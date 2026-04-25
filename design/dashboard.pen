@@ -1,0 +1,618 @@
+{
+  "version": "2.11",
+  "children": [
+    {
+      "type": "frame",
+      "id": "HKZlb",
+      "x": 0,
+      "y": 0,
+      "name": "App",
+      "width": 1920,
+      "height": 1080,
+      "fill": "#FAFAFA",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "GudGW",
+          "name": "Titlebar",
+          "width": "fill_container",
+          "height": 48,
+          "fill": "#FAFAFA",
+          "padding": [
+            0,
+            24
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "q9UkHI",
+              "name": "Left",
+              "width": "fit_content(28)",
+              "height": "fit_content(28)",
+              "alignItems": "center"
+            },
+            {
+              "type": "frame",
+              "id": "OJe7y",
+              "name": "Center",
+              "width": "fill_container",
+              "layout": "vertical",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "fnhnO",
+                  "fill": "#111827",
+                  "content": "Project",
+                  "fontFamily": "Inter",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Olj61",
+              "name": "Window Controls",
+              "width": 132,
+              "fill": "#F8FAFC",
+              "cornerRadius": 999,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#E2E8F0"
+              },
+              "gap": 8,
+              "padding": [
+                7,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Gbs0D",
+                  "name": "Minimize",
+                  "width": 32,
+                  "height": 22,
+                  "fill": "#334155",
+                  "cornerRadius": 999,
+                  "stroke": {
+                    "thickness": 0
+                  },
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "nCkWQ",
+                      "x": 11,
+                      "y": 6,
+                      "name": "minDot",
+                      "fill": "#F8FAFC",
+                      "width": 10,
+                      "height": 10
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "W7EnP",
+                  "name": "Maximize",
+                  "width": 32,
+                  "height": 22,
+                  "fill": "#334155",
+                  "cornerRadius": 999,
+                  "stroke": {
+                    "thickness": 0
+                  },
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "F1vVM",
+                      "x": 11,
+                      "y": 6,
+                      "name": "maxDot",
+                      "fill": "#F8FAFC",
+                      "width": 10,
+                      "height": 10
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xMkUG",
+                  "name": "Close",
+                  "width": 32,
+                  "height": 22,
+                  "fill": "#334155",
+                  "cornerRadius": 999,
+                  "stroke": {
+                    "thickness": 0
+                  },
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "oRCxl",
+                      "x": 11,
+                      "y": 6,
+                      "name": "closeDot",
+                      "fill": "#F8FAFC",
+                      "width": 10,
+                      "height": 10
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sjFGp",
+          "name": "Shell",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "#fafafa",
+          "children": [
+            {
+              "type": "frame",
+              "id": "gdcDu",
+              "name": "Sidebar",
+              "width": 80,
+              "height": "fill_container",
+              "fill": "#ffffff",
+              "stroke": {
+                "align": "inside",
+                "thickness": {
+                  "right": 1
+                },
+                "fill": "#e5e7eb"
+              },
+              "layout": "vertical",
+              "gap": 16,
+              "padding": [
+                16,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "e5lHO",
+                  "name": "Ellipsis Button",
+                  "width": 32,
+                  "height": 32,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "zWnmO",
+                      "x": 0,
+                      "y": 0,
+                      "width": 32,
+                      "height": 32,
+                      "iconFontName": "ellipsis",
+                      "iconFontFamily": "lucide",
+                      "fill": "#111827"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "zYKDQ",
+                  "name": "Plus Button",
+                  "width": 32,
+                  "height": 32,
+                  "fill": "#111827",
+                  "cornerRadius": 6,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "f2wqjR",
+                      "x": 6,
+                      "y": 6,
+                      "width": 20,
+                      "height": 20,
+                      "iconFontName": "plus",
+                      "iconFontFamily": "lucide",
+                      "fill": "#fafafa"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "K5eUcI",
+                  "name": "Divider",
+                  "width": 32,
+                  "height": 1,
+                  "fill": "#e5e7eb"
+                },
+                {
+                  "type": "frame",
+                  "id": "F8vot",
+                  "name": "Project Switcher",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "zz6tK",
+                      "name": "Project 1",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "#111827",
+                      "cornerRadius": 6
+                    },
+                    {
+                      "type": "frame",
+                      "id": "DvTwt",
+                      "name": "Project 2",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "#0ea5e9",
+                      "cornerRadius": 6
+                    },
+                    {
+                      "type": "frame",
+                      "id": "CVG49",
+                      "name": "Project 3",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "#f97316",
+                      "cornerRadius": 6
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ougrw",
+                      "name": "Project 4",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "#22c55e",
+                      "cornerRadius": 6
+                    },
+                    {
+                      "type": "frame",
+                      "id": "m93Dm",
+                      "name": "Project 5",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "#a855f7",
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "IHIjC",
+                  "name": "Bottom Spacer",
+                  "width": "fill_container",
+                  "height": "fill_container"
+                },
+                {
+                  "type": "frame",
+                  "id": "A0NG6x",
+                  "name": "Avatar Icon",
+                  "width": 32,
+                  "height": 32,
+                  "fill": "#cbd5e1",
+                  "cornerRadius": 8
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "S66uc",
+              "name": "mainShell",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#fafafa",
+              "gap": 24,
+              "padding": 24,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "oN0F4",
+                  "name": "Side Panel",
+                  "width": 360,
+                  "height": "fill_container",
+                  "fill": "#ffffff",
+                  "cornerRadius": 24,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#e5e7eb"
+                  },
+                  "layout": "vertical",
+                  "gap": 20,
+                  "padding": 24,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "rFaEB",
+                      "name": "Brand Row",
+                      "width": "fill_container",
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "SX36t",
+                          "name": "Brand Left",
+                          "gap": 12,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ut4NX",
+                              "name": "Brand Icon",
+                              "width": 32,
+                              "height": 32,
+                              "fill": "#111827",
+                              "cornerRadius": 8
+                            },
+                            {
+                              "type": "text",
+                              "id": "F4pMT",
+                              "name": "Brand Text",
+                              "fill": "#111827",
+                              "content": "Ora Desktop",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "u1kUSg",
+                          "name": "Collapse Button",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "#f8fafc",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "#e2e8f0"
+                          },
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "b0PIDk",
+                              "x": 8,
+                              "y": 8,
+                              "name": "collapseIcon",
+                              "width": 16,
+                              "height": 16,
+                              "iconFontName": "chevrons-left",
+                              "iconFontFamily": "lucide",
+                              "fill": "#111827"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "GoSHi",
+                      "name": "Agent Task Section",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "M4EJU",
+                          "name": "Agent Task Title",
+                          "fill": "#71717a",
+                          "content": "Agent Task",
+                          "lineHeight": 1.3,
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "VQYy1",
+                          "name": "Agent Task List",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 12,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "gP87b",
+                              "name": "Task 1",
+                              "width": "fill_container",
+                              "fill": "#f8fafc",
+                              "cornerRadius": 12,
+                              "stroke": {
+                                "align": "inside",
+                                "thickness": 1,
+                                "fill": "#e5e7eb"
+                              },
+                              "layout": "vertical",
+                              "gap": 6,
+                              "padding": 12,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "aEyQe",
+                                  "name": "Task 1 Title",
+                                  "fill": "#111827",
+                                  "content": "Build dashboard sidebar",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "E4PMA",
+                                  "name": "Task 1 Body",
+                                  "fill": "#52525b",
+                                  "content": "Waiting for design tokens and layout decisions.",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "h1ugF0",
+                              "name": "Task 2",
+                              "width": "fill_container",
+                              "fill": "#ffffff",
+                              "cornerRadius": 12,
+                              "stroke": {
+                                "align": "inside",
+                                "thickness": 1,
+                                "fill": "#e5e7eb"
+                              },
+                              "layout": "vertical",
+                              "gap": 6,
+                              "padding": 12,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "xNYA9",
+                                  "name": "Task 2 Title",
+                                  "fill": "#111827",
+                                  "content": "Sync project state",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "JbgxZ",
+                                  "name": "Task 2 Body",
+                                  "fill": "#52525b",
+                                  "content": "Last update came from the design board.",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "FPx7A",
+                              "name": "Task 3",
+                              "width": "fill_container",
+                              "fill": "#ffffff",
+                              "cornerRadius": 12,
+                              "stroke": {
+                                "align": "inside",
+                                "thickness": 1,
+                                "fill": "#e5e7eb"
+                              },
+                              "layout": "vertical",
+                              "gap": 6,
+                              "padding": 12,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "CpWtu",
+                                  "name": "Task 3 Title",
+                                  "fill": "#111827",
+                                  "content": "Check layout regression",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "khG1t",
+                                  "name": "Task 3 Body",
+                                  "fill": "#52525b",
+                                  "content": "Confirm the title bar stays independent from the sidebar.",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "H7u2Yg",
+                  "name": "Content",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#fafafa",
+                  "layout": "vertical",
+                  "gap": 24,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "TudqO",
+                      "name": "mainHero",
+                      "width": "fill_container",
+                      "fill": "#ffffff",
+                      "cornerRadius": 24,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "#e5e7eb"
+                      },
+                      "layout": "vertical",
+                      "gap": 12,
+                      "padding": 24,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "jbhip",
+                          "name": "heroTitle",
+                          "fill": "#09090b",
+                          "content": "Project",
+                          "fontFamily": "Inter",
+                          "fontSize": 28,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "nrU7Z",
+                          "name": "heroSubtitle",
+                          "fill": "#52525b",
+                          "content": "Select a workspace from the sidebar.",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "imports": {
+    "F": "pencil:shadcn.lib.pen"
+  }
+}
