@@ -1,4 +1,4 @@
-use crate::{DomainModelError, TaskId};
+use crate::{AuditFields, DomainModelError, TaskId};
 use serde::{Deserialize, Serialize};
 
 /// Captures whether an agent session is currently running or stopped.
@@ -43,6 +43,7 @@ pub struct Session {
     pub agent_id: String,
     pub agent_session_id: Option<String>,
     pub status: SessionStatus,
+    pub audit_fields: AuditFields,
 }
 
 impl Session {
@@ -53,6 +54,7 @@ impl Session {
         agent_id: impl Into<String>,
         agent_session_id: Option<String>,
         status: SessionStatus,
+        audit_fields: AuditFields,
     ) -> Self {
         Self {
             id,
@@ -60,6 +62,7 @@ impl Session {
             agent_id: agent_id.into(),
             agent_session_id,
             status,
+            audit_fields,
         }
     }
 }

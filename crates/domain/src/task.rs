@@ -1,4 +1,4 @@
-use crate::{DomainModelError, ProjectId, WorktreeId};
+use crate::{AuditFields, DomainModelError, ProjectId, WorktreeId};
 use serde::{Deserialize, Serialize};
 
 /// Captures the lifecycle state for a task without exposing database integer codes.
@@ -46,15 +46,18 @@ pub struct Task {
     pub title: String,
     pub status: TaskStatus,
     pub worktree_id: Option<WorktreeId>,
+    pub audit_fields: AuditFields,
 }
 
 impl Task {
+    /// Creates a task snapshot together with its persistence-managed audit metadata.
     pub fn new(
         id: crate::TaskId,
         project_id: ProjectId,
         title: impl Into<String>,
         status: TaskStatus,
         worktree_id: Option<WorktreeId>,
+        audit_fields: AuditFields,
     ) -> Self {
         Self {
             id,
@@ -62,6 +65,7 @@ impl Task {
             title: title.into(),
             status,
             worktree_id,
+            audit_fields,
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::{ArtifactId, DomainModelError, VirtualEntryId, VirtualFolderId};
+use crate::{ArtifactId, AuditFields, DomainModelError, VirtualEntryId, VirtualFolderId};
 use serde::{Deserialize, Serialize};
 
 /// Distinguishes file entries from directory entries in a virtual folder tree.
@@ -44,9 +44,11 @@ pub struct VirtualEntry {
     pub name: String,
     pub kind: VirtualEntryKind,
     pub content_ref: Option<ArtifactId>,
+    pub audit_fields: AuditFields,
 }
 
 impl VirtualEntry {
+    /// Creates a virtual entry snapshot together with its persistence-managed audit metadata.
     pub fn new(
         id: VirtualEntryId,
         virtual_folder_id: VirtualFolderId,
@@ -54,6 +56,7 @@ impl VirtualEntry {
         name: impl Into<String>,
         kind: VirtualEntryKind,
         content_ref: Option<ArtifactId>,
+        audit_fields: AuditFields,
     ) -> Self {
         Self {
             id,
@@ -62,6 +65,7 @@ impl VirtualEntry {
             name: name.into(),
             kind,
             content_ref,
+            audit_fields,
         }
     }
 }

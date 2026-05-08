@@ -1,3 +1,4 @@
+mod audit_fields;
 mod artifact;
 mod error;
 mod ids;
@@ -12,6 +13,7 @@ mod worktree;
 mod tests;
 
 pub use artifact::Artifact;
+pub use audit_fields::AuditFields;
 pub use error::DomainModelError;
 pub use ids::{
     ArtifactId, ProjectId, SessionId, TaskId, VirtualEntryId, VirtualFolderId, WorktreeId,

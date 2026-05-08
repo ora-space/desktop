@@ -1,4 +1,4 @@
-use crate::{DomainModelError, TaskId};
+use crate::{AuditFields, DomainModelError, TaskId};
 use serde::{Deserialize, Serialize};
 
 /// Models whether a worktree is the active working copy for its task.
@@ -42,20 +42,24 @@ pub struct Worktree {
     pub task_id: TaskId,
     pub branch_name: Option<String>,
     pub activity: WorktreeActivity,
+    pub audit_fields: AuditFields,
 }
 
 impl Worktree {
+    /// Creates a worktree snapshot together with its persistence-managed audit metadata.
     pub fn new(
         id: crate::WorktreeId,
         task_id: TaskId,
         branch_name: Option<String>,
         activity: WorktreeActivity,
+        audit_fields: AuditFields,
     ) -> Self {
         Self {
             id,
             task_id,
             branch_name,
             activity,
+            audit_fields,
         }
     }
 }
