@@ -35,6 +35,7 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
 
 ## Tests
 
+- run format: `cargo fmt --all`
 - run tests: `task test`
 
 ### Test assertions
