@@ -11,7 +11,10 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+ora-application = { workspace = true }
+ora-domain = { workspace = true }
 ora-logging = { workspace = true }
+r2d2 = { workspace = true }
 rusqlite = { workspace = true, features = ["bundled"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
 
@@ -38,6 +38,14 @@ impl DatabaseLocation {
         match self {
             Self::Path(_) => "path",
             Self::InMemory => "in_memory",
+        }
+    }
+
+    /// Returns the backing path required by file-based pooling entry points.
+    pub(crate) fn pooled_path(&self) -> Result<&Path, DatabaseError> {
+        match self {
+            Self::Path(path) => Ok(path.as_path()),
+            Self::InMemory => Err(DatabaseError::UnsupportedPooledLocation),
         }
     }
 }

@@ -2,8 +2,8 @@ use ora_logging::{ora_error, ora_info};
 use rusqlite::Connection;
 
 use crate::{
-    DatabaseError, DatabaseLocation, MigrationCatalog, SystemTimestampSource, TimestampSource,
-    migration,
+    DatabaseError, DatabaseLocation, MigrationCatalog, RepositoryPool, SystemTimestampSource,
+    TimestampSource, migration,
 };
 
 /// Owns a SQLite connection that has already been reconciled with the active migration target.
@@ -98,5 +98,16 @@ where
         );
 
         Ok(Database { connection })
+    }
+
+    /// Reconciles the database schema and returns the configured repository pool for later use.
+    pub fn bootstrap_repository_pool(
+        &self,
+        location: &DatabaseLocation,
+        catalog: &MigrationCatalog,
+    ) -> Result<RepositoryPool, DatabaseError> {
+        self.bootstrap(location, catalog)?;
+
+        RepositoryPool::new(location)
     }
 }

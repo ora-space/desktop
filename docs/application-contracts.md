@@ -14,6 +14,6 @@ The first `project` vertical slice is split across `ora-application`, `ora-contr
 
 - The current implementation keeps delete externally CRUD-shaped through `DeleteProjectHandler`.
 - Repository implementations can still soft-delete internally by updating `is_deleted` and `updated_at`.
-- `ora-db` remains the future home for SQLite-backed implementations of the `ora-application` ports.
+- `ora-db` now provides SQLite-backed implementations of the `ora-application` repository ports for `project`, `task`, `session`, and `worktree`.
 - `ora-application` emits structured operational `tracing` events for project CRUD handlers with an `operation` field and, when available, a `project_id`. Success events log at `INFO`, and not-found or repository failures log at `ERROR` with failure details under `error`.
 - The application layer emits events only; logging initialization, sink selection, and writer lifetimes stay owned by runtime composition roots such as `apps/web/server`.
