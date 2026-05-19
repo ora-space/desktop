@@ -6,7 +6,7 @@ use ora_application::{
     WorktreeRepositoryError,
 };
 use ora_domain::{
-    AuditFields, Project, ProjectId, ProjectWorkContext, ProjectWorkContextId,
+    AgentId, AuditFields, Project, ProjectId, ProjectWorkContext, ProjectWorkContextId,
     ProjectWorkContextSurface, Session, SessionId, SessionStatus, Task, TaskId, TaskStatus,
     Worktree, WorktreeActivity, WorktreeId,
 };
@@ -306,7 +306,7 @@ fn session_repository_supports_crud_and_soft_delete() {
     let created_session = Session::new(
         SessionId::new("session-1"),
         TaskId::new("task-1"),
-        "agent-1",
+        AgentId::new("agent-1"),
         Some("provider-1".to_string()),
         SessionStatus::Running,
         AuditFields::new(12, 12, false),
@@ -328,7 +328,7 @@ fn session_repository_supports_crud_and_soft_delete() {
     let updated_session = Session::new(
         created_session.id.clone(),
         created_session.task_id.clone(),
-        "agent-2",
+        AgentId::new("agent-2"),
         None,
         SessionStatus::Stopped,
         AuditFields::new(12, 22, false),
@@ -436,7 +436,7 @@ fn repository_pool_composes_all_repository_adapters() {
     let session = Session::new(
         SessionId::new("session-1"),
         task.id.clone(),
-        "agent-1",
+        AgentId::new("agent-1"),
         Some("provider-1".to_string()),
         SessionStatus::Running,
         AuditFields::new(42, 42, false),

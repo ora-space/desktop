@@ -7,7 +7,8 @@ use ora_contracts::{
     SessionStatus, UpdateSessionRequest, UpdateSessionResponse,
 };
 use ora_domain::{
-    AuditFields, Session as DomainSession, SessionId, SessionStatus as DomainSessionStatus, TaskId,
+    AgentId, AuditFields, Session as DomainSession, SessionId,
+    SessionStatus as DomainSessionStatus, TaskId,
 };
 use ora_logging::{ora_error, ora_info};
 
@@ -46,7 +47,7 @@ where
         let session = DomainSession::new(
             self.id_generator.generate_session_id(),
             TaskId::new(request.task_id),
-            request.agent_id,
+            AgentId::new(request.agent_id),
             request.agent_session_id,
             map_contract_session_status(request.status),
             AuditFields::new(now, now, false),
@@ -192,7 +193,7 @@ where
         let session = DomainSession::new(
             session_id.clone(),
             TaskId::new(request.task_id),
-            request.agent_id,
+            AgentId::new(request.agent_id),
             request.agent_session_id,
             map_contract_session_status(request.status),
             AuditFields::new(

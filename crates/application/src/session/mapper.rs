@@ -6,7 +6,7 @@ pub(crate) fn map_session(session: DomainSession) -> ContractSession {
     ContractSession {
         id: session.id.to_string(),
         task_id: session.task_id.to_string(),
-        agent_id: session.agent_id,
+        agent_id: session.agent_id.to_string(),
         agent_session_id: session.agent_session_id,
         status: map_session_status(session.status),
     }

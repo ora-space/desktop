@@ -9,7 +9,9 @@ use ora_contracts::{
     Session as ContractSession, SessionStatus as ContractSessionStatus, UpdateSessionRequest,
     UpdateSessionResponse,
 };
-use ora_domain::{AuditFields, Session, SessionId, SessionStatus as DomainSessionStatus, TaskId};
+use ora_domain::{
+    AgentId, AuditFields, Session, SessionId, SessionStatus as DomainSessionStatus, TaskId,
+};
 use ora_logging::{with_recorded_trace_logging, with_trace_logging};
 use pretty_assertions::assert_eq;
 use std::cell::RefCell;
@@ -57,7 +59,7 @@ fn creates_sessions_with_generated_identity_and_clock_values() {
             vec![Session::new(
                 SessionId::new("session-1"),
                 TaskId::new("task-1"),
-                "agent-1",
+                AgentId::new("agent-1"),
                 Some("provider-1".to_string()),
                 DomainSessionStatus::Running,
                 AuditFields::new(1_700_000_000_000, 1_700_000_000_000, false),
@@ -73,7 +75,7 @@ fn gets_sessions_by_identifier() {
         let repository = Rc::new(FakeSessionRepository::with_sessions(vec![Session::new(
             SessionId::new("session-1"),
             TaskId::new("task-1"),
-            "agent-1",
+            AgentId::new("agent-1"),
             None,
             DomainSessionStatus::Stopped,
             AuditFields::new(1, 2, false),
@@ -110,7 +112,7 @@ fn lists_visible_sessions() {
             Session::new(
                 SessionId::new("session-1"),
                 TaskId::new("task-1"),
-                "agent-1",
+                AgentId::new("agent-1"),
                 None,
                 DomainSessionStatus::Stopped,
                 AuditFields::new(1, 2, false),
@@ -118,7 +120,7 @@ fn lists_visible_sessions() {
             Session::new(
                 SessionId::new("session-2"),
                 TaskId::new("task-2"),
-                "agent-2",
+                AgentId::new("agent-2"),
                 Some("provider-2".to_string()),
                 DomainSessionStatus::Running,
                 AuditFields::new(3, 4, false),
@@ -162,7 +164,7 @@ fn updates_sessions_with_refreshed_timestamps() {
         let repository = Rc::new(FakeSessionRepository::with_sessions(vec![Session::new(
             SessionId::new("session-1"),
             TaskId::new("task-1"),
-            "agent-1",
+            AgentId::new("agent-1"),
             None,
             DomainSessionStatus::Stopped,
             AuditFields::new(10, 20, false),
@@ -197,7 +199,7 @@ fn updates_sessions_with_refreshed_timestamps() {
             vec![Session::new(
                 SessionId::new("session-1"),
                 TaskId::new("task-2"),
-                "agent-2",
+                AgentId::new("agent-2"),
                 Some("provider-2".to_string()),
                 DomainSessionStatus::Running,
                 AuditFields::new(10, 30, false),
@@ -213,7 +215,7 @@ fn deletes_sessions_through_soft_delete_repository_calls() {
         let repository = Rc::new(FakeSessionRepository::with_sessions(vec![Session::new(
             SessionId::new("session-1"),
             TaskId::new("task-1"),
-            "agent-1",
+            AgentId::new("agent-1"),
             None,
             DomainSessionStatus::Stopped,
             AuditFields::new(10, 20, false),
@@ -239,7 +241,7 @@ fn deletes_sessions_through_soft_delete_repository_calls() {
             vec![Session::new(
                 SessionId::new("session-1"),
                 TaskId::new("task-1"),
-                "agent-1",
+                AgentId::new("agent-1"),
                 None,
                 DomainSessionStatus::Stopped,
                 AuditFields::new(10, 40, true),

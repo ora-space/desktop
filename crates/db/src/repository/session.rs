@@ -1,5 +1,5 @@
 use ora_application::{SessionRepository, SessionRepositoryError};
-use ora_domain::{AuditFields, Session, SessionId, SessionStatus, TaskId};
+use ora_domain::{AgentId, AuditFields, Session, SessionId, SessionStatus, TaskId};
 use rusqlite::{Row, params};
 
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
@@ -28,7 +28,7 @@ impl SessionRepository for SqliteSessionRepository {
                     params![
                         session.id.as_ref(),
                         session.task_id.as_ref(),
-                        &session.agent_id,
+                        session.agent_id.as_ref(),
                         session.agent_session_id.as_deref(),
                         session.status.database_value(),
                         session.audit_fields.created_at,
@@ -97,7 +97,7 @@ impl SessionRepository for SqliteSessionRepository {
                     params![
                         session.id.as_ref(),
                         session.task_id.as_ref(),
-                        &session.agent_id,
+                        session.agent_id.as_ref(),
                         session.agent_session_id.as_deref(),
                         session.status.database_value(),
                         session.audit_fields.created_at,
@@ -144,7 +144,7 @@ fn map_session_row(row: &Row<'_>) -> Result<Session, crate::DatabaseError> {
     Ok(Session::new(
         SessionId::new(row.get::<_, String>("id")?),
         TaskId::new(row.get::<_, String>("task_id")?),
-        row.get::<_, String>("agent_id")?,
+        AgentId::new(row.get::<_, String>("agent_id")?),
         row.get::<_, Option<String>>("agent_session_id")?,
         status,
         AuditFields::new(row.get("created_at")?, row.get("updated_at")?, is_deleted),

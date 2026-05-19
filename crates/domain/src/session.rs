@@ -1,5 +1,37 @@
 use crate::{AuditFields, DomainModelError, TaskId};
 use serde::{Deserialize, Serialize};
+use std::fmt::{self, Display, Formatter};
+
+/// Identifies which agent owns a persisted session while keeping string serialization stable.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentId(String);
+
+impl AgentId {
+    pub const TERMINAL: &'static str = "terminal";
+
+    /// Creates an agent identifier from any owned or borrowed string input.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Returns the canonical terminal agent identifier as a typed domain value.
+    pub fn terminal() -> Self {
+        Self::new(Self::TERMINAL)
+    }
+}
+
+impl AsRef<str> for AgentId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Display for AgentId {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
 
 /// Captures whether an agent session is currently running or stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,7 +72,7 @@ impl TryFrom<i64> for SessionStatus {
 pub struct Session {
     pub id: crate::SessionId,
     pub task_id: TaskId,
-    pub agent_id: String,
+    pub agent_id: AgentId,
     pub agent_session_id: Option<String>,
     pub status: SessionStatus,
     pub audit_fields: AuditFields,
@@ -51,7 +83,7 @@ impl Session {
     pub fn new(
         id: crate::SessionId,
         task_id: TaskId,
-        agent_id: impl Into<String>,
+        agent_id: AgentId,
         agent_session_id: Option<String>,
         status: SessionStatus,
         audit_fields: AuditFields,
@@ -59,7 +91,7 @@ impl Session {
         Self {
             id,
             task_id,
-            agent_id: agent_id.into(),
+            agent_id,
             agent_session_id,
             status,
             audit_fields,

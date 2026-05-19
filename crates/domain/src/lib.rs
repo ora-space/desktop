@@ -22,7 +22,7 @@ pub use ids::{
 };
 pub use project::Project;
 pub use project_work_context::{ProjectWorkContext, ProjectWorkContextSurface};
-pub use session::{Session, SessionStatus};
+pub use session::{AgentId, Session, SessionStatus};
 pub use task::{Task, TaskStatus};
 pub use virtual_entry::{VirtualEntry, VirtualEntryKind};
 pub use virtual_folder::VirtualFolder;

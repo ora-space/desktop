@@ -1,8 +1,8 @@
 use crate::{
-    Artifact, ArtifactId, AuditFields, DomainModelError, Project, ProjectId, ProjectWorkContext,
-    ProjectWorkContextId, ProjectWorkContextSurface, Session, SessionId, SessionStatus, Task,
-    TaskId, TaskStatus, VirtualEntry, VirtualEntryId, VirtualEntryKind, VirtualFolder,
-    VirtualFolderId, Worktree, WorktreeActivity, WorktreeId,
+    AgentId, Artifact, ArtifactId, AuditFields, DomainModelError, Project, ProjectId,
+    ProjectWorkContext, ProjectWorkContextId, ProjectWorkContextSurface, Session, SessionId,
+    SessionStatus, Task, TaskId, TaskStatus, VirtualEntry, VirtualEntryId, VirtualEntryKind,
+    VirtualFolder, VirtualFolderId, Worktree, WorktreeActivity, WorktreeId,
 };
 use pretty_assertions::assert_eq;
 
@@ -65,7 +65,7 @@ fn constructs_schema_backed_entities() {
     let session = Session::new(
         SessionId::new("session-1"),
         task.id.clone(),
-        "codex",
+        AgentId::new("codex"),
         Some("agent-session-1".to_string()),
         SessionStatus::Running,
         audit_fields.clone(),
@@ -149,11 +149,23 @@ fn constructs_schema_backed_entities() {
         Session {
             id: SessionId::new("session-1"),
             task_id: TaskId::new("task-1"),
-            agent_id: "codex".to_string(),
+            agent_id: AgentId::new("codex"),
             agent_session_id: Some("agent-session-1".to_string()),
             status: SessionStatus::Running,
             audit_fields,
         }
+    );
+}
+
+/// Confirms the typed session agent identifier still serializes as the existing string shape.
+#[test]
+fn serializes_agent_id_as_a_transparent_string() {
+    let serialized = serde_json::to_string(&AgentId::terminal()).unwrap();
+
+    assert_eq!(serialized, "\"terminal\"");
+    assert_eq!(
+        serde_json::from_str::<AgentId>(&serialized).unwrap(),
+        AgentId::terminal()
     );
 }
 
