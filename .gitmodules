@@ -1,3 +1,0 @@
-[submodule "crates/gitlancer"]
-	path = crates/gitlancer
-	url = https://github.com/ora-space/gitlancer.git

@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "gitlancer"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "pretty_assertions",
  "thiserror",
