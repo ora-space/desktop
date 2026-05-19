@@ -413,10 +413,9 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("expected project configuration to load: {error}"));
 
-        assert_eq!(
-            config.work_dir().to_string_lossy().to_string(),
-            "/tmp/state/worktrees".to_string()
-        );
+        // Normalize separators so tests are portable across platforms (Windows uses `\`).
+        let actual = config.work_dir().to_string_lossy().to_string().replace('\\', "/");
+        assert_eq!(actual, "/tmp/state/worktrees".to_string());
     }
 
     /// Verifies the server configuration defaults to the documented host and port.
