@@ -31,6 +31,7 @@ async fn main() -> Result<(), WebBootstrapError> {
     );
 
     axum::serve(listener, router)
+        .with_graceful_shutdown(wait_for_shutdown(app_state))
         .await
         .map_err(WebBootstrapError::Serve)
 }
@@ -52,4 +53,11 @@ fn initialize_logging(
     logging_config: &ora_logging::LoggingConfig,
 ) -> Result<LoggingGuard, WebBootstrapError> {
     init_logging(logging_config.clone()).map_err(WebBootstrapError::LoggingInit)
+}
+
+/// Waits for the process shutdown signal and begins terminal runtime teardown.
+async fn wait_for_shutdown(app_state: app_state::AppState) {
+    if tokio::signal::ctrl_c().await.is_ok() {
+        app_state.shutdown_terminals();
+    }
 }

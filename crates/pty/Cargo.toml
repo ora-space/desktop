@@ -1,0 +1,21 @@
+[package]
+name = "ora-pty"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_pty"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+portable-pty = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

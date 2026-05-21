@@ -8,20 +8,26 @@ name = "ora_web_server"
 path = "src/main.rs"
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 gitlancer = { workspace = true }
 ora-application = { workspace = true }
 ora-db = { workspace = true }
 ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
 ora-logging = { workspace = true }
+ora-pty = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+futures-util = "0.3"
 pretty_assertions = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }

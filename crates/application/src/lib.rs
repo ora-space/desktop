@@ -3,6 +3,7 @@ mod project;
 mod project_work_context;
 mod session;
 mod task;
+mod terminal;
 mod worktree;
 
 pub use error::ApplicationError;
@@ -26,6 +27,12 @@ pub use task::{
     GetTaskHandler, ListTasksHandler, TaskIdGenerator, TaskRepository, TaskRepositoryError,
     TaskWorktreeDeletionMode, TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
     UpdateTaskHandler, UuidTaskIdGenerator,
+};
+pub use terminal::{
+    AttachTerminalSessionHandler, CreateTerminalSessionHandler, HandleTerminalExitHandler,
+    KillTerminalSessionHandler, ResizeTerminalSessionHandler, SendTerminalInputHandler,
+    TerminalAttachment, TerminalRuntime, TerminalRuntimeError, TerminalRuntimeRequest,
+    TerminalRuntimeResult, TerminalStartupConfig,
 };
 pub use worktree::{
     UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository, WorktreeRepositoryError,

@@ -7,7 +7,7 @@ mod task;
 pub use frontend::{
     FrontendEndpoint, FrontendHttpMethod, FrontendPathParam, PROJECT_PATH,
     PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_PATH,
-    SESSIONS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
+    SESSION_TERMINAL_PATH, SESSIONS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
 };
 pub use project::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
@@ -21,7 +21,8 @@ pub use project_work_context::{
 pub use session::{
     CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
     GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, Session,
-    SessionStatus, UpdateSessionRequest, UpdateSessionResponse,
+    SessionStatus, TerminalClientMessage, TerminalServerMessage, TerminalSessionStartup,
+    UpdateSessionRequest, UpdateSessionResponse,
 };
 use std::path::Path;
 pub use task::{
@@ -57,12 +58,15 @@ pub fn export_typescript_bindings_to(
 
     SessionStatus::export(&config)?;
     Session::export(&config)?;
+    TerminalSessionStartup::export(&config)?;
     CreateSessionRequest::export(&config)?;
     CreateSessionResponse::export(&config)?;
     GetSessionRequest::export(&config)?;
     GetSessionResponse::export(&config)?;
     ListSessionsRequest::export(&config)?;
     ListSessionsResponse::export(&config)?;
+    TerminalClientMessage::export(&config)?;
+    TerminalServerMessage::export(&config)?;
     UpdateSessionRequest::export(&config)?;
     UpdateSessionResponse::export(&config)?;
     DeleteSessionRequest::export(&config)?;
