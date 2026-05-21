@@ -6,6 +6,7 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 const DATABASE_PATH_ENV_VAR: &str = "ORA_DB_PATH";
+const DATA_DIR_ENV_VAR: &str = "ORA_DATA_DIR";
 const PROJECT_NAME_ENV_VAR: &str = "ORA_PROJECT_NAME";
 const PROJECT_PATH_ENV_VAR: &str = "ORA_PROJECT_PATH";
 const WORK_DIR_ENV_VAR: &str = "ORA_WORK_DIR";
@@ -88,15 +89,29 @@ impl DatabaseConfig {
     fn from_reader(
         mut read_variable: impl FnMut(&str) -> Option<String>,
     ) -> Result<Self, WebBootstrapError> {
-        let raw_path = read_variable(DATABASE_PATH_ENV_VAR)
-            .unwrap_or_else(|| DEFAULT_DATABASE_PATH.to_string());
+        // Precedence: explicit `ORA_DB_PATH` -> derived from `ORA_DATA_DIR` -> default
+        if let Some(raw_path) = read_variable(DATABASE_PATH_ENV_VAR) {
+            if raw_path.trim().is_empty() {
+                return Err(WebBootstrapError::InvalidDatabasePathEmpty);
+            }
 
-        if raw_path.trim().is_empty() {
-            return Err(WebBootstrapError::InvalidDatabasePathEmpty);
+            return Ok(Self {
+                path: PathBuf::from(raw_path),
+            });
+        }
+
+        if let Some(data_dir) = read_variable(DATA_DIR_ENV_VAR) {
+            if data_dir.trim().is_empty() {
+                return Err(WebBootstrapError::InvalidDatabasePathEmpty);
+            }
+
+            let mut p = PathBuf::from(data_dir);
+            p.push("ora.sqlite3");
+            return Ok(Self { path: p });
         }
 
         Ok(Self {
-            path: PathBuf::from(raw_path),
+            path: PathBuf::from(DEFAULT_DATABASE_PATH),
         })
     }
 }
@@ -129,15 +144,23 @@ impl ProjectConfig {
         mut read_variable: impl FnMut(&str) -> Option<String>,
         database_config: &DatabaseConfig,
     ) -> Result<Self, WebBootstrapError> {
-        let work_dir = match read_variable(WORK_DIR_ENV_VAR) {
-            Some(work_dir) => {
-                if work_dir.trim().is_empty() {
-                    return Err(WebBootstrapError::InvalidWorkDirEmpty);
-                }
-
-                PathBuf::from(work_dir)
+        // Precedence for work_dir: explicit `ORA_WORK_DIR` -> `ORA_DATA_DIR` -> default derived from DB path
+        let work_dir = if let Some(work_dir) = read_variable(WORK_DIR_ENV_VAR) {
+            if work_dir.trim().is_empty() {
+                return Err(WebBootstrapError::InvalidWorkDirEmpty);
             }
-            None => default_work_dir(database_config.path()),
+
+            PathBuf::from(work_dir)
+        } else if let Some(data_dir) = read_variable(DATA_DIR_ENV_VAR) {
+            if data_dir.trim().is_empty() {
+                return Err(WebBootstrapError::InvalidWorkDirEmpty);
+            }
+
+            let mut p = PathBuf::from(data_dir);
+            p.push("worktrees");
+            p
+        } else {
+            default_work_dir(database_config.path())
         };
 
         Ok(Self {
@@ -228,8 +251,22 @@ fn read_logging_config(
             });
         }
     };
+    // Determine log path with precedence: explicit `ORA_LOG_PATH` -> `ORA_DATA_DIR/logs/ora.log` -> default
+    let log_path_raw = match read_variable(LOG_PATH_ENV_VAR) {
+        Some(p) if !p.trim().is_empty() => p,
+        _ => match read_variable(DATA_DIR_ENV_VAR) {
+            Some(data_dir) if !data_dir.trim().is_empty() => {
+                let mut p = PathBuf::from(data_dir);
+                p.push("logs");
+                p.push("ora.log");
+                p.to_string_lossy().to_string()
+            }
+            _ => DEFAULT_LOG_PATH.to_string(),
+        },
+    };
+
     let file_config = FileLoggingConfig::new(
-        read_variable(LOG_PATH_ENV_VAR).unwrap_or_else(|| DEFAULT_LOG_PATH.to_string()),
+        log_path_raw,
         RotationPolicy::Daily,
         read_log_max_days(&mut read_variable)?,
     );
@@ -286,9 +323,10 @@ fn read_required_non_empty_variable(
 #[cfg(test)]
 mod tests {
     use super::{
-        DATABASE_PATH_ENV_VAR, DEFAULT_DATABASE_PATH, DEFAULT_HOST, DEFAULT_PORT, DatabaseConfig,
-        HOST_ENV_VAR, PORT_ENV_VAR, PROJECT_NAME_ENV_VAR, PROJECT_PATH_ENV_VAR, ProjectConfig,
-        RuntimeConfig, ServerConfig, WORK_DIR_ENV_VAR,
+        DATA_DIR_ENV_VAR, DATABASE_PATH_ENV_VAR, DEFAULT_DATABASE_PATH, DEFAULT_HOST, DEFAULT_PORT,
+        DatabaseConfig, HOST_ENV_VAR, LOG_MAX_DAYS_ENV_VAR, LOG_MODE_ENV_VAR, LogOutput,
+        PORT_ENV_VAR, PROJECT_NAME_ENV_VAR, PROJECT_PATH_ENV_VAR, ProjectConfig, RuntimeConfig,
+        ServerConfig, WORK_DIR_ENV_VAR, read_logging_config,
     };
     use crate::error::WebBootstrapError;
     use pretty_assertions::assert_eq;
@@ -414,7 +452,11 @@ mod tests {
         .unwrap_or_else(|error| panic!("expected project configuration to load: {error}"));
 
         // Normalize separators so tests are portable across platforms (Windows uses `\`).
-        let actual = config.work_dir().to_string_lossy().to_string().replace('\\', "/");
+        let actual = config
+            .work_dir()
+            .to_string_lossy()
+            .to_string()
+            .replace('\\', "/");
         assert_eq!(actual, "/tmp/state/worktrees".to_string());
     }
 
@@ -475,5 +517,86 @@ mod tests {
             config.server().socket_address().to_string(),
             format!("{DEFAULT_HOST}:{DEFAULT_PORT}")
         );
+    }
+
+    /// Verifies the database path is derived from ORA_DATA_DIR when ORA_DB_PATH is not set.
+    #[test]
+    fn loads_database_from_data_dir() {
+        let config = DatabaseConfig::from_reader(|key| {
+            if key == DATA_DIR_ENV_VAR {
+                Some("/tmp/state".to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|error| panic!("expected database configuration to load: {error}"));
+
+        let actual = config
+            .path()
+            .to_string_lossy()
+            .to_string()
+            .replace('\\', "/");
+        assert_eq!(actual, "/tmp/state/ora.sqlite3".to_string());
+    }
+
+    /// Verifies the work_dir is derived from ORA_DATA_DIR even when ORA_DB_PATH is explicitly set.
+    #[test]
+    fn work_dir_derived_from_data_dir_even_if_db_explicit() {
+        let database_config = DatabaseConfig::from_reader(|key| {
+            if key == DATABASE_PATH_ENV_VAR {
+                Some("/other/explicit.sqlite3".to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap();
+
+        let config = ProjectConfig::from_reader(
+            |key| {
+                if key == PROJECT_NAME_ENV_VAR {
+                    Some("Ora".to_string())
+                } else if key == PROJECT_PATH_ENV_VAR {
+                    Some("/tmp/ora".to_string())
+                } else if key == DATA_DIR_ENV_VAR {
+                    Some("/var/lib/ora".to_string())
+                } else {
+                    None
+                }
+            },
+            &database_config,
+        )
+        .unwrap_or_else(|error| panic!("expected project configuration to load: {error}"));
+
+        let actual = config
+            .work_dir()
+            .to_string_lossy()
+            .to_string()
+            .replace('\\', "/");
+        assert_eq!(actual, "/var/lib/ora/worktrees".to_string());
+    }
+
+    /// Verifies logging path is derived from ORA_DATA_DIR when ORA_LOG_PATH is not set.
+    #[test]
+    fn logging_path_derived_from_data_dir() {
+        let logging = read_logging_config(|key| {
+            if key == LOG_MODE_ENV_VAR {
+                Some("file".to_string())
+            } else if key == DATA_DIR_ENV_VAR {
+                Some("/tmp/state".to_string())
+            } else if key == LOG_MAX_DAYS_ENV_VAR {
+                Some("1".to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|error| panic!("expected logging configuration to load: {error}"));
+
+        match logging.output {
+            LogOutput::File(file) | LogOutput::StdoutAndFile(file) => {
+                let actual = file.path.to_string_lossy().to_string().replace('\\', "/");
+                assert_eq!(actual, "/tmp/state/logs/ora.log".to_string());
+            }
+            _ => panic!("expected file-backed logging output"),
+        }
     }
 }

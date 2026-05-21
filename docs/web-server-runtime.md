@@ -15,6 +15,10 @@ The web server reads its SQLite database path from:
 
 - `ORA_DB_PATH`: file-backed SQLite database path. Default: `./ora.sqlite3`
 
+Additionally, a unified data directory may be provided:
+
+- `ORA_DATA_DIR`: when set, this becomes the canonical base for runtime files. If `ORA_DB_PATH` is not explicitly set, the runtime will use `$ORA_DATA_DIR/ora.sqlite3` as the database path. Explicit `ORA_DB_PATH` continues to take precedence.
+
 Startup bootstraps the database through `ora-db`, applies the active migration catalog, and constructs the shared repository pool before the runtime is marked ready.
 
 ## Project Configuration
@@ -24,6 +28,12 @@ The web server also requires a bootstrap project identity:
 - `ORA_PROJECT_NAME`: persisted workspace project name. Required.
 - `ORA_PROJECT_PATH`: persisted workspace root path. Required.
 - `ORA_WORK_DIR`: linked-worktree root for backend-managed task workspaces. Default: `<directory of ORA_DB_PATH>/worktrees`
+ - `ORA_WORK_DIR`: linked-worktree root for backend-managed task workspaces. Default: `<directory of ORA_DB_PATH>/worktrees`.
+	If `ORA_WORK_DIR` is not set and `ORA_DATA_DIR` is provided, the runtime will use `$ORA_DATA_DIR/worktrees`.
+
+## Logging Configuration
+
+- `ORA_LOG_PATH`: configured path for log output. Default: `./ora.log`. If `ORA_LOG_PATH` is not set and `ORA_DATA_DIR` is provided, the runtime will use `$ORA_DATA_DIR/logs/ora.log`.
 
 Startup reconciles this configured project into the `projects` table before the runtime is marked ready.
 
