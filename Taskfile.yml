@@ -63,7 +63,7 @@ tasks:
       - rm -rf node_modules
       - |
         {{if eq OS "windows"}}
-        pnpm -r exec -- Remove-Item -Recurle -Force node_modules
+        pnpm -r exec -- powershell -NoProfile -Command "if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }"
         {{else}}
         pnpm -r exec -- rm -rf node_modules
         {{end}}
