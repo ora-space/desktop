@@ -105,7 +105,7 @@ impl<R: GitRunner> Git<R> {
         &self,
         request: FindWorktreeRequest<'_>,
     ) -> Result<WorktreeHandle, GitlancerError> {
-        let candidate = normalize_candidate_path(request.candidate_path);
+        let candidate = normalize_path_for_worktree_match(request.candidate_path);
         let worktrees = self
             .list_worktrees(crate::git::repository::ListWorktreesRequest {
                 repository: request.repository,
@@ -114,8 +114,16 @@ impl<R: GitRunner> Git<R> {
 
         worktrees
             .into_iter()
-            .filter(|worktree| candidate.starts_with(worktree.worktree_root().as_path()))
-            .max_by_key(|worktree| worktree.worktree_root().as_path().components().count())
+            .filter(|worktree| {
+                candidate.starts_with(normalize_path_for_worktree_match(
+                    worktree.worktree_root().as_path(),
+                ))
+            })
+            .max_by_key(|worktree| {
+                normalize_path_for_worktree_match(worktree.worktree_root().as_path())
+                    .components()
+                    .count()
+            })
             .ok_or(GitlancerError::Domain(DomainError::NotAWorktree(candidate)))
     }
 
@@ -187,6 +195,31 @@ fn normalize_candidate_path(path: &std::path::Path) -> std::path::PathBuf {
     }
 
     normalized
+}
+
+/// Resolves existing path prefixes so Windows short names and Git-reported long paths compare identically.
+fn normalize_path_for_worktree_match(path: &std::path::Path) -> std::path::PathBuf {
+    let mut current = path;
+    let mut suffix_parts = Vec::new();
+
+    loop {
+        if let Ok(canonical_path) = std::fs::canonicalize(current) {
+            let mut normalized = normalize_candidate_path(&canonical_path);
+            for suffix_part in suffix_parts.iter().rev() {
+                normalized.push(suffix_part);
+            }
+
+            return normalize_candidate_path(&normalized);
+        }
+
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(file_name)) => {
+                suffix_parts.push(file_name.to_os_string());
+                current = parent;
+            }
+            _ => return normalize_candidate_path(path),
+        }
+    }
 }
 
 /// Builds a stable `git worktree add` command so linked-worktree creation stays explicit and testable.
