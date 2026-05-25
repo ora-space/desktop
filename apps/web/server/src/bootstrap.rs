@@ -9,6 +9,7 @@ use ora_application::{
 use ora_contracts::{OpenProjectWorkContextRequest, ProjectWorkContextSurface};
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_domain::{AuditFields, Project};
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -128,6 +129,9 @@ fn reconcile_configured_project(
 /// Opens the configured file-backed SQLite database and returns the shared repository pool.
 fn build_repository_pool(database_path: &Path) -> Result<RepositoryPool, WebBootstrapError> {
     let catalog = default_migration_catalog().map_err(WebBootstrapError::DatabaseBootstrap)?;
+    let database_parent = database_path.parent().unwrap_or_else(|| Path::new("."));
+
+    fs::create_dir_all(database_parent).map_err(WebBootstrapError::DataDirectoryCreate)?;
 
     DatabaseBootstrapper::system()
         .bootstrap_repository_pool(&DatabaseLocation::path(database_path), &catalog)
@@ -202,8 +206,10 @@ mod tests {
     #[test]
     fn creates_configured_project_during_bootstrap() {
         let temp_dir = TempDir::new().unwrap();
-        let database_path = temp_dir.path().join("bootstrap-create.sqlite3");
-        let runtime_config = runtime_config(&database_path, "Ora", "/workspace/ora");
+        let data_dir = temp_dir.path().join("bootstrap-create");
+        let project_path = temp_dir.path().join("workspace").join("ora");
+        let runtime_config = runtime_config(&data_dir, "Ora", &project_path);
+        let database_path = data_dir.join("ora.sqlite3");
 
         build_app_state(&runtime_config)
             .unwrap_or_else(|error| panic!("expected runtime bootstrap to succeed: {error}"));
@@ -220,7 +226,11 @@ mod tests {
                     project.root_path,
                     project.audit_fields.is_deleted,
                 )),
-            Some(("Ora".to_string(), "/workspace/ora".to_string(), false))
+            Some((
+                "Ora".to_string(),
+                project_path.to_string_lossy().to_string(),
+                false,
+            ))
         );
         let project = repository
             .find_project_by_name("Ora")
@@ -244,8 +254,10 @@ mod tests {
     #[test]
     fn keeps_configured_project_unchanged_when_name_and_path_match() {
         let temp_dir = TempDir::new().unwrap();
-        let database_path = temp_dir.path().join("bootstrap-noop.sqlite3");
-        let runtime_config = runtime_config(&database_path, "Ora", "/workspace/ora");
+        let data_dir = temp_dir.path().join("bootstrap-noop");
+        let project_path = temp_dir.path().join("workspace").join("ora");
+        let runtime_config = runtime_config(&data_dir, "Ora", &project_path);
+        let database_path = data_dir.join("ora.sqlite3");
 
         build_app_state(&runtime_config)
             .unwrap_or_else(|error| panic!("expected first runtime bootstrap to succeed: {error}"));
@@ -270,8 +282,10 @@ mod tests {
     #[test]
     fn updates_configured_project_path_when_storage_drifts() {
         let temp_dir = TempDir::new().unwrap();
-        let database_path = temp_dir.path().join("bootstrap-update.sqlite3");
-        let original_runtime_config = runtime_config(&database_path, "Ora", "/workspace/ora");
+        let data_dir = temp_dir.path().join("bootstrap-update");
+        let original_project_path = temp_dir.path().join("workspace").join("ora");
+        let original_runtime_config = runtime_config(&data_dir, "Ora", &original_project_path);
+        let database_path = data_dir.join("ora.sqlite3");
 
         build_app_state(&original_runtime_config)
             .unwrap_or_else(|error| panic!("expected first runtime bootstrap to succeed: {error}"));
@@ -283,8 +297,8 @@ mod tests {
 
         thread::sleep(Duration::from_millis(2));
 
-        let updated_runtime_config =
-            runtime_config(&database_path, "Ora", "/workspace/ora-renamed");
+        let updated_project_path = temp_dir.path().join("workspace").join("ora-renamed");
+        let updated_runtime_config = runtime_config(&data_dir, "Ora", &updated_project_path);
         build_app_state(&updated_runtime_config).unwrap_or_else(|error| {
             panic!("expected second runtime bootstrap to succeed: {error}")
         });
@@ -296,10 +310,7 @@ mod tests {
 
         assert_eq!(updated_project.id, original_project.id);
         assert_eq!(updated_project.name, original_project.name);
-        assert_eq!(
-            updated_project.root_path,
-            "/workspace/ora-renamed".to_string()
-        );
+        assert_eq!(updated_project.root_path, updated_project_path.to_string_lossy().to_string());
         assert_eq!(
             updated_project.audit_fields.created_at,
             original_project.audit_fields.created_at
@@ -311,20 +322,14 @@ mod tests {
 
     /// Builds one runtime configuration without mutating process environment during tests.
     fn runtime_config(
-        database_path: &Path,
+        data_dir: &Path,
         project_name: &str,
-        project_path: &str,
+        project_path: &Path,
     ) -> RuntimeConfig {
-        let work_dir = database_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("worktrees");
-
         RuntimeConfig::from_reader(|key| match key {
-            "ORA_DB_PATH" => Some(database_path.to_string_lossy().to_string()),
+            "ORA_DATA_DIR" => Some(data_dir.to_string_lossy().to_string()),
             "ORA_PROJECT_NAME" => Some(project_name.to_string()),
-            "ORA_PROJECT_PATH" => Some(project_path.to_string()),
-            "ORA_WORK_DIR" => Some(work_dir.to_string_lossy().to_string()),
+            "ORA_PROJECT_PATH" => Some(project_path.to_string_lossy().to_string()),
             _ => None,
         })
         .unwrap_or_else(|error| panic!("expected runtime configuration to load: {error}"))

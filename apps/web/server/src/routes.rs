@@ -130,7 +130,9 @@ mod tests {
     /// Verifies the router supports the persisted project CRUD slice end to end.
     #[tokio::test]
     async fn serves_project_crud_routes() {
-        let (_temp_dir, _database_path, app) = test_router();
+        let (temp_dir, _database_path, app) = test_router();
+        let project_root = workspace_project_root(&temp_dir, "ora");
+        let updated_project_root = workspace_project_root(&temp_dir, "ora-next");
         let create_response = match app
             .clone()
             .oneshot(
@@ -141,7 +143,7 @@ mod tests {
                     .body(Body::from(
                         json!({
                             "name": "Ora",
-                            "rootPath": "/workspace/ora",
+                            "rootPath": project_root.clone(),
                         })
                         .to_string(),
                     ))
@@ -195,7 +197,7 @@ mod tests {
                     .body(Body::from(
                         json!({
                             "name": "Ora Updated",
-                            "rootPath": "/workspace/ora-next",
+                            "rootPath": updated_project_root.clone(),
                         })
                         .to_string(),
                     ))
@@ -226,7 +228,7 @@ mod tests {
             json!({
                 "id": project_id,
                 "name": "Ora",
-                "rootPath": "/workspace/ora",
+                "rootPath": project_root.clone(),
             })
         );
         assert_eq!(
@@ -236,7 +238,7 @@ mod tests {
                     {
                         "id": project_id,
                         "name": "Ora",
-                        "rootPath": "/workspace/ora",
+                            "rootPath": project_root.clone(),
                     },
                 ],
             })
@@ -247,7 +249,7 @@ mod tests {
                 "project": {
                     "id": project_id,
                     "name": "Ora",
-                    "rootPath": "/workspace/ora",
+                    "rootPath": project_root.clone(),
                 },
             })
         );
@@ -257,7 +259,7 @@ mod tests {
                 "project": {
                     "id": project_id,
                     "name": "Ora Updated",
-                    "rootPath": "/workspace/ora-next",
+                        "rootPath": updated_project_root.clone(),
                 },
             })
         );
@@ -302,9 +304,11 @@ mod tests {
     /// Verifies the router supports open, switch, and renew flows for project work contexts.
     #[tokio::test]
     async fn serves_project_work_context_routes() {
-        let (_temp_dir, database_path, app) = test_router();
-        let first_project_id = create_project(&app, "Ora", "/workspace/ora").await;
-        let second_project_id = create_project(&app, "Ora Docs", "/workspace/ora-docs").await;
+        let (temp_dir, database_path, app) = test_router();
+        let first_project_root = workspace_project_root(&temp_dir, "ora");
+        let second_project_root = workspace_project_root(&temp_dir, "ora-docs");
+        let first_project_id = create_project(&app, "Ora", &first_project_root).await;
+        let second_project_id = create_project(&app, "Ora Docs", &second_project_root).await;
         let open_response = match app
             .clone()
             .oneshot(
@@ -394,8 +398,9 @@ mod tests {
     /// Verifies occupied projects surface the stable conflict payload for different Tauri windows.
     #[tokio::test]
     async fn serves_project_work_context_conflicts() {
-        let (_temp_dir, _database_path, app) = test_router();
-        let project_id = create_project(&app, "Ora", "/workspace/ora").await;
+        let (temp_dir, _database_path, app) = test_router();
+        let project_root = workspace_project_root(&temp_dir, "ora");
+        let project_id = create_project(&app, "Ora", &project_root).await;
 
         let _ = app
             .clone()
@@ -454,8 +459,9 @@ mod tests {
     /// Verifies expired contexts stop blocking project opens once their lease is stale.
     #[tokio::test]
     async fn serves_project_work_context_recovery_after_expiry() {
-        let (_temp_dir, database_path, app) = test_router();
-        let project_id = create_project(&app, "Ora", "/workspace/ora").await;
+        let (temp_dir, database_path, app) = test_router();
+        let project_root = workspace_project_root(&temp_dir, "ora");
+        let project_id = create_project(&app, "Ora", &project_root).await;
 
         let open_response = match app
             .clone()
@@ -1189,6 +1195,16 @@ mod tests {
         run_git(&repository_root, &["commit", "-m", "initial"]);
 
         repository_root
+    }
+
+    /// Derives one temp-directory-backed project root for route test fixtures.
+    fn workspace_project_root(temp_dir: &TempDir, name: &str) -> String {
+        temp_dir
+            .path()
+            .join("workspace")
+            .join(name)
+            .to_string_lossy()
+            .to_string()
     }
 
     /// Runs one Git command for route-test repository setup and fails loudly when bootstrap assumptions are broken.

@@ -5,23 +5,19 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-const DATABASE_PATH_ENV_VAR: &str = "ORA_DB_PATH";
+const DATA_DIR_ENV_VAR: &str = "ORA_DATA_DIR";
 const PROJECT_NAME_ENV_VAR: &str = "ORA_PROJECT_NAME";
 const PROJECT_PATH_ENV_VAR: &str = "ORA_PROJECT_PATH";
-const WORK_DIR_ENV_VAR: &str = "ORA_WORK_DIR";
 const HOST_ENV_VAR: &str = "ORA_HOST";
 const PORT_ENV_VAR: &str = "ORA_PORT";
 const LOG_LEVEL_ENV_VAR: &str = "ORA_LOG_LEVEL";
 const LOG_MODE_ENV_VAR: &str = "ORA_LOG_MODE";
-const LOG_PATH_ENV_VAR: &str = "ORA_LOG_PATH";
 const LOG_MAX_DAYS_ENV_VAR: &str = "ORA_LOG_MAX_DAYS";
 
-const DEFAULT_DATABASE_PATH: &str = "./ora.sqlite3";
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 32578;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_LOG_MODE: &str = "stdout";
-const DEFAULT_LOG_PATH: &str = "./ora.log";
 const DEFAULT_LOG_MAX_DAYS: &str = "3";
 
 /// Groups the runtime configuration required to bootstrap the web server process.
@@ -88,15 +84,10 @@ impl DatabaseConfig {
     fn from_reader(
         mut read_variable: impl FnMut(&str) -> Option<String>,
     ) -> Result<Self, WebBootstrapError> {
-        let raw_path = read_variable(DATABASE_PATH_ENV_VAR)
-            .unwrap_or_else(|| DEFAULT_DATABASE_PATH.to_string());
-
-        if raw_path.trim().is_empty() {
-            return Err(WebBootstrapError::InvalidDatabasePathEmpty);
-        }
+        let data_dir = read_data_dir_root(&mut read_variable)?;
 
         Ok(Self {
-            path: PathBuf::from(raw_path),
+            path: data_dir.join("ora.sqlite3"),
         })
     }
 }
@@ -129,16 +120,7 @@ impl ProjectConfig {
         mut read_variable: impl FnMut(&str) -> Option<String>,
         database_config: &DatabaseConfig,
     ) -> Result<Self, WebBootstrapError> {
-        let work_dir = match read_variable(WORK_DIR_ENV_VAR) {
-            Some(work_dir) => {
-                if work_dir.trim().is_empty() {
-                    return Err(WebBootstrapError::InvalidWorkDirEmpty);
-                }
-
-                PathBuf::from(work_dir)
-            }
-            None => default_work_dir(database_config.path()),
-        };
+        let work_dir = default_work_dir(database_config.path());
 
         Ok(Self {
             name: read_required_non_empty_variable(
@@ -154,6 +136,19 @@ impl ProjectConfig {
             work_dir,
         })
     }
+}
+
+/// Resolves the single runtime data directory root used to derive all file paths.
+fn read_data_dir_root(
+    mut read_variable: impl FnMut(&str) -> Option<String>,
+) -> Result<PathBuf, WebBootstrapError> {
+    let raw_data_dir = read_variable(DATA_DIR_ENV_VAR).unwrap_or_else(|| ".".to_string());
+
+    if raw_data_dir.trim().is_empty() {
+        return Err(WebBootstrapError::InvalidDatabasePathEmpty);
+    }
+
+    Ok(PathBuf::from(raw_data_dir))
 }
 
 /// Derives the default linked-worktree root from the configured SQLite database location.
@@ -228,8 +223,9 @@ fn read_logging_config(
             });
         }
     };
+    let data_dir = read_data_dir_root(&mut read_variable)?;
     let file_config = FileLoggingConfig::new(
-        read_variable(LOG_PATH_ENV_VAR).unwrap_or_else(|| DEFAULT_LOG_PATH.to_string()),
+        data_dir.join("logs").join("ora.log"),
         RotationPolicy::Daily,
         read_log_max_days(&mut read_variable)?,
     );
@@ -286,34 +282,50 @@ fn read_required_non_empty_variable(
 #[cfg(test)]
 mod tests {
     use super::{
-        DATABASE_PATH_ENV_VAR, DEFAULT_DATABASE_PATH, DEFAULT_HOST, DEFAULT_PORT, DatabaseConfig,
-        HOST_ENV_VAR, PORT_ENV_VAR, PROJECT_NAME_ENV_VAR, PROJECT_PATH_ENV_VAR, ProjectConfig,
-        RuntimeConfig, ServerConfig, WORK_DIR_ENV_VAR,
+        DATA_DIR_ENV_VAR, DEFAULT_HOST, DEFAULT_PORT, DatabaseConfig, HOST_ENV_VAR,
+        LOG_MODE_ENV_VAR, PORT_ENV_VAR, PROJECT_NAME_ENV_VAR, PROJECT_PATH_ENV_VAR, ProjectConfig,
+        RuntimeConfig, ServerConfig,
     };
     use crate::error::WebBootstrapError;
     use pretty_assertions::assert_eq;
+    use std::path::Path;
+    use tempfile::TempDir;
 
-    /// Verifies the database configuration defaults to the documented SQLite path.
+    /// Verifies the database configuration defaults to a SQLite path under the current directory.
     #[test]
     fn loads_default_database_configuration() {
         let config = DatabaseConfig::from_reader(|_| None).unwrap_or_else(|error| {
             panic!("expected default database configuration to load: {error}");
         });
+        let expected_path = Path::new(".").join("ora.sqlite3");
 
-        assert_eq!(
-            config.path().to_string_lossy().to_string(),
-            DEFAULT_DATABASE_PATH.to_string()
-        );
+        assert_eq!(config.path(), expected_path.as_path());
     }
 
-    /// Verifies empty database paths fail with a typed bootstrap error.
+    /// Verifies the database configuration derives the SQLite path from `ORA_DATA_DIR`.
     #[test]
-    fn rejects_empty_database_path_configuration() {
+    fn loads_database_configuration_from_data_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().join("state");
+        let config = DatabaseConfig::from_reader(|key| match key {
+            DATA_DIR_ENV_VAR => Some(data_dir.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|error| panic!("expected data directory configuration to load: {error}"));
+
+        let expected_path = data_dir.join("ora.sqlite3");
+
+        assert_eq!(config.path(), expected_path.as_path());
+    }
+
+    /// Verifies empty data directories fail with a typed bootstrap error.
+    #[test]
+    fn rejects_empty_data_dir_configuration() {
         let error = match DatabaseConfig::from_reader(|key| match key {
-            DATABASE_PATH_ENV_VAR => Some("   ".to_string()),
+            DATA_DIR_ENV_VAR => Some("   ".to_string()),
             _ => None,
         }) {
-            Ok(_) => panic!("expected empty database path configuration to fail"),
+            Ok(_) => panic!("expected empty data directory configuration to fail"),
             Err(error) => error,
         };
 
@@ -339,7 +351,6 @@ mod tests {
             |key| match key {
                 PROJECT_NAME_ENV_VAR => Some("Ora".to_string()),
                 PROJECT_PATH_ENV_VAR => Some("   ".to_string()),
-                WORK_DIR_ENV_VAR => Some("/tmp/ora-worktrees".to_string()),
                 _ => None,
             },
             &DatabaseConfig::from_reader(|_| None).unwrap(),
@@ -354,68 +365,100 @@ mod tests {
     /// Verifies bootstrap project configuration exposes the configured identity unchanged.
     #[test]
     fn loads_project_configuration() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_path = temp_dir.path().join("ora");
+        let data_dir = temp_dir.path().join("ora-worktrees");
         let config = ProjectConfig::from_reader(
             |key| match key {
                 PROJECT_NAME_ENV_VAR => Some("Ora".to_string()),
-                PROJECT_PATH_ENV_VAR => Some("/tmp/ora".to_string()),
-                WORK_DIR_ENV_VAR => Some("/tmp/ora-worktrees".to_string()),
+                PROJECT_PATH_ENV_VAR => Some(project_path.to_string_lossy().to_string()),
                 _ => None,
             },
-            &DatabaseConfig::from_reader(|_| None).unwrap(),
+            &DatabaseConfig::from_reader(|key| match key {
+                DATA_DIR_ENV_VAR => Some(data_dir.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .unwrap(),
         )
         .unwrap_or_else(|error| panic!("expected project configuration to load: {error}"));
 
+        let expected_work_dir = data_dir.join("worktrees");
+
         assert_eq!(config.name(), "Ora");
-        assert_eq!(
-            config.path().to_string_lossy().to_string(),
-            "/tmp/ora".to_string()
-        );
-        assert_eq!(
-            config.work_dir().to_string_lossy().to_string(),
-            "/tmp/ora-worktrees".to_string()
-        );
+        assert_eq!(config.path(), project_path.as_path());
+        assert_eq!(config.work_dir(), expected_work_dir.as_path());
     }
 
-    /// Verifies blank linked-worktree roots fail with a typed bootstrap error.
+    /// Verifies the linked-worktree root falls back to the current directory when unset.
     #[test]
-    fn rejects_empty_work_dir_configuration() {
-        let error = match ProjectConfig::from_reader(
-            |key| match key {
-                PROJECT_NAME_ENV_VAR => Some("Ora".to_string()),
-                PROJECT_PATH_ENV_VAR => Some("/tmp/ora".to_string()),
-                WORK_DIR_ENV_VAR => Some("   ".to_string()),
-                _ => None,
-            },
-            &DatabaseConfig::from_reader(|_| None).unwrap(),
-        ) {
-            Ok(_) => panic!("expected empty worktree root configuration to fail"),
-            Err(error) => error,
-        };
-
-        assert!(matches!(error, WebBootstrapError::InvalidWorkDirEmpty));
-    }
-
-    /// Verifies the linked-worktree root defaults to a `worktrees` sibling of the SQLite database path.
-    #[test]
-    fn defaults_work_dir_next_to_database_path() {
-        let database_config = DatabaseConfig::from_reader(|key| match key {
-            DATABASE_PATH_ENV_VAR => Some("/tmp/state/ora.sqlite3".to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(|error| panic!("expected database configuration to load: {error}"));
+    fn loads_default_work_dir_from_current_directory() {
+        let database_config = DatabaseConfig::from_reader(|_| None)
+            .unwrap_or_else(|error| panic!("expected database configuration to load: {error}"));
+        let temp_dir = TempDir::new().unwrap();
+        let project_path = temp_dir.path().join("ora");
         let config = ProjectConfig::from_reader(
             |key| match key {
                 PROJECT_NAME_ENV_VAR => Some("Ora".to_string()),
-                PROJECT_PATH_ENV_VAR => Some("/tmp/ora".to_string()),
+                PROJECT_PATH_ENV_VAR => Some(project_path.to_string_lossy().to_string()),
                 _ => None,
             },
             &database_config,
         )
         .unwrap_or_else(|error| panic!("expected project configuration to load: {error}"));
 
-        // Normalize separators so tests are portable across platforms (Windows uses `\`).
-        let actual = config.work_dir().to_string_lossy().to_string().replace('\\', "/");
-        assert_eq!(actual, "/tmp/state/worktrees".to_string());
+        let expected_work_dir = Path::new(".").join("worktrees");
+
+        assert_eq!(config.work_dir(), expected_work_dir.as_path());
+    }
+
+    /// Verifies the linked-worktree root defaults to a `worktrees` sibling of the SQLite database path.
+    #[test]
+    fn defaults_work_dir_next_to_database_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().join("state");
+        let project_path = temp_dir.path().join("ora");
+        let database_config = DatabaseConfig::from_reader(|key| match key {
+            DATA_DIR_ENV_VAR => Some(data_dir.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|error| panic!("expected database configuration to load: {error}"));
+        let config = ProjectConfig::from_reader(
+            |key| match key {
+                PROJECT_NAME_ENV_VAR => Some("Ora".to_string()),
+                PROJECT_PATH_ENV_VAR => Some(project_path.to_string_lossy().to_string()),
+                _ => None,
+            },
+            &database_config,
+        )
+        .unwrap_or_else(|error| panic!("expected project configuration to load: {error}"));
+
+        let expected_work_dir = data_dir.join("worktrees");
+
+        assert_eq!(config.work_dir(), expected_work_dir.as_path());
+    }
+
+    /// Verifies the logging configuration derives the file path from `ORA_DATA_DIR`.
+    #[test]
+    fn loads_logging_configuration_from_data_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().join("state");
+        let config = super::read_logging_config(|key| match key {
+            DATA_DIR_ENV_VAR => Some(data_dir.to_string_lossy().to_string()),
+            LOG_MODE_ENV_VAR => Some("file".to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|error| panic!("expected logging configuration to load: {error}"));
+
+        match config.output {
+            ora_logging::LogOutput::Stdout => {
+                panic!("expected file-backed logging output");
+            }
+            ora_logging::LogOutput::File(file_config)
+            | ora_logging::LogOutput::StdoutAndFile(file_config) => {
+                let expected_path = data_dir.join("logs").join("ora.log");
+                assert_eq!(file_config.path, expected_path);
+            }
+        }
     }
 
     /// Verifies the server configuration defaults to the documented host and port.
@@ -450,30 +493,33 @@ mod tests {
     /// Verifies the runtime configuration loads both the server and logging contracts together.
     #[test]
     fn loads_runtime_configuration() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_path = temp_dir.path().join("ora");
+        let data_dir = temp_dir.path().join("state");
         let config = RuntimeConfig::from_reader(|key| match key {
             PROJECT_NAME_ENV_VAR => Some("Ora".to_string()),
-            PROJECT_PATH_ENV_VAR => Some("/tmp/ora".to_string()),
-            WORK_DIR_ENV_VAR => Some("/tmp/ora-worktrees".to_string()),
+            PROJECT_PATH_ENV_VAR => Some(project_path.to_string_lossy().to_string()),
+            DATA_DIR_ENV_VAR => Some(data_dir.to_string_lossy().to_string()),
+            LOG_MODE_ENV_VAR => Some("file".to_string()),
             _ => None,
         })
         .unwrap_or_else(|error| panic!("expected runtime configuration to load: {error}"));
 
-        assert_eq!(
-            config.database().path().to_string_lossy().to_string(),
-            DEFAULT_DATABASE_PATH.to_string()
-        );
+        let expected_database_path = data_dir.join("ora.sqlite3");
+        let expected_work_dir = data_dir.join("worktrees");
+        let expected_log_path = data_dir.join("logs").join("ora.log");
+
+        assert_eq!(config.database().path(), expected_database_path.as_path());
         assert_eq!(config.project().name(), "Ora");
-        assert_eq!(
-            config.project().path().to_string_lossy().to_string(),
-            "/tmp/ora".to_string()
-        );
-        assert_eq!(
-            config.project().work_dir().to_string_lossy().to_string(),
-            "/tmp/ora-worktrees".to_string()
-        );
-        assert_eq!(
-            config.server().socket_address().to_string(),
-            format!("{DEFAULT_HOST}:{DEFAULT_PORT}")
-        );
+        assert_eq!(config.project().path(), project_path.as_path());
+        assert_eq!(config.project().work_dir(), expected_work_dir.as_path());
+
+        match &config.logging().output {
+            ora_logging::LogOutput::Stdout => panic!("expected file-backed logging output"),
+            ora_logging::LogOutput::File(file_config)
+            | ora_logging::LogOutput::StdoutAndFile(file_config) => {
+                assert_eq!(&file_config.path, &expected_log_path);
+            }
+        }
     }
 }

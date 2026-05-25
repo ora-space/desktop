@@ -1,0 +1,5 @@
+id: use-ora-data-dir
+title: Use ORA_DATA_DIR for derived paths
+owner: ora-space
+status: proposed
+created: 2026-05-25

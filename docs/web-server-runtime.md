@@ -12,11 +12,15 @@
 
 ## Database Configuration
 
-The web server reads its SQLite database path from:
+The web server reads its runtime data root from:
 
-- `ORA_DB_PATH`: file-backed SQLite database path. Default: `./ora.sqlite3`
+- `ORA_DATA_DIR`: root directory for runtime state. Default: `.`
 
 Startup bootstraps the database through `ora-db`, applies the active migration catalog, and constructs the shared repository pool before the runtime is marked ready.
+
+- SQLite database path: `<ORA_DATA_DIR>/ora.sqlite3`
+- Worktree root: `<ORA_DATA_DIR>/worktrees`
+- Log file: `<ORA_DATA_DIR>/logs/ora.log`
 
 ## Project Configuration
 
@@ -24,7 +28,6 @@ The web server also requires a bootstrap project identity:
 
 - `ORA_PROJECT_NAME`: persisted workspace project name. Required.
 - `ORA_PROJECT_PATH`: persisted workspace root path. Required.
-- `ORA_WORK_DIR`: linked-worktree root for backend-managed task workspaces. Default: `<directory of ORA_DB_PATH>/worktrees`
 
 Startup reconciles this configured project into the `projects` table before the runtime is marked ready.
 
@@ -104,6 +107,6 @@ The project work context routes provide the current backend-managed project sele
 
 The current runtime uses a file-backed SQLite database bootstrapped through `ora-db`.
 
-- Data persists across process restarts as long as the same `ORA_DB_PATH` is reused.
+- Data persists across process restarts as long as the same `ORA_DATA_DIR` is reused.
 - Readiness depends on successful database bootstrap, repository-pool construction, bootstrap-project reconciliation, and synthetic web work context reconciliation.
 - Application-layer failures still map into the shared structured HTTP error envelope across the supported route families.

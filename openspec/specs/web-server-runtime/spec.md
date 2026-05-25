@@ -3,11 +3,11 @@
 Define the persisted web server runtime contract for Ora's HTTP backend, including SQLite-backed bootstrap, CRUD route exposure, and stable readiness and error behavior.
 ## Requirements
 ### Requirement: Web server runtime SHALL bootstrap a file-backed SQLite application state
-The system SHALL make `apps/web/server` construct its shared runtime state from a file-backed SQLite database through `ora-db` during startup. The runtime SHALL load a database path, a configured bootstrap project identity, and a configured or derived task-worktree root from typed bootstrap configuration, SHALL run database bootstrap and repository-pool construction before marking the server ready, SHALL reconcile the configured project into persistent storage before application state is returned, and SHALL fail startup with a typed bootstrap error when the database path or bootstrap project configuration is invalid or the SQLite bootstrap sequence cannot complete.
+The system SHALL make `apps/web/server` construct its shared runtime state from a file-backed SQLite database through `ora-db` during startup. The runtime SHALL load a runtime data root and a configured bootstrap project identity from typed bootstrap configuration, SHALL derive the SQLite database path, worktree root, and log file path from that data root, SHALL run database bootstrap and repository-pool construction before marking the server ready, SHALL reconcile the configured project into persistent storage before application state is returned, and SHALL fail startup with a typed bootstrap error when the data root or bootstrap project configuration is invalid or the SQLite bootstrap sequence cannot complete.
 
 #### Scenario: Server starts with a usable database path and a missing configured project
-- **WHEN** `ora-web-server` starts with a valid file-backed database path plus `ORA_PROJECT_NAME` and `ORA_PROJECT_PATH`, and no visible project row exists with that configured name
-- **THEN** startup bootstraps SQLite, creates one project row with the configured name and path, constructs the shared runtime state, and only then reports readiness success
+- **WHEN** `ora-web-server` starts with a valid `ORA_DATA_DIR` plus `ORA_PROJECT_NAME` and `ORA_PROJECT_PATH`, and no visible project row exists with that configured name
+- **THEN** startup bootstraps SQLite at `<ORA_DATA_DIR>/ora.sqlite3`, creates one project row with the configured name and path, constructs the shared runtime state, and only then reports readiness success
 
 #### Scenario: Server starts with an existing configured project whose stored path drifted
 - **WHEN** `ora-web-server` starts with a valid bootstrap configuration and a visible project row already exists for the configured project name but its stored `root_path` differs from `ORA_PROJECT_PATH`
@@ -20,14 +20,6 @@ The system SHALL make `apps/web/server` construct its shared runtime state from 
 #### Scenario: Bootstrap project configuration is invalid
 - **WHEN** `ora-web-server` starts with a blank or missing configured bootstrap project name or path
 - **THEN** startup fails with a typed bootstrap error instead of serving requests with an unknown workspace identity
-
-#### Scenario: Task worktree root defaults next to the configured database
-- **WHEN** `ora-web-server` starts without an explicit `ORA_WORK_DIR` and with a valid `ORA_DB_PATH`
-- **THEN** startup derives the linked-worktree root as a `worktrees` directory next to the configured SQLite database path
-
-#### Scenario: Task worktree root configuration is invalid
-- **WHEN** `ora-web-server` starts with a blank `ORA_WORK_DIR`
-- **THEN** startup fails with a typed bootstrap error instead of serving requests without a valid linked-worktree root
 
 #### Scenario: Database bootstrap fails during startup
 - **WHEN** the configured SQLite database cannot be opened, migrated, or pooled during web-server bootstrap
