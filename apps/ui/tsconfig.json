@@ -1,12 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "tsBuildInfoFile": "../../node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "types": ["vite/client"],
     "paths": {
-      "@/*": ["./web/*"],
       "@ora/ui": ["../../packages/ui/src/index.ts"]
     }
   },
-  "include": ["web"]
+  "include": ["src"]
 }

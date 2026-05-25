@@ -38,6 +38,11 @@ tasks:
     cmds:
       - pnpm dev
 
+  run:ui-showcase:
+    desc: Run the UI component showcase in development mode
+    cmds:
+      - pnpm --filter @ora/ui-showcase dev
+
   run:web-backend:
     desc: Run the web server backend in development mode
     dir: ./.data

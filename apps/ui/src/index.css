@@ -1,0 +1,17 @@
+@import "tailwindcss";
+@import "../../../packages/ui/src/theme.css";
+@source "../../../packages/ui/src";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--color-fg);
+  background: var(--color-bg);
+}
