@@ -7,19 +7,20 @@ const inputVariants = cva(
   {
     variants: {
       size: {
-        sm: "h-7 px-2.5 text-xs rounded-sm",
-        md: "h-8 px-3 text-[13px] rounded-sm",
-        lg: "h-9 px-3 text-sm rounded-md",
+        sm: "px-2 py-0.5 text-xs/none rounded-sm",
+        md: "px-3 py-1 text-[13px]/none rounded-sm",
+        lg: "px-3 py-1.5 text-sm/none rounded-sm",
       },
     },
     defaultVariants: {
       size: "md",
     },
-  }
+  },
 );
 
 export interface InputProps
-  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "size">,
+  extends
+    Omit<React.InputHTMLAttributes<HTMLInputElement>, "size">,
     VariantProps<typeof inputVariants> {}
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
@@ -32,7 +33,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         {...props}
       />
     );
-  }
+  },
 );
 Input.displayName = "Input";
 
