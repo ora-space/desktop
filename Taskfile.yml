@@ -5,17 +5,48 @@ tasks:
     cmds:
       - task: list
 
-  install:
-    desc: Install all dependencies for the project
-    cmds:
-      - pnpm install
-      - cargo fetch
-      - task: build
-
   list:
     desc: List all tasks in the current project
     cmds:
       - task --list
+
+  ###################################################
+  ############## Install Dependencies ###############
+  ###################################################
+
+  install:
+    desc: Install all dependencies for the project
+    cmds:
+      - task: install:frontend
+      - task: install:backend
+      - task: build
+
+  install:frontend:
+    desc: Install dependencies for the frontend packages
+    cmds:
+      - pnpm install
+
+  install:backend:
+    desc: Install dependencies for the Rust backend
+    cmds:
+      - cargo fetch
+
+  ###################################################
+  ############## Clean and Build Tasks ##############
+  ###################################################
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf node_modules
+      - |
+        {{if eq OS "windows"}}
+        pnpm -r exec -- powershell -NoProfile -Command "if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }"
+        {{else}}
+        pnpm -r exec -- rm -rf node_modules
+        {{end}}
+      - pnpm store prune
+      - cargo clean
 
   lint:
     desc: Run linters on all crates
@@ -23,15 +54,28 @@ tasks:
     cmds:
       - cargo clippy --workspace -- -D warnings
 
+  export-contracts:
+    desc: Regenerate TypeScript contracts and the frontend SDK package
+    cmds:
+      - cargo xtask export-contracts
+
   build:
     desc: Build all crates
     cmds:
       - cargo build --workspace
 
-  export-contracts:
-    desc: Regenerate TypeScript contracts and the frontend SDK package
+  test:
+    desc: Run contract package tests and Rust tests
+    silent: true
     cmds:
-      - cargo xtask export-contracts
+      - task: lint
+      - task: export-contracts
+      - pnpm --filter @ora/contracts test
+      - cargo test --workspace
+
+  ###################################################
+  ############# Run Development Servers #############
+  ###################################################
 
   run:web-frontend:
     desc: Run the web server frontend in development mode
@@ -52,25 +96,3 @@ tasks:
     cmds:
       - mkdir -p ../.data
       - cargo run --manifest-path ../Cargo.toml --bin ora_web_server
-
-  test:
-    desc: Run contract package tests and Rust tests
-    silent: true
-    cmds:
-      - task: lint
-      - task: export-contracts
-      - pnpm --filter @ora/contracts test
-      - cargo test --workspace
-
-  clean:
-    desc: Clean build artifacts
-    cmds:
-      - rm -rf node_modules
-      - |
-        {{if eq OS "windows"}}
-        pnpm -r exec -- powershell -NoProfile -Command "if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }"
-        {{else}}
-        pnpm -r exec -- rm -rf node_modules
-        {{end}}
-      - pnpm store prune
-      - cargo clean
