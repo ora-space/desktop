@@ -1,7 +1,26 @@
 import { Button } from "@ora/ui";
 import { Input } from "@ora/ui";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
+} from "@ora/ui";
+import { Checkbox } from "@ora/ui";
+import { Avatar, AvatarFallback, AvatarImage } from "@ora/ui";
+import { Alert, AlertTitle, AlertDescription } from "@ora/ui";
+import { Badge } from "@ora/ui";
+import { User } from "lucide-react";
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="mb-12">
       <h2 className="text-xs font-semibold uppercase tracking-widest text-fg-secondary mb-4 pb-2 border-b border-border">
@@ -12,7 +31,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center gap-6 py-3 border-b border-border-subtle last:border-0">
       <span className="w-28 shrink-0 text-xs text-fg-secondary">{label}</span>
@@ -48,8 +73,12 @@ export default function App() {
           </Row>
           <Row label="disabled">
             <Button disabled>Primary</Button>
-            <Button variant="secondary" disabled>Secondary</Button>
-            <Button variant="ghost" disabled>Ghost</Button>
+            <Button variant="secondary" disabled>
+              Secondary
+            </Button>
+            <Button variant="ghost" disabled>
+              Ghost
+            </Button>
           </Row>
           <Row label="asChild">
             <Button asChild>
@@ -72,8 +101,108 @@ export default function App() {
             <Input disabled placeholder="Disabled" className="max-w-xs" />
           </Row>
           <Row label="types">
-            <Input type="password" placeholder="Password" className="max-w-xs" />
+            <Input
+              type="password"
+              placeholder="Password"
+              className="max-w-xs"
+            />
             <Input type="search" placeholder="Search…" className="max-w-xs" />
+          </Row>
+        </Section>
+
+        {/* Card */}
+        <Section title="Card">
+          <Row label="default">
+            <Card className="w-[350px]">
+              <CardHeader>
+                <CardTitle>Create project</CardTitle>
+                <CardDescription>
+                  Deploy your new project in one-click.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid w-full items-center gap-4">
+                  <div className="flex flex-col space-y-1.5">
+                    <Input id="name" placeholder="Name of your project" />
+                  </div>
+                </div>
+              </CardContent>
+              <CardFooter className="flex justify-between">
+                <Button variant="outline">Cancel</Button>
+                <Button>Deploy</Button>
+              </CardFooter>
+            </Card>
+          </Row>
+        </Section>
+
+        {/* Checkbox */}
+        <Section title="Checkbox">
+          <Row label="default">
+            <div className="flex items-center space-x-2 text-fg">
+              <Checkbox id="terms" />
+              <label
+                htmlFor="terms"
+                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+              >
+                Accept terms and conditions
+              </label>
+            </div>
+          </Row>
+          <Row label="disabled">
+            <div className="flex items-center space-x-2 text-fg">
+              <Checkbox id="disabled-terms" disabled />
+              <label
+                htmlFor="disabled-terms"
+                className="text-sm font-medium leading-none opacity-50"
+              >
+                Disabled
+              </label>
+            </div>
+          </Row>
+        </Section>
+
+        {/* Alert */}
+        <Section title="Alert">
+          <Row label="default">
+            <Alert>
+              <AlertTitle>Heads up!</AlertTitle>
+              <AlertDescription>
+                You can add components to your app using the cli.
+              </AlertDescription>
+            </Alert>
+          </Row>
+          <Row label="destructive">
+            <Alert variant="destructive">
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>
+                Your session has expired. Please log in again.
+              </AlertDescription>
+            </Alert>
+          </Row>
+        </Section>
+
+        {/* Avatar */}
+        <Section title="Avatar">
+          <Row label="default">
+            <Avatar>
+              <AvatarImage src="https://github.com/shadcn.png" alt="@shadcn" />
+              <AvatarFallback>CN</AvatarFallback>
+            </Avatar>
+            <Avatar>
+              <AvatarFallback>
+                <User className="h-5 w-5" />
+              </AvatarFallback>
+            </Avatar>
+          </Row>
+        </Section>
+
+        {/* Badge */}
+        <Section title="Badge">
+          <Row label="variants">
+            <Badge>Default</Badge>
+            <Badge variant="secondary">Secondary</Badge>
+            <Badge variant="outline">Outline</Badge>
+            <Badge variant="destructive">Destructive</Badge>
           </Row>
         </Section>
       </div>
