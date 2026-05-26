@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button } from "@ora/ui";
+import { Button, ThemeToggle } from "@ora/ui";
 import ButtonPage from "./pages/ButtonPage";
 import InputPage from "./pages/InputPage";
 import CardPage from "./pages/CardPage";
@@ -32,6 +32,9 @@ export default function App() {
         <div className="w-3 h-3 rounded-full bg-primary" />
         <span className="font-medium text-fg">Ora UI</span>
         <span className="text-fg-secondary text-sm">Component Showcase</span>
+        <div className="ml-auto">
+          <ThemeToggle />
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
