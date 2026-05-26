@@ -1,27 +1,31 @@
 import { useState } from "react";
 import { Button, ThemeToggle } from "@ora/ui";
-import ButtonPage from "./pages/ButtonPage";
-import InputPage from "./pages/InputPage";
-import CardPage from "./pages/CardPage";
-import CheckboxPage from "./pages/CheckboxPage";
 import AlertPage from "./pages/AlertPage";
+import AlertDialogPage from "./pages/AlertDialogPage";
 import AvatarPage from "./pages/AvatarPage";
 import BadgePage from "./pages/BadgePage";
+import ButtonPage from "./pages/ButtonPage";
+import CardPage from "./pages/CardPage";
+import CheckboxPage from "./pages/CheckboxPage";
+import DialogPage from "./pages/DialogPage";
+import InputPage from "./pages/InputPage";
 
 const NAV_ITEMS = [
-  { id: "button", label: "Button", page: <ButtonPage /> },
-  { id: "input", label: "Input", page: <InputPage /> },
-  { id: "card", label: "Card", page: <CardPage /> },
-  { id: "checkbox", label: "Checkbox", page: <CheckboxPage /> },
   { id: "alert", label: "Alert", page: <AlertPage /> },
+  { id: "alert-dialog", label: "Alert Dialog", page: <AlertDialogPage /> },
   { id: "avatar", label: "Avatar", page: <AvatarPage /> },
   { id: "badge", label: "Badge", page: <BadgePage /> },
+  { id: "button", label: "Button", page: <ButtonPage /> },
+  { id: "card", label: "Card", page: <CardPage /> },
+  { id: "checkbox", label: "Checkbox", page: <CheckboxPage /> },
+  { id: "dialog", label: "Dialog", page: <DialogPage /> },
+  { id: "input", label: "Input", page: <InputPage /> },
 ] as const;
 
 type NavId = (typeof NAV_ITEMS)[number]["id"];
 
 export default function App() {
-  const [active, setActive] = useState<NavId>("button");
+  const [active, setActive] = useState<NavId>("alert");
 
   const currentPage = NAV_ITEMS.find((item) => item.id === active)?.page;
 
