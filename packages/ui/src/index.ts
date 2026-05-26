@@ -46,6 +46,18 @@ export { Alert, AlertTitle, AlertDescription } from "./alert";
 export { Badge, badgeVariants } from "./badge";
 export type { BadgeProps } from "./badge";
 
+export {
+  Breadcrumb,
+  BreadcrumbList,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+  BreadcrumbEllipsis,
+} from "./breadcrumb";
+
+export { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./collapsible";
+
 export { cn } from "./utils";
 export { ThemeToggle } from "./theme-toggle";
 export { useTheme } from "./use-theme";

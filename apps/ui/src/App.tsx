@@ -4,9 +4,11 @@ import AlertPage from "./pages/AlertPage";
 import AlertDialogPage from "./pages/AlertDialogPage";
 import AvatarPage from "./pages/AvatarPage";
 import BadgePage from "./pages/BadgePage";
+import BreadcrumbPage from "./pages/BreadcrumbPage";
 import ButtonPage from "./pages/ButtonPage";
 import CardPage from "./pages/CardPage";
 import CheckboxPage from "./pages/CheckboxPage";
+import CollapsiblePage from "./pages/CollapsiblePage";
 import DialogPage from "./pages/DialogPage";
 import InputPage from "./pages/InputPage";
 
@@ -15,9 +17,11 @@ const NAV_ITEMS = [
   { id: "alert-dialog", label: "Alert Dialog", page: <AlertDialogPage /> },
   { id: "avatar", label: "Avatar", page: <AvatarPage /> },
   { id: "badge", label: "Badge", page: <BadgePage /> },
+  { id: "breadcrumb", label: "Breadcrumb", page: <BreadcrumbPage /> },
   { id: "button", label: "Button", page: <ButtonPage /> },
   { id: "card", label: "Card", page: <CardPage /> },
   { id: "checkbox", label: "Checkbox", page: <CheckboxPage /> },
+  { id: "collapsible", label: "Collapsible", page: <CollapsiblePage /> },
   { id: "dialog", label: "Dialog", page: <DialogPage /> },
   { id: "input", label: "Input", page: <InputPage /> },
 ] as const;
