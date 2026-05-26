@@ -9,8 +9,33 @@ import ButtonPage from "./pages/ButtonPage";
 import CardPage from "./pages/CardPage";
 import CheckboxPage from "./pages/CheckboxPage";
 import CollapsiblePage from "./pages/CollapsiblePage";
+import ComboboxPage from "./pages/ComboboxPage";
+import ContextMenuPage from "./pages/ContextMenuPage";
 import DialogPage from "./pages/DialogPage";
+import DropdownMenuPage from "./pages/DropdownMenuPage";
+import EmptyPage from "./pages/EmptyPage";
+import FieldPage from "./pages/FieldPage";
+import HoverCardPage from "./pages/HoverCardPage";
 import InputPage from "./pages/InputPage";
+import LabelPage from "./pages/LabelPage";
+import MenubarPage from "./pages/MenubarPage";
+import PaginationPage from "./pages/PaginationPage";
+import PopoverPage from "./pages/PopoverPage";
+import ProgressPage from "./pages/ProgressPage";
+import RadioGroupPage from "./pages/RadioGroupPage";
+import ResizablePage from "./pages/ResizablePage";
+import ScrollAreaPage from "./pages/ScrollAreaPage";
+import SelectPage from "./pages/SelectPage";
+import SeparatorPage from "./pages/SeparatorPage";
+import SkeletonPage from "./pages/SkeletonPage";
+import SliderPage from "./pages/SliderPage";
+import SpinnerPage from "./pages/SpinnerPage";
+import SwitchPage from "./pages/SwitchPage";
+import TabsPage from "./pages/TabsPage";
+import TextareaPage from "./pages/TextareaPage";
+import TogglePage from "./pages/TogglePage";
+import ToggleGroupPage from "./pages/ToggleGroupPage";
+import TooltipPage from "./pages/TooltipPage";
 
 const NAV_ITEMS = [
   { id: "alert", label: "Alert", page: <AlertPage /> },
@@ -22,8 +47,33 @@ const NAV_ITEMS = [
   { id: "card", label: "Card", page: <CardPage /> },
   { id: "checkbox", label: "Checkbox", page: <CheckboxPage /> },
   { id: "collapsible", label: "Collapsible", page: <CollapsiblePage /> },
+  { id: "combobox", label: "Combobox", page: <ComboboxPage /> },
+  { id: "context-menu", label: "Context Menu", page: <ContextMenuPage /> },
   { id: "dialog", label: "Dialog", page: <DialogPage /> },
+  { id: "dropdown-menu", label: "Dropdown Menu", page: <DropdownMenuPage /> },
+  { id: "empty", label: "Empty", page: <EmptyPage /> },
+  { id: "field", label: "Field", page: <FieldPage /> },
+  { id: "hover-card", label: "Hover Card", page: <HoverCardPage /> },
   { id: "input", label: "Input", page: <InputPage /> },
+  { id: "label", label: "Label", page: <LabelPage /> },
+  { id: "menubar", label: "Menubar", page: <MenubarPage /> },
+  { id: "pagination", label: "Pagination", page: <PaginationPage /> },
+  { id: "popover", label: "Popover", page: <PopoverPage /> },
+  { id: "progress", label: "Progress", page: <ProgressPage /> },
+  { id: "radio-group", label: "Radio Group", page: <RadioGroupPage /> },
+  { id: "resizable", label: "Resizable", page: <ResizablePage /> },
+  { id: "scroll-area", label: "Scroll Area", page: <ScrollAreaPage /> },
+  { id: "select", label: "Select", page: <SelectPage /> },
+  { id: "separator", label: "Separator", page: <SeparatorPage /> },
+  { id: "skeleton", label: "Skeleton", page: <SkeletonPage /> },
+  { id: "slider", label: "Slider", page: <SliderPage /> },
+  { id: "spinner", label: "Spinner", page: <SpinnerPage /> },
+  { id: "switch", label: "Switch", page: <SwitchPage /> },
+  { id: "tabs", label: "Tabs", page: <TabsPage /> },
+  { id: "textarea", label: "Textarea", page: <TextareaPage /> },
+  { id: "toggle", label: "Toggle", page: <TogglePage /> },
+  { id: "toggle-group", label: "Toggle Group", page: <ToggleGroupPage /> },
+  { id: "tooltip", label: "Tooltip", page: <TooltipPage /> },
 ] as const;
 
 type NavId = (typeof NAV_ITEMS)[number]["id"];
