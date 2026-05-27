@@ -310,7 +310,10 @@ mod tests {
 
         assert_eq!(updated_project.id, original_project.id);
         assert_eq!(updated_project.name, original_project.name);
-        assert_eq!(updated_project.root_path, updated_project_path.to_string_lossy().to_string());
+        assert_eq!(
+            updated_project.root_path,
+            updated_project_path.to_string_lossy().to_string()
+        );
         assert_eq!(
             updated_project.audit_fields.created_at,
             original_project.audit_fields.created_at
@@ -321,11 +324,7 @@ mod tests {
     }
 
     /// Builds one runtime configuration without mutating process environment during tests.
-    fn runtime_config(
-        data_dir: &Path,
-        project_name: &str,
-        project_path: &Path,
-    ) -> RuntimeConfig {
+    fn runtime_config(data_dir: &Path, project_name: &str, project_path: &Path) -> RuntimeConfig {
         RuntimeConfig::from_reader(|key| match key {
             "ORA_DATA_DIR" => Some(data_dir.to_string_lossy().to_string()),
             "ORA_PROJECT_NAME" => Some(project_name.to_string()),

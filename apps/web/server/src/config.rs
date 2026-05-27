@@ -298,7 +298,6 @@ mod tests {
     };
     use crate::error::WebBootstrapError;
     use pretty_assertions::assert_eq;
-    use std::path::Path;
     use tempfile::TempDir;
 
     /// Verifies the database configuration defaults to an absolute SQLite path under the current directory.

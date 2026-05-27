@@ -10,7 +10,7 @@ use crate::bootstrap::build_app_state;
 use crate::config::RuntimeConfig;
 use crate::error::WebBootstrapError;
 use axum::Router;
-use ora_logging::{LoggingGuard, init_logging, ora_info};
+use ora_logging::{LoggingGuard, init_logging, ora_info, register_gitlancer_logger};
 use tokio::net::TcpListener;
 
 /// Boots the web server runtime, initializes shared services, and starts serving HTTP traffic.
@@ -18,6 +18,7 @@ use tokio::net::TcpListener;
 async fn main() -> Result<(), WebBootstrapError> {
     let runtime_config = RuntimeConfig::from_env()?;
     let _logging_guard = initialize_logging(runtime_config.logging())?;
+    register_gitlancer_logger();
     let app_state = build_app_state(&runtime_config)?;
     let router = build_router(app_state.clone());
     let listener = bind_listener(&runtime_config).await?;

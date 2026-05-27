@@ -1279,5 +1279,4 @@ mod tests {
             None => panic!("expected terminal message but socket closed"),
         }
     }
-
 }

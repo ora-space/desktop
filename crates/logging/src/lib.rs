@@ -3,6 +3,7 @@ mod correlation;
 mod error;
 mod file_output;
 mod formatter;
+mod gitlancer_bridge;
 mod guard;
 mod init;
 mod macros;
@@ -17,6 +18,7 @@ pub use correlation::{
     runtime_span, span_with_correlation, span_with_request_id, span_with_trace_id,
 };
 pub use error::{FileSystemAction, LoggingInitError};
+pub use gitlancer_bridge::{OraGitlancerLogger, register_gitlancer_logger};
 pub use guard::LoggingGuard;
 pub use init::init_logging;
 pub use test_support::{with_recorded_trace_logging, with_trace_logging};

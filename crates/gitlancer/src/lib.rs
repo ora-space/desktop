@@ -2,6 +2,7 @@ pub mod domain;
 pub mod error;
 pub mod exec;
 pub mod git;
+pub mod logging;
 pub mod parse;
 
 pub use domain::paths::{GitDir, RepoRelativePath, RepoRoot, WorktreeRoot};
@@ -14,3 +15,4 @@ pub use exec::env::GitEnv;
 pub use exec::output::GitOutput;
 pub use exec::runner::{CliGitRunner, GitRunner, RecordingGitRunner};
 pub use git::Git;
+pub use logging::GitlancerLogger;
