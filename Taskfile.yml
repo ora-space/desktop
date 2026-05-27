@@ -77,6 +77,15 @@ tasks:
   ############# Run Development Servers #############
   ###################################################
 
+  run:prepare:
+    desc: Ensure the local .data workspace and rustun repository exist
+    cmds:
+      - mkdir -p .data
+      - |
+        if [ ! -d .data/rustun ]; then
+          git clone https://github.com/ora-space/rustun.git .data/rustun
+        fi
+
   run:web-frontend:
     desc: Run the web server frontend in development mode
     cmds:
@@ -89,10 +98,10 @@ tasks:
 
   run:web-backend:
     desc: Run the web server backend in development mode
-    dir: ./.data
     env:
-      ORA_PROJECT_NAME: desktop
-      ORA_PROJECT_PATH: "{{.USER_WORKING_DIR}}"
+      ORA_DATA_DIR: .data
+      ORA_PROJECT_NAME: rustun
+      ORA_PROJECT_PATH: .data/rustun
     cmds:
-      - mkdir -p ../.data
-      - cargo run --manifest-path ../Cargo.toml --bin ora_web_server
+      - task: run:prepare
+      - cargo run --bin ora_web_server

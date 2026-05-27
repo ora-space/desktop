@@ -139,6 +139,9 @@ impl ProjectConfig {
 }
 
 /// Resolves the single runtime data directory root used to derive all file paths.
+///
+/// Always returns an absolute path so downstream consumers (e.g. git commands that run with a
+/// different working directory) resolve paths correctly regardless of the caller's cwd.
 fn read_data_dir_root(
     mut read_variable: impl FnMut(&str) -> Option<String>,
 ) -> Result<PathBuf, WebBootstrapError> {
@@ -148,7 +151,14 @@ fn read_data_dir_root(
         return Err(WebBootstrapError::InvalidDatabasePathEmpty);
     }
 
-    Ok(PathBuf::from(raw_data_dir))
+    let path = PathBuf::from(raw_data_dir);
+    if path.is_absolute() {
+        return Ok(path);
+    }
+
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .map_err(|_| WebBootstrapError::InvalidDatabasePathEmpty)
 }
 
 /// Derives the default linked-worktree root from the configured SQLite database location.
@@ -291,13 +301,13 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
 
-    /// Verifies the database configuration defaults to a SQLite path under the current directory.
+    /// Verifies the database configuration defaults to an absolute SQLite path under the current directory.
     #[test]
     fn loads_default_database_configuration() {
         let config = DatabaseConfig::from_reader(|_| None).unwrap_or_else(|error| {
             panic!("expected default database configuration to load: {error}");
         });
-        let expected_path = Path::new(".").join("ora.sqlite3");
+        let expected_path = std::env::current_dir().unwrap().join("ora.sqlite3");
 
         assert_eq!(config.path(), expected_path.as_path());
     }
@@ -389,7 +399,7 @@ mod tests {
         assert_eq!(config.work_dir(), expected_work_dir.as_path());
     }
 
-    /// Verifies the linked-worktree root falls back to the current directory when unset.
+    /// Verifies the linked-worktree root falls back to an absolute path in the current directory when unset.
     #[test]
     fn loads_default_work_dir_from_current_directory() {
         let database_config = DatabaseConfig::from_reader(|_| None)
@@ -406,7 +416,7 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("expected project configuration to load: {error}"));
 
-        let expected_work_dir = Path::new(".").join("worktrees");
+        let expected_work_dir = std::env::current_dir().unwrap().join("worktrees");
 
         assert_eq!(config.work_dir(), expected_work_dir.as_path());
     }
