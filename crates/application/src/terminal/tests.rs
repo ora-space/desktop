@@ -23,6 +23,15 @@ use std::path::PathBuf;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
+/// Returns a platform-appropriate shell name for tests that only inspect startup wiring.
+fn test_shell_program() -> String {
+    if cfg!(windows) {
+        "cmd.exe".to_string()
+    } else {
+        "/bin/bash".to_string()
+    }
+}
+
 /// Verifies terminal startup persists the session and launches the PTY runtime for the task worktree.
 #[test]
 fn creates_terminal_sessions() {
@@ -51,7 +60,7 @@ fn creates_terminal_sessions() {
         FixedSessionIdGenerator::new("session-1"),
         TerminalStartupConfig {
             work_dir: PathBuf::from("/tmp/worktrees"),
-            shell_program: "/bin/bash".to_string(),
+            shell_program: test_shell_program(),
         },
         FixedClock::new(100),
     );
@@ -84,7 +93,7 @@ fn creates_terminal_sessions() {
         vec![TerminalRuntimeRequest {
             session_id: PtySessionId::new("session-1"),
             cwd: PathBuf::from("/tmp/worktrees/task-1"),
-            program: "/bin/bash".to_string(),
+            program: test_shell_program(),
             args: Vec::new(),
             cols: 100,
             rows: 40,
@@ -131,7 +140,7 @@ fn marks_terminal_sessions_stopped_when_runtime_startup_fails() {
         FixedSessionIdGenerator::new("session-1"),
         TerminalStartupConfig {
             work_dir: PathBuf::from("/tmp/worktrees"),
-            shell_program: "/bin/bash".to_string(),
+            shell_program: test_shell_program(),
         },
         FixedClock::new(100),
     );

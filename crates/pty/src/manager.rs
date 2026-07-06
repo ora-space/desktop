@@ -418,6 +418,15 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    /// Returns a platform-appropriate shell name for tests that only need a plausible spawn request.
+    fn test_shell_program() -> String {
+        if cfg!(windows) {
+            "cmd.exe".to_string()
+        } else {
+            "/bin/bash".to_string()
+        }
+    }
+
     /// Verifies a running session replays buffered output after the client detaches and reattaches.
     #[tokio::test]
     async fn replays_history_after_reattach() {
@@ -429,13 +438,13 @@ mod tests {
             .start_session(PtySessionStartRequest {
                 session_id: PtySessionId::new("session-1"),
                 cwd: std::path::PathBuf::from("/tmp/task-1"),
-                program: "/bin/bash".to_string(),
+                program: test_shell_program(),
                 args: Vec::new(),
                 cols: 80,
                 rows: 24,
             })
             .unwrap_or_else(|error| panic!("expected session startup to succeed: {error}"));
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        std::thread::sleep(Duration::from_millis(30));
         let first_attachment = manager
             .attach_session(&PtySessionId::new("session-1"))
             .unwrap_or_else(|error| panic!("expected first attachment to succeed: {error:?}"));
@@ -474,7 +483,7 @@ mod tests {
             .start_session(PtySessionStartRequest {
                 session_id: PtySessionId::new("session-1"),
                 cwd: std::path::PathBuf::from("/tmp/task-1"),
-                program: "/bin/bash".to_string(),
+                program: test_shell_program(),
                 args: Vec::new(),
                 cols: 80,
                 rows: 24,
@@ -507,7 +516,7 @@ mod tests {
             .start_session(PtySessionStartRequest {
                 session_id: PtySessionId::new("session-1"),
                 cwd: std::path::PathBuf::from("/tmp/task-1"),
-                program: "/bin/bash".to_string(),
+                program: test_shell_program(),
                 args: Vec::new(),
                 cols: 80,
                 rows: 24,
@@ -519,7 +528,7 @@ mod tests {
         manager
             .resize_session(&PtySessionId::new("session-1"), 120, 50)
             .unwrap_or_else(|error| panic!("expected resize to succeed: {error:?}"));
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        tokio::task::yield_now().await;
         server_token.cancel();
 
         assert_eq!(controls.writes(), vec!["pwd\n".to_string()]);

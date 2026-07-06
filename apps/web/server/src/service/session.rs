@@ -355,6 +355,21 @@ fn map_terminal_runtime_error(error: TerminalRuntimeError) -> ApplicationError {
 }
 
 /// Returns the shell program used for first-slice task terminal sessions.
+#[cfg(not(windows))]
 fn default_shell_program() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+
+/// Returns the shell program used for first-slice task terminal sessions.
+#[cfg(windows)]
+fn default_shell_program() -> String {
+    std::env::var("COMSPEC")
+        .ok()
+        .filter(|program| !program.trim().is_empty())
+        .or_else(|| {
+            std::env::var("SHELL")
+                .ok()
+                .filter(|program| !program.trim().is_empty())
+        })
+        .unwrap_or_else(|| "cmd.exe".to_string())
 }
