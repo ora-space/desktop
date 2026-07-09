@@ -1,0 +1,19 @@
+[package]
+name = "ora-plugin-manager"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_plugin_manager"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ora-contracts = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

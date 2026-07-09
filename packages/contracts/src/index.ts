@@ -2,6 +2,7 @@
 export * from "./client.js";
 export * from "./endpoints.js";
 export * from "./transport.js";
+export * from "./plugin-rpc.js";
 export * from "./project.js";
 export * from "./project-work-context.js";
 export * from "./session.js";

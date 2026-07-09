@@ -7,6 +7,7 @@ members = [
     "crates/domain",
     "crates/gitlancer",
     "crates/logging",
+    "crates/plugin-manager",
     "crates/pty",
     "xtask",
 ]
@@ -26,6 +27,7 @@ ora-application = { path = "crates/application" }
 ora-contracts = { path = "crates/contracts" }
 ora-db = { path = "crates/db" }
 ora-domain = { path = "crates/domain" }
+ora-plugin-manager = { path = "crates/plugin-manager" }
 gitlancer = { path = "crates/gitlancer" }
 ora-logging = { path = "crates/logging" }
 ora-pty = { path = "crates/pty" }

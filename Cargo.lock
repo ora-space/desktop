@@ -1183,6 +1183,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-plugin-manager"
+version = "0.0.0"
+dependencies = [
+ "ora-contracts",
+ "pretty_assertions",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ora-pty"
 version = "0.0.0"
 dependencies = [
