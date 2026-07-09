@@ -114,6 +114,9 @@ mod tests {
 
     /// Serializes one value and compares the exact JSON payload.
     fn assert_serialized_json(value: &impl Serialize, expected: Value) {
-        assert_eq!(serde_json::to_value(value).unwrap(), expected);
+        let serialized = serde_json::to_value(value)
+            .unwrap_or_else(|error| panic!("expected JSON serialization to succeed: {error}"));
+
+        assert_eq!(serialized, expected);
     }
 }

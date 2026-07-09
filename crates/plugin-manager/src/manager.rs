@@ -1,9 +1,10 @@
 use crate::config::PluginManagerConfig;
 use crate::error::PluginManagerError;
-use crate::process::{PluginProcessOutput, PluginProcessRequest, PluginProcessRuntime};
+use crate::process::{PluginProcessOutput, collect_plugin_process_output};
 use ora_plugin_protocol::{
     PluginAddParams, PluginJsonRpcErrorResponse, PluginJsonRpcRequest, PluginJsonRpcSuccessResponse,
 };
+use ora_process::{ProcessSpawner, ProcessSpec};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -20,16 +21,16 @@ pub enum PluginLifecycleState {
 }
 
 /// Routes typed application calls to the hardcoded first-slice plugin registry.
-pub struct PluginManager<Runtime> {
+pub struct PluginManager<Spawner> {
     config: PluginManagerConfig,
-    runtime: Runtime,
+    process_spawner: Spawner,
     registry: HashMap<String, PluginDefinition>,
     lifecycle_states: Mutex<HashMap<String, PluginLifecycleState>>,
 }
 
-impl<Runtime> PluginManager<Runtime> {
-    /// Builds the plugin manager around a process runtime implementation.
-    pub fn new(config: PluginManagerConfig, runtime: Runtime) -> Self {
+impl<Spawner> PluginManager<Spawner> {
+    /// Builds the plugin manager around a process spawner implementation.
+    pub fn new(config: PluginManagerConfig, process_spawner: Spawner) -> Self {
         let registry = HashMap::from([(
             ADD_PLUGIN_ID.to_string(),
             PluginDefinition {
@@ -44,7 +45,7 @@ impl<Runtime> PluginManager<Runtime> {
 
         Self {
             config,
-            runtime,
+            process_spawner,
             registry,
             lifecycle_states,
         }
@@ -60,13 +61,14 @@ impl<Runtime> PluginManager<Runtime> {
     }
 }
 
-impl<Runtime> PluginManager<Runtime>
+impl<Spawner> PluginManager<Spawner>
 where
-    Runtime: PluginProcessRuntime,
+    Spawner: ProcessSpawner,
 {
-    /// Calls the hardcoded add capability through the configured plugin process runtime.
-    pub fn number_add(&self, a: i64, b: i64) -> Result<i64, PluginManagerError> {
+    /// Calls the hardcoded add capability through the configured plugin process spawner.
+    pub async fn number_add(&self, a: i64, b: i64) -> Result<i64, PluginManagerError> {
         let plugin = self.plugin_for_capability(ADD_PLUGIN_ID, ADD_METHOD)?;
+        let plugin_id = plugin.id.clone();
         let request_id = ADD_PLUGIN_ID.to_string();
         let rpc_request = PluginJsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION.to_string(),
@@ -82,15 +84,16 @@ where
                 }
             })?
         );
-        let process_request = self.process_request(plugin, stdin);
+        let process_spec = self.process_spec();
 
-        self.set_plugin_state(&plugin.id, PluginLifecycleState::Running);
-        let process_output = self.runtime.run_plugin_process(process_request);
-        self.set_plugin_state(&plugin.id, PluginLifecycleState::Exited);
-        let process_output = process_output
-            .map_err(|error| PluginManagerError::from_process_runtime_error(&plugin.id, error))?;
+        self.set_plugin_state(&plugin_id, PluginLifecycleState::Running);
+        let process_output = self
+            .spawn_and_run_plugin_process(&plugin_id, process_spec, stdin)
+            .await;
+        self.set_plugin_state(&plugin_id, PluginLifecycleState::Exited);
+        let process_output = process_output?;
 
-        parse_add_response(&plugin.id, &request_id, process_output)
+        parse_add_response(&plugin_id, &request_id, process_output)
     }
 
     /// Finds the plugin that is allowed to serve the requested method in this first slice.
@@ -120,20 +123,45 @@ where
         })
     }
 
-    /// Builds the process invocation from plugin metadata and the manager data directory.
-    fn process_request(&self, plugin: &PluginDefinition, stdin: String) -> PluginProcessRequest {
-        PluginProcessRequest {
-            plugin_id: plugin.id.clone(),
-            program: self.config.data_dir.join("bin").join(bun_executable_name()),
-            args: vec![self.config.data_dir.join("plugins").join("main.ts")],
-            cwd: self.config.data_dir.clone(),
-            stdin,
-            timeout: self.config.request_timeout,
-        }
+    /// Builds and drives one process crate invocation for the selected plugin.
+    async fn spawn_and_run_plugin_process(
+        &self,
+        plugin_id: &str,
+        process_spec: ProcessSpec,
+        stdin: String,
+    ) -> Result<PluginProcessOutput, PluginManagerError> {
+        let mut process = self.process_spawner.spawn(process_spec).map_err(|error| {
+            PluginManagerError::ProcessFailed {
+                plugin_id: plugin_id.to_string(),
+                message: format!("failed to spawn plugin process: {error}"),
+            }
+        })?;
+
+        collect_plugin_process_output(plugin_id, &mut process, stdin, self.config.request_timeout)
+            .await
+    }
+
+    /// Builds the process invocation from the manager data directory and bundled plugin layout.
+    fn process_spec(&self) -> ProcessSpec {
+        ProcessSpec::new(
+            self.config
+                .data_dir
+                .join("bin")
+                .join(bun_executable_name())
+                .into_os_string(),
+        )
+        .arg(
+            self.config
+                .data_dir
+                .join("plugins")
+                .join("main.ts")
+                .into_os_string(),
+        )
+        .cwd(self.config.data_dir.clone())
     }
 }
 
-impl<Runtime> PluginManager<Runtime> {
+impl<Spawner> PluginManager<Spawner> {
     /// Records the last known lifecycle state for one registered plugin.
     fn set_plugin_state(&self, plugin_id: &str, state: PluginLifecycleState) {
         self.lifecycle_states
@@ -231,179 +259,90 @@ fn bun_executable_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{ADD_PLUGIN_ID, PluginLifecycleState, PluginManager, bun_executable_name};
-    use crate::{
-        PluginManagerConfig, PluginManagerError, PluginProcessOutput, PluginProcessRequest,
-        PluginProcessRuntime, PluginProcessRuntimeError,
-    };
+    use crate::{PluginManagerConfig, PluginManagerError};
+    use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec};
     use pretty_assertions::assert_eq;
-    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::future;
+    use std::io;
     use std::path::PathBuf;
-    use std::rc::Rc;
+    use std::pin::Pin;
+    use std::process::ExitStatus;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex, PoisonError};
+    use std::task::{Context, Poll};
     use std::time::Duration;
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+    use tokio::sync::Notify;
 
-    /// Verifies add calls return the JSON-RPC result produced by the plugin process.
-    #[test]
-    fn returns_add_result_from_plugin_response() {
-        let runtime = Rc::new(FakePluginProcessRuntime::with_output(PluginProcessOutput {
-            stdout: "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":3}\n".to_string(),
-            stderr: String::new(),
-            exit_code: Some(0),
-        }));
-        let manager = PluginManager::new(
-            PluginManagerConfig::new(PathBuf::from("/tmp/ora-data")),
-            runtime.clone(),
-        );
-
-        let result = manager
-            .number_add(1, 2)
-            .unwrap_or_else(|error| panic!("expected add to succeed: {error}"));
-
-        assert_eq!(result, 3);
-        assert_eq!(
-            manager.plugin_state(ADD_PLUGIN_ID),
-            Some(PluginLifecycleState::Exited)
-        );
-        assert_eq!(
-            runtime.requests(),
-            vec![PluginProcessRequest {
-                plugin_id: "1".to_string(),
-                program: PathBuf::from("/tmp/ora-data")
-                    .join("bin")
-                    .join(bun_executable_name()),
-                args: vec![PathBuf::from("/tmp/ora-data")
-                    .join("plugins")
-                    .join("main.ts")],
-                cwd: PathBuf::from("/tmp/ora-data"),
-                stdin: "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"add\",\"params\":{\"a\":1,\"b\":2}}\n"
-                    .to_string(),
-                timeout: Duration::from_secs(5),
-            }]
-        );
-    }
-
-    /// Verifies plugin lifecycle state moves through running before the process returns.
-    #[test]
-    fn exposes_running_state_during_plugin_invocation() {
-        let runtime = Rc::new(FakePluginProcessRuntime::with_output(PluginProcessOutput {
-            stdout: "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":3}\n".to_string(),
-            stderr: String::new(),
-            exit_code: Some(0),
-        }));
-        let manager = Rc::new(PluginManager::new(
-            PluginManagerConfig::new(PathBuf::from("/tmp/ora-data")),
-            runtime.clone(),
+    /// Verifies add calls spawn the bundled plugin through the process crate boundary.
+    #[tokio::test]
+    async fn returns_add_result_and_drives_process_spec() {
+        let spawner = FakeProcessSpawner::with_process(FakeProcessPlan::exited(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":3}\n",
+            "",
+            /*exit_code*/ 0,
         ));
-        runtime.observe_state_during_run(manager.clone());
+        let data_dir = PathBuf::from("ora-data");
+        let manager =
+            PluginManager::new(PluginManagerConfig::new(data_dir.clone()), spawner.clone());
 
         let result = manager
             .number_add(1, 2)
+            .await
             .unwrap_or_else(|error| panic!("expected add to succeed: {error}"));
 
         assert_eq!(result, 3);
         assert_eq!(
-            runtime.observed_states(),
-            vec![Some(PluginLifecycleState::Running)]
-        );
-        assert_eq!(
             manager.plugin_state(ADD_PLUGIN_ID),
             Some(PluginLifecycleState::Exited)
         );
+        assert_eq!(
+            spawner.specs(),
+            vec![
+                ProcessSpec::new(
+                    data_dir
+                        .join("bin")
+                        .join(bun_executable_name())
+                        .into_os_string(),
+                )
+                .arg(data_dir.join("plugins").join("main.ts").into_os_string())
+                .cwd(data_dir)
+            ],
+        );
+        assert_eq!(
+            spawner.stdin_payloads(),
+            vec![
+                "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"add\",\"params\":{\"a\":1,\"b\":2}}\n"
+                    .to_string()
+            ],
+        );
     }
 
-    /// Verifies malformed plugin stdout becomes a stable response error.
-    #[test]
-    fn rejects_invalid_json_responses() {
-        let manager = PluginManager::new(
-            PluginManagerConfig::new(PathBuf::from("/tmp/ora-data")),
-            Rc::new(FakePluginProcessRuntime::with_output(PluginProcessOutput {
-                stdout: "not-json\n".to_string(),
-                stderr: String::new(),
-                exit_code: Some(0),
-            })),
-        );
+    /// Verifies plugin lifecycle state moves through running while the process remains active.
+    #[tokio::test]
+    async fn exposes_running_state_during_plugin_invocation() {
+        let spawner = FakeProcessSpawner::with_process(FakeProcessPlan::pending());
+        let manager = Arc::new(PluginManager::new(
+            PluginManagerConfig::with_request_timeout(
+                PathBuf::from("ora-data"),
+                Duration::from_millis(50),
+            ),
+            spawner.clone(),
+        ));
+        let task_manager = manager.clone();
+        let add_task = tokio::spawn(async move { task_manager.number_add(1, 2).await });
 
-        let error = manager.number_add(1, 2).unwrap_err();
-
-        assert!(matches!(error, PluginManagerError::InvalidResponse { .. }));
-    }
-
-    /// Verifies response ids are checked before returning plugin results.
-    #[test]
-    fn rejects_mismatched_response_ids() {
-        let manager = PluginManager::new(
-            PluginManagerConfig::new(PathBuf::from("/tmp/ora-data")),
-            Rc::new(FakePluginProcessRuntime::with_output(PluginProcessOutput {
-                stdout: "{\"jsonrpc\":\"2.0\",\"id\":\"other\",\"result\":3}\n".to_string(),
-                stderr: String::new(),
-                exit_code: Some(0),
-            })),
-        );
+        spawner.wait_for_spawn_count(1).await;
 
         assert_eq!(
-            manager.number_add(1, 2),
-            Err(PluginManagerError::ResponseIdMismatch {
-                expected: "1".to_string(),
-                actual: "other".to_string(),
-            })
+            manager.plugin_state(ADD_PLUGIN_ID),
+            Some(PluginLifecycleState::Running)
         );
-    }
-
-    /// Verifies JSON-RPC errors from the plugin are preserved for callers.
-    #[test]
-    fn maps_json_rpc_error_responses() {
-        let manager = PluginManager::new(
-            PluginManagerConfig::new(PathBuf::from("/tmp/ora-data")),
-            Rc::new(FakePluginProcessRuntime::with_output(PluginProcessOutput {
-                stdout: "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"error\":{\"code\":-32601,\"message\":\"missing method\"}}\n"
-                    .to_string(),
-                stderr: String::new(),
-                exit_code: Some(0),
-            })),
-        );
-
         assert_eq!(
-            manager.number_add(1, 2),
-            Err(PluginManagerError::JsonRpcError {
-                code: -32601,
-                message: "missing method".to_string(),
-            })
-        );
-    }
-
-    /// Verifies nonzero process exits are reported before stdout parsing.
-    #[test]
-    fn maps_nonzero_process_exits() {
-        let manager = PluginManager::new(
-            PluginManagerConfig::new(PathBuf::from("/tmp/ora-data")),
-            Rc::new(FakePluginProcessRuntime::with_output(PluginProcessOutput {
-                stdout: String::new(),
-                stderr: "boom".to_string(),
-                exit_code: Some(1),
-            })),
-        );
-
-        assert_eq!(
-            manager.number_add(1, 2),
-            Err(PluginManagerError::ProcessExitFailed {
-                plugin_id: "1".to_string(),
-                exit_code: Some(1),
-                stderr: "boom".to_string(),
-            })
-        );
-    }
-
-    /// Verifies process timeout failures become a stable plugin-manager error.
-    #[test]
-    fn maps_process_timeouts() {
-        let manager = PluginManager::new(
-            PluginManagerConfig::new(PathBuf::from("/tmp/ora-data")),
-            Rc::new(FakePluginProcessRuntime::with_error(
-                PluginProcessRuntimeError::TimedOut,
-            )),
-        );
-
-        assert_eq!(
-            manager.number_add(1, 2),
+            add_task
+                .await
+                .unwrap_or_else(|error| panic!("expected task join to succeed: {error}")),
             Err(PluginManagerError::ProcessTimedOut {
                 plugin_id: "1".to_string(),
             })
@@ -412,69 +351,453 @@ mod tests {
             manager.plugin_state(ADD_PLUGIN_ID),
             Some(PluginLifecycleState::Exited)
         );
+        assert_eq!(spawner.kill_count(), 1);
     }
 
-    struct FakePluginProcessRuntime {
-        output: RefCell<Result<PluginProcessOutput, PluginProcessRuntimeError>>,
-        requests: RefCell<Vec<PluginProcessRequest>>,
-        state_observer: RefCell<Option<Rc<PluginManager<Rc<FakePluginProcessRuntime>>>>>,
-        observed_states: RefCell<Vec<Option<PluginLifecycleState>>>,
+    /// Verifies malformed plugin stdout becomes a stable response error.
+    #[tokio::test]
+    async fn rejects_invalid_json_responses() {
+        let manager = PluginManager::new(
+            PluginManagerConfig::new(PathBuf::from("ora-data")),
+            FakeProcessSpawner::with_process(FakeProcessPlan::exited(
+                "not-json\n",
+                "",
+                /*exit_code*/ 0,
+            )),
+        );
+
+        let error = match manager.number_add(1, 2).await {
+            Ok(result) => panic!("expected invalid JSON error, got result {result}"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, PluginManagerError::InvalidResponse { .. }));
     }
 
-    impl FakePluginProcessRuntime {
-        /// Builds a fake runtime that returns one deterministic process output.
-        fn with_output(output: PluginProcessOutput) -> Self {
+    /// Verifies response ids are checked before returning plugin results.
+    #[tokio::test]
+    async fn rejects_mismatched_response_ids() {
+        let manager = PluginManager::new(
+            PluginManagerConfig::new(PathBuf::from("ora-data")),
+            FakeProcessSpawner::with_process(FakeProcessPlan::exited(
+                "{\"jsonrpc\":\"2.0\",\"id\":\"other\",\"result\":3}\n",
+                "",
+                /*exit_code*/ 0,
+            )),
+        );
+
+        assert_eq!(
+            manager.number_add(1, 2).await,
+            Err(PluginManagerError::ResponseIdMismatch {
+                expected: "1".to_string(),
+                actual: "other".to_string(),
+            })
+        );
+    }
+
+    /// Verifies JSON-RPC errors from the plugin are preserved for callers.
+    #[tokio::test]
+    async fn maps_json_rpc_error_responses() {
+        let manager = PluginManager::new(
+            PluginManagerConfig::new(PathBuf::from("ora-data")),
+            FakeProcessSpawner::with_process(FakeProcessPlan::exited(
+                "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"error\":{\"code\":-32601,\"message\":\"missing method\"}}\n",
+                "",
+                /*exit_code*/ 0,
+            )),
+        );
+
+        assert_eq!(
+            manager.number_add(1, 2).await,
+            Err(PluginManagerError::JsonRpcError {
+                code: -32601,
+                message: "missing method".to_string(),
+            })
+        );
+    }
+
+    /// Verifies nonzero process exits are reported before stdout parsing.
+    #[tokio::test]
+    async fn maps_nonzero_process_exits() {
+        let manager = PluginManager::new(
+            PluginManagerConfig::new(PathBuf::from("ora-data")),
+            FakeProcessSpawner::with_process(FakeProcessPlan::exited(
+                "", "boom", /*exit_code*/ 1,
+            )),
+        );
+
+        assert_eq!(
+            manager.number_add(1, 2).await,
+            Err(PluginManagerError::ProcessExitFailed {
+                plugin_id: "1".to_string(),
+                exit_code: Some(1),
+                stderr: "boom".to_string(),
+            })
+        );
+    }
+
+    /// Verifies process spawn failures become stable plugin-manager errors.
+    #[tokio::test]
+    async fn maps_spawn_failures() {
+        let manager = PluginManager::new(
+            PluginManagerConfig::new(PathBuf::from("ora-data")),
+            FakeProcessSpawner::with_spawn_error("missing bun"),
+        );
+
+        assert_eq!(
+            manager.number_add(1, 2).await,
+            Err(PluginManagerError::ProcessFailed {
+                plugin_id: "1".to_string(),
+                message: "failed to spawn plugin process: missing bun".to_string(),
+            })
+        );
+        assert_eq!(
+            manager.plugin_state(ADD_PLUGIN_ID),
+            Some(PluginLifecycleState::Exited)
+        );
+    }
+
+    /// Verifies a missing process pipe is reported before protocol parsing starts.
+    #[tokio::test]
+    async fn maps_missing_stdout_pipe() {
+        let manager = PluginManager::new(
+            PluginManagerConfig::new(PathBuf::from("ora-data")),
+            FakeProcessSpawner::with_process(
+                FakeProcessPlan::exited(
+                    "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":3}\n",
+                    "",
+                    /*exit_code*/ 0,
+                )
+                .without_stdout(),
+            ),
+        );
+
+        assert_eq!(
+            manager.number_add(1, 2).await,
+            Err(PluginManagerError::ProcessFailed {
+                plugin_id: "1".to_string(),
+                message: "process did not expose stdout pipe".to_string(),
+            })
+        );
+    }
+
+    #[derive(Clone)]
+    struct FakeProcessSpawner {
+        inner: Arc<FakeProcessSpawnerState>,
+    }
+
+    struct FakeProcessSpawnerState {
+        plans: Mutex<VecDeque<FakeSpawnPlan>>,
+        specs: Mutex<Vec<ProcessSpec>>,
+        stdin_payloads: Mutex<Vec<Arc<Mutex<Vec<u8>>>>>,
+        kill_count: Arc<AtomicUsize>,
+        spawn_notify: Notify,
+    }
+
+    impl FakeProcessSpawner {
+        /// Builds a fake process spawner that returns one planned process handle.
+        fn with_process(plan: FakeProcessPlan) -> Self {
+            Self::with_plans([FakeSpawnPlan::Process(plan)])
+        }
+
+        /// Builds a fake process spawner that fails before returning a process handle.
+        fn with_spawn_error(message: impl Into<String>) -> Self {
+            Self::with_plans([FakeSpawnPlan::SpawnError(message.into())])
+        }
+
+        /// Builds a fake process spawner with the requested spawn sequence.
+        fn with_plans(plans: impl IntoIterator<Item = FakeSpawnPlan>) -> Self {
             Self {
-                output: RefCell::new(Ok(output)),
-                requests: RefCell::new(Vec::new()),
-                state_observer: RefCell::new(None),
-                observed_states: RefCell::new(Vec::new()),
+                inner: Arc::new(FakeProcessSpawnerState {
+                    plans: Mutex::new(plans.into_iter().collect()),
+                    specs: Mutex::new(Vec::new()),
+                    stdin_payloads: Mutex::new(Vec::new()),
+                    kill_count: Arc::new(AtomicUsize::new(0)),
+                    spawn_notify: Notify::new(),
+                }),
             }
         }
 
-        /// Builds a fake runtime that returns one deterministic process error.
-        fn with_error(error: PluginProcessRuntimeError) -> Self {
-            Self {
-                output: RefCell::new(Err(error)),
-                requests: RefCell::new(Vec::new()),
-                state_observer: RefCell::new(None),
-                observed_states: RefCell::new(Vec::new()),
-            }
+        /// Returns every process spec received by the fake process boundary.
+        fn specs(&self) -> Vec<ProcessSpec> {
+            self.inner
+                .specs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
         }
 
-        /// Records manager state while the fake process invocation is in flight.
-        fn observe_state_during_run(
-            &self,
-            manager: Rc<PluginManager<Rc<FakePluginProcessRuntime>>>,
-        ) {
-            self.state_observer.replace(Some(manager));
+        /// Returns every stdin payload written by the manager.
+        fn stdin_payloads(&self) -> Vec<String> {
+            self.inner
+                .stdin_payloads
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .map(|payload| {
+                    let bytes = payload
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clone();
+                    String::from_utf8(bytes)
+                        .unwrap_or_else(|error| panic!("expected utf8 stdin payload: {error}"))
+                })
+                .collect()
         }
 
-        /// Returns every captured process request.
-        fn requests(&self) -> Vec<PluginProcessRequest> {
-            self.requests.borrow().clone()
+        /// Returns how many times fake process handles were killed.
+        fn kill_count(&self) -> usize {
+            self.inner.kill_count.load(Ordering::SeqCst)
         }
 
-        /// Returns every lifecycle state observed from inside the fake runtime.
-        fn observed_states(&self) -> Vec<Option<PluginLifecycleState>> {
-            self.observed_states.borrow().clone()
+        /// Waits until the manager has crossed the process spawn boundary.
+        async fn wait_for_spawn_count(&self, expected_count: usize) {
+            let wait_result = tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    if self.specs().len() >= expected_count {
+                        return;
+                    }
+                    self.inner.spawn_notify.notified().await;
+                }
+            })
+            .await;
+
+            wait_result.unwrap_or_else(|_| {
+                panic!("expected at least {expected_count} fake process spawn calls")
+            });
         }
     }
 
-    impl PluginProcessRuntime for Rc<FakePluginProcessRuntime> {
-        /// Captures the request and returns the configured fake process result.
-        fn run_plugin_process(
-            &self,
-            request: PluginProcessRequest,
-        ) -> Result<PluginProcessOutput, PluginProcessRuntimeError> {
-            self.requests.borrow_mut().push(request);
-            if let Some(manager) = self.state_observer.borrow().as_ref() {
-                self.observed_states
-                    .borrow_mut()
-                    .push(manager.plugin_state(ADD_PLUGIN_ID));
+    impl ProcessSpawner for FakeProcessSpawner {
+        type Process = FakeProcess;
+
+        fn spawn(&self, spec: ProcessSpec) -> io::Result<Self::Process> {
+            self.inner
+                .specs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(spec);
+            self.inner.spawn_notify.notify_waiters();
+
+            let plan = self
+                .inner
+                .plans
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop_front()
+                .unwrap_or_else(|| panic!("missing fake process plan"));
+
+            match plan {
+                FakeSpawnPlan::Process(plan) => {
+                    let stdin_payload = Arc::new(Mutex::new(Vec::new()));
+                    self.inner
+                        .stdin_payloads
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(stdin_payload.clone());
+
+                    Ok(FakeProcess {
+                        stdin: plan.pipes.stdin.then_some(RecordingStdin { stdin_payload }),
+                        stdout: plan
+                            .pipes
+                            .stdout
+                            .then(|| FakeRead::new(plan.stdout.into_bytes())),
+                        stderr: plan
+                            .pipes
+                            .stderr
+                            .then(|| FakeRead::new(plan.stderr.into_bytes())),
+                        exit: plan.exit,
+                        kill_count: self.inner.kill_count.clone(),
+                    })
+                }
+                FakeSpawnPlan::SpawnError(message) => Err(io::Error::other(message)),
+            }
+        }
+    }
+
+    enum FakeSpawnPlan {
+        Process(FakeProcessPlan),
+        SpawnError(String),
+    }
+
+    struct FakeProcessPlan {
+        stdout: String,
+        stderr: String,
+        exit: FakeExit,
+        pipes: FakePipes,
+    }
+
+    impl FakeProcessPlan {
+        /// Builds a fake process that exits with configured output.
+        fn exited(stdout: impl Into<String>, stderr: impl Into<String>, exit_code: i32) -> Self {
+            Self {
+                stdout: stdout.into(),
+                stderr: stderr.into(),
+                exit: FakeExit::Exited(exit_code),
+                pipes: FakePipes::all(),
+            }
+        }
+
+        /// Builds a fake process that never exits until the manager timeout path kills it.
+        fn pending() -> Self {
+            Self {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit: FakeExit::Pending,
+                pipes: FakePipes::all(),
+            }
+        }
+
+        /// Removes stdout to exercise process boundary validation.
+        fn without_stdout(mut self) -> Self {
+            self.pipes.stdout = false;
+            self
+        }
+    }
+
+    struct FakePipes {
+        stdin: bool,
+        stdout: bool,
+        stderr: bool,
+    }
+
+    impl FakePipes {
+        /// Enables all three stdio pipes expected by plugin-manager.
+        fn all() -> Self {
+            Self {
+                stdin: true,
+                stdout: true,
+                stderr: true,
+            }
+        }
+    }
+
+    struct FakeProcess {
+        stdin: Option<RecordingStdin>,
+        stdout: Option<FakeRead>,
+        stderr: Option<FakeRead>,
+        exit: FakeExit,
+        kill_count: Arc<AtomicUsize>,
+    }
+
+    impl ManagedProcess for FakeProcess {
+        type Stdin = RecordingStdin;
+        type Stdout = FakeRead;
+        type Stderr = FakeRead;
+
+        fn id(&self) -> Option<u32> {
+            Some(42)
+        }
+
+        fn take_stdin(&mut self) -> Option<Self::Stdin> {
+            self.stdin.take()
+        }
+
+        fn take_stdout(&mut self) -> Option<Self::Stdout> {
+            self.stdout.take()
+        }
+
+        fn take_stderr(&mut self) -> Option<Self::Stderr> {
+            self.stderr.take()
+        }
+
+        fn try_wait(&self) -> io::Result<Option<ExitStatus>> {
+            match self.exit {
+                FakeExit::Exited(exit_code) => Ok(Some(exit_status(exit_code))),
+                FakeExit::Pending => Ok(None),
+            }
+        }
+
+        async fn wait(&self) -> io::Result<ExitStatus> {
+            match self.exit {
+                FakeExit::Exited(exit_code) => Ok(exit_status(exit_code)),
+                FakeExit::Pending => future::pending().await,
+            }
+        }
+
+        async fn kill(&self) -> io::Result<()> {
+            self.kill_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum FakeExit {
+        Exited(i32),
+        Pending,
+    }
+
+    struct FakeRead {
+        cursor: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl FakeRead {
+        /// Builds an async reader over deterministic bytes.
+        fn new(bytes: Vec<u8>) -> Self {
+            Self {
+                cursor: std::io::Cursor::new(bytes),
+            }
+        }
+    }
+
+    impl AsyncRead for FakeRead {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            let position = self.cursor.position() as usize;
+            let source = self.cursor.get_ref();
+            if position >= source.len() || buf.remaining() == 0 {
+                return Poll::Ready(Ok(()));
             }
 
-            self.output.borrow().clone()
+            let read_length = (source.len() - position).min(buf.remaining());
+            buf.put_slice(&source[position..position + read_length]);
+            self.cursor.set_position((position + read_length) as u64);
+
+            Poll::Ready(Ok(()))
         }
+    }
+
+    struct RecordingStdin {
+        stdin_payload: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl AsyncWrite for RecordingStdin {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            self.stdin_payload
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend_from_slice(buf);
+
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[cfg(windows)]
+    fn exit_status(exit_code: i32) -> ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+
+        ExitStatus::from_raw(exit_code as u32)
+    }
+
+    #[cfg(unix)]
+    fn exit_status(exit_code: i32) -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+
+        ExitStatus::from_raw(exit_code << 8)
     }
 }

@@ -1,5 +1,3 @@
-use crate::process::PluginProcessRuntimeError;
-
 /// Enumerates plugin-manager failures that callers can handle without knowing process details.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PluginManagerError {
@@ -25,22 +23,4 @@ pub enum PluginManagerError {
     ResponseIdMismatch { expected: String, actual: String },
     #[error("plugin returned JSON-RPC error {code}: {message}")]
     JsonRpcError { code: i64, message: String },
-}
-
-impl PluginManagerError {
-    /// Converts process-runtime failures into stable plugin-manager errors.
-    pub(crate) fn from_process_runtime_error(
-        plugin_id: &str,
-        error: PluginProcessRuntimeError,
-    ) -> Self {
-        match error {
-            PluginProcessRuntimeError::TimedOut => Self::ProcessTimedOut {
-                plugin_id: plugin_id.to_string(),
-            },
-            PluginProcessRuntimeError::OperationFailed(message) => Self::ProcessFailed {
-                plugin_id: plugin_id.to_string(),
-                message,
-            },
-        }
-    }
 }
