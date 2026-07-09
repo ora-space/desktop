@@ -30,7 +30,13 @@ pub struct PluginManager<Runtime> {
 impl<Runtime> PluginManager<Runtime> {
     /// Builds the plugin manager around a process runtime implementation.
     pub fn new(config: PluginManagerConfig, runtime: Runtime) -> Self {
-        let registry = HashMap::from([(ADD_PLUGIN_ID.to_string(), PluginDefinition::add_plugin())]);
+        let registry = HashMap::from([(
+            ADD_PLUGIN_ID.to_string(),
+            PluginDefinition {
+                id: ADD_PLUGIN_ID.to_string(),
+                capabilities: vec![ADD_METHOD.to_string()],
+            },
+        )]);
         let lifecycle_states = Mutex::new(HashMap::from([(
             ADD_PLUGIN_ID.to_string(),
             PluginLifecycleState::Registered,
@@ -142,16 +148,6 @@ impl<Runtime> PluginManager<Runtime> {
 struct PluginDefinition {
     id: String,
     capabilities: Vec<String>,
-}
-
-impl PluginDefinition {
-    /// Builds the first-slice add plugin definition.
-    fn add_plugin() -> Self {
-        Self {
-            id: ADD_PLUGIN_ID.to_string(),
-            capabilities: vec![ADD_METHOD.to_string()],
-        }
-    }
 }
 
 /// Parses stdout from the plugin process and returns the add result.
@@ -466,6 +462,7 @@ mod tests {
     }
 
     impl PluginProcessRuntime for Rc<FakePluginProcessRuntime> {
+        /// Captures the request and returns the configured fake process result.
         fn run_plugin_process(
             &self,
             request: PluginProcessRequest,
