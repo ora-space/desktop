@@ -6,7 +6,9 @@ use ts_rs::TS;
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin-protocol.ts")]
 pub struct PluginAddParams {
+    #[ts(type = "number")]
     pub a: i64,
+    #[ts(type = "number")]
     pub b: i64,
 }
 
@@ -28,6 +30,7 @@ pub struct PluginJsonRpcRequest {
 pub struct PluginJsonRpcSuccessResponse {
     pub jsonrpc: String,
     pub id: String,
+    #[ts(type = "number")]
     pub result: i64,
 }
 
@@ -36,6 +39,7 @@ pub struct PluginJsonRpcSuccessResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin-protocol.ts")]
 pub struct PluginJsonRpcError {
+    #[ts(type = "number")]
     pub code: i64,
     pub message: String,
 }

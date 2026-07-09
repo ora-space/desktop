@@ -52,8 +52,8 @@ mod tests {
         assert_eq!(
             exported_types,
             vec![
-                "export type PluginAddParams = { a: bigint; b: bigint };",
-                "export type PluginJsonRpcError = { code: bigint; message: string };",
+                "export type PluginAddParams = { a: number; b: number };",
+                "export type PluginJsonRpcError = { code: number; message: string };",
                 "export type PluginJsonRpcErrorResponse = {",
                 "export type PluginJsonRpcRequest = {",
                 "export type PluginJsonRpcSuccessResponse = {",

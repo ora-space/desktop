@@ -59,6 +59,11 @@ tasks:
     cmds:
       - cargo xtask export-contracts
 
+  export-plugin-sdk:
+    desc: Regenerate TypeScript plugin SDK protocol types
+    cmds:
+      - cargo xtask export-plugin-sdk
+
   build:
     desc: Build all crates
     cmds:
@@ -70,7 +75,9 @@ tasks:
     cmds:
       - task: lint
       - task: export-contracts
+      - task: export-plugin-sdk
       - pnpm --filter @ora/contracts test
+      - pnpm --filter @ora/plugin-sdk test
       - cargo test --workspace
 
   ###################################################
