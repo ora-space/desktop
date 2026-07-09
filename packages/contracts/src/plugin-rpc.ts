@@ -3,18 +3,12 @@
 /**
  * Carries the named parameters for the first plugin `add` capability.
  */
-export type PluginAddParams = {
-  a: number;
-  b: number;
-};
+export type PluginAddParams = { a: bigint; b: bigint };
 
 /**
  * Carries JSON-RPC error details emitted by the plugin SDK.
  */
-export type PluginJsonRpcError = {
-  code: number;
-  message: string;
-};
+export type PluginJsonRpcError = { code: bigint; message: string };
 
 /**
  * Carries one failed JSON-RPC response emitted by the plugin SDK.
@@ -41,5 +35,5 @@ export type PluginJsonRpcRequest = {
 export type PluginJsonRpcSuccessResponse = {
   jsonrpc: string;
   id: string;
-  result: number;
+  result: bigint;
 };
