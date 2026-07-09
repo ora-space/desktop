@@ -8,6 +8,7 @@ members = [
     "crates/gitlancer",
     "crates/logging",
     "crates/plugin-manager",
+    "crates/process",
     "crates/pty",
     "xtask",
 ]
@@ -30,6 +31,7 @@ ora-domain = { path = "crates/domain" }
 ora-plugin-manager = { path = "crates/plugin-manager" }
 gitlancer = { path = "crates/gitlancer" }
 ora-logging = { path = "crates/logging" }
+ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
 
 # External
