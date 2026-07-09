@@ -1,7 +1,2 @@
-[env]
-# Keep generated TypeScript contracts inside the workspace package that the
-# frontend imports so Rust remains the single contract source of truth.
-TS_RS_EXPORT_DIR = { value = "packages/contracts/src", relative = true }
-
 [alias]
 xtask = "run -p xtask --"
