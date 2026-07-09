@@ -52,6 +52,7 @@ tasks:
     desc: Run linters on all crates
     silent: true
     cmds:
+      - cargo fmt --all
       - cargo clippy --workspace -- -D warnings
 
   export-contracts:
