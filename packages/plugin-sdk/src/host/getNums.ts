@@ -22,7 +22,7 @@ export async function getNums(): Promise<HostRequest | null> {
       const obj = JSON.parse(line);
       if (
         obj.jsonrpc === "2.0" &&
-        typeof obj.id === "number" &&
+        typeof obj.id === "string" &&
         typeof obj.method === "string"
       ) {
         return {

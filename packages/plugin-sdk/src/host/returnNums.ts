@@ -7,7 +7,7 @@ import type { SuccessResponse, ErrorResponse } from "./protocol";
  * @param id     - 对应请求的 id
  * @param result - 返回值，会 JSON.stringify 后写入
  */
-export async function returnNums(id: number, result: any): Promise<void> {
+export async function returnNums(id: string, result: any): Promise<void> {
   const response: SuccessResponse = {
     jsonrpc: "2.0",
     id,
@@ -24,7 +24,7 @@ export async function returnNums(id: number, result: any): Promise<void> {
  * @param message - 错误描述
  */
 returnNums.error = async function (
-  id: number,
+  id: string,
   code: number,
   message: string
 ): Promise<void> {

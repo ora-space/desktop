@@ -14,43 +14,43 @@ beforeEach(() => {
 
 test("正常请求——解析 JSON-RPC 请求为 HostRequest", async () => {
   readLineMock.mockResolvedValueOnce(
-    '{"jsonrpc":"2.0","id":1,"method":"add","params":[1,2]}'
+    '{"jsonrpc":"2.0","id":"1","method":"add","params":{"a":1,"b":2}}'
   );
 
   const result = await getNums();
 
-  expect(result).toEqual({ id: 1, method: "add", params: [1, 2] });
+  expect(result).toEqual({ id: "1", method: "add", params: { a: 1, b: 2 } });
 });
 
 test("无 params 字段时返回 params: null", async () => {
   readLineMock.mockResolvedValueOnce(
-    '{"jsonrpc":"2.0","id":2,"method":"ping"}'
+    '{"jsonrpc":"2.0","id":"2","method":"ping"}'
   );
 
   const result = await getNums();
 
-  expect(result).toEqual({ id: 2, method: "ping", params: null });
+  expect(result).toEqual({ id: "2", method: "ping", params: null });
 });
 
 test("非 JSON 行被跳过，继续读下一行", async () => {
   readLineMock
     .mockResolvedValueOnce("这不是 JSON")
-    .mockResolvedValueOnce('{"jsonrpc":"2.0","id":3,"method":"echo"}');
+    .mockResolvedValueOnce('{"jsonrpc":"2.0","id":"3","method":"echo"}');
 
   const result = await getNums();
 
-  expect(result).toEqual({ id: 3, method: "echo", params: null });
+  expect(result).toEqual({ id: "3", method: "echo", params: null });
   expect(readLineMock).toHaveBeenCalledTimes(2);
 });
 
 test("缺 jsonrpc/id/method 字段被跳过", async () => {
   readLineMock
     .mockResolvedValueOnce('{"foo":"bar"}')
-    .mockResolvedValueOnce('{"jsonrpc":"2.0","id":4,"method":"sum","params":[1,2]}');
+    .mockResolvedValueOnce('{"jsonrpc":"2.0","id":"4","method":"sum","params":{"a":1,"b":2}}');
 
   const result = await getNums();
 
-  expect(result).toEqual({ id: 4, method: "sum", params: [1, 2] });
+  expect(result).toEqual({ id: "4", method: "sum", params: { a: 1, b: 2 } });
 });
 
 test("stdin 关闭（EOF）返回 null", async () => {
@@ -63,12 +63,12 @@ test("stdin 关闭（EOF）返回 null", async () => {
 
 test("连续多次调用各自返回独立请求", async () => {
   readLineMock
-    .mockResolvedValueOnce('{"jsonrpc":"2.0","id":1,"method":"add","params":[1,2]}')
-    .mockResolvedValueOnce('{"jsonrpc":"2.0","id":2,"method":"sub","params":[5,3]}');
+    .mockResolvedValueOnce('{"jsonrpc":"2.0","id":"1","method":"add","params":{"a":1,"b":2}}')
+    .mockResolvedValueOnce('{"jsonrpc":"2.0","id":"2","method":"sub","params":{"a":5,"b":3}}');
 
   const first = await getNums();
   const second = await getNums();
 
-  expect(first).toEqual({ id: 1, method: "add", params: [1, 2] });
-  expect(second).toEqual({ id: 2, method: "sub", params: [5, 3] });
+  expect(first).toEqual({ id: "1", method: "add", params: { a: 1, b: 2 } });
+  expect(second).toEqual({ id: "2", method: "sub", params: { a: 5, b: 3 } });
 });

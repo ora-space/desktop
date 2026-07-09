@@ -13,37 +13,37 @@ beforeEach(() => {
 });
 
 test("成功响应——序列化为 JSON-RPC 格式", async () => {
-  await returnNums(1, 3);
+  await returnNums("1", 3);
 
   const output = JSON.parse(writeLineMock.mock.calls[0][0]);
-  expect(output).toEqual({ jsonrpc: "2.0", id: 1, result: 3 });
+  expect(output).toEqual({ jsonrpc: "2.0", id: "1", result: 3 });
 });
 
 test("undefined 结果序列化为 null", async () => {
-  await returnNums(1, undefined);
+  await returnNums("1", undefined);
 
   const output = JSON.parse(writeLineMock.mock.calls[0][0]);
-  expect(output).toEqual({ jsonrpc: "2.0", id: 1, result: null });
+  expect(output).toEqual({ jsonrpc: "2.0", id: "1", result: null });
 });
 
 test("复杂对象正确序列化", async () => {
-  await returnNums(1, { name: "test", items: [1, 2] });
+  await returnNums("1", { name: "test", items: [1, 2] });
 
   const output = JSON.parse(writeLineMock.mock.calls[0][0]);
   expect(output).toEqual({
     jsonrpc: "2.0",
-    id: 1,
+    id: "1",
     result: { name: "test", items: [1, 2] },
   });
 });
 
 test("错误响应——序列化为 JSON-RPC error 格式", async () => {
-  await returnNums.error(1, -32601, "Unknown method: foo");
+  await returnNums.error("1", -32601, "Unknown method: foo");
 
   const output = JSON.parse(writeLineMock.mock.calls[0][0]);
   expect(output).toEqual({
     jsonrpc: "2.0",
-    id: 1,
+    id: "1",
     error: { code: -32601, message: "Unknown method: foo" },
   });
 });
