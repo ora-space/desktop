@@ -1,7 +1,7 @@
 use crate::config::PluginManagerConfig;
 use crate::error::PluginManagerError;
 use crate::process::{PluginProcessOutput, PluginProcessRequest, PluginProcessRuntime};
-use ora_contracts::{
+use ora_plugin_protocol::{
     PluginAddParams, PluginJsonRpcErrorResponse, PluginJsonRpcRequest, PluginJsonRpcSuccessResponse,
 };
 use std::collections::HashMap;

@@ -401,7 +401,6 @@ fn render_index_module() -> String {
     source.push_str("export * from \"./client.js\";\n");
     source.push_str("export * from \"./endpoints.js\";\n");
     source.push_str("export * from \"./transport.js\";\n");
-    source.push_str("export * from \"./plugin-rpc.js\";\n");
     source.push_str("export * from \"./project.js\";\n");
     source.push_str("export * from \"./project-work-context.js\";\n");
     source.push_str("export * from \"./session.js\";\n");
@@ -566,7 +565,6 @@ mod tests {
             "endpoints.ts",
             "fetch.ts",
             "index.ts",
-            "plugin-rpc.ts",
             "project.ts",
             "session.ts",
             "task.ts",

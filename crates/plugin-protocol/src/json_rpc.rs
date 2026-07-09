@@ -4,7 +4,7 @@ use ts_rs::TS;
 /// Carries the named parameters for the first plugin `add` capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "plugin-rpc.ts")]
+#[ts(export_to = "plugin-protocol.ts")]
 pub struct PluginAddParams {
     pub a: i64,
     pub b: i64,
@@ -13,7 +13,7 @@ pub struct PluginAddParams {
 /// Carries one JSON-RPC request sent from the plugin manager to the plugin SDK.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "plugin-rpc.ts")]
+#[ts(export_to = "plugin-protocol.ts")]
 pub struct PluginJsonRpcRequest {
     pub jsonrpc: String,
     pub id: String,
@@ -24,7 +24,7 @@ pub struct PluginJsonRpcRequest {
 /// Carries one successful JSON-RPC response emitted by the plugin SDK.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "plugin-rpc.ts")]
+#[ts(export_to = "plugin-protocol.ts")]
 pub struct PluginJsonRpcSuccessResponse {
     pub jsonrpc: String,
     pub id: String,
@@ -34,7 +34,7 @@ pub struct PluginJsonRpcSuccessResponse {
 /// Carries JSON-RPC error details emitted by the plugin SDK.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "plugin-rpc.ts")]
+#[ts(export_to = "plugin-protocol.ts")]
 pub struct PluginJsonRpcError {
     pub code: i64,
     pub message: String,
@@ -43,7 +43,7 @@ pub struct PluginJsonRpcError {
 /// Carries one failed JSON-RPC response emitted by the plugin SDK.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "plugin-rpc.ts")]
+#[ts(export_to = "plugin-protocol.ts")]
 pub struct PluginJsonRpcErrorResponse {
     pub jsonrpc: String,
     pub id: String,
@@ -60,9 +60,9 @@ mod tests {
     use serde::Serialize;
     use serde_json::{Value, json};
 
-    /// Verifies plugin JSON-RPC contracts serialize to the newline-framed payload shapes.
+    /// Verifies plugin JSON-RPC protocol DTOs serialize to the newline-framed payload shapes.
     #[test]
-    fn serializes_plugin_json_rpc_contracts() {
+    fn serializes_plugin_json_rpc_protocol() {
         assert_serialized_json(
             &PluginJsonRpcRequest {
                 jsonrpc: "2.0".to_string(),

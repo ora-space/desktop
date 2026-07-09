@@ -1,5 +1,4 @@
 mod frontend;
-mod plugin_rpc;
 mod project;
 mod project_work_context;
 mod session;
@@ -9,10 +8,6 @@ pub use frontend::{
     FrontendEndpoint, FrontendHttpMethod, FrontendPathParam, PROJECT_PATH,
     PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_PATH,
     SESSION_TERMINAL_PATH, SESSIONS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
-};
-pub use plugin_rpc::{
-    PluginAddParams, PluginJsonRpcError, PluginJsonRpcErrorResponse, PluginJsonRpcRequest,
-    PluginJsonRpcSuccessResponse,
 };
 pub use project::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
@@ -42,12 +37,6 @@ pub fn export_typescript_bindings_to(
     output_directory: impl AsRef<Path>,
 ) -> Result<(), ExportError> {
     let config = Config::new().with_out_dir(output_directory.as_ref());
-
-    PluginAddParams::export(&config)?;
-    PluginJsonRpcRequest::export(&config)?;
-    PluginJsonRpcSuccessResponse::export(&config)?;
-    PluginJsonRpcError::export(&config)?;
-    PluginJsonRpcErrorResponse::export(&config)?;
 
     Project::export(&config)?;
     CreateProjectRequest::export(&config)?;
