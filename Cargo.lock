@@ -1183,6 +1183,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-process"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "ora-pty"
 version = "0.0.0"
 dependencies = [

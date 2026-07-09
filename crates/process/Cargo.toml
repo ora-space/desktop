@@ -1,0 +1,19 @@
+[package]
+name = "ora-process"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_process"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["io-util", "process", "rt", "sync"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt-multi-thread", "time"] }
