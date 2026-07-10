@@ -1,6 +1,6 @@
 {
   "name": "@ora-space/plugin-sdk",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Ora plugin development SDK",
   "type": "module",
   "license": "MIT",
@@ -12,6 +12,10 @@
     "test": "tsc -p tsconfig.json && node --test .test-dist/tests/*.test.js"
   },
   "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
     "./host": {
       "types": "./src/host/index.ts",
       "default": "./src/host/index.ts"

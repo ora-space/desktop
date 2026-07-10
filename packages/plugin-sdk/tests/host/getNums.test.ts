@@ -12,14 +12,14 @@ beforeEach(() => {
   readLineMock.mockClear();
 });
 
-test("正常请求——解析 JSON-RPC 请求为 HostRequest", async () => {
+test("正常请求——解析 JSON-RPC 请求为 JsonRpcRequest", async () => {
   readLineMock.mockResolvedValueOnce(
     '{"jsonrpc":"2.0","id":"1","method":"add","params":{"a":1,"b":2}}'
   );
 
   const result = await getNums();
 
-  expect(result).toEqual({ id: "1", method: "add", params: { a: 1, b: 2 } });
+  expect(result).toEqual({ jsonrpc: "2.0", id: "1", method: "add", params: { a: 1, b: 2 } });
 });
 
 test("无 params 字段时返回 params: null", async () => {
@@ -29,7 +29,7 @@ test("无 params 字段时返回 params: null", async () => {
 
   const result = await getNums();
 
-  expect(result).toEqual({ id: "2", method: "ping", params: null });
+  expect(result).toEqual({ jsonrpc: "2.0", id: "2", method: "ping", params: null });
 });
 
 test("非 JSON 行被跳过，继续读下一行", async () => {
@@ -39,7 +39,7 @@ test("非 JSON 行被跳过，继续读下一行", async () => {
 
   const result = await getNums();
 
-  expect(result).toEqual({ id: "3", method: "echo", params: null });
+  expect(result).toEqual({ jsonrpc: "2.0", id: "3", method: "echo", params: null });
   expect(readLineMock).toHaveBeenCalledTimes(2);
 });
 
@@ -50,7 +50,7 @@ test("缺 jsonrpc/id/method 字段被跳过", async () => {
 
   const result = await getNums();
 
-  expect(result).toEqual({ id: "4", method: "sum", params: { a: 1, b: 2 } });
+  expect(result).toEqual({ jsonrpc: "2.0", id: "4", method: "sum", params: { a: 1, b: 2 } });
 });
 
 test("stdin 关闭（EOF）返回 null", async () => {
@@ -69,6 +69,6 @@ test("连续多次调用各自返回独立请求", async () => {
   const first = await getNums();
   const second = await getNums();
 
-  expect(first).toEqual({ id: "1", method: "add", params: { a: 1, b: 2 } });
-  expect(second).toEqual({ id: "2", method: "sub", params: { a: 5, b: 3 } });
+  expect(first).toEqual({ jsonrpc: "2.0", id: "1", method: "add", params: { a: 1, b: 2 } });
+  expect(second).toEqual({ jsonrpc: "2.0", id: "2", method: "sub", params: { a: 5, b: 3 } });
 });

@@ -3,4 +3,3 @@ import "../console-guard";
 
 export { getNums } from "./getNums";
 export { returnNums } from "./returnNums";
-export type { HostRequest } from "./protocol";

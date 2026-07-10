@@ -1,5 +1,12 @@
 import { writeLine } from "../internal/writer";
-import type { SuccessResponse, ErrorResponse } from "./protocol";
+import type { PluginJsonRpcErrorResponse } from "../types/plugin-protocol.js";
+
+/** Generic JSON-RPC success response — intentionally method-agnostic. */
+interface JsonRpcSuccessResponse {
+  jsonrpc: string;
+  id: string;
+  result: unknown;
+}
 
 /**
  * 向 stdout 写入成功响应。
@@ -7,8 +14,8 @@ import type { SuccessResponse, ErrorResponse } from "./protocol";
  * @param id     - 对应请求的 id
  * @param result - 返回值，会 JSON.stringify 后写入
  */
-export async function returnNums(id: string, result: any): Promise<void> {
-  const response: SuccessResponse = {
+export async function returnNums(id: string, result: unknown): Promise<void> {
+  const response: JsonRpcSuccessResponse = {
     jsonrpc: "2.0",
     id,
     result: result ?? null,
@@ -28,7 +35,7 @@ returnNums.error = async function (
   code: number,
   message: string
 ): Promise<void> {
-  const response: ErrorResponse = {
+  const response: PluginJsonRpcErrorResponse = {
     jsonrpc: "2.0",
     id,
     error: { code, message },
