@@ -1186,9 +1186,11 @@ dependencies = [
 name = "ora-process"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "pretty_assertions",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -48,6 +48,15 @@ pub trait ManagedProcess {
     /// Waits until the child exits and returns its platform exit status.
     fn wait(&self) -> impl Future<Output = io::Result<ExitStatus>> + Send + '_;
 
-    /// Forcefully terminates the child process.
+    /// Requests forceful termination of the entire process tree rooted at the spawned child,
+    /// including any descendant processes the child may have started (for example a shell that
+    /// launched further tools).
+    ///
+    /// This is a `start_kill` contract: the future resolves once the termination request has been
+    /// submitted to the OS, **not** once the tree has fully exited. Callers that need the final
+    /// exit status of the direct child must still await [`Self::wait`]. The future returns `Ok`
+    /// when the OS accepted the request or the tree was already gone; it returns `Err` only when
+    /// the OS refused the request for a reason the caller should surface (for example
+    /// permission loss).
     fn kill(&self) -> impl Future<Output = io::Result<()>> + Send + '_;
 }

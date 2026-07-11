@@ -33,6 +33,7 @@ ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
 
 # External
+libc = "0.2"
 log = "0.4"
 portable-pty = "0.9"
 pretty_assertions = "1"
@@ -50,6 +51,7 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
 ts-rs = "12.0"
 uuid = { version = "1", features = ["v4"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [workspace.lints]
 rust = {}

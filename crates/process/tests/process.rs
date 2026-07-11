@@ -284,3 +284,206 @@ fn long_running_command() -> ProcessSpec {
 fn long_running_command() -> ProcessSpec {
     shell_command("sleep 5")
 }
+
+// ---------------------------------------------------------------------------
+// Tree-wide termination
+// ---------------------------------------------------------------------------
+
+// Verifies the tree-kill contract from `ManagedProcess::kill`: when a spawned child starts a
+// grandchild (for example a shell launching a long-running tool), killing the managed process must
+// also terminate that grandchild. On Unix the grandchild inherits the child's process group, so a
+// group-wide `kill(-pgid, SIGKILL)` reaches it; on Windows the grandchild inherits membership in
+// the child's Job Object, so `TerminateJobObject` reaches it.
+//
+// Unix variant probes liveness with `libc::kill(0)`; the Windows variant uses
+// `OpenProcess` + `GetExitCodeProcess` against `STILL_ACTIVE`.
+#[cfg(unix)]
+#[tokio::test]
+async fn kill_terminates_descendants_started_by_the_child() {
+    use std::time::Duration;
+
+    let marker_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("expected tempdir for pid marker: {error}"));
+    let marker_path = marker_dir.path().join("grandchild.pid");
+    let script = format!(
+        "sh -c 'sleep 30' & echo $! > {marker}; exec sleep 30",
+        marker = escape_shell_path(&marker_path)
+    );
+    let spawner = TokioProcessSpawner::new();
+    let process = spawner
+        .spawn(ProcessSpec::new("sh").args(["-c", script.as_str()]))
+        .unwrap_or_else(|error| panic!("expected process spawn to succeed: {error}"));
+
+    let grandchild_pid = wait_for_marker_pid(&marker_path).await;
+    assert_eq!(
+        unsafe { libc::kill(grandchild_pid, 0) },
+        0,
+        "grandchild should be alive before kill"
+    );
+
+    process
+        .kill()
+        .await
+        .unwrap_or_else(|error| panic!("expected process kill to succeed: {error}"));
+    // start_kill contract: kill returned even while the tree is still tearing down. Wait for the
+    // direct child so OS-driven SIGKILL delivery to the descendants has propagated.
+    let exit = process
+        .wait()
+        .await
+        .unwrap_or_else(|error| panic!("expected wait after kill to succeed: {error}"));
+    assert!(!exit.success());
+
+    // The grandchild was started in the same process group as the killed child (job control is
+    // off by default for non-interactive sh), so SIGKILL to the group should reach it as well.
+    // Poll for a short window: the grandchild becomes a reparented zombie until pid 1 reaps it,
+    // during which `kill -0` keeps returning success even though the process is already dead.
+    let mut reaped = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        if unsafe { libc::kill(grandchild_pid, 0) } != 0 {
+            reaped = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        reaped,
+        "grandchild should have been terminated as part of tree-wide kill"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn kill_terminates_descendants_started_by_the_child() {
+    use std::time::Duration;
+
+    let marker_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("expected tempdir for pid marker: {error}"));
+    let marker_path = marker_dir.path().join("grandchild.pid");
+    // powershell starts a detached ping (the grandchild), records its pid to the marker file, and
+    // then blocks in `Start-Sleep` so the powershell process itself stays alive until the kill
+    // arrives. `Start-Process` calls CreateProcess under the hood, so the grandchild inherits
+    // membership in the powershell process's Job Object.
+    let script = format!(
+        "$p = Start-Process -FilePath ping -ArgumentList '-n','30','127.0.0.1' -PassThru -WindowStyle Hidden; \
+         Out-File -FilePath '{marker}' -InputObject $p.Id -Encoding ASCII; \
+         Start-Sleep -Seconds 30",
+        marker = escape_powershell_path(&marker_path)
+    );
+    let spawner = TokioProcessSpawner::new();
+    let process = spawner
+        .spawn(ProcessSpec::new("powershell").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script.as_str(),
+        ]))
+        .unwrap_or_else(|error| panic!("expected process spawn to succeed: {error}"));
+
+    let grandchild_pid = wait_for_marker_pid(&marker_path).await;
+    assert!(
+        process_alive(grandchild_pid),
+        "grandchild should be alive before kill"
+    );
+
+    process
+        .kill()
+        .await
+        .unwrap_or_else(|error| panic!("expected process kill to succeed: {error}"));
+    // start_kill contract: kill returned even while the tree is still tearing down. Wait for the
+    // direct child so the Job Object termination has propagated to the descendants.
+    let exit = process
+        .wait()
+        .await
+        .unwrap_or_else(|error| panic!("expected wait after kill to succeed: {error}"));
+    assert!(!exit.success());
+
+    // `TerminateJobObject` kills every process in the job asynchronously. Poll for a short window
+    // until the grandchild's exit code is no longer `STILL_ACTIVE`.
+    let mut reaped = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if !process_alive(grandchild_pid) {
+            reaped = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        reaped,
+        "grandchild should have been terminated as part of tree-wide kill"
+    );
+}
+
+#[cfg(unix)]
+async fn wait_for_marker_pid(marker_path: &std::path::Path) -> i32 {
+    let pid = wait_for_marker_pid_contents(marker_path).await;
+    pid.parse::<i32>()
+        .unwrap_or_else(|error| panic!("grandchild marker held non-i32 pid {pid:?}: {error}"))
+}
+
+#[cfg(windows)]
+async fn wait_for_marker_pid(marker_path: &std::path::Path) -> u32 {
+    let pid = wait_for_marker_pid_contents(marker_path).await;
+    pid.parse::<u32>()
+        .unwrap_or_else(|error| panic!("grandchild marker held non-u32 pid {pid:?}: {error}"))
+}
+
+/// Polls for the numeric pid string written by the spawned grandchild. Returning the raw string lets
+/// the platform-specific callers parse into `i32` (Unix) or `u32` (Windows) without tripping the
+/// `expect_used` / `unwrap_used` clippy lints enforced workspace-wide.
+async fn wait_for_marker_pid_contents(marker_path: &std::path::Path) -> String {
+    use std::time::Duration;
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(contents) = std::fs::read_to_string(marker_path) {
+            let trimmed = contents.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "grandchild pid marker was never written"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(unix)]
+fn escape_shell_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\'', r"'\''")
+}
+
+// PowerShell single-quoted strings treat `'` as an escaped quote when doubled, so embedding the
+// marker path requires doubling every `'` and wrapping the whole result in `'...'`.
+#[cfg(windows)]
+fn escape_powershell_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\'', "''")
+}
+
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // A null handle means the process is gone (or we don't have access). The grandchild was
+    // started by the test itself, so access is never the issue here.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return false;
+    }
+
+    let mut exit_code: u32 = 0;
+    let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+    let _ = unsafe { CloseHandle(handle) };
+    if ok == 0 {
+        return false;
+    }
+    // STILL_ACTIVE (0x103 = 259) is what GetExitCodeProcess reports until the process actually
+    // terminates; any other value means the OS has observed the exit.
+    exit_code == STILL_ACTIVE as u32
+}

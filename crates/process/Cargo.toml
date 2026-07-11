@@ -11,9 +11,16 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-tokio = { workspace = true, features = ["io-util", "process", "rt", "sync"] }
+libc = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt-multi-thread", "time"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true }
