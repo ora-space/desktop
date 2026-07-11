@@ -4,7 +4,7 @@ use ts_rs::TS;
 /// Describes which client surface owns one project work context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project-work-context.ts")]
+#[ts(export_to = "project-work-context.ts")]
 pub enum ProjectWorkContextSurface {
     Web,
     Tauri,
@@ -13,7 +13,7 @@ pub enum ProjectWorkContextSurface {
 /// Describes the public project work context payload shared across adapter responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project-work-context.ts")]
+#[ts(export_to = "project-work-context.ts")]
 pub struct ProjectWorkContext {
     pub id: String,
     pub surface: ProjectWorkContextSurface,
@@ -25,7 +25,7 @@ pub struct ProjectWorkContext {
 /// Carries the payload used to open or switch a client window into a project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project-work-context.ts")]
+#[ts(export_to = "project-work-context.ts")]
 pub struct OpenProjectWorkContextRequest {
     pub surface: ProjectWorkContextSurface,
     pub window_id: String,
@@ -35,7 +35,7 @@ pub struct OpenProjectWorkContextRequest {
 /// Returns the active project work context after a successful open or switch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project-work-context.ts")]
+#[ts(export_to = "project-work-context.ts")]
 pub struct OpenProjectWorkContextResponse {
     pub context: ProjectWorkContext,
 }
@@ -43,7 +43,7 @@ pub struct OpenProjectWorkContextResponse {
 /// Carries the payload used to renew an existing project work context lease.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project-work-context.ts")]
+#[ts(export_to = "project-work-context.ts")]
 pub struct RenewProjectWorkContextRequest {
     pub surface: ProjectWorkContextSurface,
     pub window_id: String,
@@ -52,7 +52,7 @@ pub struct RenewProjectWorkContextRequest {
 /// Returns the active project work context after a successful lease renewal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project-work-context.ts")]
+#[ts(export_to = "project-work-context.ts")]
 pub struct RenewProjectWorkContextResponse {
     pub context: ProjectWorkContext,
 }

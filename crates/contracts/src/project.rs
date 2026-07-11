@@ -4,7 +4,7 @@ use ts_rs::TS;
 /// Describes the public project payload shared across adapter responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct Project {
     pub id: String,
     pub name: String,
@@ -14,7 +14,7 @@ pub struct Project {
 /// Carries the app-facing payload for project creation requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct CreateProjectRequest {
     pub name: String,
     pub root_path: String,
@@ -23,7 +23,7 @@ pub struct CreateProjectRequest {
 /// Returns the created project after a successful create request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct CreateProjectResponse {
     pub project: Project,
 }
@@ -31,7 +31,7 @@ pub struct CreateProjectResponse {
 /// Identifies which project to fetch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct GetProjectRequest {
     pub project_id: String,
 }
@@ -39,7 +39,7 @@ pub struct GetProjectRequest {
 /// Returns one project payload after a successful fetch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct GetProjectResponse {
     pub project: Project,
 }
@@ -47,13 +47,13 @@ pub struct GetProjectResponse {
 /// Requests the full visible project list.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct ListProjectsRequest {}
 
 /// Returns the visible project list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct ListProjectsResponse {
     pub projects: Vec<Project>,
 }
@@ -61,7 +61,7 @@ pub struct ListProjectsResponse {
 /// Carries the full replacement payload for project updates in the first slice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct UpdateProjectRequest {
     pub project_id: String,
     pub name: String,
@@ -71,7 +71,7 @@ pub struct UpdateProjectRequest {
 /// Returns the updated project after a successful update request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct UpdateProjectResponse {
     pub project: Project,
 }
@@ -79,7 +79,7 @@ pub struct UpdateProjectResponse {
 /// Identifies which project to delete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct DeleteProjectRequest {
     pub project_id: String,
 }
@@ -87,7 +87,7 @@ pub struct DeleteProjectRequest {
 /// Returns the deleted project identifier after a successful delete request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "project.ts")]
+#[ts(export_to = "project.ts")]
 pub struct DeleteProjectResponse {
     pub project_id: String,
 }
