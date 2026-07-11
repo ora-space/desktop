@@ -177,6 +177,24 @@ async fn can_wait_and_kill_without_exclusive_process_access() {
     assert!(!exit.success());
 }
 
+#[tokio::test]
+async fn wait_closes_unowned_stdin_so_stdin_readers_exit() {
+    let spawner = TokioProcessSpawner::new();
+    let process = spawner
+        .spawn(stdin_echo_command())
+        .unwrap_or_else(|error| panic!("expected process spawn to succeed: {error}"));
+
+    // Deliberately do NOT take_stdin. A stdin-driven child (cat/more) must still
+    // exit because wait() closes the unowned write end, mirroring tokio's native
+    // Child::wait. Without the fix this hangs until the timeout elapses.
+    let exit = tokio::time::timeout(Duration::from_secs(5), process.wait())
+        .await
+        .expect("expected wait to return after closing stdin, but it hung");
+    let exit = exit.unwrap_or_else(|error| panic!("expected process wait to succeed: {error}"));
+
+    assert!(exit.success());
+}
+
 fn spawn_with<S: ProcessSpawner>(spawner: &S, spec: ProcessSpec) -> io::Result<S::Process> {
     spawner.spawn(spec)
 }

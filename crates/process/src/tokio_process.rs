@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::io;
 use std::process::ExitStatus;
+use std::sync::{Mutex, PoisonError};
 
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::runtime::Handle;
@@ -59,7 +60,7 @@ impl ProcessSpawner for TokioProcessSpawner {
 
         Ok(TokioManagedProcess {
             id,
-            stdin,
+            stdin: Mutex::new(stdin),
             stdout,
             stderr,
             exit_rx,
@@ -73,7 +74,7 @@ impl ProcessSpawner for TokioProcessSpawner {
 #[derive(Debug)]
 pub struct TokioManagedProcess {
     id: Option<u32>,
-    stdin: Option<ChildStdin>,
+    stdin: Mutex<Option<ChildStdin>>,
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
     exit_rx: watch::Receiver<Option<ExitState>>,
@@ -99,7 +100,12 @@ impl ManagedProcess for TokioManagedProcess {
     }
 
     fn take_stdin(&mut self) -> Option<Self::Stdin> {
-        self.stdin.take()
+        // A poisoned mutex only means some prior holder panicked while locked;
+        // the guard is still usable, so recover it instead of poisoning the caller.
+        self.stdin
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     fn take_stdout(&mut self) -> Option<Self::Stdout> {
@@ -118,6 +124,19 @@ impl ManagedProcess for TokioManagedProcess {
     }
 
     fn wait(&self) -> impl Future<Output = io::Result<ExitStatus>> + Send + '_ {
+        // If the caller never took ownership of stdin, close the write end before
+        // waiting so stdin-driven children (cat, more, grep, ...) observe EOF and
+        // exit instead of hanging forever. tokio's native Child::wait does this
+        // automatically; moving stdin off the Child and onto this handle lost that
+        // protection, so we restore it here. The take is idempotent: a caller that
+        // already took stdin to write finds None here and nothing is dropped.
+        drop(
+            self.stdin
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take(),
+        );
+
         let mut exit_rx = self.exit_rx.clone();
 
         async move {
