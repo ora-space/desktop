@@ -49,7 +49,22 @@ impl ProcessSpawner for TokioProcessSpawner {
         // Build the tree handle after spawn so the child can be enrolled in its tree-wide
         // termination group on Windows. Doing it here (rather than lazily inside the lifecycle
         // task) propagates any Job Object setup failure as a spawn error.
-        let tree = ProcessTree::from_spawned(&child)?;
+        let tree = match ProcessTree::from_spawned(&child) {
+            Ok(tree) => tree,
+            Err(error) => {
+                // The OS process already exists even though tree setup failed, and this function
+                // is about to return `Err` without handing the caller any handle to manage it.
+                // Terminate the direct child now, independent of the spec's drop policy: a
+                // keep_alive_on_drop child would otherwise survive `Child::drop` here (its
+                // `kill_on_drop` flag is false) and leak as an unmanaged process. Reap it on the
+                // runtime so it doesn't linger as a zombie either.
+                let _ = child.start_kill();
+                handle.spawn(async move {
+                    let _ = child.wait().await;
+                });
+                return Err(error);
+            }
+        };
         let id = child.id();
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
