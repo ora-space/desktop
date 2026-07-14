@@ -15,12 +15,10 @@ ora-db = { workspace = true }
 ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
 ora-logging = { workspace = true }
-ora-pty = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
-tokio-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
@@ -29,5 +27,4 @@ pretty_assertions = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
-tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }

@@ -37,7 +37,6 @@ fn creates_sessions_with_generated_identity_and_clock_values() {
             agent_id: "agent-1".to_string(),
             agent_session_id: Some("provider-1".to_string()),
             status: ContractSessionStatus::Running,
-            terminal: None,
         }) {
             Ok(response) => response,
             Err(error) => panic!("create handler failed: {error}"),
@@ -308,7 +307,6 @@ fn emits_structured_operational_events() {
                 agent_id: "agent-1".to_string(),
                 agent_session_id: None,
                 status: ContractSessionStatus::Stopped,
-                terminal: None,
             })
             .unwrap();
         assert_eq!(

@@ -8,7 +8,6 @@ export type CreateSessionRequest = {
   agentId: string;
   agentSessionId: string | null;
   status: SessionStatus;
-  terminal: TerminalSessionStartup | null;
 };
 
 /**
@@ -61,30 +60,6 @@ export type Session = {
  * Describes whether the public session view is still running.
  */
 export type SessionStatus = "running" | "stopped";
-
-/**
- * Describes one client-to-server terminal control message.
- */
-export type TerminalClientMessage = { "type": "input"; data: string } | {
-  "type": "resize";
-  cols: number;
-  rows: number;
-} | { "type": "kill" };
-
-/**
- * Describes one server-to-client terminal stream message.
- */
-export type TerminalServerMessage =
-  | { "type": "ready"; sessionId: string }
-  | { "type": "history"; data: string }
-  | { "type": "output"; data: string }
-  | { "type": "exit"; exitCode: number | null }
-  | { "type": "error"; code: string; message: string };
-
-/**
- * Describes the initial PTY dimensions used only during terminal session startup.
- */
-export type TerminalSessionStartup = { cols: number; rows: number };
 
 /**
  * Carries the full replacement payload for session updates in the first slice.

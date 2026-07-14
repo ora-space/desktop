@@ -10,15 +10,6 @@ pub enum SessionStatus {
     Stopped,
 }
 
-/// Describes the initial PTY dimensions used only during terminal session startup.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub struct TerminalSessionStartup {
-    pub cols: u16,
-    pub rows: u16,
-}
-
 /// Describes the public session payload shared across adapter responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -40,8 +31,6 @@ pub struct CreateSessionRequest {
     pub agent_id: String,
     pub agent_session_id: Option<String>,
     pub status: SessionStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub terminal: Option<TerminalSessionStartup>,
 }
 
 /// Returns the created session after a successful create request.
@@ -118,48 +107,12 @@ pub struct DeleteSessionResponse {
     pub session_id: String,
 }
 
-/// Describes one client-to-server terminal control message.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub enum TerminalClientMessage {
-    Input { data: String },
-    Resize { cols: u16, rows: u16 },
-    Kill {},
-}
-
-/// Describes one server-to-client terminal stream message.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub enum TerminalServerMessage {
-    Ready {
-        #[serde(rename = "sessionId")]
-        session_id: String,
-    },
-    History {
-        data: String,
-    },
-    Output {
-        data: String,
-    },
-    Exit {
-        #[serde(rename = "exitCode")]
-        exit_code: Option<i32>,
-    },
-    Error {
-        code: String,
-        message: String,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
         GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, Session,
-        SessionStatus, TerminalClientMessage, TerminalServerMessage, TerminalSessionStartup,
-        UpdateSessionRequest, UpdateSessionResponse,
+        SessionStatus, UpdateSessionRequest, UpdateSessionResponse,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -180,7 +133,6 @@ mod tests {
             agent_id: "agent-1".to_string(),
             agent_session_id: None,
             status: SessionStatus::Stopped,
-            terminal: Some(TerminalSessionStartup { cols: 80, rows: 24 }),
         };
         let get_request = GetSessionRequest {
             session_id: "session-1".to_string(),
@@ -214,10 +166,6 @@ mod tests {
                 "agentId": "agent-1",
                 "agentSessionId": null,
                 "status": "stopped",
-                "terminal": {
-                    "cols": 80,
-                    "rows": 24,
-                },
             }),
         );
         assert_serialized_json(
@@ -337,130 +285,6 @@ mod tests {
                 session: session.clone(),
             },
             UpdateSessionResponse { session }
-        );
-    }
-
-    /// Verifies terminal session startup payloads and stream messages serialize with stable JSON shapes.
-    #[test]
-    fn serializes_terminal_contracts() {
-        assert_serialized_json(
-            &TerminalSessionStartup {
-                cols: 120,
-                rows: 40,
-            },
-            json!({
-                "cols": 120,
-                "rows": 40,
-            }),
-        );
-        assert_serialized_json(
-            &TerminalClientMessage::Input {
-                data: "ls -la\n".to_string(),
-            },
-            json!({
-                "type": "input",
-                "data": "ls -la\n",
-            }),
-        );
-        assert_serialized_json(
-            &TerminalClientMessage::Resize {
-                cols: 132,
-                rows: 50,
-            },
-            json!({
-                "type": "resize",
-                "cols": 132,
-                "rows": 50,
-            }),
-        );
-        assert_serialized_json(
-            &TerminalClientMessage::Kill {},
-            json!({
-                "type": "kill",
-            }),
-        );
-        assert_serialized_json(
-            &TerminalServerMessage::Ready {
-                session_id: "session-1".to_string(),
-            },
-            json!({
-                "type": "ready",
-                "sessionId": "session-1",
-            }),
-        );
-        assert_serialized_json(
-            &TerminalServerMessage::History {
-                data: "cargo test\n".to_string(),
-            },
-            json!({
-                "type": "history",
-                "data": "cargo test\n",
-            }),
-        );
-        assert_serialized_json(
-            &TerminalServerMessage::Output {
-                data: "Finished dev profile\n".to_string(),
-            },
-            json!({
-                "type": "output",
-                "data": "Finished dev profile\n",
-            }),
-        );
-        assert_serialized_json(
-            &TerminalServerMessage::Exit { exit_code: Some(0) },
-            json!({
-                "type": "exit",
-                "exitCode": 0,
-            }),
-        );
-        assert_serialized_json(
-            &TerminalServerMessage::Error {
-                code: "terminal_already_attached".to_string(),
-                message: "terminal already attached".to_string(),
-            },
-            json!({
-                "type": "error",
-                "code": "terminal_already_attached",
-                "message": "terminal already attached",
-            }),
-        );
-    }
-
-    /// Verifies terminal startup dimensions remain separate from later resize control messages.
-    #[test]
-    fn keeps_terminal_startup_dimensions_separate_from_resize_messages() {
-        let create_request = CreateSessionRequest {
-            task_id: "task-1".to_string(),
-            agent_id: "terminal".to_string(),
-            agent_session_id: None,
-            status: SessionStatus::Running,
-            terminal: Some(TerminalSessionStartup { cols: 90, rows: 28 }),
-        };
-        let resize_message = TerminalClientMessage::Resize {
-            cols: 140,
-            rows: 45,
-        };
-
-        assert_eq!(
-            serde_json::to_value(create_request).unwrap(),
-            json!({
-                "taskId": "task-1",
-                "agentId": "terminal",
-                "agentSessionId": null,
-                "status": "running",
-                "terminal": {
-                    "cols": 90,
-                    "rows": 28,
-                },
-            })
-        );
-        assert_eq!(
-            serde_json::to_value(resize_message).unwrap(),
-            json!({
-                "type": "resize",
-                "cols": 140,
-                "rows": 45,
-            })
         );
     }
 

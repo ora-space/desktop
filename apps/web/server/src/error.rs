@@ -150,36 +150,6 @@ impl From<ApplicationError> for WebApiError {
                 code: "session_repository_error",
                 message,
             },
-            ApplicationError::TerminalStartup { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "terminal_startup_error",
-                message,
-            },
-            ApplicationError::TerminalRuntimeMissing { session_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "terminal_runtime_missing",
-                message: format!("terminal runtime missing for session: {session_id}"),
-            },
-            ApplicationError::TerminalAlreadyAttached { session_id } => Self {
-                status: StatusCode::CONFLICT,
-                code: "terminal_already_attached",
-                message: format!("terminal already attached for session: {session_id}"),
-            },
-            ApplicationError::TerminalSessionNotTerminal { session_id } => Self {
-                status: StatusCode::CONFLICT,
-                code: "terminal_session_not_terminal",
-                message: format!("session is not a terminal session: {session_id}"),
-            },
-            ApplicationError::TerminalSessionStopped { session_id } => Self {
-                status: StatusCode::CONFLICT,
-                code: "terminal_session_stopped",
-                message: format!("terminal session already stopped: {session_id}"),
-            },
-            ApplicationError::InvalidTerminalRequest { message } => Self {
-                status: StatusCode::BAD_REQUEST,
-                code: "invalid_terminal_request",
-                message,
-            },
         }
     }
 }

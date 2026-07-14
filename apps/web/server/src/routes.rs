@@ -4,7 +4,7 @@ use axum::Router;
 use axum::routing::{get, post};
 use ora_contracts::{
     PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
-    SESSION_PATH, SESSION_TERMINAL_PATH, SESSIONS_PATH, TASK_PATH, TASKS_PATH,
+    SESSION_PATH, SESSIONS_PATH, TASK_PATH, TASKS_PATH,
 };
 
 /// Builds the top-level router for health checks and the persisted CRUD routes.
@@ -47,23 +47,16 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(sessions::update_session)
                 .delete(sessions::delete_session),
         )
-        .route(
-            SESSION_TERMINAL_PATH,
-            get(sessions::attach_terminal_session),
-        )
         .with_state(app_state)
 }
 
 #[cfg(test)]
 mod tests {
     use super::build_router;
-    use crate::app_state::AppState;
     use crate::bootstrap::build_app_state_for_database;
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode};
-    use futures_util::StreamExt;
     use ora_application::{ProjectWorkContextRepository, WorktreeRepository};
-    use ora_contracts::TerminalServerMessage;
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, SqliteProjectWorkContextRepository,
         SqliteWorktreeRepository,
@@ -73,8 +66,6 @@ mod tests {
     use serde_json::{Value, json};
     use std::path::Path;
     use tempfile::TempDir;
-    use tokio::net::TcpListener;
-    use tokio_tungstenite::tungstenite::Message;
     use tower::util::ServiceExt;
 
     /// Verifies the liveness route reports process health without bootstrap state.
@@ -882,128 +873,6 @@ mod tests {
         );
     }
 
-    /// Verifies terminal sessions stay running across WebSocket disconnects and replay buffered output on reconnect.
-    #[tokio::test]
-    async fn serves_terminal_websocket_lifecycle() {
-        let (temp_dir, _database_path, app_state, base_http_url, base_ws_url, server_task) =
-            start_test_server().await;
-        let project_id = create_project_via_http(&base_http_url, "Ora", "/workspace/ora").await;
-        let task_id = create_task_via_http(&base_http_url, &project_id, "Ship task terminal").await;
-        let create_response = http_json(
-            reqwest::Client::new(),
-            reqwest::Method::POST,
-            format!("{base_http_url}/api/sessions"),
-            Some(json!({
-                "taskId": task_id,
-                "agentId": "terminal",
-                "agentSessionId": null,
-                "status": "running",
-                "terminal": {
-                    "cols": 100,
-                    "rows": 30,
-                },
-            })),
-        )
-        .await;
-        let session_id = create_response["session"]["id"]
-            .as_str()
-            .unwrap_or_else(|| panic!("expected created session id"))
-            .to_string();
-        let (mut first_socket, _) = tokio_tungstenite::connect_async(format!(
-            "{base_ws_url}/api/sessions/{session_id}/terminal"
-        ))
-        .await
-        .unwrap_or_else(|error| panic!("expected terminal websocket connect to succeed: {error}"));
-
-        assert_eq!(
-            read_terminal_message(&mut first_socket).await,
-            TerminalServerMessage::Ready {
-                session_id: session_id.clone(),
-            }
-        );
-        drop(first_socket);
-
-        assert_eq!(
-            http_json(
-                reqwest::Client::new(),
-                reqwest::Method::GET,
-                format!("{base_http_url}/api/sessions/{session_id}"),
-                None,
-            )
-            .await["session"]["status"],
-            json!("running")
-        );
-        app_state.shutdown_terminals();
-        server_task.abort();
-        drop(temp_dir);
-    }
-
-    /// Verifies the terminal route rejects duplicate live attachments for the same running session.
-    #[tokio::test]
-    async fn rejects_duplicate_terminal_attachment() {
-        let (temp_dir, _database_path, app_state, base_http_url, base_ws_url, server_task) =
-            start_test_server().await;
-        let project_id = create_project_via_http(&base_http_url, "Ora", "/workspace/ora").await;
-        let task_id =
-            create_task_via_http(&base_http_url, &project_id, "Ship duplicate attach").await;
-        let session_id = create_terminal_session_via_http(&base_http_url, &task_id).await;
-        let (_first_socket, _) = tokio_tungstenite::connect_async(format!(
-            "{base_ws_url}/api/sessions/{session_id}/terminal"
-        ))
-        .await
-        .unwrap_or_else(|error| {
-            panic!("expected first terminal websocket connect to succeed: {error}")
-        });
-        let error = tokio_tungstenite::connect_async(format!(
-            "{base_ws_url}/api/sessions/{session_id}/terminal"
-        ))
-        .await
-        .unwrap_err();
-
-        assert!(
-            error.to_string().contains("409"),
-            "expected duplicate attach to fail with HTTP 409, got {error}"
-        );
-        app_state.shutdown_terminals();
-        server_task.abort();
-        drop(temp_dir);
-    }
-
-    /// Verifies the terminal route rejects non-terminal sessions before upgrading the socket.
-    #[tokio::test]
-    async fn rejects_non_terminal_session_attachment() {
-        let (temp_dir, _database_path, app_state, base_http_url, base_ws_url, server_task) =
-            start_test_server().await;
-        let create_response = http_json(
-            reqwest::Client::new(),
-            reqwest::Method::POST,
-            format!("{base_http_url}/api/sessions"),
-            Some(json!({
-                "taskId": "task-1",
-                "agentId": "agent-1",
-                "agentSessionId": null,
-                "status": "running",
-            })),
-        )
-        .await;
-        let session_id = create_response["session"]["id"]
-            .as_str()
-            .unwrap_or_else(|| panic!("expected created session id"));
-        let error = tokio_tungstenite::connect_async(format!(
-            "{base_ws_url}/api/sessions/{session_id}/terminal"
-        ))
-        .await
-        .unwrap_err();
-
-        assert!(
-            error.to_string().contains("409"),
-            "expected non-terminal attach to fail with HTTP 409, got {error}"
-        );
-        app_state.shutdown_terminals();
-        server_task.abort();
-        drop(temp_dir);
-    }
-
     /// Builds a ready router for tests that need the full persisted route surface.
     fn test_router() -> (TempDir, std::path::PathBuf, axum::Router) {
         let temp_dir = TempDir::new().unwrap();
@@ -1017,48 +886,6 @@ mod tests {
         app_state.mark_ready();
 
         (temp_dir, database_path, build_router(app_state))
-    }
-
-    /// Starts one real HTTP server so terminal WebSocket tests can exercise upgrade flows end to end.
-    async fn start_test_server() -> (
-        TempDir,
-        std::path::PathBuf,
-        AppState,
-        String,
-        String,
-        tokio::task::JoinHandle<()>,
-    ) {
-        let temp_dir = TempDir::new().unwrap();
-        let database_path = temp_dir.path().join("routes-terminal.sqlite3");
-        let project_root = initialize_git_repository(temp_dir.path().join("repo"));
-        let work_dir = temp_dir.path().join("worktrees");
-        let app_state = build_app_state_for_database(&database_path, &project_root, &work_dir)
-            .unwrap_or_else(|error| {
-                panic!("expected application state bootstrap to succeed: {error}");
-            });
-        app_state.mark_ready();
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap_or_else(|error| panic!("expected test listener bind to succeed: {error}"));
-        let address = listener
-            .local_addr()
-            .unwrap_or_else(|error| panic!("expected listener address lookup to succeed: {error}"));
-        let app = build_router(app_state.clone());
-        let server_task = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .await
-                .unwrap_or_else(|error| panic!("expected test server to keep serving: {error}"));
-        });
-
-        (
-            temp_dir,
-            database_path,
-            app_state,
-            format!("http://{address}"),
-            format!("ws://{address}"),
-            server_task,
-        )
     }
 
     /// Creates one project through the HTTP API and returns the generated project id.
@@ -1089,64 +916,6 @@ mod tests {
             Some(project_id) => project_id.to_string(),
             None => panic!("response did not include a project id"),
         }
-    }
-
-    /// Creates one project through the live HTTP server and returns the generated project id.
-    async fn create_project_via_http(base_http_url: &str, name: &str, root_path: &str) -> String {
-        http_json(
-            reqwest::Client::new(),
-            reqwest::Method::POST,
-            format!("{base_http_url}/api/projects"),
-            Some(json!({
-                "name": name,
-                "rootPath": root_path,
-            })),
-        )
-        .await["project"]["id"]
-            .as_str()
-            .unwrap_or_else(|| panic!("expected created project id"))
-            .to_string()
-    }
-
-    /// Creates one task through the live HTTP server and returns the generated task id.
-    async fn create_task_via_http(base_http_url: &str, project_id: &str, title: &str) -> String {
-        http_json(
-            reqwest::Client::new(),
-            reqwest::Method::POST,
-            format!("{base_http_url}/api/tasks"),
-            Some(json!({
-                "projectId": project_id,
-                "title": title,
-                "status": "doing",
-            })),
-        )
-        .await["task"]["id"]
-            .as_str()
-            .unwrap_or_else(|| panic!("expected created task id"))
-            .to_string()
-    }
-
-    /// Creates one terminal session through the live HTTP server and returns the generated session id.
-    async fn create_terminal_session_via_http(base_http_url: &str, task_id: &str) -> String {
-        http_json(
-            reqwest::Client::new(),
-            reqwest::Method::POST,
-            format!("{base_http_url}/api/sessions"),
-            Some(json!({
-                "taskId": task_id,
-                "agentId": "terminal",
-                "agentSessionId": null,
-                "status": "running",
-                "terminal": {
-                    "cols": 80,
-                    "rows": 24,
-                },
-            })),
-        )
-        .await["session"]["id"]
-            .as_str()
-            .unwrap_or_else(|| panic!("expected created session id"))
-            .to_string()
     }
 
     /// Opens the test database so route assertions can inspect persisted work context state.
@@ -1232,51 +1001,6 @@ mod tests {
         match serde_json::from_slice::<Value>(&bytes) {
             Ok(value) => value,
             Err(error) => panic!("failed to decode JSON body: {error}"),
-        }
-    }
-
-    /// Sends one JSON HTTP request to the live test server and returns the decoded JSON payload.
-    async fn http_json(
-        client: reqwest::Client,
-        method: reqwest::Method,
-        url: String,
-        body: Option<Value>,
-    ) -> Value {
-        let request = client.request(method, url);
-        let request = match body {
-            Some(body) => request.json(&body),
-            None => request,
-        };
-        let response = request
-            .send()
-            .await
-            .unwrap_or_else(|error| panic!("expected live HTTP request to succeed: {error}"));
-        let status = response.status();
-        let actual = response
-            .json::<Value>()
-            .await
-            .unwrap_or_else(|error| panic!("expected live HTTP JSON body to decode: {error}"));
-
-        assert!(
-            status.is_success(),
-            "expected HTTP success, got {status} with {actual}"
-        );
-
-        actual
-    }
-
-    /// Reads one terminal server message from the socket and decodes the shared protocol payload.
-    async fn read_terminal_message(
-        socket: &mut tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    ) -> TerminalServerMessage {
-        match socket.next().await {
-            Some(Ok(Message::Text(text))) => serde_json::from_str(&text)
-                .unwrap_or_else(|error| panic!("expected terminal server JSON payload: {error}")),
-            Some(Ok(other)) => panic!("expected terminal text message, got {other:?}"),
-            Some(Err(error)) => panic!("expected terminal message read to succeed: {error}"),
-            None => panic!("expected terminal message but socket closed"),
         }
     }
 }

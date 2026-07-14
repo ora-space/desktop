@@ -49,11 +49,6 @@ impl AppState {
         &self.session_api
     }
 
-    /// Starts terminal runtime shutdown for every active session owned by the server.
-    pub fn shutdown_terminals(&self) {
-        self.session_api.shutdown_terminals();
-    }
-
     /// Marks the runtime as ready after bootstrap finishes successfully.
     pub fn mark_ready(&self) {
         self.ready.store(true, Ordering::SeqCst);

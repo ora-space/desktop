@@ -5,18 +5,13 @@ The first `project` vertical slice is split across `ora-application`, `ora-contr
 ## Ownership
 
 - `ora-contracts` owns serialization-friendly request and response DTOs for `CreateProject`, `GetProject`, `ListProjects`, `UpdateProject`, `DeleteProject`, `OpenProjectWorkContext`, and `RenewProjectWorkContext`.
-- `ora-contracts` also owns the terminal session create payloads and the shared WebSocket terminal protocol DTOs used by the web runtime and future Tauri clients.
 - `ora-contracts::Project` is the single shared app-facing project payload for the first slice. It exposes `id`, `name`, and `root_path` only.
-- `ora-contracts::CreateSessionRequest` now keeps terminal startup dimensions in an optional `terminal` object so non-terminal sessions stay on the same shared contract without exposing backend worktree paths.
-- Runtime-only terminal viewport changes stay out of `UpdateSessionRequest`; clients use `TerminalClientMessage::Resize` after attach instead of mutating persisted session CRUD state.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
 - `ora-contracts` also owns the frontend endpoint manifest for the exported HTTP CRUD surface, including operation names, HTTP methods, path templates, path parameters, request types, response types, and JSON body behavior.
 - `ora-contracts` exports TypeScript DTOs plus the generated frontend SDK into `packages/contracts/src` so frontend packages can consume the generated contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`.
 - Backend-owned task worktrees stay internal; `ora-contracts` does not export standalone public worktree CRUD DTOs, SDK operations, or task payload linkage fields for them.
 - `ora-application` owns project CRUD handlers, application errors, repository ports, and the mapping from `ora-domain::Project` into `ora-contracts::Project`.
 - `ora-application` also owns the project work context handlers, lease timing rules, occupancy conflicts, and the mapping from `ora-domain::ProjectWorkContext` into the shared contract payload.
-- `ora-application` now owns terminal startup, attach, input, resize, kill, and PTY-exit synchronization handlers behind transport-agnostic repository and runtime ports.
-- The terminal runtime implementation itself lives in `ora-pty`, which owns PTY lifecycle, single-client attachment, bounded replay history, and server-token/session-token cancellation semantics without depending on HTTP or WebSocket adapters.
 - Transport adapters such as `apps/web/server` stay thin: they accept contract requests, delegate to `ora-application`, and return contract responses or application errors.
 
 ## Frontend SDK Export
@@ -33,10 +28,3 @@ The first `project` vertical slice is split across `ora-application`, `ora-contr
 - `ora-db` now provides SQLite-backed implementations of the `ora-application` repository ports for `project`, `task`, `session`, and `worktree`.
 - `ora-application` emits structured operational `tracing` events for project CRUD handlers with an `operation` field and, when available, a `project_id`. Success events log at `INFO`, and not-found or repository failures log at `ERROR` with failure details under `error`.
 - The application layer emits events only; logging initialization, sink selection, and writer lifetimes stay owned by runtime composition roots such as `apps/web/server`.
-
-## Terminal Slice Notes
-
-- Terminal-backed session creation still starts from `POST /api/sessions`, but callers must set `agentId = "terminal"` and provide initial `terminal.cols` and `terminal.rows`.
-- Terminal attach and control traffic use shared contract enums: `TerminalClientMessage` for `input`, `resize`, and `kill`, and `TerminalServerMessage` for `ready`, `history`, `output`, `exit`, and terminal-scoped `error`.
-- The application layer resolves the task-owned worktree internally from the persisted task/worktree relationship and `ORA_WORK_DIR`, so adapters never receive or submit raw backend filesystem paths.
-- PTY startup failures leave the created session persisted in `Stopped` state for diagnostics instead of deleting durable session identity.

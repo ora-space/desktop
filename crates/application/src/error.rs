@@ -31,18 +31,6 @@ pub enum ApplicationError {
     SessionNotFound { session_id: String },
     #[error("session repository operation failed: {message}")]
     SessionRepository { message: String },
-    #[error("terminal startup failed: {message}")]
-    TerminalStartup { message: String },
-    #[error("terminal runtime missing for session: {session_id}")]
-    TerminalRuntimeMissing { session_id: String },
-    #[error("terminal already attached for session: {session_id}")]
-    TerminalAlreadyAttached { session_id: String },
-    #[error("session is not a terminal session: {session_id}")]
-    TerminalSessionNotTerminal { session_id: String },
-    #[error("terminal session already stopped: {session_id}")]
-    TerminalSessionStopped { session_id: String },
-    #[error("invalid terminal session request: {message}")]
-    InvalidTerminalRequest { message: String },
 }
 
 impl ApplicationError {

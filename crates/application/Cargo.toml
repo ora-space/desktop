@@ -14,10 +14,8 @@ workspace = true
 ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
 ora-logging = { workspace = true }
-ora-pty = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
-tokio-util = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 

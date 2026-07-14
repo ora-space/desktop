@@ -30,11 +30,7 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
             runtime_config.project().work_dir().to_path_buf(),
             clock,
         )),
-        Arc::new(SessionApi::new(
-            pool,
-            runtime_config.project().work_dir().to_path_buf(),
-            clock,
-        )),
+        Arc::new(SessionApi::new(pool, clock)),
     ))
 }
 
@@ -57,7 +53,7 @@ pub(crate) fn build_app_state_for_database(
             work_dir.to_path_buf(),
             clock,
         )),
-        Arc::new(SessionApi::new(pool, work_dir.to_path_buf(), clock)),
+        Arc::new(SessionApi::new(pool, clock)),
     ))
 }
 

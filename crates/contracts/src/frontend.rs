@@ -39,7 +39,6 @@ pub const TASKS_PATH: &str = "/api/tasks";
 pub const TASK_PATH: &str = "/api/tasks/{taskId}";
 pub const SESSIONS_PATH: &str = "/api/sessions";
 pub const SESSION_PATH: &str = "/api/sessions/{sessionId}";
-pub const SESSION_TERMINAL_PATH: &str = "/api/sessions/{sessionId}/terminal";
 
 const PROJECT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "project_id",
