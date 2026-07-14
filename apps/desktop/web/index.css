@@ -1,153 +1,15 @@
 @import "tailwindcss";
-@import "../../../packages/ui/src/theme.css";
-@source "../../../packages/ui/src";
 
 :root {
-  font-family: var(--font-sans);
-  font-size: 14px;
-  color: var(--color-fg);
-  background: var(--color-bg);
-}
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light dark;
 }
 
 body {
-  height: 100vh;
-  width: 100vw;
-  overflow: hidden;
-}
-
-/* Base Utility Classes */
-.layout {
-  display: flex;
-  height: 100vh;
-  width: 100vw;
-}
-
-.sidebar {
-  width: 260px;
-  background-color: var(--bg-secondary);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-}
-
-.main-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--bg);
-}
-
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 6px 12px;
-  cursor: pointer;
-  border: none;
-  transition: background-color 0.15s;
-}
-
-.button-primary {
-  background-color: var(--btn-bg);
-  color: var(--btn-fg);
-}
-
-.button-primary:hover {
-  background-color: var(--btn-hover);
-}
-
-.button-ghost {
-  background-color: transparent;
-  color: var(--fg);
-}
-
-.button-ghost:hover {
-  background-color: var(--border-subtle);
-}
-
-.input {
-  box-sizing: border-box;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: var(--font-sans);
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.input:focus {
-  border-color: var(--primary);
+  margin: 0;
+  min-height: 100vh;
 }
 
 #root {
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+  min-height: 100vh;
 }
