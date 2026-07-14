@@ -58,5 +58,11 @@ pub trait ManagedProcess {
     /// when the OS accepted the request or the tree was already gone; it returns `Err` only when
     /// the OS refused the request for a reason the caller should surface (for example
     /// permission loss).
+    ///
+    /// This explicit `kill()` path is the **only** tree-wide contract. If the Tokio runtime
+    /// itself tears down while a `kill_on_drop` handle is still alive (for example during process
+    /// shutdown), the lifecycle task is dropped and only terminates the direct child;
+    /// descendants rely on OS cleanup at process exit. Use `kill()` explicitly when tree-wide
+    /// termination must be guaranteed.
     fn kill(&self) -> impl Future<Output = io::Result<()>> + Send + '_;
 }

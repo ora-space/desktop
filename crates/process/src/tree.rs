@@ -9,7 +9,9 @@
 //!   the entire group is signalled with `kill(-pgid, SIGKILL)`.
 //! - On Windows the child is assigned to a Job Object created with
 //!   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; the whole job is terminated with
-//!   `TerminateJobObject`, and closing the job handle kills every process still in the job.
+//!   `TerminateJobObject`. Graceful drop disarms the kill-on-close limit first, so only an
+//!   ungraceful termination (process crash where `Drop` cannot run) relies on handle-close
+//!   cleanup to kill every process still in the job.
 //!
 //! [`ProcessTree::kill`] mirrors the `start_kill` contract used by [`crate::ManagedProcess::kill`]:
 //! it delivers the termination request to the OS and returns without waiting for any process to
@@ -25,8 +27,11 @@ use tokio::process::{Child, Command};
 ///
 /// Created from a freshly-spawned child and held by the lifecycle task so every kill path
 /// (explicit `kill()`, `kill_on_drop`, and lifecycle task teardown) goes through one entry point.
-/// Dropping this handle releases those resources; on Windows it also triggers OS-level cleanup of
-/// the tree via the Job Object's `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` limit.
+/// Dropping this handle is an *ordinary* release: on Windows it disarms
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` before closing the Job Object handle, so releasing this
+/// handle never terminates the tree on its own. Tree-wide termination only ever happens through
+/// the explicit [`ProcessTree::kill`] path (`TerminateJobObject`), which is unaffected by
+/// disarming since it acts immediately rather than on handle close.
 pub(crate) struct ProcessTree {
     #[cfg(unix)]
     pgid: i32,
@@ -120,10 +125,14 @@ impl ProcessTree {
 #[cfg(windows)]
 impl Drop for ProcessTree {
     fn drop(&mut self) {
-        // CloseHandle releasing our reference to the Job Object. Because the job was created with
-        // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, the OS kills every process still in the job once the
-        // last handle is closed. Even for keep_alive_on_drop processes this is the right thing to
-        // do during runtime teardown: thoroughly cleaning up the tree instead of orphaning it.
+        // This runs both on the direct child's normal exit and whenever the lifecycle task
+        // itself is torn down without an explicit kill (for example Tokio runtime shutdown),
+        // including for `keep_alive_on_drop` processes. Neither case should terminate whatever
+        // is still running in the job, so disarm JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE first: without
+        // this, closing the handle would kill every descendant still in the job even though
+        // nobody asked for that. Any real termination already happened synchronously through
+        // `kill()` (`TerminateJobObject`) before this Drop runs, so disarming here is safe.
+        let _ = disarm_kill_on_close(self.job);
         close_handle(self.job);
     }
 }
@@ -187,6 +196,34 @@ fn create_kill_on_close_job() -> io::Result<windows_sys::Win32::Foundation::HAND
     }
 
     Ok(job)
+}
+
+/// Clears the Job Object's limit flags so a subsequent `CloseHandle` no longer terminates
+/// whatever is still running in the job. Used for the ordinary (non-killing) release path in
+/// [`Drop for ProcessTree`](ProcessTree), never for the explicit `kill()` path.
+#[cfg(windows)]
+fn disarm_kill_on_close(job: windows_sys::Win32::Foundation::HANDLE) -> io::Result<()> {
+    use windows_sys::Win32::System::JobObjects::{
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+
+    // Zeroed LimitFlags clears JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (the only limit this job was
+    // ever configured with; see `create_kill_on_close_job`).
+    let info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+
+    let ok = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(windows)]

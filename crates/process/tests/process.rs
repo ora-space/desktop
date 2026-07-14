@@ -415,6 +415,236 @@ async fn kill_terminates_descendants_started_by_the_child() {
     );
 }
 
+// Verifies that the direct child exiting on its own (no `kill()` ever called) does not kill
+// descendants: only tree-wide `kill()` should terminate the tree. Regression test for the
+// Windows Job Object's `KILL_ON_JOB_CLOSE` limit firing whenever `ProcessTree` is dropped,
+// including on the direct child's normal exit.
+#[cfg(unix)]
+#[tokio::test]
+async fn natural_exit_does_not_kill_descendants_started_by_the_child() {
+    let marker_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("expected tempdir for pid marker: {error}"));
+    let marker_path = marker_dir.path().join("grandchild.pid");
+    // No `exec sleep 30` here (unlike the kill test): the direct child backgrounds the
+    // grandchild, records its pid, and then exits on its own.
+    let script = format!(
+        "sh -c 'sleep 15' & echo $! > {marker}",
+        marker = escape_shell_path(&marker_path)
+    );
+    let spawner = TokioProcessSpawner::new();
+    let process = spawner
+        .spawn(ProcessSpec::new("sh").args(["-c", script.as_str()]))
+        .unwrap_or_else(|error| panic!("expected process spawn to succeed: {error}"));
+
+    let grandchild_pid = wait_for_marker_pid(&marker_path).await;
+    assert_eq!(
+        unsafe { libc::kill(grandchild_pid, 0) },
+        0,
+        "grandchild should be alive before parent exit"
+    );
+
+    let exit = process
+        .wait()
+        .await
+        .unwrap_or_else(|error| panic!("expected wait to succeed: {error}"));
+    assert!(exit.success(), "direct child should have exited normally");
+
+    // The handle (and the `ProcessTree` it owns) is dropped here. Nothing ever called kill(), so
+    // this must be an ordinary release that leaves the grandchild running.
+    drop(process);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    assert_eq!(
+        unsafe { libc::kill(grandchild_pid, 0) },
+        0,
+        "grandchild must survive the direct child's normal exit"
+    );
+
+    unsafe {
+        libc::kill(grandchild_pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn natural_exit_does_not_kill_descendants_started_by_the_child() {
+    let marker_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("expected tempdir for pid marker: {error}"));
+    let marker_path = marker_dir.path().join("grandchild.pid");
+    // No `Start-Sleep` here (unlike the kill test): the direct child starts the detached
+    // grandchild, records its pid, and then exits on its own.
+    let script = format!(
+        "$p = Start-Process -FilePath ping -ArgumentList '-n','15','127.0.0.1' -PassThru -WindowStyle Hidden; \
+         Out-File -FilePath '{marker}' -InputObject $p.Id -Encoding ASCII",
+        marker = escape_powershell_path(&marker_path)
+    );
+    let spawner = TokioProcessSpawner::new();
+    let process = spawner
+        .spawn(ProcessSpec::new("powershell").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script.as_str(),
+        ]))
+        .unwrap_or_else(|error| panic!("expected process spawn to succeed: {error}"));
+
+    let grandchild_pid = wait_for_marker_pid(&marker_path).await;
+    assert!(
+        process_alive(grandchild_pid),
+        "grandchild should be alive before parent exit"
+    );
+
+    let exit = process
+        .wait()
+        .await
+        .unwrap_or_else(|error| panic!("expected wait to succeed: {error}"));
+    assert!(exit.success(), "direct child should have exited normally");
+
+    // The handle (and the `ProcessTree` it owns, along with the Job Object handle) is dropped
+    // here. Nothing ever called kill(), so this must be an ordinary release that does not fire
+    // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE against the grandchild still in the job.
+    drop(process);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    assert!(
+        process_alive(grandchild_pid),
+        "grandchild must survive the direct child's normal exit"
+    );
+
+    kill_pid(grandchild_pid);
+}
+
+// Verifies that a `keep_alive_on_drop` process (and its descendants) survives the lifecycle
+// task itself being torn down (for example Tokio runtime shutdown), not just the user-facing
+// handle being dropped. This exercises `Drop for ProcessTree` directly, since runtime teardown
+// cancels the pending lifecycle task future without running any of its async body.
+#[cfg(unix)]
+#[test]
+fn keep_alive_on_drop_survives_runtime_teardown() {
+    let marker_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("expected tempdir for pid marker: {error}"));
+    let marker_path = marker_dir.path().join("grandchild.pid");
+    let script = format!(
+        "sh -c 'sleep 30' & echo $! > {marker}; exec sleep 30",
+        marker = escape_shell_path(&marker_path)
+    );
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|error| panic!("expected tokio runtime to build: {error}"));
+
+    let (direct_pid, grandchild_pid) = runtime.block_on(async {
+        let spawner = TokioProcessSpawner::new();
+        let process = spawner
+            .spawn(
+                ProcessSpec::new("sh")
+                    .args(["-c", script.as_str()])
+                    .keep_alive_on_drop(),
+            )
+            .unwrap_or_else(|error| panic!("expected process spawn to succeed: {error}"));
+        let direct_pid = process
+            .id()
+            .unwrap_or_else(|| panic!("expected direct child pid")) as i32;
+
+        let grandchild_pid = wait_for_marker_pid(&marker_path).await;
+        assert_eq!(
+            unsafe { libc::kill(grandchild_pid, 0) },
+            0,
+            "grandchild should be alive before teardown"
+        );
+
+        // Mirrors real usage: the caller drops the handle because it no longer needs to observe
+        // this process. keep_alive_on_drop means this alone must not affect the child or its
+        // descendants; the lifecycle task keeps running past this point.
+        drop(process);
+        (direct_pid, grandchild_pid)
+    });
+
+    // The direct child is still asleep (30s), so the lifecycle task is still parked on
+    // `child.wait()` when the runtime tears down: its future is dropped without running any more
+    // of its async body, so only `Drop for ProcessTree` gets a chance to run.
+    runtime.shutdown_timeout(Duration::from_secs(5));
+
+    assert_eq!(
+        unsafe { libc::kill(direct_pid, 0) },
+        0,
+        "direct child should survive runtime teardown for a keep_alive_on_drop process"
+    );
+    assert_eq!(
+        unsafe { libc::kill(grandchild_pid, 0) },
+        0,
+        "descendant should survive runtime teardown for a keep_alive_on_drop process"
+    );
+
+    unsafe {
+        libc::kill(direct_pid, libc::SIGKILL);
+        libc::kill(grandchild_pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn keep_alive_on_drop_survives_runtime_teardown() {
+    let marker_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("expected tempdir for pid marker: {error}"));
+    let marker_path = marker_dir.path().join("grandchild.pid");
+    let script = format!(
+        "$p = Start-Process -FilePath ping -ArgumentList '-n','30','127.0.0.1' -PassThru -WindowStyle Hidden; \
+         Out-File -FilePath '{marker}' -InputObject $p.Id -Encoding ASCII; \
+         Start-Sleep -Seconds 30",
+        marker = escape_powershell_path(&marker_path)
+    );
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|error| panic!("expected tokio runtime to build: {error}"));
+
+    let (direct_pid, grandchild_pid) = runtime.block_on(async {
+        let spawner = TokioProcessSpawner::new();
+        let process = spawner
+            .spawn(
+                ProcessSpec::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", script.as_str()])
+                    .keep_alive_on_drop(),
+            )
+            .unwrap_or_else(|error| panic!("expected process spawn to succeed: {error}"));
+        let direct_pid = process
+            .id()
+            .unwrap_or_else(|| panic!("expected direct child pid"));
+
+        let grandchild_pid = wait_for_marker_pid(&marker_path).await;
+        assert!(
+            process_alive(grandchild_pid),
+            "grandchild should be alive before teardown"
+        );
+
+        // Mirrors real usage: the caller drops the handle because it no longer needs to observe
+        // this process. keep_alive_on_drop means this alone must not affect the child or its
+        // descendants; the lifecycle task keeps running past this point.
+        drop(process);
+        (direct_pid, grandchild_pid)
+    });
+
+    // The direct child is still asleep (30s), so the lifecycle task is still parked on
+    // `child.wait()` when the runtime tears down: its future is dropped without running any more
+    // of its async body, so only `Drop for ProcessTree` gets a chance to run.
+    runtime.shutdown_timeout(Duration::from_secs(5));
+
+    assert!(
+        process_alive(direct_pid),
+        "direct child should survive runtime teardown for a keep_alive_on_drop process"
+    );
+    assert!(
+        process_alive(grandchild_pid),
+        "descendant should survive runtime teardown for a keep_alive_on_drop process"
+    );
+
+    kill_pid(direct_pid);
+    kill_pid(grandchild_pid);
+}
+
 #[cfg(unix)]
 async fn wait_for_marker_pid(marker_path: &std::path::Path) -> i32 {
     let pid = wait_for_marker_pid_contents(marker_path).await;
@@ -486,4 +716,19 @@ fn process_alive(pid: u32) -> bool {
     // STILL_ACTIVE (0x103 = 259) is what GetExitCodeProcess reports until the process actually
     // terminates; any other value means the OS has observed the exit.
     exit_code == STILL_ACTIVE as u32
+}
+
+// Test cleanup helper: some regression tests deliberately keep processes alive past the point a
+// normal `kill()` path would reach, so the test is responsible for terminating them itself.
+#[cfg(windows)]
+fn kill_pid(pid: u32) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    if handle.is_null() {
+        return;
+    }
+    let _ = unsafe { TerminateProcess(handle, 1) };
+    let _ = unsafe { CloseHandle(handle) };
 }
