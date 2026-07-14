@@ -85,6 +85,61 @@ importers:
         specifier: ^8.0.10
         version: 8.0.11(@types/node@24.12.3)(jiti@2.7.0)
 
+  apps/web/client:
+    dependencies:
+      '@ora/app-shell':
+        specifier: workspace:*
+        version: link:../../../packages/app-shell
+      '@ora/ui':
+        specifier: workspace:*
+        version: link:../../../packages/ui
+      '@tailwindcss/typography':
+        specifier: ^0.5.19
+        version: 0.5.20(tailwindcss@4.3.0)
+      '@tailwindcss/vite':
+        specifier: ^4.2.4
+        version: 4.3.0(vite@8.0.11(@types/node@24.12.3)(jiti@2.7.0))
+      '@untitledui/icons':
+        specifier: ^0.0.22
+        version: 0.0.22(react@19.2.6)
+      react:
+        specifier: ^19.2.5
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.2.5
+        version: 19.2.6(react@19.2.6)
+      tailwindcss:
+        specifier: ^4.2.4
+        version: 4.3.0
+      tailwindcss-animate:
+        specifier: ^1.0.7
+        version: 1.0.7(tailwindcss@4.3.0)
+      tailwindcss-react-aria-components:
+        specifier: ^2.0.1
+        version: 2.2.0(tailwindcss@4.3.0)
+    devDependencies:
+      '@vitejs/plugin-react':
+        specifier: ^6.0.1
+        version: 6.0.1(vite@8.0.11(@types/node@24.12.3)(jiti@2.7.0))
+      vite:
+        specifier: ^8.0.10
+        version: 8.0.11(@types/node@24.12.3)(jiti@2.7.0)
+
+  packages/app-shell:
+    dependencies:
+      '@ora/ui':
+        specifier: workspace:*
+        version: link:../ui
+      '@untitledui/icons':
+        specifier: ^0.0.22
+        version: 0.0.22(react@19.2.6)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.6(react@19.2.6)
+
   packages/contracts: {}
 
   packages/plugin-sdk:
@@ -101,6 +156,9 @@ importers:
       '@react-stately/utils':
         specifier: ^3.0.0
         version: 3.12.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@react-types/shared':
+        specifier: ^3.36.0
+        version: 3.36.0(react@19.2.6)
       '@untitledui/file-icons':
         specifier: ^0.0.9
         version: 0.0.9(react@19.2.6)

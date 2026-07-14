@@ -14,6 +14,7 @@
   "dependencies": {
     "@react-aria/utils": "^3.0.0",
     "@react-stately/utils": "^3.0.0",
+    "@react-types/shared": "^3.36.0",
     "@untitledui/file-icons": "^0.0.9",
     "@untitledui/icons": "^0.0.22",
     "react-aria": "^3.47.0",
