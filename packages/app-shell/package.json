@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@ora/contracts": "workspace:*",
     "@ora/ui": "workspace:*",
     "@untitledui/icons": "^0.0.22"
   },

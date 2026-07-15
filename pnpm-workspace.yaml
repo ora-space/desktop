@@ -3,4 +3,5 @@ packages:
   - 'apps/web/client'
   - 'packages/*'
 allowBuilds:
+  esbuild: true
   msw: true
