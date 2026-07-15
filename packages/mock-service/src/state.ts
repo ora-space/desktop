@@ -69,7 +69,7 @@ export function createInitialMockState(now = Date.now()): MockState {
         surface: "web",
         windowId: "prototype-window",
         projectId: "project-ora-desktop",
-        leaseExpiresAt: BigInt(now + 120_000),
+        leaseExpiresAt: now + 120_000,
       },
     ],
   };

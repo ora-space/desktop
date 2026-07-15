@@ -24,37 +24,6 @@ function ensureWorkerStarted(): Promise<void> {
   return workerStartPromise;
 }
 
-/** Restores contract runtime types that JSON cannot represent directly. */
-export function reviveMockResponse(operationName: string, response: unknown): unknown {
-  if (
-    operationName !== "openProjectWorkContext" &&
-    operationName !== "renewProjectWorkContext"
-  ) {
-    return response;
-  }
-  if (typeof response !== "object" || response === null || !("context" in response)) {
-    return response;
-  }
-
-  const context = response.context;
-  if (
-    typeof context !== "object" ||
-    context === null ||
-    !("leaseExpiresAt" in context) ||
-    (typeof context.leaseExpiresAt !== "number" && typeof context.leaseExpiresAt !== "string")
-  ) {
-    return response;
-  }
-
-  return {
-    ...response,
-    context: {
-      ...context,
-      leaseExpiresAt: BigInt(context.leaseExpiresAt),
-    },
-  };
-}
-
 /** Creates a contracts transport whose HTTP traffic is intercepted by the mock Service Worker. */
 export function createMockTransport(): ContractTransport {
   const fetchTransport = createFetchTransport();
@@ -62,9 +31,7 @@ export function createMockTransport(): ContractTransport {
   return {
     async send<TResponse>(request: ContractTransportRequest): Promise<TResponse> {
       await ensureWorkerStarted();
-      const response = await fetchTransport.send<unknown>(request);
-
-      return reviveMockResponse(request.operationName, response) as TResponse;
+      return fetchTransport.send<TResponse>(request);
     },
   };
 }

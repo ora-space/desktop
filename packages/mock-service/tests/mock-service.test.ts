@@ -11,7 +11,6 @@ import { createFetchTransport } from "@ora/contracts/fetch";
 import { setupServer } from "msw/node";
 import { createMockHandlers } from "../src/handlers.js";
 import { createInitialMockState } from "../src/state.js";
-import { reviveMockResponse } from "../src/transport.js";
 
 const initialNow = 1_700_000_000_000;
 const state = createInitialMockState(initialNow);
@@ -48,29 +47,6 @@ test("defines one Service Worker handler for every contracts endpoint", () => {
   ]);
 });
 
-test("restores bigint work-context leases after the JSON transport", () => {
-  assert.deepEqual(
-    reviveMockResponse("openProjectWorkContext", {
-      context: {
-        id: "context-1",
-        surface: "web",
-        windowId: "window-1",
-        projectId: "project-1",
-        leaseExpiresAt: 1_700_000_120_000,
-      },
-    }),
-    {
-      context: {
-        id: "context-1",
-        surface: "web",
-        windowId: "window-1",
-        projectId: "project-1",
-        leaseExpiresAt: 1_700_000_120_000n,
-      },
-    },
-  );
-});
-
 test("starts every entity collection with representative in-memory data", async () => {
   const [projects, tasks, sessions] = await Promise.all([
     client.listProjects({}),
@@ -87,7 +63,7 @@ test("starts every entity collection with representative in-memory data", async 
       surface: "web",
       windowId: "prototype-window",
       projectId: "project-ora-desktop",
-      leaseExpiresAt: BigInt(initialNow + 120_000),
+      leaseExpiresAt: initialNow + 120_000,
     },
   ]);
 });

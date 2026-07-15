@@ -15,10 +15,6 @@ import { mockState, type MockState } from "./state.js";
 
 const PROJECT_WORK_CONTEXT_LEASE_DURATION_MS = 120_000;
 
-type JsonProjectWorkContext = Omit<ProjectWorkContext, "leaseExpiresAt"> & {
-  leaseExpiresAt: number;
-};
-
 /** Produces a stable, readable identifier for newly created mock entities. */
 function createId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -27,14 +23,6 @@ function createId(prefix: string): string {
 /** Returns the same structured error envelope as the HTTP adapter. */
 function errorResponse(code: string, message: string, status: number) {
   return HttpResponse.json({ error: { code, message } }, { status });
-}
-
-/** Converts the bigint contract field into its JSON wire representation. */
-function contextToJson(context: ProjectWorkContext): JsonProjectWorkContext {
-  return {
-    ...context,
-    leaseExpiresAt: Number(context.leaseExpiresAt),
-  };
 }
 
 /** Creates the complete HTTP handler set over a supplied in-memory state. */
@@ -111,7 +99,7 @@ export function createMockHandlers(state: MockState = mockState): HttpHandler[] 
         (context) =>
           context.projectId === body.projectId &&
           context.surface === "tauri" &&
-          context.leaseExpiresAt > BigInt(now) &&
+          context.leaseExpiresAt > now &&
           context.id !== state.projectWorkContexts[existingIndex]?.id,
       );
       if (body.surface === "tauri" && conflictingContext !== undefined) {
@@ -130,7 +118,7 @@ export function createMockHandlers(state: MockState = mockState): HttpHandler[] 
         surface: body.surface,
         windowId: body.windowId,
         projectId: body.projectId,
-        leaseExpiresAt: BigInt(now + PROJECT_WORK_CONTEXT_LEASE_DURATION_MS),
+        leaseExpiresAt: now + PROJECT_WORK_CONTEXT_LEASE_DURATION_MS,
       };
       if (existingIndex === -1) {
         state.projectWorkContexts.push(context);
@@ -138,7 +126,7 @@ export function createMockHandlers(state: MockState = mockState): HttpHandler[] 
         state.projectWorkContexts[existingIndex] = context;
       }
 
-      return HttpResponse.json({ context: contextToJson(context) });
+      return HttpResponse.json({ context });
     }),
 
     renewProjectWorkContext: http.post("*/api/project-work-contexts/renew", async ({ request }) => {
@@ -156,11 +144,11 @@ export function createMockHandlers(state: MockState = mockState): HttpHandler[] 
 
       const context: ProjectWorkContext = {
         ...state.projectWorkContexts[contextIndex]!,
-        leaseExpiresAt: BigInt(Date.now() + PROJECT_WORK_CONTEXT_LEASE_DURATION_MS),
+        leaseExpiresAt: Date.now() + PROJECT_WORK_CONTEXT_LEASE_DURATION_MS,
       };
       state.projectWorkContexts[contextIndex] = context;
 
-      return HttpResponse.json({ context: contextToJson(context) });
+      return HttpResponse.json({ context });
     }),
 
     createTask: http.post("*/api/tasks", async ({ request }) => {
