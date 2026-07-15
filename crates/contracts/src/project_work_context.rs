@@ -19,6 +19,7 @@ pub struct ProjectWorkContext {
     pub surface: ProjectWorkContextSurface,
     pub window_id: String,
     pub project_id: String,
+    #[ts(type = "number")]
     pub lease_expires_at: i64,
 }
 

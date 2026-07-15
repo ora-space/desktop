@@ -22,7 +22,7 @@ export type ProjectWorkContext = {
   surface: ProjectWorkContextSurface;
   windowId: string;
   projectId: string;
-  leaseExpiresAt: bigint;
+  leaseExpiresAt: number;
 };
 
 /**
