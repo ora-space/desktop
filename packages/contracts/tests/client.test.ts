@@ -35,7 +35,7 @@ test("builds update URLs from path params and JSON bodies", async () => {
       },
     }),
   );
-  const response = await client.updateTask({
+  const response = await client.task.update({
     taskId: "task-1",
     projectId: "project-1",
     title: "Ship SDK",
@@ -79,7 +79,7 @@ test("omits JSON bodies for path-only operations", async () => {
     }),
   );
 
-  await client.getProject({
+  await client.project.get({
     projectId: "project-1",
   });
 

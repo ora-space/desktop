@@ -218,22 +218,47 @@ fn render_client_module(endpoints: &[FrontendEndpoint]) -> String {
         "import type { ContractTransport, ContractTransportRequest } from \"./transport.js\";\n\n",
     );
     source.push_str("type ClientRequestShape = object;\n\n");
+    source.push_str("type ClientOperation<Operation extends EndpointOperation> = (\n");
+    source.push_str("  request: RequestByOperation[Operation],\n");
+    source.push_str(") => Promise<ResponseByOperation[Operation]>;\n\n");
     source.push_str("export type ContractsClient = {\n");
-    source.push_str(
-        "  [Operation in EndpointOperation]: (request: RequestByOperation[Operation]) => Promise<ResponseByOperation[Operation]>;\n",
-    );
+
+    for (namespace, namespace_endpoints) in group_endpoints_by_namespace(endpoints) {
+        source.push_str("  ");
+        source.push_str(namespace);
+        source.push_str(": {\n");
+
+        for endpoint in namespace_endpoints {
+            source.push_str("    ");
+            source.push_str(endpoint.member_name);
+            source.push_str(": ClientOperation<\"");
+            source.push_str(endpoint.operation_name);
+            source.push_str("\">;\n");
+        }
+
+        source.push_str("  };\n");
+    }
+
     source.push_str("};\n\n");
     source.push_str(
         "export function createContractsClient(transport: ContractTransport): ContractsClient {\n",
     );
     source.push_str("  return {\n");
 
-    for endpoint in endpoints {
+    for (namespace, namespace_endpoints) in group_endpoints_by_namespace(endpoints) {
         source.push_str("    ");
-        source.push_str(endpoint.operation_name);
-        source.push_str(": (request) => executeOperation(\"");
-        source.push_str(endpoint.operation_name);
-        source.push_str("\", request, transport),\n");
+        source.push_str(namespace);
+        source.push_str(": {\n");
+
+        for endpoint in namespace_endpoints {
+            source.push_str("      ");
+            source.push_str(endpoint.member_name);
+            source.push_str(": (request) => executeOperation(\"");
+            source.push_str(endpoint.operation_name);
+            source.push_str("\", request, transport),\n");
+        }
+
+        source.push_str("    },\n");
     }
 
     source.push_str("  };\n");
@@ -409,6 +434,25 @@ fn render_index_module() -> String {
     source
 }
 
+/// Groups endpoints into their client namespaces, preserving the manifest declaration order.
+fn group_endpoints_by_namespace(
+    endpoints: &[FrontendEndpoint],
+) -> Vec<(&'static str, Vec<&FrontendEndpoint>)> {
+    let mut grouped: Vec<(&'static str, Vec<&FrontendEndpoint>)> = Vec::new();
+
+    for endpoint in endpoints {
+        match grouped
+            .iter_mut()
+            .find(|(namespace, _)| *namespace == endpoint.namespace)
+        {
+            Some((_, namespace_endpoints)) => namespace_endpoints.push(endpoint),
+            None => grouped.push((endpoint.namespace, vec![endpoint])),
+        }
+    }
+
+    grouped
+}
+
 /// Collects the TypeScript DTO imports needed by the generated endpoint manifest.
 fn collect_contract_type_imports(
     endpoints: &[FrontendEndpoint],
@@ -533,6 +577,19 @@ mod tests {
 
         assert!(module.contains("Object.entries(requestRecord).filter"));
         assert!(module.contains("missing path parameter"));
+    }
+
+    /// Verifies the generated client groups operations into namespaces over the flat wire names.
+    #[test]
+    fn renders_client_with_namespaced_operations() {
+        let module = render_client_module(frontend_endpoints());
+
+        assert!(module.contains("  project: {\n"));
+        assert!(module.contains("    create: ClientOperation<\"createProject\">;\n"));
+        assert!(module.contains(
+            "      update: (request) => executeOperation(\"updateTask\", request, transport),\n"
+        ));
+        assert!(module.contains("  projectWorkContext: {\n"));
     }
 
     /// Verifies the fetch transport module includes the shared error-decoding helpers.

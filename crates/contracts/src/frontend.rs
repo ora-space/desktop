@@ -19,10 +19,15 @@ pub struct FrontendPathParam {
 }
 
 /// Describes one frontend-facing HTTP operation exported from `ora-contracts`.
+///
+/// `namespace` and `member_name` place the operation on the generated client
+/// (`client.project.create`); `operation_name` stays the flat wire-level identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendEndpoint {
     pub operation_name: &'static str,
+    pub namespace: &'static str,
+    pub member_name: &'static str,
     pub method: FrontendHttpMethod,
     pub path_template: &'static str,
     pub request_type: &'static str,
@@ -53,6 +58,11 @@ const SESSION_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     wire_name: "sessionId",
 };
 
+const PROJECT_NAMESPACE: &str = "project";
+const PROJECT_WORK_CONTEXT_NAMESPACE: &str = "projectWorkContext";
+const TASK_NAMESPACE: &str = "task";
+const SESSION_NAMESPACE: &str = "session";
+
 const PROJECT_PATH_PARAMS: &[FrontendPathParam] = &[PROJECT_ID_PATH_PARAM];
 const TASK_PATH_PARAMS: &[FrontendPathParam] = &[TASK_ID_PATH_PARAM];
 const SESSION_PATH_PARAMS: &[FrontendPathParam] = &[SESSION_ID_PATH_PARAM];
@@ -61,6 +71,8 @@ const NO_PATH_PARAMS: &[FrontendPathParam] = &[];
 const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     FrontendEndpoint {
         operation_name: "createProject",
+        namespace: PROJECT_NAMESPACE,
+        member_name: "create",
         method: FrontendHttpMethod::Post,
         path_template: PROJECTS_PATH,
         request_type: "CreateProjectRequest",
@@ -70,6 +82,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "getProject",
+        namespace: PROJECT_NAMESPACE,
+        member_name: "get",
         method: FrontendHttpMethod::Get,
         path_template: PROJECT_PATH,
         request_type: "GetProjectRequest",
@@ -79,6 +93,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "listProjects",
+        namespace: PROJECT_NAMESPACE,
+        member_name: "list",
         method: FrontendHttpMethod::Get,
         path_template: PROJECTS_PATH,
         request_type: "ListProjectsRequest",
@@ -88,6 +104,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "updateProject",
+        namespace: PROJECT_NAMESPACE,
+        member_name: "update",
         method: FrontendHttpMethod::Put,
         path_template: PROJECT_PATH,
         request_type: "UpdateProjectRequest",
@@ -97,6 +115,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "deleteProject",
+        namespace: PROJECT_NAMESPACE,
+        member_name: "delete",
         method: FrontendHttpMethod::Delete,
         path_template: PROJECT_PATH,
         request_type: "DeleteProjectRequest",
@@ -106,6 +126,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "openProjectWorkContext",
+        namespace: PROJECT_WORK_CONTEXT_NAMESPACE,
+        member_name: "open",
         method: FrontendHttpMethod::Post,
         path_template: PROJECT_WORK_CONTEXT_OPEN_PATH,
         request_type: "OpenProjectWorkContextRequest",
@@ -115,6 +137,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "renewProjectWorkContext",
+        namespace: PROJECT_WORK_CONTEXT_NAMESPACE,
+        member_name: "renew",
         method: FrontendHttpMethod::Post,
         path_template: PROJECT_WORK_CONTEXT_RENEW_PATH,
         request_type: "RenewProjectWorkContextRequest",
@@ -124,6 +148,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "createTask",
+        namespace: TASK_NAMESPACE,
+        member_name: "create",
         method: FrontendHttpMethod::Post,
         path_template: TASKS_PATH,
         request_type: "CreateTaskRequest",
@@ -133,6 +159,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "getTask",
+        namespace: TASK_NAMESPACE,
+        member_name: "get",
         method: FrontendHttpMethod::Get,
         path_template: TASK_PATH,
         request_type: "GetTaskRequest",
@@ -142,6 +170,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "listTasks",
+        namespace: TASK_NAMESPACE,
+        member_name: "list",
         method: FrontendHttpMethod::Get,
         path_template: TASKS_PATH,
         request_type: "ListTasksRequest",
@@ -151,6 +181,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "updateTask",
+        namespace: TASK_NAMESPACE,
+        member_name: "update",
         method: FrontendHttpMethod::Put,
         path_template: TASK_PATH,
         request_type: "UpdateTaskRequest",
@@ -160,6 +192,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "deleteTask",
+        namespace: TASK_NAMESPACE,
+        member_name: "delete",
         method: FrontendHttpMethod::Delete,
         path_template: TASK_PATH,
         request_type: "DeleteTaskRequest",
@@ -169,6 +203,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "createSession",
+        namespace: SESSION_NAMESPACE,
+        member_name: "create",
         method: FrontendHttpMethod::Post,
         path_template: SESSIONS_PATH,
         request_type: "CreateSessionRequest",
@@ -178,6 +214,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "getSession",
+        namespace: SESSION_NAMESPACE,
+        member_name: "get",
         method: FrontendHttpMethod::Get,
         path_template: SESSION_PATH,
         request_type: "GetSessionRequest",
@@ -187,6 +225,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "listSessions",
+        namespace: SESSION_NAMESPACE,
+        member_name: "list",
         method: FrontendHttpMethod::Get,
         path_template: SESSIONS_PATH,
         request_type: "ListSessionsRequest",
@@ -196,6 +236,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "updateSession",
+        namespace: SESSION_NAMESPACE,
+        member_name: "update",
         method: FrontendHttpMethod::Put,
         path_template: SESSION_PATH,
         request_type: "UpdateSessionRequest",
@@ -205,6 +247,8 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     },
     FrontendEndpoint {
         operation_name: "deleteSession",
+        namespace: SESSION_NAMESPACE,
+        member_name: "delete",
         method: FrontendHttpMethod::Delete,
         path_template: SESSION_PATH,
         request_type: "DeleteSessionRequest",
@@ -227,6 +271,7 @@ mod tests {
         SESSION_PATH, SESSIONS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
     };
     use pretty_assertions::assert_eq;
+    use std::collections::BTreeSet;
 
     /// Verifies the exported endpoint manifest matches the current CRUD route surface.
     #[test]
@@ -236,6 +281,8 @@ mod tests {
             &[
                 FrontendEndpoint {
                     operation_name: "createProject",
+                    namespace: "project",
+                    member_name: "create",
                     method: FrontendHttpMethod::Post,
                     path_template: PROJECTS_PATH,
                     request_type: "CreateProjectRequest",
@@ -245,6 +292,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "getProject",
+                    namespace: "project",
+                    member_name: "get",
                     method: FrontendHttpMethod::Get,
                     path_template: PROJECT_PATH,
                     request_type: "GetProjectRequest",
@@ -257,6 +306,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "listProjects",
+                    namespace: "project",
+                    member_name: "list",
                     method: FrontendHttpMethod::Get,
                     path_template: PROJECTS_PATH,
                     request_type: "ListProjectsRequest",
@@ -266,6 +317,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "updateProject",
+                    namespace: "project",
+                    member_name: "update",
                     method: FrontendHttpMethod::Put,
                     path_template: PROJECT_PATH,
                     request_type: "UpdateProjectRequest",
@@ -278,6 +331,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "deleteProject",
+                    namespace: "project",
+                    member_name: "delete",
                     method: FrontendHttpMethod::Delete,
                     path_template: PROJECT_PATH,
                     request_type: "DeleteProjectRequest",
@@ -290,6 +345,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "openProjectWorkContext",
+                    namespace: "projectWorkContext",
+                    member_name: "open",
                     method: FrontendHttpMethod::Post,
                     path_template: PROJECT_WORK_CONTEXT_OPEN_PATH,
                     request_type: "OpenProjectWorkContextRequest",
@@ -299,6 +356,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "renewProjectWorkContext",
+                    namespace: "projectWorkContext",
+                    member_name: "renew",
                     method: FrontendHttpMethod::Post,
                     path_template: PROJECT_WORK_CONTEXT_RENEW_PATH,
                     request_type: "RenewProjectWorkContextRequest",
@@ -308,6 +367,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "createTask",
+                    namespace: "task",
+                    member_name: "create",
                     method: FrontendHttpMethod::Post,
                     path_template: TASKS_PATH,
                     request_type: "CreateTaskRequest",
@@ -317,6 +378,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "getTask",
+                    namespace: "task",
+                    member_name: "get",
                     method: FrontendHttpMethod::Get,
                     path_template: TASK_PATH,
                     request_type: "GetTaskRequest",
@@ -329,6 +392,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "listTasks",
+                    namespace: "task",
+                    member_name: "list",
                     method: FrontendHttpMethod::Get,
                     path_template: TASKS_PATH,
                     request_type: "ListTasksRequest",
@@ -338,6 +403,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "updateTask",
+                    namespace: "task",
+                    member_name: "update",
                     method: FrontendHttpMethod::Put,
                     path_template: TASK_PATH,
                     request_type: "UpdateTaskRequest",
@@ -350,6 +417,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "deleteTask",
+                    namespace: "task",
+                    member_name: "delete",
                     method: FrontendHttpMethod::Delete,
                     path_template: TASK_PATH,
                     request_type: "DeleteTaskRequest",
@@ -362,6 +431,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "createSession",
+                    namespace: "session",
+                    member_name: "create",
                     method: FrontendHttpMethod::Post,
                     path_template: SESSIONS_PATH,
                     request_type: "CreateSessionRequest",
@@ -371,6 +442,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "getSession",
+                    namespace: "session",
+                    member_name: "get",
                     method: FrontendHttpMethod::Get,
                     path_template: SESSION_PATH,
                     request_type: "GetSessionRequest",
@@ -383,6 +456,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "listSessions",
+                    namespace: "session",
+                    member_name: "list",
                     method: FrontendHttpMethod::Get,
                     path_template: SESSIONS_PATH,
                     request_type: "ListSessionsRequest",
@@ -392,6 +467,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "updateSession",
+                    namespace: "session",
+                    member_name: "update",
                     method: FrontendHttpMethod::Put,
                     path_template: SESSION_PATH,
                     request_type: "UpdateSessionRequest",
@@ -404,6 +481,8 @@ mod tests {
                 },
                 FrontendEndpoint {
                     operation_name: "deleteSession",
+                    namespace: "session",
+                    member_name: "delete",
                     method: FrontendHttpMethod::Delete,
                     path_template: SESSION_PATH,
                     request_type: "DeleteSessionRequest",
@@ -431,6 +510,8 @@ mod tests {
             update_task,
             FrontendEndpoint {
                 operation_name: "updateTask",
+                namespace: "task",
+                member_name: "update",
                 method: FrontendHttpMethod::Put,
                 path_template: TASK_PATH,
                 request_type: "UpdateTaskRequest",
@@ -442,6 +523,22 @@ mod tests {
                 has_json_body: true,
             }
         );
+    }
+
+    /// Verifies every namespace member is unique so no operation is shadowed on the generated client.
+    #[test]
+    fn exports_unique_namespace_members() {
+        let mut seen_members = BTreeSet::new();
+
+        for endpoint in frontend_endpoints() {
+            assert_eq!(
+                seen_members.insert((endpoint.namespace, endpoint.member_name)),
+                true,
+                "duplicate client member {}.{}",
+                endpoint.namespace,
+                endpoint.member_name
+            );
+        }
     }
 
     /// Verifies the exported endpoint manifest omits backend-owned worktree operations.
