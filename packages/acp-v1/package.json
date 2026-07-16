@@ -1,0 +1,50 @@
+{
+  "name": "@ora/acp-v1",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Agent Client Protocol (ACP) standardizes communication between code editors and coding agents. Forked from @agentclientprotocol/sdk for in-house development.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/acp.ts",
+    "./experimental/http-client": "./src/http-stream.ts",
+    "./experimental/ws-client": "./src/ws-stream.ts",
+    "./experimental/server": "./src/server.ts",
+    "./experimental/node": "./src/node-adapter.ts",
+    "./schema/schema.json": "./schema/schema.json"
+  },
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "generate": "node scripts/generate.js",
+    "build": "tsc",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix"
+  },
+  "dependencies": {
+    "zod": "^3.25.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@hey-api/openapi-ts": "^0.99.0",
+    "@types/node": "^26.0.1",
+    "@types/ws": "^8.5.13",
+    "@typescript-eslint/eslint-plugin": "^8.62.1",
+    "@typescript-eslint/parser": "^8.62.1",
+    "concurrently": "^10.0.0",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.7.0",
+    "http-server": "^14.1.1",
+    "prettier": "^3.9.4",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.0",
+    "ws": "^8.18.0"
+  }
+}

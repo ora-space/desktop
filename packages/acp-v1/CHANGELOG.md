@@ -1,0 +1,376 @@
+# Changelog
+
+## [1.2.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v1.2.0...v1.2.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **http:** make SSE close and response delivery deterministic ([#209](https://github.com/agentclientprotocol/typescript-sdk/issues/209)) ([2adee0f](https://github.com/agentclientprotocol/typescript-sdk/commit/2adee0f5071bd1201c84b7d8a2836cfe011d4c9a))
+* Preserve extensible union semantics in TS schemas ([#215](https://github.com/agentclientprotocol/typescript-sdk/issues/215)) ([e323221](https://github.com/agentclientprotocol/typescript-sdk/commit/e3232216ac172283e4f77f9d75c12f820952b5e9))
+
+## [1.2.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v1.1.0...v1.2.0) (2026-07-06)
+
+
+### Features
+
+* Update schema to 1.17.0 ([#204](https://github.com/agentclientprotocol/typescript-sdk/issues/204)) ([fa8b5bd](https://github.com/agentclientprotocol/typescript-sdk/commit/fa8b5bd426fec07a85203d6a6e4b83d173243cf1))
+* Update schema to 1.19.0 ([#213](https://github.com/agentclientprotocol/typescript-sdk/issues/213)) ([6599433](https://github.com/agentclientprotocol/typescript-sdk/commit/6599433640feb8e36372a767554869fd5097fdd3))
+
+
+### Bug Fixes
+
+* make ndJsonStream receive path linear in message size ([#210](https://github.com/agentclientprotocol/typescript-sdk/issues/210)) ([2fc41d2](https://github.com/agentclientprotocol/typescript-sdk/commit/2fc41d2822579f754042db4d4f8c53b7c9b9ad2f))
+* unify JSON-RPC message validation policy across transports ([#212](https://github.com/agentclientprotocol/typescript-sdk/issues/212)) ([5e01eb2](https://github.com/agentclientprotocol/typescript-sdk/commit/5e01eb2ac2cd72c8c6ebff1015874366c781eaa5)), closes [#211](https://github.com/agentclientprotocol/typescript-sdk/issues/211)
+
+## [1.1.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v1.0.0...v1.1.0) (2026-06-29)
+
+
+### Features
+
+* Expose request ids in handler contexts ([#202](https://github.com/agentclientprotocol/typescript-sdk/issues/202)) ([eda849c](https://github.com/agentclientprotocol/typescript-sdk/commit/eda849ca7894f32e4ed11df81eb5b024e5512e5b))
+
+## [1.0.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.29.0...v1.0.0) (2026-06-24)
+
+
+### Features
+
+* **schema:** Update to v1.16.0 of the schema ([#199](https://github.com/agentclientprotocol/typescript-sdk/issues/199)) ([de58791](https://github.com/agentclientprotocol/typescript-sdk/commit/de5879100c1bb5e2fdaebc957c1ca01364eb33cc))
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([#201](https://github.com/agentclientprotocol/typescript-sdk/issues/201)) ([008fc28](https://github.com/agentclientprotocol/typescript-sdk/commit/008fc2861adc3f87edc4daa12eb78b81a6fd7161))
+
+## [0.29.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.28.1...v0.29.0) (2026-06-22)
+
+
+### Features
+
+* **unstable:** Add support for request cancellation ([#195](https://github.com/agentclientprotocol/typescript-sdk/issues/195)) ([d5197f9](https://github.com/agentclientprotocol/typescript-sdk/commit/d5197f9f6346a4b57084552e0bdf3c71ccf64412))
+
+## [0.28.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.28.0...v0.28.1) (2026-06-19)
+
+
+### Bug Fixes
+
+* Expose peer contexts from app connections ([#190](https://github.com/agentclientprotocol/typescript-sdk/issues/190)) ([d657310](https://github.com/agentclientprotocol/typescript-sdk/commit/d6573109fd7c27170cd970aa9b28e7e6054e993e))
+
+## [0.28.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.27.1...v0.28.0) (2026-06-18)
+
+
+### Features
+
+* **schema:** Update to schema v1.14.0 ([#185](https://github.com/agentclientprotocol/typescript-sdk/issues/185)) ([3c619a7](https://github.com/agentclientprotocol/typescript-sdk/commit/3c619a737120bbd4ccc6282b893e94152125562c))
+
+## [0.27.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.27.0...v0.27.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **node-adapter:** Cap HTTP request body size ([#186](https://github.com/agentclientprotocol/typescript-sdk/issues/186)) ([3832d4c](https://github.com/agentclientprotocol/typescript-sdk/commit/3832d4ce69d9f44c5f886c9b3ff24169d6119236))
+* **node-adapter:** harden Node adapter request parsing ([220eae6](https://github.com/agentclientprotocol/typescript-sdk/commit/220eae660e459ac648fe352b756b586f39f9aa1e))
+
+## [0.27.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.26.0...v0.27.0) (2026-06-18)
+
+This is a big release! We have rewritten the SDK to have a more ergonomic design for creating new agents and clients. You can read more in the [Migration Guide](https://github.com/agentclientprotocol/typescript-sdk/blob/main/MIGRATION_0.26_0.27.md) for how to migrate.
+
+For now, you will still have the old interfaces available to ease the migration, but they are deprecated and will be removed in a future release.
+
+### Features
+
+* Experimental Streamable HTTP & WebSocket Transport ([#155](https://github.com/agentclientprotocol/typescript-sdk/issues/155)) ([d6a3d88](https://github.com/agentclientprotocol/typescript-sdk/commit/d6a3d88107d3a4440479a1aba3c664eccd384661))
+* New SDK design (see MIGRATION_0.26_0.27.md) ([#181](https://github.com/agentclientprotocol/typescript-sdk/issues/181)) ([87e2df3](https://github.com/agentclientprotocol/typescript-sdk/commit/87e2df33b5c8a010bd9e4d750c5a6a32ecb82388))
+
+## [0.26.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.25.1...v0.26.0) (2026-06-16)
+
+
+### Features
+
+* **schema:** Update to v1.13.7 of the schema ([#179](https://github.com/agentclientprotocol/typescript-sdk/issues/179)) ([34885b6](https://github.com/agentclientprotocol/typescript-sdk/commit/34885b639326bcfbda2053aab4679bd2f9773fec))
+
+## [0.25.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.25.0...v0.25.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* cleanup zod generation ([#170](https://github.com/agentclientprotocol/typescript-sdk/issues/170)) ([be44483](https://github.com/agentclientprotocol/typescript-sdk/commit/be44483cf0e49ffe8d078361f091e8783f69ed14))
+* Zod type inference errors ([#177](https://github.com/agentclientprotocol/typescript-sdk/issues/177)) ([d9fafa2](https://github.com/agentclientprotocol/typescript-sdk/commit/d9fafa20533e907a02754251a741a58f0cc07e81))
+
+## [0.25.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.24.0...v0.25.0) (2026-06-05)
+
+
+### Features
+
+* **schema:** stabilize deleteSession ([#168](https://github.com/agentclientprotocol/typescript-sdk/issues/168)) ([2cc77af](https://github.com/agentclientprotocol/typescript-sdk/commit/2cc77af0b4b9d8d4f64b41ed266e32ce00010bdc))
+
+## [0.24.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.23.0...v0.24.0) (2026-06-02)
+
+
+### Features
+
+* Add resilient schema deserialization ([#167](https://github.com/agentclientprotocol/typescript-sdk/issues/167)) ([5864e73](https://github.com/agentclientprotocol/typescript-sdk/commit/5864e7306e0feb0852cef9aee2a5ba53a0a7f627))
+* **schema:** Stabilize addl dirs and remove unstable model selectors ([#165](https://github.com/agentclientprotocol/typescript-sdk/issues/165)) ([fa6e302](https://github.com/agentclientprotocol/typescript-sdk/commit/fa6e30280874ccd702cc4ab7577d402d2864f619))
+
+## [0.23.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.22.1...v0.23.0) (2026-06-01)
+
+
+### Features
+
+* **schema:** Stabilize logout and update schema to v0.13.4 ([#163](https://github.com/agentclientprotocol/typescript-sdk/issues/163)) ([cfd900a](https://github.com/agentclientprotocol/typescript-sdk/commit/cfd900a981eb00dbcdee52db2b2b38847a957328))
+
+## [0.22.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.22.0...v0.22.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* Event ordering ([#153](https://github.com/agentclientprotocol/typescript-sdk/issues/153)) ([7b63226](https://github.com/agentclientprotocol/typescript-sdk/commit/7b632266f009865d0e8e64def5cd55367363845b))
+
+## [0.22.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.21.1...v0.22.0) (2026-05-18)
+
+
+### Features
+
+* **unstable:** Add session delete handling ([#152](https://github.com/agentclientprotocol/typescript-sdk/issues/152)) ([f9384f5](https://github.com/agentclientprotocol/typescript-sdk/commit/f9384f59008298b44fd1e22e5dde3f2e922fc7ec))
+* Update schema to v0.13.2 ([#150](https://github.com/agentclientprotocol/typescript-sdk/issues/150)) ([b15960b](https://github.com/agentclientprotocol/typescript-sdk/commit/b15960b74667f9a582470d58c18ebb9054e5acfd))
+
+## [0.21.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.21.0...v0.21.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* emit .js extensions in generated schema barrel for nodenext consumers ([#146](https://github.com/agentclientprotocol/typescript-sdk/issues/146)) ([63b96db](https://github.com/agentclientprotocol/typescript-sdk/commit/63b96db49d4826c02fe4afc62a7754db1f9f9ef7))
+
+## [0.21.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.20.0...v0.21.0) (2026-04-28)
+
+
+### Features
+
+* **unstable:** Add `providers/*` support ([#138](https://github.com/agentclientprotocol/typescript-sdk/issues/138)) ([e234c21](https://github.com/agentclientprotocol/typescript-sdk/commit/e234c213d362d2cd170f8215fa0758a62a59d54e))
+
+## [0.20.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.19.2...v0.20.0) (2026-04-23)
+
+
+### Features
+
+* Stabilize `closeSession` and `resumeSession` ([#132](https://github.com/agentclientprotocol/typescript-sdk/issues/132)) ([806d307](https://github.com/agentclientprotocol/typescript-sdk/commit/806d307ba92e824e859075f3f72fe1e9b35b8f0b))
+
+## [0.19.2](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.19.1...v0.19.2) (2026-04-23)
+
+
+### Bug Fixes
+
+* Avoid event loop timing causing out of order messages ([#130](https://github.com/agentclientprotocol/typescript-sdk/issues/130)) ([8f514f3](https://github.com/agentclientprotocol/typescript-sdk/commit/8f514f348decd2ed0f8a57b845c7e170aaa75376))
+
+## [0.19.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.19.0...v0.19.1) (2026-04-21)
+
+
+### Bug Fixes
+
+* avoid spurious unhandledRejection when transport fails mid-sendRequest ([#122](https://github.com/agentclientprotocol/typescript-sdk/issues/122)) ([b6b2cb4](https://github.com/agentclientprotocol/typescript-sdk/commit/b6b2cb44650286b4dc9ea8097cef46d4c41b6f1f))
+* Flush decoder state at end of NDJSON stream ([#119](https://github.com/agentclientprotocol/typescript-sdk/issues/119)) ([4e1b07a](https://github.com/agentclientprotocol/typescript-sdk/commit/4e1b07aab3fbbcc5b2c0bfbfa0adc63e1aa53f92))
+* Use TypeScript private keyword instead of ES #private fields ([#127](https://github.com/agentclientprotocol/typescript-sdk/issues/127)) ([c6e6ee2](https://github.com/agentclientprotocol/typescript-sdk/commit/c6e6ee2f369fde017e0f4df48e509bf041ab8985))
+
+## [0.19.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.18.2...v0.19.0) (2026-04-14)
+
+
+### Features
+
+* **unstable:** Initial unstable elicitation support ([#113](https://github.com/agentclientprotocol/typescript-sdk/issues/113)) ([bf259e9](https://github.com/agentclientprotocol/typescript-sdk/commit/bf259e9e36b38fc760397babe7f455cdf6665193))
+
+## [0.18.2](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.18.1...v0.18.2) (2026-04-08)
+
+
+### Bug Fixes
+
+* propagate input stream errors through ndJsonStream ([#111](https://github.com/agentclientprotocol/typescript-sdk/issues/111)) ([f57a8d1](https://github.com/agentclientprotocol/typescript-sdk/commit/f57a8d1d4606c6f12684e7790b0c9cfaba0e319c))
+
+## [0.18.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.18.0...v0.18.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* Handle ACP connection transport failures cleanly ([#103](https://github.com/agentclientprotocol/typescript-sdk/issues/103)) ([028ee3f](https://github.com/agentclientprotocol/typescript-sdk/commit/028ee3f6c89a51b6e0cc41aea7db97b3f9639812))
+
+## [0.18.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.17.1...v0.18.0) (2026-04-01)
+
+
+### Features
+
+* **unstable:** Add initial additionalDirectories and NES support ([#104](https://github.com/agentclientprotocol/typescript-sdk/issues/104)) ([43cde3b](https://github.com/agentclientprotocol/typescript-sdk/commit/43cde3ba20ee39040f5c28d4aa3e56adde3bbdae))
+
+## [0.17.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.17.0...v0.17.1) (2026-03-27)
+
+
+### Bug Fixes
+
+* Make sure we use zod/v4 path for imports ([#99](https://github.com/agentclientprotocol/typescript-sdk/issues/99)) ([e632d3b](https://github.com/agentclientprotocol/typescript-sdk/commit/e632d3be54cc55421b9a1d22c07a5df0b1c89a9b))
+
+## [0.17.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.16.1...v0.17.0) (2026-03-25)
+
+
+### Features
+
+* **schema:** Update schema to 0.11.3 ([#88](https://github.com/agentclientprotocol/typescript-sdk/issues/88)) ([0fe246e](https://github.com/agentclientprotocol/typescript-sdk/commit/0fe246e8e4979ac637fe7a0d14648ba03baecebf))
+
+## [0.16.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.16.0...v0.16.1) (2026-03-11)
+
+
+### Bug Fixes
+
+* **unstable:** Fixes for session/close capabilities ([#85](https://github.com/agentclientprotocol/typescript-sdk/issues/85)) ([e8721b7](https://github.com/agentclientprotocol/typescript-sdk/commit/e8721b79505a0a8eae03380bb3029c6419f8f1e6))
+
+## [0.16.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.15.0...v0.16.0) (2026-03-10)
+
+
+### Features
+
+* add unstable session/close ([#81](https://github.com/agentclientprotocol/typescript-sdk/issues/81)) ([2c9bc77](https://github.com/agentclientprotocol/typescript-sdk/commit/2c9bc77af971f22dc2c30f473f9f3e4b57c47621))
+* Stabilize unstable_listSessions to listSessions ([#84](https://github.com/agentclientprotocol/typescript-sdk/issues/84)) ([9e89bbc](https://github.com/agentclientprotocol/typescript-sdk/commit/9e89bbc6907d5ae343448b4d98c492fb296d74cf))
+
+## [0.15.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.14.1...v0.15.0) (2026-03-05)
+
+
+### Features
+
+* Update to 0.11.0 of the schema ([#79](https://github.com/agentclientprotocol/typescript-sdk/issues/79)) ([2763d63](https://github.com/agentclientprotocol/typescript-sdk/commit/2763d63fe53f25d9af66ff7265915a50e8449e7b))
+
+
+### Bug Fixes
+
+* use npx.cmd on Windows in client example ([#68](https://github.com/agentclientprotocol/typescript-sdk/issues/68)) ([fdc7815](https://github.com/agentclientprotocol/typescript-sdk/commit/fdc78155f8e917c6e3b854df26a69ec4e8024e74))
+
+## [0.14.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.14.0...v0.14.1) (2026-02-05)
+
+
+### Bug Fixes
+
+* inconsistent bigint vs number in zod and schema ([#66](https://github.com/agentclientprotocol/typescript-sdk/issues/66)) ([5e3c342](https://github.com/agentclientprotocol/typescript-sdk/commit/5e3c34229279989b385bd26baddc1536202635c8))
+
+## [0.14.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.13.1...v0.14.0) (2026-02-04)
+
+
+### Features
+
+* Stabilize Session Config Options ([#64](https://github.com/agentclientprotocol/typescript-sdk/issues/64)) ([15806a2](https://github.com/agentclientprotocol/typescript-sdk/commit/15806a212c7de266a87db8d265d53f2ecc4b8963))
+
+## [0.13.1](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.13.0...v0.13.1) (2026-01-22)
+
+
+### Bug Fixes
+
+* **schema:** Update to schema v0.10.7 ([#58](https://github.com/agentclientprotocol/typescript-sdk/issues/58)) ([ade1b68](https://github.com/agentclientprotocol/typescript-sdk/commit/ade1b6842b12ac9acece6d4540e00bca8ce8cdb3))
+
+## [0.13.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.12.0...v0.13.0) (2026-01-13)
+
+
+### Features
+
+* (breaking) no more auto underscoring of extension methods ([#55](https://github.com/agentclientprotocol/typescript-sdk/issues/55)) ([ec4b095](https://github.com/agentclientprotocol/typescript-sdk/commit/ec4b0950ff5bcdfa60826e720c25575929d1f034))
+* add unstable session config option handling ([#56](https://github.com/agentclientprotocol/typescript-sdk/issues/56)) ([ec7bb47](https://github.com/agentclientprotocol/typescript-sdk/commit/ec7bb47628f2be505e8fe0f784674dc6573d2f15))
+* Update to 0.10.6 of the schema ([#53](https://github.com/agentclientprotocol/typescript-sdk/issues/53)) ([766964e](https://github.com/agentclientprotocol/typescript-sdk/commit/766964e29df567a4725911002c3184b0c19ec99a))
+
+## [0.12.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.11.0...v0.12.0) (2025-12-16)
+
+
+### Features
+
+* **unstable:** add list sessions method ([#47](https://github.com/agentclientprotocol/typescript-sdk/issues/47)) ([2efd404](https://github.com/agentclientprotocol/typescript-sdk/commit/2efd40492a5569cbe0f570731279dc8e9ebeb9d0))
+* Update to 0.10.4 of the schema ([#49](https://github.com/agentclientprotocol/typescript-sdk/issues/49)) ([6c44fb2](https://github.com/agentclientprotocol/typescript-sdk/commit/6c44fb239c8420d0f797aa111d7d1ec6ec2d77da))
+
+## [0.11.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.10.0...v0.11.0) (2025-12-12)
+
+
+### Features
+
+* **unstable:** add resumeSession support ([#41](https://github.com/agentclientprotocol/typescript-sdk/issues/41)) ([721c450](https://github.com/agentclientprotocol/typescript-sdk/commit/721c450c1eea1ec4ed2bcaf370a02b2ebfd2aa1c))
+
+## [0.10.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.9.0...v0.10.0) (2025-12-11)
+
+
+### Features
+
+* Update to 0.10.2 of the schema ([#39](https://github.com/agentclientprotocol/typescript-sdk/issues/39)) ([0773dde](https://github.com/agentclientprotocol/typescript-sdk/commit/0773ddecc9881cbf18265c26ef422a51aeb7617b))
+
+## [0.9.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.8.0...v0.9.0) (2025-12-11)
+
+
+### Features
+
+* Update to 0.10.1 of the schema ([#36](https://github.com/agentclientprotocol/typescript-sdk/issues/36)) ([210392b](https://github.com/agentclientprotocol/typescript-sdk/commit/210392bfdcb95d2f515784af914323d2606194f6))
+* Unstable: add unstable forkSession support ([#37](https://github.com/agentclientprotocol/typescript-sdk/pull/37)) ([16262ef
+](https://github.com/agentclientprotocol/typescript-sdk/commit/16262ef7b52892f935aa7fb39d98657895345ff4))
+
+## [0.8.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.7.0...v0.8.0) (2025-12-08)
+
+
+### Features
+
+* Update to 0.10 of the schema ([#31](https://github.com/agentclientprotocol/typescript-sdk/issues/31)) ([f026432](https://github.com/agentclientprotocol/typescript-sdk/commit/f02643202801a8947ce78710ded6f3f7f6fa7ee8))
+
+## [0.7.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.6.0...v0.7.0) (2025-12-01)
+
+
+### Features
+
+* Update to v0.9.1 of the schema ([#28](https://github.com/agentclientprotocol/typescript-sdk/issues/28)) ([6166944](https://github.com/agentclientprotocol/typescript-sdk/commit/6166944f69a212a6db2d68f315d33ed3214668d4))
+
+## [0.6.0](https://github.com/agentclientprotocol/typescript-sdk/compare/v0.5.1...v0.6.0) (2025-12-01)
+
+Updates to the latest version of the ACP JSON Schema, [v0.8.0](https://github.com/agentclientprotocol/agent-client-protocol/releases/tag/v0.8.0)
+
+This update provides much improved schema interfaces. The migration should be minimal because in TypeScript the interfaces should be functionally equivalent. But there may be some areas where the types are now more informative to the compiler and will hopefully help you catch errors earlier.
+
+## 0.5.1 (2025-10-24)
+
+- Add ability for agents and clients to provide information about their implementation
+- Fix incorrectly serialized `_meta` field on `SetSessionModeResponse`
+
+## 0.5.0 (2025-10-24)
+
+- Provide access to an `AbortSignal` and `closed` promise on connections so you can wait for the connection to close and handle any other cleanup tasks you need for a graceful shutdown. https://github.com/agentclientprotocol/typescript-sdk/pull/11
+- Allow for more customization of error messages: https://github.com/agentclientprotocol/typescript-sdk/pull/12
+- Update to latest ACP JSON Schema: https://github.com/agentclientprotocol/typescript-sdk/pull/10
+
+## 0.4.9 (2025-10-21)
+
+- Fix: incorrect method for session/set_model client implementation.
+
+## 0.4.8 (2025-10-15)
+
+- Fix: return valid setSessionModel response object
+
+## 0.4.7 (2025-10-11)
+
+- New repo: https://github.com/agentclientprotocol/typescript-sdk
+
+## 0.4.6 (2025-10-10)
+
+- No changes
+
+## 0.4.5 (2025-10-02)
+
+- **Unstable** initial support for model selection.
+
+## 0.4.4 (2025-09-30)
+
+### Protocol
+
+- Correctly mark capability-based `Agent` and `Client` methods as optional.
+
+## 0.4.3 (2025-09-25)
+
+- No changes
+
+## 0.4.2 (2025-09-22)
+
+- No changes
+
+## 0.4.1 (2025-09-22)
+
+- No changes
+
+## 0.4.0 (2025-09-17)
+
+- Use Stream abstraction instead of raw byte streams [#93](https://github.com/agentclientprotocol/agent-client-protocol/pull/93)
+  - Makes it easier to use with websockets instead of stdio
+- Improve type safety for method map helpers [#94](https://github.com/agentclientprotocol/agent-client-protocol/pull/94)
