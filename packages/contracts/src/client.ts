@@ -4,39 +4,93 @@ import type { ContractTransport, ContractTransportRequest } from "./transport.js
 
 type ClientRequestShape = object;
 
+type ClientOperation<Operation extends EndpointOperation> = (
+  request: RequestByOperation[Operation],
+) => Promise<ResponseByOperation[Operation]>;
+
 export type ContractsClient = {
-  [Operation in EndpointOperation]: (request: RequestByOperation[Operation]) => Promise<ResponseByOperation[Operation]>;
+  project: {
+    create: ClientOperation<"createProject">;
+    get: ClientOperation<"getProject">;
+    list: ClientOperation<"listProjects">;
+    update: ClientOperation<"updateProject">;
+    delete: ClientOperation<"deleteProject">;
+  };
+  projectWorkContext: {
+    open: ClientOperation<"openProjectWorkContext">;
+    renew: ClientOperation<"renewProjectWorkContext">;
+  };
+  task: {
+    create: ClientOperation<"createTask">;
+    get: ClientOperation<"getTask">;
+    list: ClientOperation<"listTasks">;
+    update: ClientOperation<"updateTask">;
+    delete: ClientOperation<"deleteTask">;
+  };
+  session: {
+    create: ClientOperation<"createSession">;
+    get: ClientOperation<"getSession">;
+    list: ClientOperation<"listSessions">;
+    update: ClientOperation<"updateSession">;
+    delete: ClientOperation<"deleteSession">;
+  };
+  skill: {
+    create: ClientOperation<"createSkill">;
+    get: ClientOperation<"getSkill">;
+    list: ClientOperation<"listSkills">;
+    update: ClientOperation<"updateSkill">;
+    delete: ClientOperation<"deleteSkill">;
+  };
+  agent: {
+    create: ClientOperation<"createAgent">;
+    get: ClientOperation<"getAgent">;
+    list: ClientOperation<"listAgents">;
+    update: ClientOperation<"updateAgent">;
+    delete: ClientOperation<"deleteAgent">;
+  };
 };
 
 export function createContractsClient(transport: ContractTransport): ContractsClient {
   return {
-    createProject: (request) => executeOperation("createProject", request, transport),
-    getProject: (request) => executeOperation("getProject", request, transport),
-    listProjects: (request) => executeOperation("listProjects", request, transport),
-    updateProject: (request) => executeOperation("updateProject", request, transport),
-    deleteProject: (request) => executeOperation("deleteProject", request, transport),
-    openProjectWorkContext: (request) => executeOperation("openProjectWorkContext", request, transport),
-    renewProjectWorkContext: (request) => executeOperation("renewProjectWorkContext", request, transport),
-    createTask: (request) => executeOperation("createTask", request, transport),
-    getTask: (request) => executeOperation("getTask", request, transport),
-    listTasks: (request) => executeOperation("listTasks", request, transport),
-    updateTask: (request) => executeOperation("updateTask", request, transport),
-    deleteTask: (request) => executeOperation("deleteTask", request, transport),
-    createSession: (request) => executeOperation("createSession", request, transport),
-    getSession: (request) => executeOperation("getSession", request, transport),
-    listSessions: (request) => executeOperation("listSessions", request, transport),
-    updateSession: (request) => executeOperation("updateSession", request, transport),
-    deleteSession: (request) => executeOperation("deleteSession", request, transport),
-    createSkill: (request) => executeOperation("createSkill", request, transport),
-    getSkill: (request) => executeOperation("getSkill", request, transport),
-    listSkills: (request) => executeOperation("listSkills", request, transport),
-    updateSkill: (request) => executeOperation("updateSkill", request, transport),
-    deleteSkill: (request) => executeOperation("deleteSkill", request, transport),
-    createAgent: (request) => executeOperation("createAgent", request, transport),
-    getAgent: (request) => executeOperation("getAgent", request, transport),
-    listAgents: (request) => executeOperation("listAgents", request, transport),
-    updateAgent: (request) => executeOperation("updateAgent", request, transport),
-    deleteAgent: (request) => executeOperation("deleteAgent", request, transport),
+    project: {
+      create: (request) => executeOperation("createProject", request, transport),
+      get: (request) => executeOperation("getProject", request, transport),
+      list: (request) => executeOperation("listProjects", request, transport),
+      update: (request) => executeOperation("updateProject", request, transport),
+      delete: (request) => executeOperation("deleteProject", request, transport),
+    },
+    projectWorkContext: {
+      open: (request) => executeOperation("openProjectWorkContext", request, transport),
+      renew: (request) => executeOperation("renewProjectWorkContext", request, transport),
+    },
+    task: {
+      create: (request) => executeOperation("createTask", request, transport),
+      get: (request) => executeOperation("getTask", request, transport),
+      list: (request) => executeOperation("listTasks", request, transport),
+      update: (request) => executeOperation("updateTask", request, transport),
+      delete: (request) => executeOperation("deleteTask", request, transport),
+    },
+    session: {
+      create: (request) => executeOperation("createSession", request, transport),
+      get: (request) => executeOperation("getSession", request, transport),
+      list: (request) => executeOperation("listSessions", request, transport),
+      update: (request) => executeOperation("updateSession", request, transport),
+      delete: (request) => executeOperation("deleteSession", request, transport),
+    },
+    skill: {
+      create: (request) => executeOperation("createSkill", request, transport),
+      get: (request) => executeOperation("getSkill", request, transport),
+      list: (request) => executeOperation("listSkills", request, transport),
+      update: (request) => executeOperation("updateSkill", request, transport),
+      delete: (request) => executeOperation("deleteSkill", request, transport),
+    },
+    agent: {
+      create: (request) => executeOperation("createAgent", request, transport),
+      get: (request) => executeOperation("getAgent", request, transport),
+      list: (request) => executeOperation("listAgents", request, transport),
+      update: (request) => executeOperation("updateAgent", request, transport),
+      delete: (request) => executeOperation("deleteAgent", request, transport),
+    },
   };
 }
 
