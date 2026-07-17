@@ -1183,6 +1183,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-plugin-protocol"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "ts-rs",
+ "uuid",
+]
+
+[[package]]
 name = "ora-pty"
 version = "0.0.0"
 dependencies = [
