@@ -405,6 +405,10 @@ fn render_index_module() -> String {
     source.push_str("export * from \"./project-work-context.js\";\n");
     source.push_str("export * from \"./session.js\";\n");
     source.push_str("export * from \"./task.js\";\n");
+    source.push_str("export * from \"./acp/content.js\";\n");
+    source.push_str("export * from \"./acp/prompt_turn.js\";\n");
+    source.push_str("export * from \"./acp/session_delete.js\";\n");
+    source.push_str("export * from \"./acp/tool_calls.js\";\n");
 
     source
 }
@@ -561,6 +565,10 @@ mod tests {
         });
 
         let generated_files = [
+            "acp/content.ts",
+            "acp/prompt_turn.ts",
+            "acp/session_delete.ts",
+            "acp/tool_calls.ts",
             "client.ts",
             "endpoints.ts",
             "fetch.ts",
@@ -583,6 +591,8 @@ mod tests {
         let index_module = fs::read_to_string(package_source_directory.join("index.ts"))
             .unwrap_or_else(|error| panic!("failed to read generated index module: {error}"));
 
+        assert!(index_module.contains("export * from \"./acp/content.js\";"));
+        assert!(index_module.contains("export * from \"./acp/tool_calls.js\";"));
         assert_eq!(index_module, render_index_module(),);
     }
 }

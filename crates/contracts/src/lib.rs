@@ -1,3 +1,4 @@
+pub mod acp;
 mod frontend;
 mod project;
 mod project_work_context;
@@ -36,7 +37,9 @@ use ts_rs::{Config, ExportError, TS};
 pub fn export_typescript_bindings_to(
     output_directory: impl AsRef<Path>,
 ) -> Result<(), ExportError> {
-    let config = Config::new().with_out_dir(output_directory.as_ref());
+    let config = Config::new()
+        .with_out_dir(output_directory.as_ref())
+        .with_import_extension(Some("js"));
 
     Project::export(&config)?;
     CreateProjectRequest::export(&config)?;
@@ -84,6 +87,8 @@ pub fn export_typescript_bindings_to(
     UpdateTaskResponse::export(&config)?;
     DeleteTaskRequest::export(&config)?;
     DeleteTaskResponse::export(&config)?;
+
+    acp::export_typescript_bindings(&config)?;
 
     Ok(())
 }

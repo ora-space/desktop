@@ -6,3 +6,7 @@ export * from "./project.js";
 export * from "./project-work-context.js";
 export * from "./session.js";
 export * from "./task.js";
+export * from "./acp/content.js";
+export * from "./acp/prompt_turn.js";
+export * from "./acp/session_delete.js";
+export * from "./acp/tool_calls.js";
