@@ -6,7 +6,7 @@ import type { ToolCall, ToolCallUpdate } from "./tool_calls.js";
  * Streams one chunk of an agent-authored message.
  */
 export type AgentMessageChunk = {
-  messageId: string | null;
+  messageId?: string | null;
   content: ContentBlock;
 };
 
@@ -49,13 +49,17 @@ export type SessionCancelNotification = { sessionId: string };
  */
 export type SessionPromptRequest = {
   sessionId: string;
+  messageId?: string | null;
   prompt: Array<ContentBlock>;
 };
 
 /**
  * Carries the internal result of `session/prompt`.
  */
-export type SessionPromptResponse = { stopReason: StopReason };
+export type SessionPromptResponse = {
+  stopReason: StopReason;
+  userMessageId?: string | null;
+};
 
 /**
  * Represents the session updates shown across the prompt-turn and tool-call flows.
@@ -88,4 +92,4 @@ export type StopReason =
 /**
  * Reports current context usage and optional cumulative cost.
  */
-export type UsageUpdate = { used: number; size: number; cost: Cost | null };
+export type UsageUpdate = { used: number; size: number; cost?: Cost | null };

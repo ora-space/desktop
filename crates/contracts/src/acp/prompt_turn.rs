@@ -6,9 +6,12 @@ use super::{ContentBlock, ToolCall, ToolCallUpdate};
 /// Carries the internal parameters of `session/prompt`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/prompt_turn.ts")]
 pub struct SessionPromptRequest {
     pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
     pub prompt: Vec<ContentBlock>,
 }
 
@@ -27,9 +30,12 @@ pub enum StopReason {
 /// Carries the internal result of `session/prompt`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/prompt_turn.ts")]
 pub struct SessionPromptResponse {
     pub stop_reason: StopReason,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_message_id: Option<String>,
 }
 
 /// Carries the internal parameters of the `session/cancel` notification.
@@ -81,6 +87,7 @@ pub struct PlanUpdate {
 /// Streams one chunk of an agent-authored message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/prompt_turn.ts")]
 pub struct AgentMessageChunk {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,6 +107,7 @@ pub struct Cost {
 /// Reports current context usage and optional cumulative cost.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/prompt_turn.ts")]
 pub struct UsageUpdate {
     #[ts(type = "number")]

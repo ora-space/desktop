@@ -4,9 +4,9 @@
  * Carries optional presentation hints for content.
  */
 export type Annotations = {
-  audience: Array<Role> | null;
-  priority: number | null;
-  lastModified: string | null;
+  audience?: Array<Role> | null;
+  priority?: number | null;
+  lastModified?: string | null;
 };
 
 /**
@@ -15,7 +15,7 @@ export type Annotations = {
 export type AudioContent = {
   data: string;
   mimeType: string;
-  annotations: Annotations | null;
+  annotations?: Annotations | null;
 };
 
 /**
@@ -24,7 +24,7 @@ export type AudioContent = {
 export type BlobResourceContents = {
   uri: string;
   blob: string;
-  mimeType: string | null;
+  mimeType?: string | null;
 };
 
 /**
@@ -37,7 +37,7 @@ export type ContentBlock =
   | {
     "type": "resource";
     resource: EmbeddedResourceContents;
-    annotations: Annotations | null;
+    annotations?: Annotations | null;
   }
   | { "type": "resource_link" } & ResourceLink;
 
@@ -54,8 +54,8 @@ export type EmbeddedResourceContents =
 export type ImageContent = {
   data: string;
   mimeType: string;
-  uri: string | null;
-  annotations: Annotations | null;
+  uri?: string | null;
+  annotations?: Annotations | null;
 };
 
 /**
@@ -64,11 +64,11 @@ export type ImageContent = {
 export type ResourceLink = {
   uri: string;
   name: string;
-  mimeType: string | null;
-  title: string | null;
-  description: string | null;
-  size: number | null;
-  annotations: Annotations | null;
+  mimeType?: string | null;
+  title?: string | null;
+  description?: string | null;
+  size?: number | null;
+  annotations?: Annotations | null;
 };
 
 /**
@@ -79,7 +79,7 @@ export type Role = "user" | "assistant";
 /**
  * Contains plain text exchanged in a prompt or update.
  */
-export type TextContent = { text: string; annotations: Annotations | null };
+export type TextContent = { text: string; annotations?: Annotations | null };
 
 /**
  * Embeds a textual resource directly in a content block.
@@ -87,5 +87,5 @@ export type TextContent = { text: string; annotations: Annotations | null };
 export type TextResourceContents = {
   uri: string;
   text: string;
-  mimeType: string | null;
+  mimeType?: string | null;
 };

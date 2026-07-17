@@ -56,6 +56,7 @@ pub struct ContentToolCallContent {
 /// Describes a file modification produced by a tool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/tool_calls.ts")]
 pub struct DiffToolCallContent {
     pub path: String,
@@ -85,6 +86,7 @@ pub enum ToolCallContent {
 /// Points to a file location affected by a tool call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/tool_calls.ts")]
 pub struct ToolCallLocation {
     pub path: String,
@@ -95,6 +97,7 @@ pub struct ToolCallLocation {
 /// Announces a new tool call and its initial presentation state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/tool_calls.ts")]
 pub struct ToolCall {
     pub tool_call_id: String,
@@ -118,6 +121,7 @@ pub struct ToolCall {
 /// Carries a partial update to an existing tool call.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/tool_calls.ts")]
 pub struct ToolCallUpdate {
     pub tool_call_id: String,

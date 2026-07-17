@@ -3,9 +3,10 @@ use serde_json::json;
 
 use super::{
     BlobResourceContents, ContentBlock, ContentToolCallContent, EmbeddedResourceContents,
-    ImageContent, ResourceLink, SessionPromptRequest, SessionRequestPermissionResponse,
-    SessionUpdate, SessionUpdateNotification, TextContent, TextResourceContents, ToolCall,
-    ToolCallContent, ToolCallStatus, ToolKind, ToolPermissionOutcome,
+    ImageContent, ResourceLink, SessionPromptRequest, SessionPromptResponse,
+    SessionRequestPermissionResponse, SessionUpdate, SessionUpdateNotification, StopReason,
+    TextContent, TextResourceContents, ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
+    ToolPermissionOutcome,
 };
 
 /// Ensures all documented content variants preserve their tagged wire representation.
@@ -64,6 +65,7 @@ fn round_trips_content_blocks() {
 fn serializes_session_prompt_params_only() {
     let request = SessionPromptRequest {
         session_id: "sess_123".to_owned(),
+        message_id: Some("4c12d49b-729c-4086-bfed-5b82e9a53400".to_owned()),
         prompt: vec![ContentBlock::Text(TextContent {
             text: "hello".to_owned(),
             annotations: None,
@@ -73,10 +75,29 @@ fn serializes_session_prompt_params_only() {
     assert_eq!(
         json!({
             "sessionId": "sess_123",
+            "messageId": "4c12d49b-729c-4086-bfed-5b82e9a53400",
             "prompt": [{ "type": "text", "text": "hello" }]
         }),
         serde_json::to_value(request)
             .unwrap_or_else(|error| panic!("prompt request should serialize: {error}"))
+    );
+}
+
+/// Ensures prompt responses acknowledge the user message identifier when supported.
+#[test]
+fn serializes_prompt_response_message_acknowledgement() {
+    let response = SessionPromptResponse {
+        stop_reason: StopReason::EndTurn,
+        user_message_id: Some("4c12d49b-729c-4086-bfed-5b82e9a53400".to_owned()),
+    };
+
+    assert_eq!(
+        json!({
+            "stopReason": "end_turn",
+            "userMessageId": "4c12d49b-729c-4086-bfed-5b82e9a53400"
+        }),
+        serde_json::to_value(response)
+            .unwrap_or_else(|error| panic!("prompt response should serialize: {error}"))
     );
 }
 

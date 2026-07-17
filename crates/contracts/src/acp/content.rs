@@ -13,6 +13,7 @@ pub enum Role {
 /// Carries optional presentation hints for content.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/content.ts")]
 pub struct Annotations {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -26,6 +27,7 @@ pub struct Annotations {
 /// Contains plain text exchanged in a prompt or update.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/content.ts")]
 pub struct TextContent {
     pub text: String,
@@ -36,6 +38,7 @@ pub struct TextContent {
 /// Contains a base64-encoded image.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/content.ts")]
 pub struct ImageContent {
     pub data: String,
@@ -49,6 +52,7 @@ pub struct ImageContent {
 /// Contains base64-encoded audio.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/content.ts")]
 pub struct AudioContent {
     pub data: String,
@@ -60,6 +64,7 @@ pub struct AudioContent {
 /// Embeds a textual resource directly in a content block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/content.ts")]
 pub struct TextResourceContents {
     pub uri: String,
@@ -71,6 +76,7 @@ pub struct TextResourceContents {
 /// Embeds a base64-encoded binary resource directly in a content block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/content.ts")]
 pub struct BlobResourceContents {
     pub uri: String,
@@ -91,6 +97,7 @@ pub enum EmbeddedResourceContents {
 /// References a resource that the agent can access separately.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 #[ts(export_to = "acp/content.ts")]
 pub struct ResourceLink {
     pub uri: String,
@@ -119,6 +126,7 @@ pub enum ContentBlock {
     Resource {
         resource: EmbeddedResourceContents,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional = nullable)]
         annotations: Option<Annotations>,
     },
     ResourceLink(ResourceLink),

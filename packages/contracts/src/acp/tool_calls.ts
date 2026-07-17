@@ -11,7 +11,7 @@ export type ContentToolCallContent = { content: ContentBlock };
  */
 export type DiffToolCallContent = {
   path: string;
-  oldText: string | null;
+  oldText?: string | null;
   newText: string;
 };
 
@@ -62,10 +62,10 @@ export type ToolCall = {
   title: string;
   kind: ToolKind;
   status: ToolCallStatus;
-  content: Array<ToolCallContent> | null;
-  locations: Array<ToolCallLocation> | null;
-  rawInput: unknown;
-  rawOutput: unknown;
+  content?: Array<ToolCallContent> | null;
+  locations?: Array<ToolCallLocation> | null;
+  rawInput?: unknown;
+  rawOutput?: unknown;
 };
 
 /**
@@ -79,7 +79,7 @@ export type ToolCallContent =
 /**
  * Points to a file location affected by a tool call.
  */
-export type ToolCallLocation = { path: string; line: number | null };
+export type ToolCallLocation = { path: string; line?: number | null };
 
 /**
  * Describes the execution lifecycle of a tool call.
@@ -91,13 +91,13 @@ export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
  */
 export type ToolCallUpdate = {
   toolCallId: string;
-  title: string | null;
-  kind: ToolKind | null;
-  status: ToolCallStatus | null;
-  content: Array<ToolCallContent> | null;
-  locations: Array<ToolCallLocation> | null;
-  rawInput: unknown;
-  rawOutput: unknown;
+  title?: string | null;
+  kind?: ToolKind | null;
+  status?: ToolCallStatus | null;
+  content?: Array<ToolCallContent> | null;
+  locations?: Array<ToolCallLocation> | null;
+  rawInput?: unknown;
+  rawOutput?: unknown;
 };
 
 /**
