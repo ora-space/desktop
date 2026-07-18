@@ -9,6 +9,7 @@ fn bootstrap_project_id() -> ProjectId {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let _ = bootstrap_project_id();
             if cfg!(debug_assertions) {

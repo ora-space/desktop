@@ -1,4 +1,5 @@
 mod agent;
+mod file_system;
 mod frontend;
 mod project;
 mod project_work_context;
@@ -11,10 +12,15 @@ pub use agent::{
     GetAgentRequest, GetAgentResponse, ListAgentsRequest, ListAgentsResponse, UpdateAgentRequest,
     UpdateAgentResponse,
 };
+pub use file_system::{
+    FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryRequest,
+    ListDirectoryResponse,
+};
 pub use frontend::{
-    AGENT_PATH, AGENTS_PATH, FrontendEndpoint, FrontendHttpMethod, FrontendPathParam, PROJECT_PATH,
-    PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_PATH,
-    SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
+    AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, FrontendEndpoint, FrontendHttpMethod,
+    FrontendPathParam, FrontendQueryParam, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_PATH, SESSIONS_PATH, SKILL_PATH,
+    SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
 };
 pub use project::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
@@ -60,6 +66,11 @@ pub fn export_typescript_bindings_to(
     UpdateAgentResponse::export(&config)?;
     DeleteAgentRequest::export(&config)?;
     DeleteAgentResponse::export(&config)?;
+    FileSystemEntryKind::export(&config)?;
+    FileSystemEntry::export(&config)?;
+    FileSystemBreadcrumb::export(&config)?;
+    ListDirectoryRequest::export(&config)?;
+    ListDirectoryResponse::export(&config)?;
     Project::export(&config)?;
     CreateProjectRequest::export(&config)?;
     CreateProjectResponse::export(&config)?;

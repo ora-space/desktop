@@ -39,6 +39,10 @@ pub enum WebBootstrapError {
     InvalidProjectPathEmpty,
     #[error("ORA_LOG_MAX_DAYS must be greater than zero")]
     InvalidLogMaxDaysZero,
+    #[error("server user home directory is unavailable")]
+    HomeDirectoryUnavailable,
+    #[error("server user home directory must be absolute: {home_directory:?}")]
+    HomeDirectoryNotAbsolute { home_directory: std::path::PathBuf },
     #[error("failed to create runtime data directory")]
     DataDirectoryCreate(#[source] std::io::Error),
     #[error("failed to bootstrap SQLite database")]
@@ -81,6 +85,15 @@ impl WebApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             code: "bad_request",
+            message: message.into(),
+        }
+    }
+
+    /// Creates a filesystem API error with a stable transport code and status.
+    pub fn file_system(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            code,
             message: message.into(),
         }
     }
@@ -187,6 +200,13 @@ impl From<ApplicationError> for WebApiError {
 impl From<JsonRejection> for WebApiError {
     /// Maps JSON decoding failures into a stable bad-request API response.
     fn from(error: JsonRejection) -> Self {
+        Self::bad_request(error.body_text())
+    }
+}
+
+impl From<axum::extract::rejection::QueryRejection> for WebApiError {
+    /// Maps query decoding failures into the same stable bad-request envelope as JSON failures.
+    fn from(error: axum::extract::rejection::QueryRejection) -> Self {
         Self::bad_request(error.body_text())
     }
 }

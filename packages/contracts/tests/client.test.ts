@@ -94,6 +94,46 @@ test("omits JSON bodies for path-only operations", async () => {
   ]);
 });
 
+test("encodes optional query parameters without adding a JSON body", async () => {
+  const requests: ContractTransportRequest[] = [];
+  const client = createContractsClient(
+    recordingTransport(requests, {
+      currentPath: "/home/ora/projects & tools",
+      parentPath: "/home/ora",
+      breadcrumbs: [],
+      entries: [],
+    }),
+  );
+
+  await client.fileSystem.listDirectory({ path: "/home/ora/projects & tools" });
+
+  assert.deepEqual(requests, [
+    {
+      operationName: "listDirectory",
+      method: "GET",
+      path: "/api/file-system/directory?path=%2Fhome%2Fora%2Fprojects+%26+tools",
+      body: undefined,
+      headers: {},
+    },
+  ]);
+});
+
+test("omits absent optional query parameters", async () => {
+  const requests: ContractTransportRequest[] = [];
+  const client = createContractsClient(
+    recordingTransport(requests, {
+      currentPath: "/home/ora",
+      parentPath: "/home",
+      breadcrumbs: [],
+      entries: [],
+    }),
+  );
+
+  await client.fileSystem.listDirectory({});
+
+  assert.deepEqual(requests[0]?.path, "/api/file-system/directory");
+});
+
 test("uses a skill id in PUT paths while leaving editable fields in JSON", async () => {
   const requests: ContractTransportRequest[] = [];
   const client = createContractsClient(

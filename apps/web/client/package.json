@@ -13,6 +13,7 @@
     "@ora/app-shell": "workspace:*",
     "@ora/contracts": "workspace:*",
     "@ora/mock-service": "workspace:*",
+    "@ora/platform": "workspace:*",
     "@ora/ui": "workspace:*",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.2.4",

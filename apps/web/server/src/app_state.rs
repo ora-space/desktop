@@ -1,4 +1,6 @@
-use crate::service::{AgentApi, ProjectApi, ProjectWorkContextApi, SessionApi, SkillApi, TaskApi};
+use crate::service::{
+    AgentApi, FileSystemApi, ProjectApi, ProjectWorkContextApi, SessionApi, SkillApi, TaskApi,
+};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -6,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[derive(Clone)]
 pub struct AppState {
     agent_api: Arc<AgentApi>,
+    file_system_api: Arc<FileSystemApi>,
     project_api: Arc<ProjectApi>,
     project_work_context_api: Arc<ProjectWorkContextApi>,
     task_api: Arc<TaskApi>,
@@ -18,6 +21,7 @@ impl AppState {
     /// Creates one shared application state value with readiness disabled until bootstrap completes.
     pub fn new(
         agent_api: Arc<AgentApi>,
+        file_system_api: Arc<FileSystemApi>,
         project_api: Arc<ProjectApi>,
         project_work_context_api: Arc<ProjectWorkContextApi>,
         task_api: Arc<TaskApi>,
@@ -26,6 +30,7 @@ impl AppState {
     ) -> Self {
         Self {
             agent_api,
+            file_system_api,
             project_api,
             project_work_context_api,
             task_api,
@@ -38,6 +43,11 @@ impl AppState {
     /// Returns the shared configurable-agent API used by HTTP routes.
     pub fn agent_api(&self) -> &Arc<AgentApi> {
         &self.agent_api
+    }
+
+    /// Returns the shared read-only filesystem API used by the web path picker.
+    pub fn file_system_api(&self) -> &Arc<FileSystemApi> {
+        &self.file_system_api
     }
 
     /// Returns the shared project API that routes delegate into.

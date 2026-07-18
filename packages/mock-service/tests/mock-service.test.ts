@@ -43,6 +43,7 @@ test("defines one Service Worker handler for every contracts endpoint", () => {
     "getSkill",
     "getTask",
     "listAgents",
+    "listDirectory",
     "listProjects",
     "listSessions",
     "listSkills",
@@ -55,6 +56,17 @@ test("defines one Service Worker handler for every contracts endpoint", () => {
     "updateSkill",
     "updateTask",
   ]);
+});
+
+test("lists deterministic mock filesystem directories from home or an explicit query path", async () => {
+  assert.deepEqual(await client.fileSystem.listDirectory({}), state.fileSystemDirectories[state.homeDirectory]);
+  assert.deepEqual(
+    await client.fileSystem.listDirectory({ path: "/home/ora/projects" }),
+    state.fileSystemDirectories["/home/ora/projects"],
+  );
+  for (const project of state.projects) {
+    assert.ok(state.fileSystemDirectories[project.rootPath]);
+  }
 });
 
 test("starts every entity collection with representative in-memory data", async () => {

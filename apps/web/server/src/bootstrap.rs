@@ -1,7 +1,9 @@
 use crate::app_state::AppState;
 use crate::config::{ProjectConfig, RuntimeConfig};
 use crate::error::WebBootstrapError;
-use crate::service::{AgentApi, ProjectApi, ProjectWorkContextApi, SessionApi, SkillApi, TaskApi};
+use crate::service::{
+    AgentApi, FileSystemApi, ProjectApi, ProjectWorkContextApi, SessionApi, SkillApi, TaskApi,
+};
 use ora_application::{
     Clock, OpenProjectWorkContextHandler, ProjectIdGenerator, ProjectRepository,
     ProjectRepositoryError, UuidProjectIdGenerator, UuidProjectWorkContextIdGenerator,
@@ -23,6 +25,9 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
 
     Ok(AppState::new(
         Arc::new(AgentApi::new(pool.clone(), clock)),
+        Arc::new(FileSystemApi::new(
+            runtime_config.file_system().home_directory().to_path_buf(),
+        )),
         Arc::new(ProjectApi::new(pool.clone(), clock)),
         Arc::new(ProjectWorkContextApi::new(pool.clone(), clock)),
         Arc::new(TaskApi::new(
@@ -48,6 +53,9 @@ pub(crate) fn build_app_state_for_database(
 
     Ok(AppState::new(
         Arc::new(AgentApi::new(pool.clone(), clock)),
+        Arc::new(FileSystemApi::new(
+            project_root.parent().unwrap_or(project_root).to_path_buf(),
+        )),
         Arc::new(ProjectApi::new(pool.clone(), clock)),
         Arc::new(ProjectWorkContextApi::new(pool.clone(), clock)),
         Arc::new(TaskApi::new(
@@ -329,6 +337,7 @@ mod tests {
             "ORA_DATA_DIR" => Some(data_dir.to_string_lossy().to_string()),
             "ORA_PROJECT_NAME" => Some(project_name.to_string()),
             "ORA_PROJECT_PATH" => Some(project_path.to_string_lossy().to_string()),
+            "HOME" => Some(data_dir.to_string_lossy().to_string()),
             _ => None,
         })
         .unwrap_or_else(|error| panic!("expected runtime configuration to load: {error}"))

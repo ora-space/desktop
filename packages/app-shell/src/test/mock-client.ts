@@ -165,5 +165,13 @@ export function createMockClient(state: MockClientState): ContractsClient {
         return { skillId: req.skillId };
       },
     },
-  } as ContractsClient;
+    fileSystem: {
+      listDirectory: async (request) => ({
+        currentPath: request.path ?? "/home/test",
+        parentPath: null,
+        breadcrumbs: [],
+        entries: [],
+      }),
+    },
+  };
 }

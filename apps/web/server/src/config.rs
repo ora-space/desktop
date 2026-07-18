@@ -13,6 +13,8 @@ const PORT_ENV_VAR: &str = "ORA_PORT";
 const LOG_LEVEL_ENV_VAR: &str = "ORA_LOG_LEVEL";
 const LOG_MODE_ENV_VAR: &str = "ORA_LOG_MODE";
 const LOG_MAX_DAYS_ENV_VAR: &str = "ORA_LOG_MAX_DAYS";
+const HOME_ENV_VAR: &str = "HOME";
+const USER_PROFILE_ENV_VAR: &str = "USERPROFILE";
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 32578;
@@ -23,6 +25,7 @@ const DEFAULT_LOG_MAX_DAYS: &str = "3";
 /// Groups the runtime configuration required to bootstrap the web server process.
 pub struct RuntimeConfig {
     database: DatabaseConfig,
+    file_system: FileSystemConfig,
     project: ProjectConfig,
     server: ServerConfig,
     logging: LoggingConfig,
@@ -44,6 +47,11 @@ impl RuntimeConfig {
         &self.project
     }
 
+    /// Returns the filesystem configuration used by server-side path browsing.
+    pub fn file_system(&self) -> &FileSystemConfig {
+        &self.file_system
+    }
+
     /// Returns the server bind configuration used by the runtime.
     pub fn server(&self) -> &ServerConfig {
         &self.server
@@ -62,10 +70,42 @@ impl RuntimeConfig {
 
         Ok(Self {
             project: ProjectConfig::from_reader(&mut read_variable, &database)?,
+            file_system: FileSystemConfig::from_reader(&mut read_variable)?,
             database,
             server: ServerConfig::from_reader(&mut read_variable)?,
             logging: read_logging_config(&mut read_variable)?,
         })
+    }
+}
+
+/// Describes the server user's home directory used as the browser's default location.
+pub struct FileSystemConfig {
+    home_directory: PathBuf,
+}
+
+impl FileSystemConfig {
+    /// Returns the absolute home directory used when a listing request omits its path.
+    pub fn home_directory(&self) -> &Path {
+        self.home_directory.as_path()
+    }
+
+    /// Resolves the conventional Unix or Windows home environment variable without mutating tests.
+    fn from_reader(
+        mut read_variable: impl FnMut(&str) -> Option<String>,
+    ) -> Result<Self, WebBootstrapError> {
+        let raw_home = read_variable(HOME_ENV_VAR)
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                read_variable(USER_PROFILE_ENV_VAR).filter(|value| !value.trim().is_empty())
+            })
+            .ok_or(WebBootstrapError::HomeDirectoryUnavailable)?;
+        let home_directory = PathBuf::from(raw_home);
+
+        if !home_directory.is_absolute() {
+            return Err(WebBootstrapError::HomeDirectoryNotAbsolute { home_directory });
+        }
+
+        Ok(Self { home_directory })
     }
 }
 
@@ -292,9 +332,9 @@ fn read_required_non_empty_variable(
 #[cfg(test)]
 mod tests {
     use super::{
-        DATA_DIR_ENV_VAR, DEFAULT_HOST, DEFAULT_PORT, DatabaseConfig, HOST_ENV_VAR,
-        LOG_MODE_ENV_VAR, PORT_ENV_VAR, PROJECT_NAME_ENV_VAR, PROJECT_PATH_ENV_VAR, ProjectConfig,
-        RuntimeConfig, ServerConfig,
+        DATA_DIR_ENV_VAR, DEFAULT_HOST, DEFAULT_PORT, DatabaseConfig, FileSystemConfig,
+        HOME_ENV_VAR, HOST_ENV_VAR, LOG_MODE_ENV_VAR, PORT_ENV_VAR, PROJECT_NAME_ENV_VAR,
+        PROJECT_PATH_ENV_VAR, ProjectConfig, RuntimeConfig, ServerConfig,
     };
     use crate::error::WebBootstrapError;
     use pretty_assertions::assert_eq;
@@ -309,6 +349,19 @@ mod tests {
         let expected_path = std::env::current_dir().unwrap().join("ora.sqlite3");
 
         assert_eq!(config.path(), expected_path.as_path());
+    }
+
+    /// Verifies filesystem browsing starts from the absolute server user home directory.
+    #[test]
+    fn loads_file_system_home_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = FileSystemConfig::from_reader(|key| match key {
+            HOME_ENV_VAR => Some(temp_dir.path().to_string_lossy().to_string()),
+            _ => None,
+        })
+        .unwrap_or_else(|error| panic!("expected filesystem configuration to load: {error}"));
+
+        assert_eq!(config.home_directory(), temp_dir.path());
     }
 
     /// Verifies the database configuration derives the SQLite path from `ORA_DATA_DIR`.
@@ -510,6 +563,7 @@ mod tests {
             PROJECT_PATH_ENV_VAR => Some(project_path.to_string_lossy().to_string()),
             DATA_DIR_ENV_VAR => Some(data_dir.to_string_lossy().to_string()),
             LOG_MODE_ENV_VAR => Some("file".to_string()),
+            HOME_ENV_VAR => Some(temp_dir.path().to_string_lossy().to_string()),
             _ => None,
         })
         .unwrap_or_else(|error| panic!("expected runtime configuration to load: {error}"));
@@ -522,6 +576,7 @@ mod tests {
         assert_eq!(config.project().name(), "Ora");
         assert_eq!(config.project().path(), project_path.as_path());
         assert_eq!(config.project().work_dir(), expected_work_dir.as_path());
+        assert_eq!(config.file_system().home_directory(), temp_dir.path());
 
         match &config.logging().output {
             ora_logging::LogOutput::Stdout => panic!("expected file-backed logging output"),

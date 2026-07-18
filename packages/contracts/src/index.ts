@@ -3,6 +3,7 @@ export * from "./client.js";
 export * from "./endpoints.js";
 export * from "./transport.js";
 export * from "./agent.js";
+export * from "./file-system.js";
 export * from "./project.js";
 export * from "./project-work-context.js";
 export * from "./session.js";

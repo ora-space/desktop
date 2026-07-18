@@ -366,6 +366,30 @@ export function createMockHandlers(state: MockState = mockState): HttpHandler[] 
       state.agents.splice(agentIndex, 1);
       return HttpResponse.json({ agentId });
     }),
+
+    listDirectory: http.get("*/api/file-system/directory", ({ request }) => {
+      const path = new URL(request.url).searchParams.get("path") ?? state.homeDirectory;
+      const isAbsolutePath =
+        path.startsWith("/") || path.startsWith("\\\\") || /^[A-Za-z]:[\\/]/.test(path);
+      if (!isAbsolutePath) {
+        return errorResponse(
+          "invalid_file_system_path",
+          `filesystem path must be absolute: ${path}`,
+          400,
+        );
+      }
+
+      const directory = state.fileSystemDirectories[path];
+      if (directory === undefined) {
+        return errorResponse(
+          "file_system_path_not_found",
+          `filesystem path was not found: ${path}`,
+          404,
+        );
+      }
+
+      return HttpResponse.json(directory);
+    }),
   } satisfies Record<EndpointOperation, HttpHandler>;
 
   return Object.values(handlersByOperation);

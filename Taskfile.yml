@@ -49,11 +49,14 @@ tasks:
       - cargo clean
 
   lint:
-    desc: Run linters on all crates
+    desc: Run linters on all Rust crates and frontend packages
     silent: true
     cmds:
       - cargo fmt --all
       - cargo clippy --workspace -- -D warnings
+      - pnpm --filter @ora/web-client lint
+      - pnpm --filter @ora/desktop lint
+      - pnpm --filter @ora/platform lint
 
   export-contracts:
     desc: Regenerate TypeScript contracts and the frontend SDK package
@@ -66,9 +69,10 @@ tasks:
       - cargo build --workspace
 
   test:frontend:
-    desc: Run TypeScript package test suites (contracts, app-shell, mock-service)
+    desc: Run TypeScript package test suites (contracts, platform, app-shell, mock-service)
     cmds:
       - pnpm --filter @ora/contracts test
+      - pnpm --filter @ora/platform test
       - pnpm --filter @ora/app-shell test
       - pnpm --filter @ora/mock-service test
 
@@ -100,7 +104,16 @@ tasks:
         fi
 
   run:web-frontend:
-    desc: Run the web server frontend in development mode
+    desc: Run the web frontend against the real HTTP backend
+    env:
+      VITE_ORA_CONTRACT_TRANSPORT: fetch
+    cmds:
+      - pnpm --filter @ora/web-client dev
+
+  run:web-proto:
+    desc: Run the web frontend with the in-browser mock service
+    env:
+      VITE_ORA_CONTRACT_TRANSPORT: mock
     cmds:
       - pnpm --filter @ora/web-client dev
 

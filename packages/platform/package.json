@@ -1,0 +1,43 @@
+{
+  "name": "@ora/platform",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./web": "./src/web/index.ts",
+    "./tauri": "./src/tauri/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ora/contracts": "workspace:*",
+    "@ora/ui": "workspace:*",
+    "@tabler/icons-react": "^3.44.0",
+    "@tanstack/react-virtual": "^3.13.12"
+  },
+  "peerDependencies": {
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tauri-apps/plugin-dialog": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.10"
+  }
+}

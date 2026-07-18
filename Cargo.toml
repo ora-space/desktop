@@ -11,6 +11,7 @@ members = [
     "crates/pty",
     "xtask",
 ]
+exclude = ["apps/desktop/src-tauri"]
 resolver = "2"
 
 [workspace.package]

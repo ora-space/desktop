@@ -8,6 +8,7 @@
 - It exposes health endpoints for process liveness and runtime readiness.
 - It serves persisted HTTP CRUD routes for `project`, `task`, and `session` by delegating to `ora-application`.
 - It provisions and cleans up task-owned linked worktrees as internal backend state during task lifecycle flows.
+- It provides read-only server filesystem listings for the Web platform path picker.
 
 ## Database Configuration
 
@@ -76,6 +77,7 @@ The persisted runtime exposes CRUD routes for the supported public models:
 - `GET /api/sessions/{session_id}`
 - `PUT /api/sessions/{session_id}`
 - `DELETE /api/sessions/{session_id}`
+- `GET /api/file-system/directory?path={absolute_path}`
 
 Request and response payloads use `ora-contracts` DTO shapes, so transport behavior stays aligned with the shared application contract.
 Task payloads do not expose backend-owned worktree identifiers, and the runtime does not expose standalone public worktree CRUD endpoints.
@@ -85,6 +87,25 @@ The project work context routes provide the current backend-managed project sele
 - `open` creates or switches one `(surface, window_id)` context into a project and refreshes its lease immediately.
 - `renew` extends an existing context lease using backend time.
 - Occupied-project conflicts return a stable HTTP `409` error without exposing the owning surface or window id in the response.
+
+### Filesystem browsing
+
+The filesystem directory route supports the custom Web path picker.
+
+- Omitting `path` lists the Web Server process user's home directory.
+- Supplied paths must be absolute. Relative paths return `invalid_file_system_path`.
+- Responses include the current path, parent path, server-derived breadcrumbs, and all child entries.
+- Hidden entries are included. Symbolic links remain visible and preserve their link paths; broken links are reported as unavailable entries.
+- Directories sort before files, and the endpoint returns the complete directory without pagination.
+- The route intentionally has no configured browse root and can navigate outside home. Deployments must account for the exposed server directory metadata when setting network access to the Web Server.
+
+## Frontend development modes
+
+- `task run:web-backend` starts the Rust HTTP backend on its default port.
+- `task run:web-frontend` starts Vite with the fetch contracts transport and expects the backend to run separately.
+- `task run:web-proto` starts Vite with the MSW contracts transport and does not require the Rust backend.
+
+The Web production build always selects the fetch transport. Development startup rejects missing or unknown `VITE_ORA_CONTRACT_TRANSPORT` values so the active data source is never implicit.
 
 ## Storage Behavior
 

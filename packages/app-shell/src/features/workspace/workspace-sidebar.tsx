@@ -373,8 +373,8 @@ function WorkspaceDialog({ dialog, onOpenChange }: { dialog: DialogState; onOpen
     description = t("dialog.projectDescription");
     submitLabel = dialog.entity ? t("dialog.saveProject") : t("dialog.addProject");
     fields = [
-      { name: "name", label: t("dialog.projectName"), value: dialog.entity?.name ?? "", placeholder: t("dialog.projectNamePlaceholder") },
-      { name: "rootPath", label: t("dialog.repositoryPath"), value: dialog.entity?.rootPath ?? "", placeholder: "C:\\workspace\\project" },
+      { kind: "text", name: "name", label: t("dialog.projectName"), value: dialog.entity?.name ?? "", placeholder: t("dialog.projectNamePlaceholder") },
+      { kind: "path", name: "rootPath", label: t("dialog.repositoryPath"), value: dialog.entity?.rootPath ?? "", selectionKind: "directory", placeholder: "C:\\workspace\\project" },
     ];
     submit = async (values) => {
       if (dialog.entity) {
@@ -388,8 +388,8 @@ function WorkspaceDialog({ dialog, onOpenChange }: { dialog: DialogState; onOpen
     description = t("dialog.worktreeDescription");
     submitLabel = dialog.entity ? t("dialog.saveTask") : t("dialog.createTask");
     fields = [
-      { name: "title", label: t("dialog.taskTitle"), value: dialog.entity?.title ?? "", placeholder: t("dialog.taskPlaceholder") },
-      { name: "status", label: t("dialog.status"), value: dialog.entity?.status ?? "todo", options: [
+      { kind: "text", name: "title", label: t("dialog.taskTitle"), value: dialog.entity?.title ?? "", placeholder: t("dialog.taskPlaceholder") },
+      { kind: "select", name: "status", label: t("dialog.status"), value: dialog.entity?.status ?? "todo", options: [
         { label: t("common.todo"), value: "todo" }, { label: t("common.doing"), value: "doing" }, { label: t("common.done"), value: "done" },
       ] },
     ];
@@ -405,8 +405,8 @@ function WorkspaceDialog({ dialog, onOpenChange }: { dialog: DialogState; onOpen
     description = t("dialog.sessionDescription");
     submitLabel = dialog.entity ? t("dialog.saveSession") : t("dialog.startSession");
     fields = [
-      { name: "agentId", label: t("dialog.agent"), value: dialog.entity?.agentId ?? "codex", placeholder: "codex" },
-      { name: "status", label: t("dialog.status"), value: dialog.entity?.status ?? "running", options: [
+      { kind: "text", name: "agentId", label: t("dialog.agent"), value: dialog.entity?.agentId ?? "codex", placeholder: "codex" },
+      { kind: "select", name: "status", label: t("dialog.status"), value: dialog.entity?.status ?? "running", options: [
         { label: t("common.running"), value: "running" }, { label: t("common.stopped"), value: "stopped" },
       ] },
     ];

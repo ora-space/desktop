@@ -18,6 +18,14 @@ pub struct FrontendPathParam {
     pub wire_name: &'static str,
 }
 
+/// Describes one optional request field serialized into an endpoint query string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendQueryParam {
+    pub rust_field_name: &'static str,
+    pub wire_name: &'static str,
+}
+
 /// Describes one frontend-facing HTTP operation exported from `ora-contracts`.
 ///
 /// `namespace` and `member_name` place the operation on the generated client
@@ -36,6 +44,16 @@ pub struct FrontendEndpoint {
     pub has_json_body: bool,
 }
 
+impl FrontendEndpoint {
+    /// Returns optional query parameters without forcing unrelated endpoints to repeat empty metadata.
+    pub fn query_params(&self) -> &'static [FrontendQueryParam] {
+        match self.operation_name {
+            "listDirectory" => FILE_SYSTEM_DIRECTORY_QUERY_PARAMS,
+            _ => NO_QUERY_PARAMS,
+        }
+    }
+}
+
 pub const PROJECTS_PATH: &str = "/api/projects";
 pub const PROJECT_PATH: &str = "/api/projects/{projectId}";
 pub const PROJECT_WORK_CONTEXT_OPEN_PATH: &str = "/api/project-work-contexts/open";
@@ -48,6 +66,7 @@ pub const SKILLS_PATH: &str = "/api/skills";
 pub const SKILL_PATH: &str = "/api/skills/{skillId}";
 pub const AGENTS_PATH: &str = "/api/agents";
 pub const AGENT_PATH: &str = "/api/agents/{agentId}";
+pub const FILE_SYSTEM_DIRECTORY_PATH: &str = "/api/file-system/directory";
 
 const PROJECT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "project_id",
@@ -69,6 +88,10 @@ const AGENT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "agent_id",
     wire_name: "agentId",
 };
+const FILE_SYSTEM_DIRECTORY_PATH_QUERY_PARAM: FrontendQueryParam = FrontendQueryParam {
+    rust_field_name: "path",
+    wire_name: "path",
+};
 
 const PROJECT_NAMESPACE: &str = "project";
 const PROJECT_WORK_CONTEXT_NAMESPACE: &str = "projectWorkContext";
@@ -76,6 +99,7 @@ const TASK_NAMESPACE: &str = "task";
 const SESSION_NAMESPACE: &str = "session";
 const SKILL_NAMESPACE: &str = "skill";
 const AGENT_NAMESPACE: &str = "agent";
+const FILE_SYSTEM_NAMESPACE: &str = "fileSystem";
 
 const PROJECT_PATH_PARAMS: &[FrontendPathParam] = &[PROJECT_ID_PATH_PARAM];
 const TASK_PATH_PARAMS: &[FrontendPathParam] = &[TASK_ID_PATH_PARAM];
@@ -83,6 +107,9 @@ const SESSION_PATH_PARAMS: &[FrontendPathParam] = &[SESSION_ID_PATH_PARAM];
 const SKILL_PATH_PARAMS: &[FrontendPathParam] = &[SKILL_ID_PATH_PARAM];
 const AGENT_PATH_PARAMS: &[FrontendPathParam] = &[AGENT_ID_PATH_PARAM];
 const NO_PATH_PARAMS: &[FrontendPathParam] = &[];
+const FILE_SYSTEM_DIRECTORY_QUERY_PARAMS: &[FrontendQueryParam] =
+    &[FILE_SYSTEM_DIRECTORY_PATH_QUERY_PARAM];
+const NO_QUERY_PARAMS: &[FrontendQueryParam] = &[];
 
 const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     FrontendEndpoint {
@@ -382,6 +409,17 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_params: AGENT_PATH_PARAMS,
         has_json_body: false,
     },
+    FrontendEndpoint {
+        operation_name: "listDirectory",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "listDirectory",
+        method: FrontendHttpMethod::Get,
+        path_template: FILE_SYSTEM_DIRECTORY_PATH,
+        request_type: "ListDirectoryRequest",
+        response_type: "ListDirectoryResponse",
+        path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
 ];
 
 /// Returns the Rust-owned endpoint metadata exported to the generated frontend SDK.
@@ -392,10 +430,10 @@ pub fn frontend_endpoints() -> &'static [FrontendEndpoint] {
 #[cfg(test)]
 mod tests {
     use super::{
-        AGENT_PATH, AGENTS_PATH, FrontendEndpoint, FrontendHttpMethod, FrontendPathParam,
-        PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH,
-        PROJECTS_PATH, SESSION_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
-        frontend_endpoints,
+        AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, FrontendEndpoint, FrontendHttpMethod,
+        FrontendPathParam, FrontendQueryParam, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+        PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_PATH, SESSIONS_PATH, SKILL_PATH,
+        SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
     };
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
@@ -748,7 +786,35 @@ mod tests {
                     }],
                     has_json_body: false,
                 },
+                FrontendEndpoint {
+                    operation_name: "listDirectory",
+                    namespace: "fileSystem",
+                    member_name: "listDirectory",
+                    method: FrontendHttpMethod::Get,
+                    path_template: FILE_SYSTEM_DIRECTORY_PATH,
+                    request_type: "ListDirectoryRequest",
+                    response_type: "ListDirectoryResponse",
+                    path_params: &[],
+                    has_json_body: false,
+                },
             ]
+        );
+    }
+
+    /// Verifies directory listing paths are encoded as optional GET query parameters.
+    #[test]
+    fn exposes_directory_query_parameter_metadata() {
+        let list_directory = frontend_endpoints()
+            .iter()
+            .find(|endpoint| endpoint.operation_name == "listDirectory")
+            .unwrap_or_else(|| panic!("missing listDirectory endpoint"));
+
+        assert_eq!(
+            list_directory.query_params(),
+            &[FrontendQueryParam {
+                rust_field_name: "path",
+                wire_name: "path",
+            }]
         );
     }
 

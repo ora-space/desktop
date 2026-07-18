@@ -1,11 +1,13 @@
 use crate::app_state::AppState;
-use crate::handlers::{agents, health, project_work_contexts, projects, sessions, skills, tasks};
+use crate::handlers::{
+    agents, file_system, health, project_work_contexts, projects, sessions, skills, tasks,
+};
 use axum::Router;
 use axum::routing::{get, post};
 use ora_contracts::{
-    AGENT_PATH, AGENTS_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
-    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_PATH, SESSIONS_PATH, SKILL_PATH,
-    SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, PROJECT_PATH,
+    PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_PATH,
+    SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
 };
 
 /// Builds the top-level router for health checks and the persisted CRUD routes.
@@ -13,6 +15,7 @@ pub fn build_router(app_state: AppState) -> Router {
     Router::new()
         .route("/health/live", get(health::liveness))
         .route("/health/ready", get(health::readiness))
+        .route(FILE_SYSTEM_DIRECTORY_PATH, get(file_system::list_directory))
         .route(
             PROJECTS_PATH,
             post(projects::create_project).get(projects::list_projects),
@@ -78,6 +81,9 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode};
     use ora_application::{ProjectWorkContextRepository, WorktreeRepository};
+    use ora_contracts::{
+        FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryResponse,
+    };
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, SqliteProjectWorkContextRepository,
         SqliteWorktreeRepository,
@@ -85,6 +91,7 @@ mod tests {
     use ora_domain::{ProjectWorkContextSurface, WorktreeId};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
+    use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
     use tower::util::ServiceExt;
@@ -137,6 +144,93 @@ mod tests {
         };
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// Verifies the filesystem route lists an explicit absolute directory through its GET query.
+    #[tokio::test]
+    async fn serves_file_system_directory_listings() {
+        let (temp_dir, _database_path, app) = test_router();
+        let directory = temp_dir.path().join("browser-fixture");
+        fs::create_dir(&directory).unwrap_or_else(|error| {
+            panic!("failed to create browser fixture directory: {error}");
+        });
+        fs::create_dir(directory.join("project")).unwrap_or_else(|error| {
+            panic!("failed to create project fixture directory: {error}");
+        });
+        fs::write(directory.join("README.md"), "fixture").unwrap_or_else(|error| {
+            panic!("failed to create browser fixture file: {error}");
+        });
+        let uri = format!(
+            "/api/file-system/directory?path={}",
+            directory.to_string_lossy()
+        );
+
+        let response = request_empty(&app, Method::GET, &uri).await;
+        let status = response.status();
+        let actual = serde_json::from_value::<ListDirectoryResponse>(response_json(response).await)
+            .unwrap_or_else(|error| panic!("failed to decode directory response: {error}"));
+        let mut breadcrumbs = directory
+            .ancestors()
+            .map(|path| FileSystemBreadcrumb {
+                name: path.file_name().map_or_else(
+                    || path.to_string_lossy().to_string(),
+                    |name| name.to_string_lossy().to_string(),
+                ),
+                path: path.to_string_lossy().to_string(),
+            })
+            .collect::<Vec<_>>();
+        breadcrumbs.reverse();
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            actual,
+            ListDirectoryResponse {
+                current_path: directory.to_string_lossy().to_string(),
+                parent_path: directory
+                    .parent()
+                    .map(|path| path.to_string_lossy().to_string()),
+                breadcrumbs,
+                entries: vec![
+                    FileSystemEntry {
+                        name: "project".to_string(),
+                        path: directory.join("project").to_string_lossy().to_string(),
+                        kind: FileSystemEntryKind::Directory,
+                        is_symbolic_link: false,
+                    },
+                    FileSystemEntry {
+                        name: "README.md".to_string(),
+                        path: directory.join("README.md").to_string_lossy().to_string(),
+                        kind: FileSystemEntryKind::File,
+                        is_symbolic_link: false,
+                    },
+                ],
+            }
+        );
+    }
+
+    /// Verifies relative filesystem queries receive the stable invalid-path response.
+    #[tokio::test]
+    async fn rejects_relative_file_system_paths() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let response = request_empty(
+            &app,
+            Method::GET,
+            "/api/file-system/directory?path=relative",
+        )
+        .await;
+        let status = response.status();
+        let body = response_json(response).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body,
+            json!({
+                "error": {
+                    "code": "invalid_file_system_path",
+                    "message": "filesystem path must be absolute: \"relative\"",
+                },
+            })
+        );
     }
 
     /// Verifies the router supports the persisted project CRUD slice end to end.
