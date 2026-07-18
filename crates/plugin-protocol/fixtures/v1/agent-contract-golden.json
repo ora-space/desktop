@@ -1,0 +1,91 @@
+{
+  "fixtureVersion": 1,
+  "contractVersion": 1,
+  "methods": [
+    {
+      "method": "agent.discoverInstallations",
+      "semantics": "idempotent",
+      "streaming": false,
+      "safetyControl": false
+    },
+    {
+      "method": "agent.getConfigurationSummary",
+      "semantics": "idempotent",
+      "streaming": false,
+      "safetyControl": false
+    },
+    {
+      "method": "agent.listSkills",
+      "semantics": "idempotent",
+      "streaming": false,
+      "safetyControl": false
+    },
+    {
+      "method": "agent.listMcpServers",
+      "semantics": "idempotent",
+      "streaming": false,
+      "safetyControl": false
+    },
+    {
+      "method": "agent.listConversations",
+      "semantics": "idempotent",
+      "streaming": false,
+      "safetyControl": false
+    },
+    {
+      "method": "agent.startConversation",
+      "semantics": "nonIdempotent",
+      "streaming": true,
+      "safetyControl": false
+    },
+    {
+      "method": "agent.sendMessage",
+      "semantics": "nonIdempotent",
+      "streaming": true,
+      "safetyControl": false
+    },
+    {
+      "method": "agent.cancelConversation",
+      "semantics": "idempotent",
+      "streaming": false,
+      "safetyControl": true
+    }
+  ],
+  "representativeValues": [
+    {
+      "name": "agentScope.global",
+      "value": {
+        "type": "global"
+      }
+    },
+    {
+      "name": "agentScope.project",
+      "value": {
+        "projectHandle": "project-1",
+        "type": "project",
+        "workingDirectory": "D:\\work"
+      }
+    },
+    {
+      "name": "agentEvent.textDelta",
+      "value": {
+        "channel": "assistant",
+        "kind": "textDelta",
+        "text": "你好"
+      }
+    },
+    {
+      "name": "cancelConversation.accepted",
+      "value": {
+        "disposition": "accepted"
+      }
+    },
+    {
+      "name": "businessError.authenticationRequired",
+      "value": {
+        "kind": "authenticationRequired",
+        "retryable": false
+      }
+    }
+  ]
+}

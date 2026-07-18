@@ -1,0 +1,53 @@
+{
+  "fixtureVersion": 1,
+  "wireVersion": 1,
+  "maximumPayloadBytes": 8388608,
+  "valid": [
+    {
+      "frameType": "request",
+      "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"id\":\"h:1\",\"method\":\"ping\",\"params\":{}}",
+      "payloadLen": 56,
+      "headerHex": "0000003801",
+      "frameHex": "00000038017b226a736f6e727063223a22322e30222c226964223a22683a31222c226d6574686f64223a2270696e67222c22706172616d73223a7b7d7d"
+    },
+    {
+      "frameType": "response",
+      "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"id\":\"h:1\",\"result\":\"ok\"}",
+      "payloadLen": 42,
+      "headerHex": "0000002a02",
+      "frameHex": "0000002a027b226a736f6e727063223a22322e30222c226964223a22683a31222c22726573756c74223a226f6b227d"
+    },
+    {
+      "frameType": "notification",
+      "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"method\":\"$/exit\"}",
+      "payloadLen": 35,
+      "headerHex": "0000002303",
+      "frameHex": "00000023037b226a736f6e727063223a22322e30222c226d6574686f64223a22242f65786974227d"
+    },
+    {
+      "frameType": "notification",
+      "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"method\":\"$/stream\",\"params\":{\"id\":\"h:1\",\"seq\":1,\"value\":{\"kind\":\"textDelta\",\"text\":\"你好\"}}}",
+      "payloadLen": 112,
+      "headerHex": "0000007003",
+      "frameHex": "00000070037b226a736f6e727063223a22322e30222c226d6574686f64223a22242f73747265616d222c22706172616d73223a7b226964223a22683a31222c22736571223a312c2276616c7565223a7b226b696e64223a227465787444656c7461222c2274657874223a22e4bda0e5a5bd227d7d7d"
+    }
+  ],
+  "invalid": [
+    {
+      "frameHex": "0000000001",
+      "reason": "zeroLength"
+    },
+    {
+      "frameHex": "ffffffff01",
+      "reason": "negativeLength"
+    },
+    {
+      "frameHex": "0080000101",
+      "reason": "payloadTooLarge"
+    },
+    {
+      "frameHex": "000000027f",
+      "reason": "unknownType"
+    }
+  ]
+}
