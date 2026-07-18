@@ -9,6 +9,8 @@ mod session_actor;
 mod startup;
 mod state;
 mod supervisor;
+#[cfg(test)]
+mod tests;
 mod transport;
 
 pub use assets::*;
