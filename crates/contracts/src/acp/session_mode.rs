@@ -1,4 +1,4 @@
-use super::extensibility::Metadata;
+use super::common::Meta;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -18,7 +18,7 @@ pub struct SessionModeState {
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     #[ts(type = "Record<string, unknown>")]
     #[ts(optional)]
-    pub meta: Option<Metadata>,
+    pub meta: Option<Meta>,
 }
 
 /// A selectable agent session mode.
@@ -38,7 +38,7 @@ pub struct SessionMode {
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     #[ts(type = "Record<string, unknown>")]
     #[ts(optional)]
-    pub meta: Option<Metadata>,
+    pub meta: Option<Meta>,
 }
 
 /// Parameters for the `session/set_mode` request.
@@ -54,5 +54,5 @@ pub struct SetSessionModeParams {
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     #[ts(type = "Record<string, unknown>")]
     #[ts(optional)]
-    pub meta: Option<Metadata>,
+    pub meta: Option<Meta>,
 }

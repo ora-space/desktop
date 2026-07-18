@@ -1,4 +1,4 @@
-use super::extensibility::Metadata;
+use super::common::Meta;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -35,7 +35,7 @@ pub struct ConfigOption {
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     #[ts(type = "Record<string, unknown>")]
     #[ts(optional)]
-    pub meta: Option<Metadata>,
+    pub meta: Option<Meta>,
 }
 
 /// A selectable configuration value.
@@ -55,7 +55,7 @@ pub struct ConfigOptionValue {
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     #[ts(type = "Record<string, unknown>")]
     #[ts(optional)]
-    pub meta: Option<Metadata>,
+    pub meta: Option<Meta>,
 }
 
 /// Parameters for the `session/set_config_option` request.
@@ -77,7 +77,7 @@ pub struct SetConfigOptionParams {
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     #[ts(type = "Record<string, unknown>")]
     #[ts(optional)]
-    pub meta: Option<Metadata>,
+    pub meta: Option<Meta>,
 }
 
 /// The input control type for a configuration option.

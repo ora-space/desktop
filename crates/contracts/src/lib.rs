@@ -1,4 +1,4 @@
-pub mod acp;
+mod acp;
 
 mod agent;
 mod frontend;
@@ -9,11 +9,14 @@ mod skill;
 mod task;
 
 pub use acp::{
-    CreateTerminalRequest, CreateTerminalResponse, EnvVariable, KillTerminalRequest,
-    KillTerminalResponse, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, ReadTextFileRequest,
-    ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse, TerminalExitStatus,
-    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
+    AvailableCommand, AvailableCommandInput, ConfigOption, ConfigOptionCurrentValue,
+    ConfigOptionType, ConfigOptionValue, CreateTerminalRequest, CreateTerminalResponse,
+    EnvVariable, KillTerminalRequest, KillTerminalResponse, Plan, PlanEntry, PlanEntryPriority,
+    PlanEntryStatus, ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest,
+    ReleaseTerminalResponse, SessionMode, SessionModeState, SetConfigOptionParams,
+    SetSessionModeParams, TerminalExitStatus, TerminalOutputRequest, TerminalOutputResponse,
+    WaitForTerminalExitRequest, WaitForTerminalExitResponse, WriteTextFileRequest,
+    WriteTextFileResponse,
 };
 pub use agent::{
     Agent, CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
@@ -58,16 +61,16 @@ pub fn export_typescript_bindings_to(
 ) -> Result<(), ExportError> {
     let config = Config::new().with_out_dir(output_directory.as_ref());
 
-    acp::ConfigOption::export(&config)?;
-    acp::ConfigOptionValue::export(&config)?;
-    acp::SetConfigOptionParams::export(&config)?;
-    acp::ConfigOptionType::export(&config)?;
-    acp::ConfigOptionCurrentValue::export(&config)?;
-    acp::SessionModeState::export(&config)?;
-    acp::SessionMode::export(&config)?;
-    acp::SetSessionModeParams::export(&config)?;
-    acp::AvailableCommand::export(&config)?;
-    acp::AvailableCommandInput::export(&config)?;
+    ConfigOption::export(&config)?;
+    ConfigOptionValue::export(&config)?;
+    SetConfigOptionParams::export(&config)?;
+    ConfigOptionType::export(&config)?;
+    ConfigOptionCurrentValue::export(&config)?;
+    SessionModeState::export(&config)?;
+    SessionMode::export(&config)?;
+    SetSessionModeParams::export(&config)?;
+    AvailableCommand::export(&config)?;
+    AvailableCommandInput::export(&config)?;
     ReadTextFileRequest::export(&config)?;
     ReadTextFileResponse::export(&config)?;
     WriteTextFileRequest::export(&config)?;
