@@ -48,21 +48,96 @@ pub trait ManagedProcess {
     /// Waits until the child exits and returns its platform exit status.
     fn wait(&self) -> impl Future<Output = io::Result<ExitStatus>> + Send + '_;
 
-    /// Requests forceful termination of the entire process tree rooted at the spawned child,
-    /// including any descendant processes the child may have started (for example a shell that
-    /// launched further tools).
-    ///
-    /// This is a `start_kill` contract: the future resolves once the termination request has been
-    /// submitted to the OS, **not** once the tree has fully exited. Callers that need the final
-    /// exit status of the direct child must still await [`Self::wait`]. The future returns `Ok`
-    /// when the OS accepted the request or the tree was already gone; it returns `Err` only when
-    /// the OS refused the request for a reason the caller should surface (for example
-    /// permission loss).
-    ///
-    /// This explicit `kill()` path is the **only** tree-wide contract. If the Tokio runtime
-    /// itself tears down while a `kill_on_drop` handle is still alive (for example during process
-    /// shutdown), the lifecycle task is dropped and only terminates the direct child;
-    /// descendants rely on OS cleanup at process exit. Use `kill()` explicitly when tree-wide
-    /// termination must be guaranteed.
+    /// Forcefully terminates the child process.
     fn kill(&self) -> impl Future<Output = io::Result<()>> + Send + '_;
+}
+
+/// A stable direct-process exit projection independent of platform-specific status objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessExit {
+    pub exit_code: Option<i32>,
+    pub success: bool,
+}
+
+impl From<ExitStatus> for ProcessExit {
+    fn from(status: ExitStatus) -> Self {
+        Self {
+            exit_code: status.code(),
+            success: status.success(),
+        }
+    }
+}
+
+/// Stable failures for the process-tree containment and cleanup boundary.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ProcessTreeError {
+    #[error("the platform cannot guarantee pre-execution process-tree containment")]
+    TreeKillUnavailable,
+    #[error("process tree stdio capabilities were already transferred")]
+    CapabilitiesAlreadyTransferred,
+    #[error("failed to terminate the process tree: {message}")]
+    TerminationFailed { message: String },
+    #[error("failed while observing the direct process: {message}")]
+    DirectProcessFailed { message: String },
+    #[error("failed while observing tree emptiness: {message}")]
+    TreeObservationFailed { message: String },
+    #[error("process-tree cleanup exceeded its deadline")]
+    TreeCleanupTimeout,
+}
+
+/// The three owned byte-stream endpoints transferred exactly once to generation I/O tasks.
+#[derive(Debug)]
+pub struct PluginStdio<Stdin, Stdout, Stderr> {
+    pub stdin: Stdin,
+    pub stdout: Stdout,
+    pub stderr: Stderr,
+}
+
+/// Separates one tree owner into capabilities that can be driven concurrently.
+#[derive(Debug)]
+pub struct ProcessTreeParts<Stdin, Stdout, Stderr, Controller, DirectExit, TreeEmpty> {
+    pub stdio: PluginStdio<Stdin, Stdout, Stderr>,
+    pub controller: Controller,
+    pub direct_exit: DirectExit,
+    pub tree_empty: TreeEmpty,
+}
+
+/// Concrete capability bundle produced by one [`ManagedProcessTree`] implementation.
+pub type ManagedProcessTreeParts<Tree> = ProcessTreeParts<
+    <Tree as ManagedProcessTree>::Stdin,
+    <Tree as ManagedProcessTree>::Stdout,
+    <Tree as ManagedProcessTree>::Stderr,
+    <Tree as ManagedProcessTree>::Controller,
+    <Tree as ManagedProcessTree>::DirectExit,
+    <Tree as ManagedProcessTree>::TreeEmpty,
+>;
+
+/// Requests idempotent termination while exit and tree-empty watchers retain their handles.
+pub trait ProcessTreeController: Clone + Send + Sync + 'static {
+    /// Terminates every process currently assigned to this generation's managed tree.
+    fn terminate_tree(&self) -> Result<(), ProcessTreeError>;
+}
+
+/// Owns one generation's direct process, complete hierarchy, and async stdio pipes.
+pub trait ManagedProcessTree: Sized {
+    type Stdin: AsyncWrite + Unpin + Send + 'static;
+    type Stdout: AsyncRead + Unpin + Send + 'static;
+    type Stderr: AsyncRead + Unpin + Send + 'static;
+    type Controller: ProcessTreeController;
+    type DirectExit: Future<Output = Result<ProcessExit, ProcessTreeError>> + Send + 'static;
+    type TreeEmpty: Future<Output = Result<(), ProcessTreeError>> + Send + 'static;
+
+    /// Returns the direct process identifier retained independently from descendant accounting.
+    fn direct_process_id(&self) -> u32;
+
+    /// Transfers stdio, termination, direct-exit, and tree-empty capabilities exactly once.
+    fn into_parts(self) -> Result<ManagedProcessTreeParts<Self>, ProcessTreeError>;
+}
+
+/// Creates a contained process tree before any untrusted plugin code can execute.
+pub trait ProcessTreeSpawner {
+    type ProcessTree: ManagedProcessTree;
+
+    /// Spawns one atomically contained process tree or fails without running the child.
+    fn spawn_tree(&self, spec: ProcessSpec) -> io::Result<Self::ProcessTree>;
 }
