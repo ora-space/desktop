@@ -8,6 +8,7 @@ members = [
     "crates/gitlancer",
     "crates/logging",
     "crates/plugin-protocol",
+    "crates/plugin-manager",
     "crates/process",
     "crates/pty",
     "xtask",
@@ -31,12 +32,14 @@ ora-db = { path = "crates/db" }
 ora-domain = { path = "crates/domain" }
 gitlancer = { path = "crates/gitlancer" }
 ora-logging = { path = "crates/logging" }
+ora-plugin-manager = { path = "crates/plugin-manager" }
 ora-plugin-protocol = { path = "crates/plugin-protocol" }
 ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
 
 # External
 derive_more = "2"
+deno_ast = { version = "0.53", features = ["visit"] }
 getrandom = "0.3"
 libc = "0.2"
 log = "0.4"
@@ -46,6 +49,7 @@ r2d2 = "0.8"
 rusqlite = "0.37"
 serde = "1.0"
 serde_json = "1.0"
+sha2 = "0.10"
 semver = "1"
 serde_with = { version = "3" }
 tempfile = "3"

@@ -365,7 +365,10 @@ dependencies = [
  "swc_ecma_ast",
  "swc_ecma_lexer",
  "swc_ecma_parser",
+ "swc_ecma_visit",
  "swc_eq_ignore_macros",
+ "swc_macros_common",
+ "swc_visit",
  "text_lines",
  "thiserror 2.0.18",
  "unicode-width",
@@ -1346,6 +1349,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-plugin-manager"
+version = "0.0.0"
+dependencies = [
+ "deno_ast",
+ "getrandom 0.3.4",
+ "ora-plugin-protocol",
+ "ora-process",
+ "pretty_assertions",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ora-plugin-protocol"
 version = "0.0.0"
 dependencies = [
@@ -2052,6 +2077,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2282,6 +2318,21 @@ dependencies = [
  "swc_atoms",
  "swc_common",
  "swc_ecma_ast",
+ "tracing",
+]
+
+[[package]]
+name = "swc_ecma_visit"
+version = "18.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9611a72a4008d62608547a394e5d72a5245413104db096d95a52368a8cc1d63"
+dependencies = [
+ "new_debug_unreachable",
+ "num-bigint",
+ "swc_atoms",
+ "swc_common",
+ "swc_ecma_ast",
+ "swc_visit",
  "tracing",
 ]
 
