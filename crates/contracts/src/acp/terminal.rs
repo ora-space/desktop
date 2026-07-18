@@ -1,266 +1,371 @@
+use std::{path::PathBuf, sync::Arc};
+
+use derive_more::{Display, From};
 use serde::{Deserialize, Serialize};
+use serde_with::{DefaultOnError, serde_as, skip_serializing_none};
 use ts_rs::TS;
 
-/// Carries one environment variable applied to a terminal command.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/terminal.ts")]
-pub struct EnvVariable {
-    pub name: String,
-    pub value: String,
+use super::common::{EnvVariable, SessionId};
+use super::serde_util::IntoOption;
+
+/// Typed identifier used for terminal values on the wire.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Display, From, TS)]
+#[serde(transparent)]
+#[from(Arc<str>, String, &'static str)]
+#[ts(type = "string", export_to = "acp/terminal.ts")]
+pub struct TerminalId(pub Arc<str>);
+
+impl TerminalId {
+    /// Wraps a protocol string as a typed [`TerminalId`].
+    #[must_use]
+    pub fn new(id: impl Into<Arc<str>>) -> Self {
+        Self(id.into())
+    }
 }
 
-/// Describes how a terminal command finished once it is no longer running.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+/// Request to create a new terminal and execute a command.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "acp/terminal.ts")]
-pub struct TerminalExitStatus {
-    /// Reports the process exit code, absent when a signal terminated the process.
-    pub exit_code: Option<u32>,
-    /// Names the signal that terminated the process, absent on a normal exit.
-    pub signal: Option<String>,
-}
-
-/// Requests a new terminal running one command for the session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/terminal.ts")]
 pub struct CreateTerminalRequest {
-    pub session_id: String,
+    /// The session ID for this request.
+    pub session_id: SessionId,
+    /// The command to execute.
     pub command: String,
-    /// Passes command arguments verbatim without shell interpretation.
+    /// Array of command arguments.
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
-    /// Adds environment variables on top of the client environment.
+    /// Environment variables for the command.
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvVariable>,
-    /// Runs the command in this absolute directory instead of the client default.
-    pub cwd: Option<String>,
-    /// Retains at most this many output bytes, truncating older output first.
+    /// Working directory for the command. Must be an absolute path.
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
+    /// Maximum number of output bytes to retain.
+    ///
+    /// When the limit is exceeded, the Client truncates from the beginning of the output
+    /// to stay within the limit.
+    ///
+    /// The Client MUST ensure truncation happens at a character boundary to maintain valid
+    /// string output, even if this means the retained output is slightly less than the
+    /// specified limit.
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
     pub output_byte_limit: Option<u64>,
 }
 
-/// Returns the identifier of the terminal that was created.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+impl CreateTerminalRequest {
+    /// Builds [`CreateTerminalRequest`] with the required request fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(session_id: impl Into<SessionId>, command: impl Into<String>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            command: command.into(),
+            args: Vec::new(),
+            env: Vec::new(),
+            cwd: None,
+            output_byte_limit: None,
+        }
+    }
+
+    /// Array of command arguments.
+    #[must_use]
+    pub fn args(mut self, args: Vec<String>) -> Self {
+        self.args = args;
+        self
+    }
+
+    /// Environment variables for the command.
+    #[must_use]
+    pub fn env(mut self, env: Vec<EnvVariable>) -> Self {
+        self.env = env;
+        self
+    }
+
+    /// Working directory for the command. Must be an absolute path.
+    #[must_use]
+    pub fn cwd(mut self, cwd: impl IntoOption<PathBuf>) -> Self {
+        self.cwd = cwd.into_option();
+        self
+    }
+
+    /// Maximum number of output bytes to retain.
+    ///
+    /// When the limit is exceeded, the Client truncates from the beginning of the output
+    /// to stay within the limit.
+    ///
+    /// The Client MUST ensure truncation happens at a character boundary to maintain valid
+    /// string output, even if this means the retained output is slightly less than the
+    /// specified limit.
+    #[must_use]
+    pub fn output_byte_limit(mut self, output_byte_limit: impl IntoOption<u64>) -> Self {
+        self.output_byte_limit = output_byte_limit.into_option();
+        self
+    }
+}
+
+/// Response containing the ID of the created terminal.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
 pub struct CreateTerminalResponse {
-    pub terminal_id: String,
+    /// The unique identifier for the created terminal.
+    pub terminal_id: TerminalId,
 }
 
-/// Requests the output captured so far without waiting for the command to finish.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+impl CreateTerminalResponse {
+    /// Builds [`CreateTerminalResponse`] with the required response fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(terminal_id: impl Into<TerminalId>) -> Self {
+        Self {
+            terminal_id: terminal_id.into(),
+        }
+    }
+}
+
+/// Request to get the current output and status of a terminal.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalOutputRequest {
-    pub session_id: String,
-    pub terminal_id: String,
+    /// The session ID for this request.
+    pub session_id: SessionId,
+    /// The ID of the terminal to get output from.
+    pub terminal_id: TerminalId,
 }
 
-/// Returns the captured terminal output and the command status at capture time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+impl TerminalOutputRequest {
+    /// Builds [`TerminalOutputRequest`] with the required request fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(session_id: impl Into<SessionId>, terminal_id: impl Into<TerminalId>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            terminal_id: terminal_id.into(),
+        }
+    }
+}
+
+/// Response containing the terminal output and exit status.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalOutputResponse {
+    /// The terminal output captured so far.
     pub output: String,
-    /// Reports whether output was dropped to stay within the byte limit.
+    /// Whether the output was truncated due to byte limits.
     pub truncated: bool,
-    /// Describes the exit, absent while the command is still running.
+    /// Exit status if the command has completed.
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
     pub exit_status: Option<TerminalExitStatus>,
 }
 
-/// Requests a wait until the terminal command finishes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/terminal.ts")]
-pub struct WaitForTerminalExitRequest {
-    pub session_id: String,
-    pub terminal_id: String,
+impl TerminalOutputResponse {
+    /// Builds [`TerminalOutputResponse`] with the required response fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(output: impl Into<String>, truncated: bool) -> Self {
+        Self {
+            output: output.into(),
+            truncated,
+            exit_status: None,
+        }
+    }
+
+    /// Exit status if the command has completed.
+    #[must_use]
+    pub fn exit_status(mut self, exit_status: impl IntoOption<TerminalExitStatus>) -> Self {
+        self.exit_status = exit_status.into_option();
+        self
+    }
 }
 
-/// Returns how the terminal command finished.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+/// Request to release a terminal and free its resources.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseTerminalRequest {
+    /// The session ID for this request.
+    pub session_id: SessionId,
+    /// The ID of the terminal to release.
+    pub terminal_id: TerminalId,
+}
+
+impl ReleaseTerminalRequest {
+    /// Builds [`ReleaseTerminalRequest`] with the required request fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(session_id: impl Into<SessionId>, terminal_id: impl Into<TerminalId>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            terminal_id: terminal_id.into(),
+        }
+    }
+}
+
+/// Response to terminal/release method
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseTerminalResponse {}
+
+impl ReleaseTerminalResponse {
+    /// Builds [`ReleaseTerminalResponse`] with the required response fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Request to kill a terminal without releasing it.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct KillTerminalRequest {
+    /// The session ID for this request.
+    pub session_id: SessionId,
+    /// The ID of the terminal to kill.
+    pub terminal_id: TerminalId,
+}
+
+impl KillTerminalRequest {
+    /// Builds [`KillTerminalRequest`] with the required request fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(session_id: impl Into<SessionId>, terminal_id: impl Into<TerminalId>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            terminal_id: terminal_id.into(),
+        }
+    }
+}
+
+/// Response to `terminal/kill` method
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct KillTerminalResponse {}
+
+impl KillTerminalResponse {
+    /// Builds [`KillTerminalResponse`] with the required response fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Request to wait for a terminal command to exit.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct WaitForTerminalExitRequest {
+    /// The session ID for this request.
+    pub session_id: SessionId,
+    /// The ID of the terminal to wait for.
+    pub terminal_id: TerminalId,
+}
+
+impl WaitForTerminalExitRequest {
+    /// Builds [`WaitForTerminalExitRequest`] with the required request fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(session_id: impl Into<SessionId>, terminal_id: impl Into<TerminalId>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            terminal_id: terminal_id.into(),
+        }
+    }
+}
+
+/// Response containing the exit status of a terminal command.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
 pub struct WaitForTerminalExitResponse {
-    /// Reports the process exit code, absent when a signal terminated the process.
+    /// The exit status of the terminal command.
+    #[serde(flatten)]
+    pub exit_status: TerminalExitStatus,
+}
+
+impl WaitForTerminalExitResponse {
+    /// Builds [`WaitForTerminalExitResponse`] with the required response fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(exit_status: TerminalExitStatus) -> Self {
+        Self { exit_status }
+    }
+}
+
+/// Exit status of a terminal command.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/terminal.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalExitStatus {
+    /// The process exit code (may be null if terminated by signal).
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
     pub exit_code: Option<u32>,
-    /// Names the signal that terminated the process, absent on a normal exit.
+    /// The signal that terminated the process (may be null if exited normally).
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
     pub signal: Option<String>,
 }
 
-/// Requests termination of the running command while keeping the terminal readable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/terminal.ts")]
-pub struct KillTerminalRequest {
-    pub session_id: String,
-    pub terminal_id: String,
+impl TerminalExitStatus {
+    /// Builds [`TerminalExitStatus`] with the required fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The process exit code (may be null if terminated by signal).
+    #[must_use]
+    pub fn exit_code(mut self, exit_code: impl IntoOption<u32>) -> Self {
+        self.exit_code = exit_code.into_option();
+        self
+    }
+
+    /// The signal that terminated the process (may be null if exited normally).
+    #[must_use]
+    pub fn signal(mut self, signal: impl IntoOption<String>) -> Self {
+        self.signal = signal.into_option();
+        self
+    }
 }
 
-/// Acknowledges a completed kill, which carries no result fields.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/terminal.ts")]
-pub struct KillTerminalResponse {}
-
-/// Requests release of the terminal and every resource it still holds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/terminal.ts")]
-pub struct ReleaseTerminalRequest {
-    pub session_id: String,
-    pub terminal_id: String,
-}
-
-/// Acknowledges a completed release, which carries no result fields.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/terminal.ts")]
-pub struct ReleaseTerminalResponse {}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        CreateTerminalRequest, CreateTerminalResponse, EnvVariable, KillTerminalRequest,
-        KillTerminalResponse, ReleaseTerminalRequest, ReleaseTerminalResponse, TerminalExitStatus,
-        TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
-        WaitForTerminalExitResponse,
-    };
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
-
-    /// Verifies terminal creation carries argument, environment, and limit options separately.
-    #[test]
-    fn serializes_create_terminal_contracts() {
-        assert_serialized_json(
-            &CreateTerminalRequest {
-                session_id: "sess-1".to_string(),
-                command: "cargo".to_string(),
-                args: vec!["test".to_string()],
-                env: vec![EnvVariable {
-                    name: "RUST_LOG".to_string(),
-                    value: "debug".to_string(),
-                }],
-                cwd: Some("/home/user/project".to_string()),
-                output_byte_limit: Some(1_048_576),
-            },
-            json!({
-                "sessionId": "sess-1",
-                "command": "cargo",
-                "args": ["test"],
-                "env": [{ "name": "RUST_LOG", "value": "debug" }],
-                "cwd": "/home/user/project",
-                "outputByteLimit": 1_048_576,
-            }),
-        );
-        assert_serialized_json(
-            &CreateTerminalRequest {
-                session_id: "sess-1".to_string(),
-                command: "ls".to_string(),
-                args: Vec::new(),
-                env: Vec::new(),
-                cwd: None,
-                output_byte_limit: None,
-            },
-            json!({
-                "sessionId": "sess-1",
-                "command": "ls",
-                "args": [],
-                "env": [],
-                "cwd": null,
-                "outputByteLimit": null,
-            }),
-        );
-        assert_serialized_json(
-            &CreateTerminalResponse {
-                terminal_id: "term-1".to_string(),
-            },
-            json!({ "terminalId": "term-1" }),
-        );
-    }
-
-    /// Verifies output responses omit an exit status while the command is still running.
-    #[test]
-    fn serializes_terminal_output_contracts() {
-        assert_serialized_json(
-            &TerminalOutputRequest {
-                session_id: "sess-1".to_string(),
-                terminal_id: "term-1".to_string(),
-            },
-            json!({ "sessionId": "sess-1", "terminalId": "term-1" }),
-        );
-        assert_serialized_json(
-            &TerminalOutputResponse {
-                output: "running tests\n".to_string(),
-                truncated: false,
-                exit_status: None,
-            },
-            json!({ "output": "running tests\n", "truncated": false, "exitStatus": null }),
-        );
-        assert_serialized_json(
-            &TerminalOutputResponse {
-                output: "ok\n".to_string(),
-                truncated: true,
-                exit_status: Some(TerminalExitStatus {
-                    exit_code: Some(0),
-                    signal: None,
-                }),
-            },
-            json!({
-                "output": "ok\n",
-                "truncated": true,
-                "exitStatus": { "exitCode": 0, "signal": null },
-            }),
-        );
-    }
-
-    /// Verifies exit waiting reports either an exit code or a terminating signal.
-    #[test]
-    fn serializes_wait_for_terminal_exit_contracts() {
-        assert_serialized_json(
-            &WaitForTerminalExitRequest {
-                session_id: "sess-1".to_string(),
-                terminal_id: "term-1".to_string(),
-            },
-            json!({ "sessionId": "sess-1", "terminalId": "term-1" }),
-        );
-        assert_serialized_json(
-            &WaitForTerminalExitResponse {
-                exit_code: Some(1),
-                signal: None,
-            },
-            json!({ "exitCode": 1, "signal": null }),
-        );
-        assert_serialized_json(
-            &WaitForTerminalExitResponse {
-                exit_code: None,
-                signal: Some("SIGKILL".to_string()),
-            },
-            json!({ "exitCode": null, "signal": "SIGKILL" }),
-        );
-    }
-
-    /// Verifies kill and release target one terminal and acknowledge without fields.
-    #[test]
-    fn serializes_terminal_lifecycle_contracts() {
-        assert_serialized_json(
-            &KillTerminalRequest {
-                session_id: "sess-1".to_string(),
-                terminal_id: "term-1".to_string(),
-            },
-            json!({ "sessionId": "sess-1", "terminalId": "term-1" }),
-        );
-        assert_serialized_json(&KillTerminalResponse {}, json!({}));
-        assert_serialized_json(
-            &ReleaseTerminalRequest {
-                session_id: "sess-1".to_string(),
-                terminal_id: "term-1".to_string(),
-            },
-            json!({ "sessionId": "sess-1", "terminalId": "term-1" }),
-        );
-        assert_serialized_json(&ReleaseTerminalResponse {}, json!({}));
-    }
-
-    fn assert_serialized_json(value: &impl serde::Serialize, expected: serde_json::Value) {
-        assert_eq!(serde_json::to_value(value).unwrap(), expected);
-    }
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    TerminalId::export(config)?;
+    TerminalExitStatus::export(config)?;
+    CreateTerminalRequest::export(config)?;
+    CreateTerminalResponse::export(config)?;
+    TerminalOutputRequest::export(config)?;
+    TerminalOutputResponse::export(config)?;
+    ReleaseTerminalRequest::export(config)?;
+    ReleaseTerminalResponse::export(config)?;
+    KillTerminalRequest::export(config)?;
+    KillTerminalResponse::export(config)?;
+    WaitForTerminalExitRequest::export(config)?;
+    WaitForTerminalExitResponse::export(config)?;
+    Ok(())
 }

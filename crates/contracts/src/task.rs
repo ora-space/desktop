@@ -105,6 +105,23 @@ pub struct DeleteTaskResponse {
     pub task_id: String,
 }
 
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    TaskStatus::export(config)?;
+    Task::export(config)?;
+    CreateTaskRequest::export(config)?;
+    CreateTaskResponse::export(config)?;
+    GetTaskRequest::export(config)?;
+    GetTaskResponse::export(config)?;
+    ListTasksRequest::export(config)?;
+    ListTasksResponse::export(config)?;
+    UpdateTaskRequest::export(config)?;
+    UpdateTaskResponse::export(config)?;
+    DeleteTaskRequest::export(config)?;
+    DeleteTaskResponse::export(config)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

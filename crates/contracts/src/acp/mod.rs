@@ -1,52 +1,44 @@
-mod authentication;
-mod common;
-mod file;
-mod initialization;
-mod mcp;
-mod plan;
-mod session;
-mod session_config_options;
-mod session_mode;
-mod slash_command;
-mod terminal;
+pub mod authentication;
+pub mod common;
+pub mod content;
+pub mod error;
+pub mod file;
+pub mod initialization;
+pub mod literals;
+pub mod mcp;
+pub mod notification;
+pub mod permission;
+pub mod plan;
+pub mod prompt;
+pub mod rpc;
+pub mod serde_util;
+pub mod session;
+pub mod session_config_options;
+pub mod session_mode;
+pub mod slash_command;
+pub mod terminal;
+pub mod tool_call;
 
-pub use authentication::{
-    AuthMethod, AuthMethodType, AuthenticateRequest, AuthenticateResponse, LogoutRequest,
-    LogoutResponse,
-};
-pub use common::{
-    AuthMethodId, Cursor, EmptyObject, ImplementationInfo, MessageId, Meta, ProtocolVersion,
-    SessionId,
-};
-pub use file::{
-    ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,
-};
-pub use initialization::{
-    AgentCapabilities, AuthenticationCapabilities, ClientCapabilities, FileSystemCapabilities,
-    InitializeRequest, InitializeResponse, McpCapabilities, PromptCapabilities,
-    SessionCapabilities,
-};
-pub use mcp::{
-    EnvironmentVariable, HttpHeader, HttpMcpServer, McpServer, McpTransport, SseMcpServer,
-    StdioMcpServer,
-};
-pub use plan::{Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus};
-pub use session::{
-    CancelSessionNotification, CloseSessionRequest, CloseSessionResponse, DeleteSessionRequest,
-    DeleteSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
-    LoadSessionResponse, NewSessionRequest, NewSessionResponse, PatchField, ResumeSessionRequest,
-    ResumeSessionResponse, SessionEnvironment, SessionInfo, SessionInfoUpdate, SessionUpdate,
-    SessionUpdateNotification, SessionUpdateType,
-};
-pub use session_config_options::{
-    ConfigOption, ConfigOptionCurrentValue, ConfigOptionType, ConfigOptionValue,
-    SetConfigOptionParams,
-};
-pub use session_mode::{SessionMode, SessionModeId, SessionModeState, SetSessionModeParams};
-pub use slash_command::{AvailableCommand, AvailableCommandInput};
-pub use terminal::{
-    CreateTerminalRequest, CreateTerminalResponse, EnvVariable, KillTerminalRequest,
-    KillTerminalResponse, ReleaseTerminalRequest, ReleaseTerminalResponse, TerminalExitStatus,
-    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse,
-};
+/// Exports every ACP TypeScript binding declared across the `acp` module family.
+///
+/// Each sub-module owns its own exhaustive binding list; this aggregates them so the
+/// crate-level export entry point only needs a single `acp::export` call.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    common::export(config)?;
+    content::export(config)?;
+    authentication::export(config)?;
+    initialization::export(config)?;
+    session_config_options::export(config)?;
+    session_mode::export(config)?;
+    slash_command::export(config)?;
+    plan::export(config)?;
+    prompt::export(config)?;
+    mcp::export(config)?;
+    terminal::export(config)?;
+    tool_call::export(config)?;
+    session::export(config)?;
+    notification::export(config)?;
+    permission::export(config)?;
+    file::export(config)?;
+    Ok(())
+}

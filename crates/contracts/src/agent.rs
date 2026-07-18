@@ -92,6 +92,22 @@ pub struct DeleteAgentResponse {
     pub agent_id: String,
 }
 
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    Agent::export(config)?;
+    CreateAgentRequest::export(config)?;
+    CreateAgentResponse::export(config)?;
+    GetAgentRequest::export(config)?;
+    GetAgentResponse::export(config)?;
+    ListAgentsRequest::export(config)?;
+    ListAgentsResponse::export(config)?;
+    UpdateAgentRequest::export(config)?;
+    UpdateAgentResponse::export(config)?;
+    DeleteAgentRequest::export(config)?;
+    DeleteAgentResponse::export(config)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

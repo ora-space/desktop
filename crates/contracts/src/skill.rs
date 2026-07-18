@@ -92,6 +92,22 @@ pub struct DeleteSkillResponse {
     pub skill_id: String,
 }
 
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    Skill::export(config)?;
+    CreateSkillRequest::export(config)?;
+    CreateSkillResponse::export(config)?;
+    GetSkillRequest::export(config)?;
+    GetSkillResponse::export(config)?;
+    ListSkillsRequest::export(config)?;
+    ListSkillsResponse::export(config)?;
+    UpdateSkillRequest::export(config)?;
+    UpdateSkillResponse::export(config)?;
+    DeleteSkillRequest::export(config)?;
+    DeleteSkillResponse::export(config)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

@@ -107,6 +107,23 @@ pub struct DeleteSessionResponse {
     pub session_id: String,
 }
 
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    SessionStatus::export(config)?;
+    Session::export(config)?;
+    CreateSessionRequest::export(config)?;
+    CreateSessionResponse::export(config)?;
+    GetSessionRequest::export(config)?;
+    GetSessionResponse::export(config)?;
+    ListSessionsRequest::export(config)?;
+    ListSessionsResponse::export(config)?;
+    UpdateSessionRequest::export(config)?;
+    UpdateSessionResponse::export(config)?;
+    DeleteSessionRequest::export(config)?;
+    DeleteSessionResponse::export(config)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

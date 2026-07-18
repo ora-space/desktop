@@ -1,47 +1,57 @@
+use derive_more::{Display, From};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::BTreeMap;
+use std::sync::Arc;
+use ts_rs::TS;
 
-/// Identifies the ACP version negotiated between a client and an agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A unique identifier for a conversation session between a client and agent.
+///
+/// Sessions maintain their own context, conversation history, and state,
+/// allowing multiple independent interactions with the same agent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Display, From, TS)]
 #[serde(transparent)]
-pub struct ProtocolVersion(pub u32);
+#[from(Arc<str>, String, &'static str)]
+#[ts(type = "string", export_to = "acp/common.ts")]
+pub struct SessionId(pub Arc<str>);
 
-/// Identifies one ACP session without allowing it to be confused with other identifiers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SessionId(pub String);
-
-/// Preserves an opaque pagination position supplied by an ACP agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Cursor(pub String);
-
-/// Identifies one authentication method advertised by an ACP agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AuthMethodId(pub String);
-
-/// Identifies a protocol message position when a method requires one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct MessageId(pub String);
-
-/// Stores implementation-defined metadata without granting protocol code ownership of its keys.
-pub type Meta = BTreeMap<String, Value>;
-
-/// Describes a client or agent implementation for display and stable identification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImplementationInfo {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub version: String,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<Meta>,
+impl SessionId {
+    /// Wraps a protocol string as a typed [`SessionId`].
+    #[must_use]
+    pub fn new(id: impl Into<Arc<str>>) -> Self {
+        Self(id.into())
+    }
 }
 
 /// Represents a successful payload or capability marker whose wire representation is `{}`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "acp/common.ts")]
 pub struct EmptyObject {}
+
+/// An environment variable to set when launching an MCP server.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "acp/common.ts")]
+pub struct EnvVariable {
+    /// The name of the environment variable.
+    pub name: String,
+    /// The value to set for the environment variable.
+    pub value: String,
+}
+
+impl EnvVariable {
+    /// Builds [`EnvVariable`] with the required fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
+
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    SessionId::export(config)?;
+    EmptyObject::export(config)?;
+    EnvVariable::export(config)?;
+    Ok(())
+}

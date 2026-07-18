@@ -11,9 +11,11 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+derive_more = { workspace = true, features = ["from", "display"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-ts-rs = { workspace = true, features = ["format"] }
+serde_with = { workspace = true }
+ts-rs = { workspace = true, features = ["format", "no-serde-warnings"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

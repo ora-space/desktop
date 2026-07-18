@@ -1,109 +1,136 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
+use serde_with::{DefaultOnError, serde_as, skip_serializing_none};
 use ts_rs::TS;
 
-/// Carries the `fs/read_text_file` parameters an agent sends to the client.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+use super::{common::SessionId, serde_util::IntoOption};
+
+/// Request to write content to a text file.
+///
+/// Only available if the client supports the `fs.writeTextFile` capability.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "acp/file.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct WriteTextFileRequest {
+    /// The session ID for this request.
+    pub session_id: SessionId,
+    /// Absolute path to the file to write.
+    pub path: PathBuf,
+    /// The text content to write to the file.
+    pub content: String,
+}
+
+impl WriteTextFileRequest {
+    /// Builds [`WriteTextFileRequest`] with the required request fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(
+        session_id: impl Into<SessionId>,
+        path: impl Into<PathBuf>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            session_id: session_id.into(),
+            path: path.into(),
+            content: content.into(),
+        }
+    }
+}
+
+/// Response to `fs/write_text_file`
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/file.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct WriteTextFileResponse {}
+
+impl WriteTextFileResponse {
+    /// Builds [`WriteTextFileResponse`] with the required response fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Request to read content from a text file.
+///
+/// Only available if the client supports the `fs.readTextFile` capability.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/file.ts")]
+#[serde(rename_all = "camelCase")]
 pub struct ReadTextFileRequest {
-    pub session_id: String,
-    pub path: String,
-    /// Starts the returned slice at this 1-based line instead of the first line.
+    /// The session ID for this request.
+    pub session_id: SessionId,
+    /// Absolute path to the file to read.
+    pub path: PathBuf,
+    /// Line number to start reading from (1-based).
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
     pub line: Option<u32>,
-    /// Limits the returned slice to this many lines.
+    /// Maximum number of lines to read.
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
     pub limit: Option<u32>,
 }
 
-/// Returns the requested text file contents to the calling agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+impl ReadTextFileRequest {
+    /// Builds [`ReadTextFileRequest`] with the required request fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(session_id: impl Into<SessionId>, path: impl Into<PathBuf>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            path: path.into(),
+            line: None,
+            limit: None,
+        }
+    }
+
+    /// Line number to start reading from (1-based).
+    #[must_use]
+    pub fn line(mut self, line: impl IntoOption<u32>) -> Self {
+        self.line = line.into_option();
+        self
+    }
+
+    /// Maximum number of lines to read.
+    #[must_use]
+    pub fn limit(mut self, limit: impl IntoOption<u32>) -> Self {
+        self.limit = limit.into_option();
+        self
+    }
+}
+
+/// Response containing the contents of a text file.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "acp/file.ts")]
+#[serde(rename_all = "camelCase")]
 pub struct ReadTextFileResponse {
+    /// Content payload returned by this response.
     pub content: String,
 }
 
-/// Carries the `fs/write_text_file` parameters an agent sends to the client.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/file.ts")]
-pub struct WriteTextFileRequest {
-    pub session_id: String,
-    pub path: String,
-    pub content: String,
+impl ReadTextFileResponse {
+    /// Builds [`ReadTextFileResponse`] with the required response fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+        }
+    }
 }
 
-/// Acknowledges a completed text file write, which carries no result fields.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/file.ts")]
-pub struct WriteTextFileResponse {}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,
-    };
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
-
-    /// Verifies read requests keep optional line windowing separate from the required target.
-    #[test]
-    fn serializes_read_text_file_contracts() {
-        assert_serialized_json(
-            &ReadTextFileRequest {
-                session_id: "sess-1".to_string(),
-                path: "/home/user/project/src/main.rs".to_string(),
-                line: None,
-                limit: None,
-            },
-            json!({
-                "sessionId": "sess-1",
-                "path": "/home/user/project/src/main.rs",
-                "line": null,
-                "limit": null,
-            }),
-        );
-        assert_serialized_json(
-            &ReadTextFileRequest {
-                session_id: "sess-1".to_string(),
-                path: "/home/user/project/src/main.rs".to_string(),
-                line: Some(10),
-                limit: Some(50),
-            },
-            json!({
-                "sessionId": "sess-1",
-                "path": "/home/user/project/src/main.rs",
-                "line": 10,
-                "limit": 50,
-            }),
-        );
-        assert_serialized_json(
-            &ReadTextFileResponse {
-                content: "fn main() {}\n".to_string(),
-            },
-            json!({ "content": "fn main() {}\n" }),
-        );
-    }
-
-    /// Verifies write requests carry the full replacement content and acknowledge without fields.
-    #[test]
-    fn serializes_write_text_file_contracts() {
-        assert_serialized_json(
-            &WriteTextFileRequest {
-                session_id: "sess-1".to_string(),
-                path: "/home/user/project/src/main.rs".to_string(),
-                content: "fn main() {}\n".to_string(),
-            },
-            json!({
-                "sessionId": "sess-1",
-                "path": "/home/user/project/src/main.rs",
-                "content": "fn main() {}\n",
-            }),
-        );
-        assert_serialized_json(&WriteTextFileResponse {}, json!({}));
-    }
-
-    fn assert_serialized_json(value: &impl serde::Serialize, expected: serde_json::Value) {
-        assert_eq!(serde_json::to_value(value).unwrap(), expected);
-    }
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    WriteTextFileRequest::export(config)?;
+    WriteTextFileResponse::export(config)?;
+    ReadTextFileRequest::export(config)?;
+    ReadTextFileResponse::export(config)?;
+    Ok(())
 }

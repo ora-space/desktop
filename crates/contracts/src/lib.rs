@@ -1,4 +1,4 @@
-mod acp;
+pub mod acp;
 
 mod agent;
 mod frontend;
@@ -8,16 +8,6 @@ mod session;
 mod skill;
 mod task;
 
-pub use acp::{
-    AvailableCommand, AvailableCommandInput, ConfigOption, ConfigOptionCurrentValue,
-    ConfigOptionType, ConfigOptionValue, CreateTerminalRequest, CreateTerminalResponse,
-    EnvVariable, KillTerminalRequest, KillTerminalResponse, Plan, PlanEntry, PlanEntryPriority,
-    PlanEntryStatus, ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest,
-    ReleaseTerminalResponse, SessionMode, SessionModeState, SetConfigOptionParams,
-    SetSessionModeParams, TerminalExitStatus, TerminalOutputRequest, TerminalOutputResponse,
-    WaitForTerminalExitRequest, WaitForTerminalExitResponse, WriteTextFileRequest,
-    WriteTextFileResponse,
-};
 pub use agent::{
     Agent, CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
     GetAgentRequest, GetAgentResponse, ListAgentsRequest, ListAgentsResponse, UpdateAgentRequest,
@@ -53,111 +43,24 @@ pub use task::{
     GetTaskResponse, ListTasksRequest, ListTasksResponse, Task, TaskStatus, UpdateTaskRequest,
     UpdateTaskResponse,
 };
-use ts_rs::{Config, ExportError, TS};
+use ts_rs::{Config, ExportError};
 
 /// Exports every contract DTO family into the shared TypeScript package for frontend consumers.
+///
+/// Each module owns the exhaustive list of its own TypeScript bindings, so adding a new contract
+/// type only requires registering it next to its definition rather than in this aggregation point.
 pub fn export_typescript_bindings_to(
     output_directory: impl AsRef<Path>,
 ) -> Result<(), ExportError> {
     let config = Config::new().with_out_dir(output_directory.as_ref());
 
-    ConfigOption::export(&config)?;
-    ConfigOptionValue::export(&config)?;
-    SetConfigOptionParams::export(&config)?;
-    ConfigOptionType::export(&config)?;
-    ConfigOptionCurrentValue::export(&config)?;
-    SessionModeState::export(&config)?;
-    SessionMode::export(&config)?;
-    SetSessionModeParams::export(&config)?;
-    AvailableCommand::export(&config)?;
-    AvailableCommandInput::export(&config)?;
-    ReadTextFileRequest::export(&config)?;
-    ReadTextFileResponse::export(&config)?;
-    WriteTextFileRequest::export(&config)?;
-    WriteTextFileResponse::export(&config)?;
-    EnvVariable::export(&config)?;
-    TerminalExitStatus::export(&config)?;
-    CreateTerminalRequest::export(&config)?;
-    CreateTerminalResponse::export(&config)?;
-    TerminalOutputRequest::export(&config)?;
-    TerminalOutputResponse::export(&config)?;
-    WaitForTerminalExitRequest::export(&config)?;
-    WaitForTerminalExitResponse::export(&config)?;
-    KillTerminalRequest::export(&config)?;
-    KillTerminalResponse::export(&config)?;
-    ReleaseTerminalRequest::export(&config)?;
-    ReleaseTerminalResponse::export(&config)?;
-    PlanEntryPriority::export(&config)?;
-    PlanEntryStatus::export(&config)?;
-    PlanEntry::export(&config)?;
-    Plan::export(&config)?;
-
-    Agent::export(&config)?;
-    CreateAgentRequest::export(&config)?;
-    CreateAgentResponse::export(&config)?;
-    GetAgentRequest::export(&config)?;
-    GetAgentResponse::export(&config)?;
-    ListAgentsRequest::export(&config)?;
-    ListAgentsResponse::export(&config)?;
-    UpdateAgentRequest::export(&config)?;
-    UpdateAgentResponse::export(&config)?;
-    DeleteAgentRequest::export(&config)?;
-    DeleteAgentResponse::export(&config)?;
-    Project::export(&config)?;
-    CreateProjectRequest::export(&config)?;
-    CreateProjectResponse::export(&config)?;
-    GetProjectRequest::export(&config)?;
-    GetProjectResponse::export(&config)?;
-    ListProjectsRequest::export(&config)?;
-    ListProjectsResponse::export(&config)?;
-    UpdateProjectRequest::export(&config)?;
-    UpdateProjectResponse::export(&config)?;
-    DeleteProjectRequest::export(&config)?;
-    DeleteProjectResponse::export(&config)?;
-    ProjectWorkContextSurface::export(&config)?;
-    ProjectWorkContext::export(&config)?;
-    OpenProjectWorkContextRequest::export(&config)?;
-    OpenProjectWorkContextResponse::export(&config)?;
-    RenewProjectWorkContextRequest::export(&config)?;
-    RenewProjectWorkContextResponse::export(&config)?;
-
-    SessionStatus::export(&config)?;
-    Session::export(&config)?;
-    CreateSessionRequest::export(&config)?;
-    CreateSessionResponse::export(&config)?;
-    GetSessionRequest::export(&config)?;
-    GetSessionResponse::export(&config)?;
-    ListSessionsRequest::export(&config)?;
-    ListSessionsResponse::export(&config)?;
-    UpdateSessionRequest::export(&config)?;
-    UpdateSessionResponse::export(&config)?;
-    DeleteSessionRequest::export(&config)?;
-    DeleteSessionResponse::export(&config)?;
-
-    Skill::export(&config)?;
-    CreateSkillRequest::export(&config)?;
-    CreateSkillResponse::export(&config)?;
-    GetSkillRequest::export(&config)?;
-    GetSkillResponse::export(&config)?;
-    ListSkillsRequest::export(&config)?;
-    ListSkillsResponse::export(&config)?;
-    UpdateSkillRequest::export(&config)?;
-    UpdateSkillResponse::export(&config)?;
-    DeleteSkillRequest::export(&config)?;
-    DeleteSkillResponse::export(&config)?;
-
-    TaskStatus::export(&config)?;
-    Task::export(&config)?;
-    CreateTaskRequest::export(&config)?;
-    CreateTaskResponse::export(&config)?;
-    GetTaskRequest::export(&config)?;
-    GetTaskResponse::export(&config)?;
-    ListTasksRequest::export(&config)?;
-    ListTasksResponse::export(&config)?;
-    UpdateTaskRequest::export(&config)?;
-    UpdateTaskResponse::export(&config)?;
-    DeleteTaskRequest::export(&config)?;
-    DeleteTaskResponse::export(&config)?;
+    acp::export(&config)?;
+    agent::export(&config)?;
+    project::export(&config)?;
+    project_work_context::export(&config)?;
+    session::export(&config)?;
+    skill::export(&config)?;
+    task::export(&config)?;
 
     Ok(())
 }

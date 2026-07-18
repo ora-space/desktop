@@ -92,6 +92,22 @@ pub struct DeleteProjectResponse {
     pub project_id: String,
 }
 
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    Project::export(config)?;
+    CreateProjectRequest::export(config)?;
+    CreateProjectResponse::export(config)?;
+    GetProjectRequest::export(config)?;
+    GetProjectResponse::export(config)?;
+    ListProjectsRequest::export(config)?;
+    ListProjectsResponse::export(config)?;
+    UpdateProjectRequest::export(config)?;
+    UpdateProjectResponse::export(config)?;
+    DeleteProjectRequest::export(config)?;
+    DeleteProjectResponse::export(config)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

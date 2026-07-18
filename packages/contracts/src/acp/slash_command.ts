@@ -5,33 +5,30 @@
  */
 export type AvailableCommand = {
   /**
-   * The command name without a slash.
+   * Command name (e.g., `create_plan`, `research_codebase`).
    */
   name: string;
   /**
-   * The command description.
+   * Human-readable description of what the command does.
    */
   description: string;
   /**
-   * Optional command input details.
+   * Input for the command if required
    */
-  input?: AvailableCommandInput;
-  /**
-   * Optional extension data.
-   */
-  _meta?: Record<string, unknown>;
+  input?: AvailableCommandInput | null;
 };
 
 /**
  * Input details for a slash command.
  */
-export type AvailableCommandInput = {
+export type AvailableCommandInput = UnstructuredCommandInput;
+
+/**
+ * All text that was typed after the command name is provided as input.
+ */
+export type UnstructuredCommandInput = {
   /**
-   * The prompt shown before input is provided.
+   * A hint to display when the input hasn't been provided yet
    */
   hint: string;
-  /**
-   * Optional extension data.
-   */
-  _meta?: Record<string, unknown>;
 };

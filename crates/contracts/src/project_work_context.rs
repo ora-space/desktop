@@ -57,6 +57,17 @@ pub struct RenewProjectWorkContextResponse {
     pub context: ProjectWorkContext,
 }
 
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    ProjectWorkContextSurface::export(config)?;
+    ProjectWorkContext::export(config)?;
+    OpenProjectWorkContextRequest::export(config)?;
+    OpenProjectWorkContextResponse::export(config)?;
+    RenewProjectWorkContextRequest::export(config)?;
+    RenewProjectWorkContextResponse::export(config)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

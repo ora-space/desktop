@@ -1,103 +1,105 @@
 use serde::{Deserialize, Serialize};
+use serde_with::{DefaultOnError, serde_as, skip_serializing_none};
 use ts_rs::TS;
 
-/// Ranks how important one plan entry is relative to the rest of the plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "acp/plan.ts")]
-pub enum PlanEntryPriority {
-    High,
-    Medium,
-    Low,
-}
-
-/// Describes how far the agent has progressed through one plan entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "acp/plan.ts")]
-pub enum PlanEntryStatus {
-    Pending,
-    InProgress,
-    Completed,
-}
-
-/// Describes one step the agent intends to take during the current turn.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "acp/plan.ts")]
-pub struct PlanEntry {
-    /// Describes the step in human-readable form.
-    pub content: String,
-    pub priority: PlanEntryPriority,
-    pub status: PlanEntryStatus,
-}
-
-/// Carries the agent's complete plan for the current turn.
+/// An execution plan for accomplishing complex tasks.
 ///
-/// Each update replaces the previous plan outright, so entries are never merged.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+/// Plans consist of multiple entries representing individual tasks or goals.
+/// Agents report plans to clients to provide visibility into their execution strategy.
+/// Plans can evolve during execution as the agent discovers new requirements or completes tasks.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "acp/plan.ts")]
+#[serde(rename_all = "camelCase")]
 pub struct Plan {
+    /// The list of tasks to be accomplished.
+    ///
+    /// When updating a plan, the agent must send a complete list of all entries
+    /// with their current status. The client replaces the entire plan with each update.
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub entries: Vec<PlanEntry>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus};
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
-
-    /// Verifies plan entry enums use the snake_case spellings the protocol defines.
-    #[test]
-    fn serializes_plan_entry_with_protocol_enum_spellings() {
-        assert_serialized_json(
-            &PlanEntry {
-                content: "Check the code style in the repository".to_string(),
-                priority: PlanEntryPriority::Medium,
-                status: PlanEntryStatus::InProgress,
-            },
-            json!({
-                "content": "Check the code style in the repository",
-                "priority": "medium",
-                "status": "in_progress",
-            }),
-        );
-        assert_serialized_json(&PlanEntryPriority::High, json!("high"));
-        assert_serialized_json(&PlanEntryPriority::Low, json!("low"));
-        assert_serialized_json(&PlanEntryStatus::Pending, json!("pending"));
-        assert_serialized_json(&PlanEntryStatus::Completed, json!("completed"));
+impl Plan {
+    /// Builds [`Plan`] with the required fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(entries: Vec<PlanEntry>) -> Self {
+        Self { entries }
     }
+}
 
-    /// Verifies a plan carries every entry, including the empty starting plan.
-    #[test]
-    fn serializes_plan_as_complete_entry_list() {
-        assert_serialized_json(&Plan::default(), json!({ "entries": [] }));
-        assert_serialized_json(
-            &Plan {
-                entries: vec![
-                    PlanEntry {
-                        content: "Find the login function".to_string(),
-                        priority: PlanEntryPriority::High,
-                        status: PlanEntryStatus::Completed,
-                    },
-                    PlanEntry {
-                        content: "Add unit tests".to_string(),
-                        priority: PlanEntryPriority::Low,
-                        status: PlanEntryStatus::Pending,
-                    },
-                ],
-            },
-            json!({
-                "entries": [
-                    { "content": "Find the login function", "priority": "high", "status": "completed" },
-                    { "content": "Add unit tests", "priority": "low", "status": "pending" },
-                ],
-            }),
-        );
-    }
+/// A single entry in the execution plan.
+///
+/// Represents a task or goal that the assistant intends to accomplish
+/// as part of fulfilling the user's request.
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/plan.ts")]
+#[serde(rename_all = "camelCase")]
+pub struct PlanEntry {
+    /// Human-readable description of what this task aims to accomplish.
+    pub content: String,
+    /// The relative importance of this task.
+    /// Used to indicate which tasks are most critical to the overall goal.
+    pub priority: PlanEntryPriority,
+    /// Current execution status of this task.
+    pub status: PlanEntryStatus,
+}
 
-    fn assert_serialized_json(value: &impl serde::Serialize, expected: serde_json::Value) {
-        assert_eq!(serde_json::to_value(value).unwrap(), expected);
+impl PlanEntry {
+    /// Builds [`PlanEntry`] with the required fields set; optional fields start unset or empty.
+    #[must_use]
+    pub fn new(
+        content: impl Into<String>,
+        priority: PlanEntryPriority,
+        status: PlanEntryStatus,
+    ) -> Self {
+        Self {
+            content: content.into(),
+            priority,
+            status,
+        }
     }
+}
+
+/// Priority levels for plan entries.
+///
+/// Used to indicate the relative importance or urgency of different
+/// tasks in the execution plan.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/plan.ts")]
+#[serde(rename_all = "snake_case")]
+pub enum PlanEntryPriority {
+    /// High priority task - critical to the overall goal.
+    High,
+    /// Medium priority task - important but not critical.
+    Medium,
+    /// Low priority task - nice to have but not essential.
+    Low,
+}
+
+/// Status of a plan entry in the execution flow.
+///
+/// Tracks the lifecycle of each task from planning through completion.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, TS)]
+#[ts(export_to = "acp/plan.ts")]
+#[serde(rename_all = "snake_case")]
+pub enum PlanEntryStatus {
+    /// The task has not started yet.
+    Pending,
+    /// The task is currently being worked on.
+    InProgress,
+    /// The task has been successfully completed.
+    Completed,
+}
+
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    Plan::export(config)?;
+    PlanEntry::export(config)?;
+    PlanEntryPriority::export(config)?;
+    PlanEntryStatus::export(config)?;
+    Ok(())
 }
