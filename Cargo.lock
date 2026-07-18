@@ -1198,6 +1198,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-process"
+version = "0.0.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "pretty_assertions",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ora-pty"
 version = "0.0.0"
 dependencies = [

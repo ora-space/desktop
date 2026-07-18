@@ -1,0 +1,24 @@
+[package]
+name = "ora-process"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_process"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+getrandom = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt-multi-thread", "time"] }
