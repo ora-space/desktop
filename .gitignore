@@ -29,3 +29,8 @@ packages/contracts/.test-dist/
 .tmp
 *.tsbuildinfo
 **/.test-dist
+
+# Plugin runtime prepare outputs
+/.cache/plugin-runtime/
+/.cache/plugin-sdk-pack-tests/
+/runtime-assets/prepared/
