@@ -13,6 +13,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "node scripts/clean-test.mjs && pnpm run typecheck && pnpm run build && tsc -p tsconfig.test.json && node scripts/run-tests.mjs"
   },
+  "bin": {
+    "ora-plugin-pack": "./dist/pack/cli.js"
+  },
   "exports": {
     "./agent": {
       "types": "./dist/agent/index.d.ts",
