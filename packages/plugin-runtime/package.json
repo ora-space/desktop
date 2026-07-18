@@ -1,0 +1,13 @@
+{
+  "name": "@ora-space/plugin-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node scripts/clean-test.mjs && pnpm run typecheck && tsc -p tsconfig.test.json && node scripts/run-tests.mjs"
+  },
+  "dependencies": {
+    "@ora-space/plugin-sdk": "workspace:*"
+  }
+}

@@ -165,6 +165,13 @@ importers:
 
   packages/plugin-sdk: {}
 
+  packages/plugin-runtime:
+    dependencies:
+      '@ora-space/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+
+
   packages/ui:
     dependencies:
       '@radix-ui/react-alert-dialog':
