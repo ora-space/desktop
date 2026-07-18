@@ -18,7 +18,7 @@ pub use agent::{
 };
 pub use error::{
     ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget, PublicError,
-    RequestId, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
+    RequestId, SkillFolderConflictParams, SkillUploadTooLargeParams, SkillUploadTooManyFilesParams,
 };
 pub use file_system::{
     FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryRequest,
@@ -30,7 +30,7 @@ pub use frontend::{
     GIT_IDENTITY_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
     PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
     SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH,
-    SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
+    SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
 };
 pub use git::{GetGitIdentityRequest, GitIdentityResponse};
 pub use project::{

@@ -85,6 +85,8 @@ pub const SESSION_STOP_PATH: &str = "/api/sessions/{sessionId}/stop";
 pub const AGENT_MODELS_PATH: &str = "/api/agent-models";
 pub const SKILLS_PATH: &str = "/api/skills";
 pub const SKILL_PATH: &str = "/api/skills/{skillId}";
+/// Uploads a local skill folder as a multipart request that the backend commits atomically.
+pub const SKILL_IMPORT_PATH: &str = "/api/skills/import";
 pub const AGENTS_PATH: &str = "/api/agents";
 pub const AGENT_PATH: &str = "/api/agents/{agentId}";
 pub const FILE_SYSTEM_DIRECTORY_PATH: &str = "/api/file-system/directory";

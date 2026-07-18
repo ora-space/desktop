@@ -36,7 +36,7 @@ Because adapters and generated frontend types bind to `ora-contracts` rather tha
 
 Public failures serialize directly as `{ code, params, requestId }`. `RequestId` is UUID-backed, and `PublicError` is a discriminated union with one named parameter shape per code, including explicit empty parameters. The contract exposes neither an internal message nor an outer error envelope.
 
-The backend maps the highest semantic application error exhaustively to both a public error and one transport-neutral classification: `InvalidRequest`, `NotFound`, `Conflict`, or `Internal`. Infrastructure failures become `internal_error` while their Rust `Error::source()` chains remain available for diagnostics outside the serialized contract. Adapters never infer public codes by inspecting source chains or matching error strings.
+The backend maps the highest semantic application error exhaustively to both a public error and one transport-neutral classification: `InvalidRequest`, `PayloadTooLarge`, `NotFound`, `Conflict`, `Unprocessable`, or `Internal`. Infrastructure failures become `internal_error` while their Rust `Error::source()` chains remain available for diagnostics outside the serialized contract. Adapters never infer public codes by inspecting source chains or matching error strings. Skill upload limits and folder conflicts expose only bounded safe parameters such as `maxBytes`, `maxFiles`, and a validated destination name.
 
 ## Handlers
 
@@ -51,7 +51,7 @@ The handler set is intentionally narrower than full CRUD per entity, because som
 | `project` | create, get, list, update |
 | `task` | create, get, list, update |
 | `session` | get, list, delete |
-| `skill` | create, get, list, update, delete |
+| `skill` | create, get, list, update, delete, import, startup reconciliation |
 | `agent_definition` | create, get, list, update, delete |
 | `project_work_context` | open, renew |
 | `worktree` | none — ports only |

@@ -112,7 +112,10 @@ impl RequestLifecycle {
                 error.chain_depth = report.chain_depth(),
                 "request completed"
             ),
-            ErrorClassification::InvalidRequest | ErrorClassification::NotFound => ora_info!(
+            ErrorClassification::InvalidRequest
+            | ErrorClassification::PayloadTooLarge
+            | ErrorClassification::NotFound
+            | ErrorClassification::Unprocessable => ora_info!(
                 operation = self.inner.operation.as_ref(),
                 request_id = %self.inner.request_id,
                 outcome = "failure",

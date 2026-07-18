@@ -7,6 +7,7 @@ This module implements `ora-application` persistence ports on SQLite and exposes
 - Concrete repositories map projects, tasks, sessions, skills, configurable agents, worktrees, and project work contexts between SQL rows and domain values.
 - Normal reads exclude soft-deleted rows. Soft deletion records timestamps rather than removing individual domain records physically.
 - `RepositoryPool` serializes access to its connection and gives repository operations a consistent error boundary.
+- `SqliteSkillImportUnitOfWork` holds a transaction open across the injected package-promotion callback, so the skill row commits only after the filesystem rename succeeds.
 - Project work context queries preserve surface/window identity, lease expiry, and active-project lookup semantics.
 
 ## Aggregate deletion
@@ -18,5 +19,7 @@ Task deletion cascades through its sessions and owned worktree record. Project d
 These transactions mutate Ora-owned database state only. They never invoke Git, remove checkout directories or branches, or delete provider-owned ACP history.
 
 SQL details remain internal to this module; lifecycle policy and public error mapping belong to `ora-application` and `ora-backend`.
+
+Repository and import-transaction failures preserve their concrete SQLite errors behind application-owned source-chain wrappers. This module does not stringify or log failures that the outer request lifecycle will complete.
 
 See the [ora-db overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts.md).

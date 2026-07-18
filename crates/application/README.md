@@ -16,9 +16,7 @@
 
 Handlers accept `ora-contracts` requests, operate on `ora-domain` models, and map results back to contract responses. Infrastructure is injected through statically dispatched repository, clock, identifier, and worktree traits so use-case rules can be tested without a database or Git process.
 
-`ApplicationError` is the stable application-facing failure vocabulary. Handlers translate domain
-validation into semantic variants and retain infrastructure failures as `Error::source()` chains
-through the shared `RepositoryError`. Handlers do not emit generic success or propagation-only failure events, choose public error codes, or select transport status. Web, Tauri, and stream seams own the single correlated request-completion event and derive its level from the public classification.
+`ApplicationError` is the stable application-facing failure vocabulary. Handlers translate domain and skill-package validation into semantic variants and retain infrastructure failures as `Error::source()` chains through `RepositoryError` and `SkillPackageStoreError`. Handlers do not emit generic success or propagation-only failure events, choose public error codes, or select transport status. Web, Tauri, and stream seams own the single correlated request-completion event and derive its level from the public classification. Skill-import compensation is the deliberate exception: a cleanup failure is a separate lifecycle fact and is logged without replacing the primary error.
 
 Aggregate deletion, SQLite composition, ACP process supervision, and transport-neutral public error normalization belong to `ora-backend` and `ora-db`. Contract serialization and endpoint metadata belong to `ora-contracts`.
 

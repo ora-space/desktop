@@ -1,5 +1,8 @@
 use ora_application::ApplicationError;
-use ora_contracts::{ContractError, EmptyErrorParams, PublicError, RequestId};
+use ora_contracts::{
+    ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
+    SkillUploadTooManyFilesParams,
+};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -10,8 +13,10 @@ type SharedError = Arc<dyn Error + Send + Sync + 'static>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorClassification {
     InvalidRequest,
+    PayloadTooLarge,
     NotFound,
     Conflict,
+    Unprocessable,
     Internal,
 }
 
@@ -110,6 +115,58 @@ impl From<ApplicationError> for BackendError {
                 PublicError::SkillNotFound(EmptyErrorParams {}),
                 "skill not found",
             ),
+            ApplicationError::SkillUploadEmpty => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadEmpty(EmptyErrorParams {}),
+                "skill upload contained no files",
+            ),
+            ApplicationError::SkillUploadTooManyFiles { max_files } => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
+                    max_files: *max_files,
+                }),
+                "skill upload contains too many files",
+            ),
+            ApplicationError::SkillUploadPathInvalid => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadPathInvalid(EmptyErrorParams {}),
+                "skill upload contains an unsafe path",
+            ),
+            ApplicationError::SkillUploadPathDuplicate => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadPathDuplicate(EmptyErrorParams {}),
+                "skill upload contains a duplicate path",
+            ),
+            ApplicationError::SkillManifestMissing => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestMissing(EmptyErrorParams {}),
+                "skill manifest is missing",
+            ),
+            ApplicationError::SkillManifestInvalid { .. } => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestInvalid(EmptyErrorParams {}),
+                "skill manifest is invalid",
+            ),
+            ApplicationError::SkillManifestNameBlank => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestNameBlank(EmptyErrorParams {}),
+                "skill manifest name is blank",
+            ),
+            ApplicationError::SkillManifestDescriptionBlank => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestDescriptionBlank(EmptyErrorParams {}),
+                "skill manifest description is blank",
+            ),
+            ApplicationError::SkillManifestNameInvalid => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestNameInvalid(EmptyErrorParams {}),
+                "skill manifest name is invalid",
+            ),
+            ApplicationError::SkillFolderConflict { name } => (
+                ErrorClassification::Conflict,
+                PublicError::SkillFolderConflict(SkillFolderConflictParams { name: name.clone() }),
+                "skill folder already exists",
+            ),
             ApplicationError::AgentDefinitionNameBlank => (
                 ErrorClassification::InvalidRequest,
                 PublicError::AgentNameBlank(EmptyErrorParams {}),
@@ -156,6 +213,7 @@ impl From<ApplicationError> for BackendError {
                 "session not found",
             ),
             ApplicationError::SkillRepository { .. }
+            | ApplicationError::SkillPackageStorage { .. }
             | ApplicationError::AgentDefinitionRepository { .. }
             | ApplicationError::ProjectRepository { .. }
             | ApplicationError::ProjectWorkContextRepository { .. }
@@ -185,7 +243,9 @@ impl From<ApplicationError> for BackendError {
 mod tests {
     use super::{BackendError, ErrorClassification};
     use ora_application::{ApplicationError, RepositoryError};
-    use ora_contracts::{EmptyErrorParams, PublicError};
+    use ora_contracts::{
+        EmptyErrorParams, PublicError, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
+    };
     use pretty_assertions::assert_eq;
     use std::error::Error;
 
@@ -201,6 +261,35 @@ mod tests {
         assert_eq!(
             error.source().map(ToString::to_string),
             Some("worktree mode requires a Git repository".to_string())
+        );
+    }
+
+    /// Verifies skill import validation and conflicts expose only bounded typed parameters.
+    #[test]
+    fn maps_skill_import_semantics_to_public_contracts() {
+        let too_many =
+            BackendError::from(ApplicationError::SkillUploadTooManyFiles { max_files: 1000 });
+        let conflict = BackendError::from(ApplicationError::SkillFolderConflict {
+            name: "grilling".to_string(),
+        });
+
+        assert_eq!(
+            (
+                too_many.classification(),
+                too_many.public_error().clone(),
+                conflict.classification(),
+                conflict.public_error().clone(),
+            ),
+            (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
+                    max_files: 1000,
+                }),
+                ErrorClassification::Conflict,
+                PublicError::SkillFolderConflict(SkillFolderConflictParams {
+                    name: "grilling".to_string(),
+                }),
+            )
         );
     }
 

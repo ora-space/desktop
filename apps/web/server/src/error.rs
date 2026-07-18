@@ -64,6 +64,11 @@ pub enum WebBootstrapError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+    #[error("failed to reconcile skill storage")]
+    SkillStorageReconcile {
+        #[source]
+        source: ora_application::ApplicationError,
+    },
     #[error(transparent)]
     LoggingInit(#[from] ora_logging::LoggingInitError),
     #[error("failed to bind HTTP listener")]
@@ -204,8 +209,27 @@ pub(crate) struct DeferredCompletion;
 const fn status_for(classification: ErrorClassification) -> StatusCode {
     match classification {
         ErrorClassification::InvalidRequest => StatusCode::BAD_REQUEST,
+        ErrorClassification::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         ErrorClassification::NotFound => StatusCode::NOT_FOUND,
         ErrorClassification::Conflict => StatusCode::CONFLICT,
+        ErrorClassification::Unprocessable => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorClassification::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_for;
+    use axum::http::StatusCode;
+    use ora_backend::ErrorClassification;
+    use pretty_assertions::assert_eq;
+
+    /// Verifies transport-only upload limits retain their native HTTP status.
+    #[test]
+    fn maps_payload_too_large_classification_to_http_413() {
+        assert_eq!(
+            status_for(ErrorClassification::PayloadTooLarge),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
     }
 }

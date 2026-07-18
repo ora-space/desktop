@@ -42,6 +42,7 @@ export type ContractError =
     | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
     | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
     | { "code": "skill_upload_empty"; "params": EmptyErrorParams }
+    | { "code": "skill_upload_too_large"; "params": SkillUploadTooLargeParams }
     | {
       "code": "skill_upload_too_many_files";
       "params": SkillUploadTooManyFilesParams;
@@ -108,6 +109,7 @@ export type PublicError =
   | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
   | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
   | { "code": "skill_upload_empty"; "params": EmptyErrorParams }
+  | { "code": "skill_upload_too_large"; "params": SkillUploadTooLargeParams }
   | {
     "code": "skill_upload_too_many_files";
     "params": SkillUploadTooManyFilesParams;
@@ -130,6 +132,11 @@ export type RequestId = string;
  * Carries a validated skill name when its destination folder already exists.
  */
 export type SkillFolderConflictParams = { name: string };
+
+/**
+ * Carries the configured request-body limit without exposing uploaded file contents.
+ */
+export type SkillUploadTooLargeParams = { maxBytes: number };
 
 /**
  * Carries the configured upload limit without exposing uploaded file names.

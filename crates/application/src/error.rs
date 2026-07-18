@@ -1,4 +1,5 @@
-use crate::{RepositoryError, TaskWorktreeProvisionerError};
+use crate::skill::SkillPackageStoreError;
+use crate::{BoxRepositorySource, RepositoryError, TaskWorktreeProvisionerError};
 use ora_domain::DomainModelError;
 use thiserror::Error;
 
@@ -13,6 +14,34 @@ pub enum ApplicationError {
     SkillRepository {
         #[source]
         source: RepositoryError,
+    },
+    #[error("skill upload contained no files")]
+    SkillUploadEmpty,
+    #[error("skill upload exceeds the {max_files}-file limit")]
+    SkillUploadTooManyFiles { max_files: usize },
+    #[error("skill upload contains an unsafe path")]
+    SkillUploadPathInvalid,
+    #[error("skill upload contains a duplicate path")]
+    SkillUploadPathDuplicate,
+    #[error("skill upload is missing a root SKILL.md manifest")]
+    SkillManifestMissing,
+    #[error("skill manifest is invalid")]
+    SkillManifestInvalid {
+        #[source]
+        source: BoxRepositorySource,
+    },
+    #[error("skill manifest name must not be blank")]
+    SkillManifestNameBlank,
+    #[error("skill manifest description must not be blank")]
+    SkillManifestDescriptionBlank,
+    #[error("skill manifest name is not a safe directory name")]
+    SkillManifestNameInvalid,
+    #[error("skill folder already exists: {name}")]
+    SkillFolderConflict { name: String },
+    #[error("skill package storage operation failed")]
+    SkillPackageStorage {
+        #[source]
+        source: SkillPackageStoreError,
     },
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
@@ -154,6 +183,15 @@ impl PartialEq for ApplicationError {
 
         match (self, other) {
             (SkillNameBlank, SkillNameBlank)
+            | (SkillUploadEmpty, SkillUploadEmpty)
+            | (SkillUploadPathInvalid, SkillUploadPathInvalid)
+            | (SkillUploadPathDuplicate, SkillUploadPathDuplicate)
+            | (SkillManifestMissing, SkillManifestMissing)
+            | (SkillManifestInvalid { .. }, SkillManifestInvalid { .. })
+            | (SkillManifestNameBlank, SkillManifestNameBlank)
+            | (SkillManifestDescriptionBlank, SkillManifestDescriptionBlank)
+            | (SkillManifestNameInvalid, SkillManifestNameInvalid)
+            | (SkillPackageStorage { .. }, SkillPackageStorage { .. })
             | (AgentDefinitionNameBlank, AgentDefinitionNameBlank)
             | (TaskWorktreeRequiresGitRepository, TaskWorktreeRequiresGitRepository)
             | (SkillRepository { .. }, SkillRepository { .. })
@@ -164,6 +202,13 @@ impl PartialEq for ApplicationError {
             | (WorktreeRepository { .. }, WorktreeRepository { .. })
             | (SessionRepository { .. }, SessionRepository { .. }) => true,
             (SkillNotFound { skill_id: left }, SkillNotFound { skill_id: right }) => left == right,
+            (
+                SkillUploadTooManyFiles { max_files: left },
+                SkillUploadTooManyFiles { max_files: right },
+            ) => left == right,
+            (SkillFolderConflict { name: left }, SkillFolderConflict { name: right }) => {
+                left == right
+            }
             (
                 AgentDefinitionNotFound { agent_id: left },
                 AgentDefinitionNotFound { agent_id: right },

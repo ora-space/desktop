@@ -8,7 +8,7 @@ name = "ora_web_server"
 path = "src/main.rs"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
 chrono-tz = { workspace = true }
 futures-util = { workspace = true }
 ora-application = { workspace = true }

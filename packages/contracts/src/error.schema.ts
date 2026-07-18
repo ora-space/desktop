@@ -5,6 +5,10 @@ export const requestIdSchema = z.string();
 
 export const emptyErrorParamsSchema = z.record(z.string(), z.never());
 
+export const skillUploadTooLargeParamsSchema = z.object({
+    maxBytes: z.number()
+});
+
 export const skillUploadTooManyFilesParamsSchema = z.object({
     maxFiles: z.number()
 });
@@ -120,6 +124,9 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("skill_upload_empty"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_upload_too_large"),
+        "params": skillUploadTooLargeParamsSchema
     }), z.object({
         "code": z.literal("skill_upload_too_many_files"),
         "params": skillUploadTooManyFilesParamsSchema
@@ -248,6 +255,9 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("skill_upload_empty"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_upload_too_large"),
+        "params": skillUploadTooLargeParamsSchema
     }), z.object({
         "code": z.literal("skill_upload_too_many_files"),
         "params": skillUploadTooManyFilesParamsSchema
