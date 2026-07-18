@@ -1,0 +1,31 @@
+{
+  "name": "@ora-space/plugin-sdk",
+  "version": "1.0.0",
+  "description": "Public author SDK for Ora Agent plugins",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node scripts/clean-test.mjs && pnpm run typecheck && pnpm run build && tsc -p tsconfig.test.json && node scripts/run-tests.mjs"
+  },
+  "exports": {
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "default": "./dist/agent/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/types/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {}
+}

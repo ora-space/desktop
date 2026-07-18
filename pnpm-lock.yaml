@@ -163,6 +163,8 @@ importers:
 
   packages/contracts: {}
 
+  packages/plugin-sdk: {}
+
   packages/ui:
     dependencies:
       '@radix-ui/react-alert-dialog':
