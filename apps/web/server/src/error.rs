@@ -50,6 +50,8 @@ pub enum WebBootstrapError {
     DatabaseBootstrap(#[source] ora_db::DatabaseError),
     #[error("failed to reconcile bootstrap project: {message}")]
     ProjectBootstrap { message: String },
+    #[error("failed to reconcile skill storage: {message}")]
+    SkillStorageReconcile { message: String },
     #[error(transparent)]
     LoggingInit(#[from] ora_logging::LoggingInitError),
     #[error("failed to bind HTTP listener")]
@@ -117,6 +119,21 @@ impl From<ApplicationError> for WebApiError {
             ApplicationError::SkillRepository { message } => Self {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "skill_repository_error",
+                message,
+            },
+            ApplicationError::SkillImportInvalid { reason } => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "skill_import_invalid",
+                message: reason,
+            },
+            ApplicationError::SkillFolderConflict { name } => Self {
+                status: StatusCode::CONFLICT,
+                code: "skill_folder_conflict",
+                message: format!("skill folder already exists: {name}"),
+            },
+            ApplicationError::SkillPackageStorage { message } => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "skill_package_storage_error",
                 message,
             },
             ApplicationError::AgentDefinitionNameBlank => Self {
@@ -205,6 +222,7 @@ impl From<BackendError> for WebApiError {
             BackendErrorKind::BadRequest => StatusCode::BAD_REQUEST,
             BackendErrorKind::NotFound => StatusCode::NOT_FOUND,
             BackendErrorKind::Conflict => StatusCode::CONFLICT,
+            BackendErrorKind::Unprocessable => StatusCode::UNPROCESSABLE_ENTITY,
             BackendErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
 

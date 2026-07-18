@@ -8,6 +8,7 @@ pub enum BackendErrorKind {
     BadRequest,
     NotFound,
     Conflict,
+    Unprocessable,
     Internal,
 }
 
@@ -73,6 +74,20 @@ impl From<ApplicationError> for BackendError {
             ApplicationError::SkillRepository { .. } => internal(
                 "skill_repository_error",
                 "skill repository operation failed",
+            ),
+            ApplicationError::SkillImportInvalid { reason } => Self::new(
+                BackendErrorKind::Unprocessable,
+                "skill_import_invalid",
+                reason,
+            ),
+            ApplicationError::SkillFolderConflict { name } => Self::new(
+                BackendErrorKind::Conflict,
+                "skill_folder_conflict",
+                format!("skill folder already exists: {name}"),
+            ),
+            ApplicationError::SkillPackageStorage { .. } => internal(
+                "skill_package_storage_error",
+                "skill package storage operation failed",
             ),
             ApplicationError::AgentDefinitionNameBlank => Self::new(
                 BackendErrorKind::BadRequest,

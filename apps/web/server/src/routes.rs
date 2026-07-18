@@ -3,13 +3,18 @@ use crate::handlers::{
     agents, file_system, health, project_work_contexts, projects, sessions, skills, tasks,
 };
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, PROJECT_PATH,
     PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
     SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH,
+    TASKS_PATH,
 };
+
+/// Caps the total size of one skill folder upload, matching the application-layer file-count limit.
+const MAX_SKILL_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
 
 /// Builds the top-level router for health checks and the persisted CRUD routes.
 pub fn build_router(app_state: AppState) -> Router {
@@ -60,6 +65,10 @@ pub fn build_router(app_state: AppState) -> Router {
         .route(
             SKILLS_PATH,
             post(skills::create_skill).get(skills::list_skills),
+        )
+        .route(
+            SKILL_IMPORT_PATH,
+            post(skills::import_skill).layer(DefaultBodyLimit::max(MAX_SKILL_UPLOAD_BYTES)),
         )
         .route(
             SKILL_PATH,
@@ -981,6 +990,84 @@ mod tests {
             .status(),
             StatusCode::BAD_REQUEST
         );
+    }
+
+    /// Verifies the router imports a skill folder atomically and rejects conflicts and bad uploads.
+    #[tokio::test]
+    async fn serves_skill_folder_import_route() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let manifest: &[u8] = b"---\nname: grilling\ndescription: Grill the user\n---\n";
+
+        let import = app
+            .clone()
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("SKILL.md", manifest), ("refs/util.py", b"noop".as_slice())],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(import.status(), StatusCode::OK);
+        let created = response_json(import).await;
+        let skill_id = created["skill"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("response did not include a skill id"))
+            .to_string();
+        assert_eq!(
+            created,
+            json!({
+                "skill": { "id": skill_id, "name": "grilling", "description": "Grill the user" },
+            })
+        );
+
+        // A second import that resolves to the same committed directory name conflicts.
+        let conflict = app
+            .clone()
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("SKILL.md", manifest)],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+
+        // An upload without a manifest is unprocessable.
+        let invalid = app
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("refs/util.py", b"noop".as_slice())],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// Builds one multipart upload request whose file parts carry their relative path as the filename.
+    fn multipart_request(uri: &str, parts: &[(&str, &[u8])]) -> Request<Body> {
+        let boundary = "ORASKILLBOUNDARY";
+        let mut body = Vec::new();
+        for (filename, bytes) in parts {
+            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            body.extend_from_slice(
+                format!(
+                    "Content-Disposition: form-data; name=\"files\"; filename=\"{filename}\"\r\n"
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+            body.extend_from_slice(bytes);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+        Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap_or_else(|error| panic!("failed to build request: {error}"))
     }
 
     /// Sends one JSON request to the router under test.

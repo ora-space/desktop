@@ -6,8 +6,12 @@ use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
+use ora_application::{LocalSkillPackageStore, ReconcileSkillStorageHandler, UploadedSkillFile};
 use ora_contracts::*;
-use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
+use ora_db::{
+    DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteSkillRepository,
+    default_migration_catalog,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -32,6 +36,8 @@ pub enum BackendBootstrapError {
     },
     #[error("failed to bootstrap backend database")]
     Database(#[source] ora_db::DatabaseError),
+    #[error("failed to reconcile skill storage: {0}")]
+    SkillStorage(String),
     #[error("failed to initialize agent runtime")]
     AgentRuntime(#[source] BackendError),
 }
@@ -67,13 +73,14 @@ impl Backend {
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let agent_runtime = AgentRuntimeManager::new(pool.clone(), paths.home_directory, clock)
             .map_err(BackendBootstrapError::AgentRuntime)?;
+        let skill_store = prepare_skill_storage(&paths.database_path, &pool)?;
 
         Ok(Self {
             project: Arc::new(ProjectApi::new(pool.clone(), clock)),
             task: Arc::new(TaskApi::new(pool.clone(), worktree_root.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime: Arc::new(agent_runtime),
-            skill: Arc::new(SkillApi::new(pool.clone(), clock)),
+            skill: Arc::new(SkillApi::new(pool.clone(), clock, skill_store)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             pool,
             worktree_root,
@@ -266,6 +273,13 @@ impl Backend {
     ) -> Result<DeleteSkillResponse, BackendError> {
         self.skill.delete(request).map_err(BackendError::from)
     }
+    /// Imports one uploaded skill folder atomically through the shared application composition.
+    pub fn import_skill(
+        &self,
+        files: Vec<UploadedSkillFile>,
+    ) -> Result<CreateSkillResponse, BackendError> {
+        self.skill.import(files).map_err(BackendError::from)
+    }
 
     /// Creates one configurable agent through the shared application composition.
     pub fn create_agent(
@@ -299,6 +313,37 @@ impl Backend {
     ) -> Result<DeleteAgentResponse, BackendError> {
         self.agent.delete(request).map_err(BackendError::from)
     }
+}
+
+/// Creates the skill storage root, then reconciles it so startup begins from a clean layout.
+///
+/// Reconciliation runs while the backend is still opening so any crash-orphaned staging or
+/// promoted-but-uncommitted directory is gone before the first import can observe the filesystem.
+fn prepare_skill_storage(
+    database_path: &Path,
+    pool: &RepositoryPool,
+) -> Result<LocalSkillPackageStore, BackendBootstrapError> {
+    let skills_directory = skills_storage_dir(database_path);
+    ensure_directory(&skills_directory)?;
+    let store = LocalSkillPackageStore::new(skills_directory);
+
+    ReconcileSkillStorageHandler::new(store.clone(), SqliteSkillRepository::new(pool.clone()))
+        .handle()
+        .map_err(|error| BackendBootstrapError::SkillStorage(error.to_string()))?;
+
+    Ok(store)
+}
+
+/// Derives the `atoms/skills` root from the configured SQLite database location.
+///
+/// The database sits directly under the runtime data directory, so its parent is the data root
+/// that every derived path (worktrees, skills) hangs off of.
+fn skills_storage_dir(database_path: &Path) -> PathBuf {
+    database_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("atoms")
+        .join("skills")
 }
 
 /// Creates one required runtime directory and preserves its exact failing path.

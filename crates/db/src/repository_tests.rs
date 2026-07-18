@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use ora_application::{
     AgentDefinitionRepository, ProjectRepository, ProjectRepositoryError,
-    ProjectWorkContextRepository, SessionRepository, SessionRepositoryError, SkillRepository,
-    TaskRepository, TaskRepositoryError, WorktreeRepository, WorktreeRepositoryError,
+    ProjectWorkContextRepository, SessionRepository, SessionRepositoryError,
+    SkillImportCommitError, SkillImportUnitOfWork, SkillRepository, TaskRepository,
+    TaskRepositoryError, WorktreeRepository, WorktreeRepositoryError,
 };
 use ora_domain::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, Project, ProjectId,
@@ -18,8 +19,9 @@ use tempfile::TempDir;
 use crate::{
     CascadeDeleteOutcome, DatabaseBootstrapper, DatabaseLocation, RepositoryPool,
     SqliteAgentDefinitionRepository, SqliteCascadeRepository, SqliteProjectRepository,
-    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillRepository,
-    SqliteTaskRepository, SqliteWorktreeRepository, TimestampSource, default_migration_catalog,
+    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillImportUnitOfWork,
+    SqliteSkillRepository, SqliteTaskRepository, SqliteWorktreeRepository, TimestampSource,
+    default_migration_catalog,
 };
 
 /// Verifies catalog repositories use stable identifiers and hide soft-deleted rows.
@@ -108,6 +110,42 @@ fn catalog_repositories_support_id_based_crud_and_allow_duplicate_names() {
             .soft_delete_agent_definition(&AgentDefinitionId::new("missing"), 4)
             .unwrap(),
         false
+    );
+}
+
+/// Verifies the import unit of work commits the row only when the promote callback succeeds.
+#[test]
+fn skill_import_unit_of_work_commits_on_success_and_rolls_back_on_promote_failure() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    let unit_of_work = SqliteSkillImportUnitOfWork::new(pool.clone());
+    let repository = SqliteSkillRepository::new(pool);
+    let committed = skill("skill-commit", "grilling", "Grill", 1, 1, false);
+    let rolled_back = skill("skill-rollback", "probe", "Probe", 2, 2, false);
+
+    unit_of_work
+        .insert_then(committed.clone(), || Ok(()))
+        .unwrap();
+    let rollback = unit_of_work
+        .insert_then(rolled_back, || Err("promote failed".to_string()))
+        .unwrap_err();
+
+    assert_eq!(
+        rollback,
+        SkillImportCommitError::Promote {
+            message: "promote failed".to_string(),
+        }
+    );
+    assert_eq!(
+        repository
+            .find_skill(&SkillId::new("skill-commit"))
+            .unwrap(),
+        Some(committed)
+    );
+    assert_eq!(
+        repository
+            .find_skill(&SkillId::new("skill-rollback"))
+            .unwrap(),
+        None
     );
 }
 

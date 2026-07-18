@@ -5,6 +5,7 @@ mod project;
 mod project_work_context;
 mod session;
 mod skill;
+mod skill_import;
 mod task;
 mod worktree;
 
@@ -15,5 +16,6 @@ pub use project::SqliteProjectRepository;
 pub use project_work_context::SqliteProjectWorkContextRepository;
 pub use session::SqliteSessionRepository;
 pub use skill::SqliteSkillRepository;
+pub use skill_import::SqliteSkillImportUnitOfWork;
 pub use task::SqliteTaskRepository;
 pub use worktree::SqliteWorktreeRepository;

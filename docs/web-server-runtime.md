@@ -21,6 +21,7 @@ Startup asks `ora-backend` to bootstrap the database, apply the active migration
 
 - SQLite database path: `<ORA_DATA_DIR>/ora.sqlite3`
 - Worktree root: `<ORA_DATA_DIR>/worktrees`
+- Imported skill folders: `<ORA_DATA_DIR>/atoms/skills`
 - Log file: `<ORA_DATA_DIR>/logs/ora.log`
 
 ## Project Configuration
@@ -87,6 +88,7 @@ The persisted runtime exposes CRUD routes for the supported public models:
 - `GET /api/skills/{skill_id}`
 - `PUT /api/skills/{skill_id}`
 - `DELETE /api/skills/{skill_id}`
+- `POST /api/skills/import`
 - `POST /api/agents`
 - `GET /api/agents`
 - `GET /api/agents/{agent_id}`
@@ -100,6 +102,26 @@ Task payloads do not expose backend-owned worktree identifiers, and the runtime 
 Session create starts `<home>/.opencode/bin/opencode acp`, `<home>/.nga/bin/nga acp`, or `<home>/.codeagentcli/bin/codeagentcli acp` according to the immutable `agentCli`. The server performs `initialize` and `session/new` before persisting. Load performs a fresh `initialize` followed by `session/load` using the private provider session id. The public Session payload never exposes that id.
 
 Load and prompt responses use `application/x-ndjson`. Each line is one complete frame. Data and control paths are separate, session-update queues are bounded at 256 items, frames are limited to 8 MiB, and overflow terminates the operation rather than dropping updates silently.
+
+### Skill Folder Import
+
+`POST /api/skills/import` uploads a local skill folder as one `multipart/form-data` request. Each
+file part carries its skill-root-relative path as the part file name, and the request body is capped
+at 50 MB (oversized uploads return `413`, uploads over 1000 files return `422`).
+
+The import is atomic across the filesystem and the database:
+
+- Files stream into a staging directory `<ORA_DATA_DIR>/atoms/skills/<uuid>.tmp`, where `<uuid>` is
+  the skill's future identifier.
+- The staged `SKILL.md` front matter supplies the skill `name` and `description`; the committed
+  directory is named after that resolved `name`.
+- The row insert, the staging→`<name>` directory rename, and the transaction commit run as one unit
+  of work, so a failure at any point leaves neither a committed row nor a promoted directory.
+- Validation failures return `422`, and importing a folder whose resolved name already has a
+  committed directory returns `409`.
+- Deleting a skill also removes its committed directory. Startup reconciliation discards leftover
+  `*.tmp` staging directories and any committed directory not backed by a visible skill row,
+  restoring a clean layout after a crash.
 
 The project work context routes provide the current backend-managed project selection surface.
 

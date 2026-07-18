@@ -1,7 +1,8 @@
 use crate::app_state::AppState;
 use crate::error::WebApiError;
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Multipart, Path, State};
+use ora_application::UploadedSkillFile;
 use ora_contracts::{
     CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,
     GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest,
@@ -74,6 +75,41 @@ pub async fn update_skill(
             name: body.name,
             description: body.description,
         })
+        .map(Json)
+        .map_err(Into::into)
+}
+
+/// Imports one uploaded skill folder from a multipart request, committing it atomically.
+///
+/// Each file part carries its skill-root-relative path as the part file name; non-file fields are
+/// ignored so the application layer receives only the uploaded folder contents to stage.
+pub async fn import_skill(
+    State(app_state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<CreateSkillResponse>, WebApiError> {
+    let mut files = Vec::new();
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| WebApiError::bad_request(error.to_string()))?
+    {
+        let relative_path = match field.file_name() {
+            Some(file_name) => file_name.to_string(),
+            None => continue,
+        };
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|error| WebApiError::bad_request(error.to_string()))?;
+        files.push(UploadedSkillFile {
+            relative_path,
+            bytes: bytes.to_vec(),
+        });
+    }
+
+    app_state
+        .backend()
+        .import_skill(files)
         .map(Json)
         .map_err(Into::into)
 }
