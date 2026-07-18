@@ -10,6 +10,7 @@ mod ports;
 mod registry;
 mod runtime;
 mod safe_fs;
+mod scanner;
 mod state;
 mod validation;
 
@@ -25,5 +26,6 @@ pub use ports::*;
 pub use registry::*;
 pub use runtime::*;
 pub use safe_fs::*;
+pub use scanner::*;
 pub use state::*;
 pub use validation::*;
