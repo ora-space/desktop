@@ -1,6 +1,7 @@
 mod assets;
 mod generation;
 mod handshake;
+mod hub;
 mod invocation;
 mod outcome;
 mod pending;
@@ -13,6 +14,7 @@ mod transport;
 pub use assets::*;
 pub use generation::*;
 pub use handshake::*;
+pub use hub::*;
 pub use invocation::*;
 pub use outcome::*;
 pub use pending::*;
