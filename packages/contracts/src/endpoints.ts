@@ -14,6 +14,8 @@ export type EndpointPathParam = {
 
 export type FrontendEndpointDefinition = {
   operationName: string;
+  namespace: string;
+  memberName: string;
   method: HttpMethod;
   pathTemplate: string;
   requestType: string;
@@ -87,6 +89,8 @@ export type EndpointOperation = keyof RequestByOperation;
 export const endpoints = {
   createProject: {
     operationName: "createProject",
+    namespace: "project",
+    memberName: "create",
     method: "POST",
     pathTemplate: "/api/projects",
     requestType: "CreateProjectRequest",
@@ -96,6 +100,8 @@ export const endpoints = {
   },
   getProject: {
     operationName: "getProject",
+    namespace: "project",
+    memberName: "get",
     method: "GET",
     pathTemplate: "/api/projects/{projectId}",
     requestType: "GetProjectRequest",
@@ -105,6 +111,8 @@ export const endpoints = {
   },
   listProjects: {
     operationName: "listProjects",
+    namespace: "project",
+    memberName: "list",
     method: "GET",
     pathTemplate: "/api/projects",
     requestType: "ListProjectsRequest",
@@ -114,6 +122,8 @@ export const endpoints = {
   },
   updateProject: {
     operationName: "updateProject",
+    namespace: "project",
+    memberName: "update",
     method: "PUT",
     pathTemplate: "/api/projects/{projectId}",
     requestType: "UpdateProjectRequest",
@@ -123,6 +133,8 @@ export const endpoints = {
   },
   deleteProject: {
     operationName: "deleteProject",
+    namespace: "project",
+    memberName: "delete",
     method: "DELETE",
     pathTemplate: "/api/projects/{projectId}",
     requestType: "DeleteProjectRequest",
@@ -132,6 +144,8 @@ export const endpoints = {
   },
   openProjectWorkContext: {
     operationName: "openProjectWorkContext",
+    namespace: "projectWorkContext",
+    memberName: "open",
     method: "POST",
     pathTemplate: "/api/project-work-contexts/open",
     requestType: "OpenProjectWorkContextRequest",
@@ -141,6 +155,8 @@ export const endpoints = {
   },
   renewProjectWorkContext: {
     operationName: "renewProjectWorkContext",
+    namespace: "projectWorkContext",
+    memberName: "renew",
     method: "POST",
     pathTemplate: "/api/project-work-contexts/renew",
     requestType: "RenewProjectWorkContextRequest",
@@ -150,6 +166,8 @@ export const endpoints = {
   },
   createTask: {
     operationName: "createTask",
+    namespace: "task",
+    memberName: "create",
     method: "POST",
     pathTemplate: "/api/tasks",
     requestType: "CreateTaskRequest",
@@ -159,6 +177,8 @@ export const endpoints = {
   },
   getTask: {
     operationName: "getTask",
+    namespace: "task",
+    memberName: "get",
     method: "GET",
     pathTemplate: "/api/tasks/{taskId}",
     requestType: "GetTaskRequest",
@@ -168,6 +188,8 @@ export const endpoints = {
   },
   listTasks: {
     operationName: "listTasks",
+    namespace: "task",
+    memberName: "list",
     method: "GET",
     pathTemplate: "/api/tasks",
     requestType: "ListTasksRequest",
@@ -177,6 +199,8 @@ export const endpoints = {
   },
   updateTask: {
     operationName: "updateTask",
+    namespace: "task",
+    memberName: "update",
     method: "PUT",
     pathTemplate: "/api/tasks/{taskId}",
     requestType: "UpdateTaskRequest",
@@ -186,6 +210,8 @@ export const endpoints = {
   },
   deleteTask: {
     operationName: "deleteTask",
+    namespace: "task",
+    memberName: "delete",
     method: "DELETE",
     pathTemplate: "/api/tasks/{taskId}",
     requestType: "DeleteTaskRequest",
@@ -195,6 +221,8 @@ export const endpoints = {
   },
   createSession: {
     operationName: "createSession",
+    namespace: "session",
+    memberName: "create",
     method: "POST",
     pathTemplate: "/api/sessions",
     requestType: "CreateSessionRequest",
@@ -204,6 +232,8 @@ export const endpoints = {
   },
   getSession: {
     operationName: "getSession",
+    namespace: "session",
+    memberName: "get",
     method: "GET",
     pathTemplate: "/api/sessions/{sessionId}",
     requestType: "GetSessionRequest",
@@ -213,6 +243,8 @@ export const endpoints = {
   },
   listSessions: {
     operationName: "listSessions",
+    namespace: "session",
+    memberName: "list",
     method: "GET",
     pathTemplate: "/api/sessions",
     requestType: "ListSessionsRequest",
@@ -222,6 +254,8 @@ export const endpoints = {
   },
   updateSession: {
     operationName: "updateSession",
+    namespace: "session",
+    memberName: "update",
     method: "PUT",
     pathTemplate: "/api/sessions/{sessionId}",
     requestType: "UpdateSessionRequest",
@@ -231,6 +265,8 @@ export const endpoints = {
   },
   deleteSession: {
     operationName: "deleteSession",
+    namespace: "session",
+    memberName: "delete",
     method: "DELETE",
     pathTemplate: "/api/sessions/{sessionId}",
     requestType: "DeleteSessionRequest",
@@ -240,6 +276,8 @@ export const endpoints = {
   },
   createSkill: {
     operationName: "createSkill",
+    namespace: "skill",
+    memberName: "create",
     method: "POST",
     pathTemplate: "/api/skills",
     requestType: "CreateSkillRequest",
@@ -249,6 +287,8 @@ export const endpoints = {
   },
   getSkill: {
     operationName: "getSkill",
+    namespace: "skill",
+    memberName: "get",
     method: "GET",
     pathTemplate: "/api/skills/{skillId}",
     requestType: "GetSkillRequest",
@@ -258,6 +298,8 @@ export const endpoints = {
   },
   listSkills: {
     operationName: "listSkills",
+    namespace: "skill",
+    memberName: "list",
     method: "GET",
     pathTemplate: "/api/skills",
     requestType: "ListSkillsRequest",
@@ -267,6 +309,8 @@ export const endpoints = {
   },
   updateSkill: {
     operationName: "updateSkill",
+    namespace: "skill",
+    memberName: "update",
     method: "PUT",
     pathTemplate: "/api/skills/{skillId}",
     requestType: "UpdateSkillRequest",
@@ -276,6 +320,8 @@ export const endpoints = {
   },
   deleteSkill: {
     operationName: "deleteSkill",
+    namespace: "skill",
+    memberName: "delete",
     method: "DELETE",
     pathTemplate: "/api/skills/{skillId}",
     requestType: "DeleteSkillRequest",
@@ -285,6 +331,8 @@ export const endpoints = {
   },
   createAgent: {
     operationName: "createAgent",
+    namespace: "agent",
+    memberName: "create",
     method: "POST",
     pathTemplate: "/api/agents",
     requestType: "CreateAgentRequest",
@@ -294,6 +342,8 @@ export const endpoints = {
   },
   getAgent: {
     operationName: "getAgent",
+    namespace: "agent",
+    memberName: "get",
     method: "GET",
     pathTemplate: "/api/agents/{agentId}",
     requestType: "GetAgentRequest",
@@ -303,6 +353,8 @@ export const endpoints = {
   },
   listAgents: {
     operationName: "listAgents",
+    namespace: "agent",
+    memberName: "list",
     method: "GET",
     pathTemplate: "/api/agents",
     requestType: "ListAgentsRequest",
@@ -312,6 +364,8 @@ export const endpoints = {
   },
   updateAgent: {
     operationName: "updateAgent",
+    namespace: "agent",
+    memberName: "update",
     method: "PUT",
     pathTemplate: "/api/agents/{agentId}",
     requestType: "UpdateAgentRequest",
@@ -321,6 +375,8 @@ export const endpoints = {
   },
   deleteAgent: {
     operationName: "deleteAgent",
+    namespace: "agent",
+    memberName: "delete",
     method: "DELETE",
     pathTemplate: "/api/agents/{agentId}",
     requestType: "DeleteAgentRequest",
@@ -328,4 +384,4 @@ export const endpoints = {
     pathParams: [{ rustFieldName: "agent_id", wireName: "agentId" }],
     hasJsonBody: false,
   },
-} satisfies Record<EndpointOperation, FrontendEndpointDefinition>;
+} as const satisfies Record<EndpointOperation, FrontendEndpointDefinition>;
