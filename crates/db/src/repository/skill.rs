@@ -19,13 +19,12 @@ impl SqliteSkillRepository {
 
 impl SkillRepository for SqliteSkillRepository {
     fn create_skill(&self, skill: Skill) -> Result<Skill, SkillRepositoryError> {
-        self.pool.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO skills (id, name, description, created_at, updated_at, is_deleted) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![skill.id.to_string(), &skill.name, &skill.description, skill.audit_fields.created_at, skill.audit_fields.updated_at, bool_to_sqlite(skill.audit_fields.is_deleted)],
-            )?;
-            Ok(skill)
-        }).map_err(skill_repository_error_from_database)
+        self.pool
+            .with_connection(|connection| {
+                insert_skill_row(connection, &skill)?;
+                Ok(skill)
+            })
+            .map_err(skill_repository_error_from_database)
     }
 
     fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, SkillRepositoryError> {
@@ -78,6 +77,29 @@ impl SkillRepository for SqliteSkillRepository {
             ).map(|rows| rows > 0).map_err(Into::into)
         }).map_err(skill_repository_error_from_database)
     }
+}
+
+/// Inserts one skill row on the given connection, shared by the repository and the import unit of work.
+///
+/// Centralizing the statement keeps the per-statement create path and the transactional import path
+/// writing identical columns, so the two insertion routes cannot drift apart.
+pub(crate) fn insert_skill_row(
+    connection: &rusqlite::Connection,
+    skill: &Skill,
+) -> Result<(), rusqlite::Error> {
+    connection.execute(
+        "INSERT INTO skills (id, name, description, created_at, updated_at, is_deleted) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            skill.id.to_string(),
+            &skill.name,
+            &skill.description,
+            skill.audit_fields.created_at,
+            skill.audit_fields.updated_at,
+            bool_to_sqlite(skill.audit_fields.is_deleted),
+        ],
+    )?;
+
+    Ok(())
 }
 
 /// Reconstructs a domain skill from a selected SQLite row.

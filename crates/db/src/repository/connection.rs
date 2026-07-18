@@ -32,6 +32,20 @@ impl RepositoryPool {
 
         operation(&connection)
     }
+
+    /// Runs one operation with a mutable pooled connection so callers can drive an explicit transaction.
+    ///
+    /// Repositories that commit per statement use `with_connection`; this variant exists for use
+    /// cases that must interleave non-database work between an insert and its commit, such as the
+    /// skill import promoting a directory before the transaction is allowed to commit.
+    pub(crate) fn with_connection_mut<T>(
+        &self,
+        operation: impl FnOnce(&mut Connection) -> Result<T, crate::DatabaseError>,
+    ) -> Result<T, DatabaseError> {
+        let mut connection = self.inner.get()?;
+
+        operation(&mut connection)
+    }
 }
 
 /// Opens and validates SQLite connections for the repository pool.

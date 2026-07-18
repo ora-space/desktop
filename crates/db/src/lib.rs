@@ -16,7 +16,7 @@ pub use location::DatabaseLocation;
 pub use migration::{AppliedMigration, Migration, MigrationCatalog, default_migration_catalog};
 pub use repository::{
     RepositoryPool, SqliteAgentDefinitionRepository, SqliteProjectRepository,
-    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillRepository,
-    SqliteTaskRepository, SqliteWorktreeRepository,
+    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillImportUnitOfWork,
+    SqliteSkillRepository, SqliteTaskRepository, SqliteWorktreeRepository,
 };
 pub use time::{SystemTimestampSource, TimestampSource};

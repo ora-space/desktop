@@ -15,6 +15,12 @@ pub enum ApplicationError {
     SkillNotFound { skill_id: String },
     #[error("skill repository operation failed: {message}")]
     SkillRepository { message: String },
+    #[error("skill import is invalid: {reason}")]
+    SkillImportInvalid { reason: String },
+    #[error("skill folder already exists: {name}")]
+    SkillFolderConflict { name: String },
+    #[error("skill package storage operation failed: {message}")]
+    SkillPackageStorage { message: String },
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
     #[error("agent definition not found: {agent_id}")]

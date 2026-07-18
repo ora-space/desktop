@@ -3,14 +3,18 @@ use crate::config::{ProjectConfig, RuntimeConfig};
 use crate::error::WebBootstrapError;
 use crate::service::{AgentApi, ProjectApi, ProjectWorkContextApi, SessionApi, SkillApi, TaskApi};
 use ora_application::{
-    Clock, OpenProjectWorkContextHandler, ProjectIdGenerator, ProjectRepository,
-    ProjectRepositoryError, UuidProjectIdGenerator, UuidProjectWorkContextIdGenerator,
+    Clock, LocalSkillPackageStore, OpenProjectWorkContextHandler, ProjectIdGenerator,
+    ProjectRepository, ProjectRepositoryError, ReconcileSkillStorageHandler,
+    UuidProjectIdGenerator, UuidProjectWorkContextIdGenerator,
 };
 use ora_contracts::{OpenProjectWorkContextRequest, ProjectWorkContextSurface};
-use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
+use ora_db::{
+    DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteSkillImportUnitOfWork,
+    SqliteSkillRepository, default_migration_catalog,
+};
 use ora_domain::{AuditFields, Project};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,6 +24,7 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
     let clock = SystemClock;
 
     reconcile_configured_project(&pool, runtime_config.project(), clock)?;
+    let skill_store = prepare_skill_storage(runtime_config.database().path(), &pool)?;
 
     Ok(AppState::new(
         Arc::new(AgentApi::new(pool.clone(), clock)),
@@ -32,7 +37,12 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
             clock,
         )),
         Arc::new(SessionApi::new(pool.clone(), clock)),
-        Arc::new(SkillApi::new(pool, clock)),
+        Arc::new(SkillApi::new(
+            pool.clone(),
+            clock,
+            skill_store,
+            SqliteSkillImportUnitOfWork::new(pool),
+        )),
     ))
 }
 
@@ -45,6 +55,7 @@ pub(crate) fn build_app_state_for_database(
 ) -> Result<AppState, WebBootstrapError> {
     let pool = build_repository_pool(database_path)?;
     let clock = SystemClock;
+    let skill_store = prepare_skill_storage(database_path, &pool)?;
 
     Ok(AppState::new(
         Arc::new(AgentApi::new(pool.clone(), clock)),
@@ -57,7 +68,12 @@ pub(crate) fn build_app_state_for_database(
             clock,
         )),
         Arc::new(SessionApi::new(pool.clone(), clock)),
-        Arc::new(SkillApi::new(pool, clock)),
+        Arc::new(SkillApi::new(
+            pool.clone(),
+            clock,
+            skill_store,
+            SqliteSkillImportUnitOfWork::new(pool),
+        )),
     ))
 }
 
@@ -124,6 +140,39 @@ fn reconcile_configured_project(
         })
         .map(|_| ())
         .map_err(project_work_context_bootstrap_error)
+}
+
+/// Creates the skill storage root, then reconciles it so startup begins from a clean layout.
+///
+/// Reconciliation runs before the runtime marks itself ready so any crash-orphaned staging or
+/// promoted-but-uncommitted directory is gone before the first import can observe the filesystem.
+fn prepare_skill_storage(
+    database_path: &Path,
+    pool: &RepositoryPool,
+) -> Result<LocalSkillPackageStore, WebBootstrapError> {
+    let skills_dir = skills_storage_dir(database_path);
+    fs::create_dir_all(&skills_dir).map_err(WebBootstrapError::DataDirectoryCreate)?;
+    let store = LocalSkillPackageStore::new(skills_dir);
+
+    ReconcileSkillStorageHandler::new(store.clone(), SqliteSkillRepository::new(pool.clone()))
+        .handle()
+        .map_err(|error| WebBootstrapError::SkillStorageReconcile {
+            message: error.to_string(),
+        })?;
+
+    Ok(store)
+}
+
+/// Derives the `atoms/skills` root from the configured SQLite database location.
+///
+/// The database sits directly under the runtime data directory, so its parent is the data root
+/// that every derived path (worktrees, skills) hangs off of.
+fn skills_storage_dir(database_path: &Path) -> PathBuf {
+    database_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("atoms")
+        .join("skills")
 }
 
 /// Opens the configured file-backed SQLite database and returns the shared repository pool.

@@ -1,14 +1,15 @@
 use crate::bootstrap::SystemClock;
 use ora_application::{
-    ApplicationError, CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ListSkillsHandler,
-    UpdateSkillHandler, UuidSkillIdGenerator,
+    ApplicationError, CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ImportSkillHandler,
+    ListSkillsHandler, LocalSkillPackageStore, UpdateSkillHandler, UploadedSkillFile,
+    UuidSkillIdGenerator,
 };
 use ora_contracts::{
     CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,
     GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest,
     UpdateSkillResponse,
 };
-use ora_db::{RepositoryPool, SqliteSkillRepository};
+use ora_db::{RepositoryPool, SqliteSkillImportUnitOfWork, SqliteSkillRepository};
 
 /// Groups HTTP-facing use cases for the reusable skill catalog.
 pub struct SkillApi {
@@ -16,12 +17,23 @@ pub struct SkillApi {
     get_skill: GetSkillHandler<SqliteSkillRepository>,
     list_skills: ListSkillsHandler<SqliteSkillRepository>,
     update_skill: UpdateSkillHandler<SqliteSkillRepository, SystemClock>,
-    delete_skill: DeleteSkillHandler<SqliteSkillRepository, SystemClock>,
+    delete_skill: DeleteSkillHandler<SqliteSkillRepository, LocalSkillPackageStore, SystemClock>,
+    import_skill: ImportSkillHandler<
+        LocalSkillPackageStore,
+        SqliteSkillImportUnitOfWork,
+        UuidSkillIdGenerator,
+        SystemClock,
+    >,
 }
 
 impl SkillApi {
-    /// Builds the skill API from shared SQLite infrastructure.
-    pub fn new(pool: RepositoryPool, clock: SystemClock) -> Self {
+    /// Builds the skill API from shared SQLite infrastructure and the skill package store.
+    pub fn new(
+        pool: RepositoryPool,
+        clock: SystemClock,
+        store: LocalSkillPackageStore,
+        unit_of_work: SqliteSkillImportUnitOfWork,
+    ) -> Self {
         let repository = SqliteSkillRepository::new(pool);
 
         Self {
@@ -33,7 +45,13 @@ impl SkillApi {
             get_skill: GetSkillHandler::new(repository.clone()),
             list_skills: ListSkillsHandler::new(repository.clone()),
             update_skill: UpdateSkillHandler::new(repository.clone(), clock),
-            delete_skill: DeleteSkillHandler::new(repository, clock),
+            delete_skill: DeleteSkillHandler::new(repository, store.clone(), clock),
+            import_skill: ImportSkillHandler::new(
+                store,
+                unit_of_work,
+                UuidSkillIdGenerator::new(),
+                clock,
+            ),
         }
     }
 
@@ -75,5 +93,13 @@ impl SkillApi {
         request: DeleteSkillRequest,
     ) -> Result<DeleteSkillResponse, ApplicationError> {
         self.delete_skill.handle(request)
+    }
+
+    /// Delegates atomic skill folder import to the application layer.
+    pub fn import_skill(
+        &self,
+        files: Vec<UploadedSkillFile>,
+    ) -> Result<CreateSkillResponse, ApplicationError> {
+        self.import_skill.handle(files)
     }
 }

@@ -14,7 +14,8 @@ pub use agent::{
 pub use frontend::{
     AGENT_PATH, AGENTS_PATH, FrontendEndpoint, FrontendHttpMethod, FrontendPathParam, PROJECT_PATH,
     PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_PATH,
-    SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
+    SESSIONS_PATH, SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    frontend_endpoints,
 };
 pub use project::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,

@@ -1,12 +1,13 @@
 use super::{
-    CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, SkillIdGenerator, SkillRepository,
-    SkillRepositoryError, UpdateSkillHandler,
+    CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, SkillIdGenerator, SkillPackageStore,
+    SkillPackageStoreError, SkillRepository, SkillRepositoryError, UpdateSkillHandler,
 };
 use crate::{ApplicationError, Clock};
 use ora_contracts::{CreateSkillRequest, DeleteSkillRequest, GetSkillRequest, UpdateSkillRequest};
 use ora_domain::{AuditFields, Skill, SkillId};
 use pretty_assertions::assert_eq;
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 
 #[test]
@@ -102,7 +103,7 @@ fn soft_delete_hides_a_skill_by_id() {
     let repository = Rc::new(FakeSkillRepository::with_skills(vec![skill(
         "skill-1", "review", "Reviews", 1, 1, false,
     )]));
-    DeleteSkillHandler::new(repository.clone(), FixedClock(2))
+    DeleteSkillHandler::new(repository.clone(), NoopSkillPackageStore, FixedClock(2))
         .handle(DeleteSkillRequest {
             skill_id: "skill-1".to_string(),
         })
@@ -227,5 +228,42 @@ struct FixedClock(i64);
 impl Clock for FixedClock {
     fn now_timestamp_millis(&self) -> i64 {
         self.0
+    }
+}
+
+/// Skill package store that performs no filesystem work for CRUD tests that ignore on-disk folders.
+struct NoopSkillPackageStore;
+impl SkillPackageStore for NoopSkillPackageStore {
+    fn create_staging(&self, _skill_id: &SkillId) -> Result<(), SkillPackageStoreError> {
+        Ok(())
+    }
+    fn write_file(
+        &self,
+        _skill_id: &SkillId,
+        _relative_path: &Path,
+        _bytes: &[u8],
+    ) -> Result<(), SkillPackageStoreError> {
+        Ok(())
+    }
+    fn read_manifest(&self, _skill_id: &SkillId) -> Result<Option<String>, SkillPackageStoreError> {
+        Ok(None)
+    }
+    fn committed_exists(&self, _name: &str) -> Result<bool, SkillPackageStoreError> {
+        Ok(false)
+    }
+    fn promote(&self, _skill_id: &SkillId, _name: &str) -> Result<(), SkillPackageStoreError> {
+        Ok(())
+    }
+    fn discard_staging(&self, _skill_id: &SkillId) -> Result<(), SkillPackageStoreError> {
+        Ok(())
+    }
+    fn remove_committed(&self, _name: &str) -> Result<(), SkillPackageStoreError> {
+        Ok(())
+    }
+    fn remove_all_staging(&self) -> Result<(), SkillPackageStoreError> {
+        Ok(())
+    }
+    fn list_committed_names(&self) -> Result<Vec<String>, SkillPackageStoreError> {
+        Ok(Vec::new())
     }
 }
