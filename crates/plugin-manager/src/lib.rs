@@ -1,3 +1,4 @@
+mod candidate_authority;
 mod catalog;
 mod config;
 mod enablement;
@@ -6,10 +7,13 @@ mod install;
 mod lease;
 mod persistence;
 mod ports;
+mod registry;
 mod runtime;
 mod safe_fs;
 mod state;
+mod validation;
 
+pub use candidate_authority::*;
 pub use catalog::*;
 pub use config::*;
 pub use enablement::*;
@@ -18,6 +22,8 @@ pub use install::*;
 pub use lease::*;
 pub use persistence::*;
 pub use ports::*;
+pub use registry::*;
 pub use runtime::*;
 pub use safe_fs::*;
 pub use state::*;
+pub use validation::*;
