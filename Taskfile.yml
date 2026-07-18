@@ -91,6 +91,18 @@ tasks:
     cmds:
       - powershell -NoProfile -Command "if (-not (Test-Path -LiteralPath 'runtime-assets/prepared/runtime-manifest.json' -PathType Leaf)) { throw 'plugin runtime resources are not prepared; run task prepare-plugin-runtime before consuming prepared assets' }"
 
+
+  test-plugin-runtime-e2e:
+    desc: Run ignored plugin manager E2E gates against prepared Bun and Windows Job
+    cmds:
+      - task: verify-plugin-runtime-prepared
+      - pnpm --filter @ora-space/plugin-sdk build
+      - cargo test -p ora-process bun_stdio_round_trips_through_windows_job_pipes -- --ignored --test-threads=1
+      - cargo test -p ora-process abrupt_host_exit_closes_the_job_and_kills_descendants -- --ignored --test-threads=1
+      - cargo test -p ora-plugin-manager --test management_e2e
+      - cargo test -p ora-plugin-manager --test runtime_windows_e2e -- --ignored --test-threads=1
+      - cargo test -p ora-plugin-manager --test plugin_library_e2e -- --ignored --test-threads=1
+
   build:
     desc: Build all crates
     cmds:
