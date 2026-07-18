@@ -1,15 +1,16 @@
-/// Wire v1 frame header size: signed big-endian length plus signed type byte.
+/// Wire v1 frame header size: signed type byte plus signed big-endian length.
 pub const FRAME_HEADER_BYTES: usize = 5;
 /// Absolute wire v1 payload cap applied before any payload allocation.
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
-/// Identifies the JSON-RPC envelope shape carried by one wire frame.
+/// Identifies the payload encoding carried by one wire frame.
+///
+/// Request/Response/Notification live in the JSON-RPC envelope, not in this byte.
+/// Additional kinds (for example file payloads) may be added later without reusing JSON.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i8)]
 pub enum FrameType {
-    Request = 1,
-    Response = 2,
-    Notification = 3,
+    Json = 1,
 }
 
 impl TryFrom<i8> for FrameType {
@@ -17,15 +18,13 @@ impl TryFrom<i8> for FrameType {
 
     fn try_from(value: i8) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Self::Request),
-            2 => Ok(Self::Response),
-            3 => Ok(Self::Notification),
+            1 => Ok(Self::Json),
             value => Err(FrameError::UnknownType { value }),
         }
     }
 }
 
-/// An owned, fully validated wire frame whose payload still awaits JSON validation.
+/// An owned, fully validated wire frame whose payload still awaits content validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub frame_type: FrameType,
@@ -66,7 +65,7 @@ impl std::fmt::Display for PartialFramePart {
     }
 }
 
-/// Encodes a frame into the exact 5-byte-header wire representation.
+/// Encodes a frame into the exact 5-byte-header wire representation: `[type][length][payload]`.
 pub fn encode_frame(
     frame_type: FrameType,
     payload: &[u8],
@@ -75,10 +74,18 @@ pub fn encode_frame(
     validate_maximum(maximum_payload_bytes)?;
     let length = validate_payload_length(payload.len(), maximum_payload_bytes)?;
     let mut encoded = Vec::with_capacity(FRAME_HEADER_BYTES + payload.len());
-    encoded.extend_from_slice(&length.to_be_bytes());
     encoded.push(frame_type as i8 as u8);
+    encoded.extend_from_slice(&length.to_be_bytes());
     encoded.extend_from_slice(payload);
     Ok(encoded)
+}
+
+/// Encodes one JSON payload frame using the only currently supported payload kind.
+pub fn encode_json_frame(
+    payload: &[u8],
+    maximum_payload_bytes: usize,
+) -> Result<Vec<u8>, FrameError> {
+    encode_frame(FrameType::Json, payload, maximum_payload_bytes)
 }
 
 /// Incrementally decodes arbitrary pipe chunks without buffering more than one payload.
@@ -123,14 +130,14 @@ impl FrameDecoder {
                     *filled += copied;
                     chunk = &chunk[copied..];
                     if *filled == FRAME_HEADER_BYTES {
-                        let length = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        let frame_type = FrameType::try_from(bytes[0] as i8)?;
+                        let length = i32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
                         if length <= 0 {
                             return Err(FrameError::NonPositiveLength { length });
                         }
                         let expected = usize::try_from(length)
                             .map_err(|_| FrameError::NonPositiveLength { length })?;
                         validate_payload_length(expected, self.maximum_payload_bytes)?;
-                        let frame_type = FrameType::try_from(bytes[4] as i8)?;
                         self.state = DecoderState::Payload {
                             frame_type,
                             expected,
@@ -208,28 +215,29 @@ fn validate_payload_length(length: usize, maximum: usize) -> Result<i32, FrameEr
 #[cfg(test)]
 mod tests {
     use super::{
-        Frame, FrameDecoder, FrameError, FrameType, MAX_FRAME_BYTES, PartialFramePart, encode_frame,
+        Frame, FrameDecoder, FrameError, FrameType, MAX_FRAME_BYTES, PartialFramePart,
+        encode_json_frame,
     };
     use pretty_assertions::assert_eq;
 
     const REQUEST: &[u8] = br#"{"jsonrpc":"2.0","id":"h:1","method":"ping","params":{}}"#;
 
-    /// Confirms the canonical request vector has an exact five-byte big-endian header.
+    /// Confirms the canonical request vector has type-first five-byte header.
     #[test]
     fn encodes_canonical_golden_vector() {
-        let encoded = encode_frame(FrameType::Request, REQUEST, MAX_FRAME_BYTES)
+        let encoded = encode_json_frame(REQUEST, MAX_FRAME_BYTES)
             .unwrap_or_else(|error| panic!("expected frame encoding to succeed: {error}"));
-        assert_eq!(&encoded[..5], &[0x00, 0x00, 0x00, 0x38, 0x01]);
+        assert_eq!(&encoded[..5], &[0x01, 0x00, 0x00, 0x00, 0x38]);
         assert_eq!(&encoded[5..], REQUEST);
     }
 
     /// Exercises every split position plus coalesced frames with one decoder implementation.
     #[test]
     fn decodes_arbitrary_splits_and_coalesced_frames() {
-        let encoded = encode_frame(FrameType::Request, REQUEST, MAX_FRAME_BYTES)
+        let encoded = encode_json_frame(REQUEST, MAX_FRAME_BYTES)
             .unwrap_or_else(|error| panic!("expected frame encoding to succeed: {error}"));
         let expected = vec![Frame {
-            frame_type: FrameType::Request,
+            frame_type: FrameType::Json,
             payload: REQUEST.to_vec(),
         }];
 
@@ -263,15 +271,15 @@ mod tests {
     fn rejects_invalid_headers_and_partial_eof() {
         let cases = [
             (
-                [0x00, 0x00, 0x00, 0x00, 0x01],
+                [0x01, 0x00, 0x00, 0x00, 0x00],
                 FrameError::NonPositiveLength { length: 0 },
             ),
             (
-                [0xff, 0xff, 0xff, 0xff, 0x01],
+                [0x01, 0xff, 0xff, 0xff, 0xff],
                 FrameError::NonPositiveLength { length: -1 },
             ),
             (
-                [0x00, 0x00, 0x00, 0x02, 0x7f],
+                [0x7f, 0x00, 0x00, 0x00, 0x02],
                 FrameError::UnknownType { value: 127 },
             ),
         ];

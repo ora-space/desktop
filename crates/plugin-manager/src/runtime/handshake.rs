@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use ora_plugin_protocol::{
-    ActivateParams, ActivateResult, ActivationReason, DeclaredAgent, FrameType, HostRequestId,
+    ActivateParams, ActivateResult, ActivationReason, DeclaredAgent, HostRequestId,
     HostResolvedAbsolutePath, InitializeParams, InitializePaths, InitializePlugin,
     InitializeResult, JsonRpcEnvelope, JsonRpcResponse, METHOD_ACTIVATE, METHOD_INITIALIZE,
     PLUGIN_API_VERSION_V1, PluginKind, WIRE_VERSION_V1, encode_json_rpc_request,
@@ -196,7 +196,6 @@ where
         .enqueue(
             transport.generation,
             owner.clone(),
-            FrameType::Request,
             &payload,
             WriterLane::SessionControl,
             deadline,

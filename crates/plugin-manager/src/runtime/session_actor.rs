@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use ora_plugin_protocol::{
     AgentConversationId, AgentEvent, AgentRequest, CancelRequestParams, DeactivateParams,
-    DeactivationReason, FrameType, HostRequestId, JsonRpcEnvelope, JsonRpcNotification,
+    DeactivationReason, HostRequestId, JsonRpcEnvelope, JsonRpcNotification,
     JsonRpcResponse, METHOD_CANCEL_REQUEST, METHOD_DEACTIVATE, METHOD_EXIT, METHOD_STREAM,
     PluginId, StreamParams, encode_json_rpc_notification, encode_json_rpc_request,
 };
@@ -394,7 +394,6 @@ where
             .saturating_duration_since(Instant::now());
         self.spawn_enqueue(
             WriterCommandOwner::Request(request_id),
-            FrameType::Request,
             payload,
             WriterLane::Ordinary,
             remaining,
@@ -956,7 +955,6 @@ where
         let owner = WriterCommandOwner::TransportCancel(pending.model.id.clone());
         self.spawn_enqueue(
             owner,
-            FrameType::Notification,
             payload,
             WriterLane::TransportCancel,
             self.deadlines.transport_cancel_write,
@@ -1035,7 +1033,6 @@ where
         });
         self.spawn_enqueue(
             WriterCommandOwner::SessionControl(SessionControlKind::Deactivate),
-            FrameType::Request,
             payload,
             WriterLane::SessionControl,
             self.deadlines.deactivate,
@@ -1091,7 +1088,6 @@ where
         self.stop_phase = Some(StopPhase::Exiting { reason });
         self.spawn_enqueue(
             WriterCommandOwner::SessionControl(SessionControlKind::Exit),
-            FrameType::Notification,
             payload,
             WriterLane::SessionControl,
             self.deadlines.exit,
@@ -1102,7 +1098,6 @@ where
     fn spawn_enqueue(
         &self,
         owner: WriterCommandOwner,
-        frame_type: FrameType,
         payload: Vec<u8>,
         lane: WriterLane,
         timeout: Duration,
@@ -1117,14 +1112,7 @@ where
         let generation = self.generation;
         tokio::spawn(async move {
             if writer
-                .enqueue(
-                    generation,
-                    owner.clone(),
-                    frame_type,
-                    &payload,
-                    lane,
-                    timeout,
-                )
+                .enqueue(generation, owner.clone(), &payload, lane, timeout)
                 .await
                 .is_err()
             {

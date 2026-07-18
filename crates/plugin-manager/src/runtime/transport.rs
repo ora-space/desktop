@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ora_plugin_protocol::{
-    FrameDecoder, FrameError, FrameType, HostRequestId, JsonRpcEnvelope, MAX_FRAME_BYTES,
-    encode_frame, parse_json_rpc_frame,
+    FrameDecoder, FrameError, HostRequestId, JsonRpcEnvelope, MAX_FRAME_BYTES, encode_json_frame,
+    parse_json_rpc_frame,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
@@ -136,18 +136,16 @@ pub struct WriterQueues {
 }
 
 impl WriterQueues {
-    /// Encodes and reserves one complete frame within the caller's absolute enqueue budget.
+    /// Encodes and reserves one complete JSON frame within the caller's absolute enqueue budget.
     pub async fn enqueue(
         &self,
         generation: u64,
         owner: WriterCommandOwner,
-        frame_type: FrameType,
         payload: &[u8],
         lane: WriterLane,
         timeout: Duration,
     ) -> Result<(), WriterEnqueueError> {
-        let frame = encode_frame(frame_type, payload, MAX_FRAME_BYTES)
-            .map_err(WriterEnqueueError::Frame)?;
+        let frame = encode_json_frame(payload, MAX_FRAME_BYTES).map_err(WriterEnqueueError::Frame)?;
         let permits = u32::try_from(frame.len()).map_err(|_| WriterEnqueueError::BudgetClosed)?;
         let (semaphore, sender) = match lane {
             WriterLane::Ordinary => (&self.ordinary_bytes, &self.ordinary),
@@ -466,8 +464,7 @@ mod tests {
     use std::time::Duration;
 
     use ora_plugin_protocol::{
-        FrameType, HostRequestId, JsonRpcEnvelope, MAX_FRAME_BYTES, encode_frame,
-        encode_json_rpc_request,
+        HostRequestId, JsonRpcEnvelope, MAX_FRAME_BYTES, encode_json_frame, encode_json_rpc_request,
     };
     use pretty_assertions::assert_eq;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
@@ -489,7 +486,7 @@ mod tests {
             "result":{}
         }))
         .unwrap_or_else(|error| panic!("test response JSON: {error}"));
-        let frame = encode_frame(FrameType::Response, &payload, MAX_FRAME_BYTES)
+        let frame = encode_json_frame(&payload, MAX_FRAME_BYTES)
             .unwrap_or_else(|error| panic!("test frame: {error}"));
         peer.write_all(&frame)
             .await
@@ -520,7 +517,6 @@ mod tests {
             .enqueue(
                 7,
                 WriterCommandOwner::SessionControl(SessionControlKind::Initialize),
-                FrameType::Request,
                 &payload,
                 WriterLane::SessionControl,
                 Duration::from_secs(1),

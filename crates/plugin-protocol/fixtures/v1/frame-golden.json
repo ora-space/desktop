@@ -4,49 +4,49 @@
   "maximumPayloadBytes": 8388608,
   "valid": [
     {
-      "frameType": "request",
+      "frameType": "json",
       "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"id\":\"h:1\",\"method\":\"ping\",\"params\":{}}",
       "payloadLen": 56,
-      "headerHex": "0000003801",
-      "frameHex": "00000038017b226a736f6e727063223a22322e30222c226964223a22683a31222c226d6574686f64223a2270696e67222c22706172616d73223a7b7d7d"
+      "headerHex": "0100000038",
+      "frameHex": "01000000387b226a736f6e727063223a22322e30222c226964223a22683a31222c226d6574686f64223a2270696e67222c22706172616d73223a7b7d7d"
     },
     {
-      "frameType": "response",
+      "frameType": "json",
       "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"id\":\"h:1\",\"result\":\"ok\"}",
       "payloadLen": 42,
-      "headerHex": "0000002a02",
-      "frameHex": "0000002a027b226a736f6e727063223a22322e30222c226964223a22683a31222c22726573756c74223a226f6b227d"
+      "headerHex": "010000002a",
+      "frameHex": "010000002a7b226a736f6e727063223a22322e30222c226964223a22683a31222c22726573756c74223a226f6b227d"
     },
     {
-      "frameType": "notification",
+      "frameType": "json",
       "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"method\":\"$/exit\"}",
       "payloadLen": 35,
-      "headerHex": "0000002303",
-      "frameHex": "00000023037b226a736f6e727063223a22322e30222c226d6574686f64223a22242f65786974227d"
+      "headerHex": "0100000023",
+      "frameHex": "01000000237b226a736f6e727063223a22322e30222c226d6574686f64223a22242f65786974227d"
     },
     {
-      "frameType": "notification",
+      "frameType": "json",
       "payloadUtf8": "{\"jsonrpc\":\"2.0\",\"method\":\"$/stream\",\"params\":{\"id\":\"h:1\",\"seq\":1,\"value\":{\"kind\":\"textDelta\",\"text\":\"你好\"}}}",
       "payloadLen": 112,
-      "headerHex": "0000007003",
-      "frameHex": "00000070037b226a736f6e727063223a22322e30222c226d6574686f64223a22242f73747265616d222c22706172616d73223a7b226964223a22683a31222c22736571223a312c2276616c7565223a7b226b696e64223a227465787444656c7461222c2274657874223a22e4bda0e5a5bd227d7d7d"
+      "headerHex": "0100000070",
+      "frameHex": "01000000707b226a736f6e727063223a22322e30222c226d6574686f64223a22242f73747265616d222c22706172616d73223a7b226964223a22683a31222c22736571223a312c2276616c7565223a7b226b696e64223a227465787444656c7461222c2274657874223a22e4bda0e5a5bd227d7d7d"
     }
   ],
   "invalid": [
     {
-      "frameHex": "0000000001",
+      "frameHex": "0100000000",
       "reason": "zeroLength"
     },
     {
-      "frameHex": "ffffffff01",
+      "frameHex": "01ffffffff",
       "reason": "negativeLength"
     },
     {
-      "frameHex": "0080000101",
+      "frameHex": "0100800001",
       "reason": "payloadTooLarge"
     },
     {
-      "frameHex": "000000027f",
+      "frameHex": "7f00000002",
       "reason": "unknownType"
     }
   ]

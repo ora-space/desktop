@@ -100,7 +100,7 @@ impl<'de> Deserialize<'de> for HostRequestId {
     }
 }
 
-/// A parsed strict JSON-RPC envelope whose variant must match the enclosing frame type.
+/// A parsed strict JSON-RPC envelope discriminated by JSON shape, not by the wire type byte.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsonRpcEnvelope {
     Request(JsonRpcRequest),
@@ -159,8 +159,10 @@ pub enum JsonRpcParseError {
     EnvelopeNotObject,
     #[error("JSON-RPC version must equal 2.0")]
     InvalidVersion,
-    #[error("JSON-RPC envelope has fields incompatible with its frame type")]
+    #[error("JSON-RPC envelope has fields incompatible with its envelope shape")]
     FrameEnvelopeMismatch,
+    #[error("JSON frame payload type is required before JSON-RPC parsing")]
+    UnsupportedFrameType,
     #[error("JSON-RPC envelope contains an unknown top-level field")]
     UnknownField,
     #[error("JSON-RPC id must be a non-empty string no longer than 128 bytes")]
@@ -177,20 +179,30 @@ pub enum JsonRpcParseError {
     InvalidErrorShape,
 }
 
-/// Parses one complete frame according to the strict Ora JSON-RPC profile.
+/// Parses one complete JSON frame according to the strict Ora JSON-RPC profile.
 pub fn parse_json_rpc_frame(
     frame: &Frame,
     maximum_json_depth: usize,
 ) -> Result<JsonRpcEnvelope, JsonRpcParseError> {
+    if frame.frame_type != FrameType::Json {
+        return Err(JsonRpcParseError::UnsupportedFrameType);
+    }
     let value = parse_strict_json(&frame.payload, maximum_json_depth)?;
     let object = value
         .as_object()
         .ok_or(JsonRpcParseError::EnvelopeNotObject)?;
     validate_jsonrpc_version(object)?;
-    match frame.frame_type {
-        FrameType::Request => parse_request(object).map(JsonRpcEnvelope::Request),
-        FrameType::Response => parse_response(object).map(JsonRpcEnvelope::Response),
-        FrameType::Notification => parse_notification(object).map(JsonRpcEnvelope::Notification),
+    // Wire type only names the payload encoding; envelope kind comes from JSON shape.
+    if object.contains_key("method") {
+        if object.contains_key("id") {
+            parse_request(object).map(JsonRpcEnvelope::Request)
+        } else {
+            parse_notification(object).map(JsonRpcEnvelope::Notification)
+        }
+    } else if object.contains_key("id") {
+        parse_response(object).map(JsonRpcEnvelope::Response)
+    } else {
+        Err(JsonRpcParseError::InvalidResponseShape)
     }
 }
 
@@ -347,11 +359,11 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
-    /// Parses a strict response and rejects type/envelope mismatch or result/error ambiguity.
+    /// Parses a strict response and rejects result/error ambiguity from JSON shape alone.
     #[test]
     fn parses_strict_response_envelopes() {
         let response = Frame {
-            frame_type: FrameType::Response,
+            frame_type: FrameType::Json,
             payload: br#"{"jsonrpc":"2.0","id":"h:1","result":{"ok":true}}"#.to_vec(),
         };
         assert_eq!(
@@ -363,13 +375,14 @@ mod tests {
             }))
         );
 
-        let mismatch = Frame {
-            frame_type: FrameType::Notification,
-            payload: response.payload,
+        let ambiguous = Frame {
+            frame_type: FrameType::Json,
+            payload: br#"{"jsonrpc":"2.0","id":"h:1","result":true,"error":{"code":1,"message":"x"}}"#
+                .to_vec(),
         };
         assert_eq!(
-            parse_json_rpc_frame(&mismatch, 64),
-            Err(JsonRpcParseError::UnknownField)
+            parse_json_rpc_frame(&ambiguous, 64),
+            Err(JsonRpcParseError::InvalidResponseShape)
         );
     }
 
