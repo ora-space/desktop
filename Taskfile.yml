@@ -74,6 +74,23 @@ tasks:
     cmds:
       - cargo xtask export-contracts
 
+
+  export-plugin-sdk:
+    desc: Regenerate TypeScript plugin SDK and private runtime protocol types
+    cmds:
+      - cargo xtask export-plugin-sdk
+
+  prepare-plugin-runtime:
+    desc: Explicitly download, verify, bundle, and stage pinned plugin runtime resources
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-plugin-runtime.ps1
+
+  verify-plugin-runtime-prepared:
+    desc: Verify that pinned plugin runtime resources were prepared explicitly
+    internal: true
+    cmds:
+      - powershell -NoProfile -Command "if (-not (Test-Path -LiteralPath 'runtime-assets/prepared/runtime-manifest.json' -PathType Leaf)) { throw 'plugin runtime resources are not prepared; run task prepare-plugin-runtime before consuming prepared assets' }"
+
   build:
     desc: Build all crates
     cmds:
