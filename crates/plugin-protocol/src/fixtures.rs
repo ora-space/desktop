@@ -64,30 +64,18 @@ pub struct NamedGoldenValue {
 /// Builds the canonical valid and invalid Frame vectors from the production encoder.
 pub fn canonical_frame_golden_fixture() -> FrameGoldenFixture {
     let payloads = [
-        (
-            FrameType::Request,
-            r#"{"jsonrpc":"2.0","id":"h:1","method":"ping","params":{}}"#,
-        ),
-        (
-            FrameType::Response,
-            r#"{"jsonrpc":"2.0","id":"h:1","result":"ok"}"#,
-        ),
-        (
-            FrameType::Notification,
-            r#"{"jsonrpc":"2.0","method":"$/exit"}"#,
-        ),
-        (
-            FrameType::Notification,
-            r#"{"jsonrpc":"2.0","method":"$/stream","params":{"id":"h:1","seq":1,"value":{"kind":"textDelta","text":"你好"}}}"#,
-        ),
+        r#"{"jsonrpc":"2.0","id":"h:1","method":"ping","params":{}}"#,
+        r#"{"jsonrpc":"2.0","id":"h:1","result":"ok"}"#,
+        r#"{"jsonrpc":"2.0","method":"$/exit"}"#,
+        r#"{"jsonrpc":"2.0","method":"$/stream","params":{"id":"h:1","seq":1,"value":{"kind":"textDelta","text":"你好"}}}"#,
     ];
     let valid = payloads
         .into_iter()
-        .map(|(frame_type, payload)| {
-            let encoded = encode_frame(frame_type, payload.as_bytes(), MAX_FRAME_BYTES)
+        .map(|payload| {
+            let encoded = encode_frame(FrameType::Json, payload.as_bytes(), MAX_FRAME_BYTES)
                 .unwrap_or_else(|error| panic!("canonical frame must encode: {error}"));
             FrameGoldenVector {
-                frame_type: frame_type_name(frame_type).to_string(),
+                frame_type: "json".to_string(),
                 payload_utf8: payload.to_string(),
                 payload_len: payload.len(),
                 header_hex: encode_hex(&encoded[..5]),
@@ -102,10 +90,14 @@ pub fn canonical_frame_golden_fixture() -> FrameGoldenFixture {
         maximum_payload_bytes: MAX_FRAME_BYTES,
         valid,
         invalid: vec![
-            invalid_vector([0x00, 0x00, 0x00, 0x00, 0x01], "zeroLength"),
-            invalid_vector([0xff, 0xff, 0xff, 0xff, 0x01], "negativeLength"),
-            invalid_vector([0x00, 0x80, 0x00, 0x01, 0x01], "payloadTooLarge"),
-            invalid_vector([0x00, 0x00, 0x00, 0x02, 0x7f], "unknownType"),
+            // [type=json][length=0]
+            invalid_vector([0x01, 0x00, 0x00, 0x00, 0x00], "zeroLength"),
+            // [type=json][length=-1]
+            invalid_vector([0x01, 0xff, 0xff, 0xff, 0xff], "negativeLength"),
+            // [type=json][length=0x800001] exceeds MAX_FRAME_BYTES
+            invalid_vector([0x01, 0x00, 0x80, 0x00, 0x01], "payloadTooLarge"),
+            // [type=0x7f][length=2]
+            invalid_vector([0x7f, 0x00, 0x00, 0x00, 0x02], "unknownType"),
         ],
     }
 }
@@ -180,15 +172,6 @@ fn invalid_vector<const N: usize>(bytes: [u8; N], reason: &str) -> InvalidFrameG
     }
 }
 
-/// Returns the lowercase fixture spelling for one numeric frame type.
-fn frame_type_name(frame_type: FrameType) -> &'static str {
-    match frame_type {
-        FrameType::Request => "request",
-        FrameType::Response => "response",
-        FrameType::Notification => "notification",
-    }
-}
-
 /// Encodes bytes without separators so concatenation remains machine-checkable.
 fn encode_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -204,10 +187,11 @@ fn named(name: &str, value: Value) -> NamedGoldenValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_agent_contract_golden_fixture, canonical_frame_golden_fixture};
+    use super::canonical_agent_contract_golden_fixture;
+    use super::canonical_frame_golden_fixture;
     use pretty_assertions::assert_eq;
 
-    /// Freezes the human-readable payload lengths and exact five-byte headers from the design.
+    /// Freezes payload lengths and exact type-first five-byte headers.
     #[test]
     fn canonical_frame_vectors_match_design() {
         let fixture = canonical_frame_golden_fixture();
@@ -218,10 +202,10 @@ mod tests {
                 .map(|vector| (vector.payload_len, vector.header_hex.as_str()))
                 .collect::<Vec<_>>(),
             vec![
-                (56, "0000003801"),
-                (42, "0000002a02"),
-                (35, "0000002303"),
-                (112, "0000007003"),
+                (56, "0100000038"),
+                (42, "010000002a"),
+                (35, "0100000023"),
+                (112, "0100000070"),
             ]
         );
     }

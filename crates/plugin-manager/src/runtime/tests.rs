@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use ora_plugin_protocol::{
     ActivateResult, AgentProviderId, AgentRequest, AgentResponse, AgentScope,
-    DiscoverInstallationsRequest, DiscoverInstallationsResponse, FrameDecoder, FrameType,
+    DiscoverInstallationsRequest, DiscoverInstallationsResponse, FrameDecoder,
     InitializeParams, InitializeResult, InitializeResultPlugin, JsonRpcEnvelope, JsonSafeU64,
     MAX_FRAME_BYTES, METHOD_ACTIVATE, METHOD_DEACTIVATE, METHOD_EXIT, METHOD_INITIALIZE, PluginId,
-    PluginKind, PluginVersion, WIRE_VERSION_V1, encode_frame,
+    PluginKind, PluginVersion, WIRE_VERSION_V1, encode_json_frame,
 };
 use ora_process::{ProcessExit, ProcessSpec, ProcessTreeController, ProcessTreeError};
 use pretty_assertions::assert_eq;
@@ -332,7 +332,7 @@ async fn write_response(stdout: &mut DuplexStream, id: &str, result: serde_json:
         "result": result,
     }))
     .unwrap_or_else(|error| panic!("fake response JSON: {error}"));
-    let frame = encode_frame(FrameType::Response, &payload, MAX_FRAME_BYTES)
+    let frame = encode_json_frame(&payload, MAX_FRAME_BYTES)
         .unwrap_or_else(|error| panic!("fake response frame: {error}"));
     stdout
         .write_all(&frame)
