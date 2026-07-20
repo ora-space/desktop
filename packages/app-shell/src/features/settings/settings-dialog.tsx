@@ -21,7 +21,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
   Switch,
   cn,
 } from "@ora/ui";
@@ -109,7 +108,7 @@ export function SettingsDialog() {
                 );
               })}
             </nav>
-            <p className="mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block">Ora Agent IDE<br />Prototype settings</p>
+            <p className="mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block">{t("settings.productName")}<br />{t("settings.prototypeLabel")}</p>
           </aside>
 
           <ScrollArea className="min-h-0">
@@ -166,13 +165,13 @@ function AppearanceSettings({ settings, onUpdate }: { settings: SettingsPreferen
       </SettingsGroup>
       <SettingsRow icon={IconLanguage} title={t("settings.appearance.language")} description={t("settings.appearance.languageDescription")}>
         <Select value={locale} onValueChange={(value) => void i18n.changeLanguage(value as Locale)}>
-          <SelectTrigger className="w-40"><span className="flex-1 text-left">{locale === "zh-CN" ? "简体中文" : "English"}</span></SelectTrigger>
-          <SelectContent><SelectItem value="zh-CN">简体中文</SelectItem><SelectItem value="en-US">English</SelectItem></SelectContent>
+          <SelectTrigger className="w-40"><span className="flex-1 text-left">{locale === "zh-CN" ? t("account.switchChinese") : t("account.switchEnglish")}</span></SelectTrigger>
+          <SelectContent><SelectItem value="zh-CN">{t("account.switchChinese")}</SelectItem><SelectItem value="en-US">{t("account.switchEnglish")}</SelectItem></SelectContent>
         </Select>
       </SettingsRow>
       <SettingsRow icon={IconAdjustments} title={t("settings.appearance.density")} description={t("settings.appearance.densityDescription")}>
         <Select value={settings.density} onValueChange={(value) => onUpdate({ density: value as InterfaceDensity })}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-40"><span className="flex-1 text-left">{settings.density === "comfortable" ? t("settings.appearance.comfortable") : t("settings.appearance.compact")}</span></SelectTrigger>
           <SelectContent><SelectItem value="comfortable">{t("settings.appearance.comfortable")}</SelectItem><SelectItem value="compact">{t("settings.appearance.compact")}</SelectItem></SelectContent>
         </Select>
       </SettingsRow>
@@ -195,13 +194,13 @@ function ModelSettings({ settings, onUpdate }: { settings: SettingsPreferences; 
       <SettingsHeading title={t("settings.models.title")} description={t("settings.models.description")} />
       <SettingsRow icon={IconPlugConnected} title={t("settings.models.provider")} description={t("settings.models.providerDescription")}>
         <Select value={settings.provider} onValueChange={(value) => changeProvider(value as ModelProvider)}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-44"><span className="flex-1 text-left">{settings.provider === "local" ? t("settings.models.local") : settings.provider === "openai" ? "OpenAI" : "Anthropic"}</span></SelectTrigger>
           <SelectContent><SelectItem value="openai">OpenAI</SelectItem><SelectItem value="anthropic">Anthropic</SelectItem><SelectItem value="local">{t("settings.models.local")}</SelectItem></SelectContent>
         </Select>
       </SettingsRow>
       <SettingsRow icon={IconRobot} title={t("settings.models.defaultModel")} description={t("settings.models.defaultModelDescription")}>
         <Select value={settings.model} onValueChange={(model) => onUpdate({ model: model as string })}>
-          <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-52"><span className="flex-1 text-left">{settings.model}</span></SelectTrigger>
           <SelectContent>{models[settings.provider].map((model) => <SelectItem key={model} value={model}>{model}</SelectItem>)}</SelectContent>
         </Select>
       </SettingsRow>
@@ -222,7 +221,7 @@ function PermissionSettings({ settings, onUpdate }: { settings: SettingsPreferen
       <SettingsHeading title={t("settings.permissions.title")} description={t("settings.permissions.description")} />
       <SettingsRow icon={IconShieldCheck} title={t("settings.permissions.approval")} description={t("settings.permissions.approvalDescription")}>
         <Select value={settings.approvalPolicy} onValueChange={(value) => onUpdate({ approvalPolicy: value as ApprovalPolicy })}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-48"><span className="flex-1 text-left">{settings.approvalPolicy === "always" ? t("settings.permissions.always") : settings.approvalPolicy === "risky" ? t("settings.permissions.risky") : t("settings.permissions.trusted")}</span></SelectTrigger>
           <SelectContent><SelectItem value="always">{t("settings.permissions.always")}</SelectItem><SelectItem value="risky">{t("settings.permissions.risky")}</SelectItem><SelectItem value="trusted">{t("settings.permissions.trusted")}</SelectItem></SelectContent>
         </Select>
       </SettingsRow>
@@ -233,8 +232,13 @@ function PermissionSettings({ settings, onUpdate }: { settings: SettingsPreferen
       </div>
       <SettingsRow icon={IconLock} title={t("settings.permissions.timeout")} description={t("settings.permissions.timeoutDescription")}>
         <Select value={settings.commandTimeout} onValueChange={(commandTimeout) => onUpdate({ commandTimeout: commandTimeout as string })}>
-          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectItem value="30">30s</SelectItem><SelectItem value="120">2 min</SelectItem><SelectItem value="300">5 min</SelectItem><SelectItem value="0">{t("settings.permissions.noTimeout")}</SelectItem></SelectContent>
+          <SelectTrigger className="w-36"><span className="flex-1 text-left">{settings.commandTimeout === "30" ? t("settings.permissions.timeoutSeconds", { count: 30 }) : settings.commandTimeout === "120" ? t("settings.permissions.timeoutMinutes", { count: 2 }) : settings.commandTimeout === "300" ? t("settings.permissions.timeoutMinutes", { count: 5 }) : t("settings.permissions.noTimeout")}</span></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="30">{t("settings.permissions.timeoutSeconds", { count: 30 })}</SelectItem>
+            <SelectItem value="120">{t("settings.permissions.timeoutMinutes", { count: 2 })}</SelectItem>
+            <SelectItem value="300">{t("settings.permissions.timeoutMinutes", { count: 5 })}</SelectItem>
+            <SelectItem value="0">{t("settings.permissions.noTimeout")}</SelectItem>
+          </SelectContent>
         </Select>
       </SettingsRow>
     </div>
