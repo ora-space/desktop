@@ -7,7 +7,7 @@ import {
   IconGitBranch,
   IconLayoutSidebarLeftExpand,
   IconPlayerPlay,
-  IconRobot,
+  IconSquareRoundedPlus,
 } from "@tabler/icons-react";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
@@ -46,28 +46,41 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         : state.conversations[selection.sessionId]),
   );
 
-  if (session && task && project) {
+  const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
+
+  // The chat pane also backs the "no selection" landing state, where there is no
+  // Ora session to talk to yet and the composer stays disabled.
+  const chatIsOpen = (session && task && project) || selection.projectId === null;
+
+  if (chatIsOpen) {
+    const title = task?.title ?? t("chat.newThread");
+    const sendDisabled = !session || agentSessionUnavailable;
+    const chatError = conversation?.error
+      ?? (agentSessionUnavailable ? t("chat.agentSessionUnavailable") : null)
+      ?? (session ? null : t("chat.noSessionSelected"));
     return (
-      <main className="relative flex min-w-0 flex-1 flex-col bg-background">
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+      <main id="main-content" className="relative flex min-w-0 flex-1 flex-col bg-background">
+        <div className="flex h-13 shrink-0 items-center gap-2 px-3 sm:px-4">
           {sidebarCollapsed && <Button variant="ghost" size="icon-sm" onClick={() => setSidebarCollapsed(false)} aria-label={t("sidebar.expand")}><IconLayoutSidebarLeftExpand /></Button>}
-          <IconRobot className="size-4 text-emerald-600" />
           <div className="min-w-0">
-            <p className="truncate text-xs font-semibold">{task.title}</p>
-            <p className="truncate text-[10px] text-muted-foreground">{project.name} / {session.agentId}</p>
+            <p className="truncate text-[13px] font-medium tracking-[-0.01em]">{title}</p>
+            {project && session && (
+              <p className="truncate text-[10px] text-muted-foreground">{project.name} / {session.agentId}</p>
+            )}
           </div>
           <div className="flex-1" />
-          <Badge variant="outline" className="gap-1 text-[10px]"><span className={`size-1.5 rounded-full ${session.status === "running" ? "bg-emerald-500" : "bg-zinc-400"}`} />{t(`common.${session.status}`)}</Badge>
+          {session && <Badge variant="outline" className="gap-1 rounded-md text-[10px]"><span className={`size-1.5 rounded-full ${session.status === "running" ? "bg-emerald-500" : "bg-zinc-400"}`} />{t(`common.${session.status}`)}</Badge>}
+          <Button variant="ghost" size="icon-sm" onClick={clearSelection} aria-label={t("chat.newThread")}><IconSquareRoundedPlus /></Button>
         </div>
         <div className="min-h-0 flex-1 [&>main]:h-full">
           <ChatView
             messages={conversation?.messages ?? []}
             userName={userName}
             isResponding={conversation?.isResponding ?? false}
-            error={conversation?.error ?? (agentSessionUnavailable ? t("chat.agentSessionUnavailable") : null)}
-            disabled={agentSessionUnavailable}
+            error={chatError}
+            disabled={sendDisabled}
             onSend={(text) => {
-              if (session.agentSessionId === null) return;
+              if (!session || session.agentSessionId === null) return;
               void chatStore.getState().sendMessage({
                 oraSessionId: session.id,
                 agentSessionId: session.agentSessionId,
@@ -81,7 +94,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   }
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col bg-background">
+    <main id="main-content" className="flex min-w-0 flex-1 flex-col bg-background">
       <header className="flex h-12 items-center border-b border-border px-3">
         {sidebarCollapsed && <Button variant="ghost" size="icon-sm" onClick={() => setSidebarCollapsed(false)} aria-label={t("sidebar.expand")}><IconLayoutSidebarLeftExpand /></Button>}
         <span className="ml-1 text-xs font-medium text-muted-foreground">{t("workspace.overview")}</span>

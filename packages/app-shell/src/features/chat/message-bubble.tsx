@@ -2,7 +2,6 @@ import { useState } from "react";
 import { IconCheck, IconCopy, IconThumbDown, IconThumbUp } from "@tabler/icons-react";
 import { Button } from "@ora/ui";
 import { useTranslation } from "react-i18next";
-import { ColoredAvatar } from "../../components/colored-avatar";
 import { OraMark } from "../../components/ora-mark";
 import { formatClock } from "../../lib/format";
 import type { ChatMessage } from "@ora/chat";
@@ -33,22 +32,22 @@ export function MessageBubble({ message, userName }: MessageBubbleProps) {
   const isUser = message.role === "user";
 
   return (
-    <div className="group/message flex gap-3 py-4">
-      {isUser ? <ColoredAvatar name={userName} size="sm" /> : <OraMark size="sm" />}
+    <div className={`group/message flex gap-3 py-5 ${isUser ? "justify-end" : "justify-start"}`}>
+      {!isUser && <OraMark size="sm" />}
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+      <div className={`flex min-w-0 flex-col gap-1.5 ${isUser ? "max-w-[85%] items-end" : "flex-1"}`}>
         {isUser ? (
-          <div className="w-fit max-w-full rounded-2xl bg-secondary px-3.5 py-2.5">
-            <p className="whitespace-pre-wrap break-words text-sm text-foreground">{message.content}</p>
+          <div className="w-fit max-w-full rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
+            <p className="whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
           </div>
         ) : (
-          <p className="whitespace-pre-wrap break-words text-sm text-foreground">{message.content}</p>
+          <p className="whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
         )}
 
-        <div className="flex items-center gap-2">
+        <div className={`flex min-h-6 items-center gap-2 ${isUser ? "pr-1" : ""}`}>
           <span className="text-xs text-muted-foreground">{formatClock(message.createdAt)}</span>
           {!isUser && (
-            <div className="flex items-center gap-0.5 opacity-0 transition duration-100 group-hover/message:opacity-100">
+            <div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100">
               <Button variant="ghost" size="icon-xs" aria-label={t("chat.copy")} onClick={copy}>
                 {copied ? (
                   <IconCheck className="size-3.5 text-emerald-600" />
@@ -67,7 +66,7 @@ export function MessageBubble({ message, userName }: MessageBubbleProps) {
         </div>
       </div>
 
-      <span className="sr-only">{isUser ? t("chat.youSaid") : t("chat.assistantReplied")}</span>
+      <span className="sr-only">{isUser ? `${userName}: ${t("chat.youSaid")}` : t("chat.assistantReplied")}</span>
     </div>
   );
 }

@@ -1,4 +1,3 @@
-import { OraMark } from "../../components/ora-mark";
 import { Composer } from "./composer";
 import { useTranslation } from "react-i18next";
 import type { TranslationKey } from "../../i18n/i18n";
@@ -21,16 +20,15 @@ const SUGGESTIONS: TranslationKey[] = [
 export function EmptyState({ onSend, isResponding, error, disabled }: EmptyStateProps) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-1 items-center justify-center overflow-y-auto px-4 py-10">
-      <div className="w-full max-w-2xl">
-        <div className="mb-6 flex flex-col items-center text-center">
-          <OraMark size="lg" className="mb-5" />
-          <h1 className="text-2xl font-semibold text-foreground">{t("chat.heading")}</h1>
+    <div className="flex flex-1 items-center justify-center overflow-y-auto px-3 pb-[12vh] pt-10 sm:px-6">
+      <div className="w-full max-w-[760px]">
+        <div className="mb-7">
+          <h1 className="text-2xl font-medium tracking-[-0.035em] text-foreground sm:text-[28px]">{t("chat.heading")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{t("chat.subheading")}</p>
         </div>
-        {error && <p role="alert" className="mb-2 text-xs text-destructive">{error}</p>}
+        {error && <p role="alert" className="mb-2 px-1 text-xs text-destructive">{error}</p>}
         <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
-        <div className="mt-4 flex flex-wrap justify-center gap-2">
+        <div className="mt-3 flex flex-wrap gap-2">
           {SUGGESTIONS.map((suggestionKey) => {
             const suggestion = t(suggestionKey);
             return (
@@ -39,7 +37,7 @@ export function EmptyState({ onSend, isResponding, error, disabled }: EmptyState
               type="button"
               disabled={isResponding || disabled}
               onClick={() => onSend(suggestion)}
-              className="rounded-full border border-border bg-background px-3 py-1.5 text-sm text-muted-foreground transition duration-100 hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-muted-foreground"
+              className="min-h-9 rounded-lg border border-border bg-background px-3 py-2 text-left text-xs text-muted-foreground outline-none transition-colors duration-150 hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-muted-foreground"
             >
               {suggestion}
             </button>

@@ -73,6 +73,12 @@ function AppShellContent({ client, chatStore, platform, user }: Required<AppShel
       <ChatStoreContext.Provider value={chatStore}>
         <PlatformProvider adapter={platform}>
           <TooltipProvider>
+            <a
+              href="#main-content"
+              className="fixed left-3 top-3 z-50 -translate-y-20 rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-lg transition-transform focus:translate-y-0"
+            >
+              {t("common.skipToContent")}
+            </a>
             <div className="flex h-dvh overflow-hidden bg-background text-foreground">
               {sidebarCollapsed ? (
                 <WorkspaceView userName={user.name} />
