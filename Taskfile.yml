@@ -82,6 +82,7 @@ tasks:
   test:frontend:
     desc: Run TypeScript package test suites (contracts, platform, app-shell, mock-service)
     cmds:
+      - task: export-contracts
       - task: lint:frontend
       - pnpm --filter @ora/contracts test
       - pnpm --filter @ora/platform test
@@ -97,7 +98,6 @@ tasks:
     desc: Run Rust crate test suites
     cmds:
       - task: lint:backend
-      - task: export-contracts
       - cargo test --workspace
 
   test:
