@@ -1,5 +1,11 @@
-import { useEffect, useState } from "react";
-import { TooltipProvider } from "@ora/ui";
+import { useEffect, useRef, useState } from "react";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+  TooltipProvider,
+  type ResizablePanelHandle,
+} from "@ora/ui";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ContractsClient } from "@ora/contracts";
 import {
@@ -27,6 +33,11 @@ interface AppShellProps {
   user?: CurrentUser;
 }
 
+const DEFAULT_SIDEBAR_WIDTH = 320;
+const MIN_SIDEBAR_WIDTH = 240;
+const MAX_SIDEBAR_WIDTH = 480;
+const MIN_WORKSPACE_WIDTH = 480;
+
 /** The main Ora application shell: sidebar + chat view with conversation state. */
 export function AppShell({ client, platform, user = CURRENT_USER }: AppShellProps) {
   // One client per shell instance so HMR or multiple mounted shells never share cache.
@@ -46,7 +57,8 @@ function AppShellContent({ client, platform, user }: Required<AppShellProps>) {
   useEffect(() => startThemeSubscription(), []);
 
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const sidebarPanelRef = useRef<ResizablePanelHandle | null>(null);
   const locale: PlatformLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
 
   const handleSignOut = () => {
@@ -60,10 +72,32 @@ function AppShellContent({ client, platform, user }: Required<AppShellProps>) {
       <PlatformProvider adapter={platform}>
         <TooltipProvider>
           <div className="flex h-dvh overflow-hidden bg-background text-foreground">
-            {!sidebarCollapsed && (
-              <WorkspaceSidebar user={user} onSignOut={handleSignOut} />
+            {sidebarCollapsed ? (
+              <WorkspaceView userName={user.name} />
+            ) : (
+              <ResizablePanelGroup orientation="horizontal">
+                <ResizablePanel
+                  id="workspace-sidebar"
+                  panelRef={sidebarPanelRef}
+                  defaultSize={DEFAULT_SIDEBAR_WIDTH}
+                  minSize={MIN_SIDEBAR_WIDTH}
+                  maxSize={MAX_SIDEBAR_WIDTH}
+                  groupResizeBehavior="preserve-pixel-size"
+                >
+                  <WorkspaceSidebar user={user} onSignOut={handleSignOut} />
+                </ResizablePanel>
+                <ResizableHandle
+                  withHandle
+                  aria-label={t("sidebar.resize")}
+                  title={t("sidebar.resize")}
+                  className="z-20 bg-sidebar-border transition-colors hover:bg-ring focus-visible:bg-ring"
+                  onDoubleClick={() => sidebarPanelRef.current?.resize(DEFAULT_SIDEBAR_WIDTH)}
+                />
+                <ResizablePanel id="workspace-content" minSize={MIN_WORKSPACE_WIDTH}>
+                  <WorkspaceView userName={user.name} />
+                </ResizablePanel>
+              </ResizablePanelGroup>
             )}
-            <WorkspaceView userName={user.name} />
             <SettingsDialog />
           </div>
           <PlatformHost locale={locale} />

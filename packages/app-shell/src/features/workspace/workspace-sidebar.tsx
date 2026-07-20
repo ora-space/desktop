@@ -122,7 +122,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
 
   return (
     <>
-      <aside className="flex h-dvh w-[320px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+      <aside className="flex size-full min-w-0 flex-col bg-sidebar text-sidebar-foreground">
         <header className="flex h-12 items-center gap-2 border-b border-sidebar-border px-3">
           <div className="flex size-7 items-center justify-center rounded-md bg-foreground text-background">
             <IconSparkles className="size-4" />
