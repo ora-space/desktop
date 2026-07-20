@@ -189,9 +189,7 @@ describe("WebPlatformAdapter", () => {
     const { client } = fileSystemClient(listDirectory);
     const adapter = createWebPlatformAdapter(client);
 
-    await act(async () => {
-      void adapter.selectPath({ kind: "directory", initialPath: "/missing" });
-    });
+    const selection = adapter.selectPath({ kind: "directory", initialPath: "/missing" });
     render(
       <PlatformProvider adapter={adapter}>
         <PlatformHost locale="en-US" />
@@ -201,6 +199,11 @@ describe("WebPlatformAdapter", () => {
     expect(await screen.findByText("projects")).toBeVisible();
     expect(listDirectory).toHaveBeenNthCalledWith(1, { path: "/missing" });
     expect(listDirectory).toHaveBeenNthCalledWith(2, {});
-    adapter.completeSelection(1, null);
+
+    // Cancelling outside act would leave the dialog unmount cascade outside React's test scheduler.
+    await act(async () => {
+      adapter.completeSelection(1, null);
+      await selection;
+    });
   });
 });
