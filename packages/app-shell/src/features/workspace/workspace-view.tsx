@@ -1,5 +1,6 @@
 import { Button, Badge } from "@ora/ui";
 import { useTranslation } from "react-i18next";
+import { useStore } from "zustand";
 import {
   IconBrandGit,
   IconFolder,
@@ -13,7 +14,7 @@ import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
-import { useConversationsStore } from "../../state/stores/conversations-store";
+import { useChatStore } from "../../chat-store-context";
 import { ChatView } from "../chat/chat-view";
 
 interface WorkspaceViewProps {
@@ -22,8 +23,7 @@ interface WorkspaceViewProps {
 
 /** Shows useful project/task context until a session is selected, then opens its agent chat. */
 export function WorkspaceView({ userName }: WorkspaceViewProps) {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
+  const { t } = useTranslation();
 
   const { data: projects = [] } = useProjects();
   const { data: tasks = [] } = useTasks();
@@ -32,16 +32,19 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
 
-  const activeConversation = useConversationsStore((s) =>
-    s.conversations.find((c) => c.id === s.activeId) ?? null,
-  );
-  const isResponding = useConversationsStore((s) => s.isResponding);
-  const sendMessage = useConversationsStore((s) => s.sendMessage);
-  const newChat = useConversationsStore((s) => s.newChat);
+  const chatStore = useChatStore();
 
   const project = projects.find((item) => item.id === selection.projectId);
   const task = tasks.find((item) => item.id === selection.taskId);
   const session = sessions.find((item) => item.id === selection.sessionId);
+  const agentSessionUnavailable = session?.agentSessionId === null;
+  const conversation = useStore(
+    chatStore,
+    (state) =>
+      (selection.sessionId === null
+        ? undefined
+        : state.conversations[selection.sessionId]),
+  );
 
   if (session && task && project) {
     return (
@@ -57,7 +60,21 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           <Badge variant="outline" className="gap-1 text-[10px]"><span className={`size-1.5 rounded-full ${session.status === "running" ? "bg-emerald-500" : "bg-zinc-400"}`} />{t(`common.${session.status}`)}</Badge>
         </div>
         <div className="min-h-0 flex-1 [&>main]:h-full">
-          <ChatView active={activeConversation} userName={userName} isResponding={isResponding} onSend={(text) => sendMessage(text, locale)} onNewChat={newChat} />
+          <ChatView
+            messages={conversation?.messages ?? []}
+            userName={userName}
+            isResponding={conversation?.isResponding ?? false}
+            error={conversation?.error ?? (agentSessionUnavailable ? t("chat.agentSessionUnavailable") : null)}
+            disabled={agentSessionUnavailable}
+            onSend={(text) => {
+              if (session.agentSessionId === null) return;
+              void chatStore.getState().sendMessage({
+                oraSessionId: session.id,
+                agentSessionId: session.agentSessionId,
+                text,
+              }).catch(() => undefined);
+            }}
+          />
         </div>
       </main>
     );

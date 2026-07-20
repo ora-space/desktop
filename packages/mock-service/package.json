@@ -10,6 +10,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@ora/chat": "workspace:*",
     "@ora/contracts": "workspace:*",
     "msw": "^2.0.0"
   },

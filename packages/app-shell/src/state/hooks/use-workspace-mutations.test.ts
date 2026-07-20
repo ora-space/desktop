@@ -19,6 +19,7 @@ import { renderHookWithClient } from "../../test/hook-harness";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { queryKeys } from "./query-keys";
 import type { Project, Session, Task } from "@ora/contracts";
+import { createChatStore, type AcpClient } from "@ora/chat";
 
 const P1: Project = { id: "p1", name: "Ora", rootPath: "/ora" };
 const P2: Project = { id: "p2", name: "Rustun", rootPath: "/rustun" };
@@ -213,15 +214,31 @@ describe("useCreateSession", () => {
     state.projects = [P1];
     state.tasks = [T1];
     const client = createMockClient(state);
+    const newSessionRequests: Parameters<AcpClient["newSession"]>[0][] = [];
+    const chatStore = createChatStore({
+      newSession: async (request) => {
+        newSessionRequests.push(request);
+        return { sessionId: "agent-session-created" };
+      },
+      prompt: async () => ({ stopReason: "end_turn" }),
+      subscribe: () => () => undefined,
+    });
     const projects = renderHookWithClient(() => useProjects(), client);
     const tasks = renderHookWithClient(() => useTasks(), client, projects.queryClient);
-    const mutation = renderHookWithClient(() => useCreateSession(), client, projects.queryClient);
+    const mutation = renderHookWithClient(
+      () => useCreateSession(),
+      client,
+      projects.queryClient,
+      chatStore,
+    );
 
     await waitFor(() => expect(tasks.result.current.isSuccess).toBe(true));
     mutation.result.current.mutate({ taskId: "t1", agentId: "codex", status: "running" });
     await waitFor(() => expect(mutation.result.current.isSuccess).toBe(true));
 
     expect(state.sessions).toHaveLength(1);
+    expect(state.sessions[0]!.agentSessionId).toBe("agent-session-created");
+    expect(newSessionRequests).toEqual([{ cwd: "/ora", mcpServers: [] }]);
     const selection = useWorkspaceSelectionStore.getState().selection;
     expect(selection).toEqual({
       projectId: "p1",

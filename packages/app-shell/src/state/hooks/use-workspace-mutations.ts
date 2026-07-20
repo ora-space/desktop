@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Project, Session, SessionStatus, Task, TaskStatus } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
+import { useChatStore } from "../../chat-store-context";
 import { queryKeys } from "./query-keys";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 
@@ -124,12 +125,29 @@ export function useDeleteTask() {
 /** Creates a session under a task and selects it once the server confirms the id. */
 export function useCreateSession() {
   const client = useContractsClient();
+  const chatStore = useChatStore();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ taskId, agentId, status }: { taskId: string; agentId: string; status: SessionStatus }) =>
-      client.session
-        .create({ taskId, agentId, agentSessionId: null, status })
-        .then((response) => response.session),
+    mutationFn: async ({ taskId, agentId, status }: { taskId: string; agentId: string; status: SessionStatus }) => {
+      const task = readCache<Task>(queryClient, queryKeys.tasks).find(
+        (candidate) => candidate.id === taskId,
+      );
+      if (task === undefined) throw new Error(`task ${taskId} not found in workspace cache`);
+      const project = readCache<Project>(queryClient, queryKeys.projects).find(
+        (candidate) => candidate.id === task.projectId,
+      );
+      if (project === undefined) {
+        throw new Error(`project ${task.projectId} not found in workspace cache`);
+      }
+
+      const agentSession = await chatStore.getState().newSession({
+        cwd: project.rootPath,
+        mcpServers: [],
+      });
+      return client.session
+        .create({ taskId, agentId, agentSessionId: agentSession.sessionId, status })
+        .then((response) => response.session);
+    },
     onSuccess: (session) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
       // Recover the owning project from the task cache so selection stays consistent.

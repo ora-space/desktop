@@ -80,10 +80,11 @@ tasks:
       - cargo build --workspace
 
   test:frontend:
-    desc: Run TypeScript package test suites (contracts, platform, app-shell, mock-service)
+    desc: Run TypeScript package test suites (contracts, chat, platform, app-shell, mock-service)
     cmds:
       - task: lint:frontend
       - pnpm --filter @ora/contracts test
+      - pnpm --filter @ora/chat test
       - pnpm --filter @ora/platform test
       - pnpm --filter @ora/app-shell test
       - pnpm --filter @ora/mock-service test

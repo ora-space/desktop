@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 interface ComposerProps {
   onSend: (text: string) => void;
   isResponding: boolean;
+  disabled?: boolean;
   placeholder?: string;
   autoFocus?: boolean;
 }
@@ -19,6 +20,7 @@ interface ComposerProps {
 export function Composer({
   onSend,
   isResponding,
+  disabled = false,
   placeholder,
   autoFocus = false,
 }: ComposerProps) {
@@ -26,11 +28,11 @@ export function Composer({
   const [value, setValue] = useState("");
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
-  const canSend = value.trim().length > 0 && !isResponding;
+  const canSend = value.trim().length > 0 && !isResponding && !disabled;
 
   const submit = () => {
     const text = value.trim();
-    if (!text || isResponding) return;
+    if (!text || isResponding || disabled) return;
     onSend(text);
     setValue("");
   };
@@ -57,6 +59,7 @@ export function Composer({
         autoFocus={autoFocus}
         placeholder={placeholder ?? t("chat.placeholder")}
         value={value}
+        disabled={disabled}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}
         className="min-h-[28px] max-h-[200px] resize-none rounded-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"

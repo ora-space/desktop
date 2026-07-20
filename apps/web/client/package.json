@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@ora/app-shell": "workspace:*",
+    "@ora/chat": "workspace:*",
     "@ora/contracts": "workspace:*",
     "@ora/mock-service": "workspace:*",
     "@ora/platform": "workspace:*",

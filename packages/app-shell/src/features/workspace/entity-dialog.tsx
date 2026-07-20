@@ -73,6 +73,7 @@ export function EntityDialog({
   const [validationError, setValidationError] = useState(false);
   const [selectingField, setSelectingField] = useState<string | null>(null);
   const [pathSelectionError, setPathSelectionError] = useState<string | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
 
   const handlePathSelection = async (field: PathEntityField) => {
     setSelectingField(field.name);
@@ -101,11 +102,12 @@ export function EntityDialog({
       return;
     }
     setSubmitting(true);
+    setSubmissionError(null);
     try {
       await onSubmit(values);
       onOpenChange(false);
-    } catch {
-      // The workspace surfaces transport errors inline, so the form stays open for correction or retry.
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : t("dialog.submitError"));
     } finally {
       setSubmitting(false);
     }
@@ -184,6 +186,7 @@ export function EntityDialog({
             ))}
           </div>
           {validationError && <p role="alert" className="text-xs text-destructive">{t("dialog.required")}</p>}
+          {submissionError && <p role="alert" className="text-xs text-destructive">{submissionError}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" disabled={submitting} onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
             <Button type="submit" disabled={submitting}>{submitting ? t("common.saving") : submitLabel}</Button>

@@ -44,10 +44,10 @@ import type { Locale } from "../../i18n/i18n";
 import { AtomsSettings } from "./atoms-settings";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useSettingsStore, type SettingsPreferences } from "../../state/stores/settings-store";
-import { useConversationsStore } from "../../state/stores/conversations-store";
+import { useChatStore } from "../../chat-store-context";
+import { useStore } from "zustand";
 import type {
   ApprovalPolicy,
-  HistoryRetention,
   InterfaceDensity,
   ModelProvider,
   ThemeMode,
@@ -62,7 +62,8 @@ export function SettingsDialog() {
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
-  const clearConversations = useConversationsStore((s) => s.clearConversations);
+  const chatStore = useChatStore();
+  const clearConversations = useStore(chatStore, (state) => state.clearAll);
   const [category, setCategory] = useState<SettingsCategory>("appearance");
 
   const categories: Array<{ id: SettingsCategory; icon: typeof IconAdjustments; label: string }> = [
@@ -247,12 +248,6 @@ function PrivacySettings({ settings, onUpdate, onClearHistory }: { settings: Set
   return (
     <div className="space-y-7">
       <SettingsHeading title={t("settings.privacy.title")} description={t("settings.privacy.description")} />
-      <SettingsRow icon={IconDatabase} title={t("settings.privacy.retention")} description={t("settings.privacy.retentionDescription")}>
-        <Select value={settings.historyRetention} onValueChange={(value) => onUpdate({ historyRetention: value as HistoryRetention })}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectItem value="30-days">{t("settings.privacy.days30")}</SelectItem><SelectItem value="90-days">{t("settings.privacy.days90")}</SelectItem><SelectItem value="forever">{t("settings.privacy.forever")}</SelectItem></SelectContent>
-        </Select>
-      </SettingsRow>
       <div className="border-y border-border">
         <SwitchRow title={t("settings.privacy.diagnostics")} description={t("settings.privacy.diagnosticsDescription")} checked={settings.diagnostics} onCheckedChange={(diagnostics) => onUpdate({ diagnostics })} />
       </div>

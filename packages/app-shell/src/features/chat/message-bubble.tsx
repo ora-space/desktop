@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { ColoredAvatar } from "../../components/colored-avatar";
 import { OraMark } from "../../components/ora-mark";
 import { formatClock } from "../../lib/format";
-import type { ChatMessage } from "../../lib/types";
+import type { ChatMessage } from "@ora/chat";
 
 interface MessageBubbleProps {
   message: ChatMessage;

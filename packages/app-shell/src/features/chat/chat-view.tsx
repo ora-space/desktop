@@ -1,43 +1,35 @@
-import { IconEdit } from "@tabler/icons-react";
-import { useTranslation } from "react-i18next";
-import { IconButton } from "../../components/icon-button";
 import { Composer } from "./composer";
 import { EmptyState } from "./empty-state";
 import { MessageList } from "./message-list";
-import type { Conversation } from "../../lib/types";
+import type { ChatMessage } from "@ora/chat";
 
 interface ChatViewProps {
-  active: Conversation | null;
+  messages: ChatMessage[];
   userName: string;
   isResponding: boolean;
+  error: string | null;
+  disabled?: boolean;
   onSend: (text: string) => void;
-  onNewChat: () => void;
 }
 
 /** The right pane: a centered empty composer, or a thread + composer. */
-export function ChatView({ active, userName, isResponding, onSend, onNewChat }: ChatViewProps) {
-  const { t } = useTranslation();
-  if (!active) {
+export function ChatView({ messages, userName, isResponding, error, disabled = false, onSend }: ChatViewProps) {
+  if (messages.length === 0) {
     return (
       <main className="flex flex-1 flex-col bg-background">
-        <EmptyState onSend={onSend} />
+        <EmptyState onSend={onSend} isResponding={isResponding} error={error} disabled={disabled} />
       </main>
     );
   }
 
   return (
     <main className="flex flex-1 flex-col bg-background">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className="truncate text-sm font-semibold text-foreground">{active.title}</span>
-        <div className="flex-1" />
-        <IconButton icon={IconEdit} label={t("chat.new")} onClick={onNewChat} />
-      </header>
-
-      <MessageList messages={active.messages} userName={userName} isResponding={isResponding} />
+      <MessageList messages={messages} userName={userName} isResponding={isResponding} />
 
       <div className="shrink-0 px-4 pb-4">
         <div className="mx-auto w-full max-w-3xl">
-          <Composer onSend={onSend} isResponding={isResponding} />
+          {error && <p role="alert" className="mb-2 text-xs text-destructive">{error}</p>}
+          <Composer onSend={onSend} isResponding={isResponding} disabled={disabled} />
         </div>
       </div>
     </main>

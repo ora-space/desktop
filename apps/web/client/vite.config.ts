@@ -24,6 +24,7 @@ export default defineConfig(({ command, mode }) => {
         },
         { find: "@", replacement: path.resolve(__dirname, "./src") },
         { find: /^@ora\/app-shell$/, replacement: path.resolve(__dirname, "../../../packages/app-shell/src/index.ts") },
+        { find: /^@ora\/chat$/, replacement: path.resolve(__dirname, "../../../packages/chat/src/index.ts") },
         { find: /^@ora\/contracts$/, replacement: path.resolve(__dirname, "../../../packages/contracts/src/index.ts") },
         { find: /^@ora\/ui$/, replacement: path.resolve(__dirname, "../../../packages/ui/src/index.ts") },
       ],

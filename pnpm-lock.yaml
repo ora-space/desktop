@@ -56,6 +56,9 @@ importers:
       '@ora/app-shell':
         specifier: workspace:*
         version: link:../../packages/app-shell
+      '@ora/chat':
+        specifier: workspace:*
+        version: link:../../packages/chat
       '@ora/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -105,6 +108,9 @@ importers:
       '@ora/app-shell':
         specifier: workspace:*
         version: link:../../../packages/app-shell
+      '@ora/chat':
+        specifier: workspace:*
+        version: link:../../../packages/chat
       '@ora/contracts':
         specifier: workspace:*
         version: link:../../../packages/contracts
@@ -148,6 +154,9 @@ importers:
 
   packages/app-shell:
     dependencies:
+      '@ora/chat':
+        specifier: workspace:*
+        version: link:../chat
       '@ora/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -198,10 +207,26 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.12.3)(jsdom@29.1.1)(msw@2.15.0(@types/node@24.12.3)(typescript@6.0.3))(vite@8.0.11(@types/node@24.12.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
 
+  packages/chat:
+    dependencies:
+      '@ora/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      zustand:
+        specifier: ^5.0.14
+        version: 5.0.14(@types/react@19.2.14)(immer@11.1.11)(react@19.2.6)(use-sync-external-store@1.6.0(react@19.2.6))
+    devDependencies:
+      tsx:
+        specifier: ^4.0.0
+        version: 4.23.1
+
   packages/contracts: {}
 
   packages/mock-service:
     dependencies:
+      '@ora/chat':
+        specifier: workspace:*
+        version: link:../chat
       '@ora/contracts':
         specifier: workspace:*
         version: link:../contracts

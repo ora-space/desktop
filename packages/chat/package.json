@@ -1,0 +1,21 @@
+{
+  "name": "@ora/chat",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "tsc -p tsconfig.json --noEmit && tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@ora/contracts": "workspace:*",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}

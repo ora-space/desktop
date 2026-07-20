@@ -13,6 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@ora/chat": "workspace:*",
     "@ora/contracts": "workspace:*",
     "@ora/platform": "workspace:*",
     "@ora/ui": "workspace:*",

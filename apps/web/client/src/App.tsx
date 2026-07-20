@@ -1,6 +1,6 @@
 import { AppShell } from "@ora/app-shell";
-import { client, platform } from "@/contracts-runtime";
+import { chatStore, client, platform } from "@/contracts-runtime";
 
 export default function App() {
-  return <AppShell client={client} platform={platform} />;
+  return <AppShell client={client} chatStore={chatStore} platform={platform} />;
 }
