@@ -59,7 +59,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       ?? (agentSessionUnavailable ? t("chat.agentSessionUnavailable") : null)
       ?? (session ? null : t("chat.noSessionSelected"));
     return (
-      <main id="main-content" className="relative flex min-w-0 flex-1 flex-col bg-background">
+      <main id="main-content" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         <div className="flex h-13 shrink-0 items-center gap-2 px-3 sm:px-4">
           {sidebarCollapsed && <Button variant="ghost" size="icon-sm" onClick={() => setSidebarCollapsed(false)} aria-label={t("sidebar.expand")}><IconLayoutSidebarLeftExpand /></Button>}
           <div className="min-w-0">
@@ -72,7 +72,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           {session && <Badge variant="outline" className="gap-1 rounded-md text-[10px]"><span className={`size-1.5 rounded-full ${session.status === "running" ? "bg-emerald-500" : "bg-zinc-400"}`} />{t(`common.${session.status}`)}</Badge>}
           <Button variant="ghost" size="icon-sm" onClick={clearSelection} aria-label={t("chat.newThread")}><IconSquareRoundedPlus /></Button>
         </div>
-        <div className="min-h-0 flex-1 [&>main]:h-full">
+        <div className="flex min-h-0 flex-1 flex-col">
           <ChatView
             messages={conversation?.messages ?? []}
             userName={userName}
@@ -94,7 +94,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   }
 
   return (
-    <main id="main-content" className="flex min-w-0 flex-1 flex-col bg-background">
+    <main id="main-content" className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       <header className="flex h-12 items-center border-b border-border px-3">
         {sidebarCollapsed && <Button variant="ghost" size="icon-sm" onClick={() => setSidebarCollapsed(false)} aria-label={t("sidebar.expand")}><IconLayoutSidebarLeftExpand /></Button>}
         <span className="ml-1 text-xs font-medium text-muted-foreground">{t("workspace.overview")}</span>

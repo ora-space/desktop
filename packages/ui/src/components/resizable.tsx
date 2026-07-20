@@ -22,8 +22,25 @@ function ResizablePanelGroup({
   )
 }
 
-function ResizablePanel({ ...props }: ResizablePrimitive.PanelProps) {
-  return <ResizablePrimitive.Panel data-slot="resizable-panel" {...props} />
+function ResizablePanel({
+  className,
+  style,
+  ...props
+}: ResizablePrimitive.PanelProps) {
+  return (
+    <ResizablePrimitive.Panel
+      data-slot="resizable-panel"
+      // The primitive gives the panel body `max-height: 100%` and `overflow: auto`
+      // but no definite height, so a child sized with `h-full` has no percentage
+      // basis to resolve against and grows to its content instead — at which point
+      // the panel itself starts scrolling and drags the pane past the window.
+      // Making the body a flex column lets children size with `flex-1` + `min-h-0`,
+      // and clipping here keeps scrolling inside the regions that opt into it.
+      className={cn("flex min-h-0 min-w-0 flex-col", className)}
+      style={{ overflow: "hidden", ...style }}
+      {...props}
+    />
+  )
 }
 
 function ResizableHandle({

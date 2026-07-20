@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@ora/chat";
@@ -56,6 +56,50 @@ describe("ChatView", () => {
     expect(screen.getAllByRole("button")).toEqual(
       expect.arrayContaining([expect.objectContaining({ disabled: true })]),
     );
+  });
+
+  it("slides the same composer node down when the first message arrives", () => {
+    // jsdom has no layout and no Web Animations API, so both are stood up here:
+    // the rects drive the FLIP delta and the spy captures the resulting keyframes.
+    let top = 300;
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(() => ({ top }) as DOMRect);
+    const animate = vi.fn();
+    Object.defineProperty(Element.prototype, "animate", {
+      configurable: true,
+      writable: true,
+      value: animate,
+    });
+
+    const view = renderWithI18n(
+      <ChatView messages={[]} userName="Eric" isResponding={false} error={null} onSend={() => {}} />,
+    );
+    const landingComposer = screen.getByRole("textbox");
+
+    top = 800;
+    view.rerender(
+      <AppI18nProvider>
+        <ChatView
+          messages={[{ id: "user-1", role: "user", content: "hello", createdAt: 100 }]}
+          userName="Eric"
+          isResponding={false}
+          error={null}
+          onSend={() => {}}
+        />
+      </AppI18nProvider>,
+    );
+
+    // Identity is the whole point: a remounted composer cannot be animated and
+    // would drop whatever the user had typed.
+    expect(screen.getByRole("textbox")).toBe(landingComposer);
+    expect(animate).toHaveBeenCalledWith(
+      [{ transform: "translateY(-500px)" }, { transform: "translateY(0)" }],
+      expect.objectContaining({ duration: expect.any(Number) }),
+    );
+
+    rectSpy.mockRestore();
+    Reflect.deleteProperty(Element.prototype, "animate");
   });
 });
 
@@ -121,6 +165,82 @@ describe("MessageList", () => {
           ]}
           userName="Eric"
           isResponding
+        />
+      </AppI18nProvider>,
+    );
+
+    expect(list.scrollTop).toBe(240);
+  });
+
+  it("stops chasing the tail once the reader scrolls up mid-stream", () => {
+    const assistantMessage: ChatMessage = {
+      id: "assistant-1",
+      role: "assistant",
+      content: "Mock",
+      createdAt: 200,
+    };
+    const view = renderWithI18n(
+      <MessageList
+        messages={[userMessage, assistantMessage]}
+        userName="Eric"
+        isResponding
+      />,
+    );
+    const list = screen.getByTestId("message-list");
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 240 });
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 100 });
+
+    // Scrolling far from the bottom is the signal that the reader is reading
+    // history rather than following the stream.
+    list.scrollTop = 0;
+    fireEvent.scroll(list);
+
+    view.rerender(
+      <AppI18nProvider>
+        <MessageList
+          messages={[
+            userMessage,
+            { ...assistantMessage, content: "Mock response" },
+          ]}
+          userName="Eric"
+          isResponding
+        />
+      </AppI18nProvider>,
+    );
+
+    expect(list.scrollTop).toBe(0);
+  });
+
+  it("re-pins to the newest message when the user sends while scrolled up", () => {
+    const assistantMessage: ChatMessage = {
+      id: "assistant-1",
+      role: "assistant",
+      content: "Mock response",
+      createdAt: 200,
+    };
+    const view = renderWithI18n(
+      <MessageList
+        messages={[userMessage, assistantMessage]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+    const list = screen.getByTestId("message-list");
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 240 });
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 100 });
+    list.scrollTop = 0;
+    fireEvent.scroll(list);
+
+    view.rerender(
+      <AppI18nProvider>
+        <MessageList
+          messages={[
+            userMessage,
+            assistantMessage,
+            { id: "user-2", role: "user", content: "Follow-up", createdAt: 300 },
+          ]}
+          userName="Eric"
+          isResponding={false}
         />
       </AppI18nProvider>,
     );
