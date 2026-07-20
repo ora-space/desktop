@@ -50,10 +50,21 @@ tasks:
 
   lint:
     desc: Run linters on all Rust crates and frontend packages
+    cmds:
+      - task: lint:backend
+      - task: lint:frontend
+
+  lint:backend:
+    desc: Run linters on all Rust crates
     silent: true
     cmds:
       - cargo fmt --all
       - cargo clippy --workspace -- -D warnings
+
+  lint:frontend:
+    desc: Run linters on all frontend packages
+    silent: true
+    cmds:
       - pnpm --filter @ora/web-client lint
       - pnpm --filter @ora/desktop lint
       - pnpm --filter @ora/platform lint
@@ -71,6 +82,7 @@ tasks:
   test:frontend:
     desc: Run TypeScript package test suites (contracts, platform, app-shell, mock-service)
     cmds:
+      - task: lint:frontend
       - pnpm --filter @ora/contracts test
       - pnpm --filter @ora/platform test
       - pnpm --filter @ora/app-shell test
@@ -81,14 +93,19 @@ tasks:
     cmds:
       - pnpm --filter @ora/app-shell test:watch
 
+  test:backend:
+    desc: Run Rust crate test suites
+    cmds:
+      - task: lint:backend
+      - task: export-contracts
+      - cargo test --workspace
+
   test:
     desc: Run lint, regenerate contracts, then frontend and Rust tests
     silent: true
     cmds:
-      - task: lint
-      - task: export-contracts
       - task: test:frontend
-      - cargo test --workspace
+      - task: test:backend
 
   ###################################################
   ############# Run Development Servers #############

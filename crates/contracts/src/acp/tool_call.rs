@@ -420,7 +420,6 @@ impl ToolCallStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export_to = "acp/tool_call.ts")]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[expect(clippy::large_enum_variant)]
 pub enum ToolCallContent {
     /// Standard content block (text, images, resources).
     Content(Content),
