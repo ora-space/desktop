@@ -62,6 +62,7 @@ pub fn export_typescript_bindings_to(
 
     acp::export(&config)?;
     agent::export(&config)?;
+    file_system::export(&config)?;
     project::export(&config)?;
     project_work_context::export(&config)?;
     session::export(&config)?;

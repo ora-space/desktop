@@ -428,6 +428,7 @@ mod tests {
         let generated_files = [
             "agent.ts",
             "endpoints.ts",
+            "file-system.ts",
             "project.ts",
             "project-work-context.ts",
             "session.ts",

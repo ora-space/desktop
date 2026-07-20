@@ -52,6 +52,16 @@ pub struct ListDirectoryResponse {
     pub entries: Vec<FileSystemEntry>,
 }
 
+/// Exports every TypeScript binding declared in this module into the target directory.
+pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    FileSystemEntryKind::export(config)?;
+    FileSystemEntry::export(config)?;
+    FileSystemBreadcrumb::export(config)?;
+    ListDirectoryRequest::export(config)?;
+    ListDirectoryResponse::export(config)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

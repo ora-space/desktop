@@ -422,6 +422,8 @@ export const endpoints = {
   },
   listDirectory: {
     operationName: "listDirectory",
+    namespace: "fileSystem",
+    memberName: "listDirectory",
     method: "GET",
     pathTemplate: "/api/file-system/directory",
     requestType: "ListDirectoryRequest",

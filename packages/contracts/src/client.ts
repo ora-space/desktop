@@ -32,9 +32,6 @@ export type ContractsClient = {
       ? (typeof endpoints)[Operation]["memberName"]
       : never]: ClientOperation<Operation>;
   };
-  fileSystem: {
-    listDirectory: ClientOperation<"listDirectory">;
-  };
 };
 
 export function createContractsClient(transport: ContractTransport): ContractsClient {
