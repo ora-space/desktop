@@ -267,9 +267,8 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                           key={session.id}
                           depth={2}
                           active={selection.sessionId === session.id}
-                          icon={<span className={`size-2 rounded-full ${session.status === "running" ? "bg-emerald-500" : "bg-zinc-400"}`} />}
+                          icon={session.status === "running" ? <AgentActivityDots label={t("common.running")} /> : null}
                           label={session.agentId}
-                          meta={t(`common.${session.status}`)}
                           onClick={() => selectSession(session.id, task.id, project.id)}
                           menu={(
                             <EntityMenu
@@ -300,12 +299,59 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   );
 }
 
+/**
+ * Row-position animation for each cell of the 3x3 grid, in row-major order.
+ *
+ * Spelled out as whole class names because Tailwind scans source text: a name
+ * assembled at runtime would never make it into the generated stylesheet.
+ */
+const AGENT_DOT_ANIMATIONS = [
+  "animate-dot-column-top", "animate-dot-column-top", "animate-dot-column-top",
+  "animate-dot-column-middle", "animate-dot-column-middle", "animate-dot-column-middle",
+  "animate-dot-column-bottom", "animate-dot-column-bottom", "animate-dot-column-bottom",
+];
+
+/**
+ * Offset between columns, one third of the 1.2s `dot-column-*` cycle.
+ *
+ * Those keyframes hold at the top for this long plus 60ms, which is what makes
+ * a column start falling a beat after the column to its right arrives. Retiming
+ * the animation means moving this and the cycle duration together, or the
+ * handoff breaks instead of just running at a different speed.
+ */
+const AGENT_DOT_COLUMN_DELAY_MS = 400;
+
+/**
+ * Marks a working agent with a 3x3 grid of squares.
+ *
+ * Every column runs the same two-dot window that climbs to the top, pauses,
+ * and drops back down; columns are offset from each other so the three never
+ * move in lockstep.
+ *
+ * The animation carries the "still running" meaning on its own, so a stopped
+ * session renders nothing at all. `TreeRow` reserves the icon slot either way,
+ * which keeps every label aligned as the status flips.
+ */
+function AgentActivityDots({ label }: { label: string }) {
+  return (
+    <span role="img" aria-label={label} className="grid grid-cols-3 gap-[2px] text-muted-foreground">
+      {AGENT_DOT_ANIMATIONS.map((animation, index) => (
+        <span
+          key={index}
+          className={`size-[2.5px] rounded-[0.5px] bg-current ${animation}`}
+          style={{ animationDelay: `${(index % 3) * AGENT_DOT_COLUMN_DELAY_MS}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 interface TreeRowProps {
   depth: 0 | 1 | 2;
   active: boolean;
   icon: React.ReactNode;
   label: string;
-  meta: string;
+  meta?: string;
   expanded?: boolean;
   onClick: () => void;
   menu: React.ReactNode;
@@ -329,7 +375,7 @@ function TreeRow({ depth, active, icon, label, meta, expanded, onClick, menu }: 
             : <IconChevronRight className="absolute size-3.5 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />)}
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-        <span className="truncate text-[10px] text-muted-foreground">{meta}</span>
+        {meta && <span className="truncate text-[10px] text-muted-foreground">{meta}</span>}
       </button>
       <div className="mr-1 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">{menu}</div>
     </div>

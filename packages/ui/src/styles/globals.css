@@ -44,6 +44,75 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --animate-dot-column-top: dot-column-top 1.2s linear infinite;
+  --animate-dot-column-middle: dot-column-middle 1.2s linear infinite;
+  --animate-dot-column-bottom: dot-column-bottom 1.2s linear infinite;
+}
+
+/*
+ * Drives one column of a three-dot stack as a two-dot window that rises to the
+ * top, waits there, then falls back down. One keyframe per row position, since
+ * each row is lit for a different span of the cycle:
+ *
+ *   0-10%      nothing           (dark beat separating one climb from the next)
+ *   10-23%     bottom            (window entering from below)
+ *   23-36%     bottom + middle
+ *   36-74%     middle + top      (holds at the top)
+ *   74-87%     bottom + middle   (falling, the mirror of the rise)
+ *   87-100%    bottom, fading out into the next dark beat
+ *
+ * The hold runs 60ms longer than the offset callers put between columns, so a
+ * column starts its descent a beat after its right-hand neighbour reaches the
+ * top rather than on the same frame. Keeping the offset at exactly one third
+ * of the cycle preserves the wrap: the third column hands off to the first
+ * column of the next cycle on the same 60ms lag, with no seam.
+ *
+ * Resting opacity stays slightly above zero so the grid keeps its shape during
+ * the dark beat instead of vanishing. Under reduced motion the animation ends
+ * immediately and, having no fill mode, leaves every dot at its base opacity —
+ * a static full-strength grid, which still reads as "running".
+ */
+@keyframes dot-column-bottom {
+  0%, 10% {
+    opacity: 0.15;
+  }
+  13%, 36% {
+    opacity: 1;
+  }
+  39%, 71% {
+    opacity: 0.15;
+  }
+  74%, 97% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes dot-column-middle {
+  0%, 20% {
+    opacity: 0.15;
+  }
+  23%, 87% {
+    opacity: 1;
+  }
+  90%, 100% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes dot-column-top {
+  0%, 33% {
+    opacity: 0.15;
+  }
+  36%, 74% {
+    opacity: 1;
+  }
+  77%, 100% {
+    opacity: 0.15;
+  }
 }
 
 :root {
