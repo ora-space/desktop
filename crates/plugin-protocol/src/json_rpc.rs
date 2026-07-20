@@ -244,10 +244,12 @@ where
 
 /// Parses the Request profile while retaining arbitrary ids for the required fatal diagnostic.
 fn parse_request(object: &Map<String, Value>) -> Result<JsonRpcRequest, JsonRpcParseError> {
-    require_allowed_fields(object, &["jsonrpc", "id", "method", "params"])?;
+    // Classify cross-shape fields before the allow-list so mismatch stays distinguishable from
+    // unknown keys; later layers may treat the two failures differently.
     if object.contains_key("result") || object.contains_key("error") {
         return Err(JsonRpcParseError::FrameEnvelopeMismatch);
     }
+    require_allowed_fields(object, &["jsonrpc", "id", "method", "params"])?;
     let id = object
         .get("id")
         .and_then(Value::as_str)
@@ -260,10 +262,11 @@ fn parse_request(object: &Map<String, Value>) -> Result<JsonRpcRequest, JsonRpcP
 
 /// Parses the Response profile and enforces Host-owned id correlation syntax.
 fn parse_response(object: &Map<String, Value>) -> Result<JsonRpcResponse, JsonRpcParseError> {
-    require_allowed_fields(object, &["jsonrpc", "id", "result", "error"])?;
+    // See parse_request: check incompatible envelope fields before UnknownField.
     if object.contains_key("method") || object.contains_key("params") {
         return Err(JsonRpcParseError::FrameEnvelopeMismatch);
     }
+    require_allowed_fields(object, &["jsonrpc", "id", "result", "error"])?;
     let id = object
         .get("id")
         .and_then(Value::as_str)
@@ -287,10 +290,11 @@ fn parse_response(object: &Map<String, Value>) -> Result<JsonRpcResponse, JsonRp
 fn parse_notification(
     object: &Map<String, Value>,
 ) -> Result<JsonRpcNotification, JsonRpcParseError> {
-    require_allowed_fields(object, &["jsonrpc", "method", "params"])?;
+    // See parse_request: check incompatible envelope fields before UnknownField.
     if object.contains_key("id") || object.contains_key("result") || object.contains_key("error") {
         return Err(JsonRpcParseError::FrameEnvelopeMismatch);
     }
+    require_allowed_fields(object, &["jsonrpc", "method", "params"])?;
     let method = parse_method(object)?;
     let params = parse_optional_params(object)?;
     Ok(JsonRpcNotification { method, params })
@@ -325,7 +329,10 @@ fn parse_optional_params(object: &Map<String, Value>) -> Result<Option<Value>, J
     }
 }
 
-/// Rejects unknown envelope fields before they can create shape ambiguity.
+/// Rejects top-level keys outside the closed field set for the current envelope shape.
+///
+/// Callers must classify cross-shape incompatibilities as [`JsonRpcParseError::FrameEnvelopeMismatch`]
+/// before invoking this helper so unknown-key failures stay distinct.
 fn require_allowed_fields(
     object: &Map<String, Value>,
     allowed: &[&str],
@@ -369,7 +376,7 @@ mod tests {
         };
         assert_eq!(
             parse_json_rpc_frame(&mismatch, 64),
-            Err(JsonRpcParseError::UnknownField)
+            Err(JsonRpcParseError::FrameEnvelopeMismatch)
         );
     }
 
@@ -384,6 +391,62 @@ mod tests {
             encoded,
             br#"{"jsonrpc":"2.0","id":"h:7","method":"agent.listSkills","params":{"limit":10}}"#
                 .to_vec()
+        );
+    }
+
+    /// Keeps cross-shape fields as FrameEnvelopeMismatch rather than collapsing to UnknownField.
+    #[test]
+    fn classifies_cross_shape_fields_as_envelope_mismatch() {
+        let request_with_result = Frame {
+            frame_type: FrameType::Request,
+            payload: br#"{"jsonrpc":"2.0","id":"p:1","method":"agent.listSkills","result":true}"#
+                .to_vec(),
+        };
+        assert_eq!(
+            parse_json_rpc_frame(&request_with_result, 64),
+            Err(JsonRpcParseError::FrameEnvelopeMismatch)
+        );
+
+        let response_with_params = Frame {
+            frame_type: FrameType::Response,
+            payload: br#"{"jsonrpc":"2.0","id":"h:1","result":true,"params":{}}"#.to_vec(),
+        };
+        assert_eq!(
+            parse_json_rpc_frame(&response_with_params, 64),
+            Err(JsonRpcParseError::FrameEnvelopeMismatch)
+        );
+
+        let notification_with_error = Frame {
+            frame_type: FrameType::Notification,
+            payload: br#"{"jsonrpc":"2.0","method":"$/exit","error":{"code":1,"message":"x"}}"#
+                .to_vec(),
+        };
+        assert_eq!(
+            parse_json_rpc_frame(&notification_with_error, 64),
+            Err(JsonRpcParseError::FrameEnvelopeMismatch)
+        );
+    }
+
+    /// Keeps truly unknown top-level keys as UnknownField after mismatch checks.
+    #[test]
+    fn classifies_unknown_top_level_fields_separately() {
+        let unknown_on_request = Frame {
+            frame_type: FrameType::Request,
+            payload: br#"{"jsonrpc":"2.0","id":"p:1","method":"agent.listSkills","extra":1}"#
+                .to_vec(),
+        };
+        assert_eq!(
+            parse_json_rpc_frame(&unknown_on_request, 64),
+            Err(JsonRpcParseError::UnknownField)
+        );
+
+        let unknown_on_response = Frame {
+            frame_type: FrameType::Response,
+            payload: br#"{"jsonrpc":"2.0","id":"h:1","result":true,"extra":1}"#.to_vec(),
+        };
+        assert_eq!(
+            parse_json_rpc_frame(&unknown_on_response, 64),
+            Err(JsonRpcParseError::UnknownField)
         );
     }
 }
