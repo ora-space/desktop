@@ -12,6 +12,7 @@ export type AcpSessionNotificationListener = (
 export interface AcpClient {
   newSession(request: acp.NewSessionRequest): Promise<acp.NewSessionResponse>;
   prompt(request: acp.PromptRequest): Promise<acp.PromptResponse>;
+  cancel(notification: acp.CancelNotification): Promise<void>;
   subscribe(listener: AcpSessionNotificationListener): () => void;
 }
 
@@ -24,6 +25,7 @@ export function createUnavailableAcpClient(): AcpClient {
   return {
     newSession: async () => unavailable(),
     prompt: async () => unavailable(),
+    cancel: async () => unavailable(),
     subscribe: () => () => undefined,
   };
 }

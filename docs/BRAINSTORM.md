@@ -1,70 +1,233 @@
-# Brainstorm: Agent settings prototype
+# Brainstorm: ACP execution-flow mock
 
 ## Goal
 
-Design a shared settings experience in `packages/app-shell` for the Ora Agent IDE, with appearance preferences and an "Atoms" area for managing agents and skills. The result must work in both desktop and web hosts and use `@ora/ui` components.
+Extend the ACP-backed chat prototype from streamed text replies into a complete,
+demonstrable agent execution flow. The mock should exercise the same domain and
+UI boundaries that a real ACP backend will use later, without touching the real
+filesystem or speculating about the backend transport.
 
-## Codebase findings
+The agreed vertical slice is:
 
-- `AppShell` owns shared product UI and is the correct owner for settings state and presentation.
-- `UserProfile` already provides the natural settings entry point in the sidebar footer.
-- `@ora/ui` already exports the required primitives: dialog, tabs, select, switch, input, button, badge, and scroll area.
-- `ContractsClient` already exposes typed CRUD commands for both agents and skills; the Atoms UI can use real repository boundaries rather than prototype-only data shapes.
-- Language switching already exists through `react-i18next`, but currently lives directly in the account menu.
-- Theme state and provider/model preferences do not yet have contracts, so those controls should initially use local prototype state behind a small settings boundary.
+`thought -> plan -> read tool -> plan update -> edit tool with diff -> plan completion -> final response`
 
-## Current recommendation
+## Repository findings
 
-Use a large IDE-style settings dialog rather than a separate route. The dialog has a narrow left navigation rail and a scrollable settings pane, remains usable on laptop-sized screens, and can later become a full page without changing feature ownership.
+- Commit `2857064` introduced the current ACP-backed conversation flow.
+- The current `AcpClient` supports session creation, prompting, and update
+  subscriptions. The mock only streams text `agent_message_chunk` updates.
+- `packages/contracts/src/acp` already defines thought chunks, plans, tool calls,
+  tool call updates, diffs, cancellation, stop reasons, and rich content blocks.
+- `packages/chat` currently discards every session update except text agent
+  message chunks and models a conversation as a flat message list.
+- `packages/app-shell` only renders user and assistant text plus a typing
+  indicator. Long thought-only periods therefore look stalled even though the
+  prompt remains active.
+- The production web runtime currently installs an unavailable ACP client. No
+  real JSON-RPC/WebSocket/Tauri ACP adapter exists yet.
+- The repository has collapsible UI primitives but no diff renderer or text
+  diff dependency.
 
-### Settings categories
+## Agreed scope
 
-1. **Appearance**
-   - Theme: system, light, dark.
-   - Language: Simplified Chinese or English.
-   - Optional density control: comfortable or compact, because Agent IDE users scan long trees and logs.
+### Mock scenarios
 
-2. **Atoms**
-   - Agents and Skills tabs with counts, search, and empty/loading/error states.
-   - Commands: create, edit, and delete using the existing contracts.
-   - Each row shows name and description; destructive actions require confirmation.
-   - Reserve import/export and enable/disable actions for a later iteration instead of inventing unsupported contracts now.
+The mock keeps the existing text-only response for ordinary questions. A small,
+deterministic bilingual intent resolver selects richer scenarios for prompts
+that express operations such as create, implement, modify, fix, or refactor.
+Failure phrases take precedence over success phrases.
 
-3. **Models & Services**
-   - Default provider and model selectors.
-   - Connection-status row and a manage-provider command.
-   - Do not place raw API secrets in the shared frontend until a secure host-backed credential contract exists.
+Scenario selection is injected through a resolver dependency. Runtime code uses
+the default Chinese/English keyword resolver, while tests inject a resolver that
+directly returns a scenario such as `chat`, `tool_success`, or `tool_failure`.
+There are no hidden user-facing mock commands.
 
-4. **Permissions & Execution**
-   - Approval policy: ask every time, ask for risky actions, or trusted workspace.
-   - Separate switches for terminal, filesystem writes, and network access.
-   - Default command timeout selector.
+The successful scenario uses fixed virtual files and emits a stable event
+sequence:
 
-5. **Data & Privacy**
-   - Conversation-history retention.
-   - Diagnostic/telemetry sharing switch.
-   - Clear local conversation history command with destructive confirmation.
+1. Stream a text thought in chunks.
+2. Emit a complete plan snapshot with pending and in-progress entries.
+3. Emit a read tool call and update it through its lifecycle.
+4. Replace the plan snapshot with updated statuses.
+5. Emit an edit tool call whose result contains `oldText` and `newText`.
+6. Complete the plan.
+7. Stream the final assistant response.
 
-## Ownership boundaries
+The failure scenario attempts to access a missing virtual file, marks the tool
+as failed, leaves the relevant plan item incomplete, and streams an assistant
+explanation. The prompt still ends normally because the failure belongs to the
+tool, not the ACP transport.
 
-| Layer | Responsibility |
+### Virtual filesystem
+
+Tool scenarios use a session-scoped in-memory filesystem. Reads observe prior
+mock edits within the same ACP session, while sessions remain isolated. The
+default scenario operates on fixed paths such as `src/app.ts`; test-related
+prompts may include the fixed `src/app.test.ts` fixture.
+
+The mock never reads or writes the user's real project. Virtual files and chat
+execution state reset when the mock client is recreated.
+
+### Timing and cancellation
+
+Thought and final response text stream in small chunks. Plan and tool lifecycle
+transitions use stable delays of roughly 150-250 ms so progress is visible
+without making the demo slow. Every delay goes through the existing injectable
+scheduler, and no random timing is introduced.
+
+The composer exposes a stop command while a turn is active. `AcpClient` gains
+the baseline ACP cancellation operation. The mock checks cancellation between
+stages and chunks, stops emitting subsequent work, marks active tools as failed
+with a cancelled explanation, preserves the current plan snapshot, and resolves
+the prompt with `stopReason: "cancelled"`.
+
+## Chat domain model
+
+Replace the flat `ChatMessage[]` model with turn-scoped, ordered conversation
+items. The initial item union contains:
+
+- `message` for user and assistant content;
+- `thought` for streamed agent progress;
+- `plan` for the current full plan snapshot;
+- `toolCall` for one tool lifecycle keyed by `toolCallId`.
+
+Each item has a stable identity and belongs to a response turn. Repeated plan
+notifications replace the current turn's plan in place. Tool updates replace
+the matching tool in place while preserving first-seen order. Although the mock
+runs tools sequentially, the state model must support multiple concurrent tool
+IDs without overwriting them.
+
+Each assistant turn has an explicit lifecycle:
+
+- `streaming` while protocol updates are arriving;
+- `completed` after a normal prompt response, retaining its `stopReason`;
+- `cancelled` after user cancellation;
+- `failed` after a rejected ACP request or transport error.
+
+Conversation busy state is derived from the active turn instead of being stored
+as an independent boolean. A failed tool may still belong to a completed turn
+when the agent handles the failure and returns normally.
+
+`ContentChunk.messageId` is optional in ACP. Explicit IDs are aggregated by ID.
+When an ID is absent, the current turn maintains separate implicit thought and
+assistant message items. A valid ID-less chunk must not become a conversation
+error.
+
+This slice fully renders text content and tool diffs. Other content blocks are
+represented by a safe unsupported-content item instead of being silently
+dropped or crashing the store. The mock itself emits only text and diff content.
+
+## Frontend behavior
+
+All activity for one response turn is visually grouped under one agent identity:
+
+`thought -> plan -> tools -> final response`
+
+- Thought is shown as subdued, collapsible progress. It is visible while
+  streaming and automatically collapses when a tool call or final response
+  begins.
+- Plan is an inline, collapsible progress section at the start of the response.
+  Updates replace the existing entries. It starts expanded and collapses to a
+  completed-count summary when all entries finish.
+- Tool calls are ordered by first appearance and update in place. Pending and
+  running tools are expanded, completed tools collapse to a compact summary,
+  and failed tools remain expanded.
+- Tool summaries use the ACP tool kind, title, status, and file locations.
+  Human-readable structured content is primary. Optional `rawInput` and
+  `rawOutput` appear in a secondary formatted-JSON disclosure and are omitted
+  when absent.
+- Edit results use a compact unified diff suitable for the narrow conversation
+  pane. The header shows the path and addition/deletion counts; changed hunks
+  include line numbers and context, with an action to reveal the full diff.
+  Use a maintained diff library rather than implementing a diff algorithm.
+- File paths are interactive-looking locations, but opening the real editor is
+  outside this slice.
+- Unsupported rich content displays a clear placeholder.
+- `end_turn` adds no notice. `cancelled` shows a subdued stopped notice.
+  `max_tokens` and `max_turn_requests` show an incomplete-response warning, and
+  `refusal` uses neutral treatment. Only rejected ACP operations use the turn
+  failure UI.
+
+## Backend replacement boundary
+
+The frontend must depend only on the transport-independent `AcpClient`. Mock
+scenario types, virtual files, and schedulers must not leak into `packages/chat`
+or `packages/app-shell`.
+
+A future backend adapter will own:
+
+- transport connection and ACP initialization;
+- JSON-RPC request IDs and request/response correlation;
+- encoding session new, prompt, and cancel operations;
+- forwarding `session/update` notifications to subscribers;
+- transport errors, disconnect behavior, and capability negotiation;
+- mapping stable Ora sessions to ACP agent sessions.
+
+Application runtime composition remains the only replacement point. Connecting
+the backend should replace the unavailable or mock ACP client with the real
+adapter without changing the chat state machine or execution UI.
+
+Do not add a speculative real transport in this change because the backend's
+event channel has not been selected. Instead, define a shared `AcpClient`
+conformance test harness. The mock and every future real adapter must pass the
+same behavioral tests for event delivery, cancellation, errors, subscriptions,
+and session isolation.
+
+## Ownership
+
+| Package | Responsibility |
 |---|---|
-| `packages/app-shell/src/features/settings` | Settings dialog, category navigation, local prototype preferences, Atoms management UI |
-| `packages/app-shell/src/app-shell.tsx` | Dialog open state and shared settings integration |
-| `packages/app-shell/src/features/sidebar/user-profile.tsx` | Settings entry command only |
-| `packages/contracts` | Existing Agent and Skill CRUD; future persisted settings contracts |
-| `packages/ui` | Reusable visual primitives only |
+| `packages/mock-service` | Scenario resolution, virtual files, deterministic event orchestration, and cancellation |
+| `packages/chat` | Transport-independent ACP client contract, turn model, update normalization, and lifecycle state |
+| `packages/app-shell` | Thought, plan, tool, diff, stop, and stop-reason presentation |
+| `packages/ui` | Existing generic primitives only; no ACP-specific components |
+| `packages/contracts` | Generated ACP types; do not hand-edit them for this feature |
 
-## Interaction decisions
+## Test strategy
 
-- Preferences apply immediately; there is no global Save button.
-- CRUD forms use focused dialogs and delete confirmation, matching current workspace entity behavior.
-- Language moves into Appearance; the account menu keeps Settings and Log out.
-- The first prototype should expose all five categories, while only Appearance and Atoms need complete interactions.
+- Mock tests cover ordinary chat, successful and failed tool scenarios,
+  cancellation, deterministic event order, session isolation, and stateful
+  virtual file edits.
+- Chat tests cover chunk aggregation, ID-less chunks, plan replacement, parallel
+  tool IDs, tool failures, turn lifecycle, cancellation, stop reasons, and
+  unsupported content.
+- App-shell tests cover live, completed, failed, and cancelled rendering;
+  thought and plan collapse rules; tool disclosures; unified diff output; and
+  the stop interaction.
+- Existing text-only conversation behavior remains covered as a regression.
+- No browser E2E framework is added in this slice.
+
+## Non-goals
+
+- Permission request UI and reverse RPC.
+- Embedded terminals.
+- Session mode and configuration controls.
+- Slash commands and usage/cost display.
+- ACP session list, load, resume, or persisted conversation history.
+- Real filesystem mutation or editor navigation.
+- Full image, audio, resource, or terminal content rendering.
+- A real backend transport adapter.
+
+## Acceptance criteria
+
+- A normal prompt still produces the existing streamed text conversation.
+- An operation prompt visibly progresses through thought, plan, read, edit,
+  diff, plan completion, and final response without duplicate timeline items.
+- A failed tool and a cancelled turn remain understandable and leave the
+  composer usable.
+- Concurrent sessions and concurrent tool IDs do not corrupt each other's
+  state.
+- The mock has no real filesystem side effects.
+- The mock passes the shared `AcpClient` conformance harness.
+- Replacing the mock with a conforming real adapter requires no changes to the
+  chat domain model or execution-flow components.
 
 ## Implementation status
 
-- The five-category large-dialog layout is implemented in `packages/app-shell`.
-- Appearance preferences apply immediately and persist locally.
-- Atoms uses the existing Agent and Skill CRUD contracts backed by `packages/mock-service` in the web prototype.
-- Models, permissions, and privacy controls are interactive prototype state pending host-backed settings contracts.
+Implemented on `frontend_0720` across `packages/mock-service`, `packages/chat`,
+and `packages/app-shell`. The implementation includes the shared ACP client
+conformance exercise, deterministic success/failure/cancellation scenarios,
+turn-scoped chat state, execution-flow UI, and focused tests.
+
+Verification completed with `cargo fmt --all`, the full `task test` workflow,
+and production builds for both `@ora/web-client` and `@ora/desktop`.

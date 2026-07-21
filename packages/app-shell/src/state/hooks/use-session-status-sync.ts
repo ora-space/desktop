@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ContractsClient, Session, SessionStatus } from "@ora/contracts";
-import type { ChatStore } from "@ora/chat";
+import { isConversationResponding, type ChatStore } from "@ora/chat";
 import { queryKeys } from "./query-keys";
 
 /**
@@ -25,7 +25,7 @@ export function useSessionStatusSync(client: ContractsClient, chatStore: ChatSto
 
     return chatStore.subscribe((state) => {
       for (const [oraSessionId, conversation] of Object.entries(state.conversations)) {
-        const status: SessionStatus = conversation.isResponding ? "running" : "stopped";
+        const status: SessionStatus = isConversationResponding(conversation) ? "running" : "stopped";
         if (lastPushed.get(oraSessionId) === status) continue;
 
         const sessions = (queryClient.getQueryData(queryKeys.sessions) as Session[] | undefined) ?? [];

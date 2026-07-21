@@ -9,6 +9,7 @@ import type { ChatMessage } from "@ora/chat";
 interface MessageBubbleProps {
   message: ChatMessage;
   userName: string;
+  embeddedAssistant?: boolean;
 }
 
 /** Copies message content to the clipboard and briefly confirms with a check. */
@@ -26,14 +27,14 @@ function useCopyMessage(content: string) {
 }
 
 /** A single chat message: avatar + content, with hover actions on replies. */
-export function MessageBubble({ message, userName }: MessageBubbleProps) {
+export function MessageBubble({ message, userName, embeddedAssistant = false }: MessageBubbleProps) {
   const { t } = useTranslation();
   const { copied, copy } = useCopyMessage(message.content);
   const isUser = message.role === "user";
 
   return (
-    <div className={`group/message flex gap-3 py-5 ${isUser ? "justify-end" : "justify-start"}`}>
-      {!isUser && <OraMark size="sm" />}
+    <div className={`group/message flex gap-3 ${embeddedAssistant ? "py-1" : "py-5"} ${isUser ? "justify-end" : "justify-start"}`}>
+      {!isUser && !embeddedAssistant && <OraMark size="sm" />}
 
       <div className={`flex min-w-0 flex-col gap-1.5 ${isUser ? "max-w-[85%] items-end" : "flex-1"}`}>
         {isUser ? (

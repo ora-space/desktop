@@ -39,6 +39,7 @@ function createRecordingChatStore(): { chatStore: ReturnType<typeof createChatSt
       promptRequests.push(request);
       return { stopReason: "end_turn" };
     },
+    cancel: async () => undefined,
     subscribe: () => () => undefined,
   });
   return { chatStore, newSessionRequests, promptRequests };

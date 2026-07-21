@@ -1,0 +1,57 @@
+import { useEffect, useState } from "react";
+import { IconCheck, IconChevronDown, IconCircle, IconLoader2, IconListCheck } from "@tabler/icons-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@ora/ui";
+import { useTranslation } from "react-i18next";
+import type { ChatPlan } from "@ora/chat";
+import type { acp } from "@ora/contracts";
+
+interface PlanBlockProps {
+  plan: ChatPlan;
+}
+
+/** Displays the latest complete plan snapshot and collapses once every entry finishes. */
+export function PlanBlock({ plan }: PlanBlockProps) {
+  const { t } = useTranslation();
+  const completed = plan.entries.filter((entry) => entry.status === "completed").length;
+  const allCompleted = plan.entries.length > 0 && completed === plan.entries.length;
+  const [open, setOpen] = useState(!allCompleted);
+
+  useEffect(() => {
+    if (allCompleted) setOpen(false);
+  }, [allCompleted]);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="rounded-lg border border-border/80 bg-card">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <IconListCheck className="size-4 text-sky-600" />
+        <span className="font-medium">{t("chat.plan")}</span>
+        <span className="text-muted-foreground">{t("chat.planProgress", { completed, total: plan.entries.length })}</span>
+        <IconChevronDown className={`ml-auto size-3.5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ol className="space-y-2 border-t border-border/70 px-3 py-3">
+          {plan.entries.map((entry, index) => (
+            <li key={`${index}-${entry.content}`} className="flex items-start gap-2 text-xs leading-5">
+              <PlanStatusIcon status={entry.status} />
+              <span className={entry.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}>
+                {entry.content}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+/** Maps plan status to a compact icon without relying on color alone. */
+function PlanStatusIcon({ status }: { status: acp.PlanEntryStatus }) {
+  switch (status) {
+    case "pending":
+      return <IconCircle className="mt-1 size-3 shrink-0 text-muted-foreground" />;
+    case "in_progress":
+      return <IconLoader2 className="mt-1 size-3 shrink-0 animate-spin text-sky-600" />;
+    case "completed":
+      return <IconCheck className="mt-1 size-3 shrink-0 text-emerald-600" />;
+  }
+}

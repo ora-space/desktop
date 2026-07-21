@@ -2,51 +2,41 @@ import { useEffect, useRef } from "react";
 import { OraMark } from "../../components/ora-mark";
 import { useTranslation } from "react-i18next";
 import { MessageBubble } from "./message-bubble";
-import type { ChatMessage } from "@ora/chat";
+import { ResponseTurn } from "./response-turn";
+import type { ChatTurn } from "@ora/chat";
 
 interface MessageListProps {
-  messages: ChatMessage[];
+  turns: ChatTurn[];
   userName: string;
   isResponding: boolean;
 }
 
-/** The scrollable message thread, kept pinned to the latest message. */
-export function MessageList({ messages, userName, isResponding }: MessageListProps) {
+/** The scrollable turn thread, kept pinned to live ACP activity unless the reader scrolls away. */
+export function MessageList({ turns, userName, isResponding }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Whether the thread should keep chasing the newest content. Reading back a
-  // scroll position during a stream is unreliable, so intent is tracked here
-  // instead of being recomputed from the DOM at append time.
   const followTailRef = useRef(true);
-  const lastMessage = messages.at(-1);
-  const showTyping = isResponding && lastMessage?.role !== "assistant";
+  const lastTurn = turns.at(-1);
+  const lastItem = lastTurn?.items.at(-1);
+  const showTyping = isResponding && lastTurn?.items.length === 0;
+  const tailVersion = itemVersion(lastItem);
 
-  // Scrolling away mid-stream is how the user says "stop chasing the tail"; coming
-  // back within a line of the bottom re-arms it. The threshold absorbs fractional
-  // scroll heights, which otherwise leave the thread permanently unpinned.
   const handleScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    followTailRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    const element = scrollRef.current;
+    if (!element) return;
+    followTailRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
   };
 
-  // Sending always re-pins: the user just produced the newest message, so they
-  // are asking to see it even if they had scrolled up to read history.
   useEffect(() => {
-    if (lastMessage?.role === "user") followTailRef.current = true;
-  }, [messages.length, lastMessage?.role]);
+    if (lastTurn?.userMessage !== undefined) followTailRef.current = true;
+  }, [turns.length, lastTurn?.userMessage.id]);
 
-  // Keep the latest message in view as the thread grows or the assistant "types".
-  // Streaming appends fire on every chunk, so those scroll instantly; only whole
-  // new messages animate, otherwise the smooth scroll never settles mid-stream.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !followTailRef.current) return;
-    el.style.scrollBehavior = isResponding ? "auto" : "smooth";
-    el.scrollTop = el.scrollHeight;
-  }, [messages.length, lastMessage?.content, isResponding]);
+    const element = scrollRef.current;
+    if (!element || !followTailRef.current) return;
+    element.style.scrollBehavior = isResponding ? "auto" : "smooth";
+    element.scrollTop = element.scrollHeight;
+  }, [turns.length, lastTurn?.items.length, tailVersion, isResponding]);
 
-  // `min-h-0` lets the thread shrink below its content height; without it the
-  // list wins the space fight and shoves the composer past the window bottom.
   return (
     <div
       ref={scrollRef}
@@ -56,8 +46,11 @@ export function MessageList({ messages, userName, isResponding }: MessageListPro
       className="scrollbar-hide min-h-0 flex-1 animate-in overflow-y-auto fade-in duration-500"
     >
       <div className="mx-auto w-full max-w-[760px] px-3 pb-4 pt-5 sm:px-5 sm:pt-8">
-        {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} userName={userName} />
+        {turns.map((turn) => (
+          <div key={turn.id}>
+            <MessageBubble message={turn.userMessage} userName={userName} />
+            {(turn.items.length > 0 || turn.status !== "streaming") && <ResponseTurn turn={turn} userName={userName} />}
+          </div>
         ))}
         {showTyping && <TypingIndicator />}
         <div className="h-8" />
@@ -66,7 +59,22 @@ export function MessageList({ messages, userName, isResponding }: MessageListPro
   );
 }
 
-/** Three bouncing dots shown while the assistant prepares a reply. */
+/** Returns a primitive version marker for streaming content and lifecycle updates. */
+function itemVersion(item: ChatTurn["items"][number] | undefined): string | number | undefined {
+  if (item === undefined) return undefined;
+  switch (item.kind) {
+    case "message":
+    case "thought":
+      return item.content;
+    case "plan":
+    case "toolCall":
+      return item.updatedAt;
+    case "unsupportedContent":
+      return item.id;
+  }
+}
+
+/** Three pulsing dots shown before the first visible agent update. */
 function TypingIndicator() {
   const { t } = useTranslation();
   return (

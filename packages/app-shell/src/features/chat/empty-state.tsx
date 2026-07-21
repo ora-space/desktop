@@ -6,6 +6,10 @@ const SUGGESTIONS: TranslationKey[] = [
   "chat.suggestion.layout",
   "chat.suggestion.worktree",
   "chat.suggestion.testing",
+  "chat.suggestion.mockChat",
+  "chat.suggestion.mockTool",
+  "chat.suggestion.mockToolWithTests",
+  "chat.suggestion.mockFailure",
 ];
 
 interface LandingSuggestionsProps {

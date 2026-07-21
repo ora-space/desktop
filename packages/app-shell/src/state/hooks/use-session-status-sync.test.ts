@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { waitFor } from "@testing-library/react";
 import { createChatStore, type AcpClient, type ChatStore } from "@ora/chat";
+import type { QueryClient } from "@tanstack/react-query";
 import type { acp, ContractsClient, Session } from "@ora/contracts";
 import { createMockClient, createMockClientState, type MockClientState } from "../../test/mock-client";
 import { renderHookWithClient } from "../../test/hook-harness";
@@ -32,6 +33,10 @@ class ControllableAcpClient implements AcpClient {
     });
   }
 
+  async cancel(): Promise<void> {
+    this.endTurn("cancelled");
+  }
+
   subscribe(): () => void {
     return () => undefined;
   }
@@ -51,6 +56,7 @@ async function mountSync(): Promise<{
   client: ContractsClient;
   chatStore: ChatStore;
   acp: ControllableAcpClient;
+  queryClient: QueryClient;
   status: () => string;
 }> {
   const state = createMockClientState();

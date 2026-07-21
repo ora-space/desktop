@@ -221,6 +221,7 @@ describe("useCreateSession", () => {
         return { sessionId: "agent-session-created" };
       },
       prompt: async () => ({ stopReason: "end_turn" }),
+      cancel: async () => undefined,
       subscribe: () => () => undefined,
     });
     const projects = renderHookWithClient(() => useProjects(), client);

@@ -9,6 +9,7 @@ import { ChatStoreContext } from "../chat-store-context";
 const testAcpClient: AcpClient = {
   newSession: async () => ({ sessionId: "agent-session-test" }),
   prompt: async () => ({ stopReason: "end_turn" }),
+  cancel: async () => undefined,
   subscribe: () => () => undefined,
 };
 

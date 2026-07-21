@@ -16,6 +16,7 @@ import { useCreateSession, DEFAULT_AGENT_ID } from "../../state/hooks/use-worksp
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useChatStore } from "../../chat-store-context";
+import { isConversationResponding } from "@ora/chat";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
 
@@ -100,9 +101,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
           <ChatView
-            messages={conversation?.messages ?? []}
+            conversation={conversation}
             userName={userName}
-            isResponding={conversation?.isResponding ?? false}
+            isResponding={isConversationResponding(conversation)}
             error={chatError}
             disabled={!canChat}
             disabledHint={canChat ? undefined : t("chat.pickProjectAndBranch")}
@@ -111,6 +112,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             contextBar={session ? undefined : <ComposerContextBar />}
             // Failures land in chatError; the rejection itself is expected.
             onSend={(text) => void sendOrStartSession(text).catch(() => undefined)}
+            onCancel={() => {
+              if (!session || session.agentSessionId === null) return;
+              void chatStore.getState().cancelMessage({
+                oraSessionId: session.id,
+                agentSessionId: session.agentSessionId,
+              }).catch(() => undefined);
+            }}
           />
         </div>
       </main>

@@ -175,6 +175,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.101.2
         version: 5.101.2(react@19.2.6)
+      diff:
+        specifier: ^8.0.4
+        version: 8.0.4
       i18next:
         specifier: ^25.8.13
         version: 25.10.10(typescript@6.0.3)

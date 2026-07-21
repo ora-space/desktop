@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { acp } from "@ora/contracts";
+import { createChatStore, exerciseAcpClientConformance } from "@ora/chat";
 import { createMockAcpClient } from "../src/acp.js";
+import { defaultMockAcpScenarioResolver } from "../src/acp-scenario.js";
 
 const immediateScheduler = { wait: async () => undefined };
 
@@ -164,6 +166,195 @@ test("streams the full reply but never settles when the turn stalls", async () =
   assert.equal(notifications.map(readText).join(""), "Mock response: hello");
 });
 
+test("routes bilingual operation and failure prompts deterministically", () => {
+  assert.equal(defaultMockAcpScenarioResolver("请修改 greeting 实现"), "tool_success");
+  assert.equal(defaultMockAcpScenarioResolver("Fix the greeting"), "tool_success");
+  assert.equal(defaultMockAcpScenarioResolver("修改不存在的文件"), "tool_failure");
+  assert.equal(defaultMockAcpScenarioResolver("Explain the greeting"), "chat");
+});
+
+test("emits thought, plan, read, edit diff, and final text for an operation prompt", async () => {
+  let id = 0;
+  const client = createMockAcpClient({
+    scheduler: immediateScheduler,
+    createId: () => `id-${++id}`,
+    scenarioResolver: () => "tool_success",
+  });
+  const notifications: acp.SessionNotification[] = [];
+  client.subscribe((notification) => notifications.push(notification));
+
+  const response = await client.prompt({
+    sessionId: "agent-session-runtime",
+    prompt: [{ type: "text", text: "implement and test greeting" }],
+  });
+
+  assert.deepEqual(response, { stopReason: "end_turn" });
+  assert.equal(notifications.some((notification) => notification.update.sessionUpdate === "agent_thought_chunk"), true);
+  assert.equal(notifications.filter((notification) => notification.update.sessionUpdate === "plan").length, 4);
+  assert.deepEqual(
+    notifications
+      .filter((notification) => notification.update.sessionUpdate === "tool_call")
+      .map((notification) => notification.update.sessionUpdate === "tool_call" ? notification.update.kind : undefined),
+    ["read", "read", "edit"],
+  );
+  const editCompletion = notifications.find((notification) =>
+    notification.update.sessionUpdate === "tool_call_update"
+    && notification.update.status === "completed"
+    && notification.update.content?.some((content) => content.type === "diff"),
+  );
+  assert.notEqual(editCompletion, undefined);
+  assert.equal(
+    notifications
+      .filter((notification) => notification.update.sessionUpdate === "agent_message_chunk")
+      .map(readText)
+      .join(""),
+    "Updated src/app.ts to normalize the name before building the greeting.",
+  );
+});
+
+test("persists virtual edits within one session without touching other sessions", async () => {
+  let id = 0;
+  const client = createMockAcpClient({
+    scheduler: immediateScheduler,
+    createId: () => `id-${++id}`,
+    scenarioResolver: () => "tool_success",
+  });
+  const notifications: acp.SessionNotification[] = [];
+  client.subscribe((notification) => notifications.push(notification));
+
+  await client.prompt({
+    sessionId: "agent-session-runtime",
+    prompt: [{ type: "text", text: "implement greeting" }],
+  });
+  notifications.length = 0;
+  await client.prompt({
+    sessionId: "agent-session-runtime",
+    prompt: [{ type: "text", text: "implement greeting again" }],
+  });
+
+  const readCompletion = notifications.find((notification) =>
+    notification.update.sessionUpdate === "tool_call_update"
+    && notification.update.status === "completed"
+    && notification.update.content?.some((content) =>
+      content.type === "content"
+      && content.content.type === "text"
+      && content.content.text.includes("normalizedName"),
+    ),
+  );
+  assert.notEqual(readCompletion, undefined);
+});
+
+test("keeps a failed tool inside a normally completed ACP turn", async () => {
+  const client = createMockAcpClient({
+    scheduler: immediateScheduler,
+    createId: () => "failure",
+    scenarioResolver: () => "tool_failure",
+  });
+  const notifications: acp.SessionNotification[] = [];
+  client.subscribe((notification) => notifications.push(notification));
+
+  const response = await client.prompt({
+    sessionId: "agent-session-runtime",
+    prompt: [{ type: "text", text: "modify a missing file" }],
+  });
+
+  assert.deepEqual(response, { stopReason: "end_turn" });
+  assert.equal(
+    notifications.some((notification) =>
+      notification.update.sessionUpdate === "tool_call_update"
+      && notification.update.status === "failed"),
+    true,
+  );
+});
+
+test("cancels an active tool and returns the ACP cancelled stop reason", async () => {
+  const notifications: acp.SessionNotification[] = [];
+  const scheduler = {
+    wait: async () => {
+      if (notifications.some((notification) => notification.update.sessionUpdate === "tool_call")) {
+        await new Promise<void>(() => undefined);
+      }
+    },
+  };
+  const client = createMockAcpClient({
+    scheduler,
+    createId: () => "cancel",
+    scenarioResolver: () => "tool_success",
+  });
+  client.subscribe((notification) => notifications.push(notification));
+
+  const prompting = client.prompt({
+    sessionId: "agent-session-runtime",
+    prompt: [{ type: "text", text: "implement greeting" }],
+  });
+  await waitForNotification(notifications, "tool_call");
+  await client.cancel({ sessionId: "agent-session-runtime" });
+  const response = await prompting;
+
+  assert.deepEqual(response, { stopReason: "cancelled" });
+  assert.equal(
+    notifications.some((notification) =>
+      notification.update.sessionUpdate === "tool_call_update"
+      && notification.update.status === "failed"
+      && typeof notification.update.rawOutput === "object"),
+    true,
+  );
+});
+
+test("preserves the cancelled tool update in the shared chat state", async () => {
+  const notifications: acp.SessionNotification[] = [];
+  const client = createMockAcpClient({
+    scheduler: {
+      wait: async () => {
+        if (notifications.some((notification) => notification.update.sessionUpdate === "tool_call")) {
+          await new Promise<void>(() => undefined);
+        }
+      },
+    },
+    createId: () => "cancel-store",
+    scenarioResolver: () => "tool_success",
+  });
+  client.subscribe((notification) => notifications.push(notification));
+  const ids = ["turn-cancel", "user-cancel"];
+  const store = createChatStore(client, { createId: () => ids.shift()! });
+  const sending = store.getState().sendMessage({
+    oraSessionId: "ora-cancel",
+    agentSessionId: "agent-session-runtime",
+    text: "implement greeting",
+  });
+  await waitForNotification(notifications, "tool_call");
+
+  await store.getState().cancelMessage({
+    oraSessionId: "ora-cancel",
+    agentSessionId: "agent-session-runtime",
+  });
+  await sending;
+
+  const turn = store.getState().conversations["ora-cancel"]!.turns[0]!;
+  const tool = turn.items.find((item) => item.kind === "toolCall");
+  assert.equal(turn.status, "cancelled");
+  assert.equal(tool?.kind === "toolCall" ? tool.status : undefined, "failed");
+});
+
+test("passes the shared ACP client conformance exercise", async () => {
+  let id = 0;
+  const client = createMockAcpClient({
+    scheduler: immediateScheduler,
+    createId: () => `conformance-${++id}`,
+    initialSessionIds: [],
+    scenarioResolver: () => "tool_success",
+  });
+
+  const result = await exerciseAcpClientConformance(client, {
+    newSessionRequest: { cwd: "/workspace/ora", mcpServers: [] },
+    prompt: [{ type: "text", text: "implement greeting" }],
+    cancelAfterFirstUpdate: true,
+  });
+
+  assert.equal(result.response.stopReason, "cancelled");
+  assert.equal(result.notifications.length > 0, true);
+});
+
 /** Reads text from the known agent text notification produced by the mock. */
 function readText(notification: acp.SessionNotification): string {
   const update = notification.update;
@@ -180,4 +371,16 @@ function readMessageId(notification: acp.SessionNotification): string {
   if (update.sessionUpdate !== "agent_message_chunk") return "";
   assert.equal(typeof update.messageId, "string");
   return update.messageId!;
+}
+
+/** Waits until the requested update type has been delivered by the async mock prompt. */
+async function waitForNotification(
+  notifications: acp.SessionNotification[],
+  sessionUpdate: acp.SessionUpdate["sessionUpdate"],
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (notifications.some((notification) => notification.update.sessionUpdate === sessionUpdate)) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`mock did not emit ${sessionUpdate}`);
 }

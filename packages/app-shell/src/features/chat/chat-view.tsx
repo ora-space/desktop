@@ -3,15 +3,16 @@ import { Composer } from "./composer";
 import { LandingHeading, LandingSuggestions } from "./empty-state";
 import { MessageList } from "./message-list";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
-import type { ChatMessage } from "@ora/chat";
+import type { SessionConversation } from "@ora/chat";
 
 interface ChatViewProps {
-  messages: ChatMessage[];
+  conversation: SessionConversation | undefined;
   userName: string;
   isResponding: boolean;
   error: string | null;
   disabled?: boolean;
   onSend: (text: string) => void;
+  onCancel?: () => void;
   /**
    * Optional strip rendered directly above the composer. Passed in rather than
    * built here so the chat pane stays unaware of workspace entities.
@@ -34,8 +35,9 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
  */
-export function ChatView({ messages, userName, isResponding, error, disabled = false, onSend, contextBar, disabledHint }: ChatViewProps) {
-  const isEmpty = messages.length === 0;
+export function ChatView({ conversation, userName, isResponding, error, disabled = false, onSend, onCancel, contextBar, disabledHint }: ChatViewProps) {
+  const turns = conversation?.turns ?? [];
+  const isEmpty = turns.length === 0;
   const composerSlotRef = useRef<HTMLDivElement>(null);
   // Where the composer sat at the last commit, used as the FLIP origin. Only the
   // landing layout records it, because that is the only position it moves from.
@@ -85,7 +87,7 @@ export function ChatView({ messages, userName, isResponding, error, disabled = f
           </div>
         </div>
       ) : (
-        <MessageList messages={messages} userName={userName} isResponding={isResponding} />
+        <MessageList turns={turns} userName={userName} isResponding={isResponding} />
       )}
 
       <div
@@ -115,7 +117,7 @@ export function ChatView({ messages, userName, isResponding, error, disabled = f
               open the moment a hint reappears. */}
           <Tooltip trackCursorAxis="both" disabled={disabledHint === undefined}>
             <TooltipTrigger render={<div />}>
-              <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
+              <Composer autoFocus onSend={onSend} onCancel={onCancel} isResponding={isResponding} disabled={disabled} />
             </TooltipTrigger>
             <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>
           </Tooltip>
