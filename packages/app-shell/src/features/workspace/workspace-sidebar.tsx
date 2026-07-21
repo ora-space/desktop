@@ -5,7 +5,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
   Input,
   Tooltip,
@@ -209,10 +208,9 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                   meta={`${projectTasks.length}`}
                   expanded={projectOpen}
                   onClick={() => openProject(project.id)}
+                  action={<NewSessionButton onClick={() => selectProject(project.id)} />}
                   menu={(
                     <EntityMenu
-                      onAdd={() => setDialog({ kind: "task", projectId: project.id })}
-                      addLabel={t("sidebar.newWorktree")}
                       onEdit={() => setDialog({ kind: "project", entity: project })}
                       onDelete={() => setDeleteTarget({ kind: "project", id: project.id, name: project.name })}
                     />
@@ -231,10 +229,9 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                         meta={t(`common.${task.status}`)}
                         expanded={taskOpen}
                         onClick={() => openTask(task.id)}
+                        action={<NewSessionButton onClick={() => selectTask(task.id, task.projectId)} />}
                         menu={(
                           <EntityMenu
-                            onAdd={() => setDialog({ kind: "session", taskId: task.id })}
-                            addLabel={t("sidebar.newSession")}
                             onEdit={() => setDialog({ kind: "task", projectId: project.id, entity: task })}
                             onDelete={() => setDeleteTarget({ kind: "task", id: task.id, name: task.title })}
                           />
@@ -335,11 +332,13 @@ interface TreeRowProps {
   meta?: string;
   expanded?: boolean;
   onClick: () => void;
+  /** Optional primary command shown beside the overflow menu on hover. */
+  action?: React.ReactNode;
   menu: React.ReactNode;
 }
 
 /** Keeps every tree level aligned while preserving a stable row width for actions. */
-function TreeRow({ depth, active, icon, label, meta, expanded, onClick, menu }: TreeRowProps) {
+function TreeRow({ depth, active, icon, label, meta, expanded, onClick, action, menu }: TreeRowProps) {
   return (
     <div className={`group/tree flex h-8 items-center rounded-md transition-colors ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/70"}`}>
       <button
@@ -358,13 +357,42 @@ function TreeRow({ depth, active, icon, label, meta, expanded, onClick, menu }: 
         <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
         {meta && <span className="truncate text-[10px] text-muted-foreground">{meta}</span>}
       </button>
-      <div className="mr-1 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">{menu}</div>
+      <div className="mr-1 flex items-center opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">
+        {menu}
+        {action}
+      </div>
     </div>
   );
 }
 
+/**
+ * Opens the composer for a new session against the row's own scope.
+ *
+ * Selecting the row's entity is the whole implementation: the workspace shows the
+ * composer for any selection without a session, and the context bar reads the
+ * same selection, so a project row lands on that project and a worktree row lands
+ * on that project plus branch.
+ */
+function NewSessionButton({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      aria-label={t("sidebar.newSession")}
+      onClick={(event) => {
+        // The row underneath toggles expansion; opening the composer should not.
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <IconPlus />
+    </Button>
+  );
+}
+
 /** Provides contextual CRUD commands without making every tree row visually noisy. */
-function EntityMenu({ onAdd, addLabel, onEdit, onDelete }: { onAdd?: () => void; addLabel?: string; onEdit: () => void; onDelete: () => void }) {
+function EntityMenu({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
   const { t } = useTranslation();
   return (
     <DropdownMenu>
@@ -372,8 +400,6 @@ function EntityMenu({ onAdd, addLabel, onEdit, onDelete }: { onAdd?: () => void;
         <IconDots />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
-        {onAdd && <DropdownMenuItem onClick={onAdd}><IconPlus />{addLabel}</DropdownMenuItem>}
-        {onAdd && <DropdownMenuSeparator />}
         <DropdownMenuItem onClick={onEdit}><IconPencil />{t("common.edit")}</DropdownMenuItem>
         <DropdownMenuItem variant="destructive" onClick={onDelete}><IconTrash />{t("common.delete")}</DropdownMenuItem>
       </DropdownMenuContent>
