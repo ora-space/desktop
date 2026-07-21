@@ -16,6 +16,7 @@ import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useChatStore } from "../../chat-store-context";
 import { ChatView } from "../chat/chat-view";
+import { ComposerContextBar } from "../chat/composer-context-bar";
 
 interface WorkspaceViewProps {
   userName: string;
@@ -48,9 +49,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
   const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
 
-  // The chat pane also backs the "no selection" landing state, where there is no
-  // Ora session to talk to yet and the composer stays disabled.
-  const chatIsOpen = (session && task && project) || selection.projectId === null;
+  // The chat pane also backs the new-task landing state. A bare project counts as
+  // landing rather than overview: picking one is how the composer's context bar
+  // says which repository the next task belongs to, so it must not navigate away.
+  const chatIsOpen = (session && task && project) || selection.taskId === null;
 
   if (chatIsOpen) {
     const title = task?.title ?? t("chat.newThread");
@@ -79,6 +81,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             isResponding={conversation?.isResponding ?? false}
             error={chatError}
             disabled={sendDisabled}
+            // A live session already fixes its project and branch, so the pickers
+            // only belong to the not-yet-created task.
+            contextBar={session ? undefined : <ComposerContextBar />}
             onSend={(text) => {
               if (!session || session.agentSessionId === null) return;
               void chatStore.getState().sendMessage({

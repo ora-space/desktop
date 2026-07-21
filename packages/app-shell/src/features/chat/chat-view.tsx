@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Composer } from "./composer";
 import { LandingHeading, LandingSuggestions } from "./empty-state";
 import { MessageList } from "./message-list";
@@ -11,6 +11,11 @@ interface ChatViewProps {
   error: string | null;
   disabled?: boolean;
   onSend: (text: string) => void;
+  /**
+   * Optional strip rendered directly above the composer. Passed in rather than
+   * built here so the chat pane stays unaware of workspace entities.
+   */
+  contextBar?: ReactNode;
 }
 
 /** How long the composer takes to travel between the landing and thread layouts. */
@@ -23,7 +28,7 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
  */
-export function ChatView({ messages, userName, isResponding, error, disabled = false, onSend }: ChatViewProps) {
+export function ChatView({ messages, userName, isResponding, error, disabled = false, onSend, contextBar }: ChatViewProps) {
   const isEmpty = messages.length === 0;
   const composerSlotRef = useRef<HTMLDivElement>(null);
   // Where the composer sat at the last commit, used as the FLIP origin. Only the
@@ -88,6 +93,10 @@ export function ChatView({ messages, userName, isResponding, error, disabled = f
       >
         <div className="mx-auto w-full max-w-[760px]">
           {error && <p role="alert" className="mb-2 px-1 text-xs text-destructive">{error}</p>}
+          {/* Inset just past the composer's 16px corner radius, so the strip's edge
+              clears the curve instead of sitting on it, and pulled down so the
+              composer card overlaps the strip's lower padding. */}
+          {contextBar && <div className="-mb-3 px-5">{contextBar}</div>}
           <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
           {isEmpty && (
             <LandingSuggestions onSend={onSend} isResponding={isResponding} disabled={disabled} />
