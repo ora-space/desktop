@@ -19,13 +19,15 @@ import { useChatStore } from "../../chat-store-context";
 import { isConversationResponding } from "@ora/chat";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
+import type { ChatSuggestion } from "../../lib/types";
 
 interface WorkspaceViewProps {
   userName: string;
+  chatSuggestions: readonly ChatSuggestion[];
 }
 
 /** Shows useful project/task context until a session is selected, then opens its agent chat. */
-export function WorkspaceView({ userName }: WorkspaceViewProps) {
+export function WorkspaceView({ userName, chatSuggestions }: WorkspaceViewProps) {
   const { t } = useTranslation();
 
   const { data: projects = [] } = useProjects();
@@ -107,6 +109,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             error={chatError}
             disabled={!canChat}
             disabledHint={canChat ? undefined : t("chat.pickProjectAndBranch")}
+            suggestions={chatSuggestions}
             // A live session already fixes its project and branch, so the pickers
             // only belong to the not-yet-created task.
             contextBar={session ? undefined : <ComposerContextBar />}

@@ -4,6 +4,7 @@ import type { acp } from "@ora/contracts";
 import { createChatStore, exerciseAcpClientConformance } from "@ora/chat";
 import { createMockAcpClient } from "../src/acp.js";
 import { defaultMockAcpScenarioResolver } from "../src/acp-scenario.js";
+import { mockChatSuggestions } from "../src/chat-suggestions.js";
 
 const immediateScheduler = { wait: async () => undefined };
 
@@ -171,9 +172,12 @@ test("routes bilingual operation and failure prompts deterministically", () => {
   assert.equal(defaultMockAcpScenarioResolver("Fix the greeting"), "tool_success");
   assert.equal(defaultMockAcpScenarioResolver("修改不存在的文件"), "tool_failure");
   assert.equal(defaultMockAcpScenarioResolver("Explain the greeting"), "chat");
+  assert.equal(defaultMockAcpScenarioResolver("总结 Agent Runtime 重构进展"), "chat");
+  assert.equal(defaultMockAcpScenarioResolver("Summarize the agent runtime refactor"), "chat");
+  assert.equal(defaultMockAcpScenarioResolver("请帮我解释如何修改 greeting"), "chat");
 });
 
-test("emits thought, plan, read, edit diff, and final text for an operation prompt", async () => {
+test("emits grouped reads, edits, commands, and final text for an operation prompt", async () => {
   let id = 0;
   const client = createMockAcpClient({
     scheduler: immediateScheduler,
@@ -190,25 +194,39 @@ test("emits thought, plan, read, edit diff, and final text for an operation prom
 
   assert.deepEqual(response, { stopReason: "end_turn" });
   assert.equal(notifications.some((notification) => notification.update.sessionUpdate === "agent_thought_chunk"), true);
-  assert.equal(notifications.filter((notification) => notification.update.sessionUpdate === "plan").length, 4);
+  assert.equal(notifications.filter((notification) => notification.update.sessionUpdate === "plan").length, 6);
   assert.deepEqual(
     notifications
       .filter((notification) => notification.update.sessionUpdate === "tool_call")
       .map((notification) => notification.update.sessionUpdate === "tool_call" ? notification.update.kind : undefined),
-    ["read", "read", "edit"],
+    ["read", "read", "edit", "edit", "execute", "execute"],
   );
-  const editCompletion = notifications.find((notification) =>
+  const editCompletions = notifications.filter((notification) =>
     notification.update.sessionUpdate === "tool_call_update"
     && notification.update.status === "completed"
     && notification.update.content?.some((content) => content.type === "diff"),
   );
-  assert.notEqual(editCompletion, undefined);
+  assert.equal(editCompletions.length, 2);
+  const commandCompletions = notifications.filter((notification) =>
+    notification.update.sessionUpdate === "tool_call_update"
+    && notification.update.status === "completed"
+    && notification.update.rawOutput !== undefined
+    && "exitCode" in (notification.update.rawOutput as object),
+  );
+  assert.equal(commandCompletions.length, 2);
+  const finalPlan = notifications
+    .filter((notification) => notification.update.sessionUpdate === "plan")
+    .at(-1);
+  assert.equal(finalPlan?.update.sessionUpdate, "plan");
+  if (finalPlan?.update.sessionUpdate === "plan") {
+    assert.equal(finalPlan.update.entries.every((entry) => entry.status === "completed"), true);
+  }
   assert.equal(
     notifications
       .filter((notification) => notification.update.sessionUpdate === "agent_message_chunk")
       .map(readText)
       .join(""),
-    "Updated src/app.ts to normalize the name before building the greeting.",
+    "Updated the greeting implementation and tests, then completed type checking and test verification.",
   );
 });
 
@@ -242,6 +260,27 @@ test("persists virtual edits within one session without touching other sessions"
     ),
   );
   assert.notEqual(readCompletion, undefined);
+  const testReadCompletion = notifications.find((notification) =>
+    notification.update.sessionUpdate === "tool_call_update"
+    && notification.update.status === "completed"
+    && notification.update.content?.some((content) =>
+      content.type === "content"
+      && content.content.type === "text"
+      && content.content.text.includes("normalizes surrounding whitespace"),
+    ),
+  );
+  assert.notEqual(testReadCompletion, undefined);
+});
+
+test("keeps injected starter prompts aligned with deterministic scenarios", () => {
+  assert.deepEqual(
+    mockChatSuggestions.map((suggestion) => defaultMockAcpScenarioResolver(suggestion.text["en-US"])),
+    ["chat", "tool_success", "tool_failure"],
+  );
+  assert.deepEqual(
+    mockChatSuggestions.map((suggestion) => defaultMockAcpScenarioResolver(suggestion.text["zh-CN"])),
+    ["chat", "tool_success", "tool_failure"],
+  );
 });
 
 test("keeps a failed tool inside a normally completed ACP turn", async () => {

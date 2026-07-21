@@ -10,3 +10,5 @@ export {
   type MockAcpScenarioResolver,
 } from "./acp-scenario.js";
 export { createMockTransport } from "./transport.js";
+export { mockChatSuggestions } from "./chat-suggestions.js";
+export { mockCurrentUser } from "./current-user.js";

@@ -20,7 +20,7 @@ if (!window.matchMedia) {
   }) as MediaQueryList;
 }
 
-// crypto.randomUUID is used by mock-data; jsdom provides it in modern Node, but
+// crypto.randomUUID is used by runtime stores; jsdom provides it in modern Node, but
 // keep a stable fallback so tests are deterministic across environments.
 if (!globalThis.crypto) {
   globalThis.crypto = {

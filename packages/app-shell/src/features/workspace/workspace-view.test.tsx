@@ -55,7 +55,7 @@ function renderWorkspaceView(state: MockClientState, chatStore: ReturnType<typeo
     <Wrapper>
       <AppI18nProvider>
         <TooltipProvider>
-          <WorkspaceView userName="Eric" />
+          <WorkspaceView userName="Eric" chatSuggestions={[]} />
         </TooltipProvider>
       </AppI18nProvider>
     </Wrapper>,

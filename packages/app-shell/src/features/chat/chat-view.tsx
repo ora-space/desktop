@@ -4,6 +4,7 @@ import { LandingHeading, LandingSuggestions } from "./empty-state";
 import { MessageList } from "./message-list";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 import type { SessionConversation } from "@ora/chat";
+import type { ChatSuggestion } from "../../lib/types";
 
 interface ChatViewProps {
   conversation: SessionConversation | undefined;
@@ -11,6 +12,7 @@ interface ChatViewProps {
   isResponding: boolean;
   error: string | null;
   disabled?: boolean;
+  suggestions?: readonly ChatSuggestion[];
   onSend: (text: string) => void;
   onCancel?: () => void;
   /**
@@ -35,7 +37,7 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
  */
-export function ChatView({ conversation, userName, isResponding, error, disabled = false, onSend, onCancel, contextBar, disabledHint }: ChatViewProps) {
+export function ChatView({ conversation, userName, isResponding, error, disabled = false, suggestions = [], onSend, onCancel, contextBar, disabledHint }: ChatViewProps) {
   const turns = conversation?.turns ?? [];
   const isEmpty = turns.length === 0;
   const composerSlotRef = useRef<HTMLDivElement>(null);
@@ -122,7 +124,7 @@ export function ChatView({ conversation, userName, isResponding, error, disabled
             <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>
           </Tooltip>
           {isEmpty && (
-            <LandingSuggestions onSend={onSend} isResponding={isResponding} disabled={disabled} />
+            <LandingSuggestions suggestions={suggestions} onSend={onSend} isResponding={isResponding} disabled={disabled} />
           )}
         </div>
       </div>

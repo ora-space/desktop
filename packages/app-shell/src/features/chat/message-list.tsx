@@ -17,6 +17,7 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
   const followTailRef = useRef(true);
   const lastTurn = turns.at(-1);
   const lastItem = lastTurn?.items.at(-1);
+  const lastUserMessageId = lastTurn?.userMessage.id;
   const showTyping = isResponding && lastTurn?.items.length === 0;
   const tailVersion = itemVersion(lastItem);
 
@@ -27,8 +28,8 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
   };
 
   useEffect(() => {
-    if (lastTurn?.userMessage !== undefined) followTailRef.current = true;
-  }, [turns.length, lastTurn?.userMessage.id]);
+    if (lastUserMessageId !== undefined) followTailRef.current = true;
+  }, [turns.length, lastUserMessageId]);
 
   useEffect(() => {
     const element = scrollRef.current;

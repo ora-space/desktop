@@ -1,14 +1,19 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   IconAlertTriangle,
   IconCheck,
   IconChevronDown,
   IconCode,
-  IconFile,
+  IconFileDiff,
+  IconFileText,
   IconLoader2,
+  IconArrowsExchange,
+  IconArrowsMove,
   IconSearch,
   IconTerminal2,
   IconTool,
+  IconTrash,
+  IconWorld,
 } from "@tabler/icons-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@ora/ui";
 import { useTranslation } from "react-i18next";
@@ -18,33 +23,54 @@ import { DiffView } from "./diff-view";
 
 interface ToolCallBlockProps {
   tool: ChatToolCall;
+  appearance?: "standalone" | "embedded";
 }
 
 /** Displays one tool lifecycle and keeps failed or active work visible by default. */
-export function ToolCallBlock({ tool }: ToolCallBlockProps) {
-  const [open, setOpen] = useState(tool.status !== "completed");
+export function ToolCallBlock({ tool, appearance = "standalone" }: ToolCallBlockProps) {
+  const [disclosure, setDisclosure] = useState({ status: tool.status, open: tool.status !== "completed" });
+  if (disclosure.status !== tool.status) {
+    setDisclosure({
+      status: tool.status,
+      open: tool.status !== "completed",
+    });
+  }
+  const open = disclosure.open;
+  const hasDetails = tool.locations.length > 0 || tool.content.length > 0 || tool.rawInput !== undefined || tool.rawOutput !== undefined;
+  const summary = (
+    <>
+      <ToolKindIcon kind={tool.toolKind} />
+      <span className="min-w-0 flex-1 truncate font-medium" title={tool.title}>{tool.title}</span>
+      <ToolStatus status={tool.status} />
+      {hasDetails && <IconChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`} />}
+    </>
+  );
 
-  useEffect(() => {
-    if (tool.status === "completed") setOpen(false);
-    if (tool.status === "failed") setOpen(true);
-  }, [tool.status]);
+  if (!hasDetails) {
+    return (
+      <div className={`flex min-h-10 w-full items-center gap-2 px-3 py-2 text-xs ${appearance === "standalone" ? "rounded-md border border-border/70 bg-card" : "bg-transparent"}`}>
+        {summary}
+      </div>
+    );
+  }
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="rounded-lg border border-border/80 bg-card">
-      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <ToolKindIcon kind={tool.toolKind} />
-        <span className="min-w-0 flex-1 truncate font-medium">{tool.title}</span>
-        <ToolStatus status={tool.status} />
-        <IconChevronDown className={`size-3.5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+    <Collapsible
+      open={open}
+      onOpenChange={(nextOpen) => setDisclosure({ status: tool.status, open: nextOpen })}
+      className={appearance === "standalone" ? "rounded-md border border-border/80 bg-card" : "bg-transparent"}
+    >
+      <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left text-xs outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        {summary}
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="space-y-3 border-t border-border/70 px-3 py-3">
+        <div className={`space-y-3 border-t border-border/70 px-3 py-3 ${appearance === "embedded" ? "bg-background/45 pl-9" : ""}`}>
           {tool.locations.length > 0 && (
             <div className="space-y-1">
               {tool.locations.map((location) => (
-                <button key={`${location.path}:${location.line ?? ""}`} type="button" className="block max-w-full truncate font-mono text-[11px] text-sky-700 hover:underline dark:text-sky-400" title={location.path}>
+                <code key={`${location.path}:${location.line ?? ""}`} className="block max-w-full truncate text-[11px] text-sky-700 dark:text-sky-400" title={location.path}>
                   {location.path}{location.line === undefined || location.line === null ? "" : `:${location.line}`}
-                </button>
+                </code>
               ))}
             </div>
           )}
@@ -67,10 +93,10 @@ function ToolContent({ content }: { content: acp.ToolCallContent }) {
     case "diff":
       return <DiffView path={content.path} oldText={content.oldText} newText={content.newText} />;
     case "terminal":
-      return <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{t("chat.unsupportedContent", { type: "terminal" })}</p>;
+      return <p className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 font-mono text-[11px] text-muted-foreground"><IconTerminal2 className="size-3.5" />{t("chat.terminalSession", { id: content.terminalId })}</p>;
     case "content":
       if (content.content.type === "text") {
-        return <pre className="overflow-x-auto rounded-md bg-muted/60 p-3 text-[11px] leading-5 whitespace-pre-wrap">{content.content.text}</pre>;
+        return <pre className="max-h-72 overflow-auto rounded-md border border-border/60 bg-muted/45 p-3 text-[11px] leading-5 whitespace-pre-wrap">{content.content.text}</pre>;
       }
       return <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{t("chat.unsupportedContent", { type: content.content.type })}</p>;
   }
@@ -82,7 +108,7 @@ function RawData({ input, output }: { input: unknown; output: unknown }) {
   return (
     <details className="rounded-md border border-border/70 bg-muted/20">
       <summary className="cursor-pointer px-3 py-2 text-[11px] font-medium text-muted-foreground">{t("chat.rawData")}</summary>
-      <pre className="overflow-x-auto border-t border-border/60 p-3 text-[11px] leading-5">{safeStringify({ input, output })}</pre>
+      <pre className="max-h-72 overflow-auto border-t border-border/60 p-3 text-[11px] leading-5">{safeStringify({ input, output })}</pre>
     </details>
   );
 }
@@ -96,36 +122,41 @@ function safeStringify(value: unknown): string {
 function ToolKindIcon({ kind }: { kind: acp.ToolKind | undefined }) {
   switch (kind) {
     case "read":
+      return <IconFileText className="size-4 shrink-0 text-sky-600" />;
     case "edit":
+      return <IconFileDiff className="size-4 shrink-0 text-violet-600" />;
     case "delete":
+      return <IconTrash className="size-4 shrink-0 text-destructive" />;
     case "move":
-      return <IconFile className="size-4 text-sky-600" />;
+      return <IconArrowsMove className="size-4 shrink-0 text-violet-600" />;
     case "search":
-      return <IconSearch className="size-4 text-violet-600" />;
+      return <IconSearch className="size-4 shrink-0 text-sky-600" />;
     case "execute":
-      return <IconTerminal2 className="size-4 text-amber-600" />;
+      return <IconTerminal2 className="size-4 shrink-0 text-amber-600" />;
     case "think":
-      return <IconCode className="size-4 text-violet-600" />;
+      return <IconCode className="size-4 shrink-0 text-violet-600" />;
     case "fetch":
+      return <IconWorld className="size-4 shrink-0 text-sky-600" />;
     case "switch_mode":
+      return <IconArrowsExchange className="size-4 shrink-0 text-muted-foreground" />;
     case "other":
     case undefined:
-      return <IconTool className="size-4 text-muted-foreground" />;
+      return <IconTool className="size-4 shrink-0 text-muted-foreground" />;
   }
 }
 
 /** Displays tool state with both iconography and localized text. */
-function ToolStatus({ status }: { status: acp.ToolCallStatus | undefined }) {
+export function ToolStatus({ status }: { status: acp.ToolCallStatus | undefined }) {
   const { t } = useTranslation();
   switch (status) {
     case "completed":
-      return <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600"><IconCheck className="size-3" />{t("chat.toolCompleted")}</span>;
+      return <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-emerald-600"><IconCheck className="size-3" />{t("chat.toolCompleted")}</span>;
     case "failed":
-      return <span className="inline-flex items-center gap-1 text-[11px] text-destructive"><IconAlertTriangle className="size-3" />{t("chat.toolFailed")}</span>;
+      return <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-destructive"><IconAlertTriangle className="size-3" />{t("chat.toolFailed")}</span>;
     case "pending":
-      return <span className="text-[11px] text-muted-foreground">{t("chat.toolPending")}</span>;
+      return <span className="shrink-0 text-[11px] text-muted-foreground">{t("chat.toolPending")}</span>;
     case "in_progress":
-      return <span className="inline-flex items-center gap-1 text-[11px] text-sky-600"><IconLoader2 className="size-3 animate-spin" />{t("chat.toolRunning")}</span>;
+      return <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-sky-600"><IconLoader2 className="size-3 animate-spin motion-reduce:animate-none" />{t("chat.toolRunning")}</span>;
     case undefined:
       return null;
   }

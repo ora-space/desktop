@@ -22,8 +22,7 @@ import { WorkspaceView } from "./features/workspace/workspace-view";
 import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
 import { AppI18nProvider } from "./i18n/i18n";
-import { CURRENT_USER } from "./lib/mock-data";
-import type { CurrentUser } from "./lib/types";
+import type { ChatSuggestion, CurrentUser } from "./lib/types";
 import { createAppQueryClient } from "./state/query-client";
 import { useSessionStatusSync } from "./state/hooks/use-session-status-sync";
 import { useUiStore } from "./state/stores/ui-store";
@@ -34,7 +33,8 @@ interface AppShellProps {
   client: ContractsClient;
   chatStore: ChatStore;
   platform: PlatformAdapter;
-  user?: CurrentUser;
+  user: CurrentUser | undefined;
+  chatSuggestions?: readonly ChatSuggestion[];
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 320;
@@ -43,20 +43,28 @@ const MAX_SIDEBAR_WIDTH = 480;
 const MIN_WORKSPACE_WIDTH = 480;
 
 /** The main Ora application shell: sidebar + chat view with conversation state. */
-export function AppShell({ client, chatStore, platform, user = CURRENT_USER }: AppShellProps) {
+export function AppShell({ client, chatStore, platform, user, chatSuggestions = [] }: AppShellProps) {
   // One client per shell instance so HMR or multiple mounted shells never share cache.
   const [queryClient] = useState(() => createAppQueryClient());
   return (
     <QueryClientProvider client={queryClient}>
       <AppI18nProvider>
-        <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} />
+        <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} chatSuggestions={chatSuggestions} />
       </AppI18nProvider>
     </QueryClientProvider>
   );
 }
 
+interface AppShellContentProps {
+  client: ContractsClient;
+  chatStore: ChatStore;
+  platform: PlatformAdapter;
+  user: CurrentUser | undefined;
+  chatSuggestions: readonly ChatSuggestion[];
+}
+
 /** Renders the shell inside providers so stateful hooks can consume the active locale. */
-function AppShellContent({ client, chatStore, platform, user }: Required<AppShellProps>) {
+function AppShellContent({ client, chatStore, platform, user, chatSuggestions }: AppShellContentProps) {
   // Mirror theme/density onto <html> for the shell's lifetime.
   useEffect(() => startThemeSubscription(), []);
   // Keep the persisted session status aligned with live ACP prompt activity.
@@ -85,7 +93,7 @@ function AppShellContent({ client, chatStore, platform, user }: Required<AppShel
             </a>
             <div className="flex h-dvh overflow-hidden bg-background text-foreground">
               {sidebarCollapsed ? (
-                <WorkspaceView userName={user.name} />
+                <WorkspaceView userName={user?.name ?? t("account.localUser")} chatSuggestions={chatSuggestions} />
               ) : (
                 <ResizablePanelGroup orientation="horizontal">
                   <ResizablePanel
@@ -106,7 +114,7 @@ function AppShellContent({ client, chatStore, platform, user }: Required<AppShel
                     onDoubleClick={() => sidebarPanelRef.current?.resize(DEFAULT_SIDEBAR_WIDTH)}
                   />
                   <ResizablePanel id="workspace-content" minSize={MIN_WORKSPACE_WIDTH}>
-                    <WorkspaceView userName={user.name} />
+                    <WorkspaceView userName={user?.name ?? t("account.localUser")} chatSuggestions={chatSuggestions} />
                   </ResizablePanel>
                 </ResizablePanelGroup>
               )}

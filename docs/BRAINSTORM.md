@@ -231,3 +231,26 @@ turn-scoped chat state, execution-flow UI, and focused tests.
 
 Verification completed with `cargo fmt --all`, the full `task test` workflow,
 and production builds for both `@ora/web-client` and `@ora/desktop`.
+
+## Follow-up: compact read activity
+
+Long runs of tools should not render as a stack of equally prominent cards. The
+frontend groups two or more adjacent calls by user intent: `read/search/fetch`
+as exploration, `edit/move/delete` as file changes, and `execute` as command
+batches. Each compact summary communicates aggregate status and relevant
+context, while a disclosure preserves every original call and protocol detail.
+
+Grouping is presentation-only: the chat store retains ordered ACP tool calls
+unchanged. A different activity category, message, thought, or plan breaks a
+group. Change summaries include unique file names and aggregate diff counts;
+command summaries preview their human-readable titles. Active or failed groups
+start expanded, completed groups collapse automatically, and individual
+results remain independently expandable. `think`, `switch_mode`, and unknown
+tools remain standalone because grouping them would obscure their meaning.
+
+The successful mock scenario exercises every grouped presentation path without
+adding UI-only switches: it emits two reads, two edits with structured diffs,
+and two simulated command lifecycles. Commands only publish ACP events and
+never invoke the host shell. Fixture paths, source text, titles, commands, and
+outputs remain owned by `packages/mock-service`; the production presentation
+continues to depend solely on ACP kinds, statuses, locations, and content.

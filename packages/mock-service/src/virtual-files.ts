@@ -23,6 +23,19 @@ describe("greet", () => {
 });
 `;
 
+const UPDATED_TEST_SOURCE = `import { greet } from "./app";
+
+describe("greet", () => {
+  it("greets a named user", () => {
+    expect(greet("Ora")).toBe("Hello, Ora");
+  });
+
+  it("normalizes surrounding whitespace", () => {
+    expect(greet("  Ora  ")).toBe("Hello, Ora");
+  });
+});
+`;
+
 interface VirtualSessionFiles {
   cwd: string;
   files: Map<string, string>;
@@ -74,4 +87,5 @@ export const mockFileFixtures = {
   appPath: APP_PATH,
   testPath: TEST_PATH,
   updatedAppSource: UPDATED_APP_SOURCE,
+  updatedTestSource: UPDATED_TEST_SOURCE,
 } as const;

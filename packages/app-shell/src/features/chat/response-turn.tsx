@@ -1,11 +1,22 @@
 import { IconAlertTriangle, IconBan, IconInfoCircle } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
-import type { ChatTurn } from "@ora/chat";
+import type { ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
 import { OraMark } from "../../components/ora-mark";
 import { MessageBubble } from "./message-bubble";
 import { PlanBlock } from "./plan-block";
 import { ThoughtBlock } from "./thought-block";
 import { ToolCallBlock } from "./tool-call-block";
+import { ToolCallGroup } from "./tool-call-group";
+import { toolCallGroupKind, type ToolCallGroupKind } from "./tool-call-group-kind";
+
+interface ToolGroup {
+  kind: "toolGroup";
+  id: string;
+  groupKind: ToolCallGroupKind;
+  tools: ChatToolCall[];
+}
+
+type DisplayTurnItem = ChatTurnItem | ToolGroup;
 
 interface ResponseTurnProps {
   turn: ChatTurn;
@@ -15,18 +26,21 @@ interface ResponseTurnProps {
 /** Groups all agent activity for one prompt under a single assistant identity. */
 export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
   const { t } = useTranslation();
+  const displayItems = groupAdjacentTools(turn.items);
   return (
     <section className="flex gap-3 py-3" aria-label={t("chat.assistantReplied")}>
       <OraMark size="sm" />
       <div className="min-w-0 flex-1 space-y-2.5">
-        {turn.items.map((item, index) => {
+        {displayItems.map((item, index) => {
           switch (item.kind) {
             case "thought":
-              return <ThoughtBlock key={item.id} thought={item} hasFollowingActivity={index < turn.items.length - 1} />;
+              return <ThoughtBlock key={item.id} thought={item} hasFollowingActivity={index < displayItems.length - 1} />;
             case "plan":
               return <PlanBlock key={item.id} plan={item} />;
             case "toolCall":
               return <ToolCallBlock key={item.id} tool={item} />;
+            case "toolGroup":
+              return <ToolCallGroup key={item.id} kind={item.groupKind} tools={item.tools} />;
             case "message":
               return <MessageBubble key={item.id} message={item} userName={userName} embeddedAssistant />;
             case "unsupportedContent":
@@ -41,6 +55,36 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
       </div>
     </section>
   );
+}
+
+/** Groups adjacent tools by intent while preserving boundaries created by messages and plans. */
+function groupAdjacentTools(items: ChatTurnItem[]): DisplayTurnItem[] {
+  const grouped: DisplayTurnItem[] = [];
+  let tools: ChatToolCall[] = [];
+  let groupKind: ToolCallGroupKind | null = null;
+
+  const flushTools = () => {
+    if (tools.length === 1) grouped.push(tools[0]);
+    if (tools.length > 1 && groupKind !== null) {
+      grouped.push({ kind: "toolGroup", id: `${groupKind}-group-${tools[0].id}`, groupKind, tools });
+    }
+    tools = [];
+    groupKind = null;
+  };
+
+  for (const item of items) {
+    const nextGroupKind = item.kind === "toolCall" ? toolCallGroupKind(item) : null;
+    if (item.kind === "toolCall" && nextGroupKind !== null) {
+      if (groupKind !== null && groupKind !== nextGroupKind) flushTools();
+      groupKind = nextGroupKind;
+      tools.push(item);
+      continue;
+    }
+    flushTools();
+    grouped.push(item);
+  }
+  flushTools();
+  return grouped;
 }
 
 /** Explains non-standard turn endings without treating them as transport failures. */

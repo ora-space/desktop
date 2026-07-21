@@ -22,6 +22,7 @@ import {
   IconPencil,
   IconPlus,
   IconSearch,
+  IconSettings,
   IconSquareRoundedPlus,
   IconTrash,
   IconX,
@@ -36,7 +37,7 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
 import { OraMark } from "../../components/ora-mark";
 
 interface WorkspaceSidebarProps {
-  user: CurrentUser;
+  user: CurrentUser | undefined;
   onSignOut: () => void;
 }
 
@@ -265,7 +266,14 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
 
         {error && <p className="border-t border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error.message}</p>}
         <div className="p-2">
-          <UserProfile user={user} onOpenSettings={() => setSettingsOpen(true)} onSignOut={onSignOut} />
+          {user === undefined ? (
+            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => setSettingsOpen(true)}>
+              <IconSettings />
+              {t("common.settings")}
+            </Button>
+          ) : (
+            <UserProfile user={user} onOpenSettings={() => setSettingsOpen(true)} onSignOut={onSignOut} />
+          )}
         </div>
       </aside>
     </>

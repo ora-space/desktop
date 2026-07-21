@@ -6,3 +6,5 @@ import { createWebPlatformAdapter } from "@ora/platform/web";
 export const client = createContractsClient(createFetchTransport());
 export const chatStore = createChatStore(createUnavailableAcpClient());
 export const platform = createWebPlatformAdapter(client);
+export const chatSuggestions = [];
+export const currentUser = undefined;

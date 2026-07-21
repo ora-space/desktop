@@ -5,7 +5,6 @@ import type {
 import type { acp } from "@ora/contracts";
 import {
   defaultMockAcpScenarioResolver,
-  promptRequestsTestInspection,
   type MockAcpScenarioResolver,
 } from "./acp-scenario.js";
 import { MockVirtualFileSystem, mockFileFixtures } from "./virtual-files.js";
@@ -181,7 +180,7 @@ async function streamAgentText(context: PromptContext, text: string): Promise<vo
   await streamContent(context, "agent_message_chunk", `agent-message-${context.createId()}`, text);
 }
 
-/** Emits a plan-backed read/edit workflow against the virtual project fixtures. */
+/** Emits a complete multi-read, multi-edit, and verification workflow against virtual fixtures. */
 async function runSuccessfulToolScenario(context: PromptContext): Promise<void> {
   await streamContent(
     context,
@@ -190,27 +189,44 @@ async function runSuccessfulToolScenario(context: PromptContext): Promise<void> 
     "I will inspect the relevant files, update the implementation, and verify the result.",
   );
 
-  const inspectTests = promptRequestsTestInspection(context.promptText);
-  const plan = createPlanEntries(inspectTests);
+  const plan = createPlanEntries();
   emitPlan(context, plan);
 
   await executeReadTool(context, mockFileFixtures.appPath, "Read the implementation");
-  plan[0] = { ...plan[0]!, status: "completed" };
-  plan[1] = { ...plan[1]!, status: "in_progress" };
-  emitPlan(context, plan);
+  advancePlan(context, plan, 0);
 
-  if (inspectTests) {
-    await executeReadTool(context, mockFileFixtures.testPath, "Read the existing tests");
-    plan[1] = { ...plan[1]!, status: "completed" };
-    plan[2] = { ...plan[2]!, status: "in_progress" };
-    emitPlan(context, plan);
-  }
+  await executeReadTool(context, mockFileFixtures.testPath, "Read the existing tests");
+  advancePlan(context, plan, 1);
 
-  await executeEditTool(context);
-  const editIndex = plan.length - 1;
-  plan[editIndex] = { ...plan[editIndex]!, status: "completed" };
-  emitPlan(context, plan);
-  await streamAgentText(context, "Updated src/app.ts to normalize the name before building the greeting.");
+  await executeEditTool(context, {
+    relativePath: mockFileFixtures.appPath,
+    title: "Update the greeting implementation",
+    operation: "normalize the supplied name",
+    newText: mockFileFixtures.updatedAppSource,
+  });
+  advancePlan(context, plan, 2);
+
+  await executeEditTool(context, {
+    relativePath: mockFileFixtures.testPath,
+    title: "Add whitespace coverage",
+    operation: "cover normalized names",
+    newText: mockFileFixtures.updatedTestSource,
+  });
+  advancePlan(context, plan, 3);
+
+  await executeMockCommand(context, {
+    title: "Run TypeScript checks",
+    command: "pnpm exec tsc --noEmit",
+    output: "TypeScript checks passed.\n",
+  });
+  await executeMockCommand(context, {
+    title: "Run greeting tests",
+    command: "pnpm test -- greeting",
+    output: "2 tests passed.\n",
+  });
+  advancePlan(context, plan, 4);
+
+  await streamAgentText(context, "Updated the greeting implementation and tests, then completed type checking and test verification.");
 }
 
 /** Emits a failed read while keeping the ACP turn itself healthy. */
@@ -282,9 +298,16 @@ async function executeReadTool(context: PromptContext, relativePath: string, tit
   context.control.activeToolId = null;
 }
 
-/** Runs one edit tool and persists its result only in the virtual session. */
-async function executeEditTool(context: PromptContext): Promise<void> {
-  const relativePath = mockFileFixtures.appPath;
+interface MockEdit {
+  relativePath: string;
+  title: string;
+  operation: string;
+  newText: string;
+}
+
+/** Runs one parameterized edit so fixture-specific details remain inside the mock workflow. */
+async function executeEditTool(context: PromptContext, edit: MockEdit): Promise<void> {
+  const { relativePath } = edit;
   const absolutePath = context.fileSystem.absolutePath(context.sessionId, relativePath);
   const oldText = context.fileSystem.read(context.sessionId, relativePath);
   if (oldText === undefined) throw new Error(`virtual fixture not found: ${relativePath}`);
@@ -293,16 +316,16 @@ async function executeEditTool(context: PromptContext): Promise<void> {
   emitUpdate(context, {
     sessionUpdate: "tool_call",
     toolCallId,
-    title: "Update the greeting implementation",
+    title: edit.title,
     kind: "edit",
     status: "pending",
     locations: [{ path: absolutePath, line: 1 }],
-    rawInput: { path: absolutePath, operation: "normalize name" },
+    rawInput: { path: absolutePath, operation: edit.operation },
   });
   await waitForStage(context);
   emitUpdate(context, { sessionUpdate: "tool_call_update", toolCallId, status: "in_progress" });
   await waitForStage(context);
-  context.fileSystem.write(context.sessionId, relativePath, mockFileFixtures.updatedAppSource);
+  context.fileSystem.write(context.sessionId, relativePath, edit.newText);
   emitUpdate(context, {
     sessionUpdate: "tool_call_update",
     toolCallId,
@@ -311,23 +334,61 @@ async function executeEditTool(context: PromptContext): Promise<void> {
       type: "diff",
       path: absolutePath,
       oldText,
-      newText: mockFileFixtures.updatedAppSource,
+      newText: edit.newText,
     }],
     rawOutput: { changed: true },
   });
   context.control.activeToolId = null;
 }
 
+interface MockCommand {
+  title: string;
+  command: string;
+  output: string;
+}
+
+/** Simulates a successful command lifecycle without invoking the host shell. */
+async function executeMockCommand(context: PromptContext, command: MockCommand): Promise<void> {
+  const toolCallId = `tool-${context.createId()}`;
+  context.control.activeToolId = toolCallId;
+  emitUpdate(context, {
+    sessionUpdate: "tool_call",
+    toolCallId,
+    title: command.title,
+    kind: "execute",
+    status: "pending",
+    rawInput: { command: command.command },
+  });
+  await waitForStage(context);
+  emitUpdate(context, { sessionUpdate: "tool_call_update", toolCallId, status: "in_progress" });
+  await waitForStage(context);
+  emitUpdate(context, {
+    sessionUpdate: "tool_call_update",
+    toolCallId,
+    status: "completed",
+    content: [{ type: "content", content: { type: "text", text: command.output } }],
+    rawOutput: { exitCode: 0 },
+  });
+  context.control.activeToolId = null;
+}
+
 /** Creates the complete plan snapshot used by the successful scenario. */
-function createPlanEntries(inspectTests: boolean): acp.PlanEntry[] {
-  const entries: acp.PlanEntry[] = [
+function createPlanEntries(): acp.PlanEntry[] {
+  return [
     { content: "Inspect the implementation", priority: "high", status: "in_progress" },
+    { content: "Inspect the existing tests", priority: "medium", status: "pending" },
+    { content: "Update the implementation", priority: "high", status: "pending" },
+    { content: "Add regression coverage", priority: "high", status: "pending" },
+    { content: "Run type checking and tests", priority: "high", status: "pending" },
   ];
-  if (inspectTests) {
-    entries.push({ content: "Inspect the existing tests", priority: "medium", status: "pending" });
-  }
-  entries.push({ content: "Update the implementation", priority: "high", status: "pending" });
-  return entries;
+}
+
+/** Completes one plan entry and starts the next before publishing a replacement snapshot. */
+function advancePlan(context: PromptContext, plan: acp.PlanEntry[], completedIndex: number): void {
+  plan[completedIndex] = { ...plan[completedIndex]!, status: "completed" };
+  const nextEntry = plan[completedIndex + 1];
+  if (nextEntry !== undefined) plan[completedIndex + 1] = { ...nextEntry, status: "in_progress" };
+  emitPlan(context, plan);
 }
 
 /** Streams one ACP content type while respecting faults and cancellation. */
