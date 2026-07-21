@@ -22,6 +22,7 @@ import {
 } from "@ora/ui";
 import {
   IconCheck,
+  IconChevronDown,
   IconChevronRight,
   IconCloud,
   IconDeviceLaptop,
@@ -35,20 +36,18 @@ import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 
 /**
- * The strip above the composer that states which project, environment, and
- * branch a new task will run against.
+ * The compact row above the composer that states which project, environment,
+ * and worktree a new task will run against.
  *
  * Project and branch are wired to the workspace selection. The environment tab
  * picks a value but has no execution behind it yet.
  */
 export function ComposerContextBar() {
   return (
-    // Bottom padding runs under the composer card, which is what makes the two
-    // read as one stacked surface instead of two separate controls.
-    <div className="flex items-center gap-0.5 rounded-t-xl bg-muted px-1.5 pb-4 pt-1">
+    <div className="flex min-w-0 flex-1 items-center gap-1">
       <ProjectTab />
-      <EnvironmentTab />
       <BranchTab />
+      <EnvironmentTab />
     </div>
   );
 }
@@ -75,15 +74,16 @@ function EnvironmentTab() {
             type="button"
             variant="ghost"
             size="sm"
-            className={CONTEXT_TAB_CLASS}
+            className={`${CONTEXT_TAB_CLASS} shrink-0`}
             aria-label={t("chat.contextBar.selectEnvironment")}
           />
         }
       >
         {environment === "local" ? <IconDeviceLaptop className="size-3.5" /> : <IconCloud className="size-3.5" />}
         {environment === "local" ? t("chat.local") : t("chat.cloud")}
+        <IconChevronDown className="size-3 opacity-50 transition-transform group-data-popup-open/context-trigger:rotate-180" aria-hidden="true" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className={MENU_WIDTH_CLASS}>
+      <DropdownMenuContent align="end" side="top" className="w-28">
         {/* DropdownMenuLabel is a group label, so it throws unless a group owns it. */}
         <DropdownMenuGroup className={MENU_GROUP_CLASS}>
           <DropdownMenuLabel className={MENU_LABEL_CLASS}>{t("chat.contextBar.launchMode")}</DropdownMenuLabel>
@@ -104,10 +104,10 @@ function EnvironmentTab() {
 }
 
 /** Shared trigger styling so the live project tab and the inert tabs stay on one baseline. */
-const CONTEXT_TAB_CLASS = "h-6 gap-1.5 px-2 text-xs font-normal text-muted-foreground";
+const CONTEXT_TAB_CLASS = "group/context-trigger h-6 min-w-0 cursor-pointer gap-1 rounded-md px-1.5 text-xs font-normal text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground data-popup-open:bg-muted/60 data-popup-open:text-foreground focus-visible:ring-2 focus-visible:ring-ring";
 
 /**
- * Metrics shared by every context-bar menu.
+ * Metrics shared by the searchable project and worktree menus.
  *
  * The project picker is a Command popup (it needs search) while the environment
  * picker is a plain menu, and the two primitives ship different padding, radius,
@@ -115,7 +115,7 @@ const CONTEXT_TAB_CLASS = "h-6 gap-1.5 px-2 text-xs font-normal text-muted-foreg
  * any tab added later should style itself from here rather than from the
  * primitive's defaults.
  */
-const MENU_WIDTH_CLASS = "w-52";
+const SEARCH_MENU_WIDTH_CLASS = "w-52";
 /** Command nests a group inside its root, so plain menus need the same second inset. */
 const MENU_GROUP_CLASS = "p-1 **:[[cmdk-group-heading]]:font-normal";
 /**
@@ -155,9 +155,10 @@ function ProjectTab() {
         }
       >
         <IconFolder className="size-3.5" />
-        <span className="max-w-40 truncate">{selectedProject?.name ?? t("chat.contextBar.noProject")}</span>
+        <span className="min-w-0 max-w-28 truncate sm:max-w-40">{selectedProject?.name ?? t("chat.contextBar.noProject")}</span>
+        <IconChevronDown className="size-3 opacity-50 transition-transform group-data-popup-open/context-trigger:rotate-180" aria-hidden="true" />
       </PopoverTrigger>
-      <PopoverContent align="start" side="top" className={`${MENU_WIDTH_CLASS} p-0`}>
+      <PopoverContent align="start" side="top" className={`${SEARCH_MENU_WIDTH_CLASS} p-0`}>
         <Command>
           <CommandInput placeholder={t("chat.contextBar.searchProjects")} className="text-xs" />
           <CommandList>
@@ -244,9 +245,10 @@ function BranchTab() {
         }
       >
         <IconGitBranch className="size-3.5" />
-        <span className="max-w-40 truncate">{selectedTask?.title ?? t("chat.contextBar.defaultBranch")}</span>
+        <span className="min-w-0 max-w-28 truncate sm:max-w-40">{selectedTask?.title ?? t("chat.contextBar.defaultBranch")}</span>
+        <IconChevronDown className="size-3 opacity-50 transition-transform group-data-popup-open/context-trigger:rotate-180" aria-hidden="true" />
       </PopoverTrigger>
-      <PopoverContent align="start" side="top" className={`${MENU_WIDTH_CLASS} p-0`}>
+      <PopoverContent align="start" side="top" className={`${SEARCH_MENU_WIDTH_CLASS} p-0`}>
         <Command>
           <CommandInput placeholder={t("chat.contextBar.searchBranches")} className="text-xs" />
           <CommandList>

@@ -73,82 +73,84 @@ export function Composer({
   }, [value]);
 
   return (
-    <div className="flex flex-col rounded-2xl border border-border/90 bg-card p-2 shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-shadow duration-200 focus-within:border-foreground/25 focus-within:shadow-[0_10px_36px_rgba(0,0,0,0.09)] focus-within:ring-2 focus-within:ring-ring/25 dark:shadow-[0_8px_30px_rgba(0,0,0,0.22)]">
-      <Textarea
-        ref={textAreaRef}
-        autoFocus={autoFocus}
-        placeholder={placeholder ?? t("chat.placeholder")}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={handleKeyDown}
-        aria-label={t("chat.messageLabel")}
-        // The shell already carries the surface, so the Textarea's own disabled
-        // fill would read as a grey block floating inside the card.
-        className="min-h-[68px] max-h-[200px] resize-none rounded-none border-0 bg-transparent px-2 py-1.5 text-[15px] leading-6 shadow-none focus-visible:ring-0 disabled:bg-transparent"
-      />
-      {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 px-2 pb-1" aria-label={t("chat.attachments")}>
-          {attachments.map((fileName) => (
-            <span key={fileName} className="inline-flex h-7 max-w-52 items-center gap-1 rounded-md bg-muted px-2 text-xs text-muted-foreground">
-              <span className="truncate">{fileName}</span>
-              <button
-                type="button"
-                aria-label={t("chat.removeAttachment", { fileName })}
-                onClick={() => setAttachments((current) => current.filter((candidate) => candidate !== fileName))}
-                className="rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+    <div data-slot="composer" className="flex flex-col rounded-xl border border-border/70 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-200 hover:border-border hover:shadow-[0_3px_10px_rgba(0,0,0,0.07)] focus-within:border-foreground/25 focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.08)] focus-within:ring-1 focus-within:ring-ring/35 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2)] dark:hover:shadow-[0_3px_12px_rgba(0,0,0,0.24)]">
+      <div className="flex flex-col p-2">
+        <Textarea
+          ref={textAreaRef}
+          autoFocus={autoFocus}
+          placeholder={placeholder ?? t("chat.placeholder")}
+          value={value}
+          disabled={disabled}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={handleKeyDown}
+          aria-label={t("chat.messageLabel")}
+          // The shell already carries the surface, so the Textarea's own disabled
+          // fill would read as a grey block floating inside the card.
+          className="min-h-14 max-h-[200px] resize-none rounded-none border-0 bg-transparent px-2 py-1 text-[15px] leading-6 shadow-none focus-visible:ring-0 disabled:bg-transparent"
+        />
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-2 pb-1" aria-label={t("chat.attachments")}>
+            {attachments.map((fileName) => (
+              <span key={fileName} className="inline-flex h-7 max-w-52 items-center gap-1 rounded-md bg-muted px-2 text-xs text-muted-foreground">
+                <span className="truncate">{fileName}</span>
+                <button
+                  type="button"
+                  aria-label={t("chat.removeAttachment", { fileName })}
+                  onClick={() => setAttachments((current) => current.filter((candidate) => candidate !== fileName))}
+                  className="rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <IconX className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex min-h-8 items-center justify-between gap-2 pt-0.5">
+          <div className="flex min-w-0 items-center gap-0.5">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="sr-only"
+              tabIndex={-1}
+              onChange={(event) => {
+                addAttachments(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            <Button type="button" variant="ghost" size="icon-sm" disabled={disabled} onClick={() => fileInputRef.current?.click()} aria-label={t("chat.attach")} className="rounded-full text-muted-foreground">
+              <IconPaperclip className="size-4" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" className="gap-1 px-2 text-xs font-normal text-muted-foreground" />}>
+                <IconSparkles className="size-3.5" />
+                {mode === "agent" ? t("chat.agentMode") : t("chat.chatMode")}
+                <IconChevronDown className="size-3" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="w-44">
+                <DropdownMenuItem onClick={() => setMode("agent")}><IconSparkles />{t("chat.agentMode")}{mode === "agent" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setMode("chat")}><IconSparkles />{t("chat.chatMode")}{mode === "chat" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <p className="hidden text-[11px] text-muted-foreground lg:block">{t("chat.sendHint")}</p>
+            {isResponding ? (
+              <Button size="icon" aria-label={t("chat.stop")} onClick={onCancel} className="size-8 rounded-full">
+                <IconSquare className="size-3.5 fill-current" />
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                aria-label={t("chat.send")}
+                disabled={!canSend}
+                onClick={submit}
+                className="size-8 rounded-full disabled:bg-muted disabled:text-muted-foreground"
               >
-                <IconX className="size-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="flex min-h-8 items-center justify-between gap-2 pt-1">
-        <div className="flex min-w-0 items-center gap-0.5">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="sr-only"
-            tabIndex={-1}
-            onChange={(event) => {
-              addAttachments(event.target.files);
-              event.target.value = "";
-            }}
-          />
-          <Button type="button" variant="ghost" size="icon-sm" disabled={disabled} onClick={() => fileInputRef.current?.click()} aria-label={t("chat.attach")} className="rounded-full text-muted-foreground">
-            <IconPaperclip className="size-4" />
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" className="gap-1 px-2 text-xs font-normal text-muted-foreground" />}>
-              <IconSparkles className="size-3.5" />
-              {mode === "agent" ? t("chat.agentMode") : t("chat.chatMode")}
-              <IconChevronDown className="size-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" side="top" className="w-44">
-              <DropdownMenuItem onClick={() => setMode("agent")}><IconSparkles />{t("chat.agentMode")}{mode === "agent" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setMode("chat")}><IconSparkles />{t("chat.chatMode")}{mode === "chat" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <p className="hidden text-[11px] text-muted-foreground lg:block">{t("chat.sendHint")}</p>
-          {isResponding ? (
-            <Button size="icon" aria-label={t("chat.stop")} onClick={onCancel} className="size-8 rounded-full">
-              <IconSquare className="size-3.5 fill-current" />
-            </Button>
-          ) : (
-            <Button
-              size="icon"
-              aria-label={t("chat.send")}
-              disabled={!canSend}
-              onClick={submit}
-              className="size-8 rounded-full disabled:bg-muted disabled:text-muted-foreground"
-            >
-              <IconArrowUp className="size-[18px]" />
-            </Button>
-          )}
+                <IconArrowUp className="size-[18px]" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

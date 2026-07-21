@@ -123,6 +123,26 @@ describe("ChatView", () => {
     expect(screen.queryByText("pick a project")).toBeNull();
   });
 
+  it("renders execution context immediately above the composer surface", () => {
+    renderWithI18n(
+      <ChatView
+        conversation={undefined}
+        userName="Eric"
+        isResponding={false}
+        error={null}
+        contextBar={<span>Ora / frontend</span>}
+        onSend={() => {}}
+      />,
+    );
+
+    const composer = screen.getByRole("textbox").closest('[data-slot="composer"]');
+    const context = screen.getByText("Ora / frontend").closest('[data-slot="composer-context"]');
+    expect(composer).not.toBeNull();
+    expect(context).not.toBeNull();
+    expect(composer?.contains(context)).toBe(false);
+    expect(context?.nextElementSibling?.querySelector('[data-slot="composer"]')).toBe(composer);
+  });
+
   it("slides the same composer node down when the first turn arrives", () => {
     // jsdom has no layout and no Web Animations API, so both are stood up here:
     // the rects drive the FLIP delta and the spy captures the resulting keyframes.

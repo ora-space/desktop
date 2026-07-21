@@ -22,7 +22,7 @@ interface ChatViewProps {
   contextBar?: ReactNode;
   /**
    * Why the composer is disabled, surfaced on hover. Preferred over an inline
-   * message for a state the user can fix from the context bar right below it.
+   * message for a state the user can fix from the context bar directly above it.
    */
   disabledHint?: string;
 }
@@ -103,10 +103,11 @@ export function ChatView({ conversation, userName, isResponding, error, disabled
       >
         <div className="mx-auto w-full max-w-[760px]">
           {error && <p role="alert" className="mb-2 px-1 text-xs text-destructive">{error}</p>}
-          {/* Inset just past the composer's 16px corner radius, so the strip's edge
-              clears the curve instead of sitting on it, and pulled down so the
-              composer card overlaps the strip's lower padding. */}
-          {contextBar && <div className="-mb-3 px-5">{contextBar}</div>}
+          {contextBar && (
+            <div data-slot="composer-context" className="mb-1 flex h-6 items-center px-1">
+              {contextBar}
+            </div>
+          )}
           {/* The hint hangs off a wrapper because a disabled textarea swallows the
               pointer events a trigger needs. The wrapper stays mounted whether or not
               there is a hint: swapping it out would remount the composer and throw
