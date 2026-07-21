@@ -62,6 +62,9 @@ importers:
       '@ora/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@ora/mock-service':
+        specifier: workspace:*
+        version: link:../../packages/mock-service
       '@ora/platform':
         specifier: workspace:*
         version: link:../../packages/platform

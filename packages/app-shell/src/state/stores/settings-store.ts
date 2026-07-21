@@ -5,6 +5,7 @@ export type ThemeMode = "system" | "light" | "dark";
 export type InterfaceDensity = "comfortable" | "compact";
 export type ModelProvider = "openai" | "anthropic" | "local";
 export type ApprovalPolicy = "always" | "risky" | "trusted";
+export type HistoryRetention = "30-days" | "90-days" | "forever";
 
 export interface SettingsPreferences {
   theme: ThemeMode;
@@ -16,6 +17,7 @@ export interface SettingsPreferences {
   fileWriteAccess: boolean;
   networkAccess: boolean;
   commandTimeout: string;
+  historyRetention: HistoryRetention;
   diagnostics: boolean;
 }
 
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: SettingsPreferences = {
   fileWriteAccess: true,
   networkAccess: false,
   commandTimeout: "120",
+  historyRetention: "90-days",
   diagnostics: false,
 };
 

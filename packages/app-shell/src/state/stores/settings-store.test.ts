@@ -25,11 +25,16 @@ describe("useSettingsStore", () => {
   });
 
   it("merges a partial patch into settings", () => {
-    useSettingsStore.getState().updateSettings({ theme: "dark", model: "claude-sonnet-4.5" });
+    useSettingsStore.getState().updateSettings({
+      theme: "dark",
+      model: "claude-sonnet-4.5",
+      historyRetention: "30-days",
+    });
     expect(useSettingsStore.getState().settings).toEqual({
       ...DEFAULT_SETTINGS,
       theme: "dark",
       model: "claude-sonnet-4.5",
+      historyRetention: "30-days",
     });
   });
 
