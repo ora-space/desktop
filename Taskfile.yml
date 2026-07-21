@@ -19,6 +19,7 @@ tasks:
     cmds:
       - task: install:frontend
       - task: install:backend
+      - task: install:desktop
       - task: build
 
   install:frontend:
@@ -28,6 +29,12 @@ tasks:
 
   install:backend:
     desc: Install dependencies for the Rust backend
+    cmds:
+      - cargo fetch
+
+  install:desktop:
+    desc: Install dependencies for the desktop Tauri app (excluded from workspace)
+    dir: apps/desktop/src-tauri
     cmds:
       - cargo fetch
 
@@ -148,6 +155,11 @@ tasks:
     desc: Run the UI component showcase in development mode
     cmds:
       - pnpm --filter @ora/ui-showcase dev
+
+  run:desktop:
+    desc: Run the desktop Tauri app in development mode
+    cmds:
+      - pnpm --filter @ora/desktop tauri dev
 
   run:web-backend:
     desc: Run the web server backend in development mode
