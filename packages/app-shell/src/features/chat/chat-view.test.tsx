@@ -58,6 +58,33 @@ describe("ChatView", () => {
     );
   });
 
+  it("keeps the disabled hint shut when the pointer never left the enabled composer", async () => {
+    const user = userEvent.setup();
+    const view = renderWithI18n(
+      <ChatView messages={[]} userName="Eric" isResponding={false} error={null} onSend={() => {}} />,
+    );
+
+    // Hover the composer while it has no hint. The real app then slides the
+    // composer out from under the pointer, so no pointerleave ever arrives.
+    await user.hover(screen.getByRole("textbox"));
+
+    view.rerender(
+      <AppI18nProvider>
+        <ChatView
+          messages={[]}
+          userName="Eric"
+          isResponding={false}
+          error={null}
+          disabled
+          disabledHint="pick a project"
+          onSend={() => {}}
+        />
+      </AppI18nProvider>,
+    );
+
+    expect(screen.queryByText("pick a project")).toBeNull();
+  });
+
   it("slides the same composer node down when the first message arrives", () => {
     // jsdom has no layout and no Web Animations API, so both are stood up here:
     // the rects drive the FLIP delta and the spy captures the resulting keyframes.

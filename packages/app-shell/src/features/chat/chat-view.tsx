@@ -103,20 +103,22 @@ export function ChatView({ messages, userName, isResponding, error, disabled = f
               clears the curve instead of sitting on it, and pulled down so the
               composer card overlaps the strip's lower padding. */}
           {contextBar && <div className="-mb-3 px-5">{contextBar}</div>}
-          {/* The hint has to hang off a wrapper: a disabled textarea swallows the
-              pointer events a trigger needs to open on hover. */}
-          {disabledHint ? (
-            // The composer spans the pane, so a hint anchored to its edge can land far
-            // from the pointer; tracking the cursor keeps it where the user is looking.
-            <Tooltip trackCursorAxis="both">
-              <TooltipTrigger render={<div />}>
-                <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
-              </TooltipTrigger>
-              <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>
-            </Tooltip>
-          ) : (
-            <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
-          )}
+          {/* The hint hangs off a wrapper because a disabled textarea swallows the
+              pointer events a trigger needs. The wrapper stays mounted whether or not
+              there is a hint: swapping it out would remount the composer and throw
+              away whatever the user had already typed. Tracking the cursor keeps the
+              bubble near the pointer, since the composer spans the whole pane. */}
+          {/* Disabling the root rather than only withholding the content is what
+              keeps a stale hover from surfacing later: the composer slides out from
+              under the pointer when a thread opens, which leaves no pointerleave
+              behind, so an enabled tooltip would still believe it is hovered and pop
+              open the moment a hint reappears. */}
+          <Tooltip trackCursorAxis="both" disabled={disabledHint === undefined}>
+            <TooltipTrigger render={<div />}>
+              <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
+            </TooltipTrigger>
+            <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>
+          </Tooltip>
           {isEmpty && (
             <LandingSuggestions onSend={onSend} isResponding={isResponding} disabled={disabled} />
           )}
