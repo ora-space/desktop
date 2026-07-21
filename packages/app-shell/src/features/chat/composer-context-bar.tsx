@@ -30,6 +30,7 @@ import {
   IconPlus,
 } from "@tabler/icons-react";
 import { useProjects } from "../../state/hooks/use-projects";
+import { useTasks } from "../../state/hooks/use-tasks";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 
@@ -37,20 +38,17 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
  * The strip above the composer that states which project, environment, and
  * branch a new task will run against.
  *
- * The project tab is fully wired. The environment tab picks a value but has no
- * execution behind it yet, and branch is still an inert placeholder holding its
- * place in the row.
+ * Project and branch are wired to the workspace selection. The environment tab
+ * picks a value but has no execution behind it yet.
  */
 export function ComposerContextBar() {
-  const { t } = useTranslation();
-
   return (
     // Bottom padding runs under the composer card, which is what makes the two
     // read as one stacked surface instead of two separate controls.
     <div className="flex items-center gap-0.5 rounded-t-xl bg-muted px-1.5 pb-4 pt-1">
       <ProjectTab />
       <EnvironmentTab />
-      <ContextTabPlaceholder icon={<IconGitBranch className="size-3.5" />} label={t("chat.contextBar.defaultBranch")} />
+      <BranchTab />
     </div>
   );
 }
@@ -119,7 +117,7 @@ const CONTEXT_TAB_CLASS = "h-6 gap-1.5 px-2 text-xs font-normal text-muted-foreg
  */
 const MENU_WIDTH_CLASS = "w-52";
 /** Command nests a group inside its root, so plain menus need the same second inset. */
-const MENU_GROUP_CLASS = "p-1";
+const MENU_GROUP_CLASS = "p-1 **:[[cmdk-group-heading]]:font-normal";
 /**
  * `text-foreground` is deliberate: menu popups default to `--popover-foreground`,
  * which is a shade darker than the `--foreground` that CommandGroup sets, so
@@ -212,12 +210,89 @@ function ProjectTab() {
   );
 }
 
-/** Holds a tab's place in the row until its selection model exists. */
-function ContextTabPlaceholder({ icon, label }: { icon: React.ReactNode; label: string }) {
+/**
+ * Selects which worktree a task runs in, or creates a new one.
+ *
+ * Tasks stand in for branches here: the backend owns the worktree and its branch
+ * name and does not expose either through the frontend contract, so the task
+ * title is the only handle the UI has. The secondary line shows task status for
+ * the same reason — working-tree dirtiness is not something we can ask for yet.
+ */
+function BranchTab() {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const { data: tasks = [] } = useTasks();
+  const selection = useWorkspaceSelectionStore((s) => s.selection);
+  const selectTask = useWorkspaceSelectionStore((s) => s.selectTask);
+  const setDialog = useUiStore((s) => s.setDialog);
+
+  const projectId = selection.projectId;
+  const projectTasks = tasks.filter((task) => task.projectId === projectId);
+  const selectedTask = tasks.find((task) => task.id === selection.taskId);
+
   return (
-    <Button type="button" variant="ghost" size="sm" disabled className={CONTEXT_TAB_CLASS}>
-      {icon}
-      {label}
-    </Button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={CONTEXT_TAB_CLASS}
+            aria-label={t("chat.contextBar.selectBranch")}
+          />
+        }
+      >
+        <IconGitBranch className="size-3.5" />
+        <span className="max-w-40 truncate">{selectedTask?.title ?? t("chat.contextBar.defaultBranch")}</span>
+      </PopoverTrigger>
+      <PopoverContent align="start" side="top" className={`${MENU_WIDTH_CLASS} p-0`}>
+        <Command>
+          <CommandInput placeholder={t("chat.contextBar.searchBranches")} className="text-xs" />
+          <CommandList>
+            <CommandEmpty className="py-4 text-xs">{t("chat.contextBar.noBranchesFound")}</CommandEmpty>
+            <CommandGroup heading={t("chat.contextBar.branches")} className={MENU_GROUP_CLASS}>
+              {projectTasks.map((task) => (
+                <CommandItem
+                  key={task.id}
+                  value={task.title}
+                  data-checked={task.id === selection.taskId}
+                  className={MENU_ITEM_CLASS}
+                  onSelect={() => {
+                    selectTask(task.id, task.projectId);
+                    setOpen(false);
+                  }}
+                >
+                  <IconGitBranch className={MENU_ICON_CLASS} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{task.title}</span>
+                    <span className="block truncate text-[10px] text-muted-foreground">{t(`common.${task.status}`)}</span>
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            <CommandSeparator />
+            <CommandGroup className={MENU_GROUP_CLASS}>
+              {/* Same ui-store dialog the sidebar's "new worktree" action opens, so
+                  both paths share one form and one create mutation. */}
+              <CommandItem
+                value={t("chat.contextBar.createBranch")}
+                className={MENU_ITEM_CLASS}
+                disabled={projectId === null}
+                onSelect={() => {
+                  if (projectId === null) return;
+                  setOpen(false);
+                  setDialog({ kind: "task", projectId });
+                }}
+              >
+                <IconPlus className={MENU_ICON_CLASS} />
+                {t("chat.contextBar.createBranch")}
+              </CommandItem>
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
+

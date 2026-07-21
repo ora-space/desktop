@@ -49,10 +49,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
   const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
 
-  // The chat pane also backs the new-task landing state. A bare project counts as
-  // landing rather than overview: picking one is how the composer's context bar
-  // says which repository the next task belongs to, so it must not navigate away.
-  const chatIsOpen = (session && task && project) || selection.taskId === null;
+  // Anything short of a selected session is the new-task landing. The composer's
+  // context bar owns the project and branch selection, so choosing either must not
+  // navigate away from the composer that reads them. The overview is left as the
+  // fallback for a session whose task or project has gone missing.
+  const chatIsOpen = session === undefined || (task !== undefined && project !== undefined);
 
   if (chatIsOpen) {
     const title = task?.title ?? t("chat.newThread");
