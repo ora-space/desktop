@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Composer } from "./composer";
 import { LandingHeading, LandingSuggestions } from "./empty-state";
 import { MessageList } from "./message-list";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 import type { ChatMessage } from "@ora/chat";
 
 interface ChatViewProps {
@@ -16,6 +17,11 @@ interface ChatViewProps {
    * built here so the chat pane stays unaware of workspace entities.
    */
   contextBar?: ReactNode;
+  /**
+   * Why the composer is disabled, surfaced on hover. Preferred over an inline
+   * message for a state the user can fix from the context bar right below it.
+   */
+  disabledHint?: string;
 }
 
 /** How long the composer takes to travel between the landing and thread layouts. */
@@ -28,7 +34,7 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
  */
-export function ChatView({ messages, userName, isResponding, error, disabled = false, onSend, contextBar }: ChatViewProps) {
+export function ChatView({ messages, userName, isResponding, error, disabled = false, onSend, contextBar, disabledHint }: ChatViewProps) {
   const isEmpty = messages.length === 0;
   const composerSlotRef = useRef<HTMLDivElement>(null);
   // Where the composer sat at the last commit, used as the FLIP origin. Only the
@@ -97,7 +103,20 @@ export function ChatView({ messages, userName, isResponding, error, disabled = f
               clears the curve instead of sitting on it, and pulled down so the
               composer card overlaps the strip's lower padding. */}
           {contextBar && <div className="-mb-3 px-5">{contextBar}</div>}
-          <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
+          {/* The hint has to hang off a wrapper: a disabled textarea swallows the
+              pointer events a trigger needs to open on hover. */}
+          {disabledHint ? (
+            // The composer spans the pane, so a hint anchored to its edge can land far
+            // from the pointer; tracking the cursor keeps it where the user is looking.
+            <Tooltip trackCursorAxis="both">
+              <TooltipTrigger render={<div />}>
+                <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
+              </TooltipTrigger>
+              <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Composer autoFocus onSend={onSend} isResponding={isResponding} disabled={disabled} />
+          )}
           {isEmpty && (
             <LandingSuggestions onSend={onSend} isResponding={isResponding} disabled={disabled} />
           )}

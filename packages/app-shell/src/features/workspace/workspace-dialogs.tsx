@@ -23,6 +23,7 @@ import {
   useCreateSession,
   useUpdateSession,
   useDeleteSession,
+  DEFAULT_AGENT_ID,
 } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore, type DialogState, type DeleteTarget } from "../../state/stores/ui-store";
 
@@ -142,7 +143,7 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
     description = t("dialog.sessionDescription");
     submitLabel = dialog.entity ? t("dialog.saveSession") : t("dialog.startSession");
     fields = [
-      { kind: "text", name: "agentId", label: t("dialog.agent"), value: dialog.entity?.agentId ?? "codex", placeholder: "codex" },
+      { kind: "text", name: "agentId", label: t("dialog.agent"), value: dialog.entity?.agentId ?? DEFAULT_AGENT_ID, placeholder: DEFAULT_AGENT_ID },
       { kind: "select", name: "status", label: t("dialog.status"), value: dialog.entity?.status ?? "running", options: [
         { label: t("common.running"), value: "running" }, { label: t("common.stopped"), value: "stopped" },
       ] },

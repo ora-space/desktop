@@ -81,7 +81,9 @@ export function Composer({
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}
         aria-label={t("chat.messageLabel")}
-        className="min-h-[68px] max-h-[200px] resize-none rounded-none border-0 bg-transparent px-2 py-1.5 text-[15px] leading-6 shadow-none focus-visible:ring-0"
+        // The shell already carries the surface, so the Textarea's own disabled
+        // fill would read as a grey block floating inside the card.
+        className="min-h-[68px] max-h-[200px] resize-none rounded-none border-0 bg-transparent px-2 py-1.5 text-[15px] leading-6 shadow-none focus-visible:ring-0 disabled:bg-transparent"
       />
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-2 pb-1" aria-label={t("chat.attachments")}>

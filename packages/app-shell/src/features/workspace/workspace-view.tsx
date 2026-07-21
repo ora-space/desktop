@@ -12,6 +12,7 @@ import {
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
+import { useCreateSession, DEFAULT_AGENT_ID } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useChatStore } from "../../chat-store-context";
@@ -48,6 +49,25 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   );
 
   const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
+  const createSession = useCreateSession();
+
+  /**
+   * Sends into the selected session, or starts one for the selected worktree
+   * first. useCreateSession already opens the agent session against the
+   * project's root path and selects the result, so the implicit path here is the
+   * same one the session dialog takes.
+   */
+  const sendOrStartSession = async (text: string) => {
+    const target = session ?? (task
+      ? await createSession.mutateAsync({ taskId: task.id, agentId: DEFAULT_AGENT_ID, status: "running" })
+      : undefined);
+    if (target?.agentSessionId == null) return;
+    await chatStore.getState().sendMessage({
+      oraSessionId: target.id,
+      agentSessionId: target.agentSessionId,
+      text,
+    });
+  };
 
   // Anything short of a selected session is the new-task landing. The composer's
   // context bar owns the project and branch selection, so choosing either must not
@@ -57,10 +77,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
   if (chatIsOpen) {
     const title = task?.title ?? t("chat.newThread");
-    const sendDisabled = !session || agentSessionUnavailable;
+    // With a session selected the agent session decides; without one, a project and
+    // worktree are enough, because the first message creates the session itself.
+    const canChat = session ? session.agentSessionId !== null : task !== undefined && project !== undefined;
     const chatError = conversation?.error
       ?? (agentSessionUnavailable ? t("chat.agentSessionUnavailable") : null)
-      ?? (session ? null : t("chat.noSessionSelected"));
+      ?? createSession.error?.message
+      ?? null;
     return (
       <main id="main-content" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         <div className="flex h-13 shrink-0 items-center gap-2 px-3 sm:px-4">
@@ -81,18 +104,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             userName={userName}
             isResponding={conversation?.isResponding ?? false}
             error={chatError}
-            disabled={sendDisabled}
+            disabled={!canChat}
+            disabledHint={canChat ? undefined : t("chat.pickProjectAndBranch")}
             // A live session already fixes its project and branch, so the pickers
             // only belong to the not-yet-created task.
             contextBar={session ? undefined : <ComposerContextBar />}
-            onSend={(text) => {
-              if (!session || session.agentSessionId === null) return;
-              void chatStore.getState().sendMessage({
-                oraSessionId: session.id,
-                agentSessionId: session.agentSessionId,
-                text,
-              }).catch(() => undefined);
-            }}
+            // Failures land in chatError; the rejection itself is expected.
+            onSend={(text) => void sendOrStartSession(text).catch(() => undefined)}
           />
         </div>
       </main>
