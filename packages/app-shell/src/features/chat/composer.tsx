@@ -35,7 +35,6 @@ export function Composer({
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [mode, setMode] = useState<"agent" | "chat">("agent");
-  const [environment, setEnvironment] = useState<"local" | "cloud">("local");
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -126,16 +125,6 @@ export function Composer({
             <DropdownMenuContent align="start" side="top" className="w-44">
               <DropdownMenuItem onClick={() => setMode("agent")}><IconSparkles />{t("chat.agentMode")}{mode === "agent" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setMode("chat")}><IconSparkles />{t("chat.chatMode")}{mode === "chat" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" className="hidden gap-1 px-2 text-xs font-normal text-muted-foreground sm:inline-flex" />}>
-              {environment === "local" ? t("chat.local") : t("chat.cloud")}
-              <IconChevronDown className="size-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" side="top" className="w-40">
-              <DropdownMenuItem onClick={() => setEnvironment("local")}>{t("chat.local")}{environment === "local" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setEnvironment("cloud")}>{t("chat.cloud")}{environment === "cloud" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

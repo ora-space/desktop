@@ -10,12 +10,20 @@ import {
   CommandList,
   CommandSeparator,
   CommandShortcut,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@ora/ui";
 import {
+  IconCheck,
   IconChevronRight,
+  IconCloud,
   IconDeviceLaptop,
   IconFolder,
   IconGitBranch,
@@ -29,9 +37,9 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
  * The strip above the composer that states which project, environment, and
  * branch a new task will run against.
  *
- * Only the project tab is wired up; environment and branch render as inert
- * placeholders so the row's final shape is visible while their backing
- * selections are still being designed.
+ * The project tab is fully wired. The environment tab picks a value but has no
+ * execution behind it yet, and branch is still an inert placeholder holding its
+ * place in the row.
  */
 export function ComposerContextBar() {
   const { t } = useTranslation();
@@ -41,20 +49,88 @@ export function ComposerContextBar() {
     // read as one stacked surface instead of two separate controls.
     <div className="flex items-center gap-0.5 rounded-t-xl bg-muted px-1.5 pb-4 pt-1">
       <ProjectTab />
-      <ContextTabPlaceholder icon={<IconDeviceLaptop className="size-3.5" />} label={t("chat.local")} />
+      <EnvironmentTab />
       <ContextTabPlaceholder icon={<IconGitBranch className="size-3.5" />} label={t("chat.contextBar.defaultBranch")} />
     </div>
+  );
+}
+
+/** Where a task runs. Local is the only environment the runtime can service today. */
+type TaskEnvironment = "local" | "cloud";
+
+/**
+ * Chooses between local and cloud execution.
+ *
+ * The choice is component state on purpose: nothing consumes it yet, so lifting
+ * it into a store would only invent a contract that the runtime has to match
+ * later. It moves once one of the two environments actually dispatches work.
+ */
+function EnvironmentTab() {
+  const { t } = useTranslation();
+  const [environment, setEnvironment] = useState<TaskEnvironment>("local");
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={CONTEXT_TAB_CLASS}
+            aria-label={t("chat.contextBar.selectEnvironment")}
+          />
+        }
+      >
+        {environment === "local" ? <IconDeviceLaptop className="size-3.5" /> : <IconCloud className="size-3.5" />}
+        {environment === "local" ? t("chat.local") : t("chat.cloud")}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top" className={MENU_WIDTH_CLASS}>
+        {/* DropdownMenuLabel is a group label, so it throws unless a group owns it. */}
+        <DropdownMenuGroup className={MENU_GROUP_CLASS}>
+          <DropdownMenuLabel className={MENU_LABEL_CLASS}>{t("chat.contextBar.launchMode")}</DropdownMenuLabel>
+          <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => setEnvironment("local")}>
+            <IconDeviceLaptop className={MENU_ICON_CLASS} />
+            {t("chat.contextBar.runLocally")}
+            {environment === "local" && <IconCheck className={MENU_CHECK_CLASS} />}
+          </DropdownMenuItem>
+          <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => setEnvironment("cloud")}>
+            <IconCloud className={MENU_ICON_CLASS} />
+            {t("chat.cloud")}
+            {environment === "cloud" && <IconCheck className={MENU_CHECK_CLASS} />}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
 /** Shared trigger styling so the live project tab and the inert tabs stay on one baseline. */
 const CONTEXT_TAB_CLASS = "h-6 gap-1.5 px-2 text-xs font-normal text-muted-foreground";
 
-/** Keeps the picker's type at the same size as the tab that opens it. */
-const MENU_TEXT_CLASS = "text-xs";
-
-/** Menu rows also tighten their icon slot so labels align with the tab row above. */
-const MENU_ITEM_CLASS = `${MENU_TEXT_CLASS} gap-1.5`;
+/**
+ * Metrics shared by every context-bar menu.
+ *
+ * The project picker is a Command popup (it needs search) while the environment
+ * picker is a plain menu, and the two primitives ship different padding, radius,
+ * and hover colours. These constants are what keep them looking like one family;
+ * any tab added later should style itself from here rather than from the
+ * primitive's defaults.
+ */
+const MENU_WIDTH_CLASS = "w-52";
+/** Command nests a group inside its root, so plain menus need the same second inset. */
+const MENU_GROUP_CLASS = "p-1";
+/**
+ * `text-foreground` is deliberate: menu popups default to `--popover-foreground`,
+ * which is a shade darker than the `--foreground` that CommandGroup sets, so
+ * without it the two menus render their labels at different weights.
+ */
+const MENU_ITEM_CLASS = "gap-1.5 rounded-sm px-2 py-1.5 text-xs text-foreground focus:bg-muted focus:text-foreground";
+const MENU_LABEL_CLASS = "px-2 py-1.5 text-xs font-normal text-muted-foreground";
+/** Leading icons stay muted so the label carries the row; only the trailing check is full strength. */
+const MENU_ICON_CLASS = "size-3.5 text-muted-foreground";
+/** Command's built-in trailing check renders at size-4; hand-rolled ones must match. */
+const MENU_CHECK_CLASS = "ml-auto size-4";
 
 /** Selects the project a new task belongs to, or creates one through the shared workspace dialog. */
 function ProjectTab() {
@@ -83,12 +159,12 @@ function ProjectTab() {
         <IconFolder className="size-3.5" />
         <span className="max-w-40 truncate">{selectedProject?.name ?? t("chat.contextBar.noProject")}</span>
       </PopoverTrigger>
-      <PopoverContent align="start" side="top" className="w-52 p-0">
+      <PopoverContent align="start" side="top" className={`${MENU_WIDTH_CLASS} p-0`}>
         <Command>
-          <CommandInput placeholder={t("chat.contextBar.searchProjects")} className={MENU_TEXT_CLASS} />
+          <CommandInput placeholder={t("chat.contextBar.searchProjects")} className="text-xs" />
           <CommandList>
-            <CommandEmpty className={`py-4 ${MENU_TEXT_CLASS}`}>{t("chat.contextBar.noProjectsFound")}</CommandEmpty>
-            <CommandGroup>
+            <CommandEmpty className="py-4 text-xs">{t("chat.contextBar.noProjectsFound")}</CommandEmpty>
+            <CommandGroup className={MENU_GROUP_CLASS}>
               {projects.map((project) => (
                 // `data-checked` drives CommandItem's own trailing check. Rendering a
                 // second `ml-auto` icon here instead would fight that built-in one and
@@ -103,13 +179,13 @@ function ProjectTab() {
                     setOpen(false);
                   }}
                 >
-                  <IconFolder className="size-3.5 text-muted-foreground" />
+                  <IconFolder className={MENU_ICON_CLASS} />
                   <span className="truncate">{project.name}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
             <CommandSeparator />
-            <CommandGroup>
+            <CommandGroup className={MENU_GROUP_CLASS}>
               {/* Reuses the sidebar's project form verbatim; its mutation selects the
                   new project, which is what feeds the label back into this tab. */}
               <CommandItem
@@ -120,7 +196,7 @@ function ProjectTab() {
                   setDialog({ kind: "project" });
                 }}
               >
-                <IconPlus className="size-3.5 text-muted-foreground" />
+                <IconPlus className={MENU_ICON_CLASS} />
                 {t("sidebar.newProject")}
                 {/* CommandShortcut both right-aligns the chevron and suppresses the
                     built-in check, so this row lines up with the project rows above. */}
