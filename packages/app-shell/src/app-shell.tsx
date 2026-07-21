@@ -19,6 +19,7 @@ import { ContractsClientContext } from "./contracts-client-context";
 import { ChatStoreContext } from "./chat-store-context";
 import { WorkspaceSidebar } from "./features/workspace/workspace-sidebar";
 import { WorkspaceView } from "./features/workspace/workspace-view";
+import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
 import { AppI18nProvider } from "./i18n/i18n";
 import { CURRENT_USER } from "./lib/mock-data";
@@ -110,6 +111,9 @@ function AppShellContent({ client, chatStore, platform, user }: Required<AppShel
                 </ResizablePanelGroup>
               )}
               <SettingsDialog />
+              {/* Mounted here, not in the sidebar, so collapsing the sidebar does
+                  not take the workspace dialogs down with it. */}
+              <WorkspaceDialogs />
             </div>
             <PlatformHost locale={locale} />
           </TooltipProvider>
