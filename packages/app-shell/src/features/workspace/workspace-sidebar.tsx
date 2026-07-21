@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
+  Collapsible,
+  CollapsibleContent,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -210,46 +212,50 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                     />
                   )}
                 />
-                {projectOpen && projectTasks.map((task) => {
-                  const taskSessions = sessions.filter((session) => session.taskId === task.id);
-                  const taskOpen = expandedTasks.has(task.id) || Boolean(needle);
-                  return (
-                    <div key={task.id}>
-                      <TreeRow
-                        depth={1}
-                        active={selection.taskId === task.id && selection.sessionId === null}
-                        icon={<IconGitBranch className="size-3.5 text-muted-foreground" />}
-                        label={task.title}
-                        meta={t(`common.${task.status}`)}
-                        expanded={taskOpen}
-                        onClick={() => openTask(task.id)}
-                        action={<NewSessionButton onClick={() => selectTask(task.id, task.projectId)} />}
-                        menu={(
-                          <EntityMenu
-                            onEdit={() => setDialog({ kind: "task", projectId: project.id, entity: task })}
-                            onDelete={() => setDeleteTarget({ kind: "task", id: task.id, name: task.title })}
-                          />
-                        )}
-                      />
-                      {taskOpen && taskSessions.map((session) => (
+                <TreeBranch expanded={projectOpen}>
+                  {projectTasks.map((task) => {
+                    const taskSessions = sessions.filter((session) => session.taskId === task.id);
+                    const taskOpen = expandedTasks.has(task.id) || Boolean(needle);
+                    return (
+                      <div key={task.id}>
                         <TreeRow
-                          key={session.id}
-                          depth={2}
-                          active={selection.sessionId === session.id}
-                          icon={session.status === "running" ? <AgentActivityDots label={t("common.running")} /> : null}
-                          label={session.agentId}
-                          onClick={() => selectSession(session.id, task.id, project.id)}
+                          depth={1}
+                          active={selection.taskId === task.id && selection.sessionId === null}
+                          icon={<IconGitBranch className="size-3.5 text-muted-foreground" />}
+                          label={task.title}
+                          meta={t(`common.${task.status}`)}
+                          expanded={taskOpen}
+                          onClick={() => openTask(task.id)}
+                          action={<NewSessionButton onClick={() => selectTask(task.id, task.projectId)} />}
                           menu={(
                             <EntityMenu
-                              onEdit={() => setDialog({ kind: "session", taskId: task.id, entity: session })}
-                              onDelete={() => setDeleteTarget({ kind: "session", id: session.id, name: session.agentId })}
+                              onEdit={() => setDialog({ kind: "task", projectId: project.id, entity: task })}
+                              onDelete={() => setDeleteTarget({ kind: "task", id: task.id, name: task.title })}
                             />
                           )}
                         />
-                      ))}
-                    </div>
-                  );
-                })}
+                        <TreeBranch expanded={taskOpen}>
+                          {taskSessions.map((session) => (
+                            <TreeRow
+                              key={session.id}
+                              depth={2}
+                              active={selection.sessionId === session.id}
+                              icon={session.status === "running" ? <AgentActivityDots label={t("common.running")} /> : null}
+                              label={session.agentId}
+                              onClick={() => selectSession(session.id, task.id, project.id)}
+                              menu={(
+                                <EntityMenu
+                                  onEdit={() => setDialog({ kind: "session", taskId: task.id, entity: session })}
+                                  onDelete={() => setDeleteTarget({ kind: "session", id: session.id, name: session.agentId })}
+                                />
+                              )}
+                            />
+                          ))}
+                        </TreeBranch>
+                      </div>
+                    );
+                  })}
+                </TreeBranch>
               </div>
             );
           })}
@@ -315,6 +321,32 @@ function AgentActivityDots({ label }: { label: string }) {
         />
       ))}
     </span>
+  );
+}
+
+/**
+ * Animates a level of the tree open and closed.
+ *
+ * Driven by the shared Collapsible rather than a hand-rolled height, because the
+ * same sidebar ships to the desktop shell and the browser: both put it on WebKit,
+ * where animating a `0fr`/`1fr` grid track is far less dependable than the pixel
+ * height Base UI measures into `--collapsible-panel-height`.
+ *
+ * The rows carry their own selection state, so the row button stays the control
+ * and this stays a controlled panel with no Trigger of its own.
+ *
+ * Follows the height pattern established by the shared Accordion. Note that
+ * tw-animate-css's `animate-collapsible-*` classes cannot stand in here: their
+ * keyframes read Radix/Bits/Reka/Kobalte height variables, none of which Base UI
+ * sets, so they would silently fall back to `height: auto` and never animate.
+ */
+function TreeBranch({ expanded, children }: { expanded: boolean; children: React.ReactNode }) {
+  return (
+    <Collapsible open={expanded}>
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

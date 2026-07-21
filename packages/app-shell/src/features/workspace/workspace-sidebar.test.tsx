@@ -60,7 +60,13 @@ beforeEach(() => {
   useUiStore.setState({ expandedProjects: new Set(), expandedTasks: new Set() });
 });
 
-/** Finds a tree row by its label. */
+/**
+ * Finds a tree row by its label.
+ *
+ * A role query rather than a text one: a branch on its way closed is still in
+ * the DOM until the animation ends, and this asks what a user can actually
+ * reach at that moment.
+ */
 function treeRow(label: string): HTMLElement | null {
   return screen.queryByRole("button", { name: new RegExp(label) });
 }
@@ -103,5 +109,18 @@ describe("WorkspaceSidebar", () => {
     await user.click(screen.getByText(PROJECT.name));
 
     expect(treeRow(TASK.title)).not.toBeNull();
+  });
+
+  // The Collapsible holds the panel just long enough to animate out, then drops
+  // it, so a collapsed branch costs nothing once the close has finished.
+  it("unmounts a collapsed branch instead of leaving it hidden in the DOM", async () => {
+    const user = userEvent.setup();
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
+
+    await user.click(screen.getByText(PROJECT.name));
+
+    await waitFor(() => expect(screen.queryByText(TASK.title)).toBeNull());
   });
 });
