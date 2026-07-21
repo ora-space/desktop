@@ -4,6 +4,7 @@ import { Button } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import { OraMark } from "../../components/ora-mark";
 import { formatClock } from "../../lib/format";
+import { AnchorHighlight } from "./anchor-highlight";
 import type { ChatMessage } from "@ora/chat";
 
 interface MessageBubbleProps {
@@ -38,8 +39,9 @@ export function MessageBubble({ message, userName, embeddedAssistant = false }: 
 
       <div className={`flex min-w-0 flex-col gap-1.5 ${isUser ? "max-w-[85%] items-end" : "flex-1"}`}>
         {isUser ? (
-          <div className="w-fit max-w-full rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
-            <p className="whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
+          <div className="relative w-fit max-w-full rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
+            <AnchorHighlight />
+            <p className="relative whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
           </div>
         ) : (
           <p className="whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>

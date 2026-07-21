@@ -174,6 +174,116 @@ describe("ChatView", () => {
 });
 
 describe("MessageList", () => {
+  it("reveals conversation anchors for long threads and jumps to the selected turn", async () => {
+    const user = userEvent.setup();
+    const turns = ["Inspect the runtime", "Review   the\nimplementation", "Run the test suite"].map((content, index) =>
+      createTurn({
+        id: `turn-${index + 1}`,
+        userMessage: {
+          kind: "message",
+          id: `user-${index + 1}`,
+          role: "user",
+          content,
+          createdAt: 100 + index,
+        },
+      }),
+    );
+    renderWithI18n(<MessageList turns={turns} userName="Eric" isResponding={false} />);
+
+    const navigation = screen.getByRole("navigation", { name: /对话历史|Conversation history/ });
+    expect(navigation).toHaveClass("fixed");
+    expect(screen.getByTestId("conversation-anchor-list")).toHaveClass("max-h-48", "overflow-y-auto");
+    const secondQuestionButton = screen.getByRole("button", { name: /问题 2：Review the implementation|Question 2: Review the implementation/i });
+    const secondResponseButton = screen.getByRole("button", { name: /回复 2：Done|Response 2: Done/i });
+    const thirdResponseButton = screen.getByRole("button", { name: /回复 3：Done|Response 3: Done/i });
+    const previousTurnButton = screen.getByRole("button", { name: /上一轮对话|Previous turn/ });
+    expect(thirdResponseButton).toHaveAttribute("aria-current", "location");
+    expect(previousTurnButton).toHaveClass("opacity-0");
+
+    const secondQuestionLine = secondQuestionButton.firstElementChild as HTMLElement;
+    const secondResponseLine = secondResponseButton.firstElementChild as HTMLElement;
+    expect(secondQuestionLine).toHaveStyle({ width: "16px" });
+    expect(secondResponseLine).toHaveStyle({ width: "10px" });
+    vi.spyOn(secondQuestionButton, "getBoundingClientRect").mockReturnValue({ left: 600, top: 210, height: 12 } as DOMRect);
+    await user.hover(secondQuestionButton);
+    const preview = screen.getByTestId("conversation-anchor-preview");
+    expect(preview).toHaveTextContent("Review the implementation");
+    expect(preview).toHaveStyle({ left: "592px", top: "216px" });
+    expect(secondQuestionLine).toHaveStyle({ width: "20px" });
+    expect(secondResponseLine).toHaveStyle({ width: "10px" });
+    await user.unhover(secondQuestionButton);
+    expect(screen.queryByTestId("conversation-anchor-preview")).not.toBeInTheDocument();
+
+    const list = screen.getByTestId("message-list");
+    const secondQuestion = list.querySelector<HTMLElement>('[data-conversation-anchor="turn-2:user"]');
+    const secondResponse = list.querySelector<HTMLElement>('[data-conversation-anchor="turn-2:response"]');
+    const thirdResponse = list.querySelector<HTMLElement>('[data-conversation-anchor="turn-3:response"]');
+    expect(secondQuestion).not.toBeNull();
+    expect(secondResponse).not.toBeNull();
+    expect(thirdResponse).not.toBeNull();
+    Object.defineProperty(secondQuestion, "offsetTop", { configurable: true, value: 240 });
+    Object.defineProperty(secondResponse, "offsetTop", { configurable: true, value: 360 });
+    Object.defineProperty(thirdResponse, "offsetTop", { configurable: true, value: 600 });
+    const scrollTo = vi.fn();
+    const animateQuestion = vi.fn();
+    const animateResponse = vi.fn();
+    Object.defineProperty(list, "scrollTo", { configurable: true, value: scrollTo });
+    const questionOutline = secondQuestion?.querySelector<SVGRectElement>("[data-anchor-highlight]");
+    const responseOutline = secondResponse?.querySelector<SVGRectElement>("[data-anchor-highlight]");
+    expect(questionOutline).not.toBeNull();
+    expect(responseOutline).not.toBeNull();
+    Object.defineProperty(questionOutline, "animate", { configurable: true, value: animateQuestion });
+    Object.defineProperty(questionOutline, "getAnimations", { configurable: true, value: () => [] });
+    Object.defineProperty(responseOutline, "animate", { configurable: true, value: animateResponse });
+    Object.defineProperty(responseOutline, "getAnimations", { configurable: true, value: () => [] });
+
+    await user.click(secondQuestionButton);
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 228, behavior: "smooth" });
+    expect(animateQuestion).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ duration: 3000, easing: expect.any(String) }),
+    );
+    expect(animateResponse).not.toHaveBeenCalled();
+    expect(secondQuestionButton).toHaveAttribute("aria-current", "location");
+
+    await user.click(secondResponseButton);
+
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 348, behavior: "smooth" });
+    expect(animateResponse).toHaveBeenCalled();
+    expect(secondResponseButton).toHaveAttribute("aria-current", "location");
+
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 900 });
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 300 });
+    list.scrollTop = 520;
+    fireEvent.scroll(list);
+
+    expect(thirdResponseButton).toHaveAttribute("aria-current", "location");
+  });
+
+  it("keeps the conversation navigator out of short threads", () => {
+    renderWithI18n(<MessageList turns={[createTurn()]} userName="Eric" isResponding={false} />);
+
+    expect(screen.queryByRole("navigation", { name: /对话历史|Conversation history/ })).not.toBeInTheDocument();
+  });
+
+  it("truncates long anchor previews without shortening their accessible names", async () => {
+    const user = userEvent.setup();
+    const longPrompt = "a".repeat(180);
+    const turns = [longPrompt, "second", "third"].map((content, index) => createTurn({
+      id: `long-turn-${index + 1}`,
+      userMessage: { kind: "message", id: `long-user-${index + 1}`, role: "user", content, createdAt: 100 + index },
+    }));
+    renderWithI18n(<MessageList turns={turns} userName="Eric" isResponding={false} />);
+
+    const anchor = screen.getByRole("button", { name: new RegExp(longPrompt) });
+    await user.hover(anchor);
+
+    const preview = screen.getByTestId("conversation-anchor-preview");
+    expect(preview).toHaveTextContent(`${"a".repeat(117)}...`);
+    expect(preview).not.toHaveTextContent(longPrompt);
+  });
+
   it("replaces the typing indicator once a thought chunk arrives", () => {
     const streaming = createTurn({ status: "streaming", items: [] });
     const view = renderWithI18n(<MessageList turns={[streaming]} userName="Eric" isResponding />);
