@@ -91,12 +91,6 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     }));
   }, [loading, projects, tasks]);
 
-  // Mutations select their new child. Expand its ancestors once without preventing a later manual collapse.
-  useEffect(() => {
-    if (selection.taskId) useUiStore.getState().expandTask(selection.taskId);
-    if (selection.projectId) useUiStore.getState().expandProject(selection.projectId);
-  }, [selection.projectId, selection.taskId]);
-
   const openProject = (projectId: string) => {
     toggleProjectExpand(projectId);
     selectProject(projectId);

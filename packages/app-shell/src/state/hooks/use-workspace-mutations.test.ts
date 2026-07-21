@@ -17,6 +17,7 @@ import { useSessions } from "./use-sessions";
 import { createMockClient, createMockClientState } from "../../test/mock-client";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
+import { useUiStore } from "../stores/ui-store";
 import { queryKeys } from "./query-keys";
 import type { Project, Session, Task } from "@ora/contracts";
 import { createChatStore, type AcpClient } from "@ora/chat";
@@ -30,6 +31,7 @@ const S2: Session = { id: "s2", taskId: "t1", agentId: "claude", agentSessionId:
 
 beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
+  useUiStore.setState({ expandedProjects: new Set(), expandedTasks: new Set() });
 });
 
 describe("useCreateProject", () => {
@@ -150,6 +152,20 @@ describe("useCreateTask", () => {
     expect(selection.projectId).toBe("p1");
     expect(selection.taskId).toBe(state.tasks[0]!.id);
   });
+
+  it("expands the owning project so the new task is visible", async () => {
+    const state = createMockClientState();
+    state.projects = [P1];
+    const client = createMockClient(state);
+    const projects = renderHookWithClient(() => useProjects(), client);
+    const mutation = renderHookWithClient(() => useCreateTask(), client, projects.queryClient);
+
+    await waitFor(() => expect(projects.result.current.isSuccess).toBe(true));
+    mutation.result.current.mutate({ projectId: "p1", title: "New task", status: "todo" });
+    await waitFor(() => expect(mutation.result.current.isSuccess).toBe(true));
+
+    expect(useUiStore.getState().expandedProjects).toEqual(new Set(["p1"]));
+  });
 });
 
 describe("useUpdateTask", () => {
@@ -246,6 +262,9 @@ describe("useCreateSession", () => {
       taskId: "t1",
       sessionId: state.sessions[0]!.id,
     });
+    // The session sits two levels down, so both ancestors have to open.
+    expect(useUiStore.getState().expandedProjects).toEqual(new Set(["p1"]));
+    expect(useUiStore.getState().expandedTasks).toEqual(new Set(["t1"]));
   });
 });
 

@@ -4,6 +4,7 @@ import { useContractsClient } from "../../contracts-client-context";
 import { useChatStore } from "../../chat-store-context";
 import { queryKeys } from "./query-keys";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
+import { useUiStore } from "../stores/ui-store";
 
 type QueryClient = ReturnType<typeof useQueryClient>;
 
@@ -89,6 +90,9 @@ export function useCreateTask() {
     onSuccess: (task) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks });
       useWorkspaceSelectionStore.getState().selectTask(task.id, task.projectId);
+      // Reveal the new row. Expanding here rather than reacting to the selection
+      // keeps a plain row click free to collapse what it just selected.
+      useUiStore.getState().expandProject(task.projectId);
     },
   });
 }
@@ -163,6 +167,9 @@ export function useCreateSession() {
       const task = tasks.find((candidate) => candidate.id === session.taskId);
       if (task) {
         useWorkspaceSelectionStore.getState().selectSession(session.id, task.id, task.projectId);
+        // Both ancestors, since the session sits two levels down.
+        useUiStore.getState().expandProject(task.projectId);
+        useUiStore.getState().expandTask(task.id);
       }
     },
   });
