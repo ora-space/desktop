@@ -32,6 +32,11 @@ const VIEWPORT_MARGIN_PX = 12;
 const WHEEL_ANCHORS_PER_STEP = 1;
 const TRACK_SHIFT_DURATION_MS = 240;
 const NEW_ANCHOR_DURATION_MS = 180;
+const ANCHOR_WIDTH = {
+  user: "28%",
+  assistant: "46%",
+  emphasized: "58%",
+} as const;
 
 /** Renders a Grok-style minimap with separate beats for prompts and responses. */
 export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: ConversationNavigatorProps) {
@@ -176,7 +181,8 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
 
   if (turns.length < 3) return null;
 
-  const activeIndex = Math.max(0, anchors.findIndex((anchor) => anchor.id === activeAnchorId));
+  const matchedActiveIndex = anchors.findIndex((anchor) => anchor.id === activeAnchorId);
+  const activeIndex = matchedActiveIndex >= 0 ? matchedActiveIndex : Math.max(0, anchors.length - 1);
 
   /** Moves through prompts and responses in the same order as the visible anchor track. */
   const navigateByAnchor = (offset: -1 | 1) => {
@@ -193,7 +199,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
         <div className="pointer-events-auto relative flex w-7 flex-col items-center">
         <button
           type="button"
-          aria-label={t("chat.previousTurn")}
+          aria-label={t("chat.previousMessage")}
           disabled={activeIndex === 0}
           onClick={() => navigateByAnchor(-1)}
           className="mb-px flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:invisible"
@@ -218,7 +224,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
           {anchors.map((anchor) => {
             const active = anchor.id === activeAnchorId;
             const previewed = anchor.id === previewAnchorId;
-            const baseWidth = anchor.role === "user" ? "28%" : "46%";
+            const baseWidth = ANCHOR_WIDTH[anchor.role];
 
             return (
               <button
@@ -241,7 +247,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
                   aria-hidden="true"
                   className={`h-px origin-right rounded-full transition-[width,background-color,opacity] duration-200 ease-out motion-reduce:transition-none ${active ? "bg-foreground/85" : anchor.role === "user" ? "bg-muted-foreground/65" : "bg-muted-foreground/45 group-hover/tick:bg-foreground/70"}`}
                   style={{
-                    width: active || previewed ? "58%" : baseWidth,
+                    width: active || previewed ? ANCHOR_WIDTH.emphasized : baseWidth,
                     opacity: previewAnchorId === null || previewed ? 1 : 0.72,
                   }}
                 />
@@ -253,7 +259,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
 
         <button
           type="button"
-          aria-label={t("chat.nextTurn")}
+          aria-label={t("chat.nextMessage")}
           disabled={activeIndex === anchors.length - 1}
           onClick={() => navigateByAnchor(1)}
           className="mt-px flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:invisible"
@@ -266,7 +272,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
         <div
           ref={previewRef}
           data-testid="conversation-anchor-preview"
-          className={`pointer-events-none fixed z-30 w-56 max-w-[calc(100vw-var(--spacing)*6)] -translate-y-1/2 rounded-lg border border-border/70 bg-popover/95 p-3 text-left text-popover-foreground shadow-lg backdrop-blur-md ${preview.left === undefined ? "invisible" : "animate-in duration-150 fade-in slide-in-from-right-1 motion-reduce:animate-none"}`}
+          className={`pointer-events-none fixed z-30 w-56 max-w-[calc(100vw-var(--spacing)*6)] -translate-y-1/2 rounded-lg border border-border/70 bg-popover/95 p-3 text-left text-popover-foreground shadow-lg backdrop-blur-md ${preview.left === undefined ? "invisible" : "animate-preview-fade-in motion-reduce:animate-none"}`}
           style={{ left: preview.left ?? preview.anchorLeft, top: preview.top ?? preview.anchorTop }}
         >
           <p className="mb-1 text-[11px] text-muted-foreground">{previewAnchor.label}</p>
