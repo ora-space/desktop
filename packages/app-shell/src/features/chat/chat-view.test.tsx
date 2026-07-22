@@ -192,7 +192,18 @@ describe("MessageList", () => {
 
     const navigation = screen.getByRole("navigation", { name: /对话历史|Conversation history/ });
     expect(navigation).toHaveClass("fixed");
-    expect(screen.getByTestId("conversation-anchor-list")).toHaveClass("max-h-48", "overflow-y-auto");
+    const anchorList = screen.getByTestId("conversation-anchor-list");
+    expect(anchorList).toHaveClass("max-h-48", "overflow-y-auto");
+    expect(anchorList).not.toHaveClass("gap-2");
+    Object.defineProperty(anchorList, "scrollHeight", { configurable: true, value: 400 });
+    Object.defineProperty(anchorList, "clientHeight", { configurable: true, value: 192 });
+    const firstTick = anchorList.querySelector<HTMLElement>("[data-conversation-tick]");
+    Object.defineProperty(firstTick, "offsetHeight", { configurable: true, value: 20 });
+    anchorList.scrollTop = 0;
+    fireEvent.wheel(anchorList, { deltaY: 120 });
+    expect(anchorList.scrollTop).toBe(60);
+    fireEvent.wheel(anchorList, { deltaY: -120 });
+    expect(anchorList.scrollTop).toBe(0);
     const secondQuestionButton = screen.getByRole("button", { name: /问题 2：Review the implementation|Question 2: Review the implementation/i });
     const secondResponseButton = screen.getByRole("button", { name: /回复 2：Done|Response 2: Done/i });
     const thirdResponseButton = screen.getByRole("button", { name: /回复 3：Done|Response 3: Done/i });
@@ -202,17 +213,20 @@ describe("MessageList", () => {
 
     const secondQuestionLine = secondQuestionButton.firstElementChild as HTMLElement;
     const secondResponseLine = secondResponseButton.firstElementChild as HTMLElement;
-    expect(secondQuestionLine).toHaveStyle({ width: "16px" });
-    expect(secondResponseLine).toHaveStyle({ width: "10px" });
+    expect(secondQuestionButton).toHaveClass("h-5", "shrink-0");
+    expect(secondQuestionLine).toHaveStyle({ width: "66%" });
+    expect(secondResponseLine).toHaveStyle({ width: "42%" });
     vi.spyOn(secondQuestionButton, "getBoundingClientRect").mockReturnValue({ left: 600, top: 210, height: 12 } as DOMRect);
+    const elementRectSpy = vi.spyOn(HTMLDivElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 224, height: 80 } as DOMRect);
     await user.hover(secondQuestionButton);
     const preview = screen.getByTestId("conversation-anchor-preview");
+    expect(preview).toHaveStyle({ left: "368px", top: "216px" });
     expect(preview).toHaveTextContent("Review the implementation");
-    expect(preview).toHaveStyle({ left: "592px", top: "216px" });
-    expect(secondQuestionLine).toHaveStyle({ width: "20px" });
-    expect(secondResponseLine).toHaveStyle({ width: "10px" });
+    expect(secondQuestionLine).toHaveStyle({ width: "calc(100% - var(--spacing) * 2)" });
+    expect(secondResponseLine).toHaveStyle({ width: "42%" });
     await user.unhover(secondQuestionButton);
     expect(screen.queryByTestId("conversation-anchor-preview")).not.toBeInTheDocument();
+    elementRectSpy.mockRestore();
 
     const list = screen.getByTestId("message-list");
     const secondQuestion = list.querySelector<HTMLElement>('[data-conversation-anchor="turn-2:user"]');
@@ -242,7 +256,7 @@ describe("MessageList", () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 228, behavior: "smooth" });
     expect(animateQuestion).toHaveBeenCalledWith(
       expect.any(Array),
-      expect.objectContaining({ duration: 3000, easing: expect.any(String) }),
+      expect.objectContaining({ duration: 4000, easing: expect.any(String) }),
     );
     expect(animateResponse).not.toHaveBeenCalled();
     expect(secondQuestionButton).toHaveAttribute("aria-current", "location");

@@ -121,11 +121,11 @@ function highlightTurn(anchor: HTMLElement, reduceMotion: boolean) {
         ]
       : [
           { strokeDashoffset: 1, opacity: 0, offset: 0 },
-          { strokeDashoffset: 0, opacity: 0.72, offset: 0.2 },
-          { strokeDashoffset: 0, opacity: 0.72, offset: 0.67 },
+          { strokeDashoffset: 0, opacity: 0.72, offset: 0.15 },
+          { strokeDashoffset: 0, opacity: 0.72, offset: 0.75 },
           { strokeDashoffset: 0, opacity: 0, offset: 1 },
         ],
-    { duration: reduceMotion ? 250 : 3000, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+    { duration: reduceMotion ? 250 : 4000, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
   );
 }
 
