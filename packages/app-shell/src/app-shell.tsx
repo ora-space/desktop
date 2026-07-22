@@ -25,6 +25,7 @@ import { AppI18nProvider } from "./i18n/i18n";
 import { CURRENT_USER } from "./lib/mock-data";
 import type { CurrentUser } from "./lib/types";
 import { createAppQueryClient } from "./state/query-client";
+import { useSessionUnreadSync } from "./state/hooks/use-session-unread-sync";
 import { useUiStore } from "./state/stores/ui-store";
 import { startThemeSubscription } from "./state/stores/settings-store";
 import { useTranslation } from "react-i18next";
@@ -58,6 +59,8 @@ export function AppShell({ client, chatStore, platform, user = CURRENT_USER }: A
 function AppShellContent({ client, chatStore, platform, user }: Required<AppShellProps>) {
   // Mirror theme/density onto <html> for the shell's lifetime.
   useEffect(() => startThemeSubscription(), []);
+  // Track which sessions finished a turn while the user was looking elsewhere.
+  useSessionUnreadSync(chatStore);
 
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const { i18n, t } = useTranslation();

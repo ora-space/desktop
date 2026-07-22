@@ -9,6 +9,7 @@ import { createMockClient, createMockClientState, type MockClientState } from ".
 import { createHookWrapper, createTestQueryClient } from "../../test/hook-harness";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useUnreadSessionsStore } from "../../state/stores/unread-sessions-store";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 
 const USER = { name: "Eric", email: "eric@example.com" };
@@ -67,6 +68,7 @@ function workspaceWithOneSession(): MockClientState {
 beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
   useUiStore.setState({ expandedProjects: new Set(), expandedTasks: new Set() });
+  useUnreadSessionsStore.setState({ unread: new Set() });
 });
 
 /**
@@ -158,5 +160,32 @@ describe("WorkspaceSidebar", () => {
       conversations: { [SESSION.id]: conversation({ isResponding: false }) },
     }));
     await waitFor(() => expect(workingIndicator()).toBeNull());
+  });
+
+  // Matches the unread-mark aria-label in either shipped locale.
+  const unreadMark = () => screen.queryByLabelText(/有未读更新|Unread/);
+
+  it("shows an unread mark for an idle session flagged unread", async () => {
+    useUnreadSessionsStore.setState({ unread: new Set([SESSION.id]) });
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => expect(treeRow(SESSION.agentCli)).not.toBeNull());
+    expect(unreadMark()).not.toBeNull();
+    // The working animation is a distinct, higher-priority state.
+    expect(workingIndicator()).toBeNull();
+  });
+
+  it("prefers the working animation over the unread mark while responding", async () => {
+    useUnreadSessionsStore.setState({ unread: new Set([SESSION.id]) });
+    const store = createChatStore(createMockClient(createMockClientState()).session);
+    const { chatStore } = renderSidebar(workspaceWithOneSession(), store);
+    await waitFor(() => expect(treeRow(SESSION.agentCli)).not.toBeNull());
+
+    act(() => chatStore.setState({
+      conversations: { [SESSION.id]: conversation({ isResponding: true }) },
+    }));
+
+    await waitFor(() => expect(workingIndicator()).not.toBeNull());
+    expect(unreadMark()).toBeNull();
   });
 });

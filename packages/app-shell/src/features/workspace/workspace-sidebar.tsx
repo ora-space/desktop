@@ -36,6 +36,7 @@ import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useUnreadSessionsStore } from "../../state/stores/unread-sessions-store";
 import { OraMark } from "../../components/ora-mark";
 import { useChatStore } from "../../chat-store-context";
 
@@ -55,6 +56,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   const sessionsQuery = useSessions();
   const chatStore = useChatStore();
   const conversations = useStore(chatStore, (state) => state.conversations);
+  const unread = useUnreadSessionsStore((s) => s.unread);
   // Stabilise the array references so useMemo dependencies don't change every render.
   const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
   const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data]);
@@ -247,12 +249,15 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                               // The dots mean "the agent is working right now", which is the
                               // live prompt activity in the chat store - not session.status,
                               // which tracks whether the backing process is alive and so stays
-                              // "running" through every idle gap between turns.
+                              // "running" through every idle gap between turns. Once it stops,
+                              // the same slot carries an unread mark until the session is opened.
                               icon={conversations[session.id]?.pendingPermissions.length
                                 ? <IconAlertTriangle className="size-4 text-amber-500" aria-label={t("sidebar.permissionRequired")} />
                                 : conversations[session.id]?.isResponding
                                   ? <AgentActivityDots label={t("common.running")} />
-                                  : null}
+                                  : unread.has(session.id)
+                                    ? <UnreadDot label={t("sidebar.unread")} />
+                                    : null}
                               label={session.agentCli}
                               onClick={() => selectSession(session.id, task.id, project.id)}
                               menu={(
@@ -325,6 +330,25 @@ function AgentActivityDots({ label }: { label: string }) {
         />
       ))}
     </span>
+  );
+}
+
+/**
+ * Marks a session that finished a turn the user has not opened yet.
+ *
+ * A single filled blue dot - `sky`, the same blue the chat surface already uses
+ * for tool-call chrome - so it reads as "new here" and stays clear of the status
+ * colours (emerald means running, amber means a permission is waiting). It sits
+ * in the icon slot the activity dots vacate when the turn ends, so a row never
+ * shows both at once.
+ */
+function UnreadDot({ label }: { label: string }) {
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      className="size-1.5 rounded-full bg-sky-500"
+    />
   );
 }
 
