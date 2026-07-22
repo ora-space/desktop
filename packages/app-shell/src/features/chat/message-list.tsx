@@ -13,10 +13,20 @@ interface MessageListProps {
   isResponding: boolean;
 }
 
+const NAVIGATION_TOP_OFFSET_PX = 12;
+const TAIL_PROXIMITY_PX = 24;
+const NAVIGATION_ARRIVAL_TOLERANCE_PX = 1;
+
+interface PendingNavigation {
+  anchorId: string;
+  scrollTop: number;
+}
+
 /** The scrollable turn thread, kept pinned to live ACP activity unless the reader scrolls away. */
 export function MessageList({ turns, userName, isResponding }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followTailRef = useRef(true);
+  const pendingNavigationRef = useRef<PendingNavigation | null>(null);
   const lastTurn = turns.at(-1);
   const lastAnchorId = lastTurn === undefined
     ? null
@@ -34,13 +44,27 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
   const handleScroll = () => {
     const element = scrollRef.current;
     if (!element) return;
-    followTailRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+    followTailRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < TAIL_PROXIMITY_PX;
+    const pendingNavigation = pendingNavigationRef.current;
+    if (pendingNavigation) {
+      const maximumScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const destination = Math.min(pendingNavigation.scrollTop, maximumScrollTop);
+      if (Math.abs(element.scrollTop - destination) <= NAVIGATION_ARRIVAL_TOLERANCE_PX) {
+        pendingNavigationRef.current = null;
+      }
+      return;
+    }
     const nextAnchorId = findActiveAnchorId(element);
     setNavigation((current) => (
       current.activeAnchorId === nextAnchorId && current.lastAnchorId === lastAnchorId
         ? current
         : { activeAnchorId: nextAnchorId, lastAnchorId }
     ));
+  };
+
+  /** Returns control to position-based tracking when the reader manually moves the thread. */
+  const cancelPendingNavigation = () => {
+    pendingNavigationRef.current = null;
   };
 
   useEffect(() => {
@@ -65,8 +89,9 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
     if (!anchor) return;
 
     followTailRef.current = false;
+    const top = Math.max(0, anchor.offsetTop - NAVIGATION_TOP_OFFSET_PX);
+    pendingNavigationRef.current = { anchorId, scrollTop: top };
     setNavigation({ activeAnchorId: anchorId, lastAnchorId });
-    const top = Math.max(0, anchor.offsetTop - 12);
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const behavior = reduceMotion ? "auto" : "smooth";
     if (typeof element.scrollTo === "function") element.scrollTo({ top, behavior });
@@ -79,6 +104,9 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
       <div
         ref={scrollRef}
         onScroll={handleScroll}
+        onWheel={cancelPendingNavigation}
+        onPointerDown={cancelPendingNavigation}
+        onTouchStart={cancelPendingNavigation}
         data-testid="message-list"
         aria-live="polite"
         className="scrollbar-hide h-full min-h-0 animate-in overflow-y-auto fade-in duration-500"
@@ -116,28 +144,29 @@ function highlightTurn(anchor: HTMLElement, reduceMotion: boolean) {
   outline.animate(
     reduceMotion
       ? [
-          { strokeDashoffset: 0, opacity: 0.65 },
+          { strokeDashoffset: 0, opacity: 0.82 },
           { strokeDashoffset: 0, opacity: 0 },
         ]
       : [
           { strokeDashoffset: 1, opacity: 0, offset: 0 },
-          { strokeDashoffset: 0, opacity: 0.72, offset: 0.15 },
-          { strokeDashoffset: 0, opacity: 0.72, offset: 0.75 },
+          { strokeDashoffset: 0, opacity: 0.9, offset: 0.15 },
+          { strokeDashoffset: 0, opacity: 0.9, offset: 0.75 },
           { strokeDashoffset: 0, opacity: 0, offset: 1 },
         ],
     { duration: reduceMotion ? 250 : 4000, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
   );
 }
 
-/** Finds the last prompt or response that crossed the reading line near the viewport top. */
+/** Finds the prompt or response aligned with the navigator's viewport-top destination. */
 function findActiveAnchorId(element: HTMLDivElement): string | null {
   const anchors = Array.from(element.querySelectorAll<HTMLElement>("[data-conversation-anchor]"));
   if (anchors.length === 0) return null;
-  if (element.scrollHeight - element.scrollTop - element.clientHeight < 24) {
+  if (element.scrollHeight - element.scrollTop - element.clientHeight < TAIL_PROXIMITY_PX) {
     return anchors.at(-1)?.dataset.conversationAnchor ?? null;
   }
 
-  const readingLine = element.scrollTop + Math.min(element.clientHeight * 0.3, 180);
+  // Sharing the jump offset prevents a prompt at the top from being mistaken for its following response.
+  const readingLine = element.scrollTop + NAVIGATION_TOP_OFFSET_PX;
   let activeAnchorId = anchors[0]?.dataset.conversationAnchor ?? null;
   for (const anchor of anchors) {
     if (anchor.offsetTop > readingLine) break;

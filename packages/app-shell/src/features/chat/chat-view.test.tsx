@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ChatTurn } from "@ora/chat";
@@ -201,29 +201,69 @@ describe("MessageList", () => {
     Object.defineProperty(firstTick, "offsetHeight", { configurable: true, value: 20 });
     anchorList.scrollTop = 0;
     fireEvent.wheel(anchorList, { deltaY: 120 });
-    expect(anchorList.scrollTop).toBe(60);
+    expect(anchorList.scrollTop).toBe(20);
     fireEvent.wheel(anchorList, { deltaY: -120 });
     expect(anchorList.scrollTop).toBe(0);
     const secondQuestionButton = screen.getByRole("button", { name: /问题 2：Review the implementation|Question 2: Review the implementation/i });
     const secondResponseButton = screen.getByRole("button", { name: /回复 2：Done|Response 2: Done/i });
+    const thirdQuestionButton = screen.getByRole("button", { name: /问题 3：Run the test suite|Question 3: Run the test suite/i });
     const thirdResponseButton = screen.getByRole("button", { name: /回复 3：Done|Response 3: Done/i });
-    const previousTurnButton = screen.getByRole("button", { name: /上一轮对话|Previous turn/ });
+    const previousTurnButton = screen.getByRole("button", { name: /上一条消息|Previous message/ });
+    const nextTurnButton = screen.getByRole("button", { name: /下一条消息|Next message/ });
     expect(thirdResponseButton).toHaveAttribute("aria-current", "location");
     expect(previousTurnButton).toHaveClass("opacity-0");
 
     const secondQuestionLine = secondQuestionButton.firstElementChild as HTMLElement;
     const secondResponseLine = secondResponseButton.firstElementChild as HTMLElement;
-    expect(secondQuestionButton).toHaveClass("h-[18px]", "shrink-0");
-    expect(secondQuestionLine).toHaveStyle({ width: "52%" });
-    expect(secondResponseLine).toHaveStyle({ width: "32%" });
+    expect(secondQuestionButton).toHaveClass("h-4", "shrink-0");
+    expect(secondQuestionLine).toHaveStyle({ width: "28%" });
+    expect(secondResponseLine).toHaveStyle({ width: "46%" });
     vi.spyOn(secondQuestionButton, "getBoundingClientRect").mockReturnValue({ left: 600, top: 210, height: 12 } as DOMRect);
     const elementRectSpy = vi.spyOn(HTMLDivElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 224, height: 80 } as DOMRect);
     await user.hover(secondQuestionButton);
     const preview = screen.getByTestId("conversation-anchor-preview");
     expect(preview).toHaveStyle({ left: "368px", top: "216px" });
     expect(preview).toHaveTextContent("Review the implementation");
-    expect(secondQuestionLine).toHaveStyle({ width: "64%" });
-    expect(secondResponseLine).toHaveStyle({ width: "32%" });
+    expect(secondQuestionLine).toHaveStyle({ width: "58%" });
+    expect(secondResponseLine).toHaveStyle({ width: "46%" });
+
+    vi.spyOn(secondQuestionButton, "getBoundingClientRect").mockImplementation(() => ({
+      left: 600,
+      top: 210 - anchorList.scrollTop,
+      bottom: 226 - anchorList.scrollTop,
+      height: 16,
+    }) as DOMRect);
+    vi.spyOn(secondResponseButton, "getBoundingClientRect").mockImplementation(() => ({
+      left: 600,
+      top: 226 - anchorList.scrollTop,
+      bottom: 242 - anchorList.scrollTop,
+      height: 16,
+    }) as DOMRect);
+    fireEvent.mouseMove(anchorList, { clientX: 610, clientY: 218 });
+    fireEvent.wheel(anchorList, { clientX: 610, clientY: 218, deltaY: 16 });
+    await waitFor(() => expect(screen.getByTestId("conversation-anchor-preview")).toHaveTextContent("Done"));
+    expect(screen.getByTestId("conversation-anchor-preview")).toBe(preview);
+    expect(preview).not.toHaveClass("invisible");
+
+    const maximumScrollTop = anchorList.scrollHeight - anchorList.clientHeight;
+    let boundedScrollTop = maximumScrollTop;
+    Object.defineProperty(anchorList, "scrollTop", {
+      configurable: true,
+      get: () => boundedScrollTop,
+      set: (value: number) => {
+        boundedScrollTop = Math.max(0, Math.min(maximumScrollTop, value));
+      },
+    });
+    const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame");
+    fireEvent.wheel(anchorList, { clientX: 610, clientY: 218, deltaY: 120 });
+    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("conversation-anchor-preview")).toHaveTextContent("Done");
+    boundedScrollTop = 0;
+    fireEvent.wheel(anchorList, { clientX: 610, clientY: 218, deltaY: -120 });
+    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("conversation-anchor-preview")).toHaveTextContent("Done");
+    requestAnimationFrameSpy.mockRestore();
+
     await user.unhover(secondQuestionButton);
     expect(screen.queryByTestId("conversation-anchor-preview")).not.toBeInTheDocument();
     elementRectSpy.mockRestore();
@@ -231,12 +271,15 @@ describe("MessageList", () => {
     const list = screen.getByTestId("message-list");
     const secondQuestion = list.querySelector<HTMLElement>('[data-conversation-anchor="turn-2:user"]');
     const secondResponse = list.querySelector<HTMLElement>('[data-conversation-anchor="turn-2:response"]');
+    const thirdQuestion = list.querySelector<HTMLElement>('[data-conversation-anchor="turn-3:user"]');
     const thirdResponse = list.querySelector<HTMLElement>('[data-conversation-anchor="turn-3:response"]');
     expect(secondQuestion).not.toBeNull();
     expect(secondResponse).not.toBeNull();
+    expect(thirdQuestion).not.toBeNull();
     expect(thirdResponse).not.toBeNull();
     Object.defineProperty(secondQuestion, "offsetTop", { configurable: true, value: 240 });
     Object.defineProperty(secondResponse, "offsetTop", { configurable: true, value: 360 });
+    Object.defineProperty(thirdQuestion, "offsetTop", { configurable: true, value: 480 });
     Object.defineProperty(thirdResponse, "offsetTop", { configurable: true, value: 600 });
     const scrollTo = vi.fn();
     const animateQuestion = vi.fn();
@@ -250,12 +293,50 @@ describe("MessageList", () => {
     Object.defineProperty(questionOutline, "getAnimations", { configurable: true, value: () => [] });
     Object.defineProperty(responseOutline, "animate", { configurable: true, value: animateResponse });
     Object.defineProperty(responseOutline, "getAnimations", { configurable: true, value: () => [] });
+    expect(questionOutline?.parentElement).toHaveClass("text-foreground/80");
+
+    await user.click(previousTurnButton);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 468, behavior: "smooth" });
+    expect(thirdQuestionButton).toHaveAttribute("aria-current", "location");
+
+    await user.click(previousTurnButton);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 348, behavior: "smooth" });
+    expect(secondResponseButton).toHaveAttribute("aria-current", "location");
+
+    await user.click(nextTurnButton);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 468, behavior: "smooth" });
+    expect(thirdQuestionButton).toHaveAttribute("aria-current", "location");
+
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 900 });
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 300 });
+    list.scrollTop = 468;
+    fireEvent.scroll(list);
+    expect(thirdQuestionButton).toHaveAttribute("aria-current", "location");
+
+    await user.click(nextTurnButton);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 588, behavior: "smooth" });
+    expect(thirdResponseButton).toHaveAttribute("aria-current", "location");
+
+    list.scrollTop = 540;
+    fireEvent.scroll(list);
+    expect(thirdResponseButton).toHaveAttribute("aria-current", "location");
+
+    fireEvent.wheel(list, { deltaY: -120 });
+    list.scrollTop = 468;
+    fireEvent.scroll(list);
+    await user.click(previousTurnButton);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 348, behavior: "smooth" });
+    expect(secondResponseButton).toHaveAttribute("aria-current", "location");
+    animateQuestion.mockClear();
+    animateResponse.mockClear();
 
     await user.click(secondQuestionButton);
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 228, behavior: "smooth" });
     expect(animateQuestion).toHaveBeenCalledWith(
-      expect.any(Array),
+      expect.arrayContaining([
+        expect.objectContaining({ opacity: 0.9 }),
+      ]),
       expect.objectContaining({ duration: 4000, easing: expect.any(String) }),
     );
     expect(animateResponse).not.toHaveBeenCalled();
@@ -267,12 +348,11 @@ describe("MessageList", () => {
     expect(animateResponse).toHaveBeenCalled();
     expect(secondResponseButton).toHaveAttribute("aria-current", "location");
 
-    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 900 });
-    Object.defineProperty(list, "clientHeight", { configurable: true, value: 300 });
+    fireEvent.wheel(list, { deltaY: 120 });
     list.scrollTop = 520;
     fireEvent.scroll(list);
 
-    expect(thirdResponseButton).toHaveAttribute("aria-current", "location");
+    expect(thirdQuestionButton).toHaveAttribute("aria-current", "location");
   });
 
   it("keeps the conversation navigator out of short threads", () => {
@@ -283,15 +363,17 @@ describe("MessageList", () => {
 
   it("smoothly makes room for new anchors after the minimap reaches its height limit", () => {
     const scrollHeightSpy = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function () {
-      if (this.dataset.testid === "conversation-anchor-list") return this.querySelectorAll("[data-conversation-tick]").length * 18;
-      if (this.dataset.testid === "conversation-anchor-track") return this.children.length * 18;
+      if (this.dataset.testid === "conversation-anchor-list") return this.querySelectorAll("[data-conversation-tick]").length * 16;
+      if (this.dataset.testid === "conversation-anchor-track") return this.children.length * 16;
       return 0;
     });
     const clientHeightSpy = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function () {
       return this.dataset.testid === "conversation-anchor-list" ? 192 : 0;
     });
     const animate = vi.fn();
+    const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
     const createTurns = (count: number) => Array.from({ length: count }, (_, index) => createTurn({
       id: `overflow-turn-${index + 1}`,
       userMessage: { kind: "message", id: `overflow-user-${index + 1}`, role: "user", content: `Prompt ${index + 1}`, createdAt: 100 + index },
@@ -305,14 +387,17 @@ describe("MessageList", () => {
       </AppI18nProvider>,
     );
 
+    expect(screen.getByTestId("conversation-anchor-track").querySelectorAll("[data-conversation-tick]")).toHaveLength(22);
     expect(animate).toHaveBeenCalledWith(
-      [{ transform: "translateY(36px)" }, { transform: "translateY(0)" }],
+      [{ transform: "translateY(32px)" }, { transform: "translateY(0)" }],
       expect.objectContaining({ duration: 240, easing: expect.any(String) }),
     );
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
 
     scrollHeightSpy.mockRestore();
     clientHeightSpy.mockRestore();
     Reflect.deleteProperty(HTMLElement.prototype, "animate");
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   });
 
   it("truncates long anchor previews without shortening their accessible names", async () => {
