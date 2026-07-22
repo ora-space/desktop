@@ -30,23 +30,67 @@ const PREVIEW_MAX_CHARACTERS = 120;
 const PREVIEW_GAP_PX = 8;
 const VIEWPORT_MARGIN_PX = 12;
 const WHEEL_ANCHORS_PER_STEP = 3;
+const TRACK_SHIFT_DURATION_MS = 240;
+const NEW_ANCHOR_DURATION_MS = 180;
 
 /** Renders a Grok-style minimap with separate beats for prompts and responses. */
 export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: ConversationNavigatorProps) {
   const { t } = useTranslation();
   const anchorListRef = useRef<HTMLDivElement>(null);
+  const anchorTrackRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const previousAnchorCountRef = useRef<number | null>(null);
+  const previousTrackHeightRef = useRef(0);
   const [preview, setPreview] = useState<AnchorPreview | null>(null);
   const anchors = conversationAnchors(turns, t);
   const previewAnchorId = preview?.anchorId ?? null;
   const previewAnchor = anchors.find((anchor) => anchor.id === previewAnchorId);
+  const lastGeneratedAnchorId = anchors.at(-1)?.id;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const list = anchorListRef.current;
+    const track = anchorTrackRef.current;
     const activeButton = anchorListRef.current?.querySelector<HTMLElement>('[aria-current="location"]');
-    if (activeButton && typeof activeButton.scrollIntoView === "function") {
+    if (!list || !track) return;
+
+    const previousCount = previousAnchorCountRef.current;
+    const addedCount = previousCount === null ? 0 : Math.max(0, anchors.length - previousCount);
+    const previousHeight = previousTrackHeightRef.current;
+    const trackHeight = track.scrollHeight;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (addedCount > 0 && activeAnchorId === lastGeneratedAnchorId) {
+      const overflows = list.scrollHeight > list.clientHeight;
+      if (overflows) {
+        list.scrollTop = list.scrollHeight - list.clientHeight;
+        const shift = Math.max(0, trackHeight - previousHeight);
+        if (!reduceMotion && shift > 0 && typeof track.animate === "function") {
+          track.animate(
+            [{ transform: `translateY(${shift}px)` }, { transform: "translateY(0)" }],
+            { duration: TRACK_SHIFT_DURATION_MS, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+          );
+        }
+      } else if (activeButton && typeof activeButton.scrollIntoView === "function") {
+        activeButton.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+      }
+
+      if (!reduceMotion) {
+        const newButtons = Array.from(track.querySelectorAll<HTMLElement>("[data-conversation-tick]")).slice(-addedCount);
+        for (const button of newButtons) {
+          if (typeof button.animate !== "function") continue;
+          button.animate(
+            [{ opacity: 0, transform: "translateY(3px)" }, { opacity: 1, transform: "translateY(0)" }],
+            { duration: NEW_ANCHOR_DURATION_MS, easing: "ease-out" },
+          );
+        }
+      }
+    } else if (activeButton && typeof activeButton.scrollIntoView === "function") {
       activeButton.scrollIntoView({ block: "nearest" });
     }
-  }, [activeAnchorId, anchors.length]);
+
+    previousAnchorCountRef.current = anchors.length;
+    previousTrackHeightRef.current = trackHeight;
+  }, [activeAnchorId, anchors.length, lastGeneratedAnchorId]);
 
   useEffect(() => {
     const list = anchorListRef.current;
@@ -121,12 +165,13 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
           data-testid="conversation-anchor-list"
           onMouseLeave={() => setPreview(null)}
           onScroll={() => setPreview(null)}
-          className="scrollbar-hide flex max-h-48 flex-col items-end overflow-y-auto overscroll-contain py-px"
+          className="scrollbar-hide max-h-48 overflow-y-auto overscroll-contain py-px"
         >
+          <div ref={anchorTrackRef} data-testid="conversation-anchor-track" className="flex flex-col items-end">
           {anchors.map((anchor) => {
             const active = anchor.id === activeAnchorId;
             const previewed = anchor.id === previewAnchorId;
-            const baseWidth = anchor.role === "user" ? "66%" : "42%";
+            const baseWidth = anchor.role === "user" ? "52%" : "32%";
 
             return (
               <button
@@ -139,19 +184,20 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
                 onBlur={() => setPreview(null)}
                 onClick={() => onNavigate(anchor.id)}
                 data-conversation-tick
-                className="group/tick relative flex h-5 w-7 shrink-0 cursor-pointer items-center justify-end rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="group/tick relative flex h-[18px] w-7 shrink-0 cursor-pointer items-center justify-end rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span
                   aria-hidden="true"
                   className={`h-px origin-right rounded-full transition-[width,background-color,opacity] duration-200 ease-out motion-reduce:transition-none ${active ? "bg-foreground/85" : anchor.role === "user" ? "bg-muted-foreground/65" : "bg-muted-foreground/45 group-hover/tick:bg-foreground/70"}`}
                   style={{
-                    width: active || previewed ? "calc(100% - var(--spacing) * 2)" : baseWidth,
+                    width: active || previewed ? "64%" : baseWidth,
                     opacity: previewAnchorId === null || previewed ? 1 : 0.72,
                   }}
                 />
               </button>
             );
           })}
+          </div>
         </div>
 
         <button
