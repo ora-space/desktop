@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -29,7 +29,7 @@ interface AnchorPreview {
 const PREVIEW_MAX_CHARACTERS = 120;
 const PREVIEW_GAP_PX = 8;
 const VIEWPORT_MARGIN_PX = 12;
-const WHEEL_ANCHORS_PER_STEP = 3;
+const WHEEL_ANCHORS_PER_STEP = 1;
 const TRACK_SHIFT_DURATION_MS = 240;
 const NEW_ANCHOR_DURATION_MS = 180;
 
@@ -39,6 +39,8 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
   const anchorListRef = useRef<HTMLDivElement>(null);
   const anchorTrackRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const pointerPositionRef = useRef<{ y: number } | null>(null);
+  const previewSyncFrameRef = useRef<number | null>(null);
   const previousAnchorCountRef = useRef<number | null>(null);
   const previousTrackHeightRef = useRef(0);
   const [preview, setPreview] = useState<AnchorPreview | null>(null);
@@ -46,6 +48,50 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
   const previewAnchorId = preview?.anchorId ?? null;
   const previewAnchor = anchors.find((anchor) => anchor.id === previewAnchorId);
   const lastGeneratedAnchorId = anchors.at(-1)?.id;
+
+  /** Positions the preview beside the actual tick while keeping it inside the viewport. */
+  const showPreview = useCallback((anchorId: string, target: HTMLElement) => {
+    const bounds = target.getBoundingClientRect();
+    const anchorTop = bounds.top + bounds.height / 2;
+    setPreview((current) => {
+      if (current?.anchorId === anchorId && current.anchorLeft === bounds.left && current.anchorTop === anchorTop) {
+        return current;
+      }
+      return {
+        anchorId,
+        anchorLeft: bounds.left,
+        anchorTop,
+        left: current?.left,
+        top: current?.top,
+      };
+    });
+  }, []);
+
+  /** Re-resolves the tick beneath a stationary pointer after the scroll track moves. */
+  const syncPreviewWithPointer = useCallback(() => {
+    if (!anchorListRef.current || !pointerPositionRef.current) {
+      setPreview(null);
+      return;
+    }
+    if (previewSyncFrameRef.current !== null) window.cancelAnimationFrame(previewSyncFrameRef.current);
+    previewSyncFrameRef.current = window.requestAnimationFrame(() => {
+      previewSyncFrameRef.current = null;
+      const list = anchorListRef.current;
+      const pointer = pointerPositionRef.current;
+      if (!list || !pointer) {
+        setPreview(null);
+        return;
+      }
+
+      const hoveredTick = Array.from(list.querySelectorAll<HTMLElement>("[data-conversation-tick]")).find((tick) => {
+        const bounds = tick.getBoundingClientRect();
+        return pointer.y >= bounds.top && pointer.y < bounds.bottom;
+      });
+      const anchorId = hoveredTick?.dataset.conversationAnchorId;
+      if (hoveredTick && anchorId) showPreview(anchorId, hoveredTick);
+      else setPreview(null);
+    });
+  }, [showPreview]);
 
   useLayoutEffect(() => {
     const list = anchorListRef.current;
@@ -85,7 +131,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
         }
       }
     } else if (activeButton && typeof activeButton.scrollIntoView === "function") {
-      activeButton.scrollIntoView({ block: "nearest" });
+      activeButton.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
     }
 
     previousAnchorCountRef.current = anchors.length;
@@ -101,46 +147,41 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
       event.stopPropagation();
       const anchorHeight = list.querySelector<HTMLElement>("[data-conversation-tick]")?.offsetHeight ?? 0;
       const maxStep = anchorHeight > 0 ? anchorHeight * WHEEL_ANCHORS_PER_STEP : list.clientHeight / 4;
+      const previousScrollTop = list.scrollTop;
       list.scrollTop += Math.max(-maxStep, Math.min(maxStep, event.deltaY));
-      setPreview(null);
+      if (list.scrollTop !== previousScrollTop) syncPreviewWithPointer();
     };
     list.addEventListener("wheel", handleWheel, { passive: false });
-    return () => list.removeEventListener("wheel", handleWheel);
-  }, [anchors.length]);
+    return () => {
+      list.removeEventListener("wheel", handleWheel);
+      if (previewSyncFrameRef.current !== null) window.cancelAnimationFrame(previewSyncFrameRef.current);
+    };
+  }, [anchors.length, syncPreviewWithPointer]);
 
   useLayoutEffect(() => {
     const element = previewRef.current;
-    if (!preview || !element || preview.left !== undefined) return;
+    if (!preview || !element) return;
     const bounds = element.getBoundingClientRect();
     const halfHeight = bounds.height / 2;
-    setPreview((current) => current === preview ? {
-      ...current,
-      left: Math.max(VIEWPORT_MARGIN_PX, current.anchorLeft - PREVIEW_GAP_PX - bounds.width),
-      top: Math.min(
+    const left = Math.max(VIEWPORT_MARGIN_PX, preview.anchorLeft - PREVIEW_GAP_PX - bounds.width);
+    const top = Math.min(
         window.innerHeight - VIEWPORT_MARGIN_PX - halfHeight,
-        Math.max(VIEWPORT_MARGIN_PX + halfHeight, current.anchorTop),
-      ),
-    } : current);
+        Math.max(VIEWPORT_MARGIN_PX + halfHeight, preview.anchorTop),
+      );
+    setPreview((current) => {
+      if (current !== preview || current.left === left && current.top === top) return current;
+      return { ...current, left, top };
+    });
   }, [preview]);
 
   if (turns.length < 3) return null;
 
   const activeIndex = Math.max(0, anchors.findIndex((anchor) => anchor.id === activeAnchorId));
 
-  /** Navigates by one message anchor while keeping the control inert at either end. */
-  const navigateBy = (offset: -1 | 1) => {
+  /** Moves through prompts and responses in the same order as the visible anchor track. */
+  const navigateByAnchor = (offset: -1 | 1) => {
     const nextAnchor = anchors[activeIndex + offset];
     if (nextAnchor) onNavigate(nextAnchor.id);
-  };
-
-  /** Positions the preview beside the actual tick while keeping it inside the viewport. */
-  const showPreview = (anchorId: string, target: HTMLElement) => {
-    const bounds = target.getBoundingClientRect();
-    setPreview({
-      anchorId,
-      anchorLeft: bounds.left,
-      anchorTop: bounds.top + bounds.height / 2,
-    });
   };
 
   return (
@@ -154,7 +195,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
           type="button"
           aria-label={t("chat.previousTurn")}
           disabled={activeIndex === 0}
-          onClick={() => navigateBy(-1)}
+          onClick={() => navigateByAnchor(-1)}
           className="mb-px flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:invisible"
         >
           <IconChevronUp className="size-3.5" />
@@ -163,15 +204,21 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
         <div
           ref={anchorListRef}
           data-testid="conversation-anchor-list"
-          onMouseLeave={() => setPreview(null)}
-          onScroll={() => setPreview(null)}
+          onMouseMove={(event) => {
+            pointerPositionRef.current = { y: event.clientY };
+          }}
+          onMouseLeave={() => {
+            pointerPositionRef.current = null;
+            setPreview(null);
+          }}
+          onScroll={syncPreviewWithPointer}
           className="scrollbar-hide max-h-48 overflow-y-auto overscroll-contain py-px"
         >
           <div ref={anchorTrackRef} data-testid="conversation-anchor-track" className="flex flex-col items-end">
           {anchors.map((anchor) => {
             const active = anchor.id === activeAnchorId;
             const previewed = anchor.id === previewAnchorId;
-            const baseWidth = anchor.role === "user" ? "52%" : "32%";
+            const baseWidth = anchor.role === "user" ? "28%" : "46%";
 
             return (
               <button
@@ -179,18 +226,22 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
                 type="button"
                 aria-label={t("chat.jumpToAnchor", { label: anchor.label, message: anchor.summary })}
                 aria-current={active ? "location" : undefined}
-                onMouseEnter={(event) => showPreview(anchor.id, event.currentTarget)}
+                onMouseEnter={(event) => {
+                  pointerPositionRef.current = { y: event.clientY };
+                  showPreview(anchor.id, event.currentTarget);
+                }}
                 onFocus={(event) => showPreview(anchor.id, event.currentTarget)}
                 onBlur={() => setPreview(null)}
                 onClick={() => onNavigate(anchor.id)}
                 data-conversation-tick
-                className="group/tick relative flex h-[18px] w-7 shrink-0 cursor-pointer items-center justify-end rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-conversation-anchor-id={anchor.id}
+                className="group/tick relative flex h-4 w-7 shrink-0 cursor-pointer items-center justify-end rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span
                   aria-hidden="true"
                   className={`h-px origin-right rounded-full transition-[width,background-color,opacity] duration-200 ease-out motion-reduce:transition-none ${active ? "bg-foreground/85" : anchor.role === "user" ? "bg-muted-foreground/65" : "bg-muted-foreground/45 group-hover/tick:bg-foreground/70"}`}
                   style={{
-                    width: active || previewed ? "64%" : baseWidth,
+                    width: active || previewed ? "58%" : baseWidth,
                     opacity: previewAnchorId === null || previewed ? 1 : 0.72,
                   }}
                 />
@@ -204,7 +255,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
           type="button"
           aria-label={t("chat.nextTurn")}
           disabled={activeIndex === anchors.length - 1}
-          onClick={() => navigateBy(1)}
+          onClick={() => navigateByAnchor(1)}
           className="mt-px flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:invisible"
         >
           <IconChevronDown className="size-3.5" />

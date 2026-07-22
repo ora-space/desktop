@@ -1,7 +1,7 @@
 /** Supplies the animated outline used by both user and Agent navigation targets. */
 export function AnchorHighlight() {
   return (
-    <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible text-foreground/55">
+    <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible text-foreground/80">
       <rect
         data-anchor-highlight
         x="0"
