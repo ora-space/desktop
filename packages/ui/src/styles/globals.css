@@ -48,6 +48,16 @@
   --animate-dot-column-top: dot-column-top 1.2s linear infinite;
   --animate-dot-column-middle: dot-column-middle 1.2s linear infinite;
   --animate-dot-column-bottom: dot-column-bottom 1.2s linear infinite;
+  --animate-preview-fade-in: preview-fade-in 220ms ease-out;
+}
+
+@keyframes preview-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /*

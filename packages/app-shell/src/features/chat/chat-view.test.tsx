@@ -208,10 +208,10 @@ describe("MessageList", () => {
     const secondResponseButton = screen.getByRole("button", { name: /回复 2：Done|Response 2: Done/i });
     const thirdQuestionButton = screen.getByRole("button", { name: /问题 3：Run the test suite|Question 3: Run the test suite/i });
     const thirdResponseButton = screen.getByRole("button", { name: /回复 3：Done|Response 3: Done/i });
-    const previousTurnButton = screen.getByRole("button", { name: /上一条消息|Previous message/ });
-    const nextTurnButton = screen.getByRole("button", { name: /下一条消息|Next message/ });
+    const previousMessageButton = screen.getByRole("button", { name: /上一条消息|Previous message/ });
+    const nextMessageButton = screen.getByRole("button", { name: /下一条消息|Next message/ });
     expect(thirdResponseButton).toHaveAttribute("aria-current", "location");
-    expect(previousTurnButton).toHaveClass("opacity-0");
+    expect(previousMessageButton).toHaveClass("opacity-0");
 
     const secondQuestionLine = secondQuestionButton.firstElementChild as HTMLElement;
     const secondResponseLine = secondResponseButton.firstElementChild as HTMLElement;
@@ -223,6 +223,8 @@ describe("MessageList", () => {
     await user.hover(secondQuestionButton);
     const preview = screen.getByTestId("conversation-anchor-preview");
     expect(preview).toHaveStyle({ left: "368px", top: "216px" });
+    expect(preview).toHaveClass("animate-preview-fade-in");
+    expect(preview).not.toHaveClass("animate-in", "slide-in-from-right-1");
     expect(preview).toHaveTextContent("Review the implementation");
     expect(secondQuestionLine).toHaveStyle({ width: "58%" });
     expect(secondResponseLine).toHaveStyle({ width: "46%" });
@@ -295,15 +297,15 @@ describe("MessageList", () => {
     Object.defineProperty(responseOutline, "getAnimations", { configurable: true, value: () => [] });
     expect(questionOutline?.parentElement).toHaveClass("text-foreground/80");
 
-    await user.click(previousTurnButton);
+    await user.click(previousMessageButton);
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 468, behavior: "smooth" });
     expect(thirdQuestionButton).toHaveAttribute("aria-current", "location");
 
-    await user.click(previousTurnButton);
+    await user.click(previousMessageButton);
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 348, behavior: "smooth" });
     expect(secondResponseButton).toHaveAttribute("aria-current", "location");
 
-    await user.click(nextTurnButton);
+    await user.click(nextMessageButton);
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 468, behavior: "smooth" });
     expect(thirdQuestionButton).toHaveAttribute("aria-current", "location");
 
@@ -313,7 +315,7 @@ describe("MessageList", () => {
     fireEvent.scroll(list);
     expect(thirdQuestionButton).toHaveAttribute("aria-current", "location");
 
-    await user.click(nextTurnButton);
+    await user.click(nextMessageButton);
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 588, behavior: "smooth" });
     expect(thirdResponseButton).toHaveAttribute("aria-current", "location");
 
@@ -324,7 +326,7 @@ describe("MessageList", () => {
     fireEvent.wheel(list, { deltaY: -120 });
     list.scrollTop = 468;
     fireEvent.scroll(list);
-    await user.click(previousTurnButton);
+    await user.click(previousMessageButton);
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 348, behavior: "smooth" });
     expect(secondResponseButton).toHaveAttribute("aria-current", "location");
     animateQuestion.mockClear();

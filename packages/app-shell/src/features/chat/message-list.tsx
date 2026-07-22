@@ -18,7 +18,6 @@ const TAIL_PROXIMITY_PX = 24;
 const NAVIGATION_ARRIVAL_TOLERANCE_PX = 1;
 
 interface PendingNavigation {
-  anchorId: string;
   scrollTop: number;
 }
 
@@ -90,7 +89,7 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
 
     followTailRef.current = false;
     const top = Math.max(0, anchor.offsetTop - NAVIGATION_TOP_OFFSET_PX);
-    pendingNavigationRef.current = { anchorId, scrollTop: top };
+    pendingNavigationRef.current = { scrollTop: top };
     setNavigation({ activeAnchorId: anchorId, lastAnchorId });
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const behavior = reduceMotion ? "auto" : "smooth";
