@@ -244,9 +244,13 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                               key={session.id}
                               depth={2}
                               active={selection.sessionId === session.id}
+                              // The dots mean "the agent is working right now", which is the
+                              // live prompt activity in the chat store - not session.status,
+                              // which tracks whether the backing process is alive and so stays
+                              // "running" through every idle gap between turns.
                               icon={conversations[session.id]?.pendingPermissions.length
                                 ? <IconAlertTriangle className="size-4 text-amber-500" aria-label={t("sidebar.permissionRequired")} />
-                                : session.status === "running"
+                                : conversations[session.id]?.isResponding
                                   ? <AgentActivityDots label={t("common.running")} />
                                   : null}
                               label={session.agentCli}

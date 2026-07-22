@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Project, Session, Task } from "@ora/contracts";
-import { createChatStore } from "@ora/chat";
+import { createChatStore, type ChatStore, type SessionConversation } from "@ora/chat";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createMockClient, createMockClientState, type MockClientState } from "../../test/mock-client";
@@ -24,22 +24,35 @@ const SESSION: Session = {
 };
 
 /** Renders the sidebar with the same provider stack AppShell gives it. */
-function renderSidebar(state: MockClientState) {
+function renderSidebar(state: MockClientState, chatStore?: ChatStore) {
   const client = createMockClient(state);
-  const Wrapper = createHookWrapper(
-    client,
-    createTestQueryClient(),
-    createChatStore(client.session),
-  );
-  return render(
-    <Wrapper>
-      <AppI18nProvider>
-        <TooltipProvider>
-          <WorkspaceSidebar user={USER} onSignOut={() => undefined} />
-        </TooltipProvider>
-      </AppI18nProvider>
-    </Wrapper>,
-  );
+  const store = chatStore ?? createChatStore(client.session);
+  const Wrapper = createHookWrapper(client, createTestQueryClient(), store);
+  return {
+    ...render(
+      <Wrapper>
+        <AppI18nProvider>
+          <TooltipProvider>
+            <WorkspaceSidebar user={USER} onSignOut={() => undefined} />
+          </TooltipProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    ),
+    chatStore: store,
+  };
+}
+
+/** Builds an idle conversation, overriding only the fields a test cares about. */
+function conversation(overrides: Partial<SessionConversation> = {}): SessionConversation {
+  return {
+    turns: [],
+    isLoaded: false,
+    isLoading: false,
+    isResponding: false,
+    pendingPermissions: [],
+    error: null,
+    ...overrides,
+  };
 }
 
 /** Populates the tree the collapse tests operate on. */
@@ -118,5 +131,32 @@ describe("WorkspaceSidebar", () => {
     await user.click(screen.getByText(PROJECT.name));
 
     await waitFor(() => expect(screen.queryByText(TASK.title)).toBeNull());
+  });
+
+  // Matches the working-indicator aria-label in either shipped locale.
+  const workingIndicator = () => screen.queryByLabelText(/运行中|Running/);
+
+  it("shows no working indicator for a session whose process is alive but idle", async () => {
+    // SESSION.status is "running" - the process is up - yet no turn is in flight.
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => expect(treeRow(SESSION.agentCli)).not.toBeNull());
+    expect(workingIndicator()).toBeNull();
+  });
+
+  it("shows the working indicator only while the session is responding", async () => {
+    const store = createChatStore(createMockClient(createMockClientState()).session);
+    const { chatStore } = renderSidebar(workspaceWithOneSession(), store);
+    await waitFor(() => expect(treeRow(SESSION.agentCli)).not.toBeNull());
+
+    act(() => chatStore.setState({
+      conversations: { [SESSION.id]: conversation({ isResponding: true }) },
+    }));
+    await waitFor(() => expect(workingIndicator()).not.toBeNull());
+
+    act(() => chatStore.setState({
+      conversations: { [SESSION.id]: conversation({ isResponding: false }) },
+    }));
+    await waitFor(() => expect(workingIndicator()).toBeNull());
   });
 });
