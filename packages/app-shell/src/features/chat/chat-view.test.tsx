@@ -213,17 +213,17 @@ describe("MessageList", () => {
 
     const secondQuestionLine = secondQuestionButton.firstElementChild as HTMLElement;
     const secondResponseLine = secondResponseButton.firstElementChild as HTMLElement;
-    expect(secondQuestionButton).toHaveClass("h-5", "shrink-0");
-    expect(secondQuestionLine).toHaveStyle({ width: "66%" });
-    expect(secondResponseLine).toHaveStyle({ width: "42%" });
+    expect(secondQuestionButton).toHaveClass("h-[18px]", "shrink-0");
+    expect(secondQuestionLine).toHaveStyle({ width: "52%" });
+    expect(secondResponseLine).toHaveStyle({ width: "32%" });
     vi.spyOn(secondQuestionButton, "getBoundingClientRect").mockReturnValue({ left: 600, top: 210, height: 12 } as DOMRect);
     const elementRectSpy = vi.spyOn(HTMLDivElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 224, height: 80 } as DOMRect);
     await user.hover(secondQuestionButton);
     const preview = screen.getByTestId("conversation-anchor-preview");
     expect(preview).toHaveStyle({ left: "368px", top: "216px" });
     expect(preview).toHaveTextContent("Review the implementation");
-    expect(secondQuestionLine).toHaveStyle({ width: "calc(100% - var(--spacing) * 2)" });
-    expect(secondResponseLine).toHaveStyle({ width: "42%" });
+    expect(secondQuestionLine).toHaveStyle({ width: "64%" });
+    expect(secondResponseLine).toHaveStyle({ width: "32%" });
     await user.unhover(secondQuestionButton);
     expect(screen.queryByTestId("conversation-anchor-preview")).not.toBeInTheDocument();
     elementRectSpy.mockRestore();
@@ -279,6 +279,40 @@ describe("MessageList", () => {
     renderWithI18n(<MessageList turns={[createTurn()]} userName="Eric" isResponding={false} />);
 
     expect(screen.queryByRole("navigation", { name: /对话历史|Conversation history/ })).not.toBeInTheDocument();
+  });
+
+  it("smoothly makes room for new anchors after the minimap reaches its height limit", () => {
+    const scrollHeightSpy = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function () {
+      if (this.dataset.testid === "conversation-anchor-list") return this.querySelectorAll("[data-conversation-tick]").length * 18;
+      if (this.dataset.testid === "conversation-anchor-track") return this.children.length * 18;
+      return 0;
+    });
+    const clientHeightSpy = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function () {
+      return this.dataset.testid === "conversation-anchor-list" ? 192 : 0;
+    });
+    const animate = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+    const createTurns = (count: number) => Array.from({ length: count }, (_, index) => createTurn({
+      id: `overflow-turn-${index + 1}`,
+      userMessage: { kind: "message", id: `overflow-user-${index + 1}`, role: "user", content: `Prompt ${index + 1}`, createdAt: 100 + index },
+    }));
+    const view = renderWithI18n(<MessageList turns={createTurns(10)} userName="Eric" isResponding={false} />);
+    animate.mockClear();
+
+    view.rerender(
+      <AppI18nProvider>
+        <MessageList turns={createTurns(11)} userName="Eric" isResponding={false} />
+      </AppI18nProvider>,
+    );
+
+    expect(animate).toHaveBeenCalledWith(
+      [{ transform: "translateY(36px)" }, { transform: "translateY(0)" }],
+      expect.objectContaining({ duration: 240, easing: expect.any(String) }),
+    );
+
+    scrollHeightSpy.mockRestore();
+    clientHeightSpy.mockRestore();
+    Reflect.deleteProperty(HTMLElement.prototype, "animate");
   });
 
   it("truncates long anchor previews without shortening their accessible names", async () => {
