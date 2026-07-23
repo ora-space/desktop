@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
-import { IconArrowUp, IconCheck, IconChevronDown, IconPaperclip, IconPlayerStop, IconSparkles, IconX } from "@tabler/icons-react";
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  Textarea,
-} from "@ora/ui";
+import { IconArrowUp, IconPlayerStop, IconPlus } from "@tabler/icons-react";
+import { Button, Textarea } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
+import { PermissionSelector } from "./permission-selector";
 
 interface ComposerProps {
   onSend: (text: string) => void;
@@ -36,26 +30,15 @@ export function Composer({
 }: ComposerProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
-  const [attachments, setAttachments] = useState<string[]>([]);
-  const [mode, setMode] = useState<"agent" | "chat">("agent");
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canSend = (value.trim().length > 0 || attachments.length > 0) && !isResponding && !disabled;
+  const canSend = value.trim().length > 0 && !isResponding && !disabled;
 
   const submit = () => {
     const text = value.trim();
-    if ((!text && attachments.length === 0) || isResponding || disabled) return;
-    const attachmentReferences = attachments.map((fileName) => `@${fileName}`).join(" ");
-    onSend([text, attachmentReferences].filter(Boolean).join("\n"));
+    if (!text || isResponding || disabled) return;
+    onSend(text);
     setValue("");
-    setAttachments([]);
-  };
-
-  /** Adds unique file references without reading local file contents into the prototype. */
-  const addAttachments = (files: FileList | null) => {
-    if (!files) return;
-    setAttachments((current) => [...new Set([...current, ...Array.from(files, (file) => file.name)])]);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -89,50 +72,13 @@ export function Composer({
           // fill would read as a grey block floating inside the card.
           className="min-h-14 max-h-[200px] resize-none rounded-none border-0 bg-transparent px-2 py-1 text-[15px] leading-6 shadow-none focus-visible:ring-0 disabled:bg-transparent"
         />
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-2 pb-1" aria-label={t("chat.attachments")}>
-            {attachments.map((fileName) => (
-              <span key={fileName} className="inline-flex h-7 max-w-52 items-center gap-1 rounded-md bg-muted px-2 text-xs text-muted-foreground">
-                <span className="truncate">{fileName}</span>
-                <button
-                  type="button"
-                  aria-label={t("chat.removeAttachment", { fileName })}
-                  onClick={() => setAttachments((current) => current.filter((candidate) => candidate !== fileName))}
-                  className="rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <IconX className="size-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
         <div className="flex min-h-8 items-center justify-between gap-2 pt-0.5">
-          <div className="flex min-w-0 items-center gap-0.5">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="sr-only"
-              tabIndex={-1}
-              onChange={(event) => {
-                addAttachments(event.target.files);
-                event.target.value = "";
-              }}
-            />
-            <Button type="button" variant="ghost" size="icon-sm" disabled={disabled} onClick={() => fileInputRef.current?.click()} aria-label={t("chat.attach")} className="rounded-full text-muted-foreground">
-              <IconPaperclip className="size-4" />
+          <div className="flex min-w-0 items-center gap-1">
+            {/* Placeholder affordance: the add button is intentionally inert for now. */}
+            <Button type="button" variant="ghost" size="icon-sm" disabled={disabled} aria-label={t("chat.add")} className="rounded-full text-muted-foreground">
+              <IconPlus className="size-4" />
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" className="gap-1 px-2 text-xs font-normal text-muted-foreground" />}>
-                <IconSparkles className="size-3.5" />
-                {mode === "agent" ? t("chat.agentMode") : t("chat.chatMode")}
-                <IconChevronDown className="size-3" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" side="top" className="w-44">
-                <DropdownMenuItem onClick={() => setMode("agent")}><IconSparkles />{t("chat.agentMode")}{mode === "agent" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setMode("chat")}><IconSparkles />{t("chat.chatMode")}{mode === "chat" && <IconCheck className="ml-auto" />}</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <PermissionSelector disabled={disabled} />
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <ModelSelector disabled={disabled} />

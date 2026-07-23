@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Button, Badge } from "@ora/ui";
+import { Button } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -119,7 +119,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               </div>
             )}
           </DragRegion>
-          {session && <Badge variant="outline" className="gap-1 rounded-md text-[11px]"><span className={`size-2 rounded-full ${session.status === "running" ? "bg-emerald-500" : "bg-zinc-400"}`} />{t(`common.${session.status}`)}</Badge>}
           <WindowControls />
         </div>
         <div className="flex min-h-0 flex-1 flex-col">

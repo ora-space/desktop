@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS: SettingsPreferences = {
   density: "comfortable",
   provider: "openai",
   model: "gpt-5.1-codex",
-  approvalPolicy: "risky",
+  approvalPolicy: "trusted",
   terminalAccess: true,
   fileWriteAccess: true,
   networkAccess: false,
