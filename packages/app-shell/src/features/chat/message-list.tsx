@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { OraMark } from "../../components/ora-mark";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AgentActivityDots } from "../../components/agent-activity-dots";
 import { useTranslation } from "react-i18next";
 import { AnchorHighlight } from "./anchor-highlight";
 import { ConversationNavigator } from "./conversation-navigator";
@@ -37,8 +37,12 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
   const activeAnchorId = navigation.lastAnchorId === lastAnchorId ? navigation.activeAnchorId : lastAnchorId;
   const lastItem = lastTurn?.items.at(-1);
   const lastUserMessageId = lastTurn?.userMessage.id;
-  const showTyping = isResponding && lastTurn?.items.length === 0;
   const tailVersion = itemVersion(lastItem);
+  // Hide the running indicator while the answer itself is streaming: the growing
+  // text already shows the agent is live, so a second "working" line under it
+  // just reads as noise. It returns for thoughts, tool calls, and the waits between.
+  const streamingBody = lastItem?.kind === "message" && lastItem.role === "assistant";
+  const showRunning = isResponding && !streamingBody;
 
   const handleScroll = () => {
     const element = scrollRef.current;
@@ -124,7 +128,7 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
               )}
             </div>
           ))}
-          {showTyping && <TypingIndicator />}
+          {showRunning && <RunningIndicator />}
           <div className="h-8" />
         </div>
       </div>
@@ -189,17 +193,40 @@ function itemVersion(item: ChatTurn["items"][number] | undefined): string | numb
   }
 }
 
-/** Three pulsing dots shown before the first visible agent update. */
-function TypingIndicator() {
+/** Word rotation cadence — slow enough to read each phrase, quick enough to feel alive. */
+const RUNNING_WORD_INTERVAL_MS = 2600;
+
+/**
+ * A playful "still working" line pinned to the foot of the live turn.
+ *
+ * Unlike the old typing dots, this stays for the whole response — through every
+ * tool call and the quiet gaps between them — so the thread never looks frozen
+ * while the agent is busy. The nine-dot grid carries the motion; the rotating
+ * phrase reassures that time is passing rather than that anything has stalled.
+ */
+function RunningIndicator() {
   const { t } = useTranslation();
+  const words = useMemo(
+    () => t("chat.runningWords").split("|").map((word) => word.trim()).filter(Boolean),
+    [t],
+  );
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    setIndex(0);
+    if (words.length <= 1 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const timer = setInterval(() => setIndex((current) => (current + 1) % words.length), RUNNING_WORD_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [words]);
+
+  const word = words[index % words.length] ?? words[0] ?? "";
   return (
-    <div className="flex gap-3 py-5" role="status" aria-label={t("chat.typing")}>
-      <OraMark size="sm" />
-      <div className="flex items-center gap-1 py-2.5">
-        <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" style={{ animationDelay: "0ms" }} />
-        <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" style={{ animationDelay: "160ms" }} />
-        <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" style={{ animationDelay: "320ms" }} />
-      </div>
+    <div className="flex items-center gap-3 py-4" role="status" aria-label={t("chat.typing")}>
+      <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
+        <AgentActivityDots label={t("common.running")} dotClassName="size-[3.5px]" />
+      </span>
+      {/* Keyed so each phrase crossfades in as the rotation advances. */}
+      <span key={word} className="animate-in text-sm text-muted-foreground fade-in duration-500">{word}</span>
     </div>
   );
 }

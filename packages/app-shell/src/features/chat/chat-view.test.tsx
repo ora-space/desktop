@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ChatMessage, ChatTurn, ChatTurnItem } from "@ora/chat";
+import type { ChatMessage, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { ChatView } from "./chat-view";
 import { Composer } from "./composer";
@@ -34,6 +34,20 @@ function turn(
 /** Builds one assistant text item that lives inside a response turn. */
 function assistantItem(id: string, content: string, createdAt: number): ChatMessage {
   return { kind: "message", id, role: "assistant", content, createdAt };
+}
+
+/** Builds one in-progress tool call so tests can stand in for non-text agent work. */
+function toolCallItem(id: string, createdAt: number): ChatToolCall {
+  return {
+    kind: "toolCall",
+    id,
+    title: "Read file",
+    status: "in_progress",
+    content: [],
+    locations: [],
+    createdAt,
+    updatedAt: createdAt,
+  };
 }
 
 describe("Composer", () => {
@@ -234,12 +248,14 @@ describe("ChatView", () => {
 });
 
 describe("MessageList", () => {
-  it("replaces the typing indicator once the first assistant chunk arrives", () => {
+  it("shows the running indicator while working but hides it as the answer streams", () => {
     const view = renderWithI18n(
       <MessageList turns={[turn("turn-1", "hello", 100, [], "streaming")]} userName="Eric" isResponding />,
     );
-    expect(screen.getByLabelText(/正在输入|is typing/)).toBeInTheDocument();
+    // Waiting for the first output: the indicator stands in for the empty turn.
+    expect(screen.getByLabelText(/正在运行|is working/)).toBeInTheDocument();
 
+    // Answer body streaming in: the growing text is signal enough, so it hides.
     view.rerender(
       <AppI18nProvider>
         <MessageList
@@ -249,8 +265,31 @@ describe("MessageList", () => {
         />
       </AppI18nProvider>,
     );
+    expect(screen.queryByLabelText(/正在运行|is working/)).not.toBeInTheDocument();
 
-    expect(screen.queryByLabelText(/正在输入|is typing/)).not.toBeInTheDocument();
+    // Back to working — a tool call trails the text — so the indicator returns.
+    view.rerender(
+      <AppI18nProvider>
+        <MessageList
+          turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock", 200), toolCallItem("tool-1", 300)], "streaming")]}
+          userName="Eric"
+          isResponding
+        />
+      </AppI18nProvider>,
+    );
+    expect(screen.getByLabelText(/正在运行|is working/)).toBeInTheDocument();
+
+    // Clears once the turn settles and the agent is no longer responding.
+    view.rerender(
+      <AppI18nProvider>
+        <MessageList
+          turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock", 200)], "completed")]}
+          userName="Eric"
+          isResponding={false}
+        />
+      </AppI18nProvider>,
+    );
+    expect(screen.queryByLabelText(/正在运行|is working/)).not.toBeInTheDocument();
   });
 
   it("keeps scrolling as streamed content grows within the same message", () => {
