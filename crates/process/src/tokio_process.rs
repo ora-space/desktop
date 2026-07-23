@@ -7,8 +7,7 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::tree::ProcessTree;
-use crate::{ManagedProcess, ProcessSpawner, ProcessSpec};
+use crate::{EnvironmentPolicy, ManagedProcess, ProcessSpawner, ProcessSpec};
 
 /// Tokio-backed process spawner for real OS child processes.
 #[derive(Debug, Clone, Copy, Default)]
@@ -35,6 +34,9 @@ impl ProcessSpawner for TokioProcessSpawner {
         if let Some(cwd) = spec.cwd_path() {
             command.current_dir(cwd);
         }
+        if spec.environment_policy() == EnvironmentPolicy::ClearAndAllowlist {
+            command.env_clear();
+        }
         for (key, value) in spec.envs() {
             command.env(key, value);
         }
@@ -43,28 +45,8 @@ impl ProcessSpawner for TokioProcessSpawner {
         command.stdout(spec.stdout_policy().as_stdio());
         command.stderr(spec.stderr_policy().as_stdio());
         command.kill_on_drop(spec.should_kill_on_drop());
-        ProcessTree::configure_command(&mut command);
 
         let mut child = command.spawn()?;
-        // Build the tree handle after spawn so the child can be enrolled in its tree-wide
-        // termination group on Windows. Doing it here (rather than lazily inside the lifecycle
-        // task) propagates any Job Object setup failure as a spawn error.
-        let tree = match ProcessTree::from_spawned(&child) {
-            Ok(tree) => tree,
-            Err(error) => {
-                // The OS process already exists even though tree setup failed, and this function
-                // is about to return `Err` without handing the caller any handle to manage it.
-                // Terminate the direct child now, independent of the spec's drop policy: a
-                // keep_alive_on_drop child would otherwise survive `Child::drop` here (its
-                // `kill_on_drop` flag is false) and leak as an unmanaged process. Reap it on the
-                // runtime so it doesn't linger as a zombie either.
-                let _ = child.start_kill();
-                handle.spawn(async move {
-                    let _ = child.wait().await;
-                });
-                return Err(error);
-            }
-        };
         let id = child.id();
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
@@ -77,9 +59,7 @@ impl ProcessSpawner for TokioProcessSpawner {
         } else {
             (None, None)
         };
-        handle.spawn(run_process_lifecycle(
-            child, tree, kill_rx, drop_rx, exit_tx,
-        ));
+        handle.spawn(run_process_lifecycle(child, kill_rx, drop_rx, exit_tx));
 
         Ok(TokioManagedProcess {
             id,
@@ -182,18 +162,15 @@ impl ManagedProcess for TokioManagedProcess {
         }
     }
 
-    /// Forcefully terminates the entire process tree rooted at the spawned child, on top of the
-    /// contract documented at [`crate::ManagedProcess::kill`].
+    /// Forcefully terminates the child process.
     ///
-    /// Tree-wide termination is realized with Unix process groups (the child runs in its own group
-    /// and the whole group is signalled) and Windows Job Objects (the child is enrolled in a job
-    /// created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and the job is terminated). This also
-    /// applies to the `kill_on_drop` path: dropping the handle when the spec had
-    /// `kill_on_drop` enabled terminates the whole tree, not just the direct child.
+    /// Known limitation: only the direct child is terminated. Descendant processes spawned by the
+    /// child (for example a shell launching further tools) keep running, because tree-wide
+    /// termination requires Unix process groups / Windows Job Objects. This also applies to the
+    /// `kill_on_drop` path. Tree-wide termination is tracked as a follow-up task.
     ///
-    /// The `start_kill` contract still holds: this returns once the termination request has been
-    /// submitted to the OS rather than once the tree has fully exited; call [`Self::wait`] to reap
-    /// the direct child's final exit status.
+    /// Returns once the termination request is delivered to the OS; callers that need the final
+    /// exit status must still await [`ManagedProcess::wait`].
     fn kill(&self) -> impl Future<Output = io::Result<()>> + Send + '_ {
         let kill_tx = self.kill_tx.clone();
         let exit_rx = self.exit_rx.clone();
@@ -248,7 +225,6 @@ impl WaitFailure {
 
 async fn run_process_lifecycle(
     mut child: Child,
-    tree: ProcessTree,
     mut kill_rx: mpsc::UnboundedReceiver<KillRequest>,
     mut drop_rx: Option<oneshot::Receiver<()>>,
     exit_tx: watch::Sender<Option<ExitState>>,
@@ -264,13 +240,11 @@ async fn run_process_lifecycle(
                         return;
                     }
                     request = kill_rx.recv(), if kill_rx_open => {
-                        handle_kill_request(&tree, request, &mut kill_rx_open);
+                        handle_kill_request(&mut child, request, &mut kill_rx_open);
                     }
                     _ = drop_signal => {
                         drop_rx = None;
-                        // The user-facing handle was dropped with kill_on_drop enabled: terminate the
-                        // whole tree (descendants included), not just the direct child.
-                        let _ = tree.kill();
+                        let _ = child.start_kill();
                     }
                 }
             }
@@ -281,7 +255,7 @@ async fn run_process_lifecycle(
                         return;
                     }
                     request = kill_rx.recv(), if kill_rx_open => {
-                        handle_kill_request(&tree, request, &mut kill_rx_open);
+                        handle_kill_request(&mut child, request, &mut kill_rx_open);
                     }
                 }
             }
@@ -289,12 +263,10 @@ async fn run_process_lifecycle(
     }
 }
 
-fn handle_kill_request(tree: &ProcessTree, request: Option<KillRequest>, kill_rx_open: &mut bool) {
+fn handle_kill_request(child: &mut Child, request: Option<KillRequest>, kill_rx_open: &mut bool) {
     match request {
         Some(KillRequest { ack }) => {
-            // Acknowledge with the tree-wide termination result. `start_kill` semantics: the OS
-            // request has been submitted, callers still need to wait for the final exit status.
-            let _ = ack.send(tree.kill());
+            let _ = ack.send(child.start_kill());
         }
         None => {
             *kill_rx_open = false;

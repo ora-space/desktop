@@ -1,0 +1,24 @@
+[package]
+name = "ora-plugin-protocol"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_plugin_protocol"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+semver = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+ts-rs = { workspace = true, features = ["format"] }
+uuid = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

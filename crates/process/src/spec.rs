@@ -14,6 +14,16 @@ pub enum ProcessStdio {
     Null,
 }
 
+/// Controls whether a child can inherit ambient Host environment variables.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EnvironmentPolicy {
+    /// Preserve the ordinary process-spawner behavior and apply explicit overrides.
+    #[default]
+    InheritAndOverride,
+    /// Clear the environment before applying the explicit Host-owned allowlist.
+    ClearAndAllowlist,
+}
+
 impl ProcessStdio {
     pub(crate) fn as_stdio(self) -> Stdio {
         match self {
@@ -31,6 +41,7 @@ pub struct ProcessSpec {
     args: Vec<OsString>,
     cwd: Option<PathBuf>,
     envs: Vec<(OsString, OsString)>,
+    environment_policy: EnvironmentPolicy,
     stdin: ProcessStdio,
     stdout: ProcessStdio,
     stderr: ProcessStdio,
@@ -44,6 +55,7 @@ impl ProcessSpec {
             args: Vec::new(),
             cwd: None,
             envs: Vec::new(),
+            environment_policy: EnvironmentPolicy::InheritAndOverride,
             stdin: ProcessStdio::Piped,
             stdout: ProcessStdio::Piped,
             stderr: ProcessStdio::Piped,
@@ -76,6 +88,18 @@ impl ProcessSpec {
     /// Adds or overrides one environment variable for the child process.
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.envs.push((key.into(), value.into()));
+        self
+    }
+
+    /// Clears ambient inheritance so only explicit environment bindings reach the child.
+    pub fn clear_and_allowlist_environment(mut self) -> Self {
+        self.environment_policy = EnvironmentPolicy::ClearAndAllowlist;
+        self
+    }
+
+    /// Preserves ambient inheritance for ordinary non-plugin leaf processes.
+    pub fn inherit_and_override_environment(mut self) -> Self {
+        self.environment_policy = EnvironmentPolicy::InheritAndOverride;
         self
     }
 
@@ -129,6 +153,11 @@ impl ProcessSpec {
         self.envs
             .iter()
             .map(|(key, value)| (key.as_os_str(), value.as_os_str()))
+    }
+
+    /// Returns the explicit ambient-environment policy.
+    pub fn environment_policy(&self) -> EnvironmentPolicy {
+        self.environment_policy
     }
 
     /// Returns the configured stdin policy.

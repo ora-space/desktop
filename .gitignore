@@ -28,3 +28,4 @@ packages/contracts/.test-dist/
 /.data
 .tmp
 *.tsbuildinfo
+**/.test-dist
