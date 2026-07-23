@@ -127,15 +127,16 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
     submitLabel = dialog.entity ? t("dialog.saveTask") : t("dialog.createTask");
     fields = [
       { kind: "text", name: "title", label: t("dialog.taskTitle"), value: dialog.entity?.title ?? "", placeholder: t("dialog.taskPlaceholder") },
-      { kind: "select", name: "status", label: t("dialog.status"), value: dialog.entity?.status ?? "todo", options: [
+      // Status is only meaningful once a task exists; a new worktree always starts at "todo".
+      ...(dialog.entity ? [{ kind: "select" as const, name: "status", label: t("dialog.status"), value: dialog.entity.status, options: [
         { label: t("common.todo"), value: "todo" }, { label: t("common.doing"), value: "doing" }, { label: t("common.done"), value: "done" },
-      ] },
+      ] }] : []),
     ];
     submit = async (values) => {
       if (dialog.entity) {
         await updateTask.mutateAsync({ task: dialog.entity, title: values.title!, status: values.status as TaskStatus });
       } else {
-        await createTask.mutateAsync({ projectId: dialog.projectId, title: values.title!, status: values.status as TaskStatus });
+        await createTask.mutateAsync({ projectId: dialog.projectId, title: values.title!, status: "todo" });
       }
     };
   } else {
