@@ -1,9 +1,11 @@
 import { render, waitFor } from "@testing-library/react";
 import { createChatStore } from "@ora/chat";
 import { TooltipProvider } from "@ora/ui";
+import { PlatformProvider } from "@ora/platform";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createHookWrapper, createTestQueryClient } from "../../test/hook-harness";
+import { createStubPlatform } from "../../test/stub-platform";
 import { createMockClient, createMockClientState } from "../../test/mock-client";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { WorkspaceView } from "./workspace-view";
@@ -30,9 +32,11 @@ describe("WorkspaceView", () => {
     render(
       <Wrapper>
         <AppI18nProvider>
-          <TooltipProvider>
-            <WorkspaceView userName="Eric" />
-          </TooltipProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
         </AppI18nProvider>
       </Wrapper>,
     );

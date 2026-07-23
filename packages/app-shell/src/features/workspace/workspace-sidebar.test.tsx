@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Project, Session, Task } from "@ora/contracts";
 import { createChatStore, type ChatStore, type SessionConversation } from "@ora/chat";
 import { TooltipProvider } from "@ora/ui";
+import { PlatformProvider } from "@ora/platform";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createMockClient, createMockClientState, type MockClientState } from "../../test/mock-client";
 import { createHookWrapper, createTestQueryClient } from "../../test/hook-harness";
+import { createStubPlatform } from "../../test/stub-platform";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useUnreadSessionsStore } from "../../state/stores/unread-sessions-store";
@@ -33,9 +35,11 @@ function renderSidebar(state: MockClientState, chatStore?: ChatStore) {
     ...render(
       <Wrapper>
         <AppI18nProvider>
-          <TooltipProvider>
-            <WorkspaceSidebar user={USER} onSignOut={() => undefined} />
-          </TooltipProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceSidebar user={USER} onSignOut={() => undefined} />
+            </TooltipProvider>
+          </PlatformProvider>
         </AppI18nProvider>
       </Wrapper>,
     ),

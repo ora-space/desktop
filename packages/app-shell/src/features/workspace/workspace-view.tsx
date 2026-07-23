@@ -8,7 +8,6 @@ import {
   IconGitBranch,
   IconLayoutSidebarLeftExpand,
   IconPlayerPlay,
-  IconSquareRoundedPlus,
 } from "@tabler/icons-react";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
@@ -17,6 +16,8 @@ import { useCreateSession } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useChatStore } from "../../chat-store-context";
+import { DragRegion } from "../../components/drag-region";
+import { WindowControls } from "../../components/window-controls";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
 
@@ -49,7 +50,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         : state.conversations[selection.sessionId]),
   );
 
-  const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
   const createSession = useCreateSession();
 
   useEffect(() => {
@@ -97,7 +97,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const chatIsOpen = session === undefined || (task !== undefined && project !== undefined);
 
   if (chatIsOpen) {
-    const title = task?.title ?? t("chat.newThread");
     // With a session selected the agent session decides; without one, a project and
     // worktree are enough, because the first message creates the session itself.
     const canChat = session
@@ -108,17 +107,20 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       ?? null;
     return (
       <main id="main-content" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-        <div className="flex h-13 shrink-0 items-center gap-2 px-3 sm:px-4">
-          {sidebarCollapsed && <Button variant="ghost" size="icon-sm" onClick={() => setSidebarCollapsed(false)} aria-label={t("sidebar.expand")}><IconLayoutSidebarLeftExpand /></Button>}
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-medium tracking-[-0.01em]">{title}</p>
-            {project && session && (
-              <p className="truncate text-[10px] text-muted-foreground">{project.name} / {session.agentCli}</p>
+        <div className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
+          {sidebarCollapsed && <Button variant="ghost" size="icon" onClick={() => setSidebarCollapsed(false)} aria-label={t("sidebar.expand")}><IconLayoutSidebarLeftExpand /></Button>}
+          <DragRegion>
+            {session && (
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium tracking-[-0.01em]">{session.agentCli}</p>
+                {project && task && (
+                  <p className="truncate text-[11px] text-muted-foreground">{project.name} / {task.title}</p>
+                )}
+              </div>
             )}
-          </div>
-          <div className="flex-1" />
-          {session && <Badge variant="outline" className="gap-1 rounded-md text-[10px]"><span className={`size-1.5 rounded-full ${session.status === "running" ? "bg-emerald-500" : "bg-zinc-400"}`} />{t(`common.${session.status}`)}</Badge>}
-          <Button variant="ghost" size="icon-sm" onClick={clearSelection} aria-label={t("chat.newThread")}><IconSquareRoundedPlus /></Button>
+          </DragRegion>
+          {session && <Badge variant="outline" className="gap-1 rounded-md text-[11px]"><span className={`size-2 rounded-full ${session.status === "running" ? "bg-emerald-500" : "bg-zinc-400"}`} />{t(`common.${session.status}`)}</Badge>}
+          <WindowControls />
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
           <ChatView
@@ -150,9 +152,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
   return (
     <main id="main-content" className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-      <header className="flex h-12 items-center border-b border-border px-3">
-        {sidebarCollapsed && <Button variant="ghost" size="icon-sm" onClick={() => setSidebarCollapsed(false)} aria-label={t("sidebar.expand")}><IconLayoutSidebarLeftExpand /></Button>}
-        <span className="ml-1 text-xs font-medium text-muted-foreground">{t("workspace.overview")}</span>
+      <header className="flex h-14 items-center border-b border-border px-3">
+        {sidebarCollapsed && <Button variant="ghost" size="icon" onClick={() => setSidebarCollapsed(false)} aria-label={t("sidebar.expand")}><IconLayoutSidebarLeftExpand /></Button>}
+        <DragRegion>
+          <span className="text-[13px] font-medium text-muted-foreground">{t("workspace.overview")}</span>
+        </DragRegion>
+        <WindowControls />
       </header>
       <div className="flex flex-1 items-center justify-center p-6">
         <section className="w-full max-w-xl">
