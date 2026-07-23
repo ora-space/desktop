@@ -24,6 +24,7 @@ fn preserves_the_public_configuration_model() {
             RotationPolicy::Daily,
             NonZeroUsize::new(3).unwrap(),
         )),
+        chrono_tz::Asia::Shanghai,
     );
 
     assert_eq!(
@@ -35,6 +36,7 @@ fn preserves_the_public_configuration_model() {
                 rotation: RotationPolicy::Daily,
                 max_days: NonZeroUsize::new(3).unwrap(),
             }),
+            timezone: chrono_tz::Asia::Shanghai,
         }
     );
 }
@@ -42,8 +44,8 @@ fn preserves_the_public_configuration_model() {
 /// Verifies the crate exports the intended API surface through public constructors and helpers.
 #[test]
 fn preserves_the_public_logging_api_surface() {
-    let stdout_only = LoggingConfig::new(LogLevel::Debug, LogOutput::Stdout);
-    let warn_only = LoggingConfig::new(LogLevel::Warn, LogOutput::Stdout);
+    let stdout_only = LoggingConfig::new(LogLevel::Debug, LogOutput::Stdout, chrono_tz::UTC);
+    let warn_only = LoggingConfig::new(LogLevel::Warn, LogOutput::Stdout, chrono_tz::UTC);
     let file_only = FileLoggingConfig::new(
         "./ora.log",
         RotationPolicy::Daily,
@@ -66,7 +68,7 @@ fn preserves_the_public_logging_api_surface() {
 fn filters_events_at_warn_level() {
     let stdout = SharedBuffer::default();
     let (dispatch, _guard) = build_dispatch(
-        &LoggingConfig::new(LogLevel::Warn, LogOutput::Stdout),
+        &LoggingConfig::new(LogLevel::Warn, LogOutput::Stdout, chrono_tz::UTC),
         stdout.make_writer(),
     )
     .unwrap();
@@ -100,7 +102,11 @@ fn formats_json_events_with_context_and_error_objects() {
         NonZeroUsize::new(3).unwrap(),
     );
     let (dispatch, _guard) = build_dispatch(
-        &LoggingConfig::new(LogLevel::Info, LogOutput::StdoutAndFile(file_config)),
+        &LoggingConfig::new(
+            LogLevel::Info,
+            LogOutput::StdoutAndFile(file_config),
+            chrono_tz::Asia::Shanghai,
+        ),
         stdout.make_writer(),
     )
     .unwrap();
@@ -155,7 +161,12 @@ fn formats_json_events_with_context_and_error_objects() {
             "kind": "none"
         })
     );
-    assert_eq!(stdout_event["timestamp"].as_str().is_some(), true);
+    assert_eq!(
+        stdout_event["timestamp"]
+            .as_str()
+            .map(|timestamp| timestamp.ends_with("+08:00")),
+        Some(true)
+    );
 }
 
 /// Verifies the wrapper macros add the current function name under the top-level `method` field.
@@ -163,7 +174,7 @@ fn formats_json_events_with_context_and_error_objects() {
 fn emits_method_field_from_wrapper_macros() {
     let stdout = SharedBuffer::default();
     let (dispatch, _guard) = build_dispatch(
-        &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout),
+        &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
         stdout.make_writer(),
     )
     .unwrap();
@@ -186,7 +197,7 @@ fn emits_method_field_from_wrapper_macros() {
 fn emits_helper_api_correlation_fields_consistently() {
     let stdout = SharedBuffer::default();
     let (dispatch, _guard) = build_dispatch(
-        &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout),
+        &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
         stdout.make_writer(),
     )
     .unwrap();
@@ -209,7 +220,7 @@ fn emits_helper_api_correlation_fields_consistently() {
 fn selects_stdout_only_sink_behavior() {
     let stdout = SharedBuffer::default();
     let (dispatch, guard) = build_dispatch(
-        &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout),
+        &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
         stdout.make_writer(),
     )
     .unwrap();
@@ -233,7 +244,7 @@ fn selects_file_only_sink_behavior() {
     );
     let stdout = SharedBuffer::default();
     let (dispatch, guard) = build_dispatch(
-        &LoggingConfig::new(LogLevel::Info, LogOutput::File(file_config)),
+        &LoggingConfig::new(LogLevel::Info, LogOutput::File(file_config), chrono_tz::UTC),
         stdout.make_writer(),
     )
     .unwrap();
@@ -259,7 +270,11 @@ fn selects_stdout_and_file_sink_behavior() {
     );
     let stdout = SharedBuffer::default();
     let (dispatch, guard) = build_dispatch(
-        &LoggingConfig::new(LogLevel::Info, LogOutput::StdoutAndFile(file_config)),
+        &LoggingConfig::new(
+            LogLevel::Info,
+            LogOutput::StdoutAndFile(file_config),
+            chrono_tz::UTC,
+        ),
         stdout.make_writer(),
     )
     .unwrap();
@@ -286,6 +301,7 @@ fn reports_typed_initialization_failures() {
                 RotationPolicy::Daily,
                 NonZeroUsize::new(3).unwrap(),
             )),
+            chrono_tz::UTC,
         ),
         stdout.make_writer(),
     )
@@ -327,7 +343,7 @@ fn cleans_up_rotated_files_by_retention_window() {
     );
 }
 
-/// Verifies the public initializer reports the global-subscriber boundary as a typed failure.
+/// Verifies the public initializer rejects attempts to replace the configured process clock.
 #[test]
 fn rejects_a_second_global_initialization_attempt() {
     let lock = global_logging_test_lock();
@@ -341,12 +357,14 @@ fn rejects_a_second_global_initialization_attempt() {
             RotationPolicy::Daily,
             NonZeroUsize::new(3).unwrap(),
         )),
+        chrono_tz::UTC,
     );
     let _first_guard = init_logging(config.clone()).unwrap();
+    assert_eq!(crate::clock::local_offset(), time::UtcOffset::UTC);
     let error = init_logging(config).unwrap_err();
 
     assert_eq!(
-        matches!(error, LoggingInitError::SetGlobalSubscriber(_)),
+        matches!(error, LoggingInitError::ClockAlreadyInitialized),
         true
     );
 }

@@ -57,7 +57,7 @@ mod tests {
     fn log_command_emits_info_event_with_cwd_and_command() {
         let buffer = SharedBuffer::default();
         let (dispatch, _guard) = build_dispatch(
-            &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout),
+            &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
             buffer.make_writer(),
         )
         .unwrap();
@@ -90,7 +90,7 @@ mod tests {
     fn log_result_emits_info_on_success() {
         let buffer = SharedBuffer::default();
         let (dispatch, _guard) = build_dispatch(
-            &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout),
+            &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
             buffer.make_writer(),
         )
         .unwrap();
@@ -112,7 +112,7 @@ mod tests {
     fn log_result_emits_error_on_failure() {
         let buffer = SharedBuffer::default();
         let (dispatch, _guard) = build_dispatch(
-            &LoggingConfig::new(LogLevel::Error, LogOutput::Stdout),
+            &LoggingConfig::new(LogLevel::Error, LogOutput::Stdout, chrono_tz::UTC),
             buffer.make_writer(),
         )
         .unwrap();

@@ -8,9 +8,12 @@ use crate::file_output::prepare_file_output;
 use crate::formatter::JsonEventFormatter;
 use crate::{LogLevel, LogOutput, LoggingConfig, LoggingGuard, LoggingInitError};
 
-/// Installs the process-wide subscriber described by `config` and returns its writer-lifetime guard.
+/// Installs the configured process clock and subscriber, then returns its writer-lifetime guard.
 pub fn init_logging(config: LoggingConfig) -> Result<LoggingGuard, LoggingInitError> {
+    // Prepare fallible sinks before changing either irreversible process-wide singleton.
     let (dispatch, guard) = build_dispatch(&config, std::io::stdout)?;
+    crate::clock::initialize(config.timezone)
+        .map_err(|_| LoggingInitError::ClockAlreadyInitialized)?;
     tracing::dispatcher::set_global_default(dispatch)
         .map_err(LoggingInitError::SetGlobalSubscriber)?;
 
@@ -34,7 +37,7 @@ where
                 .with(level_filter)
                 .with(
                     layer()
-                        .event_format(JsonEventFormatter)
+                        .event_format(JsonEventFormatter::new(config.timezone))
                         .with_writer(stdout_writer)
                         .with_ansi(false),
                 );
@@ -48,7 +51,7 @@ where
                 .with(level_filter)
                 .with(
                     layer()
-                        .event_format(JsonEventFormatter)
+                        .event_format(JsonEventFormatter::new(config.timezone))
                         .with_writer(prepared_output.writer.clone())
                         .with_ansi(false),
                 );
@@ -65,13 +68,13 @@ where
                 .with(level_filter)
                 .with(
                     layer()
-                        .event_format(JsonEventFormatter)
+                        .event_format(JsonEventFormatter::new(config.timezone))
                         .with_writer(stdout_writer)
                         .with_ansi(false),
                 )
                 .with(
                     layer()
-                        .event_format(JsonEventFormatter)
+                        .event_format(JsonEventFormatter::new(config.timezone))
                         .with_writer(prepared_output.writer.clone())
                         .with_ansi(false),
                 );

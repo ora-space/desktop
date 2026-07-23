@@ -1,4 +1,5 @@
 use crate::error::WebBootstrapError;
+use crate::timezone::{TimezoneSource, TimezoneWarning};
 use ora_logging::{FileLoggingConfig, LogLevel, LogOutput, LoggingConfig, RotationPolicy};
 use std::env;
 use std::net::{IpAddr, SocketAddr};
@@ -29,6 +30,8 @@ pub struct RuntimeConfig {
     project: ProjectConfig,
     server: ServerConfig,
     logging: LoggingConfig,
+    timezone_source: TimezoneSource,
+    timezone_warning: Option<TimezoneWarning>,
 }
 
 impl RuntimeConfig {
@@ -62,18 +65,31 @@ impl RuntimeConfig {
         &self.logging
     }
 
+    /// Returns where the Web process obtained its selected logging timezone.
+    pub(crate) fn timezone_source(&self) -> TimezoneSource {
+        self.timezone_source
+    }
+
+    /// Returns the deferred timezone warning to emit after logging becomes available.
+    pub(crate) fn timezone_warning(&self) -> Option<&TimezoneWarning> {
+        self.timezone_warning.as_ref()
+    }
+
     /// Loads the runtime configuration from a caller-provided variable reader for testability.
     pub(crate) fn from_reader(
         mut read_variable: impl FnMut(&str) -> Option<String>,
     ) -> Result<Self, WebBootstrapError> {
         let database = DatabaseConfig::from_reader(&mut read_variable)?;
+        let resolved_timezone = crate::timezone::resolve(&mut read_variable);
 
         Ok(Self {
             project: ProjectConfig::from_reader(&mut read_variable, &database)?,
             file_system: FileSystemConfig::from_reader(&mut read_variable)?,
             database,
             server: ServerConfig::from_reader(&mut read_variable)?,
-            logging: read_logging_config(&mut read_variable)?,
+            logging: read_logging_config(&mut read_variable, resolved_timezone.timezone)?,
+            timezone_source: resolved_timezone.source,
+            timezone_warning: resolved_timezone.warning,
         })
     }
 }
@@ -257,6 +273,7 @@ impl ServerConfig {
 /// Loads the logging configuration from the environment contract defined for the web server bootstrap.
 fn read_logging_config(
     mut read_variable: impl FnMut(&str) -> Option<String>,
+    timezone: chrono_tz::Tz,
 ) -> Result<LoggingConfig, WebBootstrapError> {
     let level = match read_variable(LOG_LEVEL_ENV_VAR)
         .unwrap_or_else(|| DEFAULT_LOG_LEVEL.to_string())
@@ -294,7 +311,7 @@ fn read_logging_config(
         }
     };
 
-    Ok(LoggingConfig::new(level, output))
+    Ok(LoggingConfig::new(level, output, timezone))
 }
 
 /// Parses the configured retention window and rejects zero-day values explicitly.
@@ -337,6 +354,7 @@ mod tests {
         PROJECT_PATH_ENV_VAR, ProjectConfig, RuntimeConfig, ServerConfig,
     };
     use crate::error::WebBootstrapError;
+    use crate::timezone::{TimezoneSource, TimezoneWarning};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -504,11 +522,14 @@ mod tests {
     fn loads_logging_configuration_from_data_dir() {
         let temp_dir = TempDir::new().unwrap();
         let data_dir = temp_dir.path().join("state");
-        let config = super::read_logging_config(|key| match key {
-            DATA_DIR_ENV_VAR => Some(data_dir.to_string_lossy().to_string()),
-            LOG_MODE_ENV_VAR => Some("file".to_string()),
-            _ => None,
-        })
+        let config = super::read_logging_config(
+            |key| match key {
+                DATA_DIR_ENV_VAR => Some(data_dir.to_string_lossy().to_string()),
+                LOG_MODE_ENV_VAR => Some("file".to_string()),
+                _ => None,
+            },
+            chrono_tz::Asia::Shanghai,
+        )
         .unwrap_or_else(|error| panic!("expected logging configuration to load: {error}"));
 
         match config.output {
@@ -577,6 +598,12 @@ mod tests {
         assert_eq!(config.project().path(), project_path.as_path());
         assert_eq!(config.project().work_dir(), expected_work_dir.as_path());
         assert_eq!(config.file_system().home_directory(), temp_dir.path());
+        assert_eq!(config.logging().timezone, chrono_tz::Asia::Shanghai);
+        assert_eq!(config.timezone_source(), TimezoneSource::Default);
+        assert_eq!(
+            config.timezone_warning(),
+            Some(&TimezoneWarning::MissingConfiguration)
+        );
 
         match &config.logging().output {
             ora_logging::LogOutput::Stdout => panic!("expected file-backed logging output"),

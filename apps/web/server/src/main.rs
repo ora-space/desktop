@@ -5,12 +5,14 @@ mod error;
 mod handlers;
 mod routes;
 mod service;
+mod timezone;
 
 use crate::bootstrap::build_app_state;
 use crate::config::RuntimeConfig;
 use crate::error::WebBootstrapError;
+use crate::timezone::TimezoneWarning;
 use axum::Router;
-use ora_logging::{LoggingGuard, init_logging, ora_info, register_gitlancer_logger};
+use ora_logging::{LoggingGuard, init_logging, ora_info, ora_warn, register_gitlancer_logger};
 use tokio::net::TcpListener;
 
 /// Boots the web server runtime, initializes shared services, and starts serving HTTP traffic.
@@ -18,6 +20,29 @@ use tokio::net::TcpListener;
 async fn main() -> Result<(), WebBootstrapError> {
     let runtime_config = RuntimeConfig::from_env()?;
     let _logging_guard = initialize_logging(runtime_config.logging())?;
+    match runtime_config.timezone_warning() {
+        Some(TimezoneWarning::MissingConfiguration) => {
+            ora_warn!(
+                message = "timezone is not explicitly configured, using default timezone",
+                source = runtime_config.timezone_source().as_str(),
+                fallback_timezone = %runtime_config.logging().timezone,
+            );
+        }
+        Some(TimezoneWarning::InvalidConfiguration { source, timezone }) => {
+            ora_warn!(
+                message = "invalid IANA timezone configuration, falling back to UTC",
+                source = source.as_str(),
+                timezone,
+                fallback_timezone = %runtime_config.logging().timezone,
+            );
+        }
+        None => {}
+    }
+    ora_info!(
+        message = "logging initialized",
+        timezone = %runtime_config.logging().timezone,
+        timezone_source = runtime_config.timezone_source().as_str(),
+    );
     register_gitlancer_logger();
     let app_state = build_app_state(&runtime_config)?;
     let router = build_router(app_state.clone());

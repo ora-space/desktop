@@ -24,4 +24,6 @@ pub enum LoggingInitError {
     },
     #[error("failed to install the global tracing subscriber")]
     SetGlobalSubscriber(#[source] tracing::dispatcher::SetGlobalDefaultError),
+    #[error("the process-wide logging clock was already initialized")]
+    ClockAlreadyInitialized,
 }

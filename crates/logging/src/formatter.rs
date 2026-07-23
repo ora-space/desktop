@@ -1,15 +1,25 @@
 use serde_json::{Map, Value, json};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use time::format_description::well_known::Rfc3339;
 use tracing::Event;
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::registry::LookupSpan;
 
+use crate::clock::now_local_in;
 use crate::correlation::scope_correlation;
 
 /// Formats every tracing event as one JSON line that follows the shared runtime envelope.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct JsonEventFormatter;
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct JsonEventFormatter {
+    timezone: chrono_tz::Tz,
+}
+
+impl JsonEventFormatter {
+    /// Creates a formatter whose timestamps use the injected process timezone.
+    pub(crate) fn new(timezone: chrono_tz::Tz) -> Self {
+        Self { timezone }
+    }
+}
 
 impl<S, N> FormatEvent<S, N> for JsonEventFormatter
 where
@@ -28,14 +38,10 @@ where
 
         let scope = scope_correlation(context.event_scope());
         let mut payload = Map::new();
-        payload.insert(
-            "timestamp".to_string(),
-            json!(
-                OffsetDateTime::now_utc()
-                    .format(&Rfc3339)
-                    .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
-            ),
-        );
+        let timestamp = now_local_in(self.timezone)
+            .format(&Rfc3339)
+            .map_err(|_| std::fmt::Error)?;
+        payload.insert("timestamp".to_string(), json!(timestamp));
         payload.insert(
             "level".to_string(),
             Value::String(event.metadata().level().to_string()),

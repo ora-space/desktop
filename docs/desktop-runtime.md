@@ -35,6 +35,11 @@ The configured root is only a creation target. Existing worktree locations are r
 
 Desktop initializes `ora-logging` before opening the backend and registers the Gitlancer logger bridge. Logs rotate daily and retain three files. Debug builds write to stdout and the file; release builds write to the file only. The logging guard remains managed for the application lifetime.
 
+At startup, Desktop reads the operating system's IANA timezone and fixes it for the process
+lifetime. Structured event timestamps use that timezone. If the system timezone cannot be read or
+parsed, Desktop records a warning, uses UTC, and continues startup. A system timezone change takes
+effect after Ora restarts. Daily log files continue to rotate at UTC boundaries.
+
 ## Verification
 
 The Tauri Rust crate keeps its own `Cargo.lock` and is intentionally excluded from the root Cargo workspace. `task test:desktop` checks the Desktop transport, formatting, Clippy, and the independent Rust tests. `task test` includes this task explicitly.
