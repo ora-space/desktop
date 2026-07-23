@@ -210,7 +210,6 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                   active={selection.projectId === project.id && selection.taskId === null}
                   icon={<IconFolder className="size-[18px] text-muted-foreground" />}
                   label={project.name}
-                  meta={`${projectTasks.length}`}
                   expanded={projectOpen}
                   onClick={() => openProject(project.id)}
                   action={<NewTaskButton onClick={() => setDialog({ kind: "task", projectId: project.id })} />}
@@ -232,7 +231,6 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                           active={selection.taskId === task.id && selection.sessionId === null}
                           icon={<IconGitBranch className="size-4 text-muted-foreground" />}
                           label={task.title}
-                          meta={t(`common.${task.status}`)}
                           expanded={taskOpen}
                           onClick={() => openTask(task.id)}
                           action={<NewSessionButton onClick={() => selectTask(task.id, task.projectId)} />}
