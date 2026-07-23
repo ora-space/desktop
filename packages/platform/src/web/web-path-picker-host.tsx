@@ -3,16 +3,16 @@ import {
   Button,
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
   Input,
   Label,
+  Spinner,
   cn,
 } from "@ora/ui";
 import {
-  IconChevronRight,
+  IconArrowUp,
   IconFile,
   IconFolder,
   IconFolderSymlink,
@@ -33,8 +33,8 @@ import type { PlatformLocale, SelectPathOptions } from "../types";
 import { platformMessages } from "./messages";
 import type { WebPlatformAdapter } from "./web-platform-adapter";
 
-const VIRTUALIZATION_THRESHOLD = 50;
 const ENTRY_ROW_HEIGHT = 36;
+const PATH_PICKER_GUTTER = "1.5rem";
 const EMPTY_ENTRIES: FileSystemEntry[] = [];
 
 /** Renders the active Web selection request and stays absent for an idle adapter. */
@@ -82,8 +82,14 @@ function WebPathPickerDialog({
   const [loading, setLoading] = useState(true);
   const [readError, setReadError] = useState(false);
   const loadSequence = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const applyDirectory = useCallback((response: ListDirectoryResponse) => {
+    // Each directory is a distinct view. Keeping the prior scroll offset can make
+    // a short destination appear blank after navigating from a long one.
+    if (listRef.current !== null) {
+      listRef.current.scrollTop = 0;
+    }
     setDirectory(response);
     setPathDraft(response.currentPath);
     setSelectedIndex(-1);
@@ -164,7 +170,6 @@ function WebPathPickerDialog({
   const selectedEntry = selectedIndex === -1 ? undefined : entries[selectedIndex];
   const confirmableEntry =
     selectedEntry !== undefined && selectedEntry.kind === options.kind ? selectedEntry : undefined;
-  const listRef = useRef<HTMLDivElement>(null);
   const getItemKey = useCallback(
     (index: number) => entries[index]?.path ?? index,
     [entries],
@@ -178,7 +183,7 @@ function WebPathPickerDialog({
     getItemKey,
     overscan: 8,
     initialRect: { width: 640, height: 288 },
-    enabled: entries.length > VIRTUALIZATION_THRESHOLD,
+    enabled: true,
   });
 
   const navigateTo = useCallback(
@@ -216,18 +221,11 @@ function WebPathPickerDialog({
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const delta = event.key === "ArrowDown" ? 1 : -1;
-      const nextIndex = Math.max(0, Math.min(entries.length - 1, selectedIndex + delta));
+      const nextIndex = selectedIndex === -1
+        ? 0
+        : Math.max(0, Math.min(entries.length - 1, selectedIndex + delta));
       setSelectedIndex(nextIndex);
-      if (entries.length > VIRTUALIZATION_THRESHOLD) {
-        virtualizer.scrollToIndex(nextIndex, { align: "auto" });
-      } else {
-        // Non-virtual rows still need explicit keyboard scrolling once selection leaves the viewport.
-        queueMicrotask(() =>
-          document
-            .getElementById(`platform-path-entry-${nextIndex}`)
-            ?.scrollIntoView({ block: "nearest" }),
-        );
-      }
+      virtualizer.scrollToIndex(nextIndex, { align: "auto" });
       return;
     }
     if (event.key === "Enter" && !loading && !readError && selectedEntry !== undefined) {
@@ -247,29 +245,50 @@ function WebPathPickerDialog({
   const title =
     options.kind === "directory" ? messages.chooseDirectoryTitle : messages.chooseFileTitle;
   // Read the mutable virtual range on every render so scroll-triggered renders cannot reuse stale rows.
-  const positionedItems =
-    entries.length > VIRTUALIZATION_THRESHOLD
-      ? virtualizer.getVirtualItems().map((item) => ({ index: item.index, start: item.start }))
-      : entries.map((_, index) => ({ index, start: index * ENTRY_ROW_HEIGHT }));
-  const listHeight =
-    entries.length > VIRTUALIZATION_THRESHOLD
-      ? virtualizer.getTotalSize()
-      : entries.length * ENTRY_ROW_HEIGHT;
+  const positionedItems = virtualizer
+    .getVirtualItems()
+    .map((item) => ({ index: item.index, start: item.start }));
+  const listHeight = virtualizer.getTotalSize();
   const activeDescendant = selectedIndex === -1 ? undefined : `platform-path-entry-${selectedIndex}`;
 
   return (
     <Dialog open onOpenChange={(open) => !open && adapter.completeSelection(requestId, null)}>
-      <DialogContent className="sm:max-w-3xl" showCloseButton={false}>
-        <DialogHeader>
+      <DialogContent
+        className="min-h-0 min-w-0 max-w-none gap-0 overflow-hidden rounded-lg! p-0 sm:max-w-none"
+        showCloseButton={false}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          inlineSize: "40rem",
+          blockSize: "30rem",
+          maxInlineSize: "calc(100vw - 2rem)",
+          maxBlockSize: "calc(100dvh - 2rem)",
+        }}
+      >
+        <DialogHeader
+          className="min-w-0 shrink-0 gap-1"
+          style={{ padding: `${PATH_PICKER_GUTTER} ${PATH_PICKER_GUTTER} 0.75rem` }}
+        >
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>
-            {loading || readError
-              ? pathDraft
-              : directory?.currentPath ?? options.initialPath ?? ""}
-          </DialogDescription>
         </DialogHeader>
 
-        <form className="flex gap-2" onSubmit={handlePathSubmit}>
+        <form
+          className="mb-3 flex shrink-0 items-center gap-1 rounded-md bg-muted/60 p-1"
+          style={{ marginInline: PATH_PICKER_GUTTER }}
+          onSubmit={handlePathSubmit}
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0"
+            disabled={loading || directory?.parentPath == null}
+            onClick={() => directory?.parentPath != null && navigateTo(directory.parentPath)}
+            aria-label={messages.up}
+            title={messages.up}
+          >
+            <IconArrowUp />
+          </Button>
           <div className="min-w-0 flex-1">
             <Label htmlFor="platform-path-input" className="sr-only">
               {messages.pathLabel}
@@ -279,38 +298,14 @@ function WebPathPickerDialog({
               aria-label={messages.pathLabel}
               value={pathDraft}
               onChange={(event) => setPathDraft(event.target.value)}
+              className="border-transparent bg-background/70 shadow-none focus-visible:border-transparent focus-visible:ring-0"
             />
           </div>
-          <Button type="submit" variant="outline" disabled={loading || pathDraft.trim() === ""}>
+          <Button type="submit" variant="ghost" className="w-16 shrink-0" disabled={loading || pathDraft.trim() === ""}>
+            {loading && <Spinner className="size-3.5" aria-hidden="true" />}
             {messages.go}
           </Button>
         </form>
-
-        <div className="flex min-w-0 items-center gap-1 overflow-x-auto" aria-label={messages.pathLabel}>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={loading || directory?.parentPath == null}
-            onClick={() => directory?.parentPath != null && navigateTo(directory.parentPath)}
-          >
-            {messages.up}
-          </Button>
-          {directory?.breadcrumbs.map((breadcrumb, index) => (
-            <div key={breadcrumb.path} className="flex shrink-0 items-center gap-1">
-              {index > 0 && <IconChevronRight className="size-3 text-muted-foreground" />}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={loading || breadcrumb.path === directory.currentPath}
-                onClick={() => navigateTo(breadcrumb.path)}
-              >
-                {breadcrumb.name}
-              </Button>
-            </div>
-          ))}
-        </div>
 
         <div
           ref={listRef}
@@ -319,14 +314,10 @@ function WebPathPickerDialog({
           aria-activedescendant={activeDescendant}
           aria-label={title}
           aria-busy={loading}
-          className="relative h-72 overflow-auto rounded-lg border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="relative mb-3 min-h-0 flex-1 overflow-auto rounded-md bg-muted/45 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          style={{ marginInline: PATH_PICKER_GUTTER }}
           onKeyDown={handleListKeyDown}
         >
-          {loading && (
-            <div className="grid h-full place-items-center text-sm text-muted-foreground">
-              {messages.loading}
-            </div>
-          )}
           {!loading && readError && (
             <div role="alert" className="grid h-full place-items-center gap-3 p-6 text-center">
               <p className="text-sm text-destructive">{messages.readError}</p>
@@ -341,7 +332,7 @@ function WebPathPickerDialog({
               {messages.emptyDirectory}
             </div>
           )}
-          {!loading && !readError && entries.length > 0 && (
+          {!readError && entries.length > 0 && (
             <div className="relative w-full" style={{ height: listHeight }}>
               {positionedItems.map((virtualItem) => {
                 const entry = entries[virtualItem.index]!;
@@ -354,8 +345,8 @@ function WebPathPickerDialog({
                     aria-selected={selected}
                     aria-disabled={entry.kind === "unavailable"}
                     className={cn(
-                      "absolute left-0 top-0 flex h-9 w-full items-center gap-2 px-3 text-sm",
-                      selected && "bg-muted text-foreground",
+                      "absolute left-0 top-0 flex h-9 w-full min-w-0 items-center gap-2 rounded-md px-3 text-sm transition-colors duration-150 hover:bg-background/70",
+                      selected && "bg-background text-foreground shadow-sm",
                       entry.kind === "unavailable" && "text-muted-foreground opacity-60",
                     )}
                     style={{ transform: `translateY(${virtualItem.start}px)` }}
@@ -364,28 +355,25 @@ function WebPathPickerDialog({
                   >
                     <EntryIcon entry={entry} />
                     <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                    {entry.kind === "directory" && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`${messages.go}: ${entry.name}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          navigateTo(entry.path);
-                        }}
-                      >
-                        <IconChevronRight />
-                      </Button>
-                    )}
                   </div>
                 );
               })}
             </div>
           )}
+          {loading && (
+            <div className="absolute inset-0 grid place-items-center bg-muted/55" aria-live="polite">
+              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Spinner className="size-3.5" />
+                {messages.loading}
+              </span>
+            </div>
+          )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter
+          className="mx-0 mb-0 shrink-0 border-t-0 bg-transparent pt-0"
+          style={{ paddingInline: PATH_PICKER_GUTTER, paddingBottom: PATH_PICKER_GUTTER }}
+        >
           <Button type="button" variant="outline" onClick={() => adapter.completeSelection(requestId, null)}>
             {messages.cancel}
           </Button>

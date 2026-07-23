@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { hasPlatformHostRenderer } from "../platform-host-renderer";
 import { PathSelectionInProgressError } from "../types";
 import { createTauriPlatformAdapter } from "./tauri-platform-adapter";
 
@@ -41,6 +42,12 @@ describe("TauriPlatformAdapter", () => {
       multiple: false,
       defaultPath: "/home/ora",
     });
+  });
+
+  it("does not expose the Web-only React path picker host", () => {
+    const adapter = createTauriPlatformAdapter();
+
+    expect(hasPlatformHostRenderer(adapter)).toBe(false);
   });
 
   it("returns null on cancellation and rejects concurrent native dialogs", async () => {

@@ -98,6 +98,62 @@ describe("WebPlatformAdapter", () => {
     expect(screen.getByRole("button", { name: "Browse" })).toHaveFocus();
   });
 
+  it("uses a stable desktop workspace while remaining viewport-bound", async () => {
+    const user = userEvent.setup();
+    const { client } = fileSystemClient();
+    const adapter = createWebPlatformAdapter(client);
+    render(<PickerHarness adapter={adapter} />);
+
+    await user.click(screen.getByRole("button", { name: "Browse" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveStyle({
+      display: "flex",
+      flexDirection: "column",
+      inlineSize: "40rem",
+      blockSize: "30rem",
+      maxInlineSize: "calc(100vw - 2rem)",
+      maxBlockSize: "calc(100dvh - 2rem)",
+    });
+    expect(screen.getByRole("listbox")).toHaveClass("min-h-0", "flex-1", "overflow-auto");
+  });
+
+  it("uses the same single-column list for a small directory", async () => {
+    const user = userEvent.setup();
+    const { client } = fileSystemClient();
+    const adapter = createWebPlatformAdapter(client);
+    render(<PickerHarness adapter={adapter} />);
+
+    await user.click(screen.getByRole("button", { name: "Browse" }));
+
+    const entry = await screen.findByRole("option", { name: "projects" });
+    expect(entry).toHaveClass("absolute", "w-full");
+    expect(entry.parentElement).toHaveClass("relative", "w-full");
+  });
+
+  it("summarizes a deep path instead of rendering every breadcrumb", async () => {
+    const currentPath = "/home/ora/projects/very-long-organization-name/very-long-repository-name";
+    const directory: ListDirectoryResponse = {
+      ...homeDirectory,
+      currentPath,
+      breadcrumbs: [
+        ...homeDirectory.breadcrumbs,
+        { name: "projects", path: "/home/ora/projects" },
+        { name: "very-long-organization-name", path: "/home/ora/projects/very-long-organization-name" },
+        { name: "very-long-repository-name", path: currentPath },
+      ],
+    };
+    const user = userEvent.setup();
+    const { client } = fileSystemClient(vi.fn().mockResolvedValue(directory));
+    const adapter = createWebPlatformAdapter(client);
+    render(<PickerHarness adapter={adapter} />);
+
+    await user.click(screen.getByRole("button", { name: "Browse" }));
+
+    expect(await screen.findByRole("textbox", { name: "Absolute path" })).toHaveValue(currentPath);
+    expect(screen.queryByRole("button", { name: "projects" })).not.toBeInTheDocument();
+  });
+
   it("returns files in file mode while keeping directories navigable", async () => {
     const user = userEvent.setup();
     const { client } = fileSystemClient();
@@ -144,8 +200,7 @@ describe("WebPlatformAdapter", () => {
     render(<PickerHarness adapter={adapter} />);
 
     await user.click(screen.getByRole("button", { name: "Browse" }));
-    await user.click(await screen.findByText("projects"));
-    await user.click(screen.getByRole("button", { name: "Go: projects" }));
+    await user.dblClick(await screen.findByText("projects"));
 
     expect(await screen.findByRole("alert")).toBeVisible();
     expect(screen.getByRole("button", { name: "Select current folder" })).toBeDisabled();
@@ -179,6 +234,46 @@ describe("WebPlatformAdapter", () => {
     fireEvent.scroll(list);
 
     await waitFor(() => expect(screen.getByText("file-99.txt")).toBeVisible());
+  });
+
+  it("resets the directory list to the top after navigating", async () => {
+    const nextPath = "/home/ora/next";
+    const largeDirectory: ListDirectoryResponse = {
+      ...homeDirectory,
+      entries: Array.from({ length: 100 }, (_, index) => ({
+        name: `file-${index}.txt`,
+        path: `/home/ora/file-${index}.txt`,
+        kind: "file" as const,
+        isSymbolicLink: false,
+      })),
+    };
+    const nextDirectory: ListDirectoryResponse = {
+      ...homeDirectory,
+      currentPath: nextPath,
+      entries: [],
+    };
+    const listDirectory = vi
+      .fn()
+      .mockResolvedValueOnce(largeDirectory)
+      .mockResolvedValueOnce(nextDirectory);
+    const { client } = fileSystemClient(listDirectory);
+    const adapter = createWebPlatformAdapter(client);
+    const user = userEvent.setup();
+    render(<PickerHarness adapter={adapter} options={{ kind: "file" }} />);
+
+    await user.click(screen.getByRole("button", { name: "Browse" }));
+    await screen.findByText("file-0.txt");
+    const list = screen.getByRole("listbox");
+    list.scrollTop = 3_312;
+    fireEvent.scroll(list);
+
+    const pathInput = screen.getByRole("textbox", { name: "Absolute path" });
+    await user.clear(pathInput);
+    await user.type(pathInput, nextPath);
+    await user.click(screen.getByRole("button", { name: "Go" }));
+
+    expect(await screen.findByText("This folder is empty")).toBeVisible();
+    expect(list.scrollTop).toBe(0);
   });
 
   it("falls back to home when the supplied initial path cannot be read", async () => {
