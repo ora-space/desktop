@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
-import { IconArrowUp, IconPlayerStop, IconPlus } from "@tabler/icons-react";
+import { IconArrowUp, IconLoader2, IconPlayerStop, IconPlus } from "@tabler/icons-react";
 import { Button, Textarea } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
@@ -10,6 +10,14 @@ interface ComposerProps {
   onSend: (text: string) => void;
   onStop?: () => void;
   isResponding: boolean;
+  /**
+   * True once the agent has produced visible output for the live turn. While the
+   * turn is still spinning up (session starting or awaiting the first token) this
+   * stays false, which is what splits the send button's stop affordance into a
+   * loading spinner and the actual stop icon. The click action is the same in
+   * both — only the glyph changes.
+   */
+  isStreaming?: boolean;
   disabled?: boolean;
   placeholder?: string;
   autoFocus?: boolean;
@@ -24,6 +32,7 @@ export function Composer({
   onSend,
   onStop,
   isResponding,
+  isStreaming = false,
   disabled = false,
   placeholder,
   autoFocus = false,
@@ -84,12 +93,18 @@ export function Composer({
             <ModelSelector disabled={disabled} />
             <Button
               size="icon"
-              aria-label={isResponding ? t("common.stop") : t("chat.send")}
+              // A live turn always stops on click, whether it is still starting up
+              // (spinner) or already streaming (stop icon); only idle sends.
+              aria-label={isResponding ? (isStreaming ? t("common.stop") : t("chat.starting")) : t("chat.send")}
               disabled={isResponding ? onStop === undefined : !canSend}
               onClick={isResponding ? onStop : submit}
               className="size-8 rounded-full disabled:bg-muted disabled:text-muted-foreground"
             >
-              {isResponding ? <IconPlayerStop className="size-[18px]" /> : <IconArrowUp className="size-[18px]" />}
+              {isResponding
+                ? isStreaming
+                  ? <IconPlayerStop className="size-[18px]" />
+                  : <IconLoader2 className="size-[18px] animate-spin" />
+                : <IconArrowUp className="size-[18px]" />}
             </Button>
           </div>
         </div>

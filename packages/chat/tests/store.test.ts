@@ -123,6 +123,60 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
   assert.deepEqual(conversation?.pendingPermissions, []);
 });
 
+test("shows the user turn on a draft key before promoting to the created session", async () => {
+  let promptSessionId: string | undefined;
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: (request) => {
+      promptSessionId = request.sessionId;
+      return events<PromptSessionEvent>([
+        textEvent("agent_message_chunk", "done", "agent-1") as PromptSessionEvent,
+        { type: "completed", stopReason: "end_turn" },
+      ]);
+    },
+    respondToPermission: async () => ({}),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
+
+  let resolveCreate: (id: string) => void = () => {};
+  const created = new Promise<string>((resolve) => { resolveCreate = resolve; });
+  const drafts: string[] = [];
+  const promoted: string[] = [];
+
+  const sending = store.getState().sendMessage({
+    text: "hi",
+    createSession: () => created,
+    onDraft: (id) => drafts.push(id),
+    onSessionCreated: (id) => promoted.push(id),
+  });
+
+  // The turn is visible under the draft key while the session is still being created.
+  assert.deepEqual(drafts, ["draft-local-1"]);
+  const draft = store.getState().conversations["draft-local-1"];
+  assert.equal(draft?.turns.length, 1);
+  assert.equal(draft?.turns[0]?.userMessage.content, "hi");
+  assert.equal(draft?.isResponding, true);
+  assert.equal(store.getState().conversations["real-session"], undefined);
+
+  resolveCreate("real-session");
+  await sending;
+
+  // The conversation has moved onto the real id and the draft key is gone.
+  assert.deepEqual(promoted, ["real-session"]);
+  assert.equal(promptSessionId, "real-session");
+  assert.equal(store.getState().conversations["draft-local-1"], undefined);
+  const conversation = store.getState().conversations["real-session"];
+  assert.equal(conversation?.isResponding, false);
+  // The live turn is authoritative, so the promoted conversation is already
+  // "loaded" and the workspace never re-loads (and re-slides) it.
+  assert.equal(conversation?.isLoaded, true);
+  assert.deepEqual(conversation?.turns[0]?.items, [
+    { kind: "message", id: "message-agent-1", role: "assistant", content: "done", createdAt: 42, protocolMessageId: "agent-1" },
+  ]);
+  assert.equal(conversation?.turns[0]?.status, "completed");
+});
+
 test("rolls back staged load updates when replay fails before completion", async () => {
   const client: ChatSessionClient = {
     load: () => ({

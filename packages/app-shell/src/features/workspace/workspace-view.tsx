@@ -9,10 +9,13 @@ import {
   IconLayoutSidebarLeftExpand,
   IconPlayerPlay,
 } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
-import { useCreateSession } from "../../state/hooks/use-workspace-mutations";
+import { DEFAULT_AGENT_CLI } from "../../state/hooks/use-workspace-mutations";
+import { queryKeys } from "../../state/hooks/query-keys";
+import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useChatStore } from "../../chat-store-context";
@@ -38,6 +41,8 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
 
   const chatStore = useChatStore();
+  const client = useContractsClient();
+  const queryClient = useQueryClient();
 
   const project = projects.find((item) => item.id === selection.projectId);
   const task = tasks.find((item) => item.id === selection.taskId);
@@ -49,8 +54,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         ? undefined
         : state.conversations[selection.sessionId]),
   );
-
-  const createSession = useCreateSession();
 
   useEffect(() => {
     if (
@@ -69,23 +72,46 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
   /**
    * Sends into the selected session, or starts one for the selected worktree
-   * first. useCreateSession already opens the agent session against the
-   * project's root path and selects the result, so the implicit path here is the
-   * same one the session dialog takes.
+   * first. The new-session path is optimistic: the store materializes the user
+   * turn up front (so the composer slides into the thread immediately) and
+   * creates the agent session in the background, re-pointing selection at the
+   * draft and then the real id as each becomes available. This mirrors the
+   * project root path the session dialog opens against.
    */
   const sendOrStartSession = async (text: string) => {
-    const target = session ?? (task
-      ? await createSession.mutateAsync({ taskId: task.id })
-      : undefined);
-    if (target === undefined) return;
+    if (session) {
+      try {
+        await chatStore.getState().sendMessage({ oraSessionId: session.id, text });
+      } finally {
+        // Connection failures can stop the provider process, so refresh the persisted
+        // lifecycle snapshot after every finite prompt without polling idle sessions.
+        await sessionsQuery.refetch();
+      }
+      return;
+    }
+    if (task === undefined) return;
+    const taskId = task.id;
+    const projectId = task.projectId;
     try {
       await chatStore.getState().sendMessage({
-        oraSessionId: target.id,
         text,
+        createSession: () =>
+          client.session
+            .create({ taskId, agentCli: DEFAULT_AGENT_CLI })
+            .then((response) => response.session.id),
+        // Show the optimistic turn under its temporary key right away.
+        onDraft: (draftSessionId) =>
+          useWorkspaceSelectionStore.getState().selectSession(draftSessionId, taskId, projectId),
+        // The store has already re-keyed the conversation onto the real id, so
+        // selecting it here cannot flash an empty thread.
+        onSessionCreated: (realSessionId) => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+          useWorkspaceSelectionStore.getState().selectSession(realSessionId, taskId, projectId);
+          useUiStore.getState().expandProject(projectId);
+          useUiStore.getState().expandTask(taskId);
+        },
       });
     } finally {
-      // Connection failures can stop the provider process, so refresh the persisted lifecycle
-      // snapshot after every finite prompt without polling all idle sessions.
       await sessionsQuery.refetch();
     }
   };
@@ -102,9 +128,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     const canChat = session
       ? session.status === "running" || conversation?.isLoaded === true
       : task !== undefined && project !== undefined;
-    const chatError = conversation?.error
-      ?? createSession.error?.message
-      ?? null;
+    // A failed background session-create settles onto the draft conversation, so
+    // the conversation error already covers the start-up failure path.
+    const chatError = conversation?.error ?? null;
+    const lastTurn = conversation?.turns.at(-1);
+    // Output has begun once the live turn carries any item; until then the turn is
+    // still starting up (session creation or the wait for the first token).
+    const isStreaming = (conversation?.isResponding ?? false) && (lastTurn?.items.length ?? 0) > 0;
     return (
       <main id="main-content" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         <div className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
@@ -126,6 +156,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             turns={conversation?.turns ?? []}
             userName={userName}
             isResponding={conversation?.isResponding ?? false}
+            isStreaming={isStreaming}
             error={chatError}
             pendingPermissions={conversation?.pendingPermissions ?? []}
             disabled={!canChat}
@@ -135,7 +166,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             contextBar={session ? undefined : <ComposerContextBar />}
             // Failures land in chatError; the rejection itself is expected.
             onSend={(text) => void sendOrStartSession(text).catch(() => undefined)}
-            onStop={() => chatStore.getState().stopGeneration(session?.id ?? "")}
+            // The selected id, not session.id: during the optimistic startup the
+            // real session does not exist yet but the draft key is already live.
+            onStop={() => chatStore.getState().stopGeneration(selection.sessionId ?? "")}
             onRespondToPermission={(permissionRequestId, optionId) => {
               if (session) {
                 void chatStore.getState()

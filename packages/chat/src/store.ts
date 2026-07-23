@@ -25,8 +25,29 @@ export type {
 } from "./types.js";
 
 export interface SendMessageRequest {
-  oraSessionId: string;
   text: string;
+  /**
+   * Target an existing session. Provide this OR `createSession`, never both:
+   * with an id the prompt streams straight into that session, without one the
+   * session is created lazily (see `createSession`).
+   */
+  oraSessionId?: string;
+  /**
+   * Lazily creates the backing agent session, resolving to its real id. When
+   * present, the user turn is materialized immediately under a temporary key and
+   * the (slow, cold-start) session creation runs in the background, so the
+   * composer slides into the thread without waiting on the agent handshake. The
+   * store re-keys the conversation onto the real id once it arrives.
+   */
+  createSession?: () => Promise<string>;
+  /**
+   * Fired synchronously once the optimistic turn exists, carrying the temporary
+   * key so the caller can select the draft conversation for display. Only
+   * relevant on the `createSession` path.
+   */
+  onDraft?: (draftSessionId: string) => void;
+  /** Fired after the store has re-keyed onto the real session id. */
+  onSessionCreated?: (oraSessionId: string) => void;
 }
 
 export interface ChatState {
@@ -122,14 +143,19 @@ export function createChatStore(
       }
     },
 
-    sendMessage: async ({ oraSessionId, text }) => {
+    sendMessage: async ({ oraSessionId, text, createSession, onDraft, onSessionCreated }) => {
       const content = text.trim();
       if (content === "") return;
-      if (operations.has(oraSessionId)) {
+
+      // Stream into the given session, or a temporary draft key that is promoted
+      // to the real id once the background create resolves. The key is mutable
+      // because every store write below has to follow it across that promotion.
+      let key = oraSessionId ?? `draft-${createId()}`;
+      if (operations.has(key)) {
         throw new Error("this Ora session is already processing an operation");
       }
       const controller = new AbortController();
-      operations.set(oraSessionId, controller);
+      operations.set(key, controller);
 
       const createdAt = now();
       const turnId = createId();
@@ -148,29 +174,72 @@ export function createChatStore(
         error: null,
         createdAt,
       };
-      updateConversation(set, oraSessionId, (conversation) => ({
+      updateConversation(set, key, (conversation) => ({
         ...conversation,
         turns: [...conversation.turns, turn],
         isResponding: true,
         error: null,
       }));
+      // Let the caller show the draft conversation before we block on the agent.
+      onDraft?.(key);
+
+      if (createSession) {
+        let realId: string;
+        try {
+          realId = await createSession();
+        } catch (error) {
+          // Nothing streamed yet; settle the draft turn and stop here.
+          const message = errorMessage(error);
+          updateTurn(set, key, turnId, (current) => ({ ...current, status: "failed", error: message }));
+          updateConversation(set, key, (conversation) => ({
+            ...conversation,
+            isResponding: false,
+            error: message,
+          }));
+          operations.delete(key);
+          throw error;
+        }
+        if (controller.signal.aborted) {
+          // Stopped mid-startup: the session exists but we never open its stream.
+          updateTurn(set, key, turnId, (current) =>
+            current.status === "streaming" ? { ...current, status: "cancelled" } : current,
+          );
+          updateConversation(set, key, (conversation) => ({ ...conversation, isResponding: false }));
+          operations.delete(key);
+          return;
+        }
+        // Carry the live conversation and its operation onto the real id, then let
+        // the caller re-point selection at it. Order matters: the conversation is
+        // re-keyed before selection moves so the new id never reads as empty.
+        promoteConversation(set, key, realId);
+        operations.delete(key);
+        operations.set(realId, controller);
+        key = realId;
+        // This turn was streamed live, so the local conversation already is the
+        // session's history. Marking it loaded stops the workspace's "load if not
+        // loaded" effect from firing once the session id resolves — that reload
+        // clears turns to empty first, which would bounce the composer back to the
+        // landing layout and replay the slide-down animation.
+        updateConversation(set, key, (conversation) => ({ ...conversation, isLoaded: true }));
+        onSessionCreated?.(realId);
+      }
 
       try {
         for await (const event of client.prompt(
-          { sessionId: oraSessionId, text: content },
+          { sessionId: key, text: content },
           { signal: controller.signal },
         )) {
           if (event.type === "session_update") {
             // The user turn is already materialized, so the echoed prompt chunk
             // would only duplicate it; every other update belongs to this turn.
             if (event.update.sessionUpdate === "user_message_chunk") continue;
-            updateTurn(set, oraSessionId, turnId, (current) =>
+            updateTurn(set, key, turnId, (current) =>
               applyAgentUpdate(current, event.update, createId, now()),
             );
           } else if (event.type === "permission_request") {
-            appendPermission(set, oraSessionId, event);
+            appendPermission(set, key, event);
           } else {
-            updateTurn(set, oraSessionId, turnId, (current) => ({
+            updateTurn(set, key, turnId, (current) => ({
               ...current,
               status: event.stopReason === "cancelled" ? "cancelled" : "completed",
               stopReason: event.stopReason,
@@ -179,29 +248,29 @@ export function createChatStore(
         }
       } catch (error) {
         if (isAbortError(error)) {
-          updateTurn(set, oraSessionId, turnId, (current) =>
+          updateTurn(set, key, turnId, (current) =>
             current.status === "streaming" ? { ...current, status: "cancelled" } : current,
           );
-          clearPendingPermissions(set, oraSessionId);
+          clearPendingPermissions(set, key);
         } else {
           const message = errorMessage(error);
-          updateTurn(set, oraSessionId, turnId, (current) =>
+          updateTurn(set, key, turnId, (current) =>
             current.status === "streaming"
               ? { ...current, status: "failed", error: message }
               : current,
           );
-          updateConversation(set, oraSessionId, (conversation) => ({
+          updateConversation(set, key, (conversation) => ({
             ...conversation,
             error: message,
           }));
           throw error;
         }
       } finally {
-        operations.delete(oraSessionId);
-        updateTurn(set, oraSessionId, turnId, (current) =>
+        operations.delete(key);
+        updateTurn(set, key, turnId, (current) =>
           current.status === "streaming" ? { ...current, status: "completed" } : current,
         );
-        updateConversation(set, oraSessionId, (conversation) => ({
+        updateConversation(set, key, (conversation) => ({
           ...conversation,
           isResponding: false,
         }));
@@ -524,6 +593,21 @@ function updateTurn(
     ...conversation,
     turns: conversation.turns.map((turn) => (turn.id === turnId ? update(turn) : turn)),
   }));
+}
+
+/** Moves a conversation from a temporary draft key onto its real session id. */
+function promoteConversation(
+  set: ChatStore["setState"],
+  fromKey: string,
+  toKey: string,
+): void {
+  set((state) => {
+    const conversation = state.conversations[fromKey];
+    if (conversation === undefined) return state;
+    const conversations = { ...state.conversations, [toKey]: conversation };
+    delete conversations[fromKey];
+    return { conversations };
+  });
 }
 
 function updateConversation(
