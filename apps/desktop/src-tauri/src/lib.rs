@@ -58,6 +58,8 @@ pub fn run() {
             commands::delete_agent,
             commands::get_desktop_config,
             commands::set_worktree_root,
+            commands::resolve_task_cwd,
+            commands::open_location,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

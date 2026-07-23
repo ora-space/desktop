@@ -3,6 +3,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   PathSelectionInProgressError,
+  type LocationActionsCapability,
+  type LocationTarget,
   type PlatformAdapter,
   type SelectPathOptions,
   type WindowControlsCapability,
@@ -72,11 +74,36 @@ function createTauriWindowControls(): WindowControlsCapability {
   };
 }
 
+/**
+ * Wires the location handoff commands, but only inside a real Tauri window.
+ *
+ * Unlike the window controls, this stays `supported` on macOS too - macOS keeps its
+ * native traffic lights (so it paints no window controls) yet still launches Finder,
+ * Terminal, and VS Code. The jsdom/SSR guard mirrors the window-control path.
+ */
+function createTauriLocationActions(): LocationActionsCapability {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+    return { kind: "unsupported" };
+  }
+
+  return {
+    kind: "supported",
+    resolveTaskCwd: (taskId) =>
+      invoke<{ path: string }>("resolve_task_cwd", { request: { taskId } }).then(
+        (response) => response.path,
+      ),
+    open: (target: LocationTarget, path: string) =>
+      invoke("open_location", { request: { target, path } }),
+  };
+}
+
 /** Delegates path selection to the desktop operating system's native open dialog. */
 export class TauriPlatformAdapter implements PlatformAdapter {
   private selectionInProgress = false;
 
   readonly windowControls: WindowControlsCapability = createTauriWindowControls();
+
+  readonly locationActions: LocationActionsCapability = createTauriLocationActions();
 
   readonly worktreeStorage = {
     kind: "configurable" as const,

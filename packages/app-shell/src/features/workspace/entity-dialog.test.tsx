@@ -43,6 +43,7 @@ describe("EntityDialog path field", () => {
       selectPath,
       worktreeStorage: { kind: "unsupported" },
       windowControls: { kind: "none" },
+      locationActions: { kind: "unsupported" },
     });
 
     await user.click(screen.getByRole("button", { name: /Browse|浏览/ }));
@@ -60,6 +61,7 @@ describe("EntityDialog path field", () => {
       selectPath: vi.fn().mockResolvedValue(null),
       worktreeStorage: { kind: "unsupported" },
       windowControls: { kind: "none" },
+      locationActions: { kind: "unsupported" },
     });
 
     const pathInput = screen.getByLabelText("Path");

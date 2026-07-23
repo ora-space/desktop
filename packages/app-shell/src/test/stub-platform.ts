@@ -12,6 +12,7 @@ export function createStubPlatform(): PlatformAdapter {
   return {
     worktreeStorage: { kind: "unsupported" },
     windowControls: { kind: "none" },
+    locationActions: { kind: "unsupported" },
     selectPath: async () => null,
   };
 }

@@ -3,6 +3,7 @@ import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
+  Toaster,
   TooltipProvider,
   type ResizablePanelHandle,
 } from "@ora/ui";
@@ -116,6 +117,7 @@ function AppShellContent({ client, chatStore, platform, user }: Required<AppShel
               <WorkspaceDialogs />
             </div>
             <PlatformHost locale={locale} />
+            <Toaster position="bottom-right" closeButton />
           </TooltipProvider>
         </PlatformProvider>
       </ChatStoreContext.Provider>

@@ -23,6 +23,7 @@ import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
+import { LocationActionsButton } from "./location-actions-button";
 
 interface WorkspaceViewProps {
   userName: string;
@@ -155,6 +156,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               </div>
             )}
           </DragRegion>
+          <LocationActionsButton taskId={task?.id} projectPath={project?.rootPath} />
           <WindowControls />
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
@@ -196,6 +198,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         <DragRegion>
           <span className="text-[13px] font-medium text-muted-foreground">{t("workspace.overview")}</span>
         </DragRegion>
+        <LocationActionsButton taskId={task?.id} projectPath={project?.rootPath} />
         <WindowControls />
       </header>
       <div className="flex flex-1 items-center justify-center p-6">

@@ -98,6 +98,15 @@ impl Backend {
         Ok(())
     }
 
+    /// Resolves the on-disk git worktree directory that backs one task.
+    ///
+    /// Reuses the same live resolution the agent runtime performs before spawning a
+    /// provider, so the path always matches where the session actually runs. Fails
+    /// when the task has no active worktree on disk.
+    pub fn resolve_task_cwd(&self, task_id: &str) -> Result<PathBuf, BackendError> {
+        crate::agent_runtime::resolve_task_cwd(&self.pool, &ora_domain::TaskId::new(task_id))
+    }
+
     /// Creates one project through the shared application composition.
     pub fn create_project(
         &self,

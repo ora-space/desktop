@@ -393,6 +393,167 @@ pub struct SetWorktreeRootResponse {
     pub worktree_root: String,
 }
 
+/// Identifies the task whose backing git worktree directory should be resolved.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveTaskCwdRequest {
+    pub task_id: String,
+}
+
+/// Returns the absolute working directory that backs the requested task.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveTaskCwdResponse {
+    pub path: String,
+}
+
+/// Renders an absolute path with the host OS's native separators.
+///
+/// Git reports worktree paths with forward slashes on every platform, so this keeps
+/// both the copied text and the opened target reading naturally on Windows while
+/// leaving already-native paths untouched on macOS.
+fn to_native_path_string(path: &std::path::Path) -> String {
+    let rendered = path.to_string_lossy().into_owned();
+    #[cfg(target_os = "windows")]
+    let rendered = rendered.replace('/', "\\");
+    rendered
+}
+
+/// Resolves the on-disk git worktree directory for one task, live, off the API surface.
+#[tauri::command]
+pub async fn resolve_task_cwd(
+    state: State<'_, DesktopState>,
+    request: ResolveTaskCwdRequest,
+) -> Result<ResolveTaskCwdResponse, CommandError> {
+    let backend = state.backend.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        backend
+            .resolve_task_cwd(&request.task_id)
+            .map(|path| ResolveTaskCwdResponse {
+                path: to_native_path_string(&path),
+            })
+            .map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| CommandError::execution())?
+}
+
+/// Names the host application a location can be handed off to.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LocationTarget {
+    Explorer,
+    Terminal,
+    VsCode,
+}
+
+/// Carries the target application and the absolute path it should open.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLocationRequest {
+    pub target: LocationTarget,
+    pub path: String,
+}
+
+/// Opens one absolute path in the file manager, a terminal, or VS Code on the host OS.
+#[tauri::command]
+pub async fn open_location(request: OpenLocationRequest) -> Result<(), CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        open_location_blocking(request.target, &request.path)
+    })
+    .await
+    .map_err(|_| CommandError::execution())?
+}
+
+/// Reports a location handoff that the host OS refused or could not launch.
+fn open_location_error() -> CommandError {
+    CommandError::new(
+        "open_location_failed",
+        "failed to open the requested location",
+    )
+}
+
+/// Launches the host handler for one location, branching per OS since only desktop hosts call this.
+#[cfg(target_os = "windows")]
+fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), CommandError> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    // CREATE_NO_WINDOW: keep the `cmd` shim that resolves `code.cmd` from flashing a console.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    // Git reports worktree paths with forward slashes; explorer.exe only navigates
+    // backslash paths and silently falls back to a parent otherwise. Normalize once -
+    // `wt`, PowerShell, and `code` all accept backslashes too.
+    let normalized = path.replace('/', "\\");
+    let path = normalized.as_str();
+
+    match target {
+        // explorer.exe returns a non-zero exit code even on success, so a clean spawn is the only
+        // signal worth trusting here.
+        LocationTarget::Explorer => Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| open_location_error()),
+        // `code` ships as `code.cmd`, which CreateProcess will not resolve directly; route it
+        // through `cmd` and wait so a missing install surfaces as a failure the UI can report.
+        LocationTarget::VsCode => {
+            let status = Command::new("cmd")
+                .args(["/C", "code", path])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status()
+                .map_err(|_| open_location_error())?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(open_location_error())
+            }
+        }
+        // Prefer Windows Terminal; fall back to a PowerShell window opened in the target directory.
+        LocationTarget::Terminal => {
+            if Command::new("wt").args(["-d", path]).spawn().is_ok() {
+                return Ok(());
+            }
+            Command::new("cmd")
+                .args(["/C", "start", "", "/D", path, "powershell", "-NoExit"])
+                .spawn()
+                .map(|_| ())
+                .map_err(|_| open_location_error())
+        }
+    }
+}
+
+/// Launches the host handler for one location through macOS `open`, which fails loudly when absent.
+#[cfg(target_os = "macos")]
+fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), CommandError> {
+    use std::process::Command;
+
+    let mut command = Command::new("open");
+    match target {
+        LocationTarget::Explorer => {
+            command.arg(path);
+        }
+        LocationTarget::Terminal => {
+            command.args(["-a", "Terminal", path]);
+        }
+        LocationTarget::VsCode => {
+            command.args(["-a", "Visual Studio Code", path]);
+        }
+    }
+    let status = command.status().map_err(|_| open_location_error())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(open_location_error())
+    }
+}
+
+/// Rejects location handoffs on hosts that never run the desktop shell (only Web runs on Linux).
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn open_location_blocking(_target: LocationTarget, _path: &str) -> Result<(), CommandError> {
+    Err(open_location_error())
+}
+
 /// Reads the current Desktop worktree configuration without touching the Web API surface.
 #[tauri::command]
 pub async fn get_desktop_config(
