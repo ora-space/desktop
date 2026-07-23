@@ -213,7 +213,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                   meta={`${projectTasks.length}`}
                   expanded={projectOpen}
                   onClick={() => openProject(project.id)}
-                  action={<NewSessionButton onClick={() => selectProject(project.id)} />}
+                  action={<NewTaskButton onClick={() => setDialog({ kind: "task", projectId: project.id })} />}
                   menu={(
                     <EntityMenu
                       onEdit={() => setDialog({ kind: "project", entity: project })}
@@ -392,6 +392,31 @@ function NewSessionButton({ onClick }: { onClick: () => void }) {
       aria-label={t("sidebar.newSession")}
       onClick={(event) => {
         // The row underneath toggles expansion; opening the composer should not.
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <IconPlus />
+    </Button>
+  );
+}
+
+/**
+ * Opens the create-worktree-task dialog scoped to the row's project.
+ *
+ * A project's primary "+" creates a new worktree task rather than dropping
+ * straight into a composer: a task owns the branch a session runs against, so
+ * this is the entry point that gives later sessions somewhere to attach.
+ */
+function NewTaskButton({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={t("sidebar.newTask")}
+      onClick={(event) => {
+        // The row underneath toggles expansion; opening the dialog should not.
         event.stopPropagation();
         onClick();
       }}
