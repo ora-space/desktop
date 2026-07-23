@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { IconLoader2 } from "@tabler/icons-react";
 import { Composer } from "./composer";
 import { LandingHeading, LandingSuggestions } from "./empty-state";
 import { MessageList } from "./message-list";
@@ -13,6 +14,14 @@ interface ChatViewProps {
   isResponding: boolean;
   /** Output has begun for the live turn, so the composer shows stop rather than the startup spinner. */
   isStreaming?: boolean;
+  /**
+   * A selected session's history is still streaming in. This moves the composer to
+   * the thread layout right away — so clicking a session slides it down immediately
+   * instead of after the load — and shows a loading indicator where the thread will
+   * be. Kept separate from `turns` because history stages off-store until it is
+   * complete, so `turns` stays empty for the whole load.
+   */
+  isLoading?: boolean;
   error: string | null;
   pendingPermissions?: SessionPermissionRequest[];
   disabled?: boolean;
@@ -41,9 +50,14 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
  */
-export function ChatView({ turns, userName, isResponding, isStreaming = false, error, pendingPermissions = [], disabled = false, onSend, onStop, onRespondToPermission, contextBar, disabledHint }: ChatViewProps) {
+export function ChatView({ turns, userName, isResponding, isStreaming = false, isLoading = false, error, pendingPermissions = [], disabled = false, onSend, onStop, onRespondToPermission, contextBar, disabledHint }: ChatViewProps) {
   const { t } = useTranslation();
-  const isEmpty = turns.length === 0;
+  // A loading session takes the thread layout even before its turns arrive, so the
+  // landing (centered) layout is reserved for the genuinely-empty new-task compose
+  // state. This is what makes selecting a session slide the composer down at once;
+  // because `isEmpty` then flips true→false a single time and stays false through
+  // load completion, the FLIP effect below fires exactly once.
+  const isEmpty = turns.length === 0 && !isLoading;
   const composerSlotRef = useRef<HTMLDivElement>(null);
   // Where the composer sat at the last commit, used as the FLIP origin. Only the
   // landing layout records it, because that is the only position it moves from.
@@ -92,6 +106,10 @@ export function ChatView({ turns, userName, isResponding, isStreaming = false, e
             <LandingHeading />
           </div>
         </div>
+      ) : turns.length === 0 ? (
+        // Thread layout with no turns yet: history is still loading. The composer
+        // has already slid down, so this fills the space above it until turns land.
+        <HistoryLoading />
       ) : (
         <MessageList turns={turns} userName={userName} isResponding={isResponding} />
       )}
@@ -155,5 +173,22 @@ export function ChatView({ turns, userName, isResponding, isStreaming = false, e
         </div>
       </div>
     </main>
+  );
+}
+
+/** Fills the thread area while a selected session's history streams in. */
+function HistoryLoading() {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="status"
+      aria-label={t("chat.loadingHistory")}
+      className="flex min-h-0 flex-1 animate-in items-center justify-center fade-in duration-500"
+    >
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <IconLoader2 className="size-4 animate-spin" />
+        <span className="text-sm">{t("chat.loadingHistory")}</span>
+      </div>
+    </div>
   );
 }

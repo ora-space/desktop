@@ -129,6 +129,65 @@ describe("ChatView", () => {
     expect(context?.nextElementSibling?.querySelector('[data-slot="composer"]')).toBe(composer);
   });
 
+  it("shows the history loading indicator without the landing copy while a session loads", () => {
+    renderWithI18n(
+      <ChatView turns={[]} userName="Eric" isResponding={false} isLoading error={null} onSend={() => {}} />,
+    );
+
+    // Thread layout: the loading status stands in for the yet-to-arrive turns and
+    // the landing heading/suggestions are gone, so the composer has slid down.
+    expect(screen.getByRole("status", { name: /加载历史|Loading history/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeInTheDocument();
+  });
+
+  it("slides the composer down once when a session is selected, not again when its turns land", () => {
+    // Same FLIP harness as below: jsdom lacks layout and the Web Animations API.
+    let top = 300;
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(() => ({ top }) as DOMRect);
+    const animate = vi.fn();
+    Object.defineProperty(Element.prototype, "animate", {
+      configurable: true,
+      writable: true,
+      value: animate,
+    });
+
+    // Landing state: nothing selected, composer centered.
+    const view = renderWithI18n(
+      <ChatView turns={[]} userName="Eric" isResponding={false} error={null} onSend={() => {}} />,
+    );
+
+    // Selecting a session flips it into the loading thread layout: the composer
+    // slides down here, before any turn exists.
+    top = 800;
+    view.rerender(
+      <AppI18nProvider>
+        <ChatView turns={[]} userName="Eric" isResponding={false} isLoading error={null} onSend={() => {}} />
+      </AppI18nProvider>,
+    );
+    expect(animate).toHaveBeenCalledTimes(1);
+
+    // History arriving is not a landing→thread transition, so it must not replay
+    // the slide — otherwise the composer animates twice for one selection.
+    view.rerender(
+      <AppI18nProvider>
+        <ChatView
+          turns={[turn("turn-1", "hello", 100)]}
+          userName="Eric"
+          isResponding={false}
+          error={null}
+          onSend={() => {}}
+        />
+      </AppI18nProvider>,
+    );
+    expect(animate).toHaveBeenCalledTimes(1);
+
+    rectSpy.mockRestore();
+    Reflect.deleteProperty(Element.prototype, "animate");
+  });
+
   it("slides the same composer node down when the first message arrives", () => {
     // jsdom has no layout and no Web Animations API, so both are stood up here:
     // the rects drive the FLIP delta and the spy captures the resulting keyframes.

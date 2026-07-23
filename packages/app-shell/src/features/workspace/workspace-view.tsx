@@ -135,6 +135,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     // Output has begun once the live turn carries any item; until then the turn is
     // still starting up (session creation or the wait for the first token).
     const isStreaming = (conversation?.isResponding ?? false) && (lastTurn?.items.length ?? 0) > 0;
+    // A selected session always owns a thread, so treat it as loading until its
+    // history has landed (or failed). This also covers the render between selecting
+    // the session and loadSession flipping isLoading on — without it the composer
+    // would bounce back to the landing layout for a frame when switching sessions.
+    const isLoadingHistory =
+      session !== undefined && conversation?.isLoaded !== true && conversation?.error == null;
     return (
       <main id="main-content" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         <div className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
@@ -157,6 +163,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             userName={userName}
             isResponding={conversation?.isResponding ?? false}
             isStreaming={isStreaming}
+            isLoading={isLoadingHistory}
             error={chatError}
             pendingPermissions={conversation?.pendingPermissions ?? []}
             disabled={!canChat}
