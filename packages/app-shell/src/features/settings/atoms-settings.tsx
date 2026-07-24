@@ -43,6 +43,7 @@ import {
   useUpdateSkill,
   useDeleteSkill,
 } from "../../state/hooks/use-atom-mutations";
+import { SettingsHeading } from "./settings-heading";
 
 type AtomKind = "agent" | "skill";
 type AtomRecord = Agent | Skill;
@@ -244,15 +245,5 @@ function DeleteAtomDialog({ target, onOpenChange, onDelete }: { target: DeleteSt
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
-}
-
-/** Keeps settings section titles visually consistent without wrapping content in nested cards. */
-function SettingsHeading({ title, description }: { title: string; description: string }) {
-  return (
-    <header>
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
-    </header>
   );
 }

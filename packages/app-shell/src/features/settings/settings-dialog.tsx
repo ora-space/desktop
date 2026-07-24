@@ -10,7 +10,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  Badge,
   Button,
   Dialog,
   DialogContent,
@@ -36,14 +35,15 @@ import {
   IconLanguage,
   IconLock,
   IconMoon,
-  IconPlugConnected,
-  IconRobot,
+  IconPuzzle,
   IconShieldCheck,
   IconSun,
   IconTrash,
 } from "@tabler/icons-react";
 import type { Locale } from "../../i18n/i18n";
 import { AtomsSettings } from "./atoms-settings";
+import { PluginsSettings } from "./plugins-settings";
+import { SettingsHeading } from "./settings-heading";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useSettingsStore, type SettingsPreferences } from "../../state/stores/settings-store";
 import { useChatStore } from "../../chat-store-context";
@@ -52,11 +52,10 @@ import type {
   ApprovalPolicy,
   InterfaceDensity,
   HistoryRetention,
-  ModelProvider,
   ThemeMode,
 } from "../../state/stores/settings-store";
 
-type SettingsCategory = "appearance" | "atoms" | "models" | "permissions" | "privacy";
+type SettingsCategory = "appearance" | "atoms" | "plugins" | "permissions" | "privacy";
 
 /** Presents shared Ora preferences in a dense IDE-style settings surface. */
 export function SettingsDialog() {
@@ -72,7 +71,7 @@ export function SettingsDialog() {
   const categories: Array<{ id: SettingsCategory; icon: typeof IconAdjustments; label: string }> = [
     { id: "appearance", icon: IconAdjustments, label: t("settings.nav.appearance") },
     { id: "atoms", icon: IconAtom, label: t("settings.nav.atoms") },
-    { id: "models", icon: IconRobot, label: t("settings.nav.models") },
+    { id: "plugins", icon: IconPuzzle, label: t("settings.nav.plugins") },
     { id: "permissions", icon: IconShieldCheck, label: t("settings.nav.permissions") },
     { id: "privacy", icon: IconDatabase, label: t("settings.nav.privacy") },
   ];
@@ -119,7 +118,7 @@ export function SettingsDialog() {
             <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
               {category === "appearance" && <AppearanceSettings settings={settings} onUpdate={updateSettings} />}
               {category === "atoms" && <AtomsSettings />}
-              {category === "models" && <ModelSettings settings={settings} onUpdate={updateSettings} />}
+              {category === "plugins" && <PluginsSettings />}
               {category === "permissions" && <PermissionSettings settings={settings} onUpdate={updateSettings} />}
               {category === "privacy" && <PrivacySettings settings={settings} onUpdate={updateSettings} onClearHistory={clearConversations} />}
             </div>
@@ -179,40 +178,6 @@ function AppearanceSettings({ settings, onUpdate }: { settings: SettingsPreferen
           <SelectContent><SelectItem value="comfortable">{t("settings.appearance.comfortable")}</SelectItem><SelectItem value="compact">{t("settings.appearance.compact")}</SelectItem></SelectContent>
         </Select>
       </SettingsRow>
-    </div>
-  );
-}
-
-/** Models provider choices without collecting secrets until a secure credential contract exists. */
-function ModelSettings({ settings, onUpdate }: { settings: SettingsPreferences; onUpdate: (patch: Partial<SettingsPreferences>) => void }) {
-  const { t } = useTranslation();
-  const models: Record<ModelProvider, string[]> = {
-    openai: ["gpt-5.1-codex", "gpt-5.1", "gpt-4.1"],
-    anthropic: ["claude-sonnet-4.5", "claude-opus-4.1"],
-    local: ["qwen3-coder", "deepseek-r1"],
-  };
-  const changeProvider = (provider: ModelProvider) => onUpdate({ provider, model: models[provider][0] });
-
-  return (
-    <div className="space-y-7">
-      <SettingsHeading title={t("settings.models.title")} description={t("settings.models.description")} />
-      <SettingsRow icon={IconPlugConnected} title={t("settings.models.provider")} description={t("settings.models.providerDescription")}>
-        <Select value={settings.provider} onValueChange={(value) => changeProvider(value as ModelProvider)}>
-          <SelectTrigger className="w-44"><span className="flex-1 text-left">{settings.provider === "local" ? t("settings.models.local") : settings.provider === "openai" ? "OpenAI" : "Anthropic"}</span></SelectTrigger>
-          <SelectContent><SelectItem value="openai">OpenAI</SelectItem><SelectItem value="anthropic">Anthropic</SelectItem><SelectItem value="local">{t("settings.models.local")}</SelectItem></SelectContent>
-        </Select>
-      </SettingsRow>
-      <SettingsRow icon={IconRobot} title={t("settings.models.defaultModel")} description={t("settings.models.defaultModelDescription")}>
-        <Select value={settings.model} onValueChange={(model) => onUpdate({ model: model as string })}>
-          <SelectTrigger className="w-52"><span className="flex-1 text-left">{settings.model}</span></SelectTrigger>
-          <SelectContent>{models[settings.provider].map((model) => <SelectItem key={model} value={model}>{model}</SelectItem>)}</SelectContent>
-        </Select>
-      </SettingsRow>
-      <div className="flex items-center gap-3 border-y border-border py-4">
-        <span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-40" /><span className="relative inline-flex size-2 rounded-full bg-emerald-500" /></span>
-        <div className="min-w-0 flex-1"><p className="text-sm font-medium">{t("settings.models.connected")}</p><p className="text-xs text-muted-foreground">{t("settings.models.prototypeConnection")}</p></div>
-        <Badge variant="outline">{t("settings.models.ready")}</Badge>
-      </div>
     </div>
   );
 }
@@ -357,11 +322,6 @@ function describeError(error: unknown): string {
     return error.message;
   }
   return String(error);
-}
-
-/** Gives every settings pane a consistent heading and readable measure. */
-function SettingsHeading({ title, description }: { title: string; description: string }) {
-  return <header><h2 className="text-lg font-semibold">{title}</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p></header>;
 }
 
 /** Labels a grouped control without introducing nested decorative cards. */
