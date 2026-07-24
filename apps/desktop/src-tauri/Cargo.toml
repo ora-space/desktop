@@ -33,9 +33,10 @@ ora-logging = { path = "../../../crates/logging" }
 ora-plugin-manager = { path = "../../../crates/plugin-manager" }
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "sync"] }
+tokio = { version = "1", features = ["macros", "sync", "net"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
+urlencoding = "2"
 
 [dev-dependencies]
 pretty_assertions = "1"

@@ -72,6 +72,16 @@ pub(crate) fn desktop_config_backend_error(error: DesktopConfigError) -> Backend
             PublicError::WorktreeRootNotDirectory(EmptyErrorParams {}),
             "worktree root must be an existing directory",
         ),
+        // Dashboard endpoint validation failures are user-facing invalid request errors;
+        // there is no dedicated PublicError variant so they are folded into the generic
+        // InvalidRequest bucket with a context string that preserves the specifics.
+        DesktopConfigError::DashboardHostEmpty
+        | DesktopConfigError::DashboardHostNotLoopback
+        | DesktopConfigError::DashboardPortZero => (
+            ErrorClassification::InvalidRequest,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            "dashboard endpoint must be a non-empty loopback host with a non-zero port",
+        ),
         DesktopConfigError::Persist { .. }
         | DesktopConfigError::StateUnavailable
         | DesktopConfigError::DirectoryCreate { .. }

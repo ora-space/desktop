@@ -24,6 +24,8 @@ import { WorkspaceView } from "./features/workspace/workspace-view";
 import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
 import { SkillMarketplaceInstallController } from "./features/settings/skill-marketplace-install-controller";
+import { TraceDashboardPanel } from "./features/trace-dashboard/trace-dashboard-panel";
+import type { DashboardResolver } from "./features/trace-dashboard/types";
 import { AppI18nProvider } from "./i18n/i18n";
 import type { CurrentUser } from "./lib/types";
 import { createAppQueryClient } from "./state/query-client";
@@ -44,6 +46,8 @@ interface AppShellProps {
   user?: CurrentUser;
   /** Runtime adapter; hosts will inject the generated-contract adapter once available. */
   workflowRuntime?: WorkflowRuntime;
+  /** Desktop-injected resolver for the trace dashboard iframe URL; null when absent. */
+  resolveDashboardUrl?: DashboardResolver | null;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 320;
@@ -58,6 +62,7 @@ export function AppShell({
   platform,
   user,
   workflowRuntime,
+  resolveDashboardUrl = null,
 }: AppShellProps) {
   // One client per shell instance so HMR or multiple mounted shells never share cache.
   const [queryClient] = useState(() => createAppQueryClient());
@@ -66,7 +71,13 @@ export function AppShell({
       <AppI18nProvider>
         <AppEventGate client={client}>
           <WorkflowRuntimeProvider runtime={workflowRuntime}>
-            <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} />
+            <AppShellContent
+              client={client}
+              chatStore={chatStore}
+              platform={platform}
+              user={user}
+              resolveDashboardUrl={resolveDashboardUrl}
+            />
           </WorkflowRuntimeProvider>
         </AppEventGate>
       </AppI18nProvider>
@@ -75,7 +86,13 @@ export function AppShell({
 }
 
 /** Renders the shell inside providers so stateful hooks can consume the active locale. */
-function AppShellContent({ client, chatStore, platform, user: injectedUser }: AppShellProps) {
+function AppShellContent({
+  client,
+  chatStore,
+  platform,
+  user: injectedUser,
+  resolveDashboardUrl,
+}: AppShellProps) {
   // Mirror theme/density onto <html> for the shell's lifetime.
   useEffect(() => startThemeSubscription(), []);
   // Track which sessions finished a turn while the user was looking elsewhere.
@@ -138,6 +155,7 @@ function AppShellContent({ client, chatStore, platform, user: injectedUser }: Ap
               )}
               <SettingsDialog />
               <SkillMarketplaceInstallController />
+              <TraceDashboardPanel resolveDashboardUrl={resolveDashboardUrl ?? null} />
               {/* Mounted here, not in the sidebar, so collapsing the sidebar does
                   not take the workspace dialogs down with it. */}
               <WorkspaceDialogs />

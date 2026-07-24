@@ -8,6 +8,7 @@ import {
   IconBrandGit,
   IconFolder,
   IconGitBranch,
+  IconLayoutDashboard,
   IconLayoutSidebarLeftExpand,
   IconPlayerPlay,
 } from "@tabler/icons-react";
@@ -144,6 +145,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   // the one the composer and model picker are actually pointing at — a stale
   // read would warm a different agent than what is on screen.
   const targetAgentCli = useTargetAgentCli(selection);
+  const setDashboardOpen = useUiStore((s) => s.setDashboardOpen);
 
   const chatStore = useChatStore();
   useTaskDiffLiveSync(chatStore, sessions);
@@ -530,10 +532,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               </div>
             )}
           </DragRegion>
-          <LocationActionsButton
-            taskId={task?.id}
-            projectPath={project?.rootPath}
-          />
+          <LocationActionsButton taskId={task?.id} projectPath={project?.rootPath} />
+          <Button variant="ghost" size="icon" onClick={() => setDashboardOpen(true)} aria-label={t("dashboard.open")} title={t("dashboard.open")}>
+            <IconLayoutDashboard />
+          </Button>
           <WindowControls />
         </div>
         <SessionHistoryBanner session={session} />

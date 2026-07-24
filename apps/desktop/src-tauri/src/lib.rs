@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod dashboard;
 mod error;
 mod skill_marketplace;
 mod spec_commands;
@@ -151,6 +152,7 @@ pub fn run() {
             commands::resolve_task_cwd,
             commands::open_location,
             commands::write_workflow_export,
+            dashboard::get_dashboard_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -228,6 +230,7 @@ fn bootstrap_desktop(
             plugin_manager: Arc::new(plugin_manager),
             config,
             workspace_files,
+            app_data_directory: app_data_directory.clone(),
             stream_cancellations: Arc::new(Mutex::new(HashMap::new())),
         },
         DesktopRuntimeGuard { _logging: logging },

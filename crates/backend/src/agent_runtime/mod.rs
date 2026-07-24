@@ -35,7 +35,7 @@ use ora_contracts::{
     SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse,
     WarmSessionTarget,
 };
-use ora_contracts::{EmptyErrorParams, PublicError};
+use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
     AgentCli, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus, TaskId,
@@ -76,6 +76,9 @@ struct ManagerInner {
     clock: SystemClock,
     scheduler: Scheduler,
     app_events: AppEventPublisher,
+    // Stored so resolve_session_locator can hand the dashboard resolver the user
+    // home directory under which each agent CLI writes its trace artifacts.
+    home_directory: PathBuf,
 }
 
 #[derive(Clone)]
@@ -114,6 +117,24 @@ pub(super) enum RuntimeCommand {
     TitleUpdate {
         update: SessionUpdate,
     },
+}
+
+/// Backend-only resolution of one Ora session to its private agent identifier and worktree cwd.
+///
+/// This is the surface the Desktop dashboard uses to resolve an Ora session id into a
+/// concrete trace file path. It carries the agent session identifier, which is deliberately
+/// omitted from the frontend-facing `ContractSession`; it never crosses the Tauri/Web boundary
+/// and is consumed only by Desktop backend code that writes the dashboard locator file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionLocator {
+    /// The private provider-side session identifier owned by the agent CLI.
+    pub agent_session_id: String,
+    /// The persisted CLI selection, in the frontend-facing wire form Desktop already uses.
+    pub agent_cli: ContractAgentCli,
+    /// The authoritative worktree working directory resolved from the session's task.
+    pub cwd: PathBuf,
+    /// The user home directory, the root under which each agent writes its trace artifacts.
+    pub home_directory: PathBuf,
 }
 
 struct RuntimeActor {
@@ -162,7 +183,7 @@ impl AgentRuntimeManager {
         app_events: AppEventPublisher,
     ) -> Result<Self, BackendError> {
         reconcile_running_sessions(&pool, clock)?;
-        let connections = ConnectionSupervisors::start(pool.clone(), home_directory, clock);
+        let connections = ConnectionSupervisors::start(pool.clone(), home_directory.clone(), clock);
         Ok(Self {
             inner: Arc::new(ManagerInner {
                 pool,
@@ -175,6 +196,7 @@ impl AgentRuntimeManager {
                 clock,
                 scheduler,
                 app_events,
+                home_directory,
             }),
         })
     }
@@ -778,6 +800,25 @@ impl AgentRuntimeManager {
             })
             .map_err(runtime_unavailable_with)?;
         response.await.map_err(runtime_unavailable_with)?
+    }
+
+    /// Resolves one Ora session id to its private agent session identifier and worktree cwd.
+    ///
+    /// Backend-only: the returned `agent_session_id` is never exposed to the frontend. The
+    /// Desktop dashboard command consumes it to locate the agent-written trace file and writes
+    /// only a resolved file path into the locator it hands the embedded dashboard.
+    pub fn resolve_session_locator(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionLocator, BackendError> {
+        let session = self.find_session(session_id)?;
+        let cwd = resolve_task_cwd(&self.inner.pool, &session.task_id)?;
+        Ok(SessionLocator {
+            agent_session_id: session.agent_session_id.clone(),
+            agent_cli: contract_agent_cli(session.agent_cli),
+            cwd,
+            home_directory: self.inner.home_directory.clone(),
+        })
     }
 
     /// Loads one non-deleted Ora session from durable storage.

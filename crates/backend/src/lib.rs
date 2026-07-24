@@ -17,7 +17,7 @@ mod task_diff;
 mod workflow;
 mod workflow_run;
 
-pub use agent_runtime::SessionEventStream;
+pub use agent_runtime::{SessionEventStream, SessionLocator};
 pub use app_event::AppEventHub;
 pub use bootstrap::{Backend, BackendBootstrapError, BackendPaths};
 pub use error::{BackendError, ErrorClassification};

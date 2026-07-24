@@ -21,7 +21,8 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     watch: {
-      // Rust rebuilds replace loaded DLLs on Windows, so Vite must not watch Tauri artifacts.
+      // The Tauri Rust build target dir is constantly rewritten by cargo; watching
+      // it on Windows raises EBUSY and crashes the Vite dev watcher.
       ignored: ["**/src-tauri/target/**"],
     },
     proxy: {
