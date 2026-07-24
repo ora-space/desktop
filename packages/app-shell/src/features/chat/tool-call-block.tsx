@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import type { ChatToolCall } from "@ora/chat";
 import type { acp } from "@ora/contracts";
 import { DiffView } from "./diff-view";
+import { ContentBlock } from "./content-block";
 
 interface ToolCallBlockProps {
   tool: ChatToolCall;
@@ -178,7 +179,7 @@ function ToolContent({ content }: { content: acp.ToolCallContent }) {
       if (content.content.type === "text") {
         return <pre data-selectable className="max-h-72 overflow-auto rounded-r-sm border-l-2 border-border bg-[var(--code-background)] px-3 py-2.5 text-[11px] leading-5 whitespace-pre-wrap">{content.content.text}</pre>;
       }
-      return <p className="border-l-2 border-border bg-muted/25 px-3 py-2 text-xs text-muted-foreground">{t("chat.unsupportedContent", { type: content.content.type })}</p>;
+      return <ContentBlock content={content.content} appearance="tool" />;
   }
 }
 

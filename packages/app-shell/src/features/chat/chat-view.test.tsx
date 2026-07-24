@@ -1,9 +1,9 @@
 import { createElement, type ReactNode } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage, ChatThought, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
+import type { ChatContent, ChatMessage, ChatThought, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -170,6 +170,124 @@ describe("Composer", () => {
 
     expect(onSend).not.toHaveBeenCalled();
     expect(textarea).toHaveValue("first\nsecond");
+  });
+
+  it("filters available commands and inserts the keyboard selection without executing it", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <Composer
+        onSend={onSend}
+        isResponding={false}
+        availableCommands={[
+          { name: "review", description: "Review current changes" },
+          { name: "test", description: "Run the test suite", input: { hint: "package" } },
+        ]}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "/");
+    expect(screen.getByRole("listbox", { name: "可用命令" })).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    expect(textarea).toHaveValue("/test ");
+    await waitFor(() => expect(textarea).toHaveFocus());
+    expect(textarea).toHaveProperty("selectionStart", 6);
+    expect(textarea).toHaveProperty("selectionEnd", 6);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps the keyboard-selected command inside the visible list", async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    renderWithI18n(
+      <Composer
+        onSend={() => {}}
+        isResponding={false}
+        availableCommands={Array.from({ length: 12 }, (_, index) => ({
+          name: `command-${index}`,
+          description: `Command ${index}`,
+        }))}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox"), "/");
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
+
+    expect(screen.getAllByRole("option")[8]).toHaveAttribute("aria-selected", "true");
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+  });
+
+  it("previews a selected image and sends it as ACP image content", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    const view = renderWithI18n(<Composer onSend={onSend} isResponding={false} />);
+    const fileInput = view.container.querySelector('input[type="file"]') as HTMLInputElement;
+
+    await user.upload(fileInput, new File(["hello"], "diagram.png", { type: "image/png" }));
+    expect(await screen.findByRole("img", { name: "diagram.png" })).toBeVisible();
+
+    await user.type(screen.getByRole("textbox"), "inspect this{Enter}");
+
+    expect(onSend).toHaveBeenCalledWith("inspect this", [{
+      data: "aGVsbG8=",
+      mimeType: "image/png",
+      uri: "diagram.png",
+    }]);
+  });
+
+  it("switches between provider-advertised normal and plan modes", async () => {
+    const user = userEvent.setup();
+    const onModeChange = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TooltipProvider>
+        <AppI18nProvider>
+          <Composer
+            onSend={() => {}}
+            isResponding={false}
+            modes={{
+              currentModeId: "normal",
+              availableModes: [
+                { id: "normal", name: "Normal" },
+                { id: "plan", name: "Plan", description: "Plan before implementation" },
+              ],
+            }}
+            onModeChange={onModeChange}
+          />
+        </AppI18nProvider>
+      </TooltipProvider>,
+    );
+
+    await user.click(screen.getByRole("radio", { name: "Plan" }));
+
+    expect(onModeChange).toHaveBeenCalledWith("plan");
+  });
+});
+
+describe("Structured ACP content", () => {
+  it("renders image, audio, linked, and embedded resources in timeline order", () => {
+    const image = { type: "image" as const, data: "aGVsbG8=", mimeType: "image/png", uri: "file:///preview.png" };
+    const items: ChatContent[] = [
+      { kind: "content", id: "audio", source: "message", content: { type: "audio", data: "aGVsbG8=", mimeType: "audio/mpeg" }, createdAt: 2 },
+      { kind: "content", id: "link", source: "message", content: { type: "resource_link", name: "docs", title: "ACP docs", description: "Protocol reference", uri: "https://example.com/acp", size: 2048n }, createdAt: 3 },
+      { kind: "content", id: "resource", source: "message", content: { type: "resource", resource: { uri: "file:///notes.txt", mimeType: "text/plain", text: "embedded notes" } }, createdAt: 4 },
+    ];
+    const mediaTurn = turn("media", "show files", 1, items);
+    mediaTurn.userMessage.structuredContent = [image];
+    const view = renderWithI18n(<MessageList turns={[mediaTurn]} userName="Eric" isResponding={false} />);
+
+    expect(screen.getByRole("img", { name: "preview.png" })).toHaveAttribute("loading", "lazy");
+    expect(view.container.querySelector("audio[controls]")).toHaveAttribute("src", "data:audio/mpeg;base64,aGVsbG8=");
+    expect(screen.getByRole("link", { name: /ACP docs/ })).toHaveAttribute("href", "https://example.com/acp");
+    expect(screen.getByText("embedded notes")).toBeVisible();
   });
 });
 

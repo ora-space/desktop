@@ -219,12 +219,20 @@ impl Backend {
         self.agent_runtime.load_session(request).await
     }
 
-    /// Streams one text-only prompt turn for a running session.
+    /// Streams one structured ACP prompt turn for a running session.
     pub async fn prompt_session(
         &self,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
         self.agent_runtime.prompt_session(request).await
+    }
+
+    /// Changes the operating mode of one running provider session.
+    pub async fn set_session_mode(
+        &self,
+        request: SetSessionModeRequest,
+    ) -> Result<SetSessionModeResponse, BackendError> {
+        self.agent_runtime.set_session_mode(request).await
     }
 
     /// Delivers one validated permission response to the owning session actor.

@@ -1,6 +1,8 @@
+use crate::acp::content::ContentBlock;
 use crate::acp::permission::PermissionOption;
 use crate::acp::prompt::StopReason;
 use crate::acp::session::SessionUpdate;
+use crate::acp::session_mode::{SessionModeId, SessionModeState};
 use crate::acp::tool_call::ToolCallUpdate;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -73,6 +75,7 @@ pub struct ListAgentModelsResponse {
 #[ts(export_to = "session.ts")]
 pub struct CreateSessionResponse {
     pub session: Session,
+    pub modes: Option<SessionModeState>,
 }
 
 /// Identifies which session to fetch.
@@ -113,14 +116,29 @@ pub struct LoadSessionRequest {
     pub session_id: String,
 }
 
-/// Carries the text-only prompt supported by the demo surface.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Carries one or more ACP content blocks to the provider session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct PromptSessionRequest {
     pub session_id: String,
-    pub text: String,
+    pub prompt: Vec<ContentBlock>,
 }
+
+/// Selects one provider-advertised mode for a running Ora session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct SetSessionModeRequest {
+    pub session_id: String,
+    pub mode_id: SessionModeId,
+}
+
+/// Confirms that the requested provider mode was accepted.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct SetSessionModeResponse {}
 
 /// Exposes an opaque permission request while preserving the agent's typed option payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -139,6 +157,7 @@ pub struct SessionPermissionRequest {
 pub enum LoadSessionEvent {
     SessionUpdate { update: SessionUpdate },
     PermissionRequest(SessionPermissionRequest),
+    ModeState { modes: SessionModeState },
     Completed,
 }
 
@@ -221,6 +240,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ListSessionsResponse::export(config)?;
     LoadSessionRequest::export(config)?;
     PromptSessionRequest::export(config)?;
+    SetSessionModeRequest::export(config)?;
+    SetSessionModeResponse::export(config)?;
     SessionPermissionRequest::export(config)?;
     LoadSessionEvent::export(config)?;
     PromptSessionEvent::export(config)?;
