@@ -1,10 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
+import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { ChatView } from "./chat-view";
 import { Composer } from "./composer";
+import { ConversationNavigator } from "./conversation-navigator";
 import { MessageList } from "./message-list";
 
 /** Renders chat components with the same isolated i18n provider as AppShell. */
@@ -369,5 +372,137 @@ describe("MessageList", () => {
     );
 
     expect(list.scrollTop).toBe(240);
+  });
+});
+
+describe("ConversationNavigator", () => {
+  const turns = [
+    turn("turn-1", "**First** question", 100, [assistantItem("assistant-1", "```markdown\n# First answer\n\nWith `code` and [docs](https://example.com)\n```", 200)]),
+    turn("turn-2", "Second question", 300, [assistantItem("assistant-2", "Second answer", 400)]),
+    turn("turn-3", "Third question", 500, [assistantItem("assistant-3", "Third answer", 600)]),
+  ];
+
+  /** Keeps navigation state local so repeated clicks exercise the real hover-to-boundary transition. */
+  function StatefulNavigator() {
+    const [activeAnchorId, setActiveAnchorId] = useState("turn-2:user");
+    return <ConversationNavigator turns={turns} activeAnchorId={activeAnchorId} onNavigate={setActiveAnchorId} />;
+  }
+
+  it("moves one anchor at a time and keeps disabled boundary controls visible", async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    const view = renderWithI18n(
+      <TooltipProvider>
+        <ConversationNavigator turns={turns} activeAnchorId="turn-2:user" onNavigate={onNavigate} />
+      </TooltipProvider>,
+    );
+
+    const previousButton = screen.getByRole("button", { name: /上一条消息|Previous message/ });
+    const nextButton = screen.getByRole("button", { name: /下一条消息|Next message/ });
+    await user.click(previousButton);
+    await user.click(nextButton);
+
+    expect(onNavigate.mock.calls).toEqual([["turn-1:response"], ["turn-2:response"]]);
+
+    view.rerender(
+      <AppI18nProvider>
+        <TooltipProvider>
+          <ConversationNavigator turns={turns} activeAnchorId="turn-1:user" onNavigate={onNavigate} />
+        </TooltipProvider>
+      </AppI18nProvider>,
+    );
+    expect(previousButton).toBeDisabled();
+    expect(previousButton).toBeVisible();
+    expect(previousButton).toHaveAccessibleName(/这是第一条消息|This is the first message/);
+    expect(nextButton).toBeEnabled();
+    await user.hover(previousButton.parentElement!);
+    expect(await screen.findByText(/这是第一条消息|This is the first message/)).toBeVisible();
+
+    view.rerender(
+      <AppI18nProvider>
+        <TooltipProvider>
+          <ConversationNavigator turns={turns} activeAnchorId="turn-3:response" onNavigate={onNavigate} />
+        </TooltipProvider>
+      </AppI18nProvider>,
+    );
+    expect(previousButton).toBeEnabled();
+    expect(nextButton).toBeDisabled();
+    expect(nextButton).toBeVisible();
+    expect(nextButton).toHaveAccessibleName(/这是最后一条消息|This is the last message/);
+    await user.hover(nextButton.parentElement!);
+    expect(await screen.findByText(/这是最后一条消息|This is the last message/)).toBeVisible();
+  });
+
+  it("opens the boundary hint when repeated clicks disable the button under the pointer", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <TooltipProvider>
+        <StatefulNavigator />
+      </TooltipProvider>,
+    );
+
+    const previousButton = screen.getByRole("button", { name: /上一条消息|Previous message/ });
+    await user.click(previousButton);
+    await user.click(previousButton);
+    expect(previousButton).toBeDisabled();
+    expect(await screen.findByText(/这是第一条消息|This is the first message/)).toBeVisible();
+
+    const nextButton = screen.getByRole("button", { name: /下一条消息|Next message/ });
+    for (let index = 0; index < 5; index += 1) await user.click(nextButton);
+    expect(nextButton).toBeDisabled();
+    expect(await screen.findByText(/这是最后一条消息|This is the last message/)).toBeVisible();
+  });
+
+  it("shows no question heading in previews and labels responses as Ora", () => {
+    renderWithI18n(
+      <ConversationNavigator turns={turns} activeAnchorId="turn-2:user" onNavigate={() => {}} />,
+    );
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /问题 1|Question 1/ }), { clientY: 10 });
+    const questionPreview = screen.getByTestId("conversation-anchor-preview");
+    expect(questionPreview).toHaveTextContent("First question");
+    expect(questionPreview.querySelector("strong")).toHaveTextContent("First");
+    expect(questionPreview).not.toHaveTextContent(/问题 1|Question 1/);
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /回复 1|Response 1/ }), { clientY: 10 });
+    const responsePreview = screen.getByTestId("conversation-anchor-preview");
+    expect(responsePreview).toHaveTextContent("OraFirst answer With code and docs");
+    expect(responsePreview.querySelector("p.font-semibold")).toHaveTextContent("First answer");
+    expect(responsePreview.querySelector("code")).toHaveTextContent("code");
+    expect(responsePreview.querySelector("a")).toBeNull();
+    expect(responsePreview.querySelector("pre")).toBeNull();
+    expect(responsePreview).not.toHaveTextContent(/回复 1|Response 1/);
+  });
+
+  it("parses complete Markdown before visually clipping long previews", () => {
+    const longMarkdown = `${"prefix ".repeat(20)}**complete marker**`;
+    const longTurns = [
+      turn("long-1", "Question", 100, [assistantItem("long-answer", longMarkdown, 200)]),
+      turns[1],
+      turns[2],
+    ];
+    renderWithI18n(
+      <ConversationNavigator turns={longTurns} activeAnchorId="long-1:response" onNavigate={() => {}} />,
+    );
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /回复 1|Response 1/ }), { clientY: 10 });
+    expect(screen.getByTestId("conversation-anchor-preview").querySelector("strong")).toHaveTextContent("complete marker");
+  });
+
+  it("renders fenced code as an unframed compact excerpt", () => {
+    const codeTurns = [
+      turn("code-1", "Question", 100, [assistantItem("code-answer", "```python\n# Python example\ndef fibonacci(n):\n    return n\n```", 200)]),
+      turns[1],
+      turns[2],
+    ];
+    renderWithI18n(
+      <ConversationNavigator turns={codeTurns} activeAnchorId="code-1:response" onNavigate={() => {}} />,
+    );
+
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /回复 1|Response 1/ }), { clientY: 10 });
+    const codeBlock = screen.getByTestId("conversation-anchor-preview").querySelector("[data-preview-code-block]");
+    expect(codeBlock).toHaveTextContent("# Python example def fibonacci(n): return n");
+    expect(codeBlock).toHaveClass("border-l-2", "pl-2");
+    expect(codeBlock).not.toHaveClass("bg-muted", "rounded-sm");
   });
 });

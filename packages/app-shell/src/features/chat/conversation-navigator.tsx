@@ -3,6 +3,8 @@ import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { ChatTurn } from "@ora/chat";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
+import { ConversationPreviewMarkdown } from "./conversation-preview-markdown";
 
 interface ConversationNavigatorProps {
   turns: ChatTurn[];
@@ -26,12 +28,12 @@ interface AnchorPreview {
   top?: number;
 }
 
-const PREVIEW_MAX_CHARACTERS = 120;
 const PREVIEW_GAP_PX = 8;
 const VIEWPORT_MARGIN_PX = 12;
 const WHEEL_ANCHORS_PER_STEP = 1;
 const TRACK_SHIFT_DURATION_MS = 240;
 const NEW_ANCHOR_DURATION_MS = 180;
+const NAVIGATION_OVERLAY_SURFACE_CLASS = "rounded-md border border-border/70 bg-popover text-popover-foreground shadow-lg shadow-black/10 ring-1 ring-black/5 dark:border-white/10 dark:shadow-black/45 dark:ring-white/10 [&_[data-base-ui-tooltip-arrow]]:bg-popover [&_[data-base-ui-tooltip-arrow]]:fill-popover";
 const ANCHOR_WIDTH = {
   user: "28%",
   assistant: "46%",
@@ -49,6 +51,8 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
   const previousAnchorCountRef = useRef<number | null>(null);
   const previousTrackHeightRef = useRef(0);
   const [preview, setPreview] = useState<AnchorPreview | null>(null);
+  const [previousControlHovered, setPreviousControlHovered] = useState(false);
+  const [nextControlHovered, setNextControlHovered] = useState(false);
   const anchors = conversationAnchors(turns, t);
   const previewAnchorId = preview?.anchorId ?? null;
   const previewAnchor = anchors.find((anchor) => anchor.id === previewAnchorId);
@@ -197,15 +201,30 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
         className="group/history-nav pointer-events-none fixed right-1.5 top-1/2 z-20 hidden -translate-y-1/2 sm:block"
       >
         <div className="pointer-events-auto relative flex w-7 flex-col items-center">
-        <button
-          type="button"
-          aria-label={t("chat.previousMessage")}
-          disabled={activeIndex === 0}
-          onClick={() => navigateByAnchor(-1)}
-          className="mb-px flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:invisible"
-        >
-          <IconChevronUp className="size-3.5" />
-        </button>
+        <Tooltip open={activeIndex === 0 && previousControlHovered}>
+          <TooltipTrigger
+            render={
+              <span
+                className="mb-px inline-flex size-6"
+                onMouseEnter={() => setPreviousControlHovered(true)}
+                onMouseLeave={() => setPreviousControlHovered(false)}
+              />
+            }
+          >
+            <button
+              type="button"
+              aria-label={activeIndex === 0 ? t("chat.firstMessageReached") : t("chat.previousMessage")}
+              disabled={activeIndex === 0}
+              onClick={() => navigateByAnchor(-1)}
+              className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:text-muted-foreground/35"
+            >
+              <IconChevronUp className="size-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" className={NAVIGATION_OVERLAY_SURFACE_CLASS}>
+            {t("chat.firstMessageReached")}
+          </TooltipContent>
+        </Tooltip>
 
         <div
           ref={anchorListRef}
@@ -257,26 +276,43 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
           </div>
         </div>
 
-        <button
-          type="button"
-          aria-label={t("chat.nextMessage")}
-          disabled={activeIndex === anchors.length - 1}
-          onClick={() => navigateByAnchor(1)}
-          className="mt-px flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:invisible"
-        >
-          <IconChevronDown className="size-3.5" />
-        </button>
+        <Tooltip open={activeIndex === anchors.length - 1 && nextControlHovered}>
+          <TooltipTrigger
+            render={
+              <span
+                className="mt-px inline-flex size-6"
+                onMouseEnter={() => setNextControlHovered(true)}
+                onMouseLeave={() => setNextControlHovered(false)}
+              />
+            }
+          >
+            <button
+              type="button"
+              aria-label={activeIndex === anchors.length - 1 ? t("chat.lastMessageReached") : t("chat.nextMessage")}
+              disabled={activeIndex === anchors.length - 1}
+              onClick={() => navigateByAnchor(1)}
+              className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:text-muted-foreground/35"
+            >
+              <IconChevronDown className="size-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" className={NAVIGATION_OVERLAY_SURFACE_CLASS}>
+            {t("chat.lastMessageReached")}
+          </TooltipContent>
+        </Tooltip>
         </div>
       </nav>
       {preview && previewAnchor && createPortal(
         <div
           ref={previewRef}
           data-testid="conversation-anchor-preview"
-          className={`pointer-events-none fixed z-30 w-56 max-w-[calc(100vw-var(--spacing)*6)] -translate-y-1/2 rounded-lg border border-border/70 bg-popover/95 p-3 text-left text-popover-foreground shadow-lg backdrop-blur-md ${preview.left === undefined ? "invisible" : "animate-preview-fade-in motion-reduce:animate-none"}`}
+          className={`pointer-events-none fixed z-30 w-56 max-w-[calc(100vw-var(--spacing)*6)] -translate-y-1/2 p-3 text-left ${NAVIGATION_OVERLAY_SURFACE_CLASS} ${preview.left === undefined ? "invisible" : "animate-preview-fade-in motion-reduce:animate-none"}`}
           style={{ left: preview.left ?? preview.anchorLeft, top: preview.top ?? preview.anchorTop }}
         >
-          <p className="mb-1 text-[11px] text-muted-foreground">{previewAnchor.label}</p>
-          <p className="line-clamp-3 max-h-15 overflow-hidden text-xs leading-5 break-words [overflow-wrap:anywhere]">{previewAnchor.preview}</p>
+          {previewAnchor.role === "assistant" && (
+            <p className="mb-1 text-[11px] text-muted-foreground">Ora</p>
+          )}
+          <ConversationPreviewMarkdown content={previewAnchor.preview} />
         </div>,
         document.body,
       )}
@@ -288,22 +324,24 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
 function conversationAnchors(turns: ChatTurn[], t: ReturnType<typeof useTranslation>["t"]): ConversationAnchor[] {
   return turns.flatMap((turn, index) => {
     const number = index + 1;
-    const userSummary = summarizeMessage(turn.userMessage.content, t("chat.untitledTurn", { index: number }));
+    const userPreview = previewMessage(turn.userMessage.content, t("chat.untitledTurn", { index: number }));
+    const userSummary = summarizeMessage(userPreview, t("chat.untitledTurn", { index: number }));
     const userAnchor: ConversationAnchor = {
       id: `${turn.id}:user`,
       label: t("chat.userAnchorLabel", { index: number }),
-      preview: truncatePreview(userSummary),
+      preview: userPreview,
       summary: userSummary,
       role: "user",
     };
     if (turn.items.length === 0 && turn.status === "streaming") return [userAnchor];
-    const assistantSummary = responseSummary(turn, t("chat.assistantReplied"));
+    const assistantPreview = responsePreview(turn, t("chat.assistantReplied"));
+    const assistantSummary = summarizeMessage(assistantPreview, t("chat.assistantReplied"));
     return [
       userAnchor,
       {
         id: `${turn.id}:response`,
         label: t("chat.responseAnchorLabel", { index: number }),
-        preview: truncatePreview(assistantSummary),
+        preview: assistantPreview,
         summary: assistantSummary,
         role: "assistant" as const,
       },
@@ -312,12 +350,12 @@ function conversationAnchors(turns: ChatTurn[], t: ReturnType<typeof useTranslat
 }
 
 /** Chooses the latest readable Agent activity for the response preview. */
-function responseSummary(turn: ChatTurn, fallback: string): string {
+function responsePreview(turn: ChatTurn, fallback: string): string {
   for (const item of [...turn.items].reverse()) {
     switch (item.kind) {
       case "message":
       case "thought":
-        return summarizeMessage(item.content, fallback);
+        return previewMessage(item.content, fallback);
       case "toolCall":
         return item.title;
       case "plan":
@@ -329,15 +367,14 @@ function responseSummary(turn: ChatTurn, fallback: string): string {
   return fallback;
 }
 
+/** Preserves Markdown structure while replacing blank messages with a readable fallback. */
+function previewMessage(content: string, fallback: string): string {
+  const trimmed = content.trim();
+  return trimmed || fallback;
+}
+
 /** Reduces multiline content to one useful navigation label. */
 function summarizeMessage(content: string, fallback: string): string {
   const normalized = content.replace(/\s+/g, " ").trim();
   return normalized || fallback;
-}
-
-/** Caps preview payloads while preserving the full summary for accessibility. */
-function truncatePreview(summary: string): string {
-  const characters = Array.from(summary);
-  if (characters.length <= PREVIEW_MAX_CHARACTERS) return summary;
-  return `${characters.slice(0, PREVIEW_MAX_CHARACTERS - 3).join("")}...`;
 }

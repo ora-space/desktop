@@ -6,12 +6,12 @@ import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
 import type { BundledLanguage, ThemedTokenWithVariants } from "shiki";
+import { unwrapMarkdownDocument } from "./markdown-document";
 
 interface MarkdownMessageProps {
   content: string;
 }
 
-const WRAPPED_MARKDOWN_PATTERN = /^\s*```(?:markdown|md)\s*\r?\n([\s\S]*?)\r?\n```\s*$/i;
 const LANGUAGE_CLASS_PATTERN = /(?:^|\s)language-([^\s]+)/;
 const highlightedCodeCache = new Map<string, Promise<ThemedTokenWithVariants[][] | null>>();
 
@@ -73,11 +73,6 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{markdown}</ReactMarkdown>
     </div>
   );
-}
-
-/** Removes a document-level Markdown fence that would otherwise turn the whole response into code. */
-function unwrapMarkdownDocument(content: string): string {
-  return content.match(WRAPPED_MARKDOWN_PATTERN)?.[1] ?? content;
 }
 
 /** Wraps fenced code with persistent copy and disclosure controls. */
