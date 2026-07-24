@@ -27,7 +27,6 @@ import {
 } from "@ora/ui";
 import {
   IconAdjustments,
-  IconAtom,
   IconCheck,
   IconDatabase,
   IconDeviceDesktop,
@@ -36,12 +35,14 @@ import {
   IconLock,
   IconMoon,
   IconPuzzle,
+  IconRobot,
   IconShieldCheck,
+  IconSparkles,
   IconSun,
   IconTrash,
 } from "@tabler/icons-react";
 import type { Locale } from "../../i18n/i18n";
-import { AtomsSettings } from "./atoms-settings";
+import { RolesSettings, SkillsSettings } from "./atoms-settings";
 import { PluginsSettings } from "./plugins-settings";
 import { SettingsHeading } from "./settings-heading";
 import { useUiStore } from "../../state/stores/ui-store";
@@ -55,7 +56,7 @@ import type {
   ThemeMode,
 } from "../../state/stores/settings-store";
 
-type SettingsCategory = "appearance" | "atoms" | "plugins" | "permissions" | "privacy";
+type SettingsCategory = "appearance" | "roles" | "skills" | "plugins" | "permissions" | "privacy";
 
 /** Presents shared Ora preferences in a dense IDE-style settings surface. */
 export function SettingsDialog() {
@@ -70,7 +71,8 @@ export function SettingsDialog() {
 
   const categories: Array<{ id: SettingsCategory; icon: typeof IconAdjustments; label: string }> = [
     { id: "appearance", icon: IconAdjustments, label: t("settings.nav.appearance") },
-    { id: "atoms", icon: IconAtom, label: t("settings.nav.atoms") },
+    { id: "roles", icon: IconRobot, label: t("settings.nav.roles") },
+    { id: "skills", icon: IconSparkles, label: t("settings.nav.skills") },
     { id: "plugins", icon: IconPuzzle, label: t("settings.nav.plugins") },
     { id: "permissions", icon: IconShieldCheck, label: t("settings.nav.permissions") },
     { id: "privacy", icon: IconDatabase, label: t("settings.nav.privacy") },
@@ -117,7 +119,8 @@ export function SettingsDialog() {
           <ScrollArea className="min-h-0">
             <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
               {category === "appearance" && <AppearanceSettings settings={settings} onUpdate={updateSettings} />}
-              {category === "atoms" && <AtomsSettings />}
+              {category === "roles" && <RolesSettings />}
+              {category === "skills" && <SkillsSettings />}
               {category === "plugins" && <PluginsSettings />}
               {category === "permissions" && <PermissionSettings settings={settings} onUpdate={updateSettings} />}
               {category === "privacy" && <PrivacySettings settings={settings} onUpdate={updateSettings} onClearHistory={clearConversations} />}
