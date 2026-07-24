@@ -94,7 +94,7 @@ function TurnEnding({ turn }: { turn: ChatTurn }) {
     return <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><IconBan className="size-3.5" />{t("chat.turnCancelled")}</p>;
   }
   if (turn.status === "failed") {
-    return <p className="flex items-center gap-1.5 text-xs text-destructive"><IconAlertTriangle className="size-3.5" />{turn.error ?? t("chat.turnFailed")}</p>;
+    return <p data-selectable className="flex items-center gap-1.5 text-xs text-destructive"><IconAlertTriangle className="size-3.5" />{turn.error ?? t("chat.turnFailed")}</p>;
   }
   if (turn.stopReason === "max_tokens" || turn.stopReason === "max_turn_requests") {
     return <p className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400"><IconAlertTriangle className="size-3.5" />{t("chat.turnIncomplete")}</p>;

@@ -26,7 +26,7 @@ export function ThoughtBlock({ thought, hasFollowingActivity }: ThoughtBlockProp
         <IconChevronDown className={`ml-auto size-3.5 transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`} />
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <p className="border-t border-border/60 px-3 py-2.5 text-xs leading-5 text-muted-foreground whitespace-pre-wrap">
+        <p data-selectable className="border-t border-border/60 px-3 py-2.5 text-xs leading-5 text-muted-foreground whitespace-pre-wrap">
           {thought.content}
         </p>
       </CollapsibleContent>

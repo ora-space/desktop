@@ -13,7 +13,7 @@ describe("MarkdownMessage", () => {
   it("renders GitHub-flavored Markdown with semantic elements", () => {
     render(<MarkdownMessage content={"## Result\n\n- one\n- two\n\n| Name | Value |\n| --- | --- |\n| Ora | IDE |\n\n`const ready = true;`"} />);
 
-    expect(screen.getByRole("heading", { level: 2, name: "Result" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Result" }).closest("[data-selectable]")).not.toBeNull();
     expect(screen.getByRole("list")).toHaveTextContent("one");
     expect(screen.getByRole("table")).toHaveTextContent("Ora");
     expect(screen.getByText("const ready = true;")).toHaveClass("font-mono");
@@ -74,5 +74,6 @@ describe("MarkdownMessage", () => {
     expect(screen.getByText(/2 行|2 lines/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /复制代码|Copy code/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /收起代码|Collapse code/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /复制代码|Copy code/ }).closest("[data-selection-control]")).not.toBeNull();
   });
 });

@@ -204,6 +204,25 @@
   body {
     @apply bg-background text-foreground;
     font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", ui-sans-serif, sans-serif;
+    /* Desktop chrome should not drag-select; user and agent content opts in explicitly. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable]:not([contenteditable="false"]),
+  [data-selectable] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  button,
+  [role="button"],
+  summary,
+  [data-selection-control] {
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   button:not(:disabled),

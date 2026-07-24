@@ -278,7 +278,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
           })}
         </nav>
 
-        {error && <p className="border-t border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error.message}</p>}
+        {error && <p data-selectable className="border-t border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error.message}</p>}
         <div className="p-2">
           <UserProfile user={user} onOpenSettings={() => setSettingsOpen(true)} onSignOut={onSignOut} />
         </div>

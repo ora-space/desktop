@@ -42,7 +42,7 @@ export function MessageBubble({ message, userName, embeddedAssistant = false }: 
         {isUser ? (
           <div className="relative w-fit max-w-full rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
             <AnchorHighlight />
-            <p className="relative whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
+            <p data-selectable className="relative whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
           </div>
         ) : (
           <MarkdownMessage content={message.content} />

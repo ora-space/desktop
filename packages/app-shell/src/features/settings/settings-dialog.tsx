@@ -314,14 +314,14 @@ function PrivacySettings({ settings, onUpdate, onClearHistory }: { settings: Set
       {worktreeStorage.kind === "configurable" && (
         <SettingsRow icon={IconFolder} title={t("settings.privacy.worktreeRoot")} description={t("settings.privacy.worktreeRootDescription")}>
           <div className="flex max-w-sm flex-col items-end gap-2">
-            <code className="max-w-full break-all text-right text-xs text-muted-foreground">
+            <code data-selectable className="max-w-full break-all text-right text-xs text-muted-foreground">
               {worktreeRoot ?? t("settings.privacy.worktreeRootLoading")}
             </code>
             <Button variant="outline" disabled={worktreeRoot === null || worktreeSaving} onClick={changeWorktreeRoot}>
               <IconFolder />
               {worktreeSaving ? t("common.saving") : t("settings.privacy.changeWorktreeRoot")}
             </Button>
-            {worktreeError !== null && <p className="text-right text-xs text-destructive">{worktreeError}</p>}
+            {worktreeError !== null && <p data-selectable className="text-right text-xs text-destructive">{worktreeError}</p>}
           </div>
         </SettingsRow>
       )}

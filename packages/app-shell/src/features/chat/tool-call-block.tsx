@@ -68,7 +68,7 @@ export function ToolCallBlock({ tool, appearance = "standalone" }: ToolCallBlock
           {tool.locations.length > 0 && (
             <div className="space-y-1">
               {tool.locations.map((location) => (
-                <code key={`${location.path}:${location.line ?? ""}`} className="block max-w-full truncate text-[11px] text-sky-700 dark:text-sky-400" title={location.path}>
+                <code data-selectable key={`${location.path}:${location.line ?? ""}`} className="block max-w-full truncate text-[11px] text-sky-700 dark:text-sky-400" title={location.path}>
                   {location.path}{location.line === undefined || location.line === null ? "" : `:${location.line}`}
                 </code>
               ))}
@@ -93,10 +93,10 @@ function ToolContent({ content }: { content: acp.ToolCallContent }) {
     case "diff":
       return <DiffView path={content.path} oldText={content.oldText} newText={content.newText} />;
     case "terminal":
-      return <p className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 font-mono text-[11px] text-muted-foreground"><IconTerminal2 className="size-3.5" />{t("chat.terminalSession", { id: content.terminalId })}</p>;
+      return <p data-selectable className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 font-mono text-[11px] text-muted-foreground"><IconTerminal2 className="size-3.5" />{t("chat.terminalSession", { id: content.terminalId })}</p>;
     case "content":
       if (content.content.type === "text") {
-        return <pre className="max-h-72 overflow-auto rounded-md border border-border/60 bg-muted/45 p-3 text-[11px] leading-5 whitespace-pre-wrap">{content.content.text}</pre>;
+        return <pre data-selectable className="max-h-72 overflow-auto rounded-md border border-border/60 bg-muted/45 p-3 text-[11px] leading-5 whitespace-pre-wrap">{content.content.text}</pre>;
       }
       return <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{t("chat.unsupportedContent", { type: content.content.type })}</p>;
   }
@@ -108,7 +108,7 @@ function RawData({ input, output }: { input: unknown; output: unknown }) {
   return (
     <details className="rounded-md border border-border/70 bg-muted/20">
       <summary className="cursor-pointer px-3 py-2 text-[11px] font-medium text-muted-foreground">{t("chat.rawData")}</summary>
-      <pre className="max-h-72 overflow-auto border-t border-border/60 p-3 text-[11px] leading-5">{safeStringify({ input, output })}</pre>
+      <pre data-selectable className="max-h-72 overflow-auto border-t border-border/60 p-3 text-[11px] leading-5">{safeStringify({ input, output })}</pre>
     </details>
   );
 }

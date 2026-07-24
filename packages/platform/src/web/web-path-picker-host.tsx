@@ -320,7 +320,7 @@ function WebPathPickerDialog({
         >
           {!loading && readError && (
             <div role="alert" className="grid h-full place-items-center gap-3 p-6 text-center">
-              <p className="text-sm text-destructive">{messages.readError}</p>
+              <p data-selectable className="text-sm text-destructive">{messages.readError}</p>
               <Button type="button" variant="outline" onClick={() => void loadDirectory(pathDraft.trim() || undefined)}>
                 <IconRefresh />
                 {messages.retry}

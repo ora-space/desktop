@@ -178,7 +178,7 @@ export function EntityDialog({
                   />
                 )}
                 {pathSelectionError === field.name && (
-                  <p role="alert" className="text-xs text-destructive">
+                  <p role="alert" data-selectable className="text-xs text-destructive">
                     {t("dialog.pathSelectionError")}
                   </p>
                 )}
@@ -186,7 +186,7 @@ export function EntityDialog({
             ))}
           </div>
           {validationError && <p role="alert" className="text-xs text-destructive">{t("dialog.required")}</p>}
-          {submissionError && <p role="alert" className="text-xs text-destructive">{submissionError}</p>}
+          {submissionError && <p role="alert" data-selectable className="text-xs text-destructive">{submissionError}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" disabled={submitting} onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
             <Button type="submit" disabled={submitting}>{submitting ? t("common.saving") : submitLabel}</Button>

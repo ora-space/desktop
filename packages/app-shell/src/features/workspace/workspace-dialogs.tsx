@@ -79,7 +79,7 @@ function DeleteEntityDialog({ target, onOpenChange }: { target: DeleteTarget | n
         <AlertDialogHeader>
           <AlertDialogTitle>{t("delete.title", { name: target?.name ?? "" })}</AlertDialogTitle>
           <AlertDialogDescription>{target ? t(`delete.${target.kind}Description`) : ""}</AlertDialogDescription>
-          {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
+          {deleteError && <p role="alert" data-selectable className="text-sm text-destructive">{deleteError}</p>}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={deleting}>{t("common.cancel")}</AlertDialogCancel>

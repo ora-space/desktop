@@ -31,7 +31,7 @@ export function DiffView({ path, oldText, newText }: DiffViewProps) {
   return (
     <div className="overflow-hidden rounded-md border border-border bg-background">
       <div className="flex items-center gap-2 border-b border-border bg-muted/50 px-3 py-2 text-[11px]">
-        <span className="min-w-0 flex-1 truncate font-mono" title={path}>{path}</span>
+        <span data-selectable className="min-w-0 flex-1 truncate font-mono" title={path}>{path}</span>
         <span className="text-emerald-600">+{additions}</span>
         <span className="text-red-600">-{deletions}</span>
       </div>
@@ -52,7 +52,7 @@ export function DiffView({ path, oldText, newText }: DiffViewProps) {
             <span className="w-10 shrink-0 select-none border-r border-border/50 px-2 text-right text-muted-foreground/70">{line.oldLine ?? ""}</span>
             <span className="w-10 shrink-0 select-none border-r border-border/50 px-2 text-right text-muted-foreground/70">{line.newLine ?? ""}</span>
             <span className="w-5 shrink-0 select-none text-center">{line.kind === "added" ? "+" : line.kind === "removed" ? "-" : " "}</span>
-            <span className="pr-4 whitespace-pre">{line.text}</span>
+            <span data-selectable className="pr-4 whitespace-pre">{line.text}</span>
           </div>
         ))}
       </div>

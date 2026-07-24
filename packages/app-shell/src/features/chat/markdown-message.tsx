@@ -69,7 +69,7 @@ const markdownComponents: Components = {
 export function MarkdownMessage({ content }: MarkdownMessageProps) {
   const markdown = unwrapMarkdownDocument(content);
   return (
-    <div className="min-w-0 break-words text-[15px] leading-[26px] text-foreground">
+    <div data-selectable className="min-w-0 break-words text-[15px] leading-[26px] text-foreground">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{markdown}</ReactMarkdown>
     </div>
   );
@@ -103,7 +103,7 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
           : "border-border bg-[var(--code-background)]"
       }`}
     >
-      <div className="flex min-h-9 items-center px-3">
+      <div data-selection-control className="flex min-h-9 items-center px-3">
         <span className="font-mono text-[11px] font-medium text-muted-foreground">{language}</span>
         <span className="mx-2 h-3 w-px bg-border" aria-hidden="true" />
         <span className="text-[11px] text-muted-foreground" aria-live="polite">

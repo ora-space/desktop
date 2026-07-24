@@ -124,7 +124,7 @@ export function ChatView({ turns, userName, isResponding, isStreaming = false, i
         }
       >
         <div className="mx-auto w-full max-w-[760px]">
-          {error && <p role="alert" className="mb-2 px-1 text-xs text-destructive">{error}</p>}
+          {error && <p role="alert" data-selectable className="mb-2 px-1 text-xs text-destructive">{error}</p>}
           {pendingPermissions.map((request) => (
             <section key={request.permissionRequestId} className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
               <p className="text-xs font-medium">{t("chat.permissionRequired")}</p>

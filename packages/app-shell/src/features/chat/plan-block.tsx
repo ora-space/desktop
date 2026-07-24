@@ -33,7 +33,7 @@ export function PlanBlock({ plan }: PlanBlockProps) {
           {plan.entries.map((entry, index) => (
             <li key={`${index}-${entry.content}`} className="flex items-start gap-2 text-xs leading-5">
               <PlanStatusIcon status={entry.status} />
-              <span className={entry.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}>
+              <span data-selectable className={entry.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}>
                 {entry.content}
               </span>
             </li>
