@@ -2,9 +2,9 @@ import { IconAlertTriangle, IconBan, IconInfoCircle } from "@tabler/icons-react"
 import { useTranslation } from "react-i18next";
 import type { ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
 import { OraMark } from "../../components/ora-mark";
+import { ActivityGroup, type ActivityItem } from "./activity-group";
 import { MessageBubble } from "./message-bubble";
 import { PlanBlock } from "./plan-block";
-import { ThoughtBlock } from "./thought-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolCallGroup } from "./tool-call-group";
 import { toolCallGroupKind, type ToolCallGroupKind } from "./tool-call-group-kind";
@@ -16,7 +16,14 @@ interface ToolGroup {
   tools: ChatToolCall[];
 }
 
-type DisplayTurnItem = ChatTurnItem | ToolGroup;
+interface ActivityGroupItem {
+  kind: "activityGroup";
+  id: string;
+  items: ActivityItem[];
+}
+
+type ToolGroupedTurnItem = ChatTurnItem | ToolGroup;
+type DisplayTurnItem = ToolGroupedTurnItem | ActivityGroupItem;
 
 interface ResponseTurnProps {
   turn: ChatTurn;
@@ -26,15 +33,22 @@ interface ResponseTurnProps {
 /** Groups all agent activity for one prompt under a single assistant identity. */
 export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
   const { t } = useTranslation();
-  const displayItems = groupAdjacentTools(turn.items);
+  const displayItems = groupExplorationActivity(groupAdjacentTools(turn.items));
   return (
     <section className="flex gap-3 py-3" aria-label={t("chat.assistantReplied")}>
       <OraMark size="sm" />
       <div className="min-w-0 flex-1 space-y-2.5">
         {displayItems.map((item, index) => {
           switch (item.kind) {
-            case "thought":
-              return <ThoughtBlock key={item.id} thought={item} hasFollowingActivity={index < displayItems.length - 1} />;
+            case "activityGroup":
+              return (
+                <ActivityGroup
+                  key={item.id}
+                  items={item.items}
+                  turnStatus={turn.status}
+                  isLatestActivity={index === displayItems.length - 1}
+                />
+              );
             case "plan":
               return <PlanBlock key={item.id} plan={item} />;
             case "toolCall":
@@ -58,8 +72,8 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
 }
 
 /** Groups adjacent tools by intent while preserving boundaries created by messages and plans. */
-function groupAdjacentTools(items: ChatTurnItem[]): DisplayTurnItem[] {
-  const grouped: DisplayTurnItem[] = [];
+function groupAdjacentTools(items: ChatTurnItem[]): ToolGroupedTurnItem[] {
+  const grouped: ToolGroupedTurnItem[] = [];
   let tools: ChatToolCall[] = [];
   let groupKind: ToolCallGroupKind | null = null;
 
@@ -84,6 +98,38 @@ function groupAdjacentTools(items: ChatTurnItem[]): DisplayTurnItem[] {
     grouped.push(item);
   }
   flushTools();
+  return grouped;
+}
+
+/** Merges interleaved thoughts and exploratory calls into one compact progress group. */
+function groupExplorationActivity(items: ToolGroupedTurnItem[]): DisplayTurnItem[] {
+  const grouped: DisplayTurnItem[] = [];
+  let activity: ActivityItem[] = [];
+
+  const flushActivity = () => {
+    if (activity.length > 0) {
+      grouped.push({ kind: "activityGroup", id: `activity-group-${activity[0].id}`, items: activity });
+    }
+    activity = [];
+  };
+
+  for (const item of items) {
+    if (item.kind === "thought") {
+      activity.push(item);
+      continue;
+    }
+    if (item.kind === "toolCall" && toolCallGroupKind(item) === "exploration") {
+      activity.push(item);
+      continue;
+    }
+    if (item.kind === "toolGroup" && item.groupKind === "exploration") {
+      activity.push(...item.tools);
+      continue;
+    }
+    flushActivity();
+    grouped.push(item);
+  }
+  flushActivity();
   return grouped;
 }
 

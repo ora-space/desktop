@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { ChatMessage, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
+import type { ChatMessage, ChatThought, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { ChatView } from "./chat-view";
@@ -51,6 +51,64 @@ function toolCallItem(id: string, createdAt: number): ChatToolCall {
     createdAt,
     updatedAt: createdAt,
   };
+}
+
+/** Builds one completed file read with a structured path for activity summaries. */
+function completedReadItem(id: string, path: string, createdAt: number): ChatToolCall {
+  return {
+    kind: "toolCall",
+    id,
+    title: `Read ${path}`,
+    toolKind: "read",
+    status: "completed",
+    content: [],
+    locations: [{ path }],
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** Builds one live file read so the header can expose its current structured target. */
+function activeReadItem(id: string, path: string, createdAt: number): ChatToolCall {
+  return {
+    ...completedReadItem(id, path, createdAt),
+    status: "in_progress",
+  };
+}
+
+/** Builds one completed edit with a path for change-group coverage. */
+function completedEditItem(id: string, path: string, createdAt: number): ChatToolCall {
+  return {
+    kind: "toolCall",
+    id,
+    title: path,
+    toolKind: "edit",
+    status: "completed",
+    content: [],
+    locations: [{ path }],
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** Builds one completed command for command-group coverage. */
+function completedCommandItem(id: string, title: string, createdAt: number): ChatToolCall {
+  return {
+    kind: "toolCall",
+    id,
+    title,
+    toolKind: "execute",
+    status: "completed",
+    content: [],
+    locations: [],
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** Builds one reasoning update for activity timeline coverage. */
+function thoughtItem(id: string, content: string, createdAt: number): ChatThought {
+  return { kind: "thought", id, content, createdAt };
 }
 
 describe("Composer", () => {
@@ -251,6 +309,107 @@ describe("ChatView", () => {
 });
 
 describe("MessageList", () => {
+  it("compresses consecutive reads into a second-level disclosure", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <MessageList
+        turns={[
+          turn("turn-1", "Read the reports", 100, [
+            completedReadItem("read-1", "a.md", 200),
+            completedReadItem("read-2", "b.md", 300),
+            completedReadItem("read-3", "c.md", 400),
+            completedReadItem("read-4", "d.md", 500),
+          ]),
+        ]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /文件读取完成|File reading complete/ }));
+    const readBatch = screen.getByRole("button", { name: /读取 4 个文件|Read 4 files/ });
+    expect(screen.queryByRole("button", { name: /读取\s*a\.md|Read\s*a\.md/ })).toBeNull();
+
+    await user.click(readBatch);
+    expect(screen.getByRole("button", { name: /读取\s*a\.md|Read\s*a\.md/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /读取\s*d\.md|Read\s*d\.md/ })).toBeVisible();
+  });
+
+  it("keeps reads, edits, and commands as distinct perceptible activity groups", () => {
+    renderWithI18n(
+      <MessageList
+        turns={[
+          turn("turn-1", "Update and verify the document", 100, [
+            completedReadItem("read-1", "report.md", 200),
+            completedEditItem("edit-1", "report.md", 300),
+            completedEditItem("edit-2", "summary.md", 400),
+            completedCommandItem("command-1", "pnpm lint", 500),
+            completedCommandItem("command-2", "pnpm test", 600),
+          ]),
+        ]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /文件读取完成|File reading complete/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /已修改 2 个文件|Changed 2 files/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /已执行 2 条命令|Ran 2 commands/ })).toBeVisible();
+  });
+
+  it("surfaces a domain-neutral current file while exploration is streaming", () => {
+    renderWithI18n(
+      <MessageList
+        turns={[
+          turn("turn-1", "Inspect the entry point", 100, [
+            thoughtItem("thought-1", "Locating the application entry point", 200),
+            activeReadItem("read-1", "reports/q2.pdf", 300),
+          ], "streaming"),
+        ]}
+        userName="Eric"
+        isResponding
+      />,
+    );
+
+    const activity = screen.getByRole("button", { name: /正在读取 q2\.pdf|Reading q2\.pdf/ });
+    expect(activity).toHaveTextContent(/1 个文件 · 1 次分析|1 file · 1 analysis step/);
+  });
+
+  it("condenses interleaved analysis and file reads into one expandable activity timeline", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <MessageList
+        turns={[
+          turn("turn-1", "Inspect the project", 100, [
+            thoughtItem("thought-1", "Checking project configuration", 200),
+            completedReadItem("read-1", "Cargo.toml", 300),
+            thoughtItem("thought-2", "Finding the relevant source", 400),
+            completedReadItem("read-2", "src/main.rs", 500),
+            assistantItem("assistant-1", "Done", 600),
+          ]),
+        ]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+
+    const activity = screen.getByRole("button", { name: /文件读取完成|File reading complete/ });
+    expect(activity).toHaveTextContent(/2 个文件 · 2 次分析|2 files · 2 analysis steps/);
+    expect(screen.queryByText("Checking project configuration")).toBeNull();
+
+    await user.click(activity);
+    expect(screen.getByText("Cargo.toml")).toBeVisible();
+    expect(screen.getByText("main.rs")).toBeVisible();
+    const firstThought = screen.getByRole("button", { name: /Checking project configuration/ });
+    const secondThought = screen.getByRole("button", { name: /Finding the relevant source/ });
+    await user.click(firstThought);
+    expect(screen.getAllByText("Checking project configuration")).toHaveLength(2);
+
+    await user.click(secondThought);
+    expect(screen.getAllByText("Checking project configuration")).toHaveLength(1);
+    expect(screen.getAllByText("Finding the relevant source")).toHaveLength(2);
+  });
+
   it("shows the running indicator while working but hides it as the answer streams", () => {
     const view = renderWithI18n(
       <MessageList turns={[turn("turn-1", "hello", 100, [], "streaming")]} userName="Eric" isResponding />,

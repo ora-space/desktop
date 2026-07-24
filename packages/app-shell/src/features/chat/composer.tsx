@@ -66,7 +66,7 @@ export function Composer({
   }, [value]);
 
   return (
-    <div data-slot="composer" className="flex flex-col rounded-xl border border-border/70 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-200 hover:border-border hover:shadow-[0_3px_10px_rgba(0,0,0,0.07)] focus-within:border-foreground/25 focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.08)] focus-within:ring-1 focus-within:ring-ring/35 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2)] dark:hover:shadow-[0_3px_12px_rgba(0,0,0,0.24)]">
+    <div data-slot="composer" className="flex flex-col rounded-xl border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06),0_8px_24px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-200 hover:border-foreground/20 hover:shadow-[0_2px_4px_rgba(0,0,0,0.06),0_10px_28px_rgba(0,0,0,0.06)] focus-within:border-foreground/30 focus-within:shadow-[0_2px_4px_rgba(0,0,0,0.07),0_12px_32px_rgba(0,0,0,0.07)] focus-within:ring-2 focus-within:ring-ring/25 dark:shadow-[0_1px_3px_rgba(0,0,0,0.28),0_10px_28px_rgba(0,0,0,0.18)]">
       <div className="flex flex-col p-2">
         <Textarea
           ref={textAreaRef}
@@ -98,7 +98,7 @@ export function Composer({
               aria-label={isResponding ? (isStreaming ? t("common.stop") : t("chat.starting")) : t("chat.send")}
               disabled={isResponding ? onStop === undefined : !canSend}
               onClick={isResponding ? onStop : submit}
-              className="size-8 rounded-full disabled:bg-muted disabled:text-muted-foreground"
+              className="size-8 rounded-full bg-foreground text-background shadow-sm transition-[background-color,color,box-shadow] duration-200 hover:bg-foreground/85 hover:shadow-md disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
             >
               {isResponding
                 ? isStreaming

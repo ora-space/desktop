@@ -6,7 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@ora/ui";
-import { IconAlertTriangle, IconCheck, IconChevronDown, IconShieldHalf, IconShieldLock } from "@tabler/icons-react";
+import { IconCheck, IconChevronDown, IconShieldCheck, IconShieldHalf, IconShieldLock } from "@tabler/icons-react";
 import type { ComponentType } from "react";
 import type { ApprovalPolicy } from "../../state/stores/settings-store";
 import { useSettingsStore } from "../../state/stores/settings-store";
@@ -17,7 +17,7 @@ const POLICIES: readonly ApprovalPolicy[] = ["always", "risky", "trusted"] as co
 const POLICY_ICONS: Record<ApprovalPolicy, ComponentType<{ className?: string }>> = {
   always: IconShieldLock,
   risky: IconShieldHalf,
-  trusted: IconAlertTriangle,
+  trusted: IconShieldCheck,
 };
 
 const POLICY_LABEL_KEYS: Record<ApprovalPolicy, string> = {
@@ -29,7 +29,8 @@ const POLICY_LABEL_KEYS: Record<ApprovalPolicy, string> = {
 /**
  * The composer's permission-mode picker, sitting at the footer's left edge. It mirrors the
  * `approvalPolicy` setting so switching here and in Settings stays in sync. The most permissive
- * policy ("trusted" / full access) is tinted amber to flag that the agent may act without asking.
+ * policy ("trusted" / full access) stays visually neutral because it is a normal operating mode;
+ * its explicit shield icon and label communicate the scope without presenting a false warning.
  */
 export function PermissionSelector({ disabled = false }: { disabled?: boolean }) {
   const { t } = useTranslation();
@@ -37,8 +38,6 @@ export function PermissionSelector({ disabled = false }: { disabled?: boolean })
   const updateSettings = useSettingsStore((state) => state.updateSettings);
 
   const ActiveIcon = POLICY_ICONS[approvalPolicy];
-  const isFullAccess = approvalPolicy === "trusted";
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -49,11 +48,7 @@ export function PermissionSelector({ disabled = false }: { disabled?: boolean })
             size="sm"
             disabled={disabled}
             aria-label={t("chat.permission.label")}
-            className={
-              isFullAccess
-                ? "h-7 gap-1.5 rounded-md px-2 text-xs font-normal text-amber-600 hover:text-amber-600 hover:bg-amber-500/10 dark:text-amber-500 dark:hover:text-amber-500"
-                : "h-7 gap-1.5 rounded-md px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
-            }
+            className="h-7 gap-1.5 rounded-md px-2 text-xs font-normal text-muted-foreground hover:bg-muted/60 hover:text-foreground"
           />
         }
       >
@@ -71,11 +66,7 @@ export function PermissionSelector({ disabled = false }: { disabled?: boolean })
             <DropdownMenuItem
               key={policy}
               disabled={!selectable}
-              className={
-                policy === "trusted"
-                  ? "gap-1.5 rounded-sm px-2 py-1.5 text-xs text-amber-600 dark:text-amber-500"
-                  : "gap-1.5 rounded-sm px-2 py-1.5 text-xs"
-              }
+              className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
               onClick={() => updateSettings({ approvalPolicy: policy })}
             >
               <Icon className="size-3.5 shrink-0" />

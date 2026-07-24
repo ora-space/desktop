@@ -37,7 +37,7 @@ const markdownComponents: Components = {
   ),
   code: ({ children, className, ...props }) => {
     const inlineClassName = className === undefined
-      ? "rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[0.85em]"
+      ? "rounded-sm border border-border/70 bg-muted/80 px-1.5 py-[0.15em] font-mono text-[0.85em] text-foreground"
       : className;
     return <code className={inlineClassName} {...props}>{children}</code>;
   },

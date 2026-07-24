@@ -38,9 +38,9 @@ export function ToolCallGroup({ kind, tools }: ToolCallGroupProps) {
     <Collapsible
       open={open}
       onOpenChange={(nextOpen) => setDisclosure({ status, open: nextOpen })}
-      className="overflow-hidden rounded-md border border-border/80 bg-muted/15"
+      className={`overflow-hidden border-l-2 ${kind === "exploration" ? "border-sky-500/60" : kind === "changes" ? "border-violet-500/60" : "border-amber-500/60"}`}
     >
-      <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+      <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-2.5 rounded-r-sm px-3 py-1.5 text-left outline-none transition-colors duration-200 hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50">
         <GroupIcon kind={kind} />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
@@ -61,11 +61,11 @@ export function ToolCallGroup({ kind, tools }: ToolCallGroupProps) {
             </span>
           )}
         </span>
-        <ToolStatus status={status} />
+        <ToolStatus status={status} compact />
         <IconChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`} />
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="divide-y divide-border/60 border-t border-border/70">
+        <div className="ml-5 border-l border-border/60 pl-2">
           {tools.map((tool) => <ToolCallBlock key={tool.id} tool={tool} appearance="embedded" />)}
         </div>
       </CollapsibleContent>
@@ -82,15 +82,15 @@ function groupStatus(tools: ChatToolCall[]): acp.ToolCallStatus | undefined {
   return undefined;
 }
 
-/** Selects an icon and restrained accent that communicate each activity category. */
+/** Selects a bare icon so category semantics remain clear without adding another surface. */
 function GroupIcon({ kind }: { kind: ToolCallGroupKind }) {
   switch (kind) {
     case "exploration":
-      return <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-400"><IconFiles className="size-4" /></span>;
+      return <IconFiles className="size-4 shrink-0 text-sky-700 dark:text-sky-400" />;
     case "changes":
-      return <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-violet-700 dark:text-violet-400"><IconFileDiff className="size-4" /></span>;
+      return <IconFileDiff className="size-4 shrink-0 text-violet-700 dark:text-violet-400" />;
     case "commands":
-      return <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400"><IconTerminal2 className="size-4" /></span>;
+      return <IconTerminal2 className="size-4 shrink-0 text-amber-700 dark:text-amber-400" />;
   }
 }
 
