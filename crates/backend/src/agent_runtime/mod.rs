@@ -14,6 +14,7 @@ use ora_application::{
     UuidSessionIdGenerator, WorktreeRepository,
 };
 use ora_contracts::acp::common::SessionId as AcpSessionId;
+use ora_contracts::acp::content::ContentBlock;
 use ora_contracts::acp::initialization::{
     Implementation, InitializeRequest, InitializeResponse, ProtocolVersion,
 };
@@ -28,12 +29,16 @@ use ora_contracts::acp::session::{
     LoadSessionRequest as AcpLoadSessionRequest, LoadSessionResponse, NewSessionRequest,
     NewSessionResponse,
 };
+use ora_contracts::acp::session_mode::{
+    SetSessionModeRequest as AcpSetSessionModeRequest,
+    SetSessionModeResponse as AcpSetSessionModeResponse,
+};
 use ora_contracts::{
     AgentCli as ContractAgentCli, CreateSessionRequest, CreateSessionResponse,
     DeleteSessionResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent,
     PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionPermissionRequest, SessionStatus as ContractSessionStatus,
-    StopSessionRequest, StopSessionResponse,
+    SetSessionModeRequest, SetSessionModeResponse, StopSessionRequest, StopSessionResponse,
 };
 use ora_db::{
     RepositoryPool, SqliteProjectRepository, SqliteSessionRepository, SqliteTaskRepository,
@@ -59,7 +64,7 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 const CANCELLATION_GRACE: Duration = Duration::from_secs(5);
 const CONTRACT_QUEUE_CAPACITY: usize = 256;
-const MAX_PROMPT_BYTES: usize = 1024 * 1024;
+const MAX_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Coordinates one actor per Ora session while keeping provider process ownership in the backend.
 #[derive(Clone)]
@@ -90,9 +95,13 @@ pub(super) enum RuntimeCommand {
     },
     Prompt {
         operation_id: u64,
-        text: String,
+        prompt: Vec<ContentBlock>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
         accepted: oneshot::Sender<Result<(), BackendError>>,
+    },
+    SetMode {
+        mode_id: ora_contracts::acp::session_mode::SessionModeId,
+        response: oneshot::Sender<Result<SetSessionModeResponse, BackendError>>,
     },
     RespondToPermission {
         request: RespondToPermissionRequest,
@@ -220,6 +229,7 @@ impl AgentRuntimeManager {
         self.insert_actor(session.clone(), cwd, Some(process))?;
         Ok(CreateSessionResponse {
             session: contract_session(session),
+            modes: response.modes,
         })
     }
 
@@ -259,24 +269,31 @@ impl AgentRuntimeManager {
         ))
     }
 
-    /// Starts one text-only prompt stream after validating the demo payload limit.
+    /// Starts one structured ACP prompt stream after validating the public payload limit.
     pub(crate) async fn prompt_session(
         &self,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
-        let text = request.text.trim().to_string();
-        if text.is_empty() {
+        let prompt = request.prompt;
+        if prompt.is_empty()
+            || prompt.iter().all(|content| {
+                matches!(content, ContentBlock::Text(text) if text.text.trim().is_empty())
+            })
+        {
             return Err(BackendError::new(
                 BackendErrorKind::BadRequest,
                 "prompt_empty",
-                "prompt text must not be empty",
+                "prompt must contain text or media",
             ));
         }
-        if text.len() > MAX_PROMPT_BYTES {
+        let prompt_bytes = serde_json::to_vec(&prompt)
+            .map_err(|_| runtime_internal("prompt_encoding_failed", "failed to encode prompt"))?
+            .len();
+        if prompt_bytes > MAX_PROMPT_BYTES {
             return Err(BackendError::new(
                 BackendErrorKind::BadRequest,
                 "prompt_too_large",
-                "prompt text exceeds 1 MiB",
+                "prompt exceeds 16 MiB",
             ));
         }
         // Only command acceptance is serialized; active prompts on separate sessions remain
@@ -298,7 +315,7 @@ impl AgentRuntimeManager {
             .commands
             .send(RuntimeCommand::Prompt {
                 operation_id,
-                text,
+                prompt,
                 events: events_sender,
                 accepted: accepted_sender,
             })
@@ -316,6 +333,39 @@ impl AgentRuntimeManager {
             handle.commands,
             operation_id,
         ))
+    }
+
+    /// Changes the provider mode for one running, idle session.
+    pub(crate) async fn set_session_mode(
+        &self,
+        request: SetSessionModeRequest,
+    ) -> Result<SetSessionModeResponse, BackendError> {
+        let _lifecycle = self.inner.lifecycle.lock().await;
+        let session = self.find_session(&request.session_id)?;
+        if session.status != SessionStatus::Running {
+            return Err(BackendError::new(
+                BackendErrorKind::Conflict,
+                "session_stopped",
+                "session must be loaded before changing mode",
+            ));
+        }
+        let handle = self.actor_for(session)?;
+        let (response_sender, response) = oneshot::channel();
+        handle
+            .commands
+            .send(RuntimeCommand::SetMode {
+                mode_id: request.mode_id,
+                response: response_sender,
+            })
+            .map_err(|_| {
+                runtime_internal(
+                    "agent_runtime_unavailable",
+                    "session runtime is unavailable",
+                )
+            })?;
+        response
+            .await
+            .map_err(|_| runtime_internal("agent_runtime_unavailable", "session runtime stopped"))?
     }
 
     /// Routes one opaque permission response to the actor that registered the request.

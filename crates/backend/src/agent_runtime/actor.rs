@@ -15,7 +15,7 @@ impl RuntimeActor {
                 }
                 RuntimeCommand::Prompt {
                     operation_id,
-                    text,
+                    prompt,
                     events,
                     accepted,
                 } => {
@@ -27,8 +27,32 @@ impl RuntimeActor {
                         )));
                     } else {
                         let _ = accepted.send(Ok(()));
-                        self.run_prompt(operation_id, text, events).await;
+                        self.run_prompt(operation_id, prompt, events).await;
                     }
+                }
+                RuntimeCommand::SetMode { mode_id, response } => {
+                    let Some(process) = self.process.as_ref() else {
+                        let _ = response.send(Err(BackendError::new(
+                            BackendErrorKind::Conflict,
+                            "session_stopped",
+                            "session must be loaded before changing mode",
+                        )));
+                        continue;
+                    };
+                    let request = AcpSetSessionModeRequest::new(
+                        self.session.agent_session_id.clone(),
+                        mode_id,
+                    );
+                    let result = process
+                        .client
+                        .request::<_, AcpSetSessionModeResponse>(
+                            AGENT_METHOD_NAMES.session_set_mode,
+                            &request,
+                        )
+                        .await
+                        .map(|_| SetSessionModeResponse {})
+                        .map_err(map_acp_error);
+                    let _ = response.send(result);
                 }
                 RuntimeCommand::RespondToPermission { response, .. } => {
                     let _ = response.send(Err(BackendError::new(
@@ -122,8 +146,15 @@ impl RuntimeActor {
             tokio::select! {
                 response = &mut future => {
                     match response {
-                        Ok(_) => {
+                        Ok(response) => {
                             ora_debug!(session_id = %self.session.id, "session/load completed");
+                            if let Some(modes) = response.modes
+                                && events.try_send(Ok(LoadSessionEvent::ModeState { modes })).is_err()
+                            {
+                                let _ = process.child.kill().await;
+                                self.mark_stopped();
+                                return;
+                            }
                             if events.try_send(Ok(LoadSessionEvent::Completed)).is_ok() {
                                 self.process = Some(process);
                             } else {
@@ -193,16 +224,16 @@ impl RuntimeActor {
     async fn run_prompt(
         &mut self,
         operation_id: u64,
-        text: String,
+        prompt: Vec<ContentBlock>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
     ) {
         let Some(mut process) = self.process.take() else {
             return;
         };
         let client = process.client.clone();
-        let text_len = text.len();
-        let request = PromptRequest::new(self.session.agent_session_id.clone(), vec![text.into()]);
-        ora_debug!(session_id = %self.session.id, text_len = text_len, "session/prompt sent");
+        let content_count = prompt.len();
+        let request = PromptRequest::new(self.session.agent_session_id.clone(), prompt);
+        ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
         let future =
             client.request::<_, PromptResponse>(AGENT_METHOD_NAMES.session_prompt, &request);
         tokio::pin!(future);
@@ -314,6 +345,9 @@ impl RuntimeActor {
                         Some(RuntimeCommand::Prompt { accepted, .. }) | Some(RuntimeCommand::Load { accepted, .. }) => {
                             let _ = accepted.send(Err(BackendError::new(BackendErrorKind::Conflict, "session_busy", "session already has an active operation")));
                         }
+                        Some(RuntimeCommand::SetMode { response, .. }) => {
+                            let _ = response.send(Err(BackendError::new(BackendErrorKind::Conflict, "session_busy", "session already has an active operation")));
+                        }
                         Some(RuntimeCommand::Cancel { .. }) | None => {}
                     }
                 }
@@ -355,6 +389,14 @@ impl RuntimeActor {
             Some(RuntimeCommand::Prompt { accepted, .. })
             | Some(RuntimeCommand::Load { accepted, .. }) => {
                 let _ = accepted.send(Err(BackendError::new(
+                    BackendErrorKind::Conflict,
+                    "session_busy",
+                    "session already has an active operation",
+                )));
+                false
+            }
+            Some(RuntimeCommand::SetMode { response, .. }) => {
+                let _ = response.send(Err(BackendError::new(
                     BackendErrorKind::Conflict,
                     "session_busy",
                     "session already has an active operation",

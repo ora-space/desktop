@@ -5,7 +5,7 @@ import { LandingHeading, LandingSuggestions } from "./empty-state";
 import { MessageList } from "./message-list";
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 import type { ChatTurn } from "@ora/chat";
-import type { SessionPermissionRequest } from "@ora/contracts";
+import type { acp, SessionPermissionRequest } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 
 interface ChatViewProps {
@@ -25,7 +25,7 @@ interface ChatViewProps {
   error: string | null;
   pendingPermissions?: SessionPermissionRequest[];
   disabled?: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: acp.ImageContent[]) => void;
   onStop?: () => void;
   onRespondToPermission?: (permissionRequestId: string, optionId: string) => void;
   /**
@@ -38,6 +38,9 @@ interface ChatViewProps {
    * message for a state the user can fix from the context bar directly above it.
    */
   disabledHint?: string;
+  availableCommands?: acp.AvailableCommand[];
+  modes?: acp.SessionModeState | null;
+  onModeChange?: (modeId: acp.SessionModeId) => Promise<void>;
 }
 
 /** How long the composer takes to travel between the landing and thread layouts. */
@@ -50,7 +53,7 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
  */
-export function ChatView({ turns, userName, isResponding, isStreaming = false, isLoading = false, error, pendingPermissions = [], disabled = false, onSend, onStop, onRespondToPermission, contextBar, disabledHint }: ChatViewProps) {
+export function ChatView({ turns, userName, isResponding, isStreaming = false, isLoading = false, error, pendingPermissions = [], disabled = false, onSend, onStop, onRespondToPermission, contextBar, disabledHint, availableCommands = [], modes = null, onModeChange }: ChatViewProps) {
   const { t } = useTranslation();
   // A loading session takes the thread layout even before its turns arrive, so the
   // landing (centered) layout is reserved for the genuinely-empty new-task compose
@@ -163,7 +166,7 @@ export function ChatView({ turns, userName, isResponding, isStreaming = false, i
               open the moment a hint reappears. */}
           <Tooltip trackCursorAxis="both" disabled={disabledHint === undefined}>
             <TooltipTrigger render={<div />}>
-              <Composer autoFocus onSend={onSend} onStop={onStop} isResponding={isResponding} isStreaming={isStreaming} disabled={disabled} />
+              <Composer autoFocus onSend={onSend} onStop={onStop} isResponding={isResponding} isStreaming={isStreaming} disabled={disabled} availableCommands={availableCommands} modes={modes} onModeChange={onModeChange} />
             </TooltipTrigger>
             <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>
           </Tooltip>

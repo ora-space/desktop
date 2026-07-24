@@ -51,6 +51,10 @@ function renderSidebar(state: MockClientState, chatStore?: ChatStore) {
 function conversation(overrides: Partial<SessionConversation> = {}): SessionConversation {
   return {
     turns: [],
+    availableCommands: [],
+    modes: null,
+    sessionTitle: null,
+    sessionUpdatedAt: null,
     isLoaded: false,
     isLoading: false,
     isResponding: false,
@@ -148,6 +152,19 @@ describe("WorkspaceSidebar", () => {
 
     await waitFor(() => expect(treeRow(SESSION.agentCli)).not.toBeNull());
     expect(workingIndicator()).toBeNull();
+  });
+
+  it("uses the agent-provided session title as the session row label", async () => {
+    const store = createChatStore(createMockClient(createMockClientState()).session);
+    const { chatStore } = renderSidebar(workspaceWithOneSession(), store);
+    await waitFor(() => expect(treeRow(SESSION.agentCli)).not.toBeNull());
+
+    act(() => chatStore.setState({
+      conversations: { [SESSION.id]: conversation({ sessionTitle: "Review auth flow" }) },
+    }));
+
+    await waitFor(() => expect(treeRow("Review auth flow")).not.toBeNull());
+    expect(treeRow(SESSION.agentCli)).toBeNull();
   });
 
   it("shows the working indicator only while the session is responding", async () => {

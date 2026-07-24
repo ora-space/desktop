@@ -188,7 +188,7 @@ function itemVersion(item: ChatTurn["items"][number] | undefined): string | numb
     case "plan":
     case "toolCall":
       return item.updatedAt;
-    case "unsupportedContent":
+    case "content":
       return item.id;
   }
 }

@@ -360,8 +360,10 @@ function responsePreview(turn: ChatTurn, fallback: string): string {
         return item.title;
       case "plan":
         return item.entries.at(-1)?.content ?? fallback;
-      case "unsupportedContent":
-        continue;
+      case "content":
+        return item.content.type === "resource_link"
+          ? item.content.title ?? item.content.name
+          : fallback;
     }
   }
   return fallback;

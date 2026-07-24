@@ -248,7 +248,7 @@ export function createMockHandlers(state: MockState = mockState): HttpHandler[] 
       };
       state.sessions.push(session);
 
-      return HttpResponse.json({ session }, { status: 201 });
+      return HttpResponse.json({ session, modes: null }, { status: 201 });
     }),
 
     getSession: http.get("*/api/sessions/:sessionId", ({ params }) => {
@@ -271,6 +271,10 @@ export function createMockHandlers(state: MockState = mockState): HttpHandler[] 
 
     promptSession: http.post("*/api/sessions/:sessionId/prompt", () => {
       return errorResponse("unsupported_operation", "mock transport does not implement session streams", 501);
+    }),
+
+    setSessionMode: http.post("*/api/sessions/:sessionId/mode", () => {
+      return errorResponse("unsupported_operation", "mock transport does not implement session modes", 501);
     }),
 
     respondToSessionPermission: http.post("*/api/sessions/:sessionId/permissions/respond", () => {

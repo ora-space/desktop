@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Button } from "@ora/ui";
 import { useTranslation } from "react-i18next";
+import type { acp } from "@ora/contracts";
 import { useStore } from "zustand";
 import {
   IconBrandGit,
@@ -79,10 +80,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
    * draft and then the real id as each becomes available. This mirrors the
    * project root path the session dialog opens against.
    */
-  const sendOrStartSession = async (text: string) => {
+  const sendOrStartSession = async (text: string, images: acp.ImageContent[] = []) => {
     if (session) {
       try {
-        await chatStore.getState().sendMessage({ oraSessionId: session.id, text });
+        await chatStore.getState().sendMessage({ oraSessionId: session.id, text, images });
       } finally {
         // Connection failures can stop the provider process, so refresh the persisted
         // lifecycle snapshot after every finite prompt without polling idle sessions.
@@ -96,10 +97,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     try {
       await chatStore.getState().sendMessage({
         text,
+        images,
         createSession: () =>
           client.session
             .create({ taskId, agentCli: DEFAULT_AGENT_CLI })
-            .then((response) => response.session.id),
+            .then((response) => ({ oraSessionId: response.session.id, modes: response.modes })),
         // Show the optimistic turn under its temporary key right away.
         onDraft: (draftSessionId) =>
           useWorkspaceSelectionStore.getState().selectSession(draftSessionId, taskId, projectId),
@@ -149,7 +151,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           <DragRegion>
             {session && (
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium tracking-[-0.01em]">{session.agentCli}</p>
+                <p className="truncate text-sm font-medium">{conversation?.sessionTitle ?? session.agentCli}</p>
                 {project && task && (
                   <p className="truncate text-[11px] text-muted-foreground">{project.name} / {task.title}</p>
                 )}
@@ -168,13 +170,18 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             isLoading={isLoadingHistory}
             error={chatError}
             pendingPermissions={conversation?.pendingPermissions ?? []}
+            availableCommands={conversation?.availableCommands ?? []}
+            modes={conversation?.modes ?? null}
             disabled={!canChat}
             disabledHint={canChat ? undefined : t("chat.pickProjectAndBranch")}
             // A live session already fixes its project and branch, so the pickers
             // only belong to the not-yet-created task.
             contextBar={session ? undefined : <ComposerContextBar />}
             // Failures land in chatError; the rejection itself is expected.
-            onSend={(text) => void sendOrStartSession(text).catch(() => undefined)}
+            onSend={(text, images) => void sendOrStartSession(text, images).catch(() => undefined)}
+            onModeChange={session === undefined
+              ? undefined
+              : (modeId) => chatStore.getState().setMode(session.id, modeId)}
             // The selected id, not session.id: during the optimistic startup the
             // real session does not exist yet but the draft key is already live.
             onStop={() => chatStore.getState().stopGeneration(selection.sessionId ?? "")}
