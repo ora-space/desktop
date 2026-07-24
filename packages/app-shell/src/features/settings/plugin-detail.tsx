@@ -105,7 +105,7 @@ export function PluginDetail({ plugin, installed, onBack, onToggleInstall }: {
         <div className="mx-auto flex max-w-sm flex-col gap-2.5">
           {SAMPLE_PROMPT_KEYS.map((key) => (
             <div key={key} className="flex items-center gap-2 rounded-lg border border-border bg-background/80 px-3 py-2 text-xs shadow-sm">
-              <PluginTile plugin={plugin} size="sm" className="size-4 rounded-[5px] ring-0" />
+              <PluginTile plugin={plugin} size="sm" className="size-4 [&_svg]:size-4" />
               <span className="shrink-0 font-medium">{plugin.name}</span>
               <span className="min-w-0 flex-1 truncate text-muted-foreground">{t(key, { name: plugin.name })}</span>
               <IconArrowRight className="size-3.5 shrink-0 text-muted-foreground" />

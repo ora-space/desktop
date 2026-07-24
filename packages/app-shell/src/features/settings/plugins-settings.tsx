@@ -5,16 +5,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Input,
   Tabs,
   TabsList,
   TabsTrigger,
-  cn,
 } from "@ora/ui";
 import {
   IconChevronDown,
@@ -39,9 +35,6 @@ import { PluginManager } from "./plugin-manager";
 import { PluginTile } from "./plugin-tile";
 import { SettingsHeading } from "./settings-heading";
 
-/** Sentinel for "no category filter"; the other values are catalog `categoryKey`s. */
-const ALL_CATEGORIES = "all";
-
 /** The number of leading names named in the collapsed "show more" row. */
 const NAMED_IN_SHOW_MORE = 2;
 
@@ -62,7 +55,6 @@ export function PluginsSettings() {
   const [installedIds, setInstalledIds] = useState<string[]>(DEFAULT_INSTALLED_PLUGIN_IDS);
   const [query, setQuery] = useState("");
   const [collection, setCollection] = useState<PluginCollection>("public");
-  const [category, setCategory] = useState(ALL_CATEGORIES);
   const [expanded, setExpanded] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [managing, setManaging] = useState(false);
@@ -79,11 +71,10 @@ export function PluginsSettings() {
 
   const needle = query.trim().toLowerCase();
   const visible = useMemo(() => PLUGIN_CATALOG.filter((plugin) => plugin.collection === collection
-    && (category === ALL_CATEGORIES || plugin.categoryKey === category)
     && (!needle
       || plugin.name.toLowerCase().includes(needle)
       || plugin.publisher.toLowerCase().includes(needle)
-      || t(plugin.summaryKey).toLowerCase().includes(needle))), [category, collection, needle, t]);
+      || t(plugin.summaryKey).toLowerCase().includes(needle))), [collection, needle, t]);
 
   const openPlugin = openId === null ? undefined : findPlugin(openId);
   if (openPlugin) {
@@ -110,8 +101,8 @@ export function PluginsSettings() {
     );
   }
 
-  // A search or an active category filter collapses the featured/rest split into one flat list.
-  const flat = needle.length > 0 || category !== ALL_CATEGORIES;
+  // A search collapses the featured/rest split into one flat result list.
+  const searching = needle.length > 0;
   const featured = visible.filter((plugin) => plugin.featured);
   const rest = visible.filter((plugin) => !plugin.featured);
   const collapsible = rest.length > NAMED_IN_SHOW_MORE;
@@ -183,12 +174,15 @@ export function PluginsSettings() {
             <TabsTrigger value="personal">{t("settings.plugins.personal")}</TabsTrigger>
           </TabsList>
         </Tabs>
-        <CategoryFilter value={category} onChange={setCategory} />
+        {/* Placeholder: the filter affordance is drawn but carries no behaviour yet. */}
+        <Button variant="ghost" size="icon-sm" aria-label={t("settings.plugins.filter")} className="shrink-0 text-muted-foreground">
+          <IconFilter />
+        </Button>
       </div>
 
       {visible.length === 0 && <p className="py-10 text-center text-sm text-muted-foreground">{t("settings.plugins.empty")}</p>}
 
-      {visible.length > 0 && flat && (
+      {visible.length > 0 && searching && (
         <section className="space-y-2">
           <h3 className="flex items-baseline gap-2 text-sm font-medium">
             {t(collection === "public" ? "settings.plugins.public" : "settings.plugins.personal")}
@@ -198,7 +192,7 @@ export function PluginsSettings() {
         </section>
       )}
 
-      {visible.length > 0 && !flat && (
+      {visible.length > 0 && !searching && (
         <>
           {featured.length > 0 && (
             <section className="space-y-2">
@@ -260,7 +254,7 @@ function InstalledOverflowTile({ hidden, total, onOpen }: { hidden: number; tota
       title={t("settings.plugins.viewAllInstalled", { count: total })}
       className="group flex w-[76px] shrink-0 flex-col items-center gap-1.5 rounded-lg pt-1.5 outline-none"
     >
-      <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-muted text-sm font-medium text-muted-foreground ring-1 ring-border transition-all duration-200 group-hover:-translate-y-1 group-hover:text-foreground group-focus-visible:-translate-y-1 group-focus-visible:ring-2 group-focus-visible:ring-ring">
+      <span className="flex size-11 shrink-0 items-center justify-center text-base font-medium text-muted-foreground transition-all duration-200 group-hover:-translate-y-1 group-hover:text-foreground group-focus-visible:-translate-y-1">
         +{hidden}
       </span>
       <span className="w-full truncate text-center text-[11px] leading-4 text-muted-foreground transition-colors group-hover:text-foreground">
@@ -340,37 +334,6 @@ function PluginActionsMenu({ plugin, onOpen, onUninstall }: { plugin: PluginEntr
   );
 }
 
-/** Narrows the browse grid to a single catalog category. */
-function CategoryFilter({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const { t } = useTranslation();
-  const categories = useMemo(() => [...new Set(PLUGIN_CATALOG.map((plugin) => plugin.categoryKey))], []);
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={(
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("settings.plugins.filter")}
-            className={cn("shrink-0", value === ALL_CATEGORIES ? "text-muted-foreground" : "text-foreground")}
-          />
-        )}
-      >
-        <IconFilter />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuLabel>{t("settings.plugins.filter")}</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
-          <DropdownMenuRadioItem value={ALL_CATEGORIES}>{t("settings.plugins.allCategories")}</DropdownMenuRadioItem>
-          {categories.map((categoryKey) => (
-            <DropdownMenuRadioItem key={categoryKey} value={categoryKey}>{t(categoryKey)}</DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 /** Collapsed tail of the catalog, previewing the remaining plugins as stacked marks. */
 function ShowMoreRow({ plugins, onExpand }: { plugins: PluginEntry[]; onExpand: () => void }) {
   const { t } = useTranslation();
@@ -381,10 +344,9 @@ function ShowMoreRow({ plugins, onExpand }: { plugins: PluginEntry[]; onExpand: 
       onClick={onExpand}
       className="flex w-full items-center gap-3 rounded-lg p-2 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <span className="flex shrink-0 -space-x-2">
-        {plugins.slice(0, 3).map((plugin) => (
-          <PluginTile key={plugin.id} plugin={plugin} size="sm" className="ring-2 ring-background" />
-        ))}
+      {/* Bare marks cannot overlap legibly, so the preview sits in a row rather than a stack. */}
+      <span className="flex shrink-0 gap-1">
+        {plugins.slice(0, 3).map((plugin) => <PluginTile key={plugin.id} plugin={plugin} size="sm" />)}
       </span>
       <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
         {t("settings.plugins.showMore", { names, count: plugins.length - NAMED_IN_SHOW_MORE })}

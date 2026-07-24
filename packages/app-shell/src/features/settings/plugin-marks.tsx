@@ -4,12 +4,16 @@ import type { SVGProps } from "react";
  * OpenCode's mark, traced from the project's own favicon (`sst/opencode`,
  * `packages/ui/src/assets/favicon/favicon.svg`) and rescaled to a 24px viewBox.
  * The original is a white frame over a near-black plate; here the frame is
- * `currentColor` and the inner plate is dimmed so the plugin tile's tint drives
+ * `currentColor` and the inner plate is dimmed so the plugin tile's tone drives
  * both, the same way the other brand marks work.
+ *
+ * The viewBox is cropped to the artwork rather than left at 0 0 24 24: the frame
+ * only covers the middle 62% of the square, which rendered visibly smaller than
+ * the marks around it.
  */
 export function OpenCodeMark(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+    <svg viewBox="2.7 2.7 18.6 18.6" fill="currentColor" aria-hidden="true" {...props}>
       <path opacity={0.45} d="M15 10.5V16.5H9V10.5H15Z" />
       <path fillRule="evenodd" clipRule="evenodd" d="M18 19.5H6V4.5H18V19.5ZM15 7.5H9V16.5H15V7.5Z" />
     </svg>
