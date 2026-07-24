@@ -9,6 +9,8 @@ use thiserror::Error;
 const CONFIG_VERSION: u32 = 1;
 const CONFIG_FILE_NAME: &str = "config.json";
 const DEFAULT_WORKTREE_DIRECTORY_NAME: &str = "worktrees";
+const DEFAULT_DASHBOARD_HOST: &str = "127.0.0.1";
+const DEFAULT_DASHBOARD_PORT: u16 = 8601;
 
 /// Describes persisted non-sensitive Desktop runtime configuration.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,12 +18,37 @@ const DEFAULT_WORKTREE_DIRECTORY_NAME: &str = "worktrees";
 pub struct DesktopConfig {
     version: u32,
     worktree_root: PathBuf,
+    // The dashboard host/port are additive optional config carried with serde
+    // defaults so a pre-existing config.json written before these fields existed
+    // still deserializes without a version bump.
+    #[serde(default = "default_dashboard_host")]
+    dashboard_host: String,
+    #[serde(default = "default_dashboard_port")]
+    dashboard_port: u16,
+}
+
+fn default_dashboard_host() -> String {
+    DEFAULT_DASHBOARD_HOST.to_string()
+}
+
+fn default_dashboard_port() -> u16 {
+    DEFAULT_DASHBOARD_PORT
 }
 
 impl DesktopConfig {
     /// Returns the configured root used only when creating new task worktrees.
     pub fn worktree_root(&self) -> &Path {
         &self.worktree_root
+    }
+
+    /// Returns the host the embedded trace dashboard is served on (loopback by default).
+    pub fn dashboard_host(&self) -> &str {
+        &self.dashboard_host
+    }
+
+    /// Returns the port the embedded trace dashboard is served on.
+    pub fn dashboard_port(&self) -> u16 {
+        self.dashboard_port
     }
 }
 
@@ -55,6 +82,8 @@ impl DesktopConfigStore {
             let config = DesktopConfig {
                 version: CONFIG_VERSION,
                 worktree_root,
+                dashboard_host: default_dashboard_host(),
+                dashboard_port: default_dashboard_port(),
             };
             persist_config(&config_path, &config)?;
             config
@@ -86,6 +115,32 @@ impl DesktopConfigStore {
         let updated = DesktopConfig {
             version: CONFIG_VERSION,
             worktree_root,
+            dashboard_host: config.dashboard_host.clone(),
+            dashboard_port: config.dashboard_port,
+        };
+
+        persist_config(&self.config_path, &updated)?;
+        *config = updated;
+        Ok(())
+    }
+
+    /// Validates, persists, and publishes a new embedded dashboard endpoint.
+    #[allow(dead_code, reason = "settings UI wiring is a later slice")]
+    pub fn set_dashboard_endpoint(
+        &self,
+        host: String,
+        port: u16,
+    ) -> Result<(), DesktopConfigError> {
+        validate_dashboard_endpoint(&host, port)?;
+        let mut config = self
+            .config
+            .write()
+            .map_err(|_| DesktopConfigError::StateUnavailable)?;
+        let updated = DesktopConfig {
+            version: CONFIG_VERSION,
+            worktree_root: config.worktree_root.clone(),
+            dashboard_host: host,
+            dashboard_port: port,
         };
 
         persist_config(&self.config_path, &updated)?;
@@ -121,6 +176,10 @@ pub enum DesktopConfigError {
     WorktreeRootNotAbsolute { path: PathBuf },
     #[error("worktree root must be an existing directory: {path:?}")]
     WorktreeRootNotDirectory { path: PathBuf },
+    #[error("dashboard host must be a non-empty loopback address")]
+    DashboardHostEmpty,
+    #[error("dashboard port must be non-zero")]
+    DashboardPortZero,
     #[error("failed to persist Desktop configuration {path:?}")]
     Persist {
         path: PathBuf,
@@ -151,7 +210,8 @@ fn validate_config(config: &DesktopConfig) -> Result<(), DesktopConfigError> {
         });
     }
 
-    validate_worktree_root(&config.worktree_root)
+    validate_worktree_root(&config.worktree_root)?;
+    validate_dashboard_endpoint(&config.dashboard_host, config.dashboard_port)
 }
 
 /// Rejects ambiguous or unavailable roots before they become active runtime configuration.
@@ -170,6 +230,17 @@ pub(crate) fn validate_worktree_root(worktree_root: &Path) -> Result<(), Desktop
     Ok(())
 }
 
+/// Rejects ambiguous dashboard endpoints before they become active runtime configuration.
+pub(crate) fn validate_dashboard_endpoint(host: &str, port: u16) -> Result<(), DesktopConfigError> {
+    if host.trim().is_empty() {
+        return Err(DesktopConfigError::DashboardHostEmpty);
+    }
+    if port == 0 {
+        return Err(DesktopConfigError::DashboardPortZero);
+    }
+
+    Ok(())
+}
 /// Writes a complete configuration to a sibling temporary file before atomic replacement.
 fn persist_config(config_path: &Path, config: &DesktopConfig) -> Result<(), DesktopConfigError> {
     let directory = config_path.parent().unwrap_or_else(|| Path::new("."));
@@ -236,8 +307,12 @@ mod tests {
 
         assert_eq!(snapshot.worktree_root(), app_data.join("worktrees"));
         assert!(snapshot.worktree_root().is_dir());
+        assert_eq!(snapshot.dashboard_host(), "127.0.0.1");
+        assert_eq!(snapshot.dashboard_port(), 8601);
         assert!(persisted.contains("\"version\": 1"));
         assert!(persisted.contains("\"worktreeRoot\""));
+        assert!(persisted.contains("\"dashboardHost\""));
+        assert!(persisted.contains("\"dashboardPort\""));
     }
 
     /// Verifies a valid user-selected directory is persisted and restored on the next launch.
@@ -298,5 +373,70 @@ mod tests {
             DesktopConfigStore::load_or_create(temporary.path()),
             Err(DesktopConfigError::Decode { .. })
         ));
+    }
+
+    /// Verifies a pre-existing config.json written before the dashboard endpoint fields existed
+    /// still loads by applying the serde defaults for the missing fields.
+    #[test]
+    fn loads_legacy_configuration_without_dashboard_endpoint() {
+        let temporary = TempDir::new().expect("create temporary app data directory");
+        let worktrees = temporary.path().join("worktrees");
+        fs::create_dir_all(&worktrees).expect("create legacy worktree root");
+        let legacy = format!(
+            "{{\"version\":1,\"worktreeRoot\":{}}}",
+            serde_json::to_string(worktrees.to_string_lossy().as_ref()).unwrap()
+        );
+        fs::write(temporary.path().join("config.json"), legacy)
+            .expect("write legacy configuration");
+
+        let snapshot = DesktopConfigStore::load_or_create(temporary.path())
+            .expect("load legacy Desktop configuration")
+            .snapshot()
+            .expect("read Desktop configuration");
+
+        assert_eq!(snapshot.dashboard_host(), "127.0.0.1");
+        assert_eq!(snapshot.dashboard_port(), 8601);
+    }
+
+    /// Verifies a user-selected dashboard endpoint is persisted and restored on the next launch.
+    #[test]
+    fn persists_selected_dashboard_endpoint() {
+        let temporary = TempDir::new().expect("create temporary app data directory");
+        let store = DesktopConfigStore::load_or_create(temporary.path())
+            .expect("create first-run Desktop configuration");
+
+        store
+            .set_dashboard_endpoint("127.0.0.1".to_string(), 8602)
+            .expect("persist selected dashboard endpoint");
+        let snapshot =
+            DesktopConfigStore::load_or_create(temporary.path()).expect("reload configuration");
+        let snapshot = snapshot
+            .snapshot()
+            .expect("read reloaded Desktop configuration");
+
+        assert_eq!(snapshot.dashboard_host(), "127.0.0.1");
+        assert_eq!(snapshot.dashboard_port(), 8602);
+    }
+
+    /// Verifies empty hosts and zero ports are rejected without replacing the active snapshot.
+    #[test]
+    fn rejects_invalid_dashboard_endpoints() {
+        let temporary = TempDir::new().expect("create temporary app data directory");
+        let store = DesktopConfigStore::load_or_create(temporary.path())
+            .expect("create first-run Desktop configuration");
+        let original = store.snapshot().expect("read original configuration");
+
+        assert!(matches!(
+            store.set_dashboard_endpoint("  ".to_string(), 8601),
+            Err(DesktopConfigError::DashboardHostEmpty)
+        ));
+        assert!(matches!(
+            store.set_dashboard_endpoint("127.0.0.1".to_string(), 0),
+            Err(DesktopConfigError::DashboardPortZero)
+        ));
+        assert_eq!(
+            store.snapshot().expect("read unchanged configuration"),
+            original
+        );
     }
 }

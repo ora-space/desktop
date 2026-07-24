@@ -22,6 +22,8 @@ import { WorkspaceSidebar } from "./features/workspace/workspace-sidebar";
 import { WorkspaceView } from "./features/workspace/workspace-view";
 import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
+import { TraceDashboardPanel } from "./features/trace-dashboard/trace-dashboard-panel";
+import type { DashboardResolver } from "./features/trace-dashboard/types";
 import { AppI18nProvider } from "./i18n/i18n";
 import type { CurrentUser } from "./lib/types";
 import { createAppQueryClient } from "./state/query-client";
@@ -36,6 +38,8 @@ interface AppShellProps {
   chatStore: ChatStore;
   platform: PlatformAdapter;
   user?: CurrentUser;
+  /** Desktop-injected resolver for the trace dashboard iframe URL; null when absent. */
+  resolveDashboardUrl?: DashboardResolver | null;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 320;
@@ -44,20 +48,38 @@ const MAX_SIDEBAR_WIDTH = 480;
 const MIN_WORKSPACE_WIDTH = 480;
 
 /** The main Ora application shell: sidebar + chat view with conversation state. */
-export function AppShell({ client, chatStore, platform, user }: AppShellProps) {
+export function AppShell({
+  client,
+  chatStore,
+  platform,
+  user,
+  resolveDashboardUrl = null,
+}: AppShellProps) {
   // One client per shell instance so HMR or multiple mounted shells never share cache.
   const [queryClient] = useState(() => createAppQueryClient());
   return (
     <QueryClientProvider client={queryClient}>
       <AppI18nProvider>
-        <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} />
+        <AppShellContent
+          client={client}
+          chatStore={chatStore}
+          platform={platform}
+          user={user}
+          resolveDashboardUrl={resolveDashboardUrl}
+        />
       </AppI18nProvider>
     </QueryClientProvider>
   );
 }
 
 /** Renders the shell inside providers so stateful hooks can consume the active locale. */
-function AppShellContent({ client, chatStore, platform, user: injectedUser }: AppShellProps) {
+function AppShellContent({
+  client,
+  chatStore,
+  platform,
+  user: injectedUser,
+  resolveDashboardUrl,
+}: AppShellProps) {
   // Mirror theme/density onto <html> for the shell's lifetime.
   useEffect(() => startThemeSubscription(), []);
   // Track which sessions finished a turn while the user was looking elsewhere.
@@ -117,6 +139,7 @@ function AppShellContent({ client, chatStore, platform, user: injectedUser }: Ap
                 </ResizablePanelGroup>
               )}
               <SettingsDialog />
+              <TraceDashboardPanel resolveDashboardUrl={resolveDashboardUrl ?? null} />
               {/* Mounted here, not in the sidebar, so collapsing the sidebar does
                   not take the workspace dialogs down with it. */}
               <WorkspaceDialogs />

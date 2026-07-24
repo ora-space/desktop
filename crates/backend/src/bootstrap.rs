@@ -1,5 +1,5 @@
 use crate::agent::AgentApi;
-use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
+use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream, SessionLocator};
 use crate::clock::SystemClock;
 use crate::error::{BackendError, BackendErrorKind};
 use crate::project::ProjectApi;
@@ -249,6 +249,17 @@ impl Backend {
         request: DeleteSessionRequest,
     ) -> Result<DeleteSessionResponse, BackendError> {
         self.agent_runtime.delete_session(&request.session_id).await
+    }
+
+    /// Resolves one Ora session id to its private agent session identifier and worktree cwd.
+    ///
+    /// Backend-only: the returned `agent_session_id` is never exposed to the frontend. The
+    /// Desktop dashboard command consumes it to locate the agent-written trace file.
+    pub fn resolve_session_locator(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionLocator, BackendError> {
+        self.agent_runtime.resolve_session_locator(session_id)
     }
 
     /// Creates one skill through the shared application composition.

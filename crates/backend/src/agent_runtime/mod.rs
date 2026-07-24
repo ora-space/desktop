@@ -80,6 +80,24 @@ pub(super) enum RuntimeCommand {
     },
 }
 
+/// Backend-only resolution of one Ora session to its private agent identifier and worktree cwd.
+///
+/// This is the surface the Desktop dashboard uses to resolve an Ora session id into a
+/// concrete trace file path. It carries the agent session identifier, which is deliberately
+/// omitted from the frontend-facing `ContractSession`; it never crosses the Tauri/Web boundary
+/// and is consumed only by Desktop backend code that writes the dashboard locator file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionLocator {
+    /// The private provider-side session identifier owned by the agent CLI.
+    pub agent_session_id: String,
+    /// The persisted CLI selection, in the frontend-facing wire form Desktop already uses.
+    pub agent_cli: ContractAgentCli,
+    /// The authoritative worktree working directory resolved from the session's task.
+    pub cwd: PathBuf,
+    /// The user home directory, the root under which each agent writes its trace artifacts.
+    pub home_directory: PathBuf,
+}
+
 struct RuntimeActor {
     session: Session,
     cwd: PathBuf,
@@ -323,6 +341,25 @@ impl AgentRuntimeManager {
             })
             .map_err(|_| runtime_unavailable())?;
         response.await.map_err(|_| runtime_unavailable())?
+    }
+
+    /// Resolves one Ora session id to its private agent session identifier and worktree cwd.
+    ///
+    /// Backend-only: the returned `agent_session_id` is never exposed to the frontend. The
+    /// Desktop dashboard command consumes it to locate the agent-written trace file and writes
+    /// only a resolved file path into the locator it hands the embedded dashboard.
+    pub fn resolve_session_locator(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionLocator, BackendError> {
+        let session = self.find_session(session_id)?;
+        let cwd = resolve_task_cwd(&self.inner.pool, &session.task_id)?;
+        Ok(SessionLocator {
+            agent_session_id: session.agent_session_id.clone(),
+            agent_cli: contract_agent_cli(session.agent_cli),
+            cwd,
+            home_directory: self.inner.home_directory.clone(),
+        })
     }
 
     /// Loads one non-deleted Ora session from durable storage.

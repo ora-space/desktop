@@ -166,6 +166,9 @@ export function createMockClient(state: MockClientState): ContractsClient {
         return { skillId: req.skillId };
       },
     },
+    gitIdentity: {
+      get: async () => ({ name: "Test User", email: "test@example.com" }),
+    },
     fileSystem: {
       listDirectory: async (request) => ({
         currentPath: request.path ?? "/home/test",

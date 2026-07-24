@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod dashboard;
 mod error;
 mod state;
 
@@ -62,6 +63,7 @@ pub fn run() {
             commands::set_worktree_root,
             commands::resolve_task_cwd,
             commands::open_location,
+            dashboard::get_dashboard_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -120,6 +122,7 @@ fn bootstrap_desktop(
         DesktopState {
             backend,
             config,
+            app_data_directory: app_data_directory.clone(),
             stream_cancellations: Arc::new(Mutex::new(HashMap::new())),
         },
         DesktopRuntimeGuard { _logging: logging },

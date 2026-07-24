@@ -7,6 +7,7 @@ import {
   IconBrandGit,
   IconFolder,
   IconGitBranch,
+  IconLayoutDashboard,
   IconLayoutSidebarLeftExpand,
   IconPlayerPlay,
 } from "@tabler/icons-react";
@@ -71,6 +72,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const settingsAgentCli = useSettingsStore((s) => s.settings.agentCli);
+  const setDashboardOpen = useUiStore((s) => s.setDashboardOpen);
 
   const chatStore = useChatStore();
   const client = useContractsClient();
@@ -310,10 +312,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               </div>
             )}
           </DragRegion>
-          <LocationActionsButton
-            taskId={task?.id}
-            projectPath={project?.rootPath}
-          />
+          <LocationActionsButton taskId={task?.id} projectPath={project?.rootPath} />
+          <Button variant="ghost" size="icon" onClick={() => setDashboardOpen(true)} aria-label={t("dashboard.open")} title={t("dashboard.open")}>
+            <IconLayoutDashboard />
+          </Button>
           <WindowControls />
         </div>
         <div className="flex min-h-0 flex-1 flex-col">

@@ -9,6 +9,6 @@ mod session;
 mod skill;
 mod task;
 
-pub use agent_runtime::SessionEventStream;
+pub use agent_runtime::{SessionEventStream, SessionLocator};
 pub use bootstrap::{Backend, BackendBootstrapError, BackendPaths};
 pub use error::{BackendError, BackendErrorKind};

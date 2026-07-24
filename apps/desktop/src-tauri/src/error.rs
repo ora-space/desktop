@@ -61,6 +61,12 @@ impl From<DesktopConfigError> for CommandError {
                 "worktree_root_not_directory",
                 "worktree root must be an existing directory",
             ),
+            DesktopConfigError::DashboardHostEmpty => {
+                Self::new("dashboard_host_empty", "dashboard host must be a non-empty loopback address")
+            }
+            DesktopConfigError::DashboardPortZero => {
+                Self::new("dashboard_port_zero", "dashboard port must be non-zero")
+            }
             DesktopConfigError::Persist { .. } => Self::new(
                 "desktop_config_persist_error",
                 "failed to save Desktop configuration",

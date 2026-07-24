@@ -17,6 +17,11 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
+    watch: {
+      // The Tauri Rust build target dir is constantly rewritten by cargo; watching
+      // it on Windows raises EBUSY and crashes the Vite dev watcher.
+      ignored: ["**/src-tauri/target/**"],
+    },
     proxy: {
       "/api": {
         target: "http://localhost:21688",
