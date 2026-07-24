@@ -321,11 +321,15 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                                   : unread.has(session.id)
                                     ? <UnreadDot label={t("sidebar.unread")} />
                                     : null}
-                              label={agentCliLabel(session.agentCli)}
+                              label={conversations[session.id]?.sessionTitle ?? agentCliLabel(session.agentCli)}
                               onClick={() => selectSession(session.id, task.id, project.id)}
                               menu={(
                                 <EntityMenu
-                                  onDelete={() => setDeleteTarget({ kind: "session", id: session.id, name: agentCliLabel(session.agentCli) })}
+                                  onDelete={() => setDeleteTarget({
+                                    kind: "session",
+                                    id: session.id,
+                                    name: conversations[session.id]?.sessionTitle ?? agentCliLabel(session.agentCli),
+                                  })}
                                 />
                               )}
                             />

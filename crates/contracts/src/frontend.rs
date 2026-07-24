@@ -80,6 +80,7 @@ pub const SESSIONS_PATH: &str = "/api/sessions";
 pub const SESSION_PATH: &str = "/api/sessions/{sessionId}";
 pub const SESSION_LOAD_PATH: &str = "/api/sessions/{sessionId}/load";
 pub const SESSION_PROMPT_PATH: &str = "/api/sessions/{sessionId}/prompt";
+pub const SESSION_MODE_PATH: &str = "/api/sessions/{sessionId}/mode";
 pub const SESSION_PERMISSION_RESPONSE_PATH: &str = "/api/sessions/{sessionId}/permissions/respond";
 pub const SESSION_STOP_PATH: &str = "/api/sessions/{sessionId}/stop";
 pub const AGENT_MODELS_PATH: &str = "/api/agent-models";
@@ -331,6 +332,17 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_template: SESSION_PROMPT_PATH,
         request_type: "PromptSessionRequest",
         response_type: "PromptSessionEvent",
+        path_params: SESSION_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "setSessionMode",
+        namespace: SESSION_NAMESPACE,
+        member_name: "setMode",
+        method: FrontendHttpMethod::Post,
+        path_template: SESSION_MODE_PATH,
+        request_type: "SetSessionModeRequest",
+        response_type: "SetSessionModeResponse",
         path_params: SESSION_PATH_PARAMS,
         has_json_body: true,
     },

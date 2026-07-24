@@ -80,6 +80,7 @@ The persisted runtime exposes CRUD routes for the supported public models:
 - `GET /api/sessions/{session_id}`
 - `POST /api/sessions/{session_id}/load`
 - `POST /api/sessions/{session_id}/prompt`
+- `POST /api/sessions/{session_id}/mode`
 - `POST /api/sessions/{session_id}/permissions/respond`
 - `POST /api/sessions/{session_id}/stop`
 - `DELETE /api/sessions/{session_id}`
@@ -100,7 +101,7 @@ Task payloads do not expose backend-owned worktree identifiers, and the runtime 
 
 Backend construction immediately attempts `<home>/.opencode/bin/opencode acp`, `<home>/.nga/bin/nga acp`, and `<home>/.codeagentcli/bin/codeagentcli acp` children rooted at the user's home directory. Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Session create calls `session/new` on the connection selected by `agentCli`; load calls `session/load` using the private provider session id and the Task worktree `cwd`. The public Session payload never exposes that id. `GET /api/agent-models` concurrently runs each CLI's bounded `models` discovery command and returns only successful groups.
 
-Load and prompt responses use `application/x-ndjson`. Each line is one complete frame. Data and control paths are separate, session-update queues are bounded at 256 items, frames are limited to 8 MiB, and overflow terminates the operation rather than dropping updates silently.
+Prompt requests carry ACP content blocks, including text and supported image payloads, up to 16 MiB. Load and prompt responses use `application/x-ndjson`. Each line is one complete frame. Load also exposes the provider's initial mode state, while the unary mode route delegates to ACP `session/set_mode`. Data and control paths are separate, session-update queues are bounded at 256 items, frames are limited to 8 MiB, and overflow terminates the operation rather than dropping updates silently.
 
 The project work context routes provide the current backend-managed project selection surface.
 

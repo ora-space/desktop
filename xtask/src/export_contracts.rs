@@ -302,6 +302,8 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "PromptSessionEvent"
         | "RespondToPermissionRequest"
         | "RespondToPermissionResponse"
+        | "SetSessionModeRequest"
+        | "SetSessionModeResponse"
         | "StopSessionRequest"
         | "StopSessionResponse" => "session",
         "CreateSkillRequest"

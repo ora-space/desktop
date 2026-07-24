@@ -43,6 +43,7 @@ pub fn run() {
             commands::get_session,
             commands::list_sessions,
             commands::respond_to_session_permission,
+            commands::set_session_mode,
             commands::stop_session,
             commands::delete_session,
             commands::stream_contract,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { LoadSessionEvent, PromptSessionEvent } from "@ora/contracts";
+import type { LoadSessionEvent, PromptSessionEvent, PromptSessionRequest, SetSessionModeRequest } from "@ora/contracts";
 import { createChatStore, type ChatSessionClient } from "../src/index.js";
 
 /** Builds one ACP text update without exposing protocol transport details to the tests. */
@@ -24,6 +24,8 @@ async function* events<Event>(items: Event[]): AsyncIterable<Event> {
   for (const item of items) yield item;
 }
 
+const setMode: ChatSessionClient["setMode"] = async () => ({});
+
 test("loads provider history and reconstructs turns from message boundaries", async () => {
   const client: ChatSessionClient = {
     load: () => events([
@@ -34,6 +36,7 @@ test("loads provider history and reconstructs turns from message boundaries", as
       { type: "completed" },
     ]),
     prompt: () => events<PromptSessionEvent>([]),
+    setMode,
     respondToPermission: async () => ({}),
   };
   let nextId = 0;
@@ -67,12 +70,156 @@ test("loads provider history and reconstructs turns from message boundaries", as
         createdAt: 42,
       },
     ],
+    availableCommands: [],
+    modes: null,
+    sessionTitle: null,
+    sessionUpdatedAt: null,
     isLoaded: true,
     isLoading: false,
     isResponding: false,
     pendingPermissions: [],
     error: null,
   });
+});
+
+test("loads commands, session metadata, and structured content without creating metadata turns", async () => {
+  const image = { type: "image" as const, data: "aGVsbG8=", mimeType: "image/png", uri: "file:///preview.png" };
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([
+      {
+        type: "session_update",
+        update: { sessionUpdate: "usage_update", used: 1n, size: 100n },
+      },
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "review", description: "Review current changes", input: { hint: "scope" } }],
+        },
+      },
+      {
+        type: "session_update",
+        update: { sessionUpdate: "session_info_update", title: "Review auth flow", updatedAt: "2026-07-24T12:00:00+09:00" },
+      },
+      {
+        type: "session_update",
+        update: { sessionUpdate: "user_message_chunk", messageId: "user-media", content: image },
+      },
+      {
+        type: "session_update",
+        update: { sessionUpdate: "agent_message_chunk", messageId: "agent-media", content: image },
+      },
+      { type: "completed" },
+    ]),
+    prompt: () => events<PromptSessionEvent>([]),
+    setMode,
+    respondToPermission: async () => ({}),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, {
+    createId: () => `local-${++nextId}`,
+    now: () => 42,
+  });
+
+  await store.getState().loadSession("ora-1");
+
+  assert.deepEqual(store.getState().conversations["ora-1"], {
+    turns: [{
+      id: "local-1",
+      userMessage: { kind: "message", id: "local-2", role: "user", content: "", structuredContent: [image], createdAt: 42, protocolMessageId: "user-media" },
+      items: [{ kind: "content", id: "local-3", source: "message", content: image, createdAt: 42 }],
+      status: "completed",
+      stopReason: null,
+      error: null,
+      createdAt: 42,
+    }],
+    availableCommands: [{ name: "review", description: "Review current changes", input: { hint: "scope" } }],
+    modes: null,
+    sessionTitle: "Review auth flow",
+    sessionUpdatedAt: "2026-07-24T12:00:00+09:00",
+    isLoaded: true,
+    isLoading: false,
+    isResponding: false,
+    pendingPermissions: [],
+    error: null,
+  });
+});
+
+test("applies live command and partial session-info updates outside the response turn", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "plan", description: "Create a plan" }],
+        },
+      },
+      { type: "session_update", update: { sessionUpdate: "session_info_update", title: "Plan the migration" } },
+      { type: "completed", stopReason: "end_turn" },
+    ]),
+    setMode,
+    respondToPermission: async () => ({}),
+  };
+  const store = createChatStore(client, { createId: () => "local", now: () => 42 });
+
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "plan it" });
+
+  const conversation = store.getState().conversations["ora-1"];
+  assert.deepEqual(conversation?.availableCommands, [{ name: "plan", description: "Create a plan" }]);
+  assert.equal(conversation?.sessionTitle, "Plan the migration");
+  assert.equal(conversation?.sessionUpdatedAt, null);
+  assert.deepEqual(conversation?.turns[0]?.items, []);
+});
+
+test("loads and changes modes while sending structured image prompts", async () => {
+  let promptRequest: PromptSessionRequest | undefined;
+  let modeRequest: SetSessionModeRequest | undefined;
+  const modes = {
+    currentModeId: "normal",
+    availableModes: [
+      { id: "normal", name: "Normal" },
+      { id: "plan", name: "Plan" },
+    ],
+  };
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([
+      { type: "mode_state", modes },
+      { type: "completed" },
+    ]),
+    prompt: (request) => {
+      promptRequest = request;
+      return events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]);
+    },
+    setMode: async (request) => {
+      modeRequest = request;
+      return {};
+    },
+    respondToPermission: async () => ({}),
+  };
+  const store = createChatStore(client, { createId: () => "local", now: () => 42 });
+
+  await store.getState().loadSession("ora-1");
+  await store.getState().setMode("ora-1", "plan");
+  await store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "inspect",
+    images: [{ data: "aGVsbG8=", mimeType: "image/png", uri: "diagram.png" }],
+  });
+
+  assert.deepEqual(modeRequest, { sessionId: "ora-1", modeId: "plan" });
+  assert.deepEqual(promptRequest, {
+    sessionId: "ora-1",
+    prompt: [
+      { type: "text", text: "inspect" },
+      { type: "image", data: "aGVsbG8=", mimeType: "image/png", uri: "diagram.png" },
+    ],
+  });
+  assert.equal(store.getState().conversations["ora-1"]?.modes?.currentModeId, "plan");
+  assert.deepEqual(store.getState().conversations["ora-1"]?.turns[0]?.userMessage.structuredContent, [
+    { type: "image", data: "aGVsbG8=", mimeType: "image/png", uri: "diagram.png" },
+  ]);
 });
 
 test("aborting a prompt retains the partial response and marks the turn cancelled", async () => {
@@ -96,6 +243,7 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
         });
       },
     }),
+    setMode,
     respondToPermission: async () => ({}),
   };
   const store = createChatStore(client, { createId: () => "id-1", now: () => 42 });
@@ -134,13 +282,14 @@ test("shows the user turn on a draft key before promoting to the created session
         { type: "completed", stopReason: "end_turn" },
       ]);
     },
+    setMode,
     respondToPermission: async () => ({}),
   };
   let nextId = 0;
   const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
 
-  let resolveCreate: (id: string) => void = () => {};
-  const created = new Promise<string>((resolve) => { resolveCreate = resolve; });
+  let resolveCreate: (result: { oraSessionId: string; modes: null }) => void = () => {};
+  const created = new Promise<{ oraSessionId: string; modes: null }>((resolve) => { resolveCreate = resolve; });
   const drafts: string[] = [];
   const promoted: string[] = [];
 
@@ -159,7 +308,7 @@ test("shows the user turn on a draft key before promoting to the created session
   assert.equal(draft?.isResponding, true);
   assert.equal(store.getState().conversations["real-session"], undefined);
 
-  resolveCreate("real-session");
+  resolveCreate({ oraSessionId: "real-session", modes: null });
   await sending;
 
   // The conversation has moved onto the real id and the draft key is gone.
@@ -186,6 +335,7 @@ test("rolls back staged load updates when replay fails before completion", async
       },
     }),
     prompt: () => events<PromptSessionEvent>([]),
+    setMode,
     respondToPermission: async () => ({}),
   };
   const store = createChatStore(client, { createId: () => "local", now: () => 42 });
@@ -204,6 +354,10 @@ test("rolls back staged load updates when replay fails before completion", async
     conversations: {
       "ora-1": {
         turns: [previousTurn],
+        availableCommands: [],
+        modes: null,
+        sessionTitle: null,
+        sessionUpdatedAt: null,
         isLoaded: true,
         isLoading: false,
         isResponding: false,
@@ -217,6 +371,10 @@ test("rolls back staged load updates when replay fails before completion", async
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     turns: [previousTurn],
+    availableCommands: [],
+    modes: null,
+    sessionTitle: null,
+    sessionUpdatedAt: null,
     isLoaded: true,
     isLoading: false,
     isResponding: false,

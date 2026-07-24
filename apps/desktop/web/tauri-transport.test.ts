@@ -133,10 +133,10 @@ describe("createTauriTransport", () => {
       () => ({ onmessage: () => undefined }),
     ).stream({
       operationName: "promptSession",
-      request: { sessionId: "session-1", text: "hello" },
+      request: { sessionId: "session-1", prompt: [{ type: "text", text: "hello" }] },
       method: "POST",
       path: "/api/sessions/session-1/prompt",
-      body: { text: "hello" },
+      body: { prompt: [{ type: "text", text: "hello" }] },
       headers: { "content-type": "application/json" },
     });
 

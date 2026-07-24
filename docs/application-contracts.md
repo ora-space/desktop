@@ -4,7 +4,7 @@ The public application surface is split across `ora-application`, `ora-contracts
 
 ## Ownership
 
-- `ora-contracts` owns serialization-friendly request, response, and stream-event DTOs for Project, Task, Session, Skill, and Agent operations, plus the Web-only project work context and filesystem operations.
+- `ora-contracts` owns serialization-friendly request, response, and stream-event DTOs for Project, Task, Session, Skill, and Agent operations, including structured ACP prompts and session mode changes, plus the Web-only project work context and filesystem operations.
 - `ora-contracts::Project` is the single shared app-facing project payload for the first slice. It exposes `id`, `name`, and `root_path` only.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
 - `ora-contracts` also owns the frontend endpoint manifest for the exported HTTP CRUD surface, including operation names, HTTP methods, path templates, path parameters, request types, response types, and JSON body behavior.

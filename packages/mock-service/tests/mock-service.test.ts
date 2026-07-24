@@ -54,6 +54,7 @@ test("defines one Service Worker handler for every contracts endpoint", () => {
     "promptSession",
     "renewProjectWorkContext",
     "respondToSessionPermission",
+    "setSessionMode",
     "stopSession",
     "updateAgent",
     "updateProject",
@@ -212,6 +213,7 @@ test("supports session create, get, stop, and delete within one runtime", async 
     agentCli: "open_code",
   });
   assert.match(created.session.id, /^session-/);
+  assert.equal(created.modes, null);
   assert.deepEqual(await client.session.get({ sessionId: created.session.id }), created);
 
   const stopped = await client.session.stop({ sessionId: created.session.id });

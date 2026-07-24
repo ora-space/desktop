@@ -9,6 +9,7 @@ export interface ChatMessage {
   id: string;
   role: ChatMessageRole;
   content: string;
+  structuredContent?: Array<Exclude<acp.ContentBlock, { type: "text" }>>;
   createdAt: number;
   protocolMessageId?: string;
 }
@@ -46,12 +47,12 @@ export interface ChatToolCall {
   updatedAt: number;
 }
 
-/** Keeps unsupported ACP content visible without forcing the renderer to understand it. */
-export interface ChatUnsupportedContent {
-  kind: "unsupportedContent";
+/** Preserves one structured non-text ACP block at its original timeline position. */
+export interface ChatContent {
+  kind: "content";
   id: string;
   source: "message" | "thought";
-  contentType: Exclude<acp.ContentBlock["type"], "text">;
+  content: Exclude<acp.ContentBlock, { type: "text" }>;
   createdAt: number;
 }
 
@@ -61,7 +62,7 @@ export type ChatTurnItem =
   | ChatThought
   | ChatPlan
   | ChatToolCall
-  | ChatUnsupportedContent;
+  | ChatContent;
 
 /** Describes the lifecycle of one user prompt and its agent response. */
 export type ChatTurnStatus = "streaming" | "completed" | "cancelled" | "failed";
@@ -80,6 +81,10 @@ export interface ChatTurn {
 /** Holds the in-memory chat state isolated to one stable Ora session identifier. */
 export interface SessionConversation {
   turns: ChatTurn[];
+  availableCommands: acp.AvailableCommand[];
+  modes: acp.SessionModeState | null;
+  sessionTitle: string | null;
+  sessionUpdatedAt: string | null;
   isLoaded: boolean;
   isLoading: boolean;
   isResponding: boolean;

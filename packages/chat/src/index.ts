@@ -1,5 +1,6 @@
 export {
   createChatStore,
+  type ChatContent,
   type ChatMessage,
   type ChatMessageRole,
   type ChatPlan,
@@ -12,7 +13,6 @@ export {
   type ChatState,
   type ChatStore,
   type ChatStoreOptions,
-  type ChatUnsupportedContent,
   type SendMessageRequest,
   type SessionConversation,
 } from "./store.js";

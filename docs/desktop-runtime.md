@@ -4,7 +4,7 @@
 
 ## Shared Backend and Commands
 
-Desktop constructs one cloneable `ora-backend::Backend`. Unary operations use typed snake-case Tauri commands. Session load and prompt operations use `stream_contract`, which forwards ordered `data`, `error`, and `end` frames over a Tauri Channel. A private call id allows an `AbortSignal` to cancel only that stream.
+Desktop constructs one cloneable `ora-backend::Backend`. Unary operations, including provider mode changes, use typed snake-case Tauri commands. Session load and structured ACP prompt operations use `stream_contract`, which forwards ordered `data`, `error`, and `end` frames over a Tauri Channel. A private call id allows an `AbortSignal` to cancel only that stream.
 
 The frontend injects `createTauriTransport()` into `createContractsClient`. The transport maps contract operation names to Tauri commands and forwards the original request DTO unchanged. Shared backend errors retain the same public code and message as Web errors; Tauri transport errors have no HTTP status.
 

@@ -7,6 +7,7 @@ import { formatClock } from "../../lib/format";
 import { AnchorHighlight } from "./anchor-highlight";
 import { MarkdownMessage } from "./markdown-message";
 import type { ChatMessage } from "@ora/chat";
+import { ContentBlock } from "./content-block";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -40,10 +41,17 @@ export function MessageBubble({ message, userName, embeddedAssistant = false }: 
 
       <div className={`flex min-w-0 flex-col gap-1.5 ${isUser ? "max-w-[85%] items-end" : "flex-1"}`}>
         {isUser ? (
-          <div className="relative w-fit max-w-full rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
-            <AnchorHighlight />
-            <p data-selectable className="relative whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
-          </div>
+          <>
+            {message.structuredContent?.map((content, index) => (
+              <ContentBlock key={`${message.id}-content-${index}`} content={content} />
+            ))}
+            {message.content && (
+              <div className="relative w-fit max-w-full rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
+                <AnchorHighlight />
+                <p data-selectable className="relative whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
+              </div>
+            )}
+          </>
         ) : (
           <MarkdownMessage content={message.content} />
         )}
