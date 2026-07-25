@@ -85,8 +85,6 @@ export function ImagePreviewDialog({ open, src, name, onOpenChange }: ImagePrevi
   /** Starts direct manipulation with the primary button and captures movement outside the canvas. */
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
-    const canvas = canvasRef.current;
-    if (canvas === null) return;
     dragOriginRef.current = {
       pointerId: event.pointerId,
       clientX: event.clientX,
@@ -94,7 +92,7 @@ export function ImagePreviewDialog({ open, src, name, onOpenChange }: ImagePrevi
       panX: pan.x,
       panY: pan.y,
     };
-    canvas.setPointerCapture?.(event.pointerId);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     setDragging(true);
     event.preventDefault();
   };
@@ -112,7 +110,7 @@ export function ImagePreviewDialog({ open, src, name, onOpenChange }: ImagePrevi
   /** Ends panning without letting a released pointer leave the canvas stuck in a pressed state. */
   const stopDragging = (event: PointerEvent<HTMLDivElement>) => {
     if (dragOriginRef.current?.pointerId !== event.pointerId) return;
-    canvasRef.current?.releasePointerCapture?.(event.pointerId);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
     dragOriginRef.current = null;
     setDragging(false);
   };
@@ -131,14 +129,15 @@ export function ImagePreviewDialog({ open, src, name, onOpenChange }: ImagePrevi
     >
       <DialogContent
         showCloseButton={false}
-        className="grid-rows-[3.25rem_1fr] gap-0 overflow-hidden rounded-xl border border-white/10 bg-neutral-950/85 p-0 text-white shadow-2xl ring-1 ring-black/40 backdrop-blur-md sm:max-w-none"
+        className="grid-rows-[3.25rem_1fr] gap-0 overflow-hidden rounded-xl border border-border/40 bg-background/60 p-0 text-foreground shadow-2xl ring-1 ring-foreground/5 backdrop-blur-xl dark:border-border/60 dark:bg-popover/85 dark:ring-foreground/10 sm:max-w-none"
         style={{ width: "calc(100vw - 3rem)", maxWidth: "88rem", height: "calc(100dvh - 3rem)" }}
       >
-        <header className="relative flex items-center border-b border-white/10 bg-neutral-900/85 px-2 backdrop-blur-xl">
-          <DialogTitle className="pointer-events-none absolute left-1/2 max-w-[45%] -translate-x-1/2 truncate text-xs font-medium text-white/85" title={name}>
+        <header className="relative flex items-center border-b border-border/40 bg-background/50 px-2 backdrop-blur-xl dark:border-border/60 dark:bg-popover/80">
+          <div data-tauri-drag-region="" className="flex-1 self-stretch" />
+          <DialogTitle className="pointer-events-none absolute left-1/2 max-w-[45%] -translate-x-1/2 truncate text-xs font-medium text-muted-foreground" title={name}>
             {name}
           </DialogTitle>
-          <div className="ml-auto flex shrink-0 items-center gap-0.5" aria-label={t("chat.imagePreview.zoomControls")}>
+          <div className="relative ml-auto flex shrink-0 items-center gap-0.5" aria-label={t("chat.imagePreview.zoomControls")}>
             <Button
               type="button"
               variant="ghost"
@@ -146,13 +145,13 @@ export function ImagePreviewDialog({ open, src, name, onOpenChange }: ImagePrevi
               disabled={zoom <= MIN_ZOOM}
               onClick={() => changeZoom(-1)}
               aria-label={t("chat.imagePreview.zoomOut")}
-              className="size-10 rounded-md text-white/75 hover:bg-white/10 hover:text-white disabled:text-white/25"
+              className="size-10 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:text-muted-foreground/25"
             >
               <IconMinus className="size-5" />
             </Button>
             <output
               aria-label={t("chat.imagePreview.zoomLevel")}
-              className="flex h-10 min-w-14 items-center justify-center px-1 font-mono text-[11px] tabular-nums text-white/65"
+              className="flex h-10 min-w-14 items-center justify-center px-1 font-mono text-[11px] tabular-nums text-muted-foreground/65"
             >
               {zoomPercent}%
             </output>
@@ -163,7 +162,7 @@ export function ImagePreviewDialog({ open, src, name, onOpenChange }: ImagePrevi
               disabled={zoom >= MAX_ZOOM}
               onClick={() => changeZoom(1)}
               aria-label={t("chat.imagePreview.zoomIn")}
-              className="size-10 rounded-md text-white/75 hover:bg-white/10 hover:text-white disabled:text-white/25"
+              className="size-10 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:text-muted-foreground/25"
             >
               <IconPlus className="size-5" />
             </Button>
@@ -175,7 +174,7 @@ export function ImagePreviewDialog({ open, src, name, onOpenChange }: ImagePrevi
                 variant="ghost"
                 size="icon"
                 aria-label={t("chat.imagePreview.close")}
-                className="ml-1 size-10 rounded-md text-white/75 hover:bg-white/10 hover:text-white"
+                className="ml-1 size-10 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
               />
             }
           >
@@ -195,14 +194,14 @@ export function ImagePreviewDialog({ open, src, name, onOpenChange }: ImagePrevi
           onPointerCancel={stopDragging}
           onLostPointerCapture={stopDragging}
           aria-label={t("chat.imagePreview.canvas", { name, zoom: zoomPercent })}
-          className={`relative min-h-0 touch-none overflow-hidden bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70 ${dragging ? "cursor-grabbing select-none" : "cursor-grab"}`}
+          className={`relative min-h-0 touch-none overflow-hidden bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${dragging ? "cursor-grabbing select-none" : "cursor-grab"}`}
         >
           <img
             data-slot="preview-image"
             src={src}
             alt={name}
             draggable={false}
-            className="pointer-events-none absolute left-1/2 top-1/2 max-h-[calc(100%_-_4rem)] max-w-[calc(100%_-_4rem)] select-none object-contain drop-shadow-[0_18px_35px_rgba(0,0,0,0.4)] will-change-transform"
+            className="pointer-events-none absolute left-1/2 top-1/2 max-h-[calc(100%_-_4rem)] max-w-[calc(100%_-_4rem)] select-none object-contain drop-shadow-[0_12px_28px_rgba(0,0,0,0.2)] will-change-transform"
             style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
           />
         </div>
