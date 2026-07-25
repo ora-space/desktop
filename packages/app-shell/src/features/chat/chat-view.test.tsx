@@ -188,8 +188,8 @@ describe("Composer", () => {
 
     const textarea = screen.getByRole("textbox");
     await user.type(textarea, "/");
-    expect(screen.getByRole("listbox", { name: "可用命令" })).toBeVisible();
-    expect(screen.getAllByRole("option")).toHaveLength(2);
+    expect(screen.getByRole("listbox", { name: "快捷操作" })).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(3);
 
     await user.keyboard("{ArrowDown}{Enter}");
 
@@ -220,10 +220,37 @@ describe("Composer", () => {
     );
 
     await user.type(screen.getByRole("textbox"), "/");
+    await user.click(screen.getByRole("button", { name: "显示另外 7 项" }));
     await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
 
     expect(screen.getAllByRole("option")[8]).toHaveAttribute("aria-selected", "true");
     expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+
+    await user.click(screen.getByRole("button", { name: "收起" }));
+
+    expect(screen.getAllByRole("option")).toHaveLength(6);
+    expect(screen.getByRole("button", { name: "显示另外 7 项" })).toBeVisible();
+  });
+
+  it("opens the same grouped palette from plus and inserts a selected skill", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <Composer
+        onSend={() => {}}
+        isResponding={false}
+        skills={[{ id: "skill-1", name: "code-review", description: "Review the current diff" }]}
+        availableCommands={[{ name: "test", description: "Run tests" }]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
+
+    expect(screen.getByText("Ora Skills")).toBeVisible();
+    expect(screen.getByText("Skills")).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "code-review" }));
+
+    expect(screen.getByRole("textbox")).toHaveValue("$code-review ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
   it("previews a selected image and sends it as ACP image content", async () => {
@@ -266,7 +293,8 @@ describe("Composer", () => {
       </TooltipProvider>,
     );
 
-    await user.click(screen.getByRole("radio", { name: "Plan" }));
+    await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
+    await user.click(screen.getByRole("option", { name: "Plan" }));
 
     expect(onModeChange).toHaveBeenCalledWith("plan");
   });

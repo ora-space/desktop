@@ -15,6 +15,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
+import { useSkills } from "../../state/hooks/use-skills";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
@@ -67,6 +68,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const { data: projects = [] } = useProjects();
   const { data: tasks = [] } = useTasks();
   const sessionsQuery = useSessions();
+  const skillsQuery = useSkills();
   const sessions = sessionsQuery.data ?? [];
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -332,6 +334,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             isLoading={isLoadingHistory}
             error={chatError}
             pendingPermissions={conversation?.pendingPermissions ?? []}
+            skills={skillsQuery.data ?? []}
             availableCommands={conversation?.availableCommands ?? []}
             modes={conversation?.modes ?? null}
             disabled={!canChat}

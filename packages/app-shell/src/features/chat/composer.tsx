@@ -1,13 +1,22 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
-import { IconArrowUp, IconCommand, IconLoader2, IconPhoto, IconPlayerStop, IconPlus, IconX } from "@tabler/icons-react";
+import { IconArrowUp, IconLoader2, IconPhoto, IconPlayerStop, IconPlus, IconX } from "@tabler/icons-react";
 import { Button, Textarea } from "@ora/ui";
-import type { acp } from "@ora/contracts";
+import type { acp, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
 import { PermissionSelector } from "./permission-selector";
 import { WorkflowToggle } from "../workflow/workflow-toggle";
-import { ModeSelector } from "./mode-selector";
+import {
+  ComposerActionMenu,
+} from "./composer-action-menu";
+import {
+  buildComposerActions,
+  filterComposerActions,
+  visibleComposerActions,
+  type ComposerAction,
+  type ComposerActionGroup,
+} from "./composer-actions";
 
 interface ComposerProps {
   onSend: (text: string, images?: acp.ImageContent[]) => void;
@@ -29,6 +38,7 @@ interface ComposerProps {
   disabled?: boolean;
   placeholder?: string;
   autoFocus?: boolean;
+  skills?: Skill[];
   availableCommands?: acp.AvailableCommand[];
   modes?: acp.SessionModeState | null;
   onModeChange?: (modeId: acp.SessionModeId) => Promise<void>;
@@ -59,30 +69,43 @@ export function Composer({
   disabled = false,
   placeholder,
   autoFocus = false,
+  skills = [],
   availableCommands = [],
   modes = null,
   onModeChange,
 }: ComposerProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
-  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
-  const [commandsDismissed, setCommandsDismissed] = useState(false);
+  const [selectedActionIndex, setSelectedActionIndex] = useState(0);
+  const [menuDismissed, setMenuDismissed] = useState(false);
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<ComposerActionGroup>>(new Set());
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const commandOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const commandListId = useId();
-  const commandQuery = value.match(/^\/([^\s]*)$/)?.[1].toLocaleLowerCase();
-  const commandCandidates = useMemo(() => {
-    if (commandQuery === undefined) return [];
-    return availableCommands.filter((command) =>
-      command.name.toLocaleLowerCase().includes(commandQuery)
-      || command.description.toLocaleLowerCase().includes(commandQuery),
-    );
-  }, [availableCommands, commandQuery]);
-  const showCommands = commandCandidates.length > 0
-    && !commandsDismissed
+  const actionOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const actionMenuId = useId();
+  const slashQuery = value.match(/^\/([^\s]*)$/)?.[1] ?? null;
+  const allActions = useMemo(() => buildComposerActions({
+    skills,
+    commands: availableCommands,
+    modes: onModeChange === undefined ? null : modes,
+    includeAttachments: true,
+    attachmentLabel: t("chat.actionMenu.addImages"),
+    attachmentDescription: t("chat.actionMenu.addImagesDescription"),
+  }), [availableCommands, modes, onModeChange, skills, t]);
+  const filteredActions = useMemo(
+    () => filterComposerActions(allActions, plusMenuOpen ? "" : slashQuery ?? ""),
+    [allActions, plusMenuOpen, slashQuery],
+  );
+  const visibleActions = useMemo(
+    () => visibleComposerActions(filteredActions, expandedGroups),
+    [expandedGroups, filteredActions],
+  );
+  const showActionMenu = visibleActions.length > 0
+    && (plusMenuOpen || (slashQuery !== null && !menuDismissed))
     && !disabled
     && !isResponding;
 
@@ -105,19 +128,44 @@ export function Composer({
     setValue("");
     setAttachments([]);
     setAttachmentError(null);
-    setCommandsDismissed(false);
+    closeActionMenu();
   };
 
-  /** Inserts a selected command for review and leaves arguments in the user's control. */
-  const selectCommand = (command: acp.AvailableCommand) => {
-    const inserted = `/${command.name} `;
+  /** Inserts a skill or command token for review while keeping arguments under user control. */
+  const insertPromptToken = (inserted: string) => {
     setValue(inserted);
-    setCommandsDismissed(true);
+    closeActionMenu();
     requestAnimationFrame(() => {
       textAreaRef.current?.focus();
       textAreaRef.current?.setSelectionRange(inserted.length, inserted.length);
     });
   };
+
+  /** Executes the selected palette action through its existing product data path. */
+  const selectAction = (action: ComposerAction) => {
+    switch (action.group) {
+      case "skills":
+        insertPromptToken(`$${action.skill.name} `);
+        return;
+      case "commands":
+        insertPromptToken(`/${action.command.name} `);
+        return;
+      case "modes":
+        closeActionMenu();
+        void onModeChange?.(action.mode.id).catch(() => undefined);
+        return;
+      case "actions":
+        closeActionMenu();
+        fileInputRef.current?.click();
+    }
+  };
+
+  /** Closes both menu triggers and restores the collapsed section state. */
+  function closeActionMenu() {
+    setPlusMenuOpen(false);
+    setMenuDismissed(true);
+    setExpandedGroups(new Set());
+  }
 
   /** Converts selected files into ACP images while enforcing a bounded prompt payload. */
   const addImages = async (files: FileList | null) => {
@@ -139,24 +187,24 @@ export function Composer({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (showCommands) {
+    if (showActionMenu) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const direction = event.key === "ArrowDown" ? 1 : -1;
-        setSelectedCommandIndex((current) =>
-          (current + direction + commandCandidates.length) % commandCandidates.length,
+        setSelectedActionIndex((current) =>
+          (current + direction + visibleActions.length) % visibleActions.length,
         );
         return;
       }
       if (event.key === "Escape") {
         event.preventDefault();
-        setCommandsDismissed(true);
+        closeActionMenu();
         return;
       }
       if ((event.key === "Enter" || event.key === "Tab") && !event.nativeEvent.isComposing) {
         event.preventDefault();
-        const command = commandCandidates[selectedCommandIndex];
-        if (command !== undefined) selectCommand(command);
+        const action = visibleActions[selectedActionIndex];
+        if (action !== undefined) selectAction(action);
         return;
       }
     }
@@ -174,51 +222,43 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value]);
 
-  useEffect(() => setSelectedCommandIndex(0), [commandQuery, commandCandidates.length]);
+  useEffect(() => {
+    if (!showActionMenu) return;
+    const safeIndex = Math.min(selectedActionIndex, visibleActions.length - 1);
+    actionOptionRefs.current[safeIndex]?.scrollIntoView?.({ block: "nearest" });
+  }, [selectedActionIndex, showActionMenu, visibleActions.length]);
 
   useEffect(() => {
-    if (!showCommands) return;
-    commandOptionRefs.current[selectedCommandIndex]?.scrollIntoView?.({ block: "nearest" });
-  }, [selectedCommandIndex, showCommands]);
+    if (!showActionMenu) return;
+    const dismissOutside = (event: PointerEvent) => {
+      if (!composerRef.current?.contains(event.target as Node)) closeActionMenu();
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    return () => document.removeEventListener("pointerdown", dismissOutside);
+  }, [showActionMenu]);
 
   return (
-    <div data-slot="composer" className="relative flex flex-col rounded-xl border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06),0_8px_24px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-200 hover:border-foreground/20 hover:shadow-[0_2px_4px_rgba(0,0,0,0.06),0_10px_28px_rgba(0,0,0,0.06)] focus-within:border-foreground/30 focus-within:shadow-[0_2px_4px_rgba(0,0,0,0.07),0_12px_32px_rgba(0,0,0,0.07)] focus-within:ring-2 focus-within:ring-ring/25 dark:shadow-[0_1px_3px_rgba(0,0,0,0.28),0_10px_28px_rgba(0,0,0,0.18)]">
-      {showCommands && (
-        <div
-          id={commandListId}
-          role="listbox"
-          aria-label={t("chat.commands.available")}
-          className="absolute inset-x-0 bottom-[calc(100%+8px)] z-40 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-xl ring-1 ring-foreground/5"
-        >
-          <div className="flex h-9 items-center gap-2 border-b border-border/70 px-3 text-[11px] font-medium text-muted-foreground">
-            <IconCommand className="size-3.5" aria-hidden="true" />
-            {t("chat.commands.available")}
-            <span className="ml-auto tabular-nums">{commandCandidates.length}</span>
-          </div>
-          <div className="max-h-64 overflow-y-auto overscroll-contain p-1.5 scroll-py-1.5">
-            {commandCandidates.map((command, index) => (
-              <button
-                ref={(node) => { commandOptionRefs.current[index] = node; }}
-                key={command.name}
-                id={`${commandListId}-${index}`}
-                type="button"
-                role="option"
-                aria-selected={index === selectedCommandIndex}
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseMove={() => setSelectedCommandIndex(index)}
-                onClick={() => selectCommand(command)}
-                className="group flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-md border border-transparent px-3 py-2 text-left outline-none transition-colors duration-150 hover:bg-accent/70 focus-visible:ring-2 focus-visible:ring-ring aria-selected:border-border aria-selected:bg-accent aria-selected:text-accent-foreground"
-              >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-xs font-semibold text-sky-700 transition-colors group-aria-selected:bg-background dark:text-sky-400">/</span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-semibold">{command.name}</span>
-                  <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{command.description}</span>
-                </span>
-                {command.input && <span className="max-w-40 shrink truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{command.input.hint}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
+    <div ref={composerRef} data-slot="composer" className="relative flex flex-col rounded-xl border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06),0_8px_24px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] duration-200 hover:border-foreground/20 hover:shadow-[0_2px_4px_rgba(0,0,0,0.06),0_10px_28px_rgba(0,0,0,0.06)] focus-within:border-foreground/30 focus-within:shadow-[0_2px_4px_rgba(0,0,0,0.07),0_12px_32px_rgba(0,0,0,0.07)] focus-within:ring-2 focus-within:ring-ring/25 dark:shadow-[0_1px_3px_rgba(0,0,0,0.28),0_10px_28px_rgba(0,0,0,0.18)]">
+      {showActionMenu && (
+        <ComposerActionMenu
+          id={actionMenuId}
+          actions={filteredActions}
+          activeIndex={selectedActionIndex}
+          currentModeId={modes?.currentModeId}
+          expandedGroups={expandedGroups}
+          optionRefs={actionOptionRefs}
+          onActiveIndexChange={setSelectedActionIndex}
+          onToggleGroup={(group) => {
+            setExpandedGroups((current) => {
+              const next = new Set(current);
+              if (next.has(group)) next.delete(group);
+              else next.add(group);
+              return next;
+            });
+            setSelectedActionIndex(0);
+          }}
+          onSelect={selectAction}
+        />
       )}
       <div className="flex flex-col p-2">
         {attachments.length > 0 && (
@@ -247,15 +287,18 @@ export function Composer({
           disabled={disabled}
           onChange={(event) => {
             setValue(event.target.value);
-            setCommandsDismissed(false);
+            setPlusMenuOpen(false);
+            setMenuDismissed(false);
+            setExpandedGroups(new Set());
+            setSelectedActionIndex(0);
           }}
           onKeyDown={handleKeyDown}
           aria-label={t("chat.messageLabel")}
-          aria-autocomplete={availableCommands.length > 0 ? "list" : undefined}
-          aria-haspopup={availableCommands.length > 0 ? "listbox" : undefined}
-          aria-expanded={showCommands}
-          aria-controls={showCommands ? commandListId : undefined}
-          aria-activedescendant={showCommands ? `${commandListId}-${selectedCommandIndex}` : undefined}
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={showActionMenu}
+          aria-controls={showActionMenu ? actionMenuId : undefined}
+          aria-activedescendant={showActionMenu ? `${actionMenuId}-option-${selectedActionIndex}` : undefined}
           // The shell already carries the surface, so the Textarea's own disabled
           // fill would read as a grey block floating inside the card.
           className="min-h-14 max-h-[200px] resize-none rounded-none border-0 bg-transparent px-2 py-1 text-[15px] leading-6 shadow-none focus-visible:ring-0 disabled:bg-transparent"
@@ -273,13 +316,28 @@ export function Composer({
                 event.target.value = "";
               }}
             />
-            <Button type="button" variant="ghost" size="icon-sm" disabled={disabled || isResponding} aria-label={t("chat.attachments.add")} onClick={() => fileInputRef.current?.click()} className="rounded-full text-muted-foreground">
-              <IconPlus className="size-4" />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              disabled={disabled || isResponding}
+              aria-label={t("chat.actionMenu.open")}
+              aria-haspopup="listbox"
+              aria-expanded={showActionMenu && plusMenuOpen}
+              aria-controls={showActionMenu && plusMenuOpen ? actionMenuId : undefined}
+              onClick={() => {
+                setPlusMenuOpen((current) => !current);
+                setMenuDismissed(false);
+                setExpandedGroups(new Set());
+                setSelectedActionIndex(0);
+              }}
+              className="rounded-full text-muted-foreground"
+            >
+              <IconPlus className={`size-4 transition-transform duration-150 motion-reduce:transition-none ${plusMenuOpen ? "rotate-45" : ""}`} />
             </Button>
             {attachments.length > 0 && <IconPhoto className="size-3.5 text-sky-600 dark:text-sky-400" aria-hidden="true" />}
             <PermissionSelector disabled={disabled} />
             <WorkflowToggle disabled={disabled} />
-            {modes !== null && onModeChange !== undefined && <ModeSelector modes={modes} disabled={disabled || isResponding} onChange={onModeChange} />}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <ModelSelector disabled={disabled} />
