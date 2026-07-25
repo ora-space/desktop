@@ -55,9 +55,15 @@ const REMINDER_BODY: Record<WorkflowNodeId, string> = {
  * absolute path. `skillsDir` is the project's `.opencode/skills` — passed in
  * because the agent's worktree cwd may not contain it, so an absolute project-root
  * path keeps the skill findable.
+ *
+ * That absolute path is the one project-root anchor we hand the agent, so we must
+ * fence it explicitly: it is for *reading* the skill only. All OpenSpec artifacts
+ * (proposal / specs / design / tasks / changes) and the code implementation stay
+ * in the agent's current working directory (its worktree) — otherwise the agent
+ * follows the absolute path and writes them into the project root's `openspec/`.
  */
 export function buildWorkflowReminder(nodeId: WorkflowNodeId, skillsDir: string): string {
-  return `请使用位于 ${skillsDir} 的 ${WORKFLOW_SKILL[nodeId]} skill，${REMINDER_BODY[nodeId]}`;
+  return `请使用位于 ${skillsDir} 的 ${WORKFLOW_SKILL[nodeId]} skill（该绝对路径仅用于读取 skill 说明）。所有 openspec 产物（proposal、specs、design、tasks、changes）以及代码实现都必须在你当前的工作目录中完成，不要写入 skill 所在的项目根目录。${REMINDER_BODY[nodeId]}`;
 }
 
 /** One artifact's completion state as reported by `openspec status --json`. */
