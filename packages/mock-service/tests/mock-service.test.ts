@@ -38,6 +38,7 @@ test("defines one Service Worker handler for every contracts endpoint", () => {
     "deleteSkill",
     "deleteTask",
     "getAgent",
+    "getGitIdentity",
     "getProject",
     "getSession",
     "getSkill",

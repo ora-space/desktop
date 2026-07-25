@@ -1,4 +1,4 @@
-import { createElement, type ReactNode } from "react";
+import { createElement, isValidElement, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -29,18 +29,28 @@ function createTestQueryClient() {
 function renderWithI18n(element: ReactNode) {
   const client = createMockClient(createMockClientState());
   const queryClient = createTestQueryClient();
-  return {
-    ...render(
+  const wrap = (child: ReactNode) =>
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
       createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        createElement(
-          ContractsClientContext.Provider,
-          { value: client },
-          createElement(AppI18nProvider, null, element),
-        ),
+        ContractsClientContext.Provider,
+        { value: client },
+        createElement(AppI18nProvider, null, child),
       ),
-    ),
+    );
+  const rendered = render(wrap(element));
+  return {
+    ...rendered,
+    rerender: (nextElement: ReactNode) => {
+      // Older cases supplied their own i18n wrapper; keep the provider tree
+      // stable so rerender exercises component updates instead of remounts.
+      const child = isValidElement<{ children?: ReactNode }>(nextElement)
+        && nextElement.type === AppI18nProvider
+        ? nextElement.props.children
+        : nextElement;
+      rendered.rerender(wrap(child));
+    },
     client,
     queryClient,
   };

@@ -30,7 +30,7 @@ const translations = {
     "sidebar.empty": "未找到项目。",
     "sidebar.newSession": "新建会话",
     "sidebar.newTask": "新建工作树任务",
-    "sidebar.newDirectChat": "新建会话",
+    "sidebar.newDirectChat": "新建直聊",
     "sidebar.console": "控制台",
     "sidebar.openActions": "打开操作菜单",
     "sidebar.navigation": "主导航",
