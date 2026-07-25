@@ -19,11 +19,22 @@ import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import {
+  buildWorkflowReminder,
+  getRun,
+  kickNode,
+  useWorkflowStore,
+  workflowKeyFor,
+  type WorkflowNodeId,
+} from "../../state/stores/workflow-store";
 import { useChatStore } from "../../chat-store-context";
 import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
+import { WorkflowStepper } from "../workflow/workflow-stepper";
+import { useWorkflowDetection } from "../workflow/use-workflow-detection";
+import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
 import { agentCliLabel } from "./agent-cli";
 
@@ -44,6 +55,9 @@ function upsertById<T extends { id: string }>(
 ): T[] {
   return [...(current ?? []).filter((item) => item.id !== entity.id), entity];
 }
+
+/** Stable empty-turns reference so the workflow detection effect does not re-run each render. */
+const EMPTY_TURNS: ChatTurn[] = [];
 
 /** Shows useful project/task context until a session is selected, then opens its agent chat. */
 export function WorkspaceView({ userName }: WorkspaceViewProps) {
@@ -71,6 +85,21 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       : state.conversations[selection.sessionId],
   );
 
+  // Workflow state is isolated per session (per task before the session exists).
+  const workflowKey = workflowKeyFor(selection);
+  // Absolute path to the OpenSpec skills, so the agent finds them from its worktree
+  // cwd even when `.opencode/skills` lives only at the project root.
+  const skillsDir =
+    project === undefined
+      ? ".opencode/skills"
+      : `${project.rootPath.replace(/[\\/]+$/, "")}/.opencode/skills`;
+  // The highlighted (blue) stage, if any, so pressing Enter on an empty composer
+  // launches it directly.
+  const workflowRun = useWorkflowStore((state) => getRun(state, workflowKey));
+  const quickLaunchNodeId = kickNode(workflowRun);
+  // Best-effort: reflect any OpenSpec status JSON the agent emits into the stepper.
+  useWorkflowDetection(workflowKey, conversation?.turns ?? EMPTY_TURNS);
+
   useEffect(() => {
     if (
       session !== undefined &&
@@ -96,13 +125,30 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     sessionsQuery,
   ]);
 
-  /** Sends into the selected session, or lazily creates the selected execution context. */
-  const sendOrStartSession = async (text: string) => {
+  /**
+   * Sends into the selected session, or lazily creates the selected execution
+   * context first. The new-session path is optimistic: the store materializes
+   * the user turn up front (so the composer slides into the thread immediately)
+   * and creates the agent session in the background, re-pointing selection at
+   * the draft and then the real id as each becomes available.
+   *
+   * Core send: shows `displayText` in the transcript while the agent receives
+   * `agentText` (used to hide a workflow reminder). `currentKey` tracks the
+   * workflow run as an optimistic session moves from its task key to draft to
+   * real id.
+   */
+  const dispatchSend = async (
+    displayText: string,
+    agentText: string | undefined,
+  ) => {
+    let currentKey = workflowKeyFor(
+      useWorkspaceSelectionStore.getState().selection,
+    );
     if (session) {
       try {
         await chatStore
           .getState()
-          .sendMessage({ oraSessionId: session.id, text });
+          .sendMessage({ oraSessionId: session.id, text: displayText, agentText });
       } finally {
         // Connection failures can stop the provider process, so refresh the persisted
         // lifecycle snapshot after every finite prompt without polling idle sessions.
@@ -117,12 +163,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     let draftSessionId: string | null = null;
     try {
       await chatStore.getState().sendMessage({
-        text,
+        text: displayText,
+        agentText,
         createSession: async () => {
           if (taskId === null) {
             const response = await client.task.create({
               projectId,
-              title: directChatTitle(text),
+              title: directChatTitle(displayText),
               status: "todo",
               workspaceMode: "project_root",
             });
@@ -153,8 +200,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           );
           return response.session.id;
         },
+        // Show the optimistic turn under its temporary key right away, and move
+        // the workflow run onto that key so it follows the session as it forms.
         onDraft: (draftId) => {
           draftSessionId = draftId;
+          useWorkflowStore.getState().rekey(currentKey, draftId);
+          currentKey = draftId;
           const selectionStore = useWorkspaceSelectionStore.getState();
           if (taskId === null) {
             selectionStore.selectDraftSession(draftId, projectId);
@@ -162,7 +213,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             selectionStore.selectSession(draftId, taskId, projectId);
           }
         },
+        // The store has already re-keyed the conversation onto the real id, so
+        // selecting it here cannot flash an empty thread.
         onSessionCreated: (realSessionId) => {
+          useWorkflowStore.getState().rekey(currentKey, realSessionId);
+          currentKey = realSessionId;
           void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
           useWorkspaceSelectionStore
             .getState()
@@ -174,6 +229,30 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     } finally {
       await sessionsQuery.refetch();
     }
+  };
+
+  // Composer send. In Spec mode, a message typed while a stage is highlighted (none
+  // running) launches that stage and rides its reminder; the reminder shows only in
+  // `agentText`, never the transcript. Within a running stage nothing is injected.
+  const sendOrStartSession = async (text: string) => {
+    const key = workflowKeyFor(useWorkspaceSelectionStore.getState().selection);
+    const nodeId = kickNode(getRun(useWorkflowStore.getState(), key));
+    let agentText: string | undefined;
+    if (nodeId !== null) {
+      useWorkflowStore.getState().launchNode(key, nodeId);
+      agentText = `${buildWorkflowReminder(nodeId, skillsDir)}\n\n${text}`;
+    }
+    await dispatchSend(text, agentText);
+  };
+
+  // Clicking the highlighted stepper node sends its OpenSpec command now, so the
+  // agent starts that stage. The transcript shows a short action label while the
+  // agent receives the full reminder; the node flips to running.
+  const launchWorkflowNode = (id: WorkflowNodeId) => {
+    const key = workflowKeyFor(useWorkspaceSelectionStore.getState().selection);
+    useWorkflowStore.getState().launchNode(key, id);
+    const displayText = t("workflow.startNode", { node: t(`workflow.node.${id}`) });
+    void dispatchSend(displayText, buildWorkflowReminder(id, skillsDir)).catch(() => undefined);
   };
 
   // Anything short of a persisted selected session is a new or optimistic chat.
@@ -253,9 +332,17 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             contextBar={
               selection.sessionId === null ? <ComposerContextBar /> : undefined
             }
+            workflowBar={
+              <WorkflowStepper onLaunch={launchWorkflowNode} disabled={!canChat} />
+            }
             // Failures land in chatError; the rejection itself is expected.
             onSend={(text) =>
               void sendOrStartSession(text).catch(() => undefined)
+            }
+            onEmptySubmit={
+              quickLaunchNodeId === null
+                ? undefined
+                : () => launchWorkflowNode(quickLaunchNodeId)
             }
             // The selected id, not session.id: during the optimistic startup the
             // real session does not exist yet but the draft key is already live.

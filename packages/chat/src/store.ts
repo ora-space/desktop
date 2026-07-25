@@ -27,6 +27,13 @@ export type {
 export interface SendMessageRequest {
   text: string;
   /**
+   * What is actually sent to the agent, when it must differ from the displayed
+   * `text`. Used to prepend an invisible instruction (e.g. a spec-driven workflow
+   * reminder) that the user should not see echoed in their own message. Defaults
+   * to `text` when omitted.
+   */
+  agentText?: string;
+  /**
    * Target an existing session. Provide this OR `createSession`, never both:
    * with an id the prompt streams straight into that session, without one the
    * session is created lazily (see `createSession`).
@@ -154,9 +161,12 @@ export function createChatStore(
       }
     },
 
-    sendMessage: async ({ oraSessionId, text, createSession, onDraft, onSessionCreated }) => {
+    sendMessage: async ({ oraSessionId, text, agentText, createSession, onDraft, onSessionCreated }) => {
       const content = text.trim();
       if (content === "") return;
+      // What the agent receives can differ from what the user sees in their turn,
+      // so a workflow reminder is sent without appearing in the transcript.
+      const promptContent = (agentText ?? text).trim();
 
       // Stream into the given session, or a temporary draft key that is promoted
       // to the real id once the background create resolves. The key is mutable
@@ -237,7 +247,7 @@ export function createChatStore(
 
       try {
         for await (const event of client.prompt(
-          { sessionId: key, text: content },
+          { sessionId: key, text: promptContent },
           { signal: controller.signal },
         )) {
           if (event.type === "session_update") {

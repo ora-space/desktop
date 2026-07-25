@@ -26,6 +26,8 @@ interface ChatViewProps {
   pendingPermissions?: SessionPermissionRequest[];
   disabled?: boolean;
   onSend: (text: string) => void;
+  /** Fired on Enter with an empty input; used in Spec mode to run the highlighted stage. */
+  onEmptySubmit?: () => void;
   onStop?: () => void;
   onRespondToPermission?: (permissionRequestId: string, optionId: string) => void;
   /**
@@ -33,6 +35,12 @@ interface ChatViewProps {
    * built here so the chat pane stays unaware of workspace entities.
    */
   contextBar?: ReactNode;
+  /**
+   * Optional strip rendered directly above the composer (the spec-driven workflow
+   * stepper). Passed in rather than built here so the chat pane stays unaware of
+   * workflow state, mirroring `contextBar`.
+   */
+  workflowBar?: ReactNode;
   /**
    * Why the composer is disabled, surfaced on hover. Preferred over an inline
    * message for a state the user can fix from the context bar directly above it.
@@ -50,7 +58,7 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
  */
-export function ChatView({ turns, userName, isResponding, isStreaming = false, isLoading = false, error, pendingPermissions = [], disabled = false, onSend, onStop, onRespondToPermission, contextBar, disabledHint }: ChatViewProps) {
+export function ChatView({ turns, userName, isResponding, isStreaming = false, isLoading = false, error, pendingPermissions = [], disabled = false, onSend, onEmptySubmit, onStop, onRespondToPermission, contextBar, workflowBar, disabledHint }: ChatViewProps) {
   const { t } = useTranslation();
   // A loading session takes the thread layout even before its turns arrive, so the
   // landing (centered) layout is reserved for the genuinely-empty new-task compose
@@ -151,6 +159,7 @@ export function ChatView({ turns, userName, isResponding, isStreaming = false, i
               {contextBar}
             </div>
           )}
+          {workflowBar}
           {/* The hint hangs off a wrapper because a disabled textarea swallows the
               pointer events a trigger needs. The wrapper stays mounted whether or not
               there is a hint: swapping it out would remount the composer and throw
@@ -163,7 +172,7 @@ export function ChatView({ turns, userName, isResponding, isStreaming = false, i
               open the moment a hint reappears. */}
           <Tooltip trackCursorAxis="both" disabled={disabledHint === undefined}>
             <TooltipTrigger render={<div />}>
-              <Composer autoFocus onSend={onSend} onStop={onStop} isResponding={isResponding} isStreaming={isStreaming} disabled={disabled} />
+              <Composer autoFocus onSend={onSend} onEmptySubmit={onEmptySubmit} onStop={onStop} isResponding={isResponding} isStreaming={isStreaming} disabled={disabled} />
             </TooltipTrigger>
             <TooltipContent sideOffset={12}>{disabledHint}</TooltipContent>
           </Tooltip>

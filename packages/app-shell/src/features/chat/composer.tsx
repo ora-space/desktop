@@ -5,9 +5,15 @@ import { Button, Textarea } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
 import { PermissionSelector } from "./permission-selector";
+import { WorkflowToggle } from "../workflow/workflow-toggle";
 
 interface ComposerProps {
   onSend: (text: string) => void;
+  /**
+   * Invoked when Enter (or send) is pressed with an empty input. Used in Spec mode
+   * to run the highlighted stage directly; absent when there is nothing to launch.
+   */
+  onEmptySubmit?: () => void;
   onStop?: () => void;
   isResponding: boolean;
   /**
@@ -30,6 +36,7 @@ interface ComposerProps {
  */
 export function Composer({
   onSend,
+  onEmptySubmit,
   onStop,
   isResponding,
   isStreaming = false,
@@ -41,11 +48,18 @@ export function Composer({
   const [value, setValue] = useState("");
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
-  const canSend = value.trim().length > 0 && !isResponding && !disabled;
+  const hasText = value.trim().length > 0;
+  // With an empty input the send affordance still fires when there is a stage to
+  // launch, so pressing Enter runs the highlighted step.
+  const canSend = (hasText || onEmptySubmit !== undefined) && !isResponding && !disabled;
 
   const submit = () => {
+    if (isResponding || disabled) return;
     const text = value.trim();
-    if (!text || isResponding || disabled) return;
+    if (!text) {
+      onEmptySubmit?.();
+      return;
+    }
     onSend(text);
     setValue("");
   };
@@ -88,6 +102,7 @@ export function Composer({
               <IconPlus className="size-4" />
             </Button>
             <PermissionSelector disabled={disabled} />
+            <WorkflowToggle disabled={disabled} />
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <ModelSelector disabled={disabled} />
