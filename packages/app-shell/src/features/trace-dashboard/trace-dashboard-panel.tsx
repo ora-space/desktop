@@ -1,7 +1,6 @@
 import { useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { cn } from "@ora/ui";
-import { IconX } from "@tabler/icons-react";
+import { cn, Sheet, SheetContent, SheetHeader, SheetTitle } from "@ora/ui";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useDashboardEndpoint } from "./use-dashboard-endpoint";
@@ -18,12 +17,18 @@ const MIN_PANEL_WIDTH = 420;
 const MAX_PANEL_WIDTH = 1400;
 
 /**
- * Right-side docked panel (Cursor/ChatGPT-style) showing the trace dashboard for
- * the current session. The dashboard is the only surface today; review and
- * terminal are out of scope for now, so the panel renders the dashboard body
- * directly instead of a tab switcher that would only show "coming soon".
- * Its left edge is a pointer-drag handle so the dashboard can be widened to fit
- * its charts, and pointer capture keeps the resize alive over the iframe.
+ * Right-side overlay panel (codex/ChatGPT-style) showing the trace dashboard for
+ * the current session. It uses the shared `Sheet` primitive so the slide-in +
+ * fade animation, the click-the-backdrop-to-close behavior, and the top-right
+ * close button all come for free and stay consistent with the rest of the shell's
+ * dialogs. The dashboard is the only surface today (review/terminal out of
+ * scope), so the panel renders the dashboard body directly.
+ *
+ * Inside the sheet, the left edge is still a pointer-drag handle so the panel can
+ * be widened to fit the dashboard's charts; the persisted pixel width overrides
+ * the sheet's default proportional width. Closing the sheet unmounts the iframe,
+ * so reopening re-resolves the trace (the Streamlit server stays running, so this
+ * is cheap).
  */
 export function TraceDashboardPanel({ resolveDashboardUrl }: TraceDashboardPanelProps) {
   const { t } = useTranslation();
@@ -50,47 +55,43 @@ export function TraceDashboardPanel({ resolveDashboardUrl }: TraceDashboardPanel
     [],
   );
 
-  if (!open) return null;
-
   return (
-    <aside
-      data-slot="trace-dashboard-panel"
-      className="relative z-30 flex h-full shrink-0 flex-col border-l bg-popover text-sm text-popover-foreground shadow-lg"
-      style={{ width: clamp(width) }}
-      role="complementary"
-      aria-label={t("dashboard.title")}
-    >
-      <PanelResizeHandle
-        onResize={(delta, startWidth) => setWidth(clamp(startWidth - delta))}
-        aria-label={t("dashboard.resize")}
-      />
-      <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
-        <h2 className="text-sm font-medium tracking-[-0.01em]">{t("dashboard.title")}</h2>
-        <button
-          type="button"
-          className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
-          aria-label={t("dashboard.close")}
-          onClick={() => setOpen(false)}
-        >
-          <IconX className="size-4" />
-        </button>
-      </div>
-      <div className="h-full min-h-0 flex-1 px-4 pb-4">
-        <DashboardTabBody
-          sessionId={sessionId}
-          isLoading={isLoading}
-          error={error}
-          endpoint={endpoint}
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetContent
+        side="right"
+        showCloseButton
+        // The sheet defaults to a proportional w-3/4 capped by sm:max-w-sm; override
+        // both so the persisted pixel width (dragged by the handle) actually applies.
+        // Inline width/maxWidth beats the class, but max-width must be neutralized
+        // too or the data-[side=right]:sm:max-w-sm variant caps the panel at 24rem.
+        className="w-auto gap-0 data-[side=right]:sm:max-w-none"
+        style={{ width: clamp(width), maxWidth: "none" }}
+        aria-label={t("dashboard.title")}
+      >
+        <PanelResizeHandle
+          onResize={(delta, startWidth) => setWidth(clamp(startWidth - delta))}
+          aria-label={t("dashboard.resize")}
         />
-      </div>
-    </aside>
+        <SheetHeader className="gap-0.5 pr-10">
+          <SheetTitle>{t("dashboard.title")}</SheetTitle>
+        </SheetHeader>
+        <div className="h-full min-h-0 flex-1 px-4 pb-4">
+          <DashboardTabBody
+            sessionId={sessionId}
+            isLoading={isLoading}
+            error={error}
+            endpoint={endpoint}
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
 /**
  * Draggable left edge of the panel. Pointer capture keeps receiving move events
- * even when the cursor drifts over the iframe (which would otherwise swallow
- * them), so the resize never "sticks" mid-drag over the embedded dashboard.
+ * even when the cursor drifts onto the backdrop (which would otherwise swallow
+ * them and close the sheet), so the resize never "sticks" mid-drag.
  */
 function PanelResizeHandle({
   onResize,
@@ -114,7 +115,7 @@ function PanelResizeHandle({
         event.currentTarget.setPointerCapture?.(event.pointerId);
         startRef.current = {
           clientX: event.clientX,
-          // The handle's parent <aside> carries the live width; capture it at start.
+          // The handle's parent (SheetContent) carries the live width; capture it at start.
           width: event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0,
         };
       }}
