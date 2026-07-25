@@ -1,9 +1,9 @@
 import { createElement, type ReactNode } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage, ChatThought, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
+import type { ChatContent, ChatMessage, ChatThought, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -13,6 +13,7 @@ import { ChatView } from "./chat-view";
 import { Composer } from "./composer";
 import { ConversationNavigator } from "./conversation-navigator";
 import { MessageList } from "./message-list";
+import { ToolCallBlock } from "./tool-call-block";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -147,6 +148,22 @@ function thoughtItem(id: string, content: string, createdAt: number): ChatThough
   return { kind: "thought", id, content, createdAt };
 }
 
+describe("Tool calls", () => {
+  it("renders a cancelled tool as settled instead of running", () => {
+    renderWithI18n(
+      <ToolCallBlock
+        tool={{
+          ...toolCallItem("tool-1", 100),
+          status: "cancelled",
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/已取消|Cancelled/)).toBeVisible();
+    expect(screen.queryByText(/执行中|Running/)).toBeNull();
+  });
+});
+
 describe("Composer", () => {
   it("sends trimmed text with Enter and clears the textarea", async () => {
     const user = userEvent.setup();
@@ -170,6 +187,171 @@ describe("Composer", () => {
 
     expect(onSend).not.toHaveBeenCalled();
     expect(textarea).toHaveValue("first\nsecond");
+  });
+
+  it("filters available commands and inserts the keyboard selection without executing it", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <Composer
+        onSend={onSend}
+        isResponding={false}
+        availableCommands={[
+          { name: "review", description: "Review current changes" },
+          { name: "test", description: "Run the test suite", input: { hint: "package" } },
+        ]}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "/");
+    expect(screen.getByRole("listbox", { name: "快捷操作" })).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    expect(textarea).toHaveValue("/test ");
+    await waitFor(() => expect(textarea).toHaveFocus());
+    expect(textarea).toHaveProperty("selectionStart", 6);
+    expect(textarea).toHaveProperty("selectionEnd", 6);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps the keyboard-selected command inside the visible list", async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    renderWithI18n(
+      <Composer
+        onSend={() => {}}
+        isResponding={false}
+        availableCommands={Array.from({ length: 12 }, (_, index) => ({
+          name: `command-${index}`,
+          description: `Command ${index}`,
+        }))}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox"), "/");
+    await user.click(screen.getByRole("button", { name: "显示另外 7 项" }));
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
+
+    expect(screen.getAllByRole("option")[8]).toHaveAttribute("aria-selected", "true");
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+
+    await user.click(screen.getByRole("button", { name: "收起" }));
+
+    expect(screen.getAllByRole("option")).toHaveLength(6);
+    expect(screen.getByRole("button", { name: "显示另外 7 项" })).toBeVisible();
+  });
+
+  it("opens the same grouped palette from plus and inserts a selected skill", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <Composer
+        onSend={() => {}}
+        isResponding={false}
+        skills={[{ id: "skill-1", name: "code-review", description: "Review the current diff" }]}
+        availableCommands={[{ name: "test", description: "Run tests" }]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
+
+    expect(screen.getByText("Skills")).toBeVisible();
+    expect(screen.getByText("Commands")).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "code-review" }));
+
+    expect(screen.getByRole("textbox")).toHaveValue("$code-review ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("previews a selected image and sends it as ACP image content", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    const view = renderWithI18n(<Composer onSend={onSend} isResponding={false} />);
+    const fileInput = view.container.querySelector('input[type="file"]') as HTMLInputElement;
+
+    await user.upload(fileInput, new File(["hello"], "diagram.png", { type: "image/png" }));
+    expect(await screen.findByRole("img", { name: "diagram.png" })).toBeVisible();
+
+    await user.type(screen.getByRole("textbox"), "inspect this{Enter}");
+
+    expect(onSend).toHaveBeenCalledWith("inspect this", [{
+      data: "aGVsbG8=",
+      mimeType: "image/png",
+      uri: "diagram.png",
+    }]);
+  });
+
+  it("pastes a clipboard image into the attachment list", async () => {
+    const onSend = vi.fn();
+    renderWithI18n(<Composer onSend={onSend} isResponding={false} />);
+    const textarea = screen.getByRole("textbox");
+    const image = new File(["clipboard"], "clipboard.png", { type: "image/png" });
+
+    fireEvent.paste(textarea, { clipboardData: { files: [image] } });
+
+    expect(await screen.findByRole("img", { name: "clipboard.png" })).toBeVisible();
+    expect(textarea).toHaveValue("");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+});
+
+describe("Structured ACP content", () => {
+  it("renders structured resources and previews images with wheel zoom", async () => {
+    const user = userEvent.setup();
+    const image = { type: "image" as const, data: "aGVsbG8=", mimeType: "image/png", uri: "file:///preview.png" };
+    const items: ChatContent[] = [
+      { kind: "content", id: "audio", source: "message", content: { type: "audio", data: "aGVsbG8=", mimeType: "audio/mpeg" }, createdAt: 2 },
+      { kind: "content", id: "link", source: "message", content: { type: "resource_link", name: "docs", title: "ACP docs", description: "Protocol reference", uri: "https://example.com/acp", size: 2048n }, createdAt: 3 },
+      { kind: "content", id: "resource", source: "message", content: { type: "resource", resource: { uri: "file:///notes.txt", mimeType: "text/plain", text: "embedded notes" } }, createdAt: 4 },
+    ];
+    const mediaTurn = turn("media", "show files", 1, items);
+    mediaTurn.userMessage.structuredContent = [image];
+    const view = renderWithI18n(<MessageList turns={[mediaTurn]} userName="Eric" isResponding={false} />);
+
+    const inlineImage = screen.getByRole("img", { name: "preview.png" });
+    expect(inlineImage).toHaveAttribute("loading", "lazy");
+    expect(inlineImage.closest("a")).toBeNull();
+    expect(inlineImage.closest("button")).toBeNull();
+    const expandButton = screen.getByRole("button", { name: "展开图片 preview.png" });
+    expect(expandButton).toHaveClass("cursor-pointer");
+    expect(view.container.querySelector("audio[controls]")).toHaveAttribute("src", "data:audio/mpeg;base64,aGVsbG8=");
+    expect(screen.getByRole("link", { name: /ACP docs/ })).toHaveAttribute("href", "https://example.com/acp");
+    expect(screen.getByText("embedded notes")).toBeVisible();
+
+    await user.click(expandButton);
+    expect(screen.getByRole("dialog")).toHaveStyle({
+      width: "calc(100vw - 3rem)",
+      maxWidth: "88rem",
+      height: "calc(100dvh - 3rem)",
+    });
+    const canvas = screen.getByLabelText("preview.png，缩放 100%");
+    const previewImage = document.querySelector('[data-slot="preview-image"]');
+    expect(previewImage).not.toBeNull();
+    canvas.scrollLeft = 12;
+    canvas.scrollTop = 18;
+    const wheel = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
+    act(() => expect(canvas.dispatchEvent(wheel)).toBe(false));
+    expect(screen.getByLabelText("preview.png，缩放 110%")).toBeVisible();
+    expect(previewImage).toHaveStyle({ transform: "translate(-50%, -50%) translate(0px, 0px) scale(1.1)" });
+    expect(canvas).toHaveProperty("scrollLeft", 12);
+    expect(canvas).toHaveProperty("scrollTop", 18);
+    canvas.scrollLeft = 0;
+    canvas.scrollTop = 0;
+    fireEvent.pointerDown(canvas, { button: 0, pointerId: 7, clientX: 100, clientY: 100 });
+    expect(canvas).toHaveClass("cursor-grabbing");
+    fireEvent.pointerMove(canvas, { pointerId: 7, clientX: 60, clientY: 70 });
+    expect(previewImage).toHaveStyle({ transform: "translate(-50%, -50%) translate(-40px, -30px) scale(1.1)" });
+    fireEvent.pointerUp(canvas, { pointerId: 7, clientX: 60, clientY: 70 });
+    expect(canvas).toHaveClass("cursor-grab");
+    expect(screen.getByRole("button", { name: "关闭图片预览" })).toBeVisible();
   });
 });
 

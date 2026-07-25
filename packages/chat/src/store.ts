@@ -12,20 +12,22 @@ import type {
 } from "./types.js";
 
 export type {
+  ChatContent,
   ChatMessage,
   ChatMessageRole,
   ChatPlan,
   ChatThought,
   ChatToolCall,
+  ChatToolCallStatus,
   ChatTurn,
   ChatTurnItem,
   ChatTurnStatus,
-  ChatUnsupportedContent,
   SessionConversation,
 } from "./types.js";
 
 export interface SendMessageRequest {
   text: string;
+  images?: acp.ImageContent[];
   /**
    * What is actually sent to the agent, when it must differ from the displayed
    * `text`. Used to prepend an invisible instruction (e.g. a spec-driven workflow
@@ -46,7 +48,7 @@ export interface SendMessageRequest {
    * composer slides into the thread without waiting on the agent handshake. The
    * store re-keys the conversation onto the real id once it arrives.
    */
-  createSession?: () => Promise<string>;
+  createSession?: () => Promise<CreateSessionResult>;
   /**
    * Fired synchronously once the optimistic turn exists, carrying the temporary
    * key so the caller can select the draft conversation for display. Only
@@ -55,6 +57,11 @@ export interface SendMessageRequest {
   onDraft?: (draftSessionId: string) => void;
   /** Fired after the store has re-keyed onto the real session id. */
   onSessionCreated?: (oraSessionId: string) => void;
+}
+
+export interface CreateSessionResult {
+  oraSessionId: string;
+  availableCommands: acp.AvailableCommand[];
 }
 
 export interface ChatState {
@@ -82,6 +89,9 @@ export type ChatSessionClient = Pick<
 
 const EMPTY_CONVERSATION: SessionConversation = {
   turns: [],
+  availableCommands: [],
+  sessionTitle: null,
+  sessionUpdatedAt: null,
   isLoaded: false,
   isLoading: false,
   isResponding: false,
@@ -98,6 +108,11 @@ interface BufferedTextChunk {
   text: string;
   timestamp: number;
 }
+
+type ConversationUpdate = Extract<
+  acp.SessionUpdate,
+  { sessionUpdate: "available_commands_update" | "session_info_update" }
+>;
 
 /** Creates a per-session chat state owner backed directly by generated Ora contracts. */
 export function createChatStore(
@@ -149,13 +164,7 @@ export function createChatStore(
         if (!completed) {
           throw new Error("agent session load ended before completion");
         }
-        updateConversation(set, oraSessionId, () => ({
-          ...EMPTY_CONVERSATION,
-          turns: staged.finish(),
-          pendingPermissions: staged.permissions,
-          isLoaded: true,
-          isLoading: false,
-        }));
+        updateConversation(set, oraSessionId, () => staged.finish());
       } catch (error) {
         updateConversation(set, oraSessionId, () => ({
           ...previous,
@@ -171,12 +180,16 @@ export function createChatStore(
       }
     },
 
-    sendMessage: async ({ oraSessionId, text, agentText, createSession, onDraft, onSessionCreated }) => {
+    sendMessage: async ({ oraSessionId, text, images = [], agentText, createSession, onDraft, onSessionCreated }) => {
       const content = text.trim();
-      if (content === "") return;
+      if (content === "" && images.length === 0) return;
       // What the agent receives can differ from what the user sees in their turn,
       // so a workflow reminder is sent without appearing in the transcript.
       const promptContent = (agentText ?? text).trim();
+      const prompt: acp.ContentBlock[] = [
+        ...(promptContent === "" ? [] : [{ type: "text" as const, text: promptContent }]),
+        ...images.map((image) => ({ type: "image" as const, ...image })),
+      ];
 
       // Stream into the given session, or a temporary draft key that is promoted
       // to the real id once the background create resolves. The key is mutable
@@ -251,6 +264,7 @@ export function createChatStore(
           id: createId(),
           role: "user",
           content,
+          ...(images.length === 0 ? {} : { structuredContent: images.map((image) => ({ type: "image" as const, ...image })) }),
           createdAt,
         },
         items: [],
@@ -269,9 +283,9 @@ export function createChatStore(
       onDraft?.(key);
 
       if (createSession) {
-        let realId: string;
+        let created: CreateSessionResult;
         try {
-          realId = await createSession();
+          created = await createSession();
         } catch (error) {
           // Nothing streamed yet; settle the draft turn and stop here.
           const message = errorMessage(error);
@@ -296,57 +310,80 @@ export function createChatStore(
         // Carry the live conversation and its operation onto the real id, then let
         // the caller re-point selection at it. Order matters: the conversation is
         // re-keyed before selection moves so the new id never reads as empty.
-        promoteConversation(set, key, realId);
+        promoteConversation(set, key, created.oraSessionId);
         operations.delete(key);
-        operations.set(realId, controller);
-        key = realId;
+        operations.set(created.oraSessionId, controller);
+        key = created.oraSessionId;
         // This turn was streamed live, so the local conversation already is the
         // session's history. Marking it loaded stops the workspace's "load if not
         // loaded" effect from firing once the session id resolves — that reload
         // clears turns to empty first, which would bounce the composer back to the
         // landing layout and replay the slide-down animation.
-        updateConversation(set, key, (conversation) => ({ ...conversation, isLoaded: true }));
-        onSessionCreated?.(realId);
+        updateConversation(set, key, (conversation) => ({
+          ...conversation,
+          availableCommands: created.availableCommands,
+          isLoaded: true,
+        }));
+        onSessionCreated?.(created.oraSessionId);
       }
 
       try {
         for await (const event of client.prompt(
-          { sessionId: key, text: promptContent },
+          { sessionId: key, prompt },
           { signal: controller.signal },
         )) {
           if (event.type === "session_update") {
             // The user turn is already materialized, so the echoed prompt chunk
             // would only duplicate it; every other update belongs to this turn.
-            if (event.update.sessionUpdate === "user_message_chunk") continue;
-            if (event.update.sessionUpdate === "agent_message_chunk") {
-              queueTextChunk("message", event.update);
+            const update = event.update;
+            if (update.sessionUpdate === "user_message_chunk") continue;
+            if (isConversationUpdate(update)) {
+              flushPendingTextChunk();
+              updateConversation(set, key, (conversation) =>
+                applyConversationUpdate(conversation, update),
+              );
               continue;
             }
-            if (event.update.sessionUpdate === "agent_thought_chunk") {
-              queueTextChunk("thought", event.update);
+            if (isDeferredConversationUpdate(update)) {
+              flushPendingTextChunk();
+              continue;
+            }
+            if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+              queueTextChunk("message", update);
+              continue;
+            }
+            if (update.sessionUpdate === "agent_thought_chunk" && update.content.type === "text") {
+              queueTextChunk("thought", update);
               continue;
             }
             flushPendingTextChunk();
             updateTurn(set, key, turnId, (current) =>
-              applyAgentUpdate(current, event.update, createId, now()),
+              applyAgentUpdate(current, update, createId, now()),
             );
           } else if (event.type === "permission_request") {
             flushPendingTextChunk();
             appendPermission(set, key, event);
           } else {
             flushPendingTextChunk();
-            updateTurn(set, key, turnId, (current) => ({
-              ...current,
-              status: event.stopReason === "cancelled" ? "cancelled" : "completed",
-              stopReason: event.stopReason,
-            }));
+            updateTurn(set, key, turnId, (current) => {
+              const next = {
+                ...current,
+                status: event.stopReason === "cancelled" ? "cancelled" as const : "completed" as const,
+                stopReason: event.stopReason,
+              };
+              return event.stopReason === "cancelled"
+                ? cancelActiveToolCalls(next, now())
+                : next;
+            });
           }
         }
       } catch (error) {
         flushPendingTextChunk();
         if (isAbortError(error)) {
           updateTurn(set, key, turnId, (current) =>
-            current.status === "streaming" ? { ...current, status: "cancelled" } : current,
+            current.status === "streaming"
+              ? cancelActiveToolCalls({ ...current, status: "cancelled" }, now())
+              : current,
           );
           clearPendingPermissions(set, key);
         } else {
@@ -417,6 +454,9 @@ export function createChatStore(
 class HistoryBuilder {
   readonly permissions: SessionPermissionRequest[] = [];
   private readonly turns: ChatTurn[] = [];
+  private availableCommands: acp.AvailableCommand[] = [];
+  private sessionTitle: string | null = null;
+  private sessionUpdatedAt: string | null = null;
 
   constructor(
     private readonly createId: () => string,
@@ -428,6 +468,14 @@ class HistoryBuilder {
       this.appendUserChunk(update);
       return;
     }
+    if (isConversationUpdate(update)) {
+      const conversation = applyConversationUpdate(this.snapshot(), update);
+      this.availableCommands = conversation.availableCommands;
+      this.sessionTitle = conversation.sessionTitle;
+      this.sessionUpdatedAt = conversation.sessionUpdatedAt;
+      return;
+    }
+    if (isDeferredConversationUpdate(update)) return;
     const turn = this.currentTurn();
     this.replaceLast(applyAgentUpdate(turn, update, this.createId, this.now()));
   }
@@ -436,9 +484,25 @@ class HistoryBuilder {
     this.permissions.push(request);
   }
 
-  /** Marks every replayed turn as finished, since a stopped session has no live work. */
-  finish(): ChatTurn[] {
-    return this.turns.map((turn) => ({ ...turn, status: "completed" as const }));
+  /** Produces a complete loaded conversation after the finite replay stream ends. */
+  finish(): SessionConversation {
+    return {
+      ...this.snapshot(),
+      turns: this.turns.map((turn) => ({ ...turn, status: "completed" as const })),
+      pendingPermissions: this.permissions,
+      isLoaded: true,
+    };
+  }
+
+  /** Materializes replay metadata so it can share live-update normalization. */
+  private snapshot(): SessionConversation {
+    return {
+      ...EMPTY_CONVERSATION,
+      turns: this.turns,
+      availableCommands: this.availableCommands,
+      sessionTitle: this.sessionTitle,
+      sessionUpdatedAt: this.sessionUpdatedAt,
+    };
   }
 
   private appendUserChunk(chunk: acp.ContentChunk): void {
@@ -449,10 +513,15 @@ class HistoryBuilder {
       last.items.length === 0 &&
       last.userMessage.role === "user" &&
       (protocolMessageId === undefined || last.userMessage.protocolMessageId === protocolMessageId);
-    if (chunk.content.type === "text" && continuesUser && last) {
+    if (continuesUser && last) {
       this.replaceLast({
         ...last,
-        userMessage: { ...last.userMessage, content: last.userMessage.content + chunk.content.text },
+        userMessage: chunk.content.type === "text"
+          ? { ...last.userMessage, content: last.userMessage.content + chunk.content.text }
+          : {
+            ...last.userMessage,
+            structuredContent: [...(last.userMessage.structuredContent ?? []), chunk.content],
+          },
       });
       return;
     }
@@ -464,6 +533,7 @@ class HistoryBuilder {
         id: this.createId(),
         role: "user",
         content: chunk.content.type === "text" ? chunk.content.text : "",
+        ...(chunk.content.type === "text" ? {} : { structuredContent: [chunk.content] }),
         createdAt,
         ...(protocolMessageId === undefined ? {} : { protocolMessageId }),
       },
@@ -521,7 +591,7 @@ function applyAgentUpdate(
   }
 }
 
-/** Aggregates text chunks and records a visible placeholder for unsupported content. */
+/** Aggregates text chunks and preserves structured content for dedicated renderers. */
 function appendContentChunk(
   turn: ChatTurn,
   itemKind: "message" | "thought",
@@ -536,10 +606,10 @@ function appendContentChunk(
       items: [
         ...turn.items,
         {
-          kind: "unsupportedContent",
+          kind: "content",
           id: createId(),
           source: itemKind,
-          contentType: content.type as Exclude<acp.ContentBlock["type"], "text">,
+          content,
           createdAt: timestamp,
         },
       ],
@@ -586,6 +656,40 @@ function appendTextContentChunk(
     items[itemIndex] = { ...item, content: item.content + text };
   }
   return { ...turn, items };
+}
+
+/** Identifies updates that belong to the conversation chrome rather than a response turn. */
+function isConversationUpdate(
+  update: acp.SessionUpdate,
+): update is ConversationUpdate {
+  return update.sessionUpdate === "available_commands_update"
+    || update.sessionUpdate === "session_info_update";
+}
+
+/** Ignores deferred conversation chrome without materializing an empty replay turn. */
+function isDeferredConversationUpdate(update: acp.SessionUpdate): boolean {
+  return update.sessionUpdate === "config_option_update"
+    || update.sessionUpdate === "current_mode_update"
+    || update.sessionUpdate === "usage_update";
+}
+
+/** Applies the complete command list or partial session metadata update. */
+function applyConversationUpdate(
+  conversation: SessionConversation,
+  update: ConversationUpdate,
+): SessionConversation {
+  switch (update.sessionUpdate) {
+    case "available_commands_update":
+      return { ...conversation, availableCommands: update.availableCommands };
+    case "session_info_update":
+      return {
+        ...conversation,
+        sessionTitle: update.title === undefined ? conversation.sessionTitle : update.title,
+        sessionUpdatedAt: update.updatedAt === undefined
+          ? conversation.sessionUpdatedAt
+          : update.updatedAt,
+      };
+  }
 }
 
 /** Replaces the current turn's complete plan snapshot without changing its timeline position. */
@@ -669,6 +773,18 @@ function updateToolCall(turn: ChatTurn, update: acp.ToolCallUpdate, timestamp: n
     updatedAt: timestamp,
   };
   return { ...turn, items };
+}
+
+/** Settles tools whose provider lifecycle cannot finish after the prompt stream is cancelled. */
+function cancelActiveToolCalls(turn: ChatTurn, timestamp: number): ChatTurn {
+  return {
+    ...turn,
+    items: turn.items.map((item) =>
+      item.kind === "toolCall" && (item.status === "pending" || item.status === "in_progress")
+        ? { ...item, status: "cancelled" as const, updatedAt: timestamp }
+        : item,
+    ),
+  };
 }
 
 function appendPermission(

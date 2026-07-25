@@ -219,7 +219,7 @@ impl Backend {
         self.agent_runtime.load_session(request).await
     }
 
-    /// Streams one text-only prompt turn for a running session.
+    /// Streams one structured ACP prompt turn for a running session.
     pub async fn prompt_session(
         &self,
         request: PromptSessionRequest,

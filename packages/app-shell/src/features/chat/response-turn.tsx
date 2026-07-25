@@ -7,6 +7,7 @@ import { MessageBubble } from "./message-bubble";
 import { PlanBlock } from "./plan-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolCallGroup } from "./tool-call-group";
+import { ContentBlock } from "./content-block";
 import { toolCallGroupKind, type ToolCallGroupKind } from "./tool-call-group-kind";
 
 interface ToolGroup {
@@ -65,12 +66,8 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
                   streaming={turn.status === "streaming" && index === displayItems.length - 1}
                 />
               );
-            case "unsupportedContent":
-              return (
-                <p key={item.id} className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-                  {t("chat.unsupportedContent", { type: item.contentType })}
-                </p>
-              );
+            case "content":
+              return <ContentBlock key={item.id} content={item.content} />;
           }
         })}
         <TurnEnding turn={turn} />

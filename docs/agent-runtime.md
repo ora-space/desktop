@@ -13,12 +13,14 @@
 - Load registers a route on the current connection generation, marks the row Running, and calls `session/load` with the private `agentSessionId`. Every setup or replay failure restores Stopped.
 - Connection loss fails that CLI's in-flight operations, marks only its registered Sessions Stopped, terminates and reaps the old process tree, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - Model discovery runs each CLI's bounded `models` command concurrently. The response is grouped by `agent_cli` and omits CLIs whose command is missing, fails, emits invalid UTF-8, or exceeds the timeout, allowing partial results.
+- Create returns the latest complete available-command list emitted during `session/new` setup so the first composer render has provider commands.
+- Prompt accepts ordered ACP content blocks so supported providers can receive text and image content in one turn. The serialized public payload is bounded at 16 MiB.
 
 ## Flow Control
 
 ACP stdout is newline-delimited JSON-RPC with an 8 MiB frame limit. The connection reader uses an unbounded handoff to the always-running central router, while each registered Session owns a bounded 256-item update queue and an independent control queue. This keeps connection-wide parsing from imposing one Session's backpressure on another. A per-Session overflow stops only the affected Session; no data is silently discarded.
 
-Unknown agent-originated JSON-RPC requests receive a correlated `-32601` method-not-found response and do not terminate the connection. Malformed frames, unmatched responses, oversized frames, and stdio loss are connection failures. Routes are generation-bound, so updates from an old connection or an unloaded Session are treated as stale and discarded rather than taking down unrelated work.
+Unknown agent-originated JSON-RPC requests receive a correlated `-32601` method-not-found response and do not terminate the connection. Malformed frames, unmatched responses, oversized frames, and stdio loss are connection failures. Routes are generation-bound, so updates from an old connection or an unloaded Session are treated as stale and discarded rather than taking down unrelated work, except during the bounded `session/new` setup window before the provider id is known.
 
 Control traffic such as permission requests travels a separate queue from session updates, so update backpressure can never block a required protocol response. A permission request arriving during `session/load` is answered as cancelled and reported as `agent_protocol_error`, because only a prompt can legitimately request permission.
 
@@ -35,7 +37,7 @@ Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIter
 | Model discovery per CLI | 15 s |
 | Session update and event queue depth | 256 items |
 | JSON-RPC frame size | 8 MiB |
-| Prompt text size | 1 MiB |
+| Serialized prompt payload | 16 MiB |
 
 The load and prompt deadline is an inactivity timer rather than a total budget: a provider that keeps streaming updates can run indefinitely, while one that goes silent for 30 seconds fails that Session alone. An oversized prompt is rejected before it reaches the provider.
 

@@ -105,6 +105,8 @@ Task payloads do not expose backend-owned worktree identifiers, and the runtime 
 
 `GET /api/git/identity` returns the host's Git identity for the sidebar profile: the global Git config first, falling back to the authenticated GitHub CLI account when Git has no name configured.
 
+Session creation returns commands advertised through setup notifications before `session/new` completes. Prompt requests carry ordered ACP content blocks, including text and supported image payloads, up to 16 MiB.
+
 ### Agent runtime
 
 Backend construction immediately attempts one supervised `acp` child per supported CLI, rooted at the user's home directory. Executable resolution is platform-specific: on Unix each CLI is read from its fixed per-user directory (`<home>/.opencode/bin/opencode`, `<home>/.nga/bin/nga`, `<home>/.codeagentcli/bin/codeagentcli`); on Windows it is resolved from `PATH` through `where.exe` on every retry generation.

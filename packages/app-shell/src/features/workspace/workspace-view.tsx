@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Button } from "@ora/ui";
 import type { Session, Task } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
+import type { acp } from "@ora/contracts";
 import { useStore } from "zustand";
 import {
   IconBrandGit,
@@ -14,6 +15,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
+import { useSkills } from "../../state/hooks/use-skills";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
@@ -66,6 +68,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const { data: projects = [] } = useProjects();
   const { data: tasks = [] } = useTasks();
   const sessionsQuery = useSessions();
+  const skillsQuery = useSkills();
   const sessions = sessionsQuery.data ?? [];
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -133,13 +136,15 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
    * the draft and then the real id as each becomes available.
    *
    * Core send: shows `displayText` in the transcript while the agent receives
-   * `agentText` (used to hide a workflow reminder). `currentKey` tracks the
+   * `agentText` (used to hide a workflow reminder). Images remain structured
+   * prompt blocks. `currentKey` tracks the
    * workflow run as an optimistic session moves from its task key to draft to
    * real id.
    */
   const dispatchSend = async (
     displayText: string,
     agentText: string | undefined,
+    images: acp.ImageContent[] = [],
   ) => {
     let currentKey = workflowKeyFor(
       useWorkspaceSelectionStore.getState().selection,
@@ -148,7 +153,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       try {
         await chatStore
           .getState()
-          .sendMessage({ oraSessionId: session.id, text: displayText, agentText });
+          .sendMessage({ oraSessionId: session.id, text: displayText, agentText, images });
       } finally {
         // Connection failures can stop the provider process, so refresh the persisted
         // lifecycle snapshot after every finite prompt without polling idle sessions.
@@ -165,6 +170,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       await chatStore.getState().sendMessage({
         text: displayText,
         agentText,
+        images,
         createSession: async () => {
           if (taskId === null) {
             const response = await client.task.create({
@@ -198,7 +204,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
             upsertById(current, response.session),
           );
-          return response.session.id;
+          return {
+            oraSessionId: response.session.id,
+            availableCommands: response.availableCommands,
+          };
         },
         // Show the optimistic turn under its temporary key right away, and move
         // the workflow run onto that key so it follows the session as it forms.
@@ -234,7 +243,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   // Composer send. In Spec mode, a message typed while a stage is highlighted (none
   // running) launches that stage and rides its reminder; the reminder shows only in
   // `agentText`, never the transcript. Within a running stage nothing is injected.
-  const sendOrStartSession = async (text: string) => {
+  const sendOrStartSession = async (text: string, images: acp.ImageContent[] = []) => {
     const key = workflowKeyFor(useWorkspaceSelectionStore.getState().selection);
     const nodeId = kickNode(getRun(useWorkflowStore.getState(), key));
     let agentText: string | undefined;
@@ -242,7 +251,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       useWorkflowStore.getState().launchNode(key, nodeId);
       agentText = `${buildWorkflowReminder(nodeId, skillsDir)}\n\n${text}`;
     }
-    await dispatchSend(text, agentText);
+    await dispatchSend(text, agentText, images);
   };
 
   // Clicking the highlighted stepper node sends its OpenSpec command now, so the
@@ -300,7 +309,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             {session && (
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium tracking-[-0.01em]">
-                  {agentCliLabel(session.agentCli)}
+                  {conversation?.sessionTitle ?? agentCliLabel(session.agentCli)}
                 </p>
                 {project && task && (
                   <p className="truncate text-[11px] text-muted-foreground">
@@ -325,6 +334,8 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             isLoading={isLoadingHistory}
             error={chatError}
             pendingPermissions={conversation?.pendingPermissions ?? []}
+            skills={skillsQuery.data ?? []}
+            availableCommands={conversation?.availableCommands ?? []}
             disabled={!canChat}
             disabledHint={canChat ? undefined : t("chat.pickProject")}
             // A persisted or optimistic session already fixes its project and
@@ -336,8 +347,8 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               <WorkflowStepper onLaunch={launchWorkflowNode} disabled={!canChat} />
             }
             // Failures land in chatError; the rejection itself is expected.
-            onSend={(text) =>
-              void sendOrStartSession(text).catch(() => undefined)
+            onSend={(text, images) =>
+              void sendOrStartSession(text, images).catch(() => undefined)
             }
             onEmptySubmit={
               quickLaunchNodeId === null

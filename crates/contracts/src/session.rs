@@ -1,6 +1,8 @@
+use crate::acp::content::ContentBlock;
 use crate::acp::permission::PermissionOption;
 use crate::acp::prompt::StopReason;
 use crate::acp::session::SessionUpdate;
+use crate::acp::slash_command::AvailableCommand;
 use crate::acp::tool_call::ToolCallUpdate;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -73,6 +75,7 @@ pub struct ListAgentModelsResponse {
 #[ts(export_to = "session.ts")]
 pub struct CreateSessionResponse {
     pub session: Session,
+    pub available_commands: Vec<AvailableCommand>,
 }
 
 /// Identifies which session to fetch.
@@ -113,13 +116,13 @@ pub struct LoadSessionRequest {
     pub session_id: String,
 }
 
-/// Carries the text-only prompt supported by the demo surface.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Carries one or more ACP content blocks to the provider session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct PromptSessionRequest {
     pub session_id: String,
-    pub text: String,
+    pub prompt: Vec<ContentBlock>,
 }
 
 /// Exposes an opaque permission request while preserving the agent's typed option payload.

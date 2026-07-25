@@ -2,9 +2,9 @@ use super::connection::RuntimeConnection;
 use crate::BackendError;
 use ora_acp::PermissionRequest;
 use ora_contracts::acp::notification::SessionNotification;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
@@ -19,6 +19,7 @@ pub(super) enum SessionControl {
 pub(super) struct SessionChannel {
     pub connection: RuntimeConnection,
     pub updates: mpsc::Receiver<SessionNotification>,
+    pub pending_updates: VecDeque<SessionNotification>,
     pub controls: mpsc::UnboundedReceiver<SessionControl>,
     pub(super) _registration: RouteRegistration,
 }
@@ -27,6 +28,8 @@ pub(super) struct SessionChannel {
 pub(super) struct RouteRegistry {
     entries: RwLock<HashMap<String, RouteEntry>>,
     next_token: AtomicU64,
+    setup_count: AtomicU64,
+    pending_setup_updates: Mutex<VecDeque<SessionNotification>>,
 }
 
 struct RouteEntry {
@@ -37,6 +40,14 @@ struct RouteEntry {
 }
 
 impl RouteRegistry {
+    /// Keeps unrouted notifications briefly while `session/new` reveals its provider id.
+    pub(super) fn begin_session_setup(self: &Arc<Self>) -> SetupRegistration {
+        self.setup_count.fetch_add(1, Ordering::AcqRel);
+        SetupRegistration {
+            registry: self.clone(),
+        }
+    }
+
     /// Installs a route token so a stale actor cannot unregister a newer generation.
     pub(super) fn register(
         self: &Arc<Self>,
@@ -45,16 +56,31 @@ impl RouteRegistry {
         updates: mpsc::Sender<SessionNotification>,
         controls: mpsc::UnboundedSender<SessionControl>,
     ) -> RouteRegistration {
+        // Serializing registration with setup buffering closes the race where an
+        // update is classified as unrouted immediately before this route appears.
+        let mut pending = self
+            .pending_setup_updates
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
         self.write_entries().insert(
             session_id.to_string(),
             RouteEntry {
                 generation,
                 token,
-                updates,
+                updates: updates.clone(),
                 controls,
             },
         );
+        let mut retained = VecDeque::new();
+        while let Some(update) = pending.pop_front() {
+            if update.session_id.0.as_ref() == session_id {
+                let _ = updates.try_send(update);
+            } else {
+                retained.push_back(update);
+            }
+        }
+        *pending = retained;
         RouteRegistration {
             session_id: session_id.to_string(),
             token,
@@ -64,21 +90,34 @@ impl RouteRegistry {
 
     /// Routes one high-volume update without allowing a slow session to poison the connection.
     pub(super) fn route_update(&self, update: SessionNotification) {
+        let mut pending = self
+            .pending_setup_updates
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let session_id = update.session_id.to_string();
-        let delivery = self
+        let route = self
             .read_entries()
             .get(&session_id)
-            .map(|entry| (entry.token, entry.updates.try_send(update)));
-        match delivery {
-            Some((token, Err(TrySendError::Full(_)))) => {
-                if let Some(entry) = self.remove_route(&session_id, token) {
-                    let _ = entry.controls.send(SessionControl::UpdateOverflow);
+            .map(|entry| (entry.token, entry.updates.clone()));
+        match route {
+            Some((token, updates)) => match updates.try_send(update) {
+                Err(TrySendError::Full(_)) => {
+                    if let Some(entry) = self.remove_route(&session_id, token) {
+                        let _ = entry.controls.send(SessionControl::UpdateOverflow);
+                    }
                 }
+                Err(TrySendError::Closed(_)) => {
+                    self.remove_route(&session_id, token);
+                }
+                Ok(()) => {}
+            },
+            None if self.setup_count.load(Ordering::Acquire) > 0 => {
+                if pending.len() == super::CONTRACT_QUEUE_CAPACITY {
+                    pending.pop_front();
+                }
+                pending.push_back(update);
             }
-            Some((token, Err(TrySendError::Closed(_)))) => {
-                self.remove_route(&session_id, token);
-            }
-            Some((_, Ok(()))) | None => {}
+            None => {}
         }
     }
 
@@ -149,6 +188,23 @@ pub(super) struct RouteRegistration {
     registry: Arc<RouteRegistry>,
 }
 
+/// Bounds the lifetime in which an as-yet-unknown session id may emit setup updates.
+pub(super) struct SetupRegistration {
+    registry: Arc<RouteRegistry>,
+}
+
+impl Drop for SetupRegistration {
+    fn drop(&mut self) {
+        if self.registry.setup_count.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.registry
+                .pending_setup_updates
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
+        }
+    }
+}
+
 impl Drop for RouteRegistration {
     fn drop(&mut self) {
         self.registry.remove_route(&self.session_id, self.token);
@@ -183,6 +239,25 @@ mod tests {
 
         assert_eq!(first_receiver.recv().await, Some(update));
         assert!(second_receiver.try_recv().is_err());
+    }
+
+    /// Verifies session/new updates survive until the provider id can be registered.
+    #[tokio::test]
+    async fn buffers_updates_during_session_setup() {
+        let routes = Arc::new(RouteRegistry::default());
+        let setup = routes.begin_session_setup();
+        let update = SessionNotification::new(
+            "new-session",
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("Created")),
+        );
+        routes.route_update(update.clone());
+        let (updates, mut receiver) = mpsc::channel(1);
+        let (controls, _controls_receiver) = mpsc::unbounded_channel();
+
+        let _registration = routes.register("new-session", 1, updates, controls);
+        drop(setup);
+
+        assert_eq!(receiver.recv().await, Some(update));
     }
 
     /// Verifies one slow session is detached without invalidating unrelated routes.

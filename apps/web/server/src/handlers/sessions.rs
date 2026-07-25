@@ -23,11 +23,11 @@ pub struct SessionPath {
     session_id: String,
 }
 
-/// Carries the text-only prompt body after the path owns the Ora session identifier.
+/// Carries the structured prompt body after the path owns the Ora session identifier.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptSessionBody {
-    text: String,
+    prompt: Vec<ora_contracts::acp::content::ContentBlock>,
 }
 
 /// Carries a permission selection while the path owns the Ora session identifier.
@@ -111,7 +111,7 @@ pub async fn load_session(
     Ok(stream_response(events))
 }
 
-/// Streams one text-only prompt turn as private NDJSON transport frames.
+/// Streams one structured ACP prompt turn as private NDJSON transport frames.
 pub async fn prompt_session(
     State(app_state): State<AppState>,
     Path(path): Path<SessionPath>,
@@ -121,7 +121,7 @@ pub async fn prompt_session(
         .backend()
         .prompt_session(PromptSessionRequest {
             session_id: path.session_id,
-            text: body.text,
+            prompt: body.prompt,
         })
         .await
         .map_err(WebApiError::from)?;

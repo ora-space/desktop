@@ -13,6 +13,9 @@ use crate::task::resolve_task_cwd;
 use crate::{BackendError, BackendErrorKind};
 use connection::{ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
+use ora_contracts::acp::content::ContentBlock;
+use ora_contracts::acp::session::SessionUpdate;
+use ora_contracts::acp::slash_command::AvailableCommand;
 use ora_contracts::{
     CreateSessionRequest, CreateSessionResponse, DeleteSessionResponse, LoadSessionEvent,
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
@@ -33,7 +36,7 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 const CANCELLATION_GRACE: Duration = Duration::from_secs(5);
 const CONTRACT_QUEUE_CAPACITY: usize = 256;
-const MAX_PROMPT_BYTES: usize = 1024 * 1024;
+const MAX_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Coordinates one serialized actor per Ora session on its selected supervised CLI connection.
 #[derive(Clone)]
@@ -64,7 +67,7 @@ pub(super) enum RuntimeCommand {
     },
     Prompt {
         operation_id: u64,
-        text: String,
+        prompt: Vec<ContentBlock>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
         accepted: oneshot::Sender<Result<(), BackendError>>,
     },
@@ -135,6 +138,7 @@ impl AgentRuntimeManager {
         let cwd = resolve_task_cwd(&self.inner.pool, &TaskId::new(request.task_id.clone()))?;
         let supervisor = self.inner.connections.for_agent(agent_cli);
         let connection = supervisor.current()?;
+        let _setup = supervisor.begin_session_setup();
         let response = timeout(
             SESSION_SETUP_TIMEOUT,
             connection.client.request::<_, NewSessionResponse>(
@@ -150,7 +154,8 @@ impl AgentRuntimeManager {
             )
         })?
         .map_err(map_acp_error)?;
-        let channel = supervisor.open_session_channel(response.session_id.0.as_ref())?;
+        let mut channel = supervisor.open_session_channel(response.session_id.0.as_ref())?;
+        let available_commands = collect_setup_commands(&mut channel).await;
         let now = self.inner.clock.now_timestamp_millis();
         let session = Session::new(
             UuidSessionIdGenerator::new().generate_session_id(),
@@ -176,6 +181,7 @@ impl AgentRuntimeManager {
         self.insert_actor(session.clone(), cwd, supervisor, Some(channel))?;
         Ok(CreateSessionResponse {
             session: contract_session(session),
+            available_commands,
         })
     }
 
@@ -206,24 +212,31 @@ impl AgentRuntimeManager {
         ))
     }
 
-    /// Starts one text-only prompt while preserving cross-session concurrency.
+    /// Starts one structured ACP prompt stream after validating the public payload limit.
     pub(crate) async fn prompt_session(
         &self,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
-        let text = request.text.trim().to_string();
-        if text.is_empty() {
+        let prompt = request.prompt;
+        if prompt.is_empty()
+            || prompt.iter().all(|content| {
+                matches!(content, ContentBlock::Text(text) if text.text.trim().is_empty())
+            })
+        {
             return Err(BackendError::new(
                 BackendErrorKind::BadRequest,
                 "prompt_empty",
-                "prompt text must not be empty",
+                "prompt must contain text or media",
             ));
         }
-        if text.len() > MAX_PROMPT_BYTES {
+        let prompt_bytes = serde_json::to_vec(&prompt)
+            .map_err(|_| runtime_internal("prompt_encoding_failed", "failed to encode prompt"))?
+            .len();
+        if prompt_bytes > MAX_PROMPT_BYTES {
             return Err(BackendError::new(
                 BackendErrorKind::BadRequest,
                 "prompt_too_large",
-                "prompt text exceeds 1 MiB",
+                "prompt exceeds 16 MiB",
             ));
         }
         let _lifecycle = self.inner.lifecycle.lock().await;
@@ -239,7 +252,7 @@ impl AgentRuntimeManager {
             .commands
             .send(RuntimeCommand::Prompt {
                 operation_id,
-                text,
+                prompt,
                 events: events_sender,
                 accepted: accepted_sender,
             })
@@ -252,7 +265,7 @@ impl AgentRuntimeManager {
         ))
     }
 
-    /// Routes one opaque permission response to the actor that owns the logical session.
+    /// Routes one opaque permission response to the actor that registered the request.
     pub(crate) async fn respond_to_permission(
         &self,
         request: RespondToPermissionRequest,
@@ -415,4 +428,25 @@ fn reconcile_running_sessions(
         }
     }
     Ok(())
+}
+
+/// Extracts the latest setup command catalog while preserving other updates for the first prompt.
+async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<AvailableCommand> {
+    let mut available_commands = Vec::new();
+    loop {
+        // ACP sends setup updates before the response, but the shared router runs
+        // independently and may need one short scheduling window to deliver them.
+        let Ok(Some(notification)) =
+            tokio::time::timeout(Duration::from_millis(10), channel.updates.recv()).await
+        else {
+            break;
+        };
+        if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
+            // Command updates replace the full catalog, so the last setup value wins.
+            available_commands = update.available_commands.clone();
+        } else {
+            channel.pending_updates.push_back(notification);
+        }
+    }
+    available_commands
 }

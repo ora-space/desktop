@@ -242,6 +242,21 @@ function findActiveAnchorId(element: HTMLDivElement): string | null {
   return activeAnchorId;
 }
 
+/** Returns a primitive version marker for streaming content and lifecycle updates. */
+function itemVersion(item: ChatTurn["items"][number] | undefined): string | number | undefined {
+  if (item === undefined) return undefined;
+  switch (item.kind) {
+    case "message":
+    case "thought":
+      return item.content;
+    case "plan":
+    case "toolCall":
+      return item.updatedAt;
+    case "content":
+      return item.id;
+  }
+}
+
 /** Word rotation cadence — slow enough to read each phrase, quick enough to feel alive. */
 const RUNNING_WORD_INTERVAL_MS = 2600;
 

@@ -99,7 +99,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           status: "running",
         };
         state.sessions.push(session);
-        return { session };
+        return { session, availableCommands: [] };
       },
       load: async function* () { yield { type: "completed" as const }; },
       prompt: async function* () { yield { type: "completed" as const, stopReason: "end_turn" as const }; },
