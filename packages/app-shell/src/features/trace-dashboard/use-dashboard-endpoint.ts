@@ -16,6 +16,26 @@ const EMPTY_STATE: DashboardEndpointState = {
 };
 
 /**
+ * The session id the currently-resolved endpoint belongs to.
+ *
+ * When the user switches sessions, the old endpoint is stale (its URL still
+ * carries the previous session id). Tracking the owning session lets the hook
+ * treat a mismatch as "loading" so the panel shows a loading state instead of
+ * briefly rendering the previous session's iframe.
+ */
+interface ResolvedState {
+  sessionId: string | null;
+  endpoint: DashboardEndpoint | null;
+  error: string | null;
+}
+
+const INITIAL_RESOLVED: ResolvedState = {
+  sessionId: null,
+  endpoint: null,
+  error: null,
+};
+
+/**
  * Resolves the dashboard endpoint for one Ora session id.
  *
  * The effect only kicks off an async resolve (and only mutates state from its
@@ -32,10 +52,7 @@ export function useDashboardEndpoint(
   // Tracks the last resolve this hook kicked off so a slow earlier resolve cannot
   // overwrite the result of a newer one after a session switch.
   const activeResolve = useRef<Promise<DashboardEndpoint> | null>(null);
-  const [resolved, setResolved] = useState<{
-    endpoint: DashboardEndpoint | null;
-    error: string | null;
-  }>({ endpoint: null, error: null });
+  const [resolved, setResolved] = useState<ResolvedState>(INITIAL_RESOLVED);
 
   const canResolve = open && sessionId !== null && resolve !== null;
 
@@ -50,14 +67,14 @@ export function useDashboardEndpoint(
     promise
       .then((endpoint) => {
         if (!superseded && activeResolve.current === promise) {
-          setResolved({ endpoint, error: null });
+          setResolved({ sessionId, endpoint, error: null });
         }
       })
       .catch((error) => {
         if (!superseded && activeResolve.current === promise) {
           const message =
             error instanceof Error ? error.message : "Failed to resolve dashboard endpoint";
-          setResolved({ endpoint: null, error: message });
+          setResolved({ sessionId, endpoint: null, error: message });
         }
       });
 
@@ -70,9 +87,13 @@ export function useDashboardEndpoint(
 
   // Derive the public state: nothing to resolve while closed/unselected.
   if (!canResolve) return EMPTY_STATE;
+  // When the session switched, the previously-resolved endpoint is stale (its
+  // URL carries the old session id). Treat that as loading so the panel shows a
+  // loading state instead of briefly rendering the wrong session's iframe.
+  const isStale = resolved.sessionId !== sessionId;
   return {
-    endpoint: resolved.endpoint,
-    isLoading: resolved.endpoint === null && resolved.error === null,
-    error: resolved.error,
+    endpoint: isStale ? null : resolved.endpoint,
+    isLoading: isStale || (resolved.endpoint === null && resolved.error === null),
+    error: isStale ? null : resolved.error,
   };
 }

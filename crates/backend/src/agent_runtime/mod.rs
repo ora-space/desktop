@@ -14,9 +14,10 @@ use crate::{BackendError, BackendErrorKind};
 use connection::{ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
 use ora_contracts::{
-    CreateSessionRequest, CreateSessionResponse, DeleteSessionResponse, LoadSessionEvent,
-    LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
-    RespondToPermissionResponse, StopSessionRequest, StopSessionResponse,
+    AgentCli as ContractAgentCli, CreateSessionRequest, CreateSessionResponse,
+    DeleteSessionResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent,
+    PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse,
+    StopSessionRequest, StopSessionResponse,
 };
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentCli, AuditFields, Session, SessionId, SessionStatus, TaskId};

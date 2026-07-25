@@ -110,6 +110,7 @@ function PanelResizeHandle({
         // Make the grab target wider than the 1px visual so it is easy to hit.
         "before:absolute before:inset-y-0 before:-left-1 before:w-2",
       )}
+      {...props}
       onPointerDown={(event) => {
         event.preventDefault();
         event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -128,7 +129,6 @@ function PanelResizeHandle({
         startRef.current = null;
         event.currentTarget.releasePointerCapture?.(event.pointerId);
       }}
-      {...props}
     />
   );
 }

@@ -115,8 +115,7 @@ impl DesktopConfigStore {
         let updated = DesktopConfig {
             version: CONFIG_VERSION,
             worktree_root,
-            dashboard_host: config.dashboard_host.clone(),
-            dashboard_port: config.dashboard_port,
+            ..config.clone()
         };
 
         persist_config(&self.config_path, &updated)?;
@@ -138,9 +137,9 @@ impl DesktopConfigStore {
             .map_err(|_| DesktopConfigError::StateUnavailable)?;
         let updated = DesktopConfig {
             version: CONFIG_VERSION,
-            worktree_root: config.worktree_root.clone(),
             dashboard_host: host,
             dashboard_port: port,
+            ..config.clone()
         };
 
         persist_config(&self.config_path, &updated)?;
@@ -178,6 +177,8 @@ pub enum DesktopConfigError {
     WorktreeRootNotDirectory { path: PathBuf },
     #[error("dashboard host must be a non-empty loopback address")]
     DashboardHostEmpty,
+    #[error("dashboard host must be a loopback address (127.0.0.1, ::1, or localhost)")]
+    DashboardHostNotLoopback,
     #[error("dashboard port must be non-zero")]
     DashboardPortZero,
     #[error("failed to persist Desktop configuration {path:?}")]
@@ -231,15 +232,35 @@ pub(crate) fn validate_worktree_root(worktree_root: &Path) -> Result<(), Desktop
 }
 
 /// Rejects ambiguous dashboard endpoints before they become active runtime configuration.
+///
+/// The host must be a loopback address (IPv4 127.0.0.1, IPv6 ::1, or the
+/// `localhost` name) so the iframe can never become same-origin with the Tauri
+/// host — a same-origin dashboard combined with `allow-scripts allow-same-origin`
+/// would be an unsafe sandbox escape. The port must be non-zero.
 pub(crate) fn validate_dashboard_endpoint(host: &str, port: u16) -> Result<(), DesktopConfigError> {
-    if host.trim().is_empty() {
+    let host = host.trim();
+    if host.is_empty() {
         return Err(DesktopConfigError::DashboardHostEmpty);
+    }
+    if !is_loopback_host(host) {
+        return Err(DesktopConfigError::DashboardHostNotLoopback);
     }
     if port == 0 {
         return Err(DesktopConfigError::DashboardPortZero);
     }
 
     Ok(())
+}
+
+/// Returns true when `host` is a loopback address (127.0.0.1, ::1, or localhost).
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => false,
+    }
 }
 /// Writes a complete configuration to a sibling temporary file before atomic replacement.
 fn persist_config(config_path: &Path, config: &DesktopConfig) -> Result<(), DesktopConfigError> {
@@ -429,6 +450,10 @@ mod tests {
         assert!(matches!(
             store.set_dashboard_endpoint("  ".to_string(), 8601),
             Err(DesktopConfigError::DashboardHostEmpty)
+        ));
+        assert!(matches!(
+            store.set_dashboard_endpoint("192.168.1.5".to_string(), 8601),
+            Err(DesktopConfigError::DashboardHostNotLoopback)
         ));
         assert!(matches!(
             store.set_dashboard_endpoint("127.0.0.1".to_string(), 0),

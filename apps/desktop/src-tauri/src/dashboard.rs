@@ -58,7 +58,12 @@ impl DashboardLocator {
     }
 
     /// Returns the locator file path for one Ora session id.
+    ///
+    /// The session id is expected to be a backend-resolved UUID; this rejects
+    /// any id containing path separators or traversal segments so a malicious or
+    /// malformed id can never escape the dashboard directory.
     pub fn file_for(app_data_directory: &Path, ora_session_id: &str) -> PathBuf {
+        debug_assert_path_safe(ora_session_id);
         Self::directory_for(app_data_directory).join(format!("{ora_session_id}.json"))
     }
 }
@@ -100,7 +105,7 @@ pub fn resolve_claude_code_trace(
         return Ok(None);
     }
     let target_name = format!("{agent_session_id}.jsonl");
-    for path in walkdir_files(&projects_root)? {
+    for path in walkdir_files(&projects_root) {
         if path
             .file_name()
             .map(|n| n == target_name.as_str())
@@ -148,23 +153,55 @@ pub fn resolve_trace_file(
 }
 
 /// Recursively yields files under `root` without depending on an external crate.
-fn walkdir_files(root: &Path) -> std::io::Result<Box<dyn Iterator<Item = PathBuf>>> {
-    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
-    let mut collected: Vec<PathBuf> = Vec::new();
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else {
-                collected.push(path);
+///
+/// Returns a truly lazy iterator so callers that find their target early (e.g.
+/// `resolve_claude_code_trace`) can short-circuit without reading the whole tree.
+/// Unreadable subdirectories are logged and skipped so one permission issue does
+/// not abort the entire scan.
+fn walkdir_files(root: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
+    Box::new(WalkDirIter {
+        stack: vec![root.to_path_buf()],
+    })
+}
+
+/// Stateful depth-first file iterator backed by a path stack.
+struct WalkDirIter {
+    stack: Vec<PathBuf>,
+}
+
+impl Iterator for WalkDirIter {
+    type Item = PathBuf;
+
+    fn next(&mut self) -> Option<PathBuf> {
+        while let Some(dir) = self.stack.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(rd) => rd,
+                Err(e) => {
+                    tracing::warn!(?dir, ?e, "skipping unreadable directory during trace scan");
+                    continue;
+                }
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    self.stack.push(path);
+                } else {
+                    return Some(path);
+                }
             }
         }
+        None
     }
-    // Reverse so callers see the newest-scanned first; stability is by path.
-    collected.reverse();
-    Ok(Box::new(collected.into_iter()))
+}
+
+/// Asserts an Ora session id cannot escape its locator directory via path traversal.
+fn debug_assert_path_safe(id: &str) {
+    debug_assert!(
+        !id.contains('/')
+            && !id.contains('\\')
+            && !id.contains(".."),
+        "ora_session_id must not contain path separators or traversal segments: {id:?}",
+    );
 }
 
 /// Builds the iframe URL Ora embeds for one dashboard session.
@@ -174,8 +211,9 @@ pub fn dashboard_url(
     ora_session_id: &str,
     agent_type: DashboardAgentType,
 ) -> String {
+    let authority = format_host_port(host, port);
     format!(
-        "http://{host}:{port}/?session_id={oid}&agent_type={at}",
+        "http://{authority}/?session_id={oid}&agent_type={at}",
         oid = urlencoding::encode(ora_session_id),
         at = agent_type.as_str(),
     )
@@ -224,7 +262,8 @@ pub async fn get_dashboard_url(
     ) {
         Ok(Some(path)) => Some(path.to_string_lossy().into_owned()),
         Ok(None) => None,
-        Err(_) => {
+        Err(err) => {
+            tracing::warn!(?err, "failed to scan the agent trace directory");
             return Err(CommandError::new(
                 "dashboard_trace_resolution_error",
                 "failed to scan the agent trace directory",
@@ -247,7 +286,8 @@ pub async fn get_dashboard_url(
             agent_type: agent_type.as_str().to_string(),
         },
     )
-    .map_err(|_| {
+    .map_err(|err| {
+        tracing::warn!(?err, "failed to write the dashboard locator");
         CommandError::new(
             "dashboard_locator_write_error",
             "failed to write the dashboard locator",
@@ -268,11 +308,24 @@ pub async fn get_dashboard_url(
 /// Returns true when something answers a TCP connect on host:port within a beat.
 async fn probe_dashboard_server(host: &str, port: u16) -> bool {
     use std::time::Duration;
-    let addr = format!("{host}:{port}");
-    tokio::time::timeout(Duration::from_millis(500), tokio::net::TcpStream::connect(&addr))
-        .await
-        .map(|r| r.is_ok())
-        .unwrap_or(false)
+    let addr = format_host_port(host, port);
+    tokio::time::timeout(
+        Duration::from_millis(500),
+        tokio::net::TcpStream::connect(&addr),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false)
+}
+
+/// Formats a host:port pair, wrapping IPv6 hosts in brackets per RFC 3986.
+fn format_host_port(host: &str, port: u16) -> String {
+    let is_ipv6 = host.contains(':') && !host.starts_with('[');
+    if is_ipv6 {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
 }
 
 #[cfg(test)]
@@ -439,5 +492,51 @@ mod tests {
             .expect("dispatch claude")
             .expect("claude transcript should be found");
         assert_eq!(cc, cc_dir.join("cc-sess.jsonl"));
+    }
+
+    /// Verifies the IPv6 loopback host is bracketed in the dashboard URL.
+    #[test]
+    fn brackets_ipv6_loopback_in_dashboard_url() {
+        let url = dashboard_url(
+            "::1",
+            8601,
+            "sess-1",
+            DashboardAgentType::Opencode,
+        );
+        assert!(url.starts_with("http://[::1]:8601/"), "got {url}");
+    }
+
+    /// Verifies format_host_port wraps IPv6 but leaves IPv4 untouched.
+    #[test]
+    fn formats_host_port_with_ipv6_brackets() {
+        assert_eq!(format_host_port("127.0.0.1", 8601), "127.0.0.1:8601");
+        assert_eq!(format_host_port("::1", 8601), "[::1]:8601");
+        assert_eq!(format_host_port("[::1]", 8601), "[::1]:8601");
+    }
+
+    /// Verifies probe_dashboard_server returns false for a port with no listener.
+    #[tokio::test]
+    async fn probe_returns_false_for_closed_port() {
+        // Bind + immediately drop to get a guaranteed-free port.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind temporary listener");
+        let free_port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        assert!(!probe_dashboard_server("127.0.0.1", free_port).await);
+    }
+
+    /// Verifies probe_dashboard_server returns true when a local listener answers.
+    #[tokio::test]
+    async fn probe_returns_true_for_open_port() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind temporary listener");
+        let port = listener.local_addr().expect("local addr").port();
+        // Accept in the background so the probe's connect succeeds.
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+        assert!(probe_dashboard_server("127.0.0.1", port).await);
     }
 }
