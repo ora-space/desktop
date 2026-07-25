@@ -127,6 +127,7 @@ function ActionOption({
       type="button"
       role="option"
       aria-selected={active}
+      aria-current={selectedMode ? "true" : undefined}
       title={action.description || undefined}
       onMouseDown={(event) => event.preventDefault()}
       onPointerMove={onPointerMove}

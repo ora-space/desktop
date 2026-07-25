@@ -209,8 +209,8 @@ describe("Composer", () => {
 
     await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
 
-    expect(screen.getByText("Ora Skills")).toBeVisible();
     expect(screen.getByText("Skills")).toBeVisible();
+    expect(screen.getByText("Commands")).toBeVisible();
     await user.click(screen.getByRole("option", { name: "code-review" }));
 
     expect(screen.getByRole("textbox")).toHaveValue("$code-review ");
@@ -258,6 +258,8 @@ describe("Composer", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
+    expect(screen.getByText("Modes")).toBeVisible();
+    expect(screen.getByRole("option", { name: "Normal" })).toHaveAttribute("aria-current", "true");
     await user.click(screen.getByRole("option", { name: "Plan" }));
 
     expect(onModeChange).toHaveBeenCalledWith("plan");
