@@ -87,7 +87,7 @@ tasks:
       - cargo build --workspace
 
   test:frontend:
-    desc: Run TypeScript package test suites (contracts, chat, platform, app-shell, mock-service)
+    desc: Run TypeScript package test suites (contracts, chat, platform, app-shell)
     cmds:
       - task: export-contracts
       - task: lint:frontend
@@ -95,7 +95,6 @@ tasks:
       - pnpm --filter @ora/chat test
       - pnpm --filter @ora/platform test
       - pnpm --filter @ora/app-shell test
-      - pnpm --filter @ora/mock-service test
 
   test:frontend:watch:
     desc: Re-run app-shell tests on file change
@@ -139,15 +138,6 @@ tasks:
 
   run:web-frontend:
     desc: Run the web frontend against the real HTTP backend
-    env:
-      VITE_ORA_CONTRACT_TRANSPORT: fetch
-    cmds:
-      - pnpm --filter @ora/web-client dev
-
-  run:web-proto:
-    desc: Run the web frontend with the in-browser mock service
-    env:
-      VITE_ORA_CONTRACT_TRANSPORT: mock
     cmds:
       - pnpm --filter @ora/web-client dev
 

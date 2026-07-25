@@ -4,4 +4,3 @@ packages:
   - 'packages/*'
 allowBuilds:
   esbuild: true
-  msw: true

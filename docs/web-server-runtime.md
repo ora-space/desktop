@@ -123,9 +123,8 @@ The filesystem directory route supports the custom Web path picker.
 
 - `task run:web-backend` starts the Rust HTTP backend on its default port.
 - `task run:web-frontend` starts Vite with the fetch contracts transport and expects the backend to run separately.
-- `task run:web-proto` starts Vite with the MSW contracts transport and does not require the Rust backend.
 
-The Web production build always selects the fetch transport. Development startup rejects missing or unknown `VITE_ORA_CONTRACT_TRANSPORT` values so the active data source is never implicit.
+The Web frontend always uses the fetch contracts transport and talks to the Rust HTTP backend, in both development and production builds.
 
 ## Storage Behavior
 
