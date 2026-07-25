@@ -49,22 +49,15 @@ function ImageBlock({
   return (
     <figure className={`overflow-hidden rounded-md border border-border bg-muted/20 ${appearance === "tool" ? "max-w-xl" : "max-w-2xl"}`}>
       <div className="group relative">
-        <button
-          type="button"
-          onClick={() => setPreviewOpen(true)}
-          aria-label={t("chat.content.previewImage", { name: label })}
-          className="block w-full cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        >
-          <span className="flex min-h-36 max-h-[32rem] items-center justify-center bg-[var(--code-background)]">
-            <img
-              src={src}
-              alt={label}
-              loading="lazy"
-              decoding="async"
-              className="max-h-[32rem] w-auto max-w-full object-contain"
-            />
-          </span>
-        </button>
+        <span className="flex min-h-36 max-h-[32rem] items-center justify-center bg-[var(--code-background)]">
+          <img
+            src={src}
+            alt={label}
+            loading="lazy"
+            decoding="async"
+            className="max-h-[32rem] w-auto max-w-full object-contain"
+          />
+        </span>
         <button
           type="button"
           data-slot="image-expand-button"

@@ -331,14 +331,14 @@ describe("Structured ACP content", () => {
     const inlineImage = screen.getByRole("img", { name: "preview.png" });
     expect(inlineImage).toHaveAttribute("loading", "lazy");
     expect(inlineImage.closest("a")).toBeNull();
-    expect(inlineImage.closest("button")).toHaveClass("cursor-pointer");
+    expect(inlineImage.closest("button")).toBeNull();
     const expandButton = screen.getByRole("button", { name: "展开图片 preview.png" });
     expect(expandButton).toHaveClass("cursor-pointer");
     expect(view.container.querySelector("audio[controls]")).toHaveAttribute("src", "data:audio/mpeg;base64,aGVsbG8=");
     expect(screen.getByRole("link", { name: /ACP docs/ })).toHaveAttribute("href", "https://example.com/acp");
     expect(screen.getByText("embedded notes")).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "预览图片 preview.png" }));
+    await user.click(expandButton);
     expect(screen.getByRole("dialog")).toHaveStyle({
       width: "calc(100vw - 3rem)",
       maxWidth: "88rem",
