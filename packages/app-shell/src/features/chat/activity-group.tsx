@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   IconAlertTriangle,
+  IconBan,
   IconCheck,
   IconChevronDown,
   IconFiles,
@@ -24,7 +25,7 @@ interface ActivityGroupProps {
   isLatestActivity: boolean;
 }
 
-type ActivityStatus = "active" | "completed" | "failed";
+type ActivityStatus = "active" | "cancelled" | "completed" | "failed";
 
 interface ThoughtTimelineEntry {
   kind: "thought";
@@ -141,6 +142,7 @@ function groupTimelineEntries(items: ActivityItem[]): TimelineEntry[] {
 function ActivityTitle({ status, items }: { status: ActivityStatus; items: ActivityItem[] }) {
   const { t } = useTranslation();
   if (status === "failed") return t("chat.activity.failed");
+  if (status === "cancelled") return t("chat.activity.cancelled");
   const latestItem = items.at(-1);
   if (status === "completed") {
     const toolKinds = new Set(
@@ -322,6 +324,7 @@ function clusterPreviewItems(tools: ChatToolCall[]): string[] {
 function clusterStatus(tools: ChatToolCall[]): ActivityStatus {
   if (tools.some((tool) => tool.status === "failed")) return "failed";
   if (tools.some((tool) => tool.status === "pending" || tool.status === "in_progress")) return "active";
+  if (tools.some((tool) => tool.status === "cancelled")) return "cancelled";
   return "completed";
 }
 
@@ -342,6 +345,7 @@ function activityStatus(items: ActivityItem[], turnStatus: ChatTurnStatus, isLat
     tools.some((tool) => tool.status === "pending" || tool.status === "in_progress")
     || (turnStatus === "streaming" && isLatestActivity)
   ) return "active";
+  if (turnStatus === "cancelled" || tools.some((tool) => tool.status === "cancelled")) return "cancelled";
   return "completed";
 }
 
@@ -353,6 +357,8 @@ function ActivityStatusIcon({ status }: { status: ActivityStatus }) {
       return <IconLoader2 className="size-3.5 shrink-0 animate-spin text-sky-600 motion-reduce:animate-none" aria-label={t("chat.toolRunning")} />;
     case "completed":
       return <IconCheck className="size-3.5 shrink-0 text-emerald-600" aria-label={t("chat.toolCompleted")} />;
+    case "cancelled":
+      return <IconBan className="size-3.5 shrink-0 text-muted-foreground" aria-label={t("chat.toolCancelled")} />;
     case "failed":
       return <IconAlertTriangle className="size-3.5 shrink-0 text-destructive" aria-label={t("chat.toolFailed")} />;
   }

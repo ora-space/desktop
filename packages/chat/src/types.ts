@@ -32,13 +32,16 @@ export interface ChatPlan {
   updatedAt: number;
 }
 
+/** Adds a client-owned terminal state for prompts cancelled before the provider settles a tool. */
+export type ChatToolCallStatus = acp.ToolCallStatus | "cancelled";
+
 /** Stores one tool call and its latest ACP lifecycle fields. */
 export interface ChatToolCall {
   kind: "toolCall";
   id: string;
   title: string;
   toolKind?: acp.ToolKind;
-  status?: acp.ToolCallStatus;
+  status?: ChatToolCallStatus;
   content: acp.ToolCallContent[];
   locations: acp.ToolCallLocation[];
   rawInput?: unknown;
