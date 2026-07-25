@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
+import { useSkills } from "../../state/hooks/use-skills";
 import { DEFAULT_AGENT_CLI } from "../../state/hooks/use-workspace-mutations";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useContractsClient } from "../../contracts-client-context";
@@ -37,6 +38,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const { data: projects = [] } = useProjects();
   const { data: tasks = [] } = useTasks();
   const sessionsQuery = useSessions();
+  const skillsQuery = useSkills();
   const sessions = sessionsQuery.data ?? [];
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -70,7 +72,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         .then(() => sessionsQuery.refetch())
         .catch(() => undefined);
     }
-  }, [chatStore, conversation?.error, conversation?.isLoaded, conversation?.isLoading, session?.id, session?.status, sessionsQuery]);
+  }, [chatStore, conversation?.error, conversation?.isLoaded, conversation?.isLoading, session, sessionsQuery]);
 
   /**
    * Sends into the selected session, or starts one for the selected worktree
@@ -170,6 +172,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             isLoading={isLoadingHistory}
             error={chatError}
             pendingPermissions={conversation?.pendingPermissions ?? []}
+            skills={skillsQuery.data ?? []}
             availableCommands={conversation?.availableCommands ?? []}
             modes={conversation?.modes ?? null}
             disabled={!canChat}
