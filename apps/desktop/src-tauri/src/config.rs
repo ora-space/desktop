@@ -115,8 +115,7 @@ impl DesktopConfigStore {
         let updated = DesktopConfig {
             version: CONFIG_VERSION,
             worktree_root,
-            dashboard_host: config.dashboard_host.clone(),
-            dashboard_port: config.dashboard_port,
+            ..config.clone()
         };
 
         persist_config(&self.config_path, &updated)?;
@@ -138,9 +137,9 @@ impl DesktopConfigStore {
             .map_err(|_| DesktopConfigError::StateUnavailable)?;
         let updated = DesktopConfig {
             version: CONFIG_VERSION,
-            worktree_root: config.worktree_root.clone(),
             dashboard_host: host,
             dashboard_port: port,
+            ..config.clone()
         };
 
         persist_config(&self.config_path, &updated)?;
@@ -233,6 +232,11 @@ pub(crate) fn validate_worktree_root(worktree_root: &Path) -> Result<(), Desktop
 }
 
 /// Rejects ambiguous dashboard endpoints before they become active runtime configuration.
+///
+/// The host must be a loopback address (IPv4 127.0.0.1, IPv6 ::1, or the
+/// `localhost` name) so the iframe can never become same-origin with the Tauri
+/// host — a same-origin dashboard combined with `allow-scripts allow-same-origin`
+/// would be an unsafe sandbox escape. The port must be non-zero.
 pub(crate) fn validate_dashboard_endpoint(host: &str, port: u16) -> Result<(), DesktopConfigError> {
     let host = host.trim();
     if host.is_empty() {
