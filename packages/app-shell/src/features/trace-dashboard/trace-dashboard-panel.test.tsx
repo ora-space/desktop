@@ -26,13 +26,13 @@ function renderPanel(resolve: DashboardResolver) {
 }
 
 describe("TraceDashboardPanel", () => {
-  it("renders the panel when open with no session selected", () => {
+  it("renders the panel when open with no session selected", async () => {
     useUiStore.getState().setDashboardOpen(true);
     useWorkspaceSelectionStore.getState().clearSelection();
     renderPanel(vi.fn());
-    // The panel header (dashboard.title) renders in both zh-CN and en-US.
+    // The panel is portaled by Sheet; the title (dashboard.title) renders async.
     // zh-CN: "侧边面板", en-US: "Side panel" — match the common word "panel"/"面板".
-    expect(screen.getByText(/panel|面板/i)).toBeInTheDocument();
+    expect(await screen.findByText(/panel|面板/i)).toBeInTheDocument();
   });
 
   it("renders the iframe with the resolved URL once the server is reachable", async () => {
@@ -71,5 +71,21 @@ describe("TraceDashboardPanel", () => {
       // The server-unreachable copy mentions streamlit in both locales.
       expect(screen.getByText(/streamlit/i)).toBeInTheDocument();
     });
+  });
+
+  it("applies the persisted dashboard width instead of the sheet's narrow default", async () => {
+    useUiStore.getState().setDashboardOpen(true);
+    useUiStore.getState().setDashboardWidth(900);
+    useWorkspaceSelectionStore.getState().clearSelection();
+    renderPanel(vi.fn());
+    const title = await screen.findByText(/panel|面板/i);
+    // The sheet content is the closest positioned ancestor holding the width style.
+    const content = title.closest('[data-slot="sheet-content"]');
+    expect(content).not.toBeNull();
+    // 900 is within the 420–1400 clamp, so it must be applied verbatim — not capped
+    // to the sheet's sm:max-w-sm (384px) default.
+    const style = content?.getAttribute("style") ?? "";
+    expect(style).toContain("width: 900px");
+    expect(style).toContain("max-width: none");
   });
 });
