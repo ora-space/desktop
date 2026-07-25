@@ -204,6 +204,15 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
       async *[Symbol.asyncIterator]() {
         yield textEvent("agent_message_chunk", "partial", "agent-1") as PromptSessionEvent;
         yield {
+          type: "session_update",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            title: "Run command",
+            status: "in_progress",
+          },
+        } satisfies PromptSessionEvent;
+        yield {
           type: "permission_request",
           permissionRequestId: "permission-1",
           toolCall: { toolCallId: "tool-1", title: "Run command" },
@@ -234,6 +243,16 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
       userMessage: { kind: "message", id: "id-1", role: "user", content: "hello", createdAt: 42 },
       items: [
         { kind: "message", id: "message-agent-1", role: "assistant", content: "partial", createdAt: 42, protocolMessageId: "agent-1" },
+        {
+          kind: "toolCall",
+          id: "tool-1",
+          title: "Run command",
+          status: "cancelled",
+          content: [],
+          locations: [],
+          createdAt: 42,
+          updatedAt: 42,
+        },
       ],
       status: "cancelled",
       stopReason: null,
@@ -243,6 +262,53 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
   ]);
   assert.equal(conversation?.isResponding, false);
   assert.deepEqual(conversation?.pendingPermissions, []);
+});
+
+test("settles active tools when the provider completes with a cancelled stop reason", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([
+      {
+        type: "session_update",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Run command",
+          status: "in_progress",
+        },
+      },
+      { type: "completed", stopReason: "cancelled" },
+    ]),
+    respondToPermission: async () => ({}),
+  };
+  const store = createChatStore(client, { createId: () => "id-1", now: () => 42 });
+
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "run it" });
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.turns[0], {
+    id: "id-1",
+    userMessage: {
+      kind: "message",
+      id: "id-1",
+      role: "user",
+      content: "run it",
+      createdAt: 42,
+    },
+    items: [{
+      kind: "toolCall",
+      id: "tool-1",
+      title: "Run command",
+      status: "cancelled",
+      content: [],
+      locations: [],
+      createdAt: 42,
+      updatedAt: 42,
+    }],
+    status: "cancelled",
+    stopReason: "cancelled",
+    error: null,
+    createdAt: 42,
+  });
 });
 
 test("shows the user turn on a draft key before promoting to the created session", async () => {
