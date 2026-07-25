@@ -271,6 +271,19 @@ describe("Composer", () => {
     }]);
   });
 
+  it("pastes a clipboard image into the attachment list", async () => {
+    const onSend = vi.fn();
+    renderWithI18n(<Composer onSend={onSend} isResponding={false} />);
+    const textarea = screen.getByRole("textbox");
+    const image = new File(["clipboard"], "clipboard.png", { type: "image/png" });
+
+    fireEvent.paste(textarea, { clipboardData: { files: [image] } });
+
+    expect(await screen.findByRole("img", { name: "clipboard.png" })).toBeVisible();
+    expect(textarea).toHaveValue("");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("switches between provider-advertised normal and plan modes", async () => {
     const user = userEvent.setup();
     const onModeChange = vi.fn().mockResolvedValue(undefined);
@@ -303,7 +316,8 @@ describe("Composer", () => {
 });
 
 describe("Structured ACP content", () => {
-  it("renders image, audio, linked, and embedded resources in timeline order", () => {
+  it("renders structured resources and previews images with wheel zoom", async () => {
+    const user = userEvent.setup();
     const image = { type: "image" as const, data: "aGVsbG8=", mimeType: "image/png", uri: "file:///preview.png" };
     const items: ChatContent[] = [
       { kind: "content", id: "audio", source: "message", content: { type: "audio", data: "aGVsbG8=", mimeType: "audio/mpeg" }, createdAt: 2 },
@@ -314,10 +328,42 @@ describe("Structured ACP content", () => {
     mediaTurn.userMessage.structuredContent = [image];
     const view = renderWithI18n(<MessageList turns={[mediaTurn]} userName="Eric" isResponding={false} />);
 
-    expect(screen.getByRole("img", { name: "preview.png" })).toHaveAttribute("loading", "lazy");
+    const inlineImage = screen.getByRole("img", { name: "preview.png" });
+    expect(inlineImage).toHaveAttribute("loading", "lazy");
+    expect(inlineImage.closest("a")).toBeNull();
+    expect(inlineImage.closest("button")).toHaveClass("cursor-pointer");
+    const expandButton = screen.getByRole("button", { name: "展开图片 preview.png" });
+    expect(expandButton).toHaveClass("cursor-pointer");
     expect(view.container.querySelector("audio[controls]")).toHaveAttribute("src", "data:audio/mpeg;base64,aGVsbG8=");
     expect(screen.getByRole("link", { name: /ACP docs/ })).toHaveAttribute("href", "https://example.com/acp");
     expect(screen.getByText("embedded notes")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "预览图片 preview.png" }));
+    expect(screen.getByRole("dialog")).toHaveStyle({
+      width: "calc(100vw - 3rem)",
+      maxWidth: "88rem",
+      height: "calc(100dvh - 3rem)",
+    });
+    const canvas = screen.getByLabelText("preview.png，缩放 100%");
+    const previewImage = document.querySelector('[data-slot="preview-image"]');
+    expect(previewImage).not.toBeNull();
+    canvas.scrollLeft = 12;
+    canvas.scrollTop = 18;
+    const wheel = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
+    act(() => expect(canvas.dispatchEvent(wheel)).toBe(false));
+    expect(screen.getByLabelText("preview.png，缩放 110%")).toBeVisible();
+    expect(previewImage).toHaveStyle({ transform: "translate(-50%, -50%) translate(0px, 0px) scale(1.1)" });
+    expect(canvas).toHaveProperty("scrollLeft", 12);
+    expect(canvas).toHaveProperty("scrollTop", 18);
+    canvas.scrollLeft = 0;
+    canvas.scrollTop = 0;
+    fireEvent.pointerDown(canvas, { button: 0, pointerId: 7, clientX: 100, clientY: 100 });
+    expect(canvas).toHaveClass("cursor-grabbing");
+    fireEvent.pointerMove(canvas, { pointerId: 7, clientX: 60, clientY: 70 });
+    expect(previewImage).toHaveStyle({ transform: "translate(-50%, -50%) translate(-40px, -30px) scale(1.1)" });
+    fireEvent.pointerUp(canvas, { pointerId: 7, clientX: 60, clientY: 70 });
+    expect(canvas).toHaveClass("cursor-grab");
+    expect(screen.getByRole("button", { name: "关闭图片预览" })).toBeVisible();
   });
 });
 

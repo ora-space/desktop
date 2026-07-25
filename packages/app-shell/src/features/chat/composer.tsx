@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { ClipboardEvent, KeyboardEvent } from "react";
 import { IconArrowUp, IconLoader2, IconPhoto, IconPlayerStop, IconPlus, IconX } from "@tabler/icons-react";
 import { Button, Textarea } from "@ora/ui";
 import type { acp, Skill } from "@ora/contracts";
@@ -10,6 +10,7 @@ import { WorkflowToggle } from "../workflow/workflow-toggle";
 import {
   ComposerActionMenu,
 } from "./composer-action-menu";
+import { ImagePreviewDialog } from "./image-preview-dialog";
 import {
   buildComposerActions,
   filterComposerActions,
@@ -82,6 +83,7 @@ export function Composer({
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<ComposerActionGroup>>(new Set());
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [previewedAttachment, setPreviewedAttachment] = useState<ImageAttachment | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -168,9 +170,10 @@ export function Composer({
   }
 
   /** Converts selected files into ACP images while enforcing a bounded prompt payload. */
-  const addImages = async (files: FileList | null) => {
-    if (files === null || files.length === 0) return;
+  const addImages = async (files: Iterable<File> | null) => {
+    if (files === null) return;
     const selectedFiles = [...files];
+    if (selectedFiles.length === 0) return;
     const totalBytes = attachments.reduce((sum, attachment) => sum + attachment.size, 0)
       + selectedFiles.reduce((sum, file) => sum + file.size, 0);
     if (selectedFiles.some((file) => !ACCEPTED_IMAGE_TYPES.has(file.type))) {
@@ -184,6 +187,14 @@ export function Composer({
     const next = await Promise.all(selectedFiles.map(readImageAttachment));
     setAttachments((current) => [...current, ...next]);
     setAttachmentError(null);
+  };
+
+  /** Adds clipboard files through the same validation path as the attachment picker. */
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...event.clipboardData.files];
+    if (files.length === 0) return;
+    event.preventDefault();
+    void addImages(files).catch(() => setAttachmentError(t("chat.attachments.readFailed")));
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -265,7 +276,14 @@ export function Composer({
           <div className="flex gap-2 overflow-x-auto px-2 pb-2 pt-1" aria-label={t("chat.attachments.selected")}>
             {attachments.map((attachment) => (
               <figure key={attachment.id} className="group/attachment relative size-16 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
-                <img src={`data:${attachment.content.mimeType};base64,${attachment.content.data}`} alt={attachment.name} className="size-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setPreviewedAttachment(attachment)}
+                  aria-label={t("chat.content.previewImage", { name: attachment.name })}
+                  className="size-full cursor-zoom-in outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <img src={`data:${attachment.content.mimeType};base64,${attachment.content.data}`} alt={attachment.name} className="size-full object-cover" />
+                </button>
                 <button
                   type="button"
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
@@ -293,6 +311,7 @@ export function Composer({
             setSelectedActionIndex(0);
           }}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           aria-label={t("chat.messageLabel")}
           aria-autocomplete="list"
           aria-haspopup="listbox"
@@ -359,6 +378,14 @@ export function Composer({
           </div>
         </div>
       </div>
+      {previewedAttachment && (
+        <ImagePreviewDialog
+          open
+          src={`data:${previewedAttachment.content.mimeType};base64,${previewedAttachment.content.data}`}
+          name={previewedAttachment.name}
+          onOpenChange={(open) => !open && setPreviewedAttachment(null)}
+        />
+      )}
     </div>
   );
 }
