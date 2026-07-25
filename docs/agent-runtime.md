@@ -9,7 +9,7 @@
 - The child cwd is resolved from Task → stored Worktree id → stored branch name → Git's authoritative worktree metadata. A configured worktree creation root is never used to reconstruct an existing path.
 - Create performs `initialize`, then `session/new`, and persists the Ora Session only after both succeed. The guarded insert fails if its Task was deleted while the provider handshake was in flight.
 - Load starts a fresh child, performs `initialize`, then calls `session/load` with the private `agentSessionId`. The row is reserved as Running before process setup so aggregate deletion cannot race the load; every setup or replay failure restores Stopped.
-- Create and load retain the provider's complete mode state. Idle mode changes call ACP `session/set_mode`; attempts during load or prompt return `session_busy` instead of racing the active operation.
+- Create drains setup notifications emitted before the `session/new` response and returns the latest complete available-command list so the first composer render has provider commands.
 - Prompt accepts ordered ACP content blocks so supported providers can receive text and image content in one turn. The serialized public payload is bounded at 16 MiB.
 - Startup reconciles stale Running database rows to Stopped because child ownership cannot survive an Ora process restart.
 

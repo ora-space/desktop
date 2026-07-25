@@ -11,7 +11,6 @@ function conversation(overrides: Partial<SessionConversation> = {}): SessionConv
   return {
     turns: [],
     availableCommands: [],
-    modes: null,
     sessionTitle: null,
     sessionUpdatedAt: null,
     isLoaded: false,

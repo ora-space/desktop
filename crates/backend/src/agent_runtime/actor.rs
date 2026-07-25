@@ -30,30 +30,6 @@ impl RuntimeActor {
                         self.run_prompt(operation_id, prompt, events).await;
                     }
                 }
-                RuntimeCommand::SetMode { mode_id, response } => {
-                    let Some(process) = self.process.as_ref() else {
-                        let _ = response.send(Err(BackendError::new(
-                            BackendErrorKind::Conflict,
-                            "session_stopped",
-                            "session must be loaded before changing mode",
-                        )));
-                        continue;
-                    };
-                    let request = AcpSetSessionModeRequest::new(
-                        self.session.agent_session_id.clone(),
-                        mode_id,
-                    );
-                    let result = process
-                        .client
-                        .request::<_, AcpSetSessionModeResponse>(
-                            AGENT_METHOD_NAMES.session_set_mode,
-                            &request,
-                        )
-                        .await
-                        .map(|_| SetSessionModeResponse {})
-                        .map_err(map_acp_error);
-                    let _ = response.send(result);
-                }
                 RuntimeCommand::RespondToPermission { response, .. } => {
                     let _ = response.send(Err(BackendError::new(
                         BackendErrorKind::Conflict,
@@ -146,15 +122,8 @@ impl RuntimeActor {
             tokio::select! {
                 response = &mut future => {
                     match response {
-                        Ok(response) => {
+                        Ok(_) => {
                             ora_debug!(session_id = %self.session.id, "session/load completed");
-                            if let Some(modes) = response.modes
-                                && events.try_send(Ok(LoadSessionEvent::ModeState { modes })).is_err()
-                            {
-                                let _ = process.child.kill().await;
-                                self.mark_stopped();
-                                return;
-                            }
                             if events.try_send(Ok(LoadSessionEvent::Completed)).is_ok() {
                                 self.process = Some(process);
                             } else {
@@ -230,6 +199,23 @@ impl RuntimeActor {
         let Some(mut process) = self.process.take() else {
             return;
         };
+        while let Some(notification) = process.pending_updates.pop_front() {
+            if notification.session_id.0.as_ref() != self.session.agent_session_id {
+                let _ = process.child.kill().await;
+                self.mark_stopped();
+                return;
+            }
+            if events
+                .try_send(Ok(PromptSessionEvent::SessionUpdate {
+                    update: notification.update,
+                }))
+                .is_err()
+            {
+                let _ = process.child.kill().await;
+                self.mark_stopped();
+                return;
+            }
+        }
         let client = process.client.clone();
         let content_count = prompt.len();
         let request = PromptRequest::new(self.session.agent_session_id.clone(), prompt);
@@ -345,9 +331,6 @@ impl RuntimeActor {
                         Some(RuntimeCommand::Prompt { accepted, .. }) | Some(RuntimeCommand::Load { accepted, .. }) => {
                             let _ = accepted.send(Err(BackendError::new(BackendErrorKind::Conflict, "session_busy", "session already has an active operation")));
                         }
-                        Some(RuntimeCommand::SetMode { response, .. }) => {
-                            let _ = response.send(Err(BackendError::new(BackendErrorKind::Conflict, "session_busy", "session already has an active operation")));
-                        }
                         Some(RuntimeCommand::Cancel { .. }) | None => {}
                     }
                 }
@@ -389,14 +372,6 @@ impl RuntimeActor {
             Some(RuntimeCommand::Prompt { accepted, .. })
             | Some(RuntimeCommand::Load { accepted, .. }) => {
                 let _ = accepted.send(Err(BackendError::new(
-                    BackendErrorKind::Conflict,
-                    "session_busy",
-                    "session already has an active operation",
-                )));
-                false
-            }
-            Some(RuntimeCommand::SetMode { response, .. }) => {
-                let _ = response.send(Err(BackendError::new(
                     BackendErrorKind::Conflict,
                     "session_busy",
                     "session already has an active operation",

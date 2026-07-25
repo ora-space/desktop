@@ -1,13 +1,9 @@
 import type { MutableRefObject, ReactNode } from "react";
 import {
   IconBolt,
-  IconCheck,
-  IconListCheck,
-  IconMessage,
   IconPhoto,
   IconSparkles,
 } from "@tabler/icons-react";
-import type { acp } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import {
   COLLAPSED_ACTION_GROUP_SIZE,
@@ -21,7 +17,6 @@ interface ComposerActionMenuProps {
   id: string;
   actions: ComposerAction[];
   activeIndex: number;
-  currentModeId?: acp.SessionModeId;
   expandedGroups: ReadonlySet<ComposerActionGroup>;
   optionRefs: MutableRefObject<Array<HTMLButtonElement | null>>;
   onActiveIndexChange: (index: number) => void;
@@ -34,7 +29,6 @@ export function ComposerActionMenu({
   id,
   actions,
   activeIndex,
-  currentModeId,
   expandedGroups,
   optionRefs,
   onActiveIndexChange,
@@ -74,7 +68,6 @@ export function ComposerActionMenu({
                     id={`${id}-option-${index}`}
                     action={action}
                     active={index === activeIndex}
-                    currentModeId={currentModeId}
                     buttonRef={(node) => { optionRefs.current[index] = node; }}
                     onPointerMove={() => onActiveIndexChange(index)}
                     onSelect={() => onSelect(action)}
@@ -106,7 +99,6 @@ function ActionOption({
   id,
   action,
   active,
-  currentModeId,
   buttonRef,
   onPointerMove,
   onSelect,
@@ -114,12 +106,10 @@ function ActionOption({
   id: string;
   action: ComposerAction;
   active: boolean;
-  currentModeId?: acp.SessionModeId;
   buttonRef: (node: HTMLButtonElement | null) => void;
   onPointerMove: () => void;
   onSelect: () => void;
 }) {
-  const selectedMode = action.group === "modes" && action.mode.id === currentModeId;
   return (
     <button
       ref={buttonRef}
@@ -127,7 +117,6 @@ function ActionOption({
       type="button"
       role="option"
       aria-selected={active}
-      aria-current={selectedMode ? "true" : undefined}
       title={action.description || undefined}
       onMouseDown={(event) => event.preventDefault()}
       onPointerMove={onPointerMove}
@@ -139,12 +128,11 @@ function ActionOption({
       {action.group === "commands" && action.hint && (
         <span className="max-w-24 truncate font-mono text-[10px] text-muted-foreground">{action.hint}</span>
       )}
-      {selectedMode && <IconCheck className="size-3.5 shrink-0 text-foreground" aria-hidden="true" />}
     </button>
   );
 }
 
-/** Chooses a consistent line icon for each capability while distinguishing mode intent. */
+/** Chooses a consistent line icon for each capability group. */
 function actionIcon(action: ComposerAction): ReactNode {
   const commonClassName = "size-4 shrink-0 text-muted-foreground group-aria-selected:text-foreground";
   switch (action.group) {
@@ -152,16 +140,6 @@ function actionIcon(action: ComposerAction): ReactNode {
       return <IconSparkles className={commonClassName} aria-hidden="true" />;
     case "commands":
       return <IconBolt className={commonClassName} aria-hidden="true" />;
-    case "modes":
-      if (/plan/i.test(`${action.mode.id} ${action.mode.name}`)) {
-        return <IconListCheck className="size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />;
-      }
-      return (
-        <IconMessage
-          className={`size-4 shrink-0 ${/debug/i.test(`${action.mode.id} ${action.mode.name}`) ? "text-rose-500" : "text-muted-foreground"}`}
-          aria-hidden="true"
-        />
-      );
     case "actions":
       return <IconPhoto className={commonClassName} aria-hidden="true" />;
   }

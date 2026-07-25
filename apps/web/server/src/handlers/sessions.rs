@@ -10,8 +10,7 @@ use ora_contracts::{
     CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
     GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse,
     LoadSessionRequest, PromptSessionRequest, RespondToPermissionRequest,
-    RespondToPermissionResponse, SetSessionModeRequest, SetSessionModeResponse, StopSessionRequest,
-    StopSessionResponse,
+    RespondToPermissionResponse, StopSessionRequest, StopSessionResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -28,13 +27,6 @@ pub struct SessionPath {
 #[serde(rename_all = "camelCase")]
 pub struct PromptSessionBody {
     prompt: Vec<ora_contracts::acp::content::ContentBlock>,
-}
-
-/// Carries the selected provider mode after the path owns the Ora session identifier.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetSessionModeBody {
-    mode_id: ora_contracts::acp::session_mode::SessionModeId,
 }
 
 /// Carries a permission selection while the path owns the Ora session identifier.
@@ -121,23 +113,6 @@ pub async fn prompt_session(
         .await
         .map_err(WebApiError::from)?;
     Ok(stream_response(events))
-}
-
-/// Changes the provider mode for one running session.
-pub async fn set_session_mode(
-    State(app_state): State<AppState>,
-    Path(path): Path<SessionPath>,
-    Json(body): Json<SetSessionModeBody>,
-) -> Result<Json<SetSessionModeResponse>, WebApiError> {
-    app_state
-        .backend()
-        .set_session_mode(SetSessionModeRequest {
-            session_id: path.session_id,
-            mode_id: body.mode_id,
-        })
-        .await
-        .map(Json)
-        .map_err(WebApiError::from)
 }
 
 /// Routes one permission selection to the actor that owns the pending request.

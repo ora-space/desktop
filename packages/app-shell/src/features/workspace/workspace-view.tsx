@@ -103,7 +103,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         createSession: () =>
           client.session
             .create({ taskId, agentCli: DEFAULT_AGENT_CLI })
-            .then((response) => ({ oraSessionId: response.session.id, modes: response.modes })),
+            .then((response) => ({
+              oraSessionId: response.session.id,
+              availableCommands: response.availableCommands,
+            })),
         // Show the optimistic turn under its temporary key right away.
         onDraft: (draftSessionId) =>
           useWorkspaceSelectionStore.getState().selectSession(draftSessionId, taskId, projectId),
@@ -174,7 +177,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             pendingPermissions={conversation?.pendingPermissions ?? []}
             skills={skillsQuery.data ?? []}
             availableCommands={conversation?.availableCommands ?? []}
-            modes={conversation?.modes ?? null}
             disabled={!canChat}
             disabledHint={canChat ? undefined : t("chat.pickProjectAndBranch")}
             // A live session already fixes its project and branch, so the pickers
@@ -182,9 +184,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             contextBar={session ? undefined : <ComposerContextBar />}
             // Failures land in chatError; the rejection itself is expected.
             onSend={(text, images) => void sendOrStartSession(text, images).catch(() => undefined)}
-            onModeChange={session === undefined
-              ? undefined
-              : (modeId) => chatStore.getState().setMode(session.id, modeId)}
             // The selected id, not session.id: during the optimistic startup the
             // real session does not exist yet but the draft key is already live.
             onStop={() => chatStore.getState().stopGeneration(selection.sessionId ?? "")}

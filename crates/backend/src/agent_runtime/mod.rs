@@ -19,7 +19,7 @@ use ora_contracts::acp::initialization::{
     Implementation, InitializeRequest, InitializeResponse, ProtocolVersion,
 };
 use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
-use ora_contracts::acp::notification::CancelNotification;
+use ora_contracts::acp::notification::{CancelNotification, SessionNotification};
 use ora_contracts::acp::permission::{
     PermissionOptionId, RequestPermissionOutcome, RequestPermissionResponse,
     SelectedPermissionOutcome,
@@ -27,18 +27,15 @@ use ora_contracts::acp::permission::{
 use ora_contracts::acp::prompt::{PromptRequest, PromptResponse};
 use ora_contracts::acp::session::{
     LoadSessionRequest as AcpLoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-    NewSessionResponse,
+    NewSessionResponse, SessionUpdate,
 };
-use ora_contracts::acp::session_mode::{
-    SetSessionModeRequest as AcpSetSessionModeRequest,
-    SetSessionModeResponse as AcpSetSessionModeResponse,
-};
+use ora_contracts::acp::slash_command::AvailableCommand;
 use ora_contracts::{
     AgentCli as ContractAgentCli, CreateSessionRequest, CreateSessionResponse,
     DeleteSessionResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent,
     PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionPermissionRequest, SessionStatus as ContractSessionStatus,
-    SetSessionModeRequest, SetSessionModeResponse, StopSessionRequest, StopSessionResponse,
+    StopSessionRequest, StopSessionResponse,
 };
 use ora_db::{
     RepositoryPool, SqliteProjectRepository, SqliteSessionRepository, SqliteTaskRepository,
@@ -51,7 +48,7 @@ use ora_logging::ora_debug;
 use ora_process::{
     ManagedProcess, ProcessSpawner, ProcessSpec, TokioManagedProcess, TokioProcessSpawner,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -99,10 +96,6 @@ pub(super) enum RuntimeCommand {
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
         accepted: oneshot::Sender<Result<(), BackendError>>,
     },
-    SetMode {
-        mode_id: ora_contracts::acp::session_mode::SessionModeId,
-        response: oneshot::Sender<Result<SetSessionModeResponse, BackendError>>,
-    },
     RespondToPermission {
         request: RespondToPermissionRequest,
         response: oneshot::Sender<Result<RespondToPermissionResponse, BackendError>>,
@@ -130,6 +123,7 @@ struct AgentProcess {
     child: TokioManagedProcess,
     client: AcpClient<ChildStdin>,
     updates: mpsc::Receiver<ora_contracts::acp::notification::SessionNotification>,
+    pending_updates: VecDeque<ora_contracts::acp::notification::SessionNotification>,
     control: mpsc::UnboundedReceiver<AcpControl>,
     load_session_supported: bool,
 }
@@ -187,7 +181,7 @@ impl AgentRuntimeManager {
     ) -> Result<CreateSessionResponse, BackendError> {
         let agent_cli = domain_agent_cli(request.agent_cli);
         let cwd = resolve_task_cwd(&self.inner.pool, &TaskId::new(request.task_id.clone()))?;
-        let process = spawn_initialized_process(
+        let mut process = spawn_initialized_process(
             agent_cli,
             &cwd,
             &self.inner.home_directory,
@@ -204,6 +198,19 @@ impl AgentRuntimeManager {
         .await
         .map_err(|_| runtime_internal("agent_start_timeout", "agent session creation timed out"))?
         .map_err(map_acp_error)?;
+        let mut setup_notifications = Vec::new();
+        while let Ok(notification) = process.updates.try_recv() {
+            setup_notifications.push(notification);
+        }
+        let (available_commands, pending_updates) =
+            match partition_session_setup_updates(&response.session_id, setup_notifications) {
+                Ok(result) => result,
+                Err(error) => {
+                    let _ = process.child.kill().await;
+                    return Err(error);
+                }
+            };
+        process.pending_updates = pending_updates;
         let now = self.inner.clock.now_timestamp_millis();
         let session = Session::new(
             UuidSessionIdGenerator::new().generate_session_id(),
@@ -229,7 +236,7 @@ impl AgentRuntimeManager {
         self.insert_actor(session.clone(), cwd, Some(process))?;
         Ok(CreateSessionResponse {
             session: contract_session(session),
-            modes: response.modes,
+            available_commands,
         })
     }
 
@@ -333,39 +340,6 @@ impl AgentRuntimeManager {
             handle.commands,
             operation_id,
         ))
-    }
-
-    /// Changes the provider mode for one running, idle session.
-    pub(crate) async fn set_session_mode(
-        &self,
-        request: SetSessionModeRequest,
-    ) -> Result<SetSessionModeResponse, BackendError> {
-        let _lifecycle = self.inner.lifecycle.lock().await;
-        let session = self.find_session(&request.session_id)?;
-        if session.status != SessionStatus::Running {
-            return Err(BackendError::new(
-                BackendErrorKind::Conflict,
-                "session_stopped",
-                "session must be loaded before changing mode",
-            ));
-        }
-        let handle = self.actor_for(session)?;
-        let (response_sender, response) = oneshot::channel();
-        handle
-            .commands
-            .send(RuntimeCommand::SetMode {
-                mode_id: request.mode_id,
-                response: response_sender,
-            })
-            .map_err(|_| {
-                runtime_internal(
-                    "agent_runtime_unavailable",
-                    "session runtime is unavailable",
-                )
-            })?;
-        response
-            .await
-            .map_err(|_| runtime_internal("agent_runtime_unavailable", "session runtime stopped"))?
     }
 
     /// Routes one opaque permission response to the actor that registered the request.
@@ -598,6 +572,7 @@ async fn spawn_initialized_process(
         child,
         client,
         updates,
+        pending_updates: VecDeque::new(),
         control,
         load_session_supported: response.agent_capabilities.load_session,
     })
@@ -736,6 +711,31 @@ fn contract_agent_cli(agent_cli: AgentCli) -> ContractAgentCli {
     }
 }
 
+/// Extracts the latest setup-time command catalog without discarding unrelated notifications.
+fn partition_session_setup_updates(
+    expected_session_id: &AcpSessionId,
+    notifications: Vec<SessionNotification>,
+) -> Result<(Vec<AvailableCommand>, VecDeque<SessionNotification>), BackendError> {
+    let mut available_commands = Vec::new();
+    let mut pending_updates = VecDeque::new();
+    for notification in notifications {
+        if &notification.session_id != expected_session_id {
+            return Err(runtime_internal(
+                "agent_protocol_error",
+                "agent emitted an update for another session during session creation",
+            ));
+        }
+        if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
+            // The update is a complete replacement, so a later setup notification wins.
+            available_commands = update.available_commands.clone();
+        } else {
+            // The first prompt must observe setup notifications that are not returned directly.
+            pending_updates.push_back(notification);
+        }
+    }
+    Ok((available_commands, pending_updates))
+}
+
 /// Resolves OpenCode through the Windows executable lookup mechanism once at startup.
 #[cfg(windows)]
 fn resolve_opencode_path(_home_directory: &Path) -> Result<PathBuf, BackendError> {
@@ -809,18 +809,72 @@ fn runtime_internal(code: &'static str, message: impl Into<String>) -> BackendEr
 mod tests {
     #[cfg(unix)]
     use super::resolve_opencode_path;
-    use super::resolve_task_cwd;
+    use super::{partition_session_setup_updates, resolve_task_cwd};
     use ora_application::{ProjectRepository, TaskRepository};
+    use ora_contracts::acp::common::SessionId as AcpSessionId;
+    use ora_contracts::acp::notification::SessionNotification;
+    use ora_contracts::acp::session::{AvailableCommandsUpdate, SessionInfoUpdate, SessionUpdate};
+    use ora_contracts::acp::slash_command::AvailableCommand;
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteTaskRepository,
         default_migration_catalog,
     };
     use ora_domain::{AuditFields, Project, ProjectId, Task, TaskId, TaskStatus};
     use pretty_assertions::assert_eq;
+    use std::collections::VecDeque;
     use std::fs;
     #[cfg(unix)]
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    /// Verifies setup command updates are returned while other ordered updates remain queued.
+    #[test]
+    fn partitions_session_setup_updates() {
+        let session_id = AcpSessionId::new("agent-session");
+        let session_info = SessionNotification::new(
+            session_id.clone(),
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("Review auth")),
+        );
+        let commands = vec![AvailableCommand::new("review", "Review current changes")];
+        let notifications = vec![
+            session_info.clone(),
+            SessionNotification::new(
+                session_id.clone(),
+                SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(vec![
+                    AvailableCommand::new("old", "Replaced catalog"),
+                ])),
+            ),
+            SessionNotification::new(
+                session_id.clone(),
+                SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(
+                    commands.clone(),
+                )),
+            ),
+        ];
+
+        assert_eq!(
+            partition_session_setup_updates(&session_id, notifications)
+                .expect("partition setup updates"),
+            (commands, VecDeque::from([session_info])),
+        );
+    }
+
+    /// Verifies setup notifications cannot leak state across provider sessions.
+    #[test]
+    fn rejects_setup_updates_for_another_session() {
+        let result = partition_session_setup_updates(
+            &AcpSessionId::new("expected"),
+            vec![SessionNotification::new(
+                "other",
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+            )],
+        );
+
+        assert_eq!(
+            result.expect_err("reject another session").code(),
+            "agent_protocol_error",
+        );
+    }
 
     /// Verifies Unix builds resolve OpenCode from the configured user's fixed installation path.
     #[cfg(unix)]
