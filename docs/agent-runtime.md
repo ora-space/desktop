@@ -12,14 +12,14 @@
 - Load registers a route on the current connection generation, marks the row Running, and calls `session/load` with the private `agentSessionId`. Every setup or replay failure restores Stopped.
 - Connection loss fails that CLI's in-flight operations, marks only its registered Sessions Stopped, terminates and reaps the old process tree, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - Model discovery runs each CLI's bounded `models` command concurrently. The response is grouped by `agent_cli` and omits CLIs whose command is missing, fails, emits invalid UTF-8, or exceeds the timeout, allowing partial results.
-- Create and load retain the provider's complete mode state. Idle mode changes call ACP `session/set_mode`; attempts during load or prompt return `session_busy` instead of racing the active operation.
+- Create returns the latest complete available-command list emitted during `session/new` setup so the first composer render has provider commands.
 - Prompt accepts ordered ACP content blocks so supported providers can receive text and image content in one turn. The serialized public payload is bounded at 16 MiB.
 
 ## Flow Control
 
 ACP stdout is newline-delimited JSON-RPC with an 8 MiB frame limit. The connection reader uses an unbounded handoff to the always-running central router, while each registered Session owns a bounded 256-item update queue and an independent control queue. This keeps connection-wide parsing from imposing one Session's backpressure on another. A per-Session overflow stops only the affected Session; no data is silently discarded.
 
-Unknown agent-originated JSON-RPC requests receive a correlated `-32601` method-not-found response and do not terminate the connection. Malformed frames, unmatched responses, oversized frames, and stdio loss are connection failures. Updates for unloaded Sessions are treated as stale and discarded rather than taking down unrelated work.
+Unknown agent-originated JSON-RPC requests receive a correlated `-32601` method-not-found response and do not terminate the connection. Malformed frames, unmatched responses, oversized frames, and stdio loss are connection failures. Updates for unloaded Sessions are treated as stale and discarded rather than taking down unrelated work, except during the bounded `session/new` setup window before the provider id is known.
 
 Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIterable` sends `session/cancel`. Prompt cancellation waits up to five seconds for the provider to settle. A session-level timeout unloads and stops only that Session; it never restarts the shared process. Explicit Stop optionally calls `session/close` when advertised, unloads the route, and preserves provider history for a later load.
 

@@ -81,7 +81,6 @@ export function createContractsClient(
       list: (request, options) => executeOperation("listSessions", request, transport, options),
       load: (request, options) => executeStreamOperation("loadSession", request, transport, options),
       prompt: (request, options) => executeStreamOperation("promptSession", request, transport, options),
-      setMode: (request, options) => executeOperation("setSessionMode", request, transport, options),
       respondToPermission: (request, options) => executeOperation("respondToSessionPermission", request, transport, options),
       stop: (request, options) => executeOperation("stopSession", request, transport, options),
       delete: (request, options) =>

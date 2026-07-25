@@ -99,11 +99,10 @@ export function createMockClient(state: MockClientState): ContractsClient {
           status: "running",
         };
         state.sessions.push(session);
-        return { session, modes: null };
+        return { session, availableCommands: [] };
       },
       load: async function* () { yield { type: "completed" as const }; },
       prompt: async function* () { yield { type: "completed" as const, stopReason: "end_turn" as const }; },
-      setMode: async () => ({}),
       respondToPermission: async () => ({}),
       stop: async (req) => {
         const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;

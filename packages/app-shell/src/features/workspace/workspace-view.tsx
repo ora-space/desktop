@@ -160,7 +160,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           );
           return {
             oraSessionId: response.session.id,
-            modes: response.modes,
+            availableCommands: response.availableCommands,
           };
         },
         onDraft: (draftId) => {
@@ -258,7 +258,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             pendingPermissions={conversation?.pendingPermissions ?? []}
             skills={skillsQuery.data ?? []}
             availableCommands={conversation?.availableCommands ?? []}
-            modes={conversation?.modes ?? null}
             disabled={!canChat}
             disabledHint={canChat ? undefined : t("chat.pickProject")}
             // A persisted or optimistic session already fixes its project and
@@ -268,9 +267,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             }
             // Failures land in chatError; the rejection itself is expected.
             onSend={(text, images) => void sendOrStartSession(text, images).catch(() => undefined)}
-            onModeChange={session === undefined
-              ? undefined
-              : (modeId) => chatStore.getState().setMode(session.id, modeId)}
             // The selected id, not session.id: during the optimistic startup the
             // real session does not exist yet but the draft key is already live.
             onStop={() =>

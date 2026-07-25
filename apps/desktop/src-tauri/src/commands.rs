@@ -170,19 +170,6 @@ pub async fn respond_to_session_permission(
         .map_err(CommandError::from)
 }
 
-/// Changes the provider mode for one running Session actor.
-#[tauri::command]
-pub async fn set_session_mode(
-    state: State<'_, DesktopState>,
-    request: SetSessionModeRequest,
-) -> Result<SetSessionModeResponse, CommandError> {
-    state
-        .backend
-        .set_session_mode(request)
-        .await
-        .map_err(CommandError::from)
-}
-
 /// Stops one provider process while retaining the Ora session record.
 #[tauri::command]
 pub async fn stop_session(

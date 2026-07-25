@@ -1,28 +1,25 @@
 import type { acp, Skill } from "@ora/contracts";
 
-export type ComposerActionGroup = "skills" | "commands" | "modes" | "actions";
+export type ComposerActionGroup = "skills" | "commands" | "actions";
 
 export type ComposerAction =
   | { id: string; group: "skills"; label: string; description: string; skill: Skill }
   | { id: string; group: "commands"; label: string; description: string; hint?: string; command: acp.AvailableCommand }
-  | { id: string; group: "modes"; label: string; description: string; mode: acp.SessionMode }
   | { id: "action:add-images"; group: "actions"; label: string; description: string };
 
-export const COMPOSER_ACTION_GROUPS: readonly ComposerActionGroup[] = ["skills", "commands", "modes", "actions"];
+export const COMPOSER_ACTION_GROUPS: readonly ComposerActionGroup[] = ["skills", "commands", "actions"];
 export const COLLAPSED_ACTION_GROUP_SIZE = 5;
 
 /** Builds searchable actions from provider capabilities and Ora's configured skills. */
 export function buildComposerActions({
   skills,
   commands,
-  modes,
   includeAttachments,
   attachmentLabel,
   attachmentDescription,
 }: {
   skills: Skill[];
   commands: acp.AvailableCommand[];
-  modes: acp.SessionModeState | null;
   includeAttachments: boolean;
   attachmentLabel: string;
   attachmentDescription: string;
@@ -43,13 +40,6 @@ export function buildComposerActions({
       ...(command.input == null ? {} : { hint: command.input.hint }),
       command,
     })),
-    ...(modes?.availableModes.map((mode): ComposerAction => ({
-      id: `mode:${mode.id}`,
-      group: "modes",
-      label: mode.name,
-      description: mode.description ?? "",
-      mode,
-    })) ?? []),
     ...(includeAttachments ? [{
       id: "action:add-images" as const,
       group: "actions" as const,

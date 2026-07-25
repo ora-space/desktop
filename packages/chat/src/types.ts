@@ -82,7 +82,6 @@ export interface ChatTurn {
 export interface SessionConversation {
   turns: ChatTurn[];
   availableCommands: acp.AvailableCommand[];
-  modes: acp.SessionModeState | null;
   sessionTitle: string | null;
   sessionUpdatedAt: string | null;
   isLoaded: boolean;
