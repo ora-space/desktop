@@ -64,31 +64,6 @@ impl RuntimeActor {
                         self.run_prompt(operation_id, prompt, events).await;
                     }
                 }
-                RuntimeCommand::SetMode { mode_id, response } => {
-                    let Some(channel) = self.channel.as_ref() else {
-                        let _ = response.send(Err(BackendError::new(
-                            BackendErrorKind::Conflict,
-                            "session_stopped",
-                            "session must be loaded before changing mode",
-                        )));
-                        continue;
-                    };
-                    let request = AcpSetSessionModeRequest::new(
-                        self.session.agent_session_id.clone(),
-                        mode_id,
-                    );
-                    let result = channel
-                        .connection
-                        .client
-                        .request::<_, AcpSetSessionModeResponse>(
-                            AGENT_METHOD_NAMES.session_set_mode,
-                            &request,
-                        )
-                        .await
-                        .map(|_| SetSessionModeResponse {})
-                        .map_err(map_acp_error);
-                    let _ = response.send(result);
-                }
                 RuntimeCommand::RespondToPermission { response, .. } => {
                     let _ = response.send(Err(permission_not_pending()));
                 }
@@ -165,14 +140,8 @@ impl RuntimeActor {
             tokio::select! {
                 response = &mut future => {
                     match response {
-                        Ok(response) => {
+                        Ok(_) => {
                             ora_debug!(session_id = %self.session.id, "session/load completed");
-                            if let Some(modes) = response.modes
-                                && events.try_send(Ok(LoadSessionEvent::ModeState { modes })).is_err()
-                            {
-                                self.isolate_channel(channel).await;
-                                return;
-                            }
                             if events.try_send(Ok(LoadSessionEvent::Completed)).is_ok() {
                                 self.channel = Some(channel);
                             } else {
@@ -259,9 +228,6 @@ impl RuntimeActor {
                         | Some(RuntimeCommand::Load { accepted, .. }) => {
                             let _ = accepted.send(Err(session_busy()));
                         }
-                        Some(RuntimeCommand::SetMode { response, .. }) => {
-                            let _ = response.send(Err(session_busy()));
-                        }
                         Some(RuntimeCommand::RespondToPermission { response, .. }) => {
                             let _ = response.send(Err(permission_not_pending()));
                         }
@@ -282,6 +248,17 @@ impl RuntimeActor {
         let Some(mut channel) = self.channel.take() else {
             return;
         };
+        while let Some(notification) = channel.pending_updates.pop_front() {
+            if events
+                .try_send(Ok(PromptSessionEvent::SessionUpdate {
+                    update: notification.update,
+                }))
+                .is_err()
+            {
+                self.isolate_channel(channel).await;
+                return;
+            }
+        }
         let client = channel.connection.client.clone();
         let content_count = prompt.len();
         let request = PromptRequest::new(self.session.agent_session_id.clone(), prompt);
@@ -394,9 +371,6 @@ impl RuntimeActor {
                         Some(RuntimeCommand::Prompt { accepted, .. })
                         | Some(RuntimeCommand::Load { accepted, .. }) => {
                             let _ = accepted.send(Err(session_busy()));
-                        }
-                        Some(RuntimeCommand::SetMode { response, .. }) => {
-                            let _ = response.send(Err(BackendError::new(BackendErrorKind::Conflict, "session_busy", "session already has an active operation")));
                         }
                         Some(RuntimeCommand::Cancel { .. }) | None => {}
                     }

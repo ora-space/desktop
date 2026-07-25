@@ -227,14 +227,6 @@ impl Backend {
         self.agent_runtime.prompt_session(request).await
     }
 
-    /// Changes the operating mode of one running provider session.
-    pub async fn set_session_mode(
-        &self,
-        request: SetSessionModeRequest,
-    ) -> Result<SetSessionModeResponse, BackendError> {
-        self.agent_runtime.set_session_mode(request).await
-    }
-
     /// Delivers one validated permission response to the owning session actor.
     pub async fn respond_to_session_permission(
         &self,

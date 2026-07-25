@@ -7,9 +7,8 @@ use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
     PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
-    SESSION_LOAD_PATH, SESSION_MODE_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH,
-    SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH,
-    TASKS_PATH,
+    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
+    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
 };
 
 /// Builds the top-level router for health checks and the persisted CRUD routes.
@@ -55,7 +54,6 @@ pub fn build_router(app_state: AppState) -> Router {
         )
         .route(SESSION_LOAD_PATH, post(sessions::load_session))
         .route(SESSION_PROMPT_PATH, post(sessions::prompt_session))
-        .route(SESSION_MODE_PATH, post(sessions::set_session_mode))
         .route(
             SESSION_PERMISSION_RESPONSE_PATH,
             post(sessions::respond_to_permission),

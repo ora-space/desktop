@@ -284,35 +284,6 @@ describe("Composer", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("switches between provider-advertised normal and plan modes", async () => {
-    const user = userEvent.setup();
-    const onModeChange = vi.fn().mockResolvedValue(undefined);
-    render(
-      <TooltipProvider>
-        <AppI18nProvider>
-          <Composer
-            onSend={() => {}}
-            isResponding={false}
-            modes={{
-              currentModeId: "normal",
-              availableModes: [
-                { id: "normal", name: "Normal" },
-                { id: "plan", name: "Plan", description: "Plan before implementation" },
-              ],
-            }}
-            onModeChange={onModeChange}
-          />
-        </AppI18nProvider>
-      </TooltipProvider>,
-    );
-
-    await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
-    expect(screen.getByText("Modes")).toBeVisible();
-    expect(screen.getByRole("option", { name: "Normal" })).toHaveAttribute("aria-current", "true");
-    await user.click(screen.getByRole("option", { name: "Plan" }));
-
-    expect(onModeChange).toHaveBeenCalledWith("plan");
-  });
 });
 
 describe("Structured ACP content", () => {

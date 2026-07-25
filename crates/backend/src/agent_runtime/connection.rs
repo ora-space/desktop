@@ -113,6 +113,11 @@ impl ConnectionSupervisors {
 }
 
 impl ConnectionSupervisor {
+    /// Buffers otherwise-unrouted updates until `session/new` returns its provider id.
+    pub fn begin_session_setup(&self) -> super::routing::SetupRegistration {
+        self.routes.begin_session_setup()
+    }
+
     /// Starts one application-scoped CLI supervisor independently of the caller's runtime.
     fn start(
         agent_cli: AgentCli,
@@ -196,6 +201,7 @@ impl ConnectionSupervisor {
         Ok(SessionChannel {
             connection,
             updates,
+            pending_updates: std::collections::VecDeque::new(),
             controls,
             _registration: registration,
         })

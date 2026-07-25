@@ -4,7 +4,7 @@ import type { ListDirectoryRequest, ListDirectoryResponse } from "./file-system.
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse } from "./project-work-context.js";
-import type { CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, SetSessionModeRequest, SetSessionModeResponse, StopSessionRequest, StopSessionResponse } from "./session.js";
+import type { CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, StopSessionRequest, StopSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
 import type { HttpMethod } from "./transport.js";
@@ -52,7 +52,6 @@ export type RequestByOperation = {
   listSessions: ListSessionsRequest;
   loadSession: LoadSessionRequest;
   promptSession: PromptSessionRequest;
-  setSessionMode: SetSessionModeRequest;
   respondToSessionPermission: RespondToPermissionRequest;
   stopSession: StopSessionRequest;
   deleteSession: DeleteSessionRequest;
@@ -89,7 +88,6 @@ export type ResponseByOperation = {
   listSessions: ListSessionsResponse;
   loadSession: LoadSessionEvent;
   promptSession: PromptSessionEvent;
-  setSessionMode: SetSessionModeResponse;
   respondToSessionPermission: RespondToPermissionResponse;
   stopSession: StopSessionResponse;
   deleteSession: DeleteSessionResponse;
@@ -340,19 +338,6 @@ export const endpoints = {
     requestType: "PromptSessionRequest",
     responseType: "PromptSessionEvent",
     responseMode: "stream",
-    pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
-    queryParams: [],
-    hasJsonBody: true,
-  },
-  setSessionMode: {
-    operationName: "setSessionMode",
-    namespace: "session",
-    memberName: "setMode",
-    method: "POST",
-    pathTemplate: "/api/sessions/{sessionId}/mode",
-    requestType: "SetSessionModeRequest",
-    responseType: "SetSessionModeResponse",
-    responseMode: "unary",
     pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
     queryParams: [],
     hasJsonBody: true,

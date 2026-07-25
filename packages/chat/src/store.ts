@@ -60,7 +60,7 @@ export interface SendMessageRequest {
 
 export interface CreateSessionResult {
   oraSessionId: string;
-  modes: acp.SessionModeState | null;
+  availableCommands: acp.AvailableCommand[];
 }
 
 export interface ChatState {
@@ -69,7 +69,6 @@ export interface ChatState {
   initializeSession(oraSessionId: string): void;
   loadSession(oraSessionId: string): Promise<void>;
   sendMessage(request: SendMessageRequest): Promise<void>;
-  setMode(oraSessionId: string, modeId: acp.SessionModeId): Promise<void>;
   stopGeneration(oraSessionId: string): void;
   respondToPermission(oraSessionId: string, permissionRequestId: string, optionId: string): Promise<void>;
   clearAll(): void;
@@ -84,13 +83,12 @@ export interface ChatStoreOptions {
 export type ChatStore = StoreApi<ChatState>;
 export type ChatSessionClient = Pick<
   ContractsClient["session"],
-  "load" | "prompt" | "setMode" | "respondToPermission"
+  "load" | "prompt" | "respondToPermission"
 >;
 
 const EMPTY_CONVERSATION: SessionConversation = {
   turns: [],
   availableCommands: [],
-  modes: null,
   sessionTitle: null,
   sessionUpdatedAt: null,
   isLoaded: false,
@@ -112,7 +110,7 @@ interface BufferedTextChunk {
 
 type ConversationUpdate = Extract<
   acp.SessionUpdate,
-  { sessionUpdate: "available_commands_update" | "current_mode_update" | "session_info_update" }
+  { sessionUpdate: "available_commands_update" | "session_info_update" }
 >;
 
 /** Creates a per-session chat state owner backed directly by generated Ora contracts. */
@@ -158,8 +156,6 @@ export function createChatStore(
             staged.applyUpdate(event.update);
           } else if (event.type === "permission_request") {
             staged.addPermission(event);
-          } else if (event.type === "mode_state") {
-            staged.setModes(event.modes);
           } else {
             completed = true;
           }
@@ -324,7 +320,7 @@ export function createChatStore(
         // landing layout and replay the slide-down animation.
         updateConversation(set, key, (conversation) => ({
           ...conversation,
-          modes: created.modes,
+          availableCommands: created.availableCommands,
           isLoaded: true,
         }));
         onSessionCreated?.(created.oraSessionId);
@@ -406,25 +402,6 @@ export function createChatStore(
 
     stopGeneration: (oraSessionId) => operations.get(oraSessionId)?.abort(),
 
-    setMode: async (oraSessionId, modeId) => {
-      try {
-        await client.setMode({ sessionId: oraSessionId, modeId });
-        updateConversation(set, oraSessionId, (conversation) => ({
-          ...conversation,
-          modes: conversation.modes === null
-            ? null
-            : { ...conversation.modes, currentModeId: modeId },
-          error: null,
-        }));
-      } catch (error) {
-        updateConversation(set, oraSessionId, (conversation) => ({
-          ...conversation,
-          error: errorMessage(error),
-        }));
-        throw error;
-      }
-    },
-
     respondToPermission: async (oraSessionId, permissionRequestId, optionId) => {
       try {
         await client.respondToPermission({
@@ -466,7 +443,6 @@ class HistoryBuilder {
   readonly permissions: SessionPermissionRequest[] = [];
   private readonly turns: ChatTurn[] = [];
   private availableCommands: acp.AvailableCommand[] = [];
-  private modes: acp.SessionModeState | null = null;
   private sessionTitle: string | null = null;
   private sessionUpdatedAt: string | null = null;
 
@@ -483,7 +459,6 @@ class HistoryBuilder {
     if (isConversationUpdate(update)) {
       const conversation = applyConversationUpdate(this.snapshot(), update);
       this.availableCommands = conversation.availableCommands;
-      this.modes = conversation.modes;
       this.sessionTitle = conversation.sessionTitle;
       this.sessionUpdatedAt = conversation.sessionUpdatedAt;
       return;
@@ -495,11 +470,6 @@ class HistoryBuilder {
 
   addPermission(request: SessionPermissionRequest): void {
     this.permissions.push(request);
-  }
-
-  /** Preserves the provider-advertised mode catalog returned by session/load. */
-  setModes(modes: acp.SessionModeState): void {
-    this.modes = modes;
   }
 
   /** Produces a complete loaded conversation after the finite replay stream ends. */
@@ -518,7 +488,6 @@ class HistoryBuilder {
       ...EMPTY_CONVERSATION,
       turns: this.turns,
       availableCommands: this.availableCommands,
-      modes: this.modes,
       sessionTitle: this.sessionTitle,
       sessionUpdatedAt: this.sessionUpdatedAt,
     };
@@ -682,13 +651,13 @@ function isConversationUpdate(
   update: acp.SessionUpdate,
 ): update is ConversationUpdate {
   return update.sessionUpdate === "available_commands_update"
-    || update.sessionUpdate === "current_mode_update"
     || update.sessionUpdate === "session_info_update";
 }
 
 /** Ignores deferred conversation chrome without materializing an empty replay turn. */
 function isDeferredConversationUpdate(update: acp.SessionUpdate): boolean {
   return update.sessionUpdate === "config_option_update"
+    || update.sessionUpdate === "current_mode_update"
     || update.sessionUpdate === "usage_update";
 }
 
@@ -700,13 +669,6 @@ function applyConversationUpdate(
   switch (update.sessionUpdate) {
     case "available_commands_update":
       return { ...conversation, availableCommands: update.availableCommands };
-    case "current_mode_update":
-      return {
-        ...conversation,
-        modes: conversation.modes === null
-          ? null
-          : { ...conversation.modes, currentModeId: update.currentModeId },
-      };
     case "session_info_update":
       return {
         ...conversation,

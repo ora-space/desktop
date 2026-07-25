@@ -14,15 +14,12 @@ use crate::{BackendError, BackendErrorKind};
 use connection::{ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
 use ora_contracts::acp::content::ContentBlock;
-use ora_contracts::acp::session_mode::{
-    SetSessionModeRequest as AcpSetSessionModeRequest,
-    SetSessionModeResponse as AcpSetSessionModeResponse,
-};
+use ora_contracts::acp::session::SessionUpdate;
+use ora_contracts::acp::slash_command::AvailableCommand;
 use ora_contracts::{
     CreateSessionRequest, CreateSessionResponse, DeleteSessionResponse, LoadSessionEvent,
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
-    RespondToPermissionResponse, SetSessionModeRequest, SetSessionModeResponse, StopSessionRequest,
-    StopSessionResponse,
+    RespondToPermissionResponse, StopSessionRequest, StopSessionResponse,
 };
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentCli, AuditFields, Session, SessionId, SessionStatus, TaskId};
@@ -73,10 +70,6 @@ pub(super) enum RuntimeCommand {
         prompt: Vec<ContentBlock>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
         accepted: oneshot::Sender<Result<(), BackendError>>,
-    },
-    SetMode {
-        mode_id: ora_contracts::acp::session_mode::SessionModeId,
-        response: oneshot::Sender<Result<SetSessionModeResponse, BackendError>>,
     },
     RespondToPermission {
         request: RespondToPermissionRequest,
@@ -145,6 +138,7 @@ impl AgentRuntimeManager {
         let cwd = resolve_task_cwd(&self.inner.pool, &TaskId::new(request.task_id.clone()))?;
         let supervisor = self.inner.connections.for_agent(agent_cli);
         let connection = supervisor.current()?;
+        let _setup = supervisor.begin_session_setup();
         let response = timeout(
             SESSION_SETUP_TIMEOUT,
             connection.client.request::<_, NewSessionResponse>(
@@ -160,7 +154,8 @@ impl AgentRuntimeManager {
             )
         })?
         .map_err(map_acp_error)?;
-        let channel = supervisor.open_session_channel(response.session_id.0.as_ref())?;
+        let mut channel = supervisor.open_session_channel(response.session_id.0.as_ref())?;
+        let available_commands = collect_setup_commands(&mut channel).await;
         let now = self.inner.clock.now_timestamp_millis();
         let session = Session::new(
             UuidSessionIdGenerator::new().generate_session_id(),
@@ -186,7 +181,7 @@ impl AgentRuntimeManager {
         self.insert_actor(session.clone(), cwd, supervisor, Some(channel))?;
         Ok(CreateSessionResponse {
             session: contract_session(session),
-            modes: response.modes,
+            available_commands,
         })
     }
 
@@ -268,39 +263,6 @@ impl AgentRuntimeManager {
             handle.commands,
             operation_id,
         ))
-    }
-
-    /// Changes the provider mode for one running, idle session.
-    pub(crate) async fn set_session_mode(
-        &self,
-        request: SetSessionModeRequest,
-    ) -> Result<SetSessionModeResponse, BackendError> {
-        let _lifecycle = self.inner.lifecycle.lock().await;
-        let session = self.find_session(&request.session_id)?;
-        if session.status != SessionStatus::Running {
-            return Err(BackendError::new(
-                BackendErrorKind::Conflict,
-                "session_stopped",
-                "session must be loaded before changing mode",
-            ));
-        }
-        let handle = self.actor_for(session)?;
-        let (response_sender, response) = oneshot::channel();
-        handle
-            .commands
-            .send(RuntimeCommand::SetMode {
-                mode_id: request.mode_id,
-                response: response_sender,
-            })
-            .map_err(|_| {
-                runtime_internal(
-                    "agent_runtime_unavailable",
-                    "session runtime is unavailable",
-                )
-            })?;
-        response
-            .await
-            .map_err(|_| runtime_internal("agent_runtime_unavailable", "session runtime stopped"))?
     }
 
     /// Routes one opaque permission response to the actor that registered the request.
@@ -466,4 +428,25 @@ fn reconcile_running_sessions(
         }
     }
     Ok(())
+}
+
+/// Extracts the latest setup command catalog while preserving other updates for the first prompt.
+async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<AvailableCommand> {
+    let mut available_commands = Vec::new();
+    loop {
+        // ACP sends setup updates before the response, but the shared router runs
+        // independently and may need one short scheduling window to deliver them.
+        let Ok(Some(notification)) =
+            tokio::time::timeout(Duration::from_millis(10), channel.updates.recv()).await
+        else {
+            break;
+        };
+        if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
+            // Command updates replace the full catalog, so the last setup value wins.
+            available_commands = update.available_commands.clone();
+        } else {
+            channel.pending_updates.push_back(notification);
+        }
+    }
+    available_commands
 }

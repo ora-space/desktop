@@ -44,7 +44,6 @@ const tauriCommands = {
   listAgentModels: "list_agent_models",
   getSession: "get_session",
   listSessions: "list_sessions",
-  setSessionMode: "set_session_mode",
   respondToSessionPermission: "respond_to_session_permission",
   stopSession: "stop_session",
   deleteSession: "delete_session",

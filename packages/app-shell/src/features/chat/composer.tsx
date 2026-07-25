@@ -41,8 +41,6 @@ interface ComposerProps {
   autoFocus?: boolean;
   skills?: Skill[];
   availableCommands?: acp.AvailableCommand[];
-  modes?: acp.SessionModeState | null;
-  onModeChange?: (modeId: acp.SessionModeId) => Promise<void>;
 }
 
 interface ImageAttachment {
@@ -72,8 +70,6 @@ export function Composer({
   autoFocus = false,
   skills = [],
   availableCommands = [],
-  modes = null,
-  onModeChange,
 }: ComposerProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
@@ -93,11 +89,10 @@ export function Composer({
   const allActions = useMemo(() => buildComposerActions({
     skills,
     commands: availableCommands,
-    modes: onModeChange === undefined ? null : modes,
     includeAttachments: true,
     attachmentLabel: t("chat.actionMenu.addImages"),
     attachmentDescription: t("chat.actionMenu.addImagesDescription"),
-  }), [availableCommands, modes, onModeChange, skills, t]);
+  }), [availableCommands, skills, t]);
   const filteredActions = useMemo(
     () => filterComposerActions(allActions, plusMenuOpen ? "" : slashQuery ?? ""),
     [allActions, plusMenuOpen, slashQuery],
@@ -151,10 +146,6 @@ export function Composer({
         return;
       case "commands":
         insertPromptToken(`/${action.command.name} `);
-        return;
-      case "modes":
-        closeActionMenu();
-        void onModeChange?.(action.mode.id).catch(() => undefined);
         return;
       case "actions":
         closeActionMenu();
@@ -255,7 +246,6 @@ export function Composer({
           id={actionMenuId}
           actions={filteredActions}
           activeIndex={selectedActionIndex}
-          currentModeId={modes?.currentModeId}
           expandedGroups={expandedGroups}
           optionRefs={actionOptionRefs}
           onActiveIndexChange={setSelectedActionIndex}

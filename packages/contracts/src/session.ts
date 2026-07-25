@@ -3,7 +3,7 @@ import type { ContentBlock } from "./acp/content.js";
 import type { PermissionOption } from "./acp/permission.js";
 import type { StopReason } from "./acp/prompt.js";
 import type { SessionUpdate } from "./acp/session.js";
-import type { SessionModeId, SessionModeState } from "./acp/session_mode.js";
+import type { AvailableCommand } from "./acp/slash_command.js";
 import type { ToolCallUpdate } from "./acp/tool_call.js";
 
 /**
@@ -26,7 +26,7 @@ export type CreateSessionRequest = { taskId: string; agentCli: AgentCli };
  */
 export type CreateSessionResponse = {
   session: Session;
-  modes: SessionModeState | null;
+  availableCommands: Array<AvailableCommand>;
 };
 
 /**
@@ -75,7 +75,6 @@ export type ListSessionsResponse = { sessions: Array<Session> };
 export type LoadSessionEvent =
   | { "type": "session_update"; update: SessionUpdate }
   | { "type": "permission_request" } & SessionPermissionRequest
-  | { "type": "mode_state"; modes: SessionModeState }
   | { "type": "completed" };
 
 /**
@@ -136,19 +135,6 @@ export type SessionPermissionRequest = {
  * Describes whether a persisted session is registered on its shared CLI connection.
  */
 export type SessionStatus = "running" | "stopped";
-
-/**
- * Selects one provider-advertised mode for a running Ora session.
- */
-export type SetSessionModeRequest = {
-  sessionId: string;
-  modeId: SessionModeId;
-};
-
-/**
- * Confirms that the requested provider mode was accepted.
- */
-export type SetSessionModeResponse = Record<symbol, never>;
 
 /**
  * Identifies a running session whose child process should be stopped.
