@@ -156,10 +156,10 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
     };
   } else if (dialog.kind === "task") {
     title = dialog.entity ? t("dialog.editTask") : t("dialog.createWorktree");
-    description = dialog.entity ? t("dialog.taskDescription") : t("dialog.worktreeDescription");
+    description = dialog.entity ? undefined : t("dialog.worktreeDescription");
     submitLabel = dialog.entity ? t("dialog.saveTask") : t("dialog.createTask");
     fields = [
-      { kind: "text", name: "title", label: t("dialog.taskTitle"), value: dialog.entity?.title ?? "", placeholder: t("dialog.taskPlaceholder") },
+      { kind: "text", name: "title", label: t("dialog.taskTitle"), value: dialog.entity?.title ?? "" },
       // Status is only meaningful once a task exists; a new task always starts at "todo".
       ...(dialog.entity ? [{ kind: "select" as const, name: "status", label: t("dialog.status"), value: dialog.entity.status, options: [
         { label: t("common.todo"), value: "todo" }, { label: t("common.doing"), value: "doing" }, { label: t("common.done"), value: "done" },

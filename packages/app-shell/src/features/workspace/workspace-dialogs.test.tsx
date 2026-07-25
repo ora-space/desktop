@@ -85,7 +85,10 @@ describe("WorkspaceDialogs task creation", () => {
     );
 
     expect(screen.queryByRole("combobox", { name: /工作区模式|Workspace mode/ })).toBeNull();
-    await user.type(screen.getByLabelText(/任务标题|Task title/), "Worktree task");
+    expect(screen.getByText("Agent 在独立工作树中专注处理一项任务")).not.toBeNull();
+    const titleInput = screen.getByLabelText(/任务标题|Task title/);
+    expect(titleInput).not.toHaveAttribute("placeholder");
+    await user.type(titleInput, "Worktree task");
     await user.click(screen.getByRole("button", { name: /创建任务|Create task/ }));
 
     await waitFor(() => expect(state.tasks).toEqual([{
@@ -95,6 +98,38 @@ describe("WorkspaceDialogs task creation", () => {
       status: "todo",
       workspaceMode: "worktree",
     }]));
+  });
+
+  it("does not show helper text when editing a worktree task", () => {
+    const state = createMockClientState();
+    const client = createMockClient(state);
+    const Wrapper = createHookWrapper(client, createTestQueryClient(), createChatStore(client.session));
+    useUiStore.getState().setDialog({
+      kind: "task",
+      projectId: "p1",
+      entity: {
+        id: "t1",
+        projectId: "p1",
+        title: "Existing task",
+        status: "todo",
+        workspaceMode: "worktree",
+      },
+    });
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceDialogs />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("Agent 在独立工作树中专注处理一项任务");
+    expect(screen.getByLabelText(/任务标题|Task title/)).not.toHaveAttribute("placeholder");
   });
 
   it("explains that worktree mode requires a Git repository", async () => {
