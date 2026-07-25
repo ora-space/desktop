@@ -18,6 +18,7 @@ export type {
   ChatPlan,
   ChatThought,
   ChatToolCall,
+  ChatToolCallStatus,
   ChatTurn,
   ChatTurnItem,
   ChatTurnStatus,
@@ -360,18 +361,25 @@ export function createChatStore(
             appendPermission(set, key, event);
           } else {
             flushPendingTextChunk();
-            updateTurn(set, key, turnId, (current) => ({
-              ...current,
-              status: event.stopReason === "cancelled" ? "cancelled" : "completed",
-              stopReason: event.stopReason,
-            }));
+            updateTurn(set, key, turnId, (current) => {
+              const next = {
+                ...current,
+                status: event.stopReason === "cancelled" ? "cancelled" as const : "completed" as const,
+                stopReason: event.stopReason,
+              };
+              return event.stopReason === "cancelled"
+                ? cancelActiveToolCalls(next, now())
+                : next;
+            });
           }
         }
       } catch (error) {
         flushPendingTextChunk();
         if (isAbortError(error)) {
           updateTurn(set, key, turnId, (current) =>
-            current.status === "streaming" ? { ...current, status: "cancelled" } : current,
+            current.status === "streaming"
+              ? cancelActiveToolCalls({ ...current, status: "cancelled" }, now())
+              : current,
           );
           clearPendingPermissions(set, key);
         } else {
@@ -761,6 +769,18 @@ function updateToolCall(turn: ChatTurn, update: acp.ToolCallUpdate, timestamp: n
     updatedAt: timestamp,
   };
   return { ...turn, items };
+}
+
+/** Settles tools whose provider lifecycle cannot finish after the prompt stream is cancelled. */
+function cancelActiveToolCalls(turn: ChatTurn, timestamp: number): ChatTurn {
+  return {
+    ...turn,
+    items: turn.items.map((item) =>
+      item.kind === "toolCall" && (item.status === "pending" || item.status === "in_progress")
+        ? { ...item, status: "cancelled" as const, updatedAt: timestamp }
+        : item,
+    ),
+  };
 }
 
 function appendPermission(

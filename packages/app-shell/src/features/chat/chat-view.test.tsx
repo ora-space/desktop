@@ -13,6 +13,7 @@ import { ChatView } from "./chat-view";
 import { Composer } from "./composer";
 import { ConversationNavigator } from "./conversation-navigator";
 import { MessageList } from "./message-list";
+import { ToolCallBlock } from "./tool-call-block";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -146,6 +147,22 @@ function completedCommandItem(id: string, title: string, createdAt: number): Cha
 function thoughtItem(id: string, content: string, createdAt: number): ChatThought {
   return { kind: "thought", id, content, createdAt };
 }
+
+describe("Tool calls", () => {
+  it("renders a cancelled tool as settled instead of running", () => {
+    renderWithI18n(
+      <ToolCallBlock
+        tool={{
+          ...toolCallItem("tool-1", 100),
+          status: "cancelled",
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/已取消|Cancelled/)).toBeVisible();
+    expect(screen.queryByText(/执行中|Running/)).toBeNull();
+  });
+});
 
 describe("Composer", () => {
   it("sends trimmed text with Enter and clears the textarea", async () => {

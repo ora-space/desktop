@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   IconAlertTriangle,
+  IconBan,
   IconCheck,
   IconChevronDown,
   IconCode,
@@ -17,7 +18,7 @@ import {
 } from "@tabler/icons-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@ora/ui";
 import { useTranslation } from "react-i18next";
-import type { ChatToolCall } from "@ora/chat";
+import type { ChatToolCall, ChatToolCallStatus } from "@ora/chat";
 import type { acp } from "@ora/contracts";
 import { DiffView } from "./diff-view";
 import { ContentBlock } from "./content-block";
@@ -227,13 +228,15 @@ function ToolKindIcon({ kind }: { kind: acp.ToolKind | undefined }) {
 }
 
 /** Displays tool state with both iconography and localized text. */
-export function ToolStatus({ status, compact = false }: { status: acp.ToolCallStatus | undefined; compact?: boolean }) {
+export function ToolStatus({ status, compact = false }: { status: ChatToolCallStatus | undefined; compact?: boolean }) {
   const { t } = useTranslation();
   switch (status) {
     case "completed":
       return <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-emerald-600"><IconCheck className="size-3" />{compact ? <span className="sr-only">{t("chat.toolCompleted")}</span> : t("chat.toolCompleted")}</span>;
     case "failed":
       return <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-destructive"><IconAlertTriangle className="size-3" />{compact ? <span className="sr-only">{t("chat.toolFailed")}</span> : t("chat.toolFailed")}</span>;
+    case "cancelled":
+      return <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"><IconBan className="size-3" />{compact ? <span className="sr-only">{t("chat.toolCancelled")}</span> : t("chat.toolCancelled")}</span>;
     case "pending":
       return <span className="shrink-0 text-[11px] text-muted-foreground">{compact ? <span className="sr-only">{t("chat.toolPending")}</span> : t("chat.toolPending")}</span>;
     case "in_progress":

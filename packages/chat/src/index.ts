@@ -6,6 +6,7 @@ export {
   type ChatPlan,
   type ChatThought,
   type ChatToolCall,
+  type ChatToolCallStatus,
   type ChatTurn,
   type ChatTurnItem,
   type ChatTurnStatus,
