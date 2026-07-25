@@ -1,4 +1,6 @@
+import { useState } from "react";
 import {
+  IconArrowsMaximize,
   IconDownload,
   IconExternalLink,
   IconFile,
@@ -8,6 +10,7 @@ import {
 } from "@tabler/icons-react";
 import type { acp } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
+import { ImagePreviewDialog } from "./image-preview-dialog";
 
 interface ContentBlockProps {
   content: Exclude<acp.ContentBlock, { type: "text" }>;
@@ -37,6 +40,7 @@ function ImageBlock({
   appearance: "message" | "tool";
 }) {
   const { t } = useTranslation();
+  const [previewOpen, setPreviewOpen] = useState(false);
   const src = mediaDataUrl(content.mimeType, content.data);
   if (src === null || !PREVIEWABLE_IMAGE_TYPES.has(content.mimeType.toLocaleLowerCase())) {
     return <BinaryDownload uri={content.uri ?? undefined} mimeType={content.mimeType} data={content.data} />;
@@ -44,26 +48,39 @@ function ImageBlock({
   const label = content.uri ? resourceName(content.uri) : t("chat.content.generatedImage");
   return (
     <figure className={`overflow-hidden rounded-md border border-border bg-muted/20 ${appearance === "tool" ? "max-w-xl" : "max-w-2xl"}`}>
-      <a href={src} target="_blank" rel="noreferrer" className="group block outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <div className="relative flex min-h-36 max-h-[32rem] items-center justify-center bg-[var(--code-background)]">
-          <img
-            src={src}
-            alt={label}
-            loading="lazy"
-            decoding="async"
-            className="max-h-[32rem] w-auto max-w-full object-contain"
-          />
-          <span className="absolute right-2 top-2 flex size-8 items-center justify-center rounded-md border border-white/20 bg-black/60 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
-            <IconExternalLink className="size-4" aria-hidden="true" />
-            <span className="sr-only">{t("chat.content.openImage")}</span>
+      <div className="group relative">
+        <button
+          type="button"
+          onClick={() => setPreviewOpen(true)}
+          aria-label={t("chat.content.previewImage", { name: label })}
+          className="block w-full cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <span className="flex min-h-36 max-h-[32rem] items-center justify-center bg-[var(--code-background)]">
+            <img
+              src={src}
+              alt={label}
+              loading="lazy"
+              decoding="async"
+              className="max-h-[32rem] w-auto max-w-full object-contain"
+            />
           </span>
-        </div>
-      </a>
+        </button>
+        <button
+          type="button"
+          data-slot="image-expand-button"
+          onClick={() => setPreviewOpen(true)}
+          aria-label={t("chat.content.expandImage", { name: label })}
+          className="absolute right-2 top-2 flex size-9 cursor-pointer items-center justify-center rounded-md border border-white/15 bg-black/55 text-white/90 opacity-80 shadow-sm outline-none backdrop-blur-sm transition-[opacity,background-color] duration-150 hover:bg-black/70 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-white"
+        >
+            <IconArrowsMaximize className="size-4" />
+        </button>
+      </div>
       <figcaption className="flex min-h-9 items-center gap-2 border-t border-border px-3 text-xs text-muted-foreground">
         <IconPhoto className="size-4 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate" title={label}>{label}</span>
         <span className="shrink-0 font-mono text-[10px]">{content.mimeType}</span>
       </figcaption>
+      <ImagePreviewDialog open={previewOpen} src={src} name={label} onOpenChange={setPreviewOpen} />
     </figure>
   );
 }
