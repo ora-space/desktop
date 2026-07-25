@@ -146,7 +146,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
           const response = await client.session.create({
             taskId,
-            agentCli: DEFAULT_AGENT_CLI,
+            agentCli: settingsAgentCli,
           });
           queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
             upsertById(current, response.session),

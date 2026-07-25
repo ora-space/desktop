@@ -28,18 +28,20 @@ function createTestQueryClient() {
 function renderWithI18n(element: ReactNode) {
   const client = createMockClient(createMockClientState());
   const queryClient = createTestQueryClient();
-  return {
-    ...render(
+  // A wrapper (rather than a one-off wrapped element) so `rerender` re-applies
+  // every provider — the model selector reads the contracts client on each pass.
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
       createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        createElement(
-          ContractsClientContext.Provider,
-          { value: client },
-          createElement(AppI18nProvider, null, element),
-        ),
+        ContractsClientContext.Provider,
+        { value: client },
+        createElement(AppI18nProvider, null, children),
       ),
-    ),
+    );
+  return {
+    ...render(element, { wrapper }),
     client,
     queryClient,
   };
@@ -198,7 +200,6 @@ describe("ChatView", () => {
     await user.hover(screen.getByRole("textbox"));
 
     view.rerender(
-      <AppI18nProvider>
         <ChatView
           turns={[]}
           userName="Eric"
@@ -208,7 +209,6 @@ describe("ChatView", () => {
           disabledHint="pick a project"
           onSend={() => {}}
         />
-      </AppI18nProvider>,
     );
 
     expect(screen.queryByText("pick a project")).toBeNull();
@@ -268,16 +268,13 @@ describe("ChatView", () => {
     // slides down here, before any turn exists.
     top = 800;
     view.rerender(
-      <AppI18nProvider>
         <ChatView turns={[]} userName="Eric" isResponding={false} isLoading error={null} onSend={() => {}} />
-      </AppI18nProvider>,
     );
     expect(animate).toHaveBeenCalledTimes(1);
 
     // History arriving is not a landing→thread transition, so it must not replay
     // the slide — otherwise the composer animates twice for one selection.
     view.rerender(
-      <AppI18nProvider>
         <ChatView
           turns={[turn("turn-1", "hello", 100)]}
           userName="Eric"
@@ -285,7 +282,6 @@ describe("ChatView", () => {
           error={null}
           onSend={() => {}}
         />
-      </AppI18nProvider>,
     );
     expect(animate).toHaveBeenCalledTimes(1);
 
@@ -314,7 +310,6 @@ describe("ChatView", () => {
 
     top = 800;
     view.rerender(
-      <AppI18nProvider>
         <ChatView
           turns={[turn("turn-1", "hello", 100)]}
           userName="Eric"
@@ -322,7 +317,6 @@ describe("ChatView", () => {
           error={null}
           onSend={() => {}}
         />
-      </AppI18nProvider>,
     );
 
     // Identity is the whole point: a remounted composer cannot be animated and
@@ -449,37 +443,31 @@ describe("MessageList", () => {
 
     // Answer body streaming in: the growing text is signal enough, so it hides.
     view.rerender(
-      <AppI18nProvider>
         <MessageList
           turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock", 200)], "streaming")]}
           userName="Eric"
           isResponding
         />
-      </AppI18nProvider>,
     );
     expect(screen.queryByLabelText(/正在运行|is working/)).not.toBeInTheDocument();
 
     // Back to working — a tool call trails the text — so the indicator returns.
     view.rerender(
-      <AppI18nProvider>
         <MessageList
           turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock", 200), toolCallItem("tool-1", 300)], "streaming")]}
           userName="Eric"
           isResponding
         />
-      </AppI18nProvider>,
     );
     expect(screen.getByLabelText(/正在运行|is working/)).toBeInTheDocument();
 
     // Clears once the turn settles and the agent is no longer responding.
     view.rerender(
-      <AppI18nProvider>
         <MessageList
           turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock", 200)], "completed")]}
           userName="Eric"
           isResponding={false}
         />
-      </AppI18nProvider>,
     );
     expect(screen.queryByLabelText(/正在运行|is working/)).not.toBeInTheDocument();
   });
@@ -497,13 +485,11 @@ describe("MessageList", () => {
     list.scrollTop = 0;
 
     view.rerender(
-      <AppI18nProvider>
         <MessageList
           turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock response", 200)], "streaming")]}
           userName="Eric"
           isResponding
         />
-      </AppI18nProvider>,
     );
 
     expect(list.scrollTop).toBe(240);
@@ -527,13 +513,11 @@ describe("MessageList", () => {
     fireEvent.scroll(list);
 
     view.rerender(
-      <AppI18nProvider>
         <MessageList
           turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock response", 200)], "streaming")]}
           userName="Eric"
           isResponding
         />
-      </AppI18nProvider>,
     );
 
     expect(list.scrollTop).toBe(0);
@@ -551,13 +535,11 @@ describe("MessageList", () => {
     fireEvent.scroll(list);
 
     view.rerender(
-      <AppI18nProvider>
         <MessageList
           turns={[first, turn("turn-2", "Follow-up", 300, [], "streaming")]}
           userName="Eric"
           isResponding={false}
         />
-      </AppI18nProvider>,
     );
 
     expect(list.scrollTop).toBe(240);
@@ -594,11 +576,9 @@ describe("ConversationNavigator", () => {
     expect(onNavigate.mock.calls).toEqual([["turn-1:response"], ["turn-2:response"]]);
 
     view.rerender(
-      <AppI18nProvider>
         <TooltipProvider>
           <ConversationNavigator turns={turns} activeAnchorId="turn-1:user" onNavigate={onNavigate} />
         </TooltipProvider>
-      </AppI18nProvider>,
     );
     expect(previousButton).toBeDisabled();
     expect(previousButton).toBeVisible();
@@ -608,11 +588,9 @@ describe("ConversationNavigator", () => {
     expect(await screen.findByText(/这是第一条消息|This is the first message/)).toBeVisible();
 
     view.rerender(
-      <AppI18nProvider>
         <TooltipProvider>
           <ConversationNavigator turns={turns} activeAnchorId="turn-3:response" onNavigate={onNavigate} />
         </TooltipProvider>
-      </AppI18nProvider>,
     );
     expect(previousButton).toBeEnabled();
     expect(nextButton).toBeDisabled();

@@ -130,7 +130,7 @@ describe("WorkspaceSidebar", () => {
     useWorkspaceSelectionStore.getState().selectSession(SESSION.id, TASK.id, PROJECT.id);
     renderSidebar(workspaceWithOneSession());
 
-    await user.click(await screen.findByRole("button", { name: /新建会话|New chat/ }));
+    await user.click(await screen.findByRole("button", { name: /新建直聊|New direct chat/ }));
 
     expect(useWorkspaceSelectionStore.getState().selection).toEqual({
       projectId: PROJECT.id,
