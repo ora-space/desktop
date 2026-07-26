@@ -1,6 +1,7 @@
 use super::{resolve_agent_cli_path, support::contract_agent_cli};
 use ora_contracts::{AgentCliModels, ListAgentModelsResponse};
 use ora_domain::AgentCli;
+use ora_logging::ora_warn;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
@@ -34,8 +35,7 @@ async fn query_agent_models(agent_cli: AgentCli, home_directory: &Path) -> Optio
     let output = match timeout(MODEL_LIST_TIMEOUT, command.output()).await {
         Ok(Ok(output)) if output.status.success() => output,
         Ok(Ok(output)) => {
-            tracing::warn!(
-                target: "ora_backend::agent_runtime",
+            ora_warn!(
                 agent_cli = agent_cli.database_value(),
                 status = %output.status,
                 "agent CLI model discovery failed"
@@ -43,8 +43,7 @@ async fn query_agent_models(agent_cli: AgentCli, home_directory: &Path) -> Optio
             return None;
         }
         Ok(Err(error)) => {
-            tracing::warn!(
-                target: "ora_backend::agent_runtime",
+            ora_warn!(
                 agent_cli = agent_cli.database_value(),
                 error = %error,
                 "agent CLI model discovery could not start"
@@ -52,8 +51,7 @@ async fn query_agent_models(agent_cli: AgentCli, home_directory: &Path) -> Optio
             return None;
         }
         Err(_) => {
-            tracing::warn!(
-                target: "ora_backend::agent_runtime",
+            ora_warn!(
                 agent_cli = agent_cli.database_value(),
                 "agent CLI model discovery timed out"
             );
@@ -108,6 +106,8 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn lists_only_successful_cli_groups() {
+        use super::list_agent_models;
+        use ora_contracts::{AgentCli, AgentCliModels, ListAgentModelsResponse};
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
 
@@ -126,7 +126,7 @@ mod tests {
             list_agent_models(home.path()).await,
             ListAgentModelsResponse {
                 groups: vec![AgentCliModels {
-                    agent_cli: ContractAgentCli::OpenCode,
+                    agent_cli: AgentCli::OpenCode,
                     models: vec!["provider/alpha".to_string(), "provider/zeta".to_string(),],
                 }],
             }

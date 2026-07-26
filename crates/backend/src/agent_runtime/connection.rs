@@ -15,6 +15,7 @@ use ora_contracts::acp::notification::SessionNotification;
 use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentCli, SessionStatus};
+use ora_logging::{ora_error, ora_info, ora_warn};
 use ora_process::{
     ManagedProcess, ProcessSpawner, ProcessSpec, TokioManagedProcess, TokioProcessSpawner,
 };
@@ -136,8 +137,7 @@ impl ConnectionSupervisor {
                 shutdown: shutdown_receiver,
             }),
         ) {
-            tracing::warn!(
-                target: "ora_backend::agent_runtime",
+            ora_warn!(
                 agent_cli = agent_cli.database_value(),
                 error = %error,
                 "agent CLI supervisor thread could not start"
@@ -219,8 +219,7 @@ where
             {
                 Ok(runtime) => runtime,
                 Err(error) => {
-                    tracing::error!(
-                        target: "ora_backend::agent_runtime",
+                    ora_error!(
                         agent_cli = agent_cli.database_value(),
                         error = %error,
                         "agent CLI supervisor runtime could not start"
@@ -278,8 +277,7 @@ async fn run_supervisor(context: SupervisorContext) {
                     close_session_supported: process.close_session_supported,
                 };
                 let _ = state.send(ConnectionState::Ready(connection));
-                tracing::info!(
-                    target: "ora_backend::agent_runtime",
+                ora_info!(
                     agent_cli = agent_cli.database_value(),
                     generation,
                     process_id = process.child.id(),
@@ -298,8 +296,7 @@ async fn run_supervisor(context: SupervisorContext) {
                     return;
                 }
                 terminate_and_reap(&process.child).await;
-                tracing::warn!(
-                    target: "ora_backend::agent_runtime",
+                ora_warn!(
                     agent_cli = agent_cli.database_value(),
                     generation,
                     "agent CLI connection failed; scheduling restart"
@@ -307,8 +304,7 @@ async fn run_supervisor(context: SupervisorContext) {
             }
             Err(error) => {
                 let _ = state.send(ConnectionState::Unavailable);
-                tracing::warn!(
-                    target: "ora_backend::agent_runtime",
+                ora_warn!(
                     agent_cli = agent_cli.database_value(),
                     error = %error,
                     "agent CLI startup failed; scheduling retry"
@@ -348,8 +344,7 @@ async fn run_process_generation(
                         }
                     }
                     Some(AcpControl::Fatal(error)) => {
-                        tracing::warn!(
-                            target: "ora_backend::agent_runtime",
+                        ora_warn!(
                             error = %error,
                             "agent CLI ACP connection failed"
                         );
