@@ -664,7 +664,7 @@ const translations = {
     "dialog.pathSelectionError": "Unable to open the path picker. Try again.",
     "dialog.editWorktree": "Edit worktree",
     "dialog.createWorktree": "Create worktree task",
-    "dialog.worktreeDescription": "An agent focuses on one task in an isolated worktree.",
+    "dialog.worktreeDescription": "Make agent focus on one task in an isolated worktree.",
     "dialog.editTask": "Edit task",
     "dialog.workspaceMode": "Workspace mode",
     "dialog.workspaceModeWorktree": "Worktree (Git branch)",

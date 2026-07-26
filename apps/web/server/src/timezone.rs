@@ -1,8 +1,6 @@
-//! Resolves the Web server's process timezone without leaking environment policy into libraries.
+//! Resolves the Web server's process timezone from the environment contract owned by `config`.
 
-const TIMEZONE_ENV_VAR: &str = "ORA_TIMEZONE";
-const SYSTEM_TIMEZONE_ENV_VAR: &str = "TZ";
-const DEFAULT_TIMEZONE: &str = "Asia/Shanghai";
+use crate::config::{DEFAULT_TIMEZONE, SYSTEM_TIMEZONE_ENV_VAR, TIMEZONE_ENV_VAR};
 
 /// Identifies the Web configuration source that determined the process timezone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,10 +93,8 @@ fn read_non_empty_trimmed_variable(
 mod tests {
     use pretty_assertions::assert_eq;
 
-    use super::{
-        ResolvedTimezone, SYSTEM_TIMEZONE_ENV_VAR, TIMEZONE_ENV_VAR, TimezoneSource,
-        TimezoneWarning, resolve,
-    };
+    use super::{ResolvedTimezone, TimezoneSource, TimezoneWarning, resolve};
+    use crate::config::{SYSTEM_TIMEZONE_ENV_VAR, TIMEZONE_ENV_VAR};
 
     /// Verifies Ora's explicit timezone overrides the generic system environment variable.
     #[test]

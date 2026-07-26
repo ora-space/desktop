@@ -20,29 +20,7 @@ use tokio::net::TcpListener;
 async fn main() -> Result<(), WebBootstrapError> {
     let runtime_config = RuntimeConfig::from_env()?;
     let _logging_guard = initialize_logging(runtime_config.logging())?;
-    match runtime_config.timezone_warning() {
-        Some(TimezoneWarning::MissingConfiguration) => {
-            ora_warn!(
-                message = "timezone is not explicitly configured, using default timezone",
-                source = runtime_config.timezone_source().as_str(),
-                fallback_timezone = %runtime_config.logging().timezone,
-            );
-        }
-        Some(TimezoneWarning::InvalidConfiguration { source, timezone }) => {
-            ora_warn!(
-                message = "invalid IANA timezone configuration, falling back to UTC",
-                source = source.as_str(),
-                timezone,
-                fallback_timezone = %runtime_config.logging().timezone,
-            );
-        }
-        None => {}
-    }
-    ora_info!(
-        message = "logging initialized",
-        timezone = %runtime_config.logging().timezone,
-        timezone_source = runtime_config.timezone_source().as_str(),
-    );
+    report_timezone_status(&runtime_config);
     register_gitlancer_logger();
     let app_state = build_app_state(&runtime_config)?;
     let router = build_router(app_state.clone());
@@ -79,6 +57,34 @@ fn initialize_logging(
     logging_config: &ora_logging::LoggingConfig,
 ) -> Result<LoggingGuard, WebBootstrapError> {
     init_logging(logging_config.clone()).map_err(WebBootstrapError::LoggingInit)
+}
+
+/// Reports the resolved timezone configuration, warning on missing or invalid settings,
+/// and emits the post-initialization info log once logging is ready.
+fn report_timezone_status(runtime_config: &RuntimeConfig) {
+    match runtime_config.timezone_warning() {
+        Some(TimezoneWarning::MissingConfiguration) => {
+            ora_warn!(
+                message = "timezone is not explicitly configured, using default timezone",
+                source = runtime_config.timezone_source().as_str(),
+                fallback_timezone = %runtime_config.logging().timezone,
+            );
+        }
+        Some(TimezoneWarning::InvalidConfiguration { source, timezone }) => {
+            ora_warn!(
+                message = "invalid IANA timezone configuration, falling back to UTC",
+                source = source.as_str(),
+                timezone,
+                fallback_timezone = %runtime_config.logging().timezone,
+            );
+        }
+        None => {}
+    }
+    ora_info!(
+        message = "logging initialized",
+        timezone = %runtime_config.logging().timezone,
+        timezone_source = runtime_config.timezone_source().as_str(),
+    );
 }
 
 /// Waits for the process shutdown signal so the server stops cleanly on SIGINT.

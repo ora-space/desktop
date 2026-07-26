@@ -14,6 +14,9 @@ const PORT_ENV_VAR: &str = "ORA_PORT";
 const LOG_LEVEL_ENV_VAR: &str = "ORA_LOG_LEVEL";
 const LOG_MODE_ENV_VAR: &str = "ORA_LOG_MODE";
 const LOG_MAX_DAYS_ENV_VAR: &str = "ORA_LOG_MAX_DAYS";
+// Shared with the `timezone` module, which owns the resolution logic that consumes them.
+pub(crate) const TIMEZONE_ENV_VAR: &str = "ORA_TIMEZONE";
+pub(crate) const SYSTEM_TIMEZONE_ENV_VAR: &str = "TZ";
 const HOME_ENV_VAR: &str = "HOME";
 const USER_PROFILE_ENV_VAR: &str = "USERPROFILE";
 
@@ -22,6 +25,7 @@ const DEFAULT_PORT: u16 = 32578;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_LOG_MODE: &str = "stdout";
 const DEFAULT_LOG_MAX_DAYS: &str = "3";
+pub(crate) const DEFAULT_TIMEZONE: &str = "Asia/Shanghai";
 
 /// Groups the runtime configuration required to bootstrap the web server process.
 pub struct RuntimeConfig {

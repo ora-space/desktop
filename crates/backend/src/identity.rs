@@ -39,9 +39,9 @@ pub fn resolve_git_identity() -> GitIdentityResponse {
 /// Merges the git and GitHub identities by precedence: git wins, then GitHub's
 /// display name (or login), then GitHub's public email.
 fn combine_identity(git: GlobalIdentity, gh: Option<GhUser>) -> GitIdentityResponse {
-    let gh_name = gh.as_ref().map(|user| {
-        clean(user.name.as_deref()).unwrap_or_else(|| user.login.trim().to_string())
-    });
+    let gh_name = gh
+        .as_ref()
+        .map(|user| clean(user.name.as_deref()).unwrap_or_else(|| user.login.trim().to_string()));
     let gh_email = gh.as_ref().and_then(|user| clean(user.email.as_deref()));
 
     GitIdentityResponse {
@@ -97,7 +97,10 @@ mod tests {
         };
 
         assert_eq!(
-            combine_identity(git, Some(gh("ObsisMc", Some("Ray"), Some("ray@github.com")))),
+            combine_identity(
+                git,
+                Some(gh("ObsisMc", Some("Ray"), Some("ray@github.com")))
+            ),
             GitIdentityResponse {
                 name: Some("RuihaoZhang".to_string()),
                 email: Some("r9644360@gmail.com".to_string()),
@@ -142,7 +145,10 @@ mod tests {
         };
 
         assert_eq!(
-            combine_identity(git, Some(gh("ObsisMc", Some("Ray"), Some("ray@github.com")))),
+            combine_identity(
+                git,
+                Some(gh("ObsisMc", Some("Ray"), Some("ray@github.com")))
+            ),
             GitIdentityResponse {
                 name: Some("RuihaoZhang".to_string()),
                 email: Some("ray@github.com".to_string()),

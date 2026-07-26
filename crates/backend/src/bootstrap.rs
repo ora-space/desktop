@@ -104,7 +104,7 @@ impl Backend {
     /// provider, so the path always matches where the session actually runs. Fails
     /// when the task has no active worktree on disk.
     pub fn resolve_task_cwd(&self, task_id: &str) -> Result<PathBuf, BackendError> {
-        crate::agent_runtime::resolve_task_cwd(&self.pool, &ora_domain::TaskId::new(task_id))
+        crate::task::resolve_task_cwd(&self.pool, &ora_domain::TaskId::new(task_id))
     }
 
     /// Reads the host identity for the sidebar profile: global git config first,

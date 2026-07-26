@@ -6,9 +6,10 @@ mod stream;
 mod support;
 
 pub use stream::SessionEventStream;
-pub(crate) use support::*;
+use support::*;
 
 use crate::clock::SystemClock;
+use crate::task::resolve_task_cwd;
 use crate::{BackendError, BackendErrorKind};
 use connection::{ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
