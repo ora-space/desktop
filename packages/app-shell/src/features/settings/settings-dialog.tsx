@@ -36,6 +36,7 @@ import {
   IconMoon,
   IconPuzzle,
   IconRobot,
+  IconRoute,
   IconShieldCheck,
   IconSparkles,
   IconSun,
@@ -45,6 +46,7 @@ import type { Locale } from "../../i18n/i18n";
 import { RolesSettings, SkillsSettings } from "./atoms-settings";
 import { PluginsSettings } from "./plugins-settings";
 import { SettingsHeading } from "./settings-heading";
+import { WorkflowSettings } from "./workflow-settings";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useSettingsStore, type SettingsPreferences } from "../../state/stores/settings-store";
 import { useChatStore } from "../../chat-store-context";
@@ -56,7 +58,14 @@ import type {
   ThemeMode,
 } from "../../state/stores/settings-store";
 
-type SettingsCategory = "appearance" | "roles" | "skills" | "plugins" | "permissions" | "privacy";
+type SettingsCategory =
+  | "appearance"
+  | "roles"
+  | "skills"
+  | "plugins"
+  | "workflow"
+  | "permissions"
+  | "privacy";
 
 /** Presents shared Ora preferences in a dense IDE-style settings surface. */
 export function SettingsDialog() {
@@ -74,6 +83,7 @@ export function SettingsDialog() {
     { id: "roles", icon: IconRobot, label: t("settings.nav.roles") },
     { id: "skills", icon: IconSparkles, label: t("settings.nav.skills") },
     { id: "plugins", icon: IconPuzzle, label: t("settings.nav.plugins") },
+    { id: "workflow", icon: IconRoute, label: t("settings.nav.workflow") },
     { id: "permissions", icon: IconShieldCheck, label: t("settings.nav.permissions") },
     { id: "privacy", icon: IconDatabase, label: t("settings.nav.privacy") },
   ];
@@ -82,7 +92,12 @@ export function SettingsDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
         showCloseButton
-        className="h-[min(720px,calc(100dvh-2rem))] w-[min(1040px,calc(100vw-2rem))] max-w-none gap-0 overflow-hidden p-0 sm:max-w-none"
+        className={cn(
+          "max-w-none gap-0 overflow-hidden p-0 transition-[width,height] duration-200 sm:max-w-none",
+          category === "workflow"
+            ? "h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)]"
+            : "h-[min(720px,calc(100dvh-2rem))] w-[min(1040px,calc(100vw-2rem))]",
+        )}
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{t("common.settings")}</DialogTitle>
@@ -116,16 +131,22 @@ export function SettingsDialog() {
             <p className="mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block">{t("settings.productName")}<br />{t("settings.prototypeLabel")}</p>
           </aside>
 
-          <ScrollArea className="min-h-0">
-            <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
-              {category === "appearance" && <AppearanceSettings settings={settings} onUpdate={updateSettings} />}
-              {category === "roles" && <RolesSettings />}
-              {category === "skills" && <SkillsSettings />}
-              {category === "plugins" && <PluginsSettings />}
-              {category === "permissions" && <PermissionSettings settings={settings} onUpdate={updateSettings} />}
-              {category === "privacy" && <PrivacySettings settings={settings} onUpdate={updateSettings} onClearHistory={clearConversations} />}
+          {category === "workflow" ? (
+            <div className="min-h-0 overflow-hidden">
+              <WorkflowSettings />
             </div>
-          </ScrollArea>
+          ) : (
+            <ScrollArea className="min-h-0">
+              <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
+                {category === "appearance" && <AppearanceSettings settings={settings} onUpdate={updateSettings} />}
+                {category === "roles" && <RolesSettings />}
+                {category === "skills" && <SkillsSettings />}
+                {category === "plugins" && <PluginsSettings />}
+                {category === "permissions" && <PermissionSettings settings={settings} onUpdate={updateSettings} />}
+                {category === "privacy" && <PrivacySettings settings={settings} onUpdate={updateSettings} onClearHistory={clearConversations} />}
+              </div>
+            </ScrollArea>
+          )}
         </div>
       </DialogContent>
     </Dialog>

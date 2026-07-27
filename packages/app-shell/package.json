@@ -17,6 +17,7 @@
     "@ora/contracts": "workspace:*",
     "@ora/platform": "workspace:*",
     "@ora/ui": "workspace:*",
+    "@ora/workflow-mock": "workspace:*",
     "@tabler/icons-react": "^3.44.0",
     "@tanstack/react-query": "^5.101.2",
     "diff": "^8.0.4",
