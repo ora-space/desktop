@@ -6,6 +6,8 @@ export type WorkflowNodeKind =
   | "tool"
   | "output";
 
+export type WorkflowLocale = "zh-CN" | "en-US";
+
 export interface WorkflowPosition {
   x: number;
   y: number;
