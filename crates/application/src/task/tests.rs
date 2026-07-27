@@ -1,9 +1,9 @@
 use crate::{
     ApplicationError, Clock, CreateTaskHandler, CreateTaskWorktreeRequest,
-    DeleteTaskWorktreeRequest, GetTaskHandler, ListTasksHandler, TaskIdGenerator, TaskRepository,
-    TaskRepositoryError, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError, UpdateTaskHandler, WorktreeIdGenerator, WorktreeRepository,
-    WorktreeRepositoryError,
+    CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest, GetTaskHandler, ListTasksHandler,
+    TaskIdGenerator, TaskRepository, TaskRepositoryError, TaskWorktreeDeletionMode,
+    TaskWorktreeProvisioner, TaskWorktreeProvisionerError, UpdateTaskHandler, WorktreeIdGenerator,
+    WorktreeRepository, WorktreeRepositoryError,
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest,
@@ -79,6 +79,7 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
                 WorktreeId::new("worktree-1"),
                 TaskId::new(TASK_ID),
                 Some("ora/12345678".to_string()),
+                ora_domain::WorktreeBaseline::recorded("base-commit").unwrap(),
                 DomainWorktreeActivity::Active,
                 AuditFields::new(1_700_000_000_000, 1_700_000_000_000, false),
             )]
@@ -989,10 +990,12 @@ impl TaskWorktreeProvisioner for Rc<FakeTaskWorktreeProvisioner> {
     fn create_task_worktree(
         &self,
         request: CreateTaskWorktreeRequest,
-    ) -> Result<(), TaskWorktreeProvisionerError> {
+    ) -> Result<CreateTaskWorktreeResponse, TaskWorktreeProvisionerError> {
         self.take_create_error()?;
         self.created_requests.borrow_mut().push(request);
-        Ok(())
+        Ok(CreateTaskWorktreeResponse {
+            base_commit_id: "base-commit".to_string(),
+        })
     }
 
     fn delete_task_worktree(

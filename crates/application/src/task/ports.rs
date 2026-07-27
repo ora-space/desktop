@@ -47,7 +47,7 @@ pub trait TaskWorktreeProvisioner {
     fn create_task_worktree(
         &self,
         request: CreateTaskWorktreeRequest,
-    ) -> Result<(), TaskWorktreeProvisionerError>;
+    ) -> Result<CreateTaskWorktreeResponse, TaskWorktreeProvisionerError>;
 
     /// Removes the linked worktree requested by task cleanup flows.
     fn delete_task_worktree(
@@ -61,6 +61,12 @@ pub trait TaskWorktreeProvisioner {
 pub struct CreateTaskWorktreeRequest {
     pub branch_name: String,
     pub worktree_path: PathBuf,
+}
+
+/// Returns the immutable commit from which the task worktree was created.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateTaskWorktreeResponse {
+    pub base_commit_id: String,
 }
 
 /// Describes how task-owned worktree deletion should behave.

@@ -126,7 +126,8 @@ where
             .inspect_err(|error| log_task_failure("create_task", None, error))?;
         let branch_name = branch_name_for_task(&task_id);
         let worktree_path = worktree_path_for_task(&self.work_dir, &task_id);
-        self.worktree_provisioner
+        let provisioned_worktree = self
+            .worktree_provisioner
             .create_task_worktree(CreateTaskWorktreeRequest {
                 branch_name: branch_name.clone(),
                 worktree_path,
@@ -143,6 +144,11 @@ where
             worktree_id,
             task_id.clone(),
             Some(branch_name.clone()),
+            ora_domain::WorktreeBaseline::recorded(provisioned_worktree.base_commit_id).map_err(
+                |error| ApplicationError::TaskWorktree {
+                    message: error.to_string(),
+                },
+            )?,
             DomainWorktreeActivity::Active,
             AuditFields::new(now, now, false),
         );

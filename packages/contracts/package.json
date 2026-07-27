@@ -10,5 +10,8 @@
     ".": "./src/index.ts",
     "./acp": "./src/acp/index.ts",
     "./fetch": "./src/fetch.ts"
+  },
+  "devDependencies": {
+    "react-diff-view": "^3.3.3"
   }
 }

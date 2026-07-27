@@ -4,6 +4,7 @@ mod project;
 mod project_work_context;
 mod session;
 mod task;
+mod task_diff;
 mod worktree;
 
 mod skill;
@@ -32,10 +33,19 @@ pub use skill::{
     SkillRepository, SkillRepositoryError, UpdateSkillHandler, UuidSkillIdGenerator,
 };
 pub use task::{
-    CreateTaskHandler, CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, GetTaskHandler,
-    GitTaskWorktreeProvisioner, ListTasksHandler, TaskIdGenerator, TaskRepository,
-    TaskRepositoryError, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator,
+    CreateTaskHandler, CreateTaskWorktreeRequest, CreateTaskWorktreeResponse,
+    DeleteTaskWorktreeRequest, GetTaskHandler, GitTaskWorktreeProvisioner, ListTasksHandler,
+    TaskIdGenerator, TaskRepository, TaskRepositoryError, TaskWorktreeDeletionMode,
+    TaskWorktreeProvisioner, TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator,
+};
+pub use task_diff::{
+    CommitTaskChangesHandler, CommitTaskGitRequest, CreateTaskDiffCommentHandler,
+    GetTaskDiffHandler, GitTaskDiffReader, GitTaskGitWriter, ListTaskDiffCommentsHandler,
+    PushTaskBranchHandler, PushTaskGitRequest, ReadTaskDiffRequest, ReadTaskDiffScope,
+    ReplyTaskDiffCommentHandler, SetTaskDiffCommentStatusHandler, TaskDiffCommentIdGenerator,
+    TaskDiffCommentRepository, TaskDiffCommentRepositoryError, TaskDiffReader, TaskDiffReaderError,
+    TaskDiffSnapshot, TaskGitCommit, TaskGitPush, TaskGitWriter, TaskGitWriterError,
+    UuidTaskDiffCommentIdGenerator,
 };
 pub use worktree::{
     UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository, WorktreeRepositoryError,

@@ -98,6 +98,15 @@ impl WebApiError {
             message: message.into(),
         }
     }
+
+    /// Creates a stable internal error when the async runtime cannot complete blocking work.
+    pub fn internal_error(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "internal_error",
+            message: message.into(),
+        }
+    }
 }
 
 impl From<ApplicationError> for WebApiError {
@@ -177,6 +186,46 @@ impl From<ApplicationError> for WebApiError {
             ApplicationError::TaskWorktree { message } => Self {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "task_worktree_error",
+                message,
+            },
+            ApplicationError::TaskDiff { message } => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "task_diff_error",
+                message,
+            },
+            ApplicationError::TaskDiffBaselineUnavailable => Self {
+                status: StatusCode::CONFLICT,
+                code: "task_diff_baseline_unavailable",
+                message: "task diff baseline is unavailable".to_string(),
+            },
+            ApplicationError::TaskDiffTooLarge {
+                byte_count,
+                max_byte_count,
+            } => Self {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                code: "task_diff_too_large",
+                message: format!(
+                    "task diff is too large: {byte_count} bytes exceeds {max_byte_count} bytes"
+                ),
+            },
+            ApplicationError::TaskDiffStale => Self {
+                status: StatusCode::CONFLICT,
+                code: "task_diff_stale",
+                message: "task diff changed before the comment was created".to_string(),
+            },
+            ApplicationError::TaskDiffCommentNotFound { comment_id } => Self {
+                status: StatusCode::NOT_FOUND,
+                code: "task_diff_comment_not_found",
+                message: format!("task diff comment not found: {comment_id}"),
+            },
+            ApplicationError::TaskDiffCommentInvalid { message } => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "task_diff_comment_invalid",
+                message,
+            },
+            ApplicationError::TaskDiffCommentRepository { message } => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "task_diff_comment_repository_error",
                 message,
             },
             ApplicationError::WorktreeNotFound { worktree_id } => Self {

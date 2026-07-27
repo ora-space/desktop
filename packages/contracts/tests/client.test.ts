@@ -203,6 +203,40 @@ test("uses a skill id in PUT paths while leaving editable fields in JSON", async
   ]);
 });
 
+test("splits task diff comment identifiers from the review body", async () => {
+  const requests: ContractTransportRequest[] = [];
+  const client = createContractsClient(
+    recordingTransport(requests, {
+      comment: {
+        id: "reply-1",
+        taskId: "task-1",
+        kind: { kind: "reply", parentCommentId: "comment-1" },
+        body: "Updated.",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }),
+  );
+
+  await client.task.replyDiffComment({
+    taskId: "task-1",
+    commentId: "comment-1",
+    body: "Updated.",
+  });
+
+  assert.deepEqual(requests, [
+    {
+      operationName: "replyTaskDiffComment",
+      method: "POST",
+      path: "/api/tasks/task-1/diff/comments/comment-1/replies",
+      body: { body: "Updated." },
+      headers: {
+        "content-type": "application/json",
+      },
+    },
+  ]);
+});
+
 test("omits standalone worktree operations from generated contracts", () => {
   assert.equal("createWorktree" in endpoints, false);
   assert.equal("getWorktree" in endpoints, false);

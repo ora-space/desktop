@@ -9,6 +9,7 @@ mod project_work_context;
 mod session;
 mod skill;
 mod task;
+mod task_diff;
 
 pub use agent::{
     Agent, CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
@@ -25,7 +26,9 @@ pub use frontend::{
     GIT_IDENTITY_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
     PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
     SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH,
-    SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
+    SKILL_PATH, SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH,
+    TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH,
+    TASK_PUSH_PATH, TASK_WORKSPACE_PATH, TASKS_PATH, frontend_endpoints,
 };
 pub use git::{GetGitIdentityRequest, GitIdentityResponse};
 pub use project::{
@@ -53,8 +56,17 @@ pub use skill::{
 use std::path::Path;
 pub use task::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
-    GetTaskResponse, ListTasksRequest, ListTasksResponse, Task, TaskStatus, TaskWorkspaceMode,
-    UpdateTaskRequest, UpdateTaskResponse,
+    GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest,
+    ListTasksResponse, Task, TaskStatus, TaskWorkspace, TaskWorkspaceMode, UpdateTaskRequest,
+    UpdateTaskResponse,
+};
+pub use task_diff::{
+    CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest,
+    CreateTaskDiffCommentResponse, GetTaskDiffRequest, GetTaskDiffResponse,
+    ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse, PushTaskBranchRequest,
+    PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse,
+    SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse, TaskDiffComment,
+    TaskDiffCommentAnchor, TaskDiffCommentKind, TaskDiffScope, TaskDiffSide, TaskDiffThreadStatus,
 };
 use ts_rs::{Config, ExportError};
 
@@ -76,6 +88,7 @@ pub fn export_typescript_bindings_to(
     session::export(&config)?;
     skill::export(&config)?;
     task::export(&config)?;
+    task_diff::export(&config)?;
 
     Ok(())
 }

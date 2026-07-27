@@ -127,6 +127,37 @@ impl From<ApplicationError> for BackendError {
             ApplicationError::TaskWorktree { .. } => {
                 internal("task_worktree_error", "task worktree operation failed")
             }
+            ApplicationError::TaskDiff { .. } => {
+                internal("task_diff_error", "task diff operation failed")
+            }
+            ApplicationError::TaskDiffBaselineUnavailable => Self::new(
+                BackendErrorKind::Conflict,
+                "task_diff_baseline_unavailable",
+                "task diff baseline is unavailable",
+            ),
+            ApplicationError::TaskDiffTooLarge { .. } => internal(
+                "task_diff_too_large",
+                "task diff exceeds the response limit",
+            ),
+            ApplicationError::TaskDiffStale => Self::new(
+                BackendErrorKind::Conflict,
+                "task_diff_stale",
+                "task diff changed before the comment was created",
+            ),
+            ApplicationError::TaskDiffCommentNotFound { comment_id } => Self::new(
+                BackendErrorKind::NotFound,
+                "task_diff_comment_not_found",
+                format!("task diff comment not found: {comment_id}"),
+            ),
+            ApplicationError::TaskDiffCommentInvalid { message } => Self::new(
+                BackendErrorKind::BadRequest,
+                "task_diff_comment_invalid",
+                message,
+            ),
+            ApplicationError::TaskDiffCommentRepository { .. } => internal(
+                "task_diff_comment_repository_error",
+                "task diff comment repository operation failed",
+            ),
             ApplicationError::WorktreeNotFound { worktree_id } => Self::new(
                 BackendErrorKind::NotFound,
                 "worktree_not_found",

@@ -1,7 +1,8 @@
 use crate::{
     AgentDefinitionRepositoryError, ProjectRepositoryError, ProjectWorkContextRepositoryError,
-    SessionRepositoryError, SkillRepositoryError, TaskRepositoryError,
-    TaskWorktreeProvisionerError, WorktreeRepositoryError,
+    SessionRepositoryError, SkillRepositoryError, TaskDiffCommentRepositoryError,
+    TaskDiffReaderError, TaskRepositoryError, TaskWorktreeProvisionerError,
+    WorktreeRepositoryError,
 };
 use ora_domain::DomainModelError;
 use thiserror::Error;
@@ -39,6 +40,23 @@ pub enum ApplicationError {
     TaskWorktreeRequiresGitRepository,
     #[error("task worktree operation failed: {message}")]
     TaskWorktree { message: String },
+    #[error("task diff operation failed: {message}")]
+    TaskDiff { message: String },
+    #[error("task diff baseline is unavailable")]
+    TaskDiffBaselineUnavailable,
+    #[error("task diff is too large: {byte_count} bytes exceeds {max_byte_count} bytes")]
+    TaskDiffTooLarge {
+        byte_count: usize,
+        max_byte_count: usize,
+    },
+    #[error("task diff changed before the comment was created")]
+    TaskDiffStale,
+    #[error("task diff comment not found: {comment_id}")]
+    TaskDiffCommentNotFound { comment_id: String },
+    #[error("invalid task diff comment: {message}")]
+    TaskDiffCommentInvalid { message: String },
+    #[error("task diff comment repository operation failed: {message}")]
+    TaskDiffCommentRepository { message: String },
     #[error("worktree not found: {worktree_id}")]
     WorktreeNotFound { worktree_id: String },
     #[error("worktree repository operation failed: {message}")]
@@ -120,6 +138,31 @@ impl ApplicationError {
             TaskWorktreeProvisionerError::NotARepository => Self::TaskWorktreeRequiresGitRepository,
             TaskWorktreeProvisionerError::OperationFailed(message) => {
                 Self::TaskWorktree { message }
+            }
+        }
+    }
+
+    /// Maps task diff reader failures into stable application errors.
+    pub(crate) fn from_task_diff_reader_error(error: TaskDiffReaderError) -> Self {
+        match error {
+            TaskDiffReaderError::OperationFailed(message) => Self::TaskDiff { message },
+            TaskDiffReaderError::TooLarge {
+                byte_count,
+                max_byte_count,
+            } => Self::TaskDiffTooLarge {
+                byte_count,
+                max_byte_count,
+            },
+        }
+    }
+
+    /// Maps task diff comment persistence failures into stable application errors.
+    pub(crate) fn from_task_diff_comment_repository_error(
+        error: TaskDiffCommentRepositoryError,
+    ) -> Self {
+        match error {
+            TaskDiffCommentRepositoryError::OperationFailed(message) => {
+                Self::TaskDiffCommentRepository { message }
             }
         }
     }

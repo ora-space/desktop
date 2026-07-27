@@ -3,7 +3,7 @@ use crate::{
     DomainModelError, Project, ProjectId, ProjectWorkContext, ProjectWorkContextId,
     ProjectWorkContextSurface, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId,
     TaskStatus, VirtualEntry, VirtualEntryId, VirtualEntryKind, VirtualFolder, VirtualFolderId,
-    Worktree, WorktreeActivity, WorktreeId,
+    Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
 };
 use pretty_assertions::assert_eq;
 
@@ -21,6 +21,7 @@ fn constructs_schema_backed_entities() {
         WorktreeId::new("worktree-1"),
         TaskId::new("task-1"),
         Some("feature/domain-models".to_string()),
+        WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Active,
         audit_fields.clone(),
     );
@@ -101,6 +102,7 @@ fn constructs_schema_backed_entities() {
             id: WorktreeId::new("worktree-1"),
             task_id: TaskId::new("task-1"),
             branch_name: Some("feature/domain-models".to_string()),
+            baseline: WorktreeBaseline::recorded("base-commit").unwrap(),
             activity: WorktreeActivity::Active,
             audit_fields: audit_fields.clone(),
         }
@@ -275,6 +277,10 @@ fn round_trips_database_backed_enums() {
 /// Ensures adapters cannot smuggle unsupported integer values into the domain layer.
 #[test]
 fn rejects_invalid_database_values() {
+    assert_eq!(
+        WorktreeBaseline::recorded("  "),
+        Err(DomainModelError::EmptyWorktreeBaseline)
+    );
     assert_eq!(
         ProjectWorkContextSurface::from_database_value("desktop"),
         Err(DomainModelError::InvalidProjectWorkContextSurface(
