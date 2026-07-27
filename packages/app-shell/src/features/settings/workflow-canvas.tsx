@@ -4,6 +4,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
   IconFocusCentered,
   IconMinus,
@@ -63,6 +64,7 @@ export function WorkflowCanvas({
   onConnect,
   onDeleteNode,
 }: WorkflowCanvasProps) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [connection, setConnection] = useState<ConnectionDraft | null>(null);
@@ -210,7 +212,7 @@ export function WorkflowCanvas({
         "relative min-h-0 min-w-0 touch-none overflow-hidden bg-muted/25 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         panDraft === null ? "cursor-grab" : "cursor-grabbing",
       )}
-      aria-label="工作流画布"
+      aria-label={t("settings.workflow.canvas")}
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onWheel={handleWheel}
@@ -257,7 +259,7 @@ export function WorkflowCanvas({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="缩小画布"
+          aria-label={t("settings.workflow.zoomOut")}
           disabled={zoom <= MIN_WORKFLOW_ZOOM}
           onClick={() => zoomFromCenter(zoom - 0.1)}
         >
@@ -269,7 +271,7 @@ export function WorkflowCanvas({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="放大画布"
+          aria-label={t("settings.workflow.zoomIn")}
           disabled={zoom >= MAX_WORKFLOW_ZOOM}
           onClick={() => zoomFromCenter(zoom + 0.1)}
         >
@@ -278,7 +280,7 @@ export function WorkflowCanvas({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="重置画布视图"
+          aria-label={t("settings.workflow.resetView")}
           onClick={() =>
             setViewport({
               zoom: DEFAULT_WORKFLOW_ZOOM,
@@ -289,7 +291,7 @@ export function WorkflowCanvas({
           <IconFocusCentered />
         </Button>
         <span className="hidden border-l border-border px-2 text-[10px] text-muted-foreground xl:inline">
-          滚轮缩放 · 拖拽移动
+          {t("settings.workflow.canvasHint")}
         </span>
       </div>
     </section>
@@ -395,7 +397,9 @@ function WorkflowNodeCard({
   onStartConnection: (event: ReactPointerEvent) => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const metadata = getNodeMetadata(node.kind);
+  const nodeKindLabel = t(metadata.labelKey);
   const Icon = metadata.icon;
   const dragOrigin = useRef<{ pointer: WorkflowPosition; node: WorkflowPosition } | null>(null);
 
@@ -421,7 +425,7 @@ function WorkflowNodeCard({
       )}
       style={{ left: node.position.x, top: node.position.y }}
       tabIndex={0}
-      aria-label={`${metadata.label}节点：${node.title}`}
+      aria-label={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${node.title}`}
       onFocus={onSelect}
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest("button") !== null) {
@@ -442,10 +446,10 @@ function WorkflowNodeCard({
       <button
         type="button"
         data-workflow-input={node.id}
-        aria-label={`连接到${node.title}`}
+        aria-label={t("settings.workflow.connectTo", { name: node.title })}
         className="absolute -left-3 top-[49px] flex size-6 items-center justify-center rounded-full outline-none after:size-3 after:rounded-full after:border-2 after:border-background after:bg-muted-foreground after:shadow-sm after:transition-transform hover:after:scale-125 focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <span className="sr-only">连接到{node.title}</span>
+        <span className="sr-only">{t("settings.workflow.connectTo", { name: node.title })}</span>
       </button>
       <div className="flex items-start gap-2.5 border-b border-border px-3 py-3">
         <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg", metadata.tone)}>
@@ -455,7 +459,7 @@ function WorkflowNodeCard({
           <div className="flex items-center gap-1.5">
             <h4 className="truncate text-xs font-semibold">{node.title}</h4>
             <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">
-              {metadata.label}
+              {nodeKindLabel}
             </span>
           </div>
           <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">
@@ -465,7 +469,7 @@ function WorkflowNodeCard({
         {selected && (
           <button
             type="button"
-            aria-label={`删除${node.title}`}
+            aria-label={t("settings.workflow.deleteNamed", { name: node.title })}
             onClick={onDelete}
             className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
           >
@@ -474,16 +478,16 @@ function WorkflowNodeCard({
         )}
       </div>
       <div className="flex items-center justify-between px-3 py-2 text-[10px] text-muted-foreground">
-        <span className="truncate">{node.config.model ?? node.config.tool ?? "立即执行"}</span>
+        <span className="truncate">{node.config.model ?? node.config.tool ?? t("settings.workflow.immediate")}</span>
         <span className="font-mono text-[9px]">{node.id}</span>
       </div>
       <button
         type="button"
-        aria-label={`从${node.title}开始连接`}
+        aria-label={t("settings.workflow.connectFrom", { name: node.title })}
         onPointerDown={onStartConnection}
         className="absolute -right-3 top-[49px] flex size-6 items-center justify-center rounded-full outline-none after:size-3 after:rounded-full after:border-2 after:border-background after:bg-foreground after:shadow-sm after:transition-transform hover:after:scale-125 focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <span className="sr-only">从{node.title}开始连接</span>
+        <span className="sr-only">{t("settings.workflow.connectFrom", { name: node.title })}</span>
       </button>
     </article>
   );

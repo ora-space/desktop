@@ -1,4 +1,4 @@
-import type { WorkflowDefinition } from "./types";
+import type { WorkflowDefinition, WorkflowLocale } from "./types";
 
 export const MOCK_WORKFLOW: WorkflowDefinition = {
   id: "code-review",
@@ -76,3 +76,71 @@ export const MOCK_WORKFLOW: WorkflowDefinition = {
     { id: "e-review-output", source: "review", target: "output" },
   ],
 };
+
+const ENGLISH_NODE_CONTENT: Record<
+  string,
+  Pick<WorkflowDefinition["nodes"][number], "title" | "description" | "config">
+> = {
+  start: {
+    title: "Start",
+    description: "Receive the task and current workspace",
+    config: { instruction: "Extract the review scope from the user input." },
+  },
+  understand: {
+    title: "Understand changes",
+    description: "Summarize intent and affected areas",
+    config: {
+      instruction: "Read changed files and identify the goal, affected modules, and potential risks.",
+      model: "GPT-5",
+    },
+  },
+  quality: {
+    title: "Quality gate",
+    description: "Decide whether validation is required",
+    config: {
+      instruction: "Choose the next path based on the type of change.",
+      condition: "Contains source code changes",
+    },
+  },
+  tests: {
+    title: "Run checks",
+    description: "Run formatting, type checks, and tests",
+    config: {
+      instruction: "Run the smallest validation set that matches the change scope.",
+      tool: "Terminal",
+    },
+  },
+  review: {
+    title: "Review agent",
+    description: "Evaluate code and validation results",
+    config: {
+      instruction: "Organize findings by severity and provide locations and remediation advice.",
+      model: "GPT-5",
+    },
+  },
+  output: {
+    title: "Output report",
+    description: "Generate a structured review result",
+    config: { instruction: "Return a summary, findings, validation results, and next steps." },
+  },
+};
+
+/** Creates localized fixture content while preserving stable graph identifiers and positions. */
+export function createMockWorkflow(locale: WorkflowLocale): WorkflowDefinition {
+  const workflow = structuredClone(MOCK_WORKFLOW);
+  if (locale === "zh-CN") {
+    return workflow;
+  }
+  workflow.name = "Code review workflow";
+  workflow.description = "Read changes, run quality checks, and produce an actionable review summary.";
+  workflow.nodes = workflow.nodes.map((node) => ({ ...node, ...ENGLISH_NODE_CONTENT[node.id] }));
+  workflow.edges = workflow.edges.map((edge) => ({
+    ...edge,
+    label: edge.label === "需要检查"
+      ? "Checks required"
+      : edge.label === "仅文档"
+        ? "Documentation only"
+        : edge.label,
+  }));
+  return workflow;
+}

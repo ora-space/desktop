@@ -1,8 +1,9 @@
-import { MOCK_WORKFLOW } from "./fixtures";
+import { createMockWorkflow } from "./fixtures";
 import type {
   WorkflowDefinition,
   WorkflowRepository,
   WorkflowRunResult,
+  WorkflowLocale,
 } from "./types";
 
 const MOCK_LATENCY_MS = 180;
@@ -14,9 +15,12 @@ function cloneWorkflow(workflow: WorkflowDefinition): WorkflowDefinition {
 
 /** Simulates the future workflow API while keeping all prototype state inside this package. */
 export class MockWorkflowRepository implements WorkflowRepository {
-  private workflows = new Map<string, WorkflowDefinition>([
-    [MOCK_WORKFLOW.id, cloneWorkflow(MOCK_WORKFLOW)],
-  ]);
+  private workflows: Map<string, WorkflowDefinition>;
+
+  public constructor(private readonly locale: WorkflowLocale = "zh-CN") {
+    const workflow = createMockWorkflow(locale);
+    this.workflows = new Map([[workflow.id, workflow]]);
+  }
 
   /** Returns every mock workflow after a short delay so loading states stay testable. */
   async list(): Promise<WorkflowDefinition[]> {
@@ -52,13 +56,15 @@ export class MockWorkflowRepository implements WorkflowRepository {
     const steps = workflow.nodes.map((node, index) => ({
       nodeId: node.id,
       durationMs: 140 + index * 37,
-      summary: `${node.title} 已完成`,
+      summary: this.locale === "zh-CN" ? `${node.title} 已完成` : `${node.title} completed`,
     }));
     const durationMs = steps.reduce((total, step) => total + step.durationMs, 0);
     return {
       status: "success",
       durationMs,
-      output: `已完成“${workflow.name}”的模拟运行。\n\n输入：${input || "检查当前工作区的未提交改动"}\n\n发现 2 个建议项，未发现阻塞问题。`,
+      output: this.locale === "zh-CN"
+        ? `已完成“${workflow.name}”的模拟运行。\n\n输入：${input || "检查当前工作区的未提交改动"}\n\n发现 2 个建议项，未发现阻塞问题。`
+        : `Completed a simulated run of "${workflow.name}".\n\nInput: ${input || "Review uncommitted changes in the current workspace"}\n\nFound 2 suggestions and no blocking issues.`,
       steps,
     };
   }

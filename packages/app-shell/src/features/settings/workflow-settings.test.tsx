@@ -1,9 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { appI18n } from "../../i18n/i18n-instance";
 import { WorkflowSettings } from "./workflow-settings";
 
 describe("WorkflowSettings", () => {
+  afterEach(async () => {
+    await appI18n.changeLanguage("zh-CN");
+  });
+
   it("loads the mock graph and exposes a deterministic preview", async () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
@@ -44,5 +49,20 @@ describe("WorkflowSettings", () => {
     await waitFor(() => {
       expect(stage?.style.transform).toBe("translate(82px, 102px) scale(1)");
     });
+  });
+
+  it("localizes workflow chrome and mock content in English", async () => {
+    await appI18n.changeLanguage("en-US");
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    expect(await screen.findByText("Code review workflow")).toBeInTheDocument();
+    expect(screen.getByLabelText("Workflow canvas")).toBeInTheDocument();
+    expect(screen.getByText("Scroll to zoom · Drag to pan")).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: "Test run" })[0]);
+
+    expect(await screen.findByText("Simulation successful")).toBeInTheDocument();
+    expect(screen.getByText(/Found 2 suggestions and no blocking issues./)).toBeInTheDocument();
   });
 });

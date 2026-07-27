@@ -12,8 +12,8 @@ import type { WorkflowNodeKind } from "@ora/workflow-mock";
 
 export interface WorkflowNodeMetadata {
   kind: WorkflowNodeKind;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
   icon: ComponentType<IconProps>;
   tone: string;
 }
@@ -21,43 +21,43 @@ export interface WorkflowNodeMetadata {
 export const WORKFLOW_NODE_CATALOG: readonly WorkflowNodeMetadata[] = [
   {
     kind: "start",
-    label: "开始",
-    description: "定义工作流输入",
+    labelKey: "settings.workflow.kind.start",
+    descriptionKey: "settings.workflow.kind.startDescription",
     icon: IconPlayerPlay,
     tone: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
   },
   {
     kind: "prompt",
-    label: "提示词",
-    description: "处理和转换文本",
+    labelKey: "settings.workflow.kind.prompt",
+    descriptionKey: "settings.workflow.kind.promptDescription",
     icon: IconMessageCode,
     tone: "bg-violet-500/12 text-violet-700 dark:text-violet-400",
   },
   {
     kind: "agent",
-    label: "Agent",
-    description: "交给模型自主执行",
+    labelKey: "settings.workflow.kind.agent",
+    descriptionKey: "settings.workflow.kind.agentDescription",
     icon: IconBolt,
     tone: "bg-blue-500/12 text-blue-700 dark:text-blue-400",
   },
   {
     kind: "condition",
-    label: "条件分支",
-    description: "根据规则选择路径",
+    labelKey: "settings.workflow.kind.condition",
+    descriptionKey: "settings.workflow.kind.conditionDescription",
     icon: IconBinaryTree,
     tone: "bg-amber-500/12 text-amber-700 dark:text-amber-400",
   },
   {
     kind: "tool",
-    label: "工具",
-    description: "调用终端或插件",
+    labelKey: "settings.workflow.kind.tool",
+    descriptionKey: "settings.workflow.kind.toolDescription",
     icon: IconBraces,
     tone: "bg-cyan-500/12 text-cyan-700 dark:text-cyan-400",
   },
   {
     kind: "output",
-    label: "输出",
-    description: "返回最终结果",
+    labelKey: "settings.workflow.kind.output",
+    descriptionKey: "settings.workflow.kind.outputDescription",
     icon: IconArrowRight,
     tone: "bg-rose-500/12 text-rose-700 dark:text-rose-400",
   },

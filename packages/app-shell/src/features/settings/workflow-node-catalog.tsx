@@ -3,6 +3,7 @@ import {
 } from "@tabler/icons-react";
 import type { WorkflowNodeKind } from "@ora/workflow-mock";
 import { cn } from "@ora/ui";
+import { useTranslation } from "react-i18next";
 import { WORKFLOW_NODE_CATALOG } from "./workflow-node-metadata";
 
 /** Offers discoverable click-to-add controls as an accessible alternative to drag-and-drop. */
@@ -11,15 +12,16 @@ export function WorkflowNodeCatalog({
 }: {
   onAdd: (kind: WorkflowNodeKind) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <aside className="hidden min-h-0 border-r border-border bg-background lg:flex lg:flex-col">
       <div className="border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
           <IconAdjustmentsAlt className="size-4 text-muted-foreground" />
-          <h3 className="text-xs font-semibold">节点</h3>
+          <h3 className="text-xs font-semibold">{t("settings.workflow.nodes")}</h3>
         </div>
         <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-          点击添加到画布，再连接执行顺序。
+          {t("settings.workflow.nodesHint")}
         </p>
       </div>
       <div className="space-y-1.5 overflow-y-auto p-2">
@@ -36,8 +38,8 @@ export function WorkflowNodeCatalog({
                 <Icon className="size-4" stroke={1.8} />
               </span>
               <span className="min-w-0">
-                <span className="block text-xs font-medium">{item.label}</span>
-                <span className="block truncate text-[10px] text-muted-foreground">{item.description}</span>
+                <span className="block text-xs font-medium">{t(item.labelKey)}</span>
+                <span className="block truncate text-[10px] text-muted-foreground">{t(item.descriptionKey)}</span>
               </span>
             </button>
           );
