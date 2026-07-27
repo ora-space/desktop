@@ -2,57 +2,57 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconCheck,
-  IconChevronDown,
   IconCloudCheck,
   IconPlayerPlay,
-  IconPlus,
   IconRoute,
 } from "@tabler/icons-react";
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  Skeleton,
-} from "@ora/ui";
+import { Button, Input, Skeleton } from "@ora/ui";
 import {
   MockWorkflowRepository,
   type WorkflowDefinition,
+  type WorkflowLocale,
   type WorkflowNode,
   type WorkflowNodeKind,
-  type WorkflowLocale,
   type WorkflowRunResult,
 } from "@ora/workflow-mock";
 import { WorkflowCanvas } from "./workflow-canvas";
-import {
-  WorkflowNodeCatalog,
-} from "./workflow-node-catalog";
-import {
-  WORKFLOW_NODE_CATALOG,
-  getNodeMetadata,
-} from "./workflow-node-metadata";
 import { WorkflowInspector } from "./workflow-inspector";
+import { WorkflowManager } from "./workflow-manager";
+import { WorkflowNodeCatalog } from "./workflow-node-catalog";
+import { getNodeMetadata } from "./workflow-node-metadata";
 
 /** Owns the frontend-only workflow editor state and coordinates the mock repository boundary. */
 export function WorkflowSettings() {
   const { i18n, t } = useTranslation();
   const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
   const repository = useMemo(() => new MockWorkflowRepository(locale), [locale]);
-  const [workflow, setWorkflow] = useState<WorkflowDefinition | null>(null);
+  const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [managing, setManaging] = useState(false);
+  const [managerError, setManagerError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(true);
+  const [dirtyWorkflowIds, setDirtyWorkflowIds] = useState<Set<string>>(() => new Set());
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
   const nextNodeNumber = useRef(1);
   const nextEdgeNumber = useRef(1);
+  const workflow = useMemo(
+    () => workflows.find((candidate) => candidate.id === selectedWorkflowId) ?? null,
+    [selectedWorkflowId, workflows],
+  );
+  const saved = selectedWorkflowId === null || !dirtyWorkflowIds.has(selectedWorkflowId);
 
   useEffect(() => {
     let active = true;
-    repository.get("code-review").then((loaded) => {
+    setLoading(true);
+    repository.list().then((loaded) => {
       if (active) {
-        setWorkflow(loaded);
+        setWorkflows(loaded);
+        setSelectedWorkflowId(loaded[0]?.id ?? null);
+        setDirtyWorkflowIds(new Set());
+        setLoading(false);
       }
     });
     return () => {
@@ -65,16 +65,87 @@ export function WorkflowSettings() {
     [selectedNodeId, workflow],
   );
 
-  /** Applies one graph mutation while keeping dirty-state behavior consistent. */
+  /** Applies one graph or metadata mutation while keeping dirty-state behavior consistent. */
   function updateWorkflow(
     updater: (current: WorkflowDefinition) => WorkflowDefinition,
   ): void {
-    setWorkflow((current) => current === null ? null : updater(current));
-    setSaved(false);
+    setWorkflows((current) =>
+      current.map((candidate) =>
+        candidate.id === selectedWorkflowId ? updater(candidate) : candidate,
+      ),
+    );
+    if (selectedWorkflowId !== null) {
+      setDirtyWorkflowIds((current) => new Set(current).add(selectedWorkflowId));
+    }
   }
 
-  /** Adds a catalog node at a staggered central position so repeated additions stay visible. */
-  function addNode(kind: WorkflowNodeKind): void {
+  /** Switches the active graph and clears transient state that belongs to the previous workflow. */
+  function selectWorkflow(workflowId: string): void {
+    setSelectedWorkflowId(workflowId);
+    setSelectedNodeId(null);
+    setRunResult(null);
+    setManagerError(null);
+  }
+
+  /** Creates a usable blank workflow and immediately opens it for editing. */
+  async function createWorkflow(): Promise<void> {
+    setManaging(true);
+    setManagerError(null);
+    try {
+      const created = await repository.create(
+        t("settings.workflow.untitledWorkflow", { count: workflows.length + 1 }),
+      );
+      setWorkflows((current) => [...current, created]);
+      selectWorkflow(created.id);
+    } catch {
+      setManagerError(t("settings.workflow.manageError"));
+    } finally {
+      setManaging(false);
+    }
+  }
+
+  /** Deletes a workflow and selects the nearest remaining item to avoid a dead editor state. */
+  async function deleteWorkflow(workflowId: string): Promise<void> {
+    setManaging(true);
+    setManagerError(null);
+    try {
+      await repository.delete(workflowId);
+      const remaining = workflows.filter((candidate) => candidate.id !== workflowId);
+      setWorkflows(remaining);
+      if (selectedWorkflowId === workflowId) {
+        setSelectedWorkflowId(remaining[0]?.id ?? null);
+        setSelectedNodeId(null);
+        setRunResult(null);
+      }
+      setDirtyWorkflowIds((current) => {
+        const next = new Set(current);
+        next.delete(workflowId);
+        return next;
+      });
+    } catch {
+      setManagerError(t("settings.workflow.manageError"));
+    } finally {
+      setManaging(false);
+    }
+  }
+
+  /** Parses and validates an exported workflow through the mock repository before selection. */
+  async function importWorkflow(file: File): Promise<void> {
+    setManaging(true);
+    setManagerError(null);
+    try {
+      const imported = await repository.importDefinition(JSON.parse(await file.text()));
+      setWorkflows((current) => [...current, imported]);
+      selectWorkflow(imported.id);
+    } catch {
+      setManagerError(t("settings.workflow.importError"));
+    } finally {
+      setManaging(false);
+    }
+  }
+
+  /** Adds a catalog node at a canvas-provided position and selects it for immediate editing. */
+  function addNode(kind: WorkflowNodeKind, position: WorkflowNode["position"]): void {
     const metadata = getNodeMetadata(kind);
     const sequence = nextNodeNumber.current++;
     const id = `${kind}-${sequence}`;
@@ -83,15 +154,14 @@ export function WorkflowSettings() {
       kind,
       title: `${t(metadata.labelKey)} ${sequence}`,
       description: t(metadata.descriptionKey),
-      position: {
-        x: 430 + (sequence % 3) * 42,
-        y: 250 + (sequence % 4) * 38,
-      },
+      position,
       config: {
         instruction: "",
         ...(kind === "prompt" || kind === "agent" ? { model: "GPT-5" } : {}),
         ...(kind === "tool" ? { tool: "Terminal" } : {}),
-        ...(kind === "condition" ? { condition: t("settings.workflow.defaultCondition") } : {}),
+        ...(kind === "condition"
+          ? { condition: t("settings.workflow.defaultCondition") }
+          : {}),
       },
     };
     updateWorkflow((current) => ({ ...current, nodes: [...current.nodes, node] }));
@@ -103,22 +173,30 @@ export function WorkflowSettings() {
     updateWorkflow((current) => ({
       ...current,
       nodes: current.nodes.filter((node) => node.id !== nodeId),
-      edges: current.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
+      edges: current.edges.filter(
+        (edge) => edge.source !== nodeId && edge.target !== nodeId,
+      ),
     }));
-    setSelectedNodeId((current) => current === nodeId ? null : current);
+    setSelectedNodeId((current) => (current === nodeId ? null : current));
   }
 
   /** Creates a unique directed edge and ignores duplicate links. */
   function connectNodes(source: string, target: string): void {
     updateWorkflow((current) => {
-      if (current.edges.some((edge) => edge.source === source && edge.target === target)) {
+      if (
+        current.edges.some((edge) => edge.source === source && edge.target === target)
+      ) {
         return current;
       }
       return {
         ...current,
         edges: [
           ...current.edges,
-          { id: `edge-${source}-${target}-${nextEdgeNumber.current++}`, source, target },
+          {
+            id: `edge-${source}-${target}-${nextEdgeNumber.current++}`,
+            source,
+            target,
+          },
         ],
       };
     });
@@ -132,8 +210,14 @@ export function WorkflowSettings() {
     setSaving(true);
     try {
       const persisted = await repository.save(workflow);
-      setWorkflow(persisted);
-      setSaved(true);
+      setWorkflows((current) =>
+        current.map((candidate) => candidate.id === persisted.id ? persisted : candidate),
+      );
+      setDirtyWorkflowIds((current) => {
+        const next = new Set(current);
+        next.delete(persisted.id);
+        return next;
+      });
     } finally {
       setSaving(false);
     }
@@ -153,7 +237,7 @@ export function WorkflowSettings() {
     }
   }
 
-  if (workflow === null) {
+  if (loading) {
     return <WorkflowLoading />;
   }
 
@@ -164,72 +248,87 @@ export function WorkflowSettings() {
           <IconRoute className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="truncate text-sm font-semibold">{workflow.name}</h2>
-            <span className="hidden rounded-full border border-border px-2 py-0.5 text-[9px] font-medium text-muted-foreground sm:inline">
-              MOCK
-            </span>
-          </div>
-          <p className="truncate text-[10px] text-muted-foreground">{workflow.description}</p>
+          {workflow === null ? (
+            <h2 className="text-sm font-semibold">{t("settings.workflow.library")}</h2>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={workflow.name}
+                  onChange={(event) =>
+                    updateWorkflow((current) => ({ ...current, name: event.target.value }))
+                  }
+                  aria-label={t("settings.workflow.workflowName")}
+                  className="h-7 max-w-72 border-transparent bg-transparent px-1 text-sm font-semibold shadow-none hover:border-border focus-visible:border-border"
+                />
+                <span className="hidden rounded-full border border-border px-2 py-0.5 text-[9px] font-medium text-muted-foreground sm:inline">
+                  MOCK
+                </span>
+              </div>
+              <p className="truncate px-1 text-[10px] text-muted-foreground">
+                {workflow.description}
+              </p>
+            </>
+          )}
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="outline" size="sm" className="lg:hidden">
-                <IconPlus />
-                {t("settings.workflow.add")}
-                <IconChevronDown />
-              </Button>
-            }
-          >
-            <span className="sr-only">{t("settings.workflow.addNode")}</span>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {WORKFLOW_NODE_CATALOG.map((item) => {
-              const Icon = item.icon;
-              return (
-                <DropdownMenuItem key={item.kind} onClick={() => addNode(item.kind)}>
-                  <Icon />
-                  {t(item.labelKey)}
-                </DropdownMenuItem>
-              );
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
         <Button
           variant="outline"
           size="sm"
           onClick={() => void runWorkflow("")}
-          disabled={running}
+          disabled={workflow === null || running}
         >
           <IconPlayerPlay />
           <span className="hidden sm:inline">{t("settings.workflow.testRun")}</span>
         </Button>
-        <Button size="sm" onClick={() => void saveWorkflow()} disabled={saving || saved}>
+        <Button
+          size="sm"
+          onClick={() => void saveWorkflow()}
+          disabled={workflow === null || saving || saved}
+        >
           {saved ? <IconCheck /> : <IconCloudCheck />}
           <span className="hidden sm:inline">
-            {saving ? t("common.saving") : saved ? t("settings.workflow.saved") : t("common.save")}
+            {saving
+              ? t("common.saving")
+              : saved
+                ? t("settings.workflow.saved")
+                : t("common.save")}
           </span>
         </Button>
       </header>
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_260px] lg:grid-cols-[176px_minmax(0,1fr)_280px]">
-        <WorkflowNodeCatalog onAdd={addNode} />
-        <WorkflowCanvas
-          nodes={workflow.nodes}
-          edges={workflow.edges}
-          selectedNodeId={selectedNodeId}
-          onSelectNode={setSelectedNodeId}
-          onMoveNode={(nodeId, position) =>
-            updateWorkflow((current) => ({
-              ...current,
-              nodes: current.nodes.map((node) =>
-                node.id === nodeId ? { ...node, position } : node,
-              ),
-            }))
-          }
-          onConnect={connectNodes}
-          onDeleteNode={deleteNode}
+      <div className="grid min-h-0 flex-1 grid-cols-[200px_minmax(0,1fr)_260px] xl:grid-cols-[220px_minmax(0,1fr)_280px]">
+        <WorkflowManager
+          workflows={workflows}
+          selectedWorkflowId={selectedWorkflowId}
+          busy={managing}
+          error={managerError}
+          onSelect={selectWorkflow}
+          onCreate={() => void createWorkflow()}
+          onDelete={(workflowId) => void deleteWorkflow(workflowId)}
+          onImport={(file) => void importWorkflow(file)}
         />
+        {workflow === null ? (
+          <WorkflowEmpty onCreate={() => void createWorkflow()} />
+        ) : (
+          <WorkflowCanvas
+            nodes={workflow.nodes}
+            edges={workflow.edges}
+            selectedNodeId={selectedNodeId}
+            onSelectNode={setSelectedNodeId}
+            onMoveNode={(nodeId, position) =>
+              updateWorkflow((current) => ({
+                ...current,
+                nodes: current.nodes.map((node) =>
+                  node.id === nodeId ? { ...node, position } : node,
+                ),
+              }))
+            }
+            onAddNode={addNode}
+            onConnect={connectNodes}
+            onDeleteNode={deleteNode}
+          >
+            {(onAddNode) => <WorkflowNodeCatalog onAdd={onAddNode} />}
+          </WorkflowCanvas>
+        )}
         <WorkflowInspector
           node={selectedNode}
           running={running}
@@ -248,6 +347,27 @@ export function WorkflowSettings() {
         />
       </div>
     </div>
+  );
+}
+
+/** Gives an empty collection a clear recovery action without disguising it as a loading state. */
+function WorkflowEmpty({ onCreate }: { onCreate: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <section className="flex min-h-0 items-center justify-center bg-muted/25">
+      <div className="max-w-64 text-center">
+        <span className="mx-auto flex size-10 items-center justify-center rounded-xl border border-border bg-background shadow-sm">
+          <IconRoute className="size-4 text-muted-foreground" />
+        </span>
+        <h3 className="mt-3 text-sm font-semibold">{t("settings.workflow.emptyTitle")}</h3>
+        <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+          {t("settings.workflow.emptyDescription")}
+        </p>
+        <Button size="sm" className="mt-4" onClick={onCreate}>
+          {t("settings.workflow.newWorkflow")}
+        </Button>
+      </div>
+    </section>
   );
 }
 
