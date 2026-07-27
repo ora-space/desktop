@@ -70,9 +70,24 @@ export function createContractsClient(
     task: {
       create: (request, options) => executeOperation("createTask", request, transport, options),
       get: (request, options) => executeOperation("getTask", request, transport, options),
+      getWorkspace: (request, options) =>
+        executeOperation("getTaskWorkspace", request, transport, options),
       list: (request, options) => executeOperation("listTasks", request, transport, options),
       update: (request, options) => executeOperation("updateTask", request, transport, options),
       delete: (request, options) => executeOperation("deleteTask", request, transport, options),
+      getDiff: (request, options) => executeOperation("getTaskDiff", request, transport, options),
+      commitChanges: (request, options) =>
+        executeOperation("commitTaskChanges", request, transport, options),
+      pushBranch: (request, options) =>
+        executeOperation("pushTaskBranch", request, transport, options),
+      listDiffComments: (request, options) =>
+        executeOperation("listTaskDiffComments", request, transport, options),
+      createDiffComment: (request, options) =>
+        executeOperation("createTaskDiffComment", request, transport, options),
+      replyDiffComment: (request, options) =>
+        executeOperation("replyTaskDiffComment", request, transport, options),
+      setDiffCommentStatus: (request, options) =>
+        executeOperation("setTaskDiffCommentStatus", request, transport, options),
     },
     session: {
       create: (request, options) =>

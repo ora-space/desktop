@@ -87,6 +87,34 @@ export function createMockClient(state: MockClientState): ContractsClient {
         if (idx >= 0) state.tasks.splice(idx, 1);
         return { taskId: req.taskId };
       },
+      getWorkspace: async (req) => ({
+        workspace: {
+          rootPath: `/worktrees/${req.taskId}`,
+          branchName: `task/${req.taskId}`,
+        },
+      }),
+      getDiff: async () => ({
+        baseCommitId: "base",
+        headCommitId: "head",
+        diffId: "diff",
+        patch: "",
+      }),
+      commitChanges: async () => {
+        throw new Error("commitChanges not implemented in mock");
+      },
+      pushBranch: async () => {
+        throw new Error("pushBranch not implemented in mock");
+      },
+      listDiffComments: async () => ({ comments: [] }),
+      createDiffComment: async () => {
+        throw new Error("createDiffComment not implemented in mock");
+      },
+      replyDiffComment: async () => {
+        throw new Error("replyDiffComment not implemented in mock");
+      },
+      setDiffCommentStatus: async () => {
+        throw new Error("setDiffCommentStatus not implemented in mock");
+      },
     },
     session: {
       list: async () => ({ sessions: [...state.sessions] }),

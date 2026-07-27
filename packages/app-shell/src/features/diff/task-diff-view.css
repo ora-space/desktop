@@ -1,0 +1,311 @@
+.ora-task-diff {
+  --diff-background-color: transparent;
+  --diff-text-color: var(--foreground);
+  --diff-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --diff-gutter-insert-background-color: color-mix(in oklab, #22c55e 17%, transparent);
+  --diff-gutter-delete-background-color: color-mix(in oklab, #ef4444 17%, transparent);
+  --diff-code-insert-background-color: color-mix(in oklab, #22c55e 11%, transparent);
+  --diff-code-delete-background-color: color-mix(in oklab, #ef4444 11%, transparent);
+  --diff-code-insert-edit-background-color: color-mix(in oklab, #22c55e 28%, transparent);
+  --diff-code-delete-edit-background-color: color-mix(in oklab, #ef4444 28%, transparent);
+  --diff-gutter-selected-background-color: color-mix(in oklab, var(--primary) 24%, transparent);
+  --diff-code-selected-background-color: color-mix(in oklab, var(--primary) 14%, transparent);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.ora-task-diff--split {
+  --diff-gutter-delete-background-color: color-mix(in oklab, #ef4444 12%, transparent);
+  --diff-code-delete-background-color: color-mix(in oklab, #ef4444 7%, transparent);
+  --diff-code-delete-edit-background-color: color-mix(in oklab, #ef4444 20%, transparent);
+}
+
+.ora-task-diff .diff {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ora-task-diff--unified .diff-unified {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+.ora-task-diff .diff-gutter {
+  cursor: pointer;
+  border-right: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  color: var(--muted-foreground);
+}
+
+.ora-task-diff .diff-gutter:hover {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+}
+
+.ora-task-diff .diff-code {
+  padding-inline: 10px;
+  white-space: pre;
+}
+
+.ora-task-diff .diff-split .diff-code {
+  max-width: 0;
+  overflow: hidden;
+}
+
+.ora-diff-version-headings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 28px;
+}
+
+.ora-diff-version-headings span {
+  padding-inline: 10px;
+}
+
+.ora-diff-version-headings span + span {
+  border-left: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-line {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 7ch minmax(0, 1fr) 7ch minmax(0, 1fr);
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-split,
+.ora-task-diff--split.ora-task-diff--modify .diff-split > tbody {
+  display: block;
+  width: 100%;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-split > colgroup {
+  display: none;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-code {
+  max-width: none;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-line > :nth-child(1) {
+  grid-column: 3;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-line > :nth-child(2) {
+  grid-column: 4;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-line > :nth-child(3) {
+  grid-column: 1;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-line > :nth-child(4) {
+  grid-column: 2;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-line > * {
+  min-width: 0;
+  grid-row: 1;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-widget {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-decoration > tr {
+  display: block;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-decoration-content {
+  display: block;
+  width: 100%;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-widget > :first-child:not(:only-child) {
+  grid-column: 2;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-widget > :nth-child(2) {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.ora-task-diff--split.ora-task-diff--modify .diff-widget > :only-child {
+  grid-column: 1 / -1;
+}
+
+.ora-task-diff--split.ora-task-diff--add .diff-split {
+  width: 50%;
+}
+
+.ora-task-diff--split.ora-task-diff--delete .diff-split {
+  width: 50%;
+  margin-left: 50%;
+}
+
+.ora-task-diff .diff-hunk {
+  color: var(--muted-foreground);
+  background: color-mix(in oklab, var(--muted) 65%, transparent);
+}
+
+.ora-task-diff .diff-widget-content {
+  padding: 10px 12px;
+  background: var(--background);
+}
+
+.ora-task-diff .ora-diff-collapsed {
+  border-block: 1px dashed color-mix(in oklab, var(--violet-500, #8b5cf6) 24%, transparent);
+  background: color-mix(in oklab, var(--muted) 36%, transparent);
+}
+
+.ora-task-diff .ora-diff-collapsed-cell {
+  padding: 0;
+}
+
+.ora-scroll-region {
+  overscroll-behavior: none;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+}
+
+.ora-scroll-region::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ora-scroll-region::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted-foreground) 38%, transparent);
+  background-clip: padding-box;
+}
+
+.ora-scroll-region::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--muted-foreground) 56%, transparent);
+  background-clip: padding-box;
+}
+
+.ora-diff-scroll-region {
+  scrollbar-gutter: auto;
+}
+
+.ora-diff-scroll-region::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ora-diff-scroll-region::-webkit-scrollbar-track {
+  background: color-mix(in oklab, var(--muted) 30%, transparent);
+}
+
+.ora-diff-scroll-region::-webkit-scrollbar-thumb {
+  border-width: 1px;
+}
+
+@keyframes ora-diff-progress {
+  from {
+    transform: translateX(-110%);
+  }
+
+  to {
+    transform: translateX(310%);
+  }
+}
+
+.ora-diff-progress {
+  animation: ora-diff-progress 900ms ease-in-out infinite;
+}
+
+@keyframes ora-changes-side-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ora-changes-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ora-changes-backdrop-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes ora-changes-overlay-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes ora-changes-overlay-out {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(14px) scale(0.988);
+  }
+}
+
+.ora-changes-side-panel {
+  animation: ora-changes-side-panel-in 190ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ora-changes-backdrop {
+  animation: ora-changes-backdrop-in 180ms ease-out;
+}
+
+.ora-changes-backdrop.is-closing {
+  animation: ora-changes-backdrop-out 180ms ease-in forwards;
+}
+
+.ora-changes-overlay {
+  transform-origin: right center;
+  animation: ora-changes-overlay-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.ora-changes-overlay.is-closing {
+  animation: ora-changes-overlay-out 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ora-changes-side-panel,
+  .ora-changes-backdrop,
+  .ora-changes-backdrop.is-closing,
+  .ora-changes-overlay,
+  .ora-changes-overlay.is-closing {
+    animation-duration: 1ms;
+  }
+}

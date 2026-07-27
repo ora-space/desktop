@@ -1,4 +1,7 @@
-use crate::{RepositoryError, TaskWorktreeProvisionerError};
+use crate::{
+    RepositoryError, TaskDiffCommentRepositoryError, TaskDiffReaderError,
+    TaskWorktreeProvisionerError,
+};
 use ora_domain::DomainModelError;
 use thiserror::Error;
 
@@ -63,6 +66,23 @@ pub enum ApplicationError {
         #[from]
         source: TaskWorktreeProvisionerError,
     },
+    #[error("task diff operation failed: {message}")]
+    TaskDiff { message: String },
+    #[error("task diff baseline is unavailable")]
+    TaskDiffBaselineUnavailable,
+    #[error("task diff is too large: {byte_count} bytes exceeds {max_byte_count} bytes")]
+    TaskDiffTooLarge {
+        byte_count: usize,
+        max_byte_count: usize,
+    },
+    #[error("task diff changed before the comment was created")]
+    TaskDiffStale,
+    #[error("task diff comment not found: {comment_id}")]
+    TaskDiffCommentNotFound { comment_id: String },
+    #[error("invalid task diff comment: {message}")]
+    TaskDiffCommentInvalid { message: String },
+    #[error("task diff comment repository operation failed: {message}")]
+    TaskDiffCommentRepository { message: String },
     #[error("worktree not found: {worktree_id}")]
     WorktreeNotFound { worktree_id: String },
     #[error("worktree repository operation failed")]
@@ -136,6 +156,31 @@ impl ApplicationError {
         }
     }
 
+    /// Maps task diff reader failures into stable application errors.
+    pub(crate) fn from_task_diff_reader_error(error: TaskDiffReaderError) -> Self {
+        match error {
+            TaskDiffReaderError::OperationFailed(message) => Self::TaskDiff { message },
+            TaskDiffReaderError::TooLarge {
+                byte_count,
+                max_byte_count,
+            } => Self::TaskDiffTooLarge {
+                byte_count,
+                max_byte_count,
+            },
+        }
+    }
+
+    /// Maps task diff comment persistence failures into stable application errors.
+    pub(crate) fn from_task_diff_comment_repository_error(
+        error: TaskDiffCommentRepositoryError,
+    ) -> Self {
+        match error {
+            TaskDiffCommentRepositoryError::OperationFailed(message) => {
+                Self::TaskDiffCommentRepository { message }
+            }
+        }
+    }
+
     /// Maps worktree repository failures into stable application errors.
     pub(crate) fn from_worktree_repository_error(error: RepositoryError) -> Self {
         Self::WorktreeRepository { source: error }
@@ -161,6 +206,7 @@ impl PartialEq for ApplicationError {
             | (ProjectRepository { .. }, ProjectRepository { .. })
             | (ProjectWorkContextRepository { .. }, ProjectWorkContextRepository { .. })
             | (TaskRepository { .. }, TaskRepository { .. })
+            | (TaskDiffStale, TaskDiffStale)
             | (WorktreeRepository { .. }, WorktreeRepository { .. })
             | (SessionRepository { .. }, SessionRepository { .. }) => true,
             (SkillNotFound { skill_id: left }, SkillNotFound { skill_id: right }) => left == right,
@@ -183,6 +229,30 @@ impl PartialEq for ApplicationError {
                 },
             ) => left_surface == right_surface && left_window == right_window,
             (TaskNotFound { task_id: left }, TaskNotFound { task_id: right }) => left == right,
+            (TaskDiff { message: left }, TaskDiff { message: right })
+            | (
+                TaskDiffCommentInvalid { message: left },
+                TaskDiffCommentInvalid { message: right },
+            )
+            | (
+                TaskDiffCommentRepository { message: left },
+                TaskDiffCommentRepository { message: right },
+            ) => left == right,
+            (TaskDiffBaselineUnavailable, TaskDiffBaselineUnavailable) => true,
+            (
+                TaskDiffTooLarge {
+                    byte_count: left_bytes,
+                    max_byte_count: left_max,
+                },
+                TaskDiffTooLarge {
+                    byte_count: right_bytes,
+                    max_byte_count: right_max,
+                },
+            ) => left_bytes == right_bytes && left_max == right_max,
+            (
+                TaskDiffCommentNotFound { comment_id: left },
+                TaskDiffCommentNotFound { comment_id: right },
+            ) => left == right,
             (
                 TaskWorktreeIdExhausted { attempts: left },
                 TaskWorktreeIdExhausted { attempts: right },

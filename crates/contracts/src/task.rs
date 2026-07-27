@@ -72,6 +72,31 @@ pub struct GetTaskResponse {
     pub task: Task,
 }
 
+/// Requests the active workspace for one task without exposing checkout paths to callers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "task.ts")]
+pub struct GetTaskWorkspaceRequest {
+    pub task_id: String,
+}
+
+/// Describes the absolute checkout root and branch the backend resolved for one task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "task.ts")]
+pub struct TaskWorkspace {
+    pub root_path: String,
+    pub branch_name: String,
+}
+
+/// Returns one task-owned workspace without exposing repository internals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "task.ts")]
+pub struct GetTaskWorkspaceResponse {
+    pub workspace: TaskWorkspace,
+}
+
 /// Requests the full visible task list.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -129,6 +154,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CreateTaskResponse::export(config)?;
     GetTaskRequest::export(config)?;
     GetTaskResponse::export(config)?;
+    GetTaskWorkspaceRequest::export(config)?;
+    GetTaskWorkspaceResponse::export(config)?;
+    TaskWorkspace::export(config)?;
     ListTasksRequest::export(config)?;
     ListTasksResponse::export(config)?;
     UpdateTaskRequest::export(config)?;

@@ -12,6 +12,7 @@ pub enum ErrorClassification {
     InvalidRequest,
     NotFound,
     Conflict,
+    PayloadTooLarge,
     Internal,
 }
 
@@ -150,6 +151,31 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorktreeNotFound(EmptyErrorParams {}),
                 "worktree not found",
             ),
+            ApplicationError::TaskDiffBaselineUnavailable => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffBaselineUnavailable(EmptyErrorParams {}),
+                "task diff baseline is unavailable",
+            ),
+            ApplicationError::TaskDiffTooLarge { .. } => (
+                ErrorClassification::PayloadTooLarge,
+                PublicError::TaskDiffTooLarge(EmptyErrorParams {}),
+                "task diff exceeds the response limit",
+            ),
+            ApplicationError::TaskDiffStale => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffStale(EmptyErrorParams {}),
+                "task diff changed before the comment was created",
+            ),
+            ApplicationError::TaskDiffCommentNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::TaskDiffCommentNotFound(EmptyErrorParams {}),
+                "task diff comment not found",
+            ),
+            ApplicationError::TaskDiffCommentInvalid { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommentInvalid(EmptyErrorParams {}),
+                "task diff comment is invalid",
+            ),
             ApplicationError::SessionNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::SessionNotFound(EmptyErrorParams {}),
@@ -164,6 +190,8 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::TaskWorktreeRootUnavailable
             | ApplicationError::TaskFilesystem { .. }
             | ApplicationError::TaskWorktreeProvisioner { .. }
+            | ApplicationError::TaskDiff { .. }
+            | ApplicationError::TaskDiffCommentRepository { .. }
             | ApplicationError::WorktreeRepository { .. }
             | ApplicationError::SessionRepository { .. } => (
                 ErrorClassification::Internal,

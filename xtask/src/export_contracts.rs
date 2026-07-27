@@ -286,9 +286,35 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "RenewProjectWorkContextRequest"
         | "RenewProjectWorkContextResponse" => "project-work-context",
         // task
-        "CreateTaskRequest" | "CreateTaskResponse" | "DeleteTaskRequest" | "DeleteTaskResponse"
-        | "GetTaskRequest" | "GetTaskResponse" | "ListTasksRequest" | "ListTasksResponse"
-        | "UpdateTaskRequest" | "UpdateTaskResponse" => "task",
+        "CreateTaskRequest"
+        | "CreateTaskResponse"
+        | "DeleteTaskRequest"
+        | "DeleteTaskResponse"
+        | "GetTaskRequest"
+        | "GetTaskResponse"
+        | "GetTaskWorkspaceRequest"
+        | "GetTaskWorkspaceResponse"
+        | "ListTasksRequest"
+        | "ListTasksResponse"
+        | "TaskWorkspace"
+        | "UpdateTaskRequest"
+        | "UpdateTaskResponse" => "task",
+        // taskDiff
+        "CommitTaskChangesRequest"
+        | "CommitTaskChangesResponse"
+        | "CreateTaskDiffCommentRequest"
+        | "CreateTaskDiffCommentResponse"
+        | "GetTaskDiffRequest"
+        | "GetTaskDiffResponse"
+        | "ListTaskDiffCommentsRequest"
+        | "ListTaskDiffCommentsResponse"
+        | "PushTaskBranchRequest"
+        | "PushTaskBranchResponse"
+        | "ReplyTaskDiffCommentRequest"
+        | "ReplyTaskDiffCommentResponse"
+        | "SetTaskDiffCommentStatusRequest"
+        | "SetTaskDiffCommentStatusResponse"
+        | "TaskDiffScope" => "task_diff",
         // session
         "CreateSessionRequest"
         | "CreateSessionResponse"
@@ -480,6 +506,7 @@ mod tests {
             "session.ts",
             "skill.ts",
             "task.ts",
+            "task_diff.ts",
         ];
 
         for generated_file in generated_files {

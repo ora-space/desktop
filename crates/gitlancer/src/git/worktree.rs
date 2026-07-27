@@ -1,5 +1,5 @@
 use crate::domain::paths::WorktreeRoot;
-use crate::domain::refs::BranchName;
+use crate::domain::refs::{BranchName, CommitId};
 use crate::domain::repo::Repository;
 use crate::domain::worktree::{WorktreeHandle, WorktreeKind};
 use crate::error::{DomainError, GitlancerError};
@@ -53,6 +53,7 @@ pub struct CreateWorktreeRequest<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateWorktreeResponse {
     pub worktree: WorktreeHandle,
+    pub head_commit_id: CommitId,
 }
 
 /// Describes how worktree deletion should behave when Git would otherwise protect the checkout.
@@ -164,14 +165,48 @@ impl<R: GitRunner> Git<R> {
         &self,
         request: CreateWorktreeRequest<'_>,
     ) -> Result<CreateWorktreeResponse, GitlancerError> {
-        let command = build_create_worktree_command(&request);
+        let head_output = self.runner().run(&build_head_commit_command(&request))?;
+        let head_commit_id = head_output.stdout.trim();
+        if head_commit_id.is_empty() {
+            return Err(crate::ParseError::MissingLine.into());
+        }
+        let head_commit_id = CommitId::new(head_commit_id);
+        let command = build_create_worktree_command(&request, &head_commit_id);
         let _output = self.runner().run(&command)?;
-        let worktree = self.find_worktree(FindWorktreeRequest {
+        let worktree = match self.find_worktree(FindWorktreeRequest {
             repository: request.repository,
             candidate_path: request.worktree_root.as_path(),
-        })?;
+        }) {
+            Ok(worktree) => worktree,
+            Err(error) => {
+                self.cleanup_failed_worktree_creation(&request)?;
+                return Err(error);
+            }
+        };
 
-        Ok(CreateWorktreeResponse { worktree })
+        Ok(CreateWorktreeResponse {
+            worktree,
+            head_commit_id,
+        })
+    }
+
+    /// Removes both resources created by `git worktree add` when response discovery fails.
+    fn cleanup_failed_worktree_creation(
+        &self,
+        request: &CreateWorktreeRequest<'_>,
+    ) -> Result<(), GitlancerError> {
+        let worktree_cleanup = self
+            .runner()
+            .run(&build_failed_create_worktree_cleanup_command(request));
+        let branch_cleanup = self
+            .runner()
+            .run(&build_failed_create_branch_cleanup_command(request));
+
+        // Both resources are independent cleanup targets, so a failure removing one must not
+        // prevent an attempt to remove the other. Preserve the first failure when both fail.
+        worktree_cleanup?;
+        branch_cleanup?;
+        Ok(())
     }
 
     /// Deletes one linked worktree after validating repository ownership and rejecting the main checkout explicitly.
@@ -254,8 +289,21 @@ fn normalize_path_for_worktree_match(path: &std::path::Path) -> std::path::PathB
     }
 }
 
-/// Builds a stable `git worktree add` command so linked-worktree creation stays explicit and testable.
-pub fn build_create_worktree_command(request: &CreateWorktreeRequest<'_>) -> GitCommand {
+/// Reads the exact start point before mutation so the recorded baseline cannot drift concurrently.
+fn build_head_commit_command(request: &CreateWorktreeRequest<'_>) -> GitCommand {
+    GitCommand::new(
+        request.repository.root().as_path().to_path_buf(),
+        vec!["rev-parse".to_string(), "HEAD".to_string()],
+        GitEnv::default(),
+        GitIntent::ReadOnly,
+    )
+}
+
+/// Builds a stable `git worktree add` command pinned to the baseline captured before mutation.
+pub fn build_create_worktree_command(
+    request: &CreateWorktreeRequest<'_>,
+    start_point: &CommitId,
+) -> GitCommand {
     GitCommand::new(
         request.repository.root().as_path().to_path_buf(),
         vec![
@@ -268,6 +316,40 @@ pub fn build_create_worktree_command(request: &CreateWorktreeRequest<'_>) -> Git
                 .as_path()
                 .to_string_lossy()
                 .into_owned(),
+            start_point.as_str().to_string(),
+        ],
+        GitEnv::default(),
+        GitIntent::Mutating,
+    )
+}
+
+/// Builds the forced worktree removal used only to compensate a partially completed creation.
+fn build_failed_create_worktree_cleanup_command(request: &CreateWorktreeRequest<'_>) -> GitCommand {
+    GitCommand::new(
+        request.repository.root().as_path().to_path_buf(),
+        vec![
+            "worktree".to_string(),
+            "remove".to_string(),
+            request
+                .worktree_root
+                .as_path()
+                .to_string_lossy()
+                .into_owned(),
+            "--force".to_string(),
+        ],
+        GitEnv::default(),
+        GitIntent::Mutating,
+    )
+}
+
+/// Deletes the new branch after its failed worktree has been removed successfully.
+fn build_failed_create_branch_cleanup_command(request: &CreateWorktreeRequest<'_>) -> GitCommand {
+    GitCommand::new(
+        request.repository.root().as_path().to_path_buf(),
+        vec![
+            "branch".to_string(),
+            "-D".to_string(),
+            request.branch_name.as_str().to_string(),
         ],
         GitEnv::default(),
         GitIntent::Mutating,
@@ -296,4 +378,206 @@ pub fn build_delete_worktree_command(request: &DeleteWorktreeRequest<'_>) -> Git
         GitEnv::default(),
         GitIntent::Mutating,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CreateWorktreeRequest, Git, Repository};
+    use crate::{
+        BranchName, GitCommand, GitExecError, GitOutput, GitRunner, GitlancerError, RepoRoot,
+        WorktreeRoot,
+    };
+    use pretty_assertions::assert_eq;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    /// Supplies a deterministic command sequence so post-mutation rollback can be tested in isolation.
+    struct SequencedRunner {
+        results: RefCell<VecDeque<Result<GitOutput, GitExecError>>>,
+        commands: RefCell<Vec<GitCommand>>,
+    }
+
+    impl SequencedRunner {
+        /// Creates a runner whose results are consumed in command order.
+        fn new(results: Vec<Result<GitOutput, GitExecError>>) -> Self {
+            Self {
+                results: RefCell::new(results.into()),
+                commands: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl GitRunner for SequencedRunner {
+        /// Records each command and returns the next configured process result.
+        fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
+            self.commands.borrow_mut().push(command.clone());
+            match self.results.borrow_mut().pop_front() {
+                Some(result) => result,
+                None => panic!("missing fake result for {:?}", command.args),
+            }
+        }
+    }
+
+    /// Verifies baseline lookup failures occur before `git worktree add` can mutate repository state.
+    #[test]
+    fn does_not_create_worktree_when_baseline_lookup_fails() {
+        let runner = SequencedRunner::new(vec![Err(GitExecError::NonZeroExit {
+            code: Some(128),
+            args: vec!["rev-parse".to_string(), "HEAD".to_string()],
+            stdout: String::new(),
+            stderr: "missing HEAD".to_string(),
+        })]);
+        let git = Git::new(runner);
+        let repository = Repository::new(RepoRoot::new("/repo"));
+
+        let result = git.create_worktree(CreateWorktreeRequest {
+            repository: &repository,
+            worktree_root: WorktreeRoot::new("/worktrees/task"),
+            branch_name: BranchName::new("ora/task"),
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            git.runner()
+                .commands
+                .borrow()
+                .iter()
+                .map(|command| command.args.clone())
+                .collect::<Vec<_>>(),
+            vec![vec!["rev-parse", "HEAD"]]
+        );
+    }
+
+    /// Verifies metadata discovery failures remove both resources created by `git worktree add`.
+    #[test]
+    fn cleans_up_worktree_and_branch_when_creation_discovery_fails() {
+        let runner = SequencedRunner::new(vec![
+            Ok(successful_output("base-commit\n")),
+            Ok(successful_output("")),
+            Err(GitExecError::NonZeroExit {
+                code: Some(1),
+                args: vec![
+                    "worktree".to_string(),
+                    "list".to_string(),
+                    "--porcelain".to_string(),
+                ],
+                stdout: String::new(),
+                stderr: "list failed".to_string(),
+            }),
+            Ok(successful_output("")),
+            Ok(successful_output("")),
+        ]);
+        let git = Git::new(runner);
+        let repository = Repository::new(RepoRoot::new("/repo"));
+        let result = git.create_worktree(CreateWorktreeRequest {
+            repository: &repository,
+            worktree_root: WorktreeRoot::new("/worktrees/task"),
+            branch_name: BranchName::new("ora/task"),
+        });
+
+        let error = match result {
+            Err(GitlancerError::Exec(GitExecError::NonZeroExit {
+                code, args, stderr, ..
+            })) => (code, args, stderr),
+            other => panic!("expected discovery failure after successful cleanup, got {other:?}"),
+        };
+        assert_eq!(
+            error,
+            (
+                Some(1),
+                vec![
+                    "worktree".to_string(),
+                    "list".to_string(),
+                    "--porcelain".to_string(),
+                ],
+                "list failed".to_string(),
+            )
+        );
+        assert_eq!(
+            git.runner()
+                .commands
+                .borrow()
+                .iter()
+                .map(|command| command.args.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                vec!["rev-parse", "HEAD"],
+                vec![
+                    "worktree",
+                    "add",
+                    "-b",
+                    "ora/task",
+                    "/worktrees/task",
+                    "base-commit",
+                ],
+                vec!["worktree", "list", "--porcelain"],
+                vec!["worktree", "remove", "/worktrees/task", "--force"],
+                vec!["branch", "-D", "ora/task"],
+            ]
+        );
+    }
+
+    /// Verifies branch cleanup is still attempted when forced worktree removal fails.
+    #[test]
+    fn attempts_branch_cleanup_after_worktree_cleanup_fails() {
+        let cleanup_error = GitExecError::NonZeroExit {
+            code: Some(1),
+            args: vec!["worktree".to_string(), "remove".to_string()],
+            stdout: String::new(),
+            stderr: "worktree cleanup failed".to_string(),
+        };
+        let runner = SequencedRunner::new(vec![
+            Ok(successful_output("base-commit\n")),
+            Ok(successful_output("")),
+            Err(GitExecError::NonZeroExit {
+                code: Some(1),
+                args: vec![
+                    "worktree".to_string(),
+                    "list".to_string(),
+                    "--porcelain".to_string(),
+                ],
+                stdout: String::new(),
+                stderr: "list failed".to_string(),
+            }),
+            Err(cleanup_error),
+            Ok(successful_output("")),
+        ]);
+        let git = Git::new(runner);
+        let repository = Repository::new(RepoRoot::new("/repo"));
+
+        let result = git.create_worktree(CreateWorktreeRequest {
+            repository: &repository,
+            worktree_root: WorktreeRoot::new("/worktrees/task"),
+            branch_name: BranchName::new("ora/task"),
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            git.runner()
+                .commands
+                .borrow()
+                .iter()
+                .map(|command| command.args.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                vec!["rev-parse", "HEAD"],
+                vec![
+                    "worktree",
+                    "add",
+                    "-b",
+                    "ora/task",
+                    "/worktrees/task",
+                    "base-commit",
+                ],
+                vec!["worktree", "list", "--porcelain"],
+                vec!["worktree", "remove", "/worktrees/task", "--force"],
+                vec!["branch", "-D", "ora/task"],
+            ]
+        );
+    }
+
+    /// Creates one successful fake output without repeating process metadata in test setup.
+    fn successful_output(stdout: &str) -> GitOutput {
+        GitOutput::new(Some(0), stdout.to_string(), String::new(), 0)
+    }
 }

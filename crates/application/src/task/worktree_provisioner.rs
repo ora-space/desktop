@@ -1,6 +1,6 @@
 use super::{
-    CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskWorktreeDeletionMode,
-    TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
+    CreateTaskWorktreeRequest, CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest,
+    TaskWorktreeDeletionMode, TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
 };
 use gitlancer::git::branch::ListBranchesRequest;
 use gitlancer::git::worktree::{
@@ -64,7 +64,7 @@ impl TaskWorktreeProvisioner for GitTaskWorktreeProvisioner {
     fn create_task_worktree(
         &self,
         request: CreateTaskWorktreeRequest,
-    ) -> Result<(), TaskWorktreeProvisionerError> {
+    ) -> Result<CreateTaskWorktreeResponse, TaskWorktreeProvisionerError> {
         create_parent_directory(&request.worktree_path)?;
         self.git
             .create_worktree(GitCreateWorktreeRequest {
@@ -72,7 +72,9 @@ impl TaskWorktreeProvisioner for GitTaskWorktreeProvisioner {
                 worktree_root: WorktreeRoot::new(&request.worktree_path),
                 branch_name: BranchName::new(request.branch_name),
             })
-            .map(|_| ())
+            .map(|response| CreateTaskWorktreeResponse {
+                base_commit_id: response.head_commit_id.as_str().to_string(),
+            })
             .map_err(TaskWorktreeProvisionerError::operation_failed)
     }
 

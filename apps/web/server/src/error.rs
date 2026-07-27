@@ -119,6 +119,14 @@ impl WebApiError {
             error: BackendError::internal(context, source),
         }
     }
+
+    /// Creates a stable internal error when the async runtime cannot complete blocking work.
+    pub fn internal_error(message: impl Into<String>) -> Self {
+        Self::internal(
+            "blocking task failed",
+            std::io::Error::other(message.into()),
+        )
+    }
 }
 
 impl From<ApplicationError> for WebApiError {
@@ -206,6 +214,7 @@ const fn status_for(classification: ErrorClassification) -> StatusCode {
         ErrorClassification::InvalidRequest => StatusCode::BAD_REQUEST,
         ErrorClassification::NotFound => StatusCode::NOT_FOUND,
         ErrorClassification::Conflict => StatusCode::CONFLICT,
+        ErrorClassification::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         ErrorClassification::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

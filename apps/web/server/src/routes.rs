@@ -1,6 +1,7 @@
 use crate::app_state::AppState;
 use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skills, tasks,
+    agents, file_system, git, health, project_work_contexts, projects, sessions, skills,
+    task_diffs, tasks,
 };
 use axum::Router;
 use axum::middleware;
@@ -9,7 +10,9 @@ use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
     PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
     SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_COMMIT_PATH,
+    TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH,
+    TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASKS_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -55,6 +58,24 @@ pub fn build_router(app_state: AppState) -> Router {
             get(tasks::get_task)
                 .put(tasks::update_task)
                 .delete(tasks::delete_task),
+        )
+        // =============================================================================
+        // taskDiff
+        // =============================================================================
+        .route(TASK_DIFF_PATH, get(task_diffs::get_task_diff))
+        .route(TASK_COMMIT_PATH, post(task_diffs::commit_task_changes))
+        .route(TASK_PUSH_PATH, post(task_diffs::push_task_branch))
+        .route(
+            TASK_DIFF_COMMENTS_PATH,
+            post(task_diffs::create_task_diff_comment).get(task_diffs::list_task_diff_comments),
+        )
+        .route(
+            TASK_DIFF_COMMENT_REPLIES_PATH,
+            post(task_diffs::reply_task_diff_comment),
+        )
+        .route(
+            TASK_DIFF_COMMENT_STATUS_PATH,
+            axum::routing::put(task_diffs::set_task_diff_comment_status),
         )
         // =============================================================================
         // session

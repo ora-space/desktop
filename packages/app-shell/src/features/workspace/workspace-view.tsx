@@ -39,6 +39,8 @@ import { useWorkflowDetection } from "../workflow/use-workflow-detection";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
 import { agentCliLabel } from "./agent-cli";
+import { TaskChangesLayout } from "../diff/task-changes-layout";
+import { useTaskDiffLiveSync } from "../../state/hooks/use-task-diff-live-sync";
 
 interface WorkspaceViewProps {
   userName: string;
@@ -76,6 +78,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const settingsAgentCli = useSettingsStore((s) => s.settings.agentCli);
 
   const chatStore = useChatStore();
+  useTaskDiffLiveSync(chatStore, sessions);
   const client = useContractsClient();
   const queryClient = useQueryClient();
 
@@ -290,6 +293,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       conversation?.isLoaded !== true &&
       conversation?.error == null;
     return (
+      <TaskChangesLayout taskId={task?.id}>
       <main
         id="main-content"
         className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background"
@@ -375,10 +379,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           />
         </div>
       </main>
+      </TaskChangesLayout>
     );
   }
 
   return (
+    <TaskChangesLayout taskId={task?.id}>
     <main
       id="main-content"
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
@@ -459,5 +465,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         </section>
       </div>
     </main>
+    </TaskChangesLayout>
   );
 }

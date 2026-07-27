@@ -78,6 +78,7 @@ fn configure_repository_connection(connection: &Connection) -> Result<(), rusqli
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MILLIS))?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
 
     Ok(())
 }
