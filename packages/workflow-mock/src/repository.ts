@@ -1,4 +1,4 @@
-import { createMockWorkflow } from "./fixtures";
+import { createMockWorkflows } from "./fixtures";
 import type {
   WorkflowDefinition,
   WorkflowRepository,
@@ -16,10 +16,11 @@ function cloneWorkflow(workflow: WorkflowDefinition): WorkflowDefinition {
 /** Simulates the future workflow API while keeping all prototype state inside this package. */
 export class MockWorkflowRepository implements WorkflowRepository {
   private workflows: Map<string, WorkflowDefinition>;
+  private nextWorkflowId = 1;
 
   public constructor(private readonly locale: WorkflowLocale = "zh-CN") {
-    const workflow = createMockWorkflow(locale);
-    this.workflows = new Map([[workflow.id, workflow]]);
+    const workflows = createMockWorkflows(locale);
+    this.workflows = new Map(workflows.map((workflow) => [workflow.id, workflow]));
   }
 
   /** Returns every mock workflow after a short delay so loading states stay testable. */
@@ -38,6 +39,35 @@ export class MockWorkflowRepository implements WorkflowRepository {
     return cloneWorkflow(workflow);
   }
 
+  /** Creates a blank workflow with a usable Start node so the graph is never structurally empty. */
+  async create(name: string): Promise<WorkflowDefinition> {
+    await waitForMockLatency();
+    const id = `workflow-${this.nextWorkflowId++}`;
+    const workflow: WorkflowDefinition = {
+      id,
+      name,
+      description: this.locale === "zh-CN" ? "尚未添加描述" : "No description yet",
+      updatedAt: new Date().toISOString(),
+      nodes: [
+        {
+          id: "start",
+          kind: "start",
+          title: this.locale === "zh-CN" ? "开始" : "Start",
+          description: this.locale === "zh-CN" ? "接收工作流输入" : "Receive workflow input",
+          position: { x: 120, y: 260 },
+          config: {
+            instruction: this.locale === "zh-CN"
+              ? "定义工作流启动时需要的输入。"
+              : "Define the input required to start this workflow.",
+          },
+        },
+      ],
+      edges: [],
+    };
+    this.workflows.set(id, workflow);
+    return cloneWorkflow(workflow);
+  }
+
   /** Persists changes in memory for the lifetime of the current application process. */
   async save(workflow: WorkflowDefinition): Promise<WorkflowDefinition> {
     await waitForMockLatency();
@@ -47,6 +77,33 @@ export class MockWorkflowRepository implements WorkflowRepository {
     };
     this.workflows.set(saved.id, saved);
     return cloneWorkflow(saved);
+  }
+
+  /** Deletes one in-memory workflow while leaving selection decisions to the UI. */
+  async delete(id: string): Promise<void> {
+    await waitForMockLatency();
+    if (!this.workflows.delete(id)) {
+      throw new Error(`Workflow "${id}" was not found`);
+    }
+  }
+
+  /** Validates and imports a JSON-compatible workflow definition into the mock collection. */
+  async importDefinition(value: unknown): Promise<WorkflowDefinition> {
+    await waitForMockLatency();
+    if (!isWorkflowDefinition(value)) {
+      throw new Error("Invalid workflow definition");
+    }
+    const requestedId = value.id.trim();
+    const id = this.workflows.has(requestedId)
+      ? `${requestedId}-imported-${this.nextWorkflowId++}`
+      : requestedId;
+    const imported = {
+      ...cloneWorkflow(value),
+      id,
+      updatedAt: new Date().toISOString(),
+    };
+    this.workflows.set(id, imported);
+    return cloneWorkflow(imported);
   }
 
   /** Produces deterministic preview output without executing tools or contacting a model. */
@@ -68,6 +125,42 @@ export class MockWorkflowRepository implements WorkflowRepository {
       steps,
     };
   }
+}
+
+/** Rejects malformed imports before they enter graph state and break canvas assumptions. */
+function isWorkflowDefinition(value: unknown): value is WorkflowDefinition {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Partial<WorkflowDefinition>;
+  return typeof candidate.id === "string"
+    && candidate.id.trim() !== ""
+    && typeof candidate.name === "string"
+    && candidate.name.trim() !== ""
+    && typeof candidate.description === "string"
+    && typeof candidate.updatedAt === "string"
+    && Array.isArray(candidate.nodes)
+    && Array.isArray(candidate.edges)
+    && candidate.nodes.every((node) =>
+      typeof node === "object"
+      && node !== null
+      && typeof (node as WorkflowDefinition["nodes"][number]).id === "string"
+      && ["start", "prompt", "agent", "condition", "tool", "output"].includes(
+        (node as WorkflowDefinition["nodes"][number]).kind,
+      )
+      && typeof (node as WorkflowDefinition["nodes"][number]).title === "string"
+      && typeof (node as WorkflowDefinition["nodes"][number]).description === "string"
+      && typeof (node as WorkflowDefinition["nodes"][number]).position?.x === "number"
+      && typeof (node as WorkflowDefinition["nodes"][number]).position?.y === "number"
+      && typeof (node as WorkflowDefinition["nodes"][number]).config?.instruction === "string"
+    )
+    && candidate.edges.every((edge) =>
+      typeof edge === "object"
+      && edge !== null
+      && typeof (edge as WorkflowDefinition["edges"][number]).id === "string"
+      && typeof (edge as WorkflowDefinition["edges"][number]).source === "string"
+      && typeof (edge as WorkflowDefinition["edges"][number]).target === "string"
+    );
 }
 
 /** Keeps mock timing in one place so it can be replaced or disabled in tests later. */

@@ -64,6 +64,9 @@ export interface WorkflowRunResult {
 export interface WorkflowRepository {
   list(): Promise<WorkflowDefinition[]>;
   get(id: string): Promise<WorkflowDefinition>;
+  create(name: string): Promise<WorkflowDefinition>;
   save(workflow: WorkflowDefinition): Promise<WorkflowDefinition>;
+  delete(id: string): Promise<void>;
+  importDefinition(value: unknown): Promise<WorkflowDefinition>;
   run(id: string, input: string): Promise<WorkflowRunResult>;
 }
