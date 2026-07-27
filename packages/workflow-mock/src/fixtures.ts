@@ -144,3 +144,25 @@ export function createMockWorkflow(locale: WorkflowLocale): WorkflowDefinition {
   }));
   return workflow;
 }
+
+/** Provides several selectable workflows so the frontend can exercise asset management. */
+export function createMockWorkflows(locale: WorkflowLocale): WorkflowDefinition[] {
+  const review = createMockWorkflow(locale);
+  const release = structuredClone(review);
+  release.id = "release-readiness";
+  release.name = locale === "zh-CN" ? "发布准备检查" : "Release readiness";
+  release.description = locale === "zh-CN"
+    ? "在部署前验证测试、变更说明和风险项。"
+    : "Validate tests, release notes, and risks before deployment.";
+  release.updatedAt = "2026-07-26T16:40:00+08:00";
+
+  const triage = structuredClone(review);
+  triage.id = "issue-triage";
+  triage.name = locale === "zh-CN" ? "问题分类助手" : "Issue triage assistant";
+  triage.description = locale === "zh-CN"
+    ? "分析问题描述并分配优先级与处理角色。"
+    : "Analyze issue reports and assign priority and ownership.";
+  triage.updatedAt = "2026-07-25T09:20:00+08:00";
+
+  return [review, release, triage];
+}
