@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../../i18n/i18n-instance";
 import { WorkflowSettings } from "./workflow-settings";
 
@@ -51,6 +51,94 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("switches workflows from the manager and adds nodes from the bottom dock", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    const releaseWorkflow = await screen.findByText("发布准备检查");
+    await user.click(releaseWorkflow.closest("button")!);
+
+    expect(screen.getByDisplayValue("发布准备检查")).toBeInTheDocument();
+    expect(screen.getByLabelText("添加工作流节点")).toBeInTheDocument();
+    const canvas = screen.getByLabelText("工作流画布");
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      ...canvas.getBoundingClientRect(),
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 600,
+      right: 800,
+      bottom: 600,
+    });
+
+    await user.click(screen.getByRole("button", { name: "提示词" }));
+
+    expect(screen.getAllByText("提示词 1")).toHaveLength(2);
+    const addedNode = screen.getByLabelText("提示词节点: 提示词 1");
+    expect({
+      left: addedNode.style.left,
+      top: addedNode.style.top,
+    }).toEqual({
+      left: "253px",
+      top: "207px",
+    });
+  });
+
+  it("drags a node type from the dock to the chosen canvas position", async () => {
+    render(<WorkflowSettings />);
+    const canvas = await screen.findByLabelText("工作流画布");
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      ...canvas.getBoundingClientRect(),
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 600,
+      right: 800,
+      bottom: 600,
+    });
+    const dataTransfer = createDataTransfer();
+    const toolButton = screen.getByRole("button", { name: "工具" });
+
+    fireEvent.dragStart(toolButton, { dataTransfer });
+    fireEvent.dragEnter(canvas, { dataTransfer });
+
+    expect(screen.getByText("释放以添加节点")).toBeInTheDocument();
+
+    fireEvent.dragOver(canvas, { clientX: 500, clientY: 350, dataTransfer });
+    const dropEvent = new MouseEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 500,
+      clientY: 350,
+    });
+    Object.defineProperty(dropEvent, "dataTransfer", { value: dataTransfer });
+    fireEvent(canvas, dropEvent);
+
+    const addedNode = screen.getByLabelText("工具节点: 工具 1");
+    expect({
+      left: addedNode.style.left,
+      top: addedNode.style.top,
+    }).toEqual({
+      left: "353px",
+      top: "257px",
+    });
+    expect(screen.queryByText("释放以添加节点")).not.toBeInTheDocument();
+  });
+
+  it("creates a workflow from the left manager and allows renaming it", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    await screen.findByText("代码审查工作流");
+    await user.click(screen.getByRole("button", { name: "新建工作流" }));
+    const nameInput = await screen.findByDisplayValue("新工作流 4");
+    await user.clear(nameInput);
+    await user.type(nameInput, "发布复盘");
+
+    expect(screen.getByDisplayValue("发布复盘")).toBeInTheDocument();
+    expect(screen.getByText("4 个工作流")).toBeInTheDocument();
+  });
+
   it("localizes workflow chrome and mock content in English", async () => {
     await appI18n.changeLanguage("en-US");
     const user = userEvent.setup();
@@ -66,3 +154,36 @@ describe("WorkflowSettings", () => {
     expect(screen.getByText(/Found 2 suggestions and no blocking issues./)).toBeInTheDocument();
   });
 });
+
+/** Provides the subset of native drag data behavior used by the workflow catalog. */
+function createDataTransfer(): DataTransfer {
+  const values = new Map<string, string>();
+  const types: string[] = [];
+  return {
+    dropEffect: "none",
+    effectAllowed: "all",
+    files: [] as unknown as FileList,
+    items: [] as unknown as DataTransferItemList,
+    types,
+    clearData: (format?: string) => {
+      if (format === undefined) {
+        values.clear();
+        types.splice(0);
+        return;
+      }
+      values.delete(format);
+      const index = types.indexOf(format);
+      if (index >= 0) {
+        types.splice(index, 1);
+      }
+    },
+    getData: (format: string) => values.get(format) ?? "",
+    setData: (format: string, data: string) => {
+      values.set(format, data);
+      if (!types.includes(format)) {
+        types.push(format);
+      }
+    },
+    setDragImage: () => {},
+  };
+}

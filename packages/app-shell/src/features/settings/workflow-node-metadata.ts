@@ -18,6 +18,8 @@ export interface WorkflowNodeMetadata {
   tone: string;
 }
 
+export const WORKFLOW_NODE_DRAG_DATA_TYPE = "application/x-ora-workflow-node";
+
 export const WORKFLOW_NODE_CATALOG: readonly WorkflowNodeMetadata[] = [
   {
     kind: "start",

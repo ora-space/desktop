@@ -43,6 +43,65 @@ describe("MockWorkflowRepository", () => {
     );
   });
 
+  it("creates, lists, and deletes workflows", async () => {
+    const repository = new MockWorkflowRepository();
+    const initialList = repository.list();
+    await vi.runAllTimersAsync();
+    const createdRequest = repository.create("新工作流");
+    await vi.runAllTimersAsync();
+    const created = await createdRequest;
+    const populatedList = repository.list();
+    await vi.runAllTimersAsync();
+
+    expect({
+      initial: await initialList,
+      created,
+      populated: await populatedList,
+    }).toEqual({
+      initial: expect.arrayContaining([
+        expect.objectContaining({ id: "code-review" }),
+        expect.objectContaining({ id: "release-readiness" }),
+        expect.objectContaining({ id: "issue-triage" }),
+      ]),
+      created: expect.objectContaining({
+        id: "workflow-1",
+        name: "新工作流",
+        nodes: [expect.objectContaining({ id: "start", kind: "start" })],
+      }),
+      populated: expect.arrayContaining([
+        expect.objectContaining({ id: "workflow-1", name: "新工作流" }),
+      ]),
+    });
+
+    const deletion = repository.delete(created.id);
+    await vi.runAllTimersAsync();
+    await deletion;
+    const finalList = repository.list();
+    await vi.runAllTimersAsync();
+
+    expect(await finalList).not.toContainEqual(expect.objectContaining({ id: created.id }));
+  });
+
+  it("imports valid definitions with a unique id and rejects malformed JSON values", async () => {
+    const repository = new MockWorkflowRepository();
+    const importRequest = repository.importDefinition(MOCK_WORKFLOW);
+    await vi.runAllTimersAsync();
+    const imported = await importRequest;
+
+    expect(imported).toEqual(expect.objectContaining({
+      id: "code-review-imported-1",
+      name: MOCK_WORKFLOW.name,
+      updatedAt: expect.any(String),
+    }));
+
+    const invalidImport = expect(
+      repository.importDefinition({ id: "broken" }),
+    ).rejects.toThrow("Invalid workflow definition");
+    await vi.runAllTimersAsync();
+
+    await invalidImport;
+  });
+
   it("creates a deterministic successful preview trace", async () => {
     const repository = new MockWorkflowRepository();
     const run = repository.run(MOCK_WORKFLOW.id, "Review the workspace");
