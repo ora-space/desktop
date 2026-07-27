@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   IconCheck,
   IconChevronDown,
@@ -20,6 +21,7 @@ import {
   type WorkflowDefinition,
   type WorkflowNode,
   type WorkflowNodeKind,
+  type WorkflowLocale,
   type WorkflowRunResult,
 } from "@ora/workflow-mock";
 import { WorkflowCanvas } from "./workflow-canvas";
@@ -32,10 +34,11 @@ import {
 } from "./workflow-node-metadata";
 import { WorkflowInspector } from "./workflow-inspector";
 
-const repository = new MockWorkflowRepository();
-
 /** Owns the frontend-only workflow editor state and coordinates the mock repository boundary. */
 export function WorkflowSettings() {
+  const { i18n, t } = useTranslation();
+  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
+  const repository = useMemo(() => new MockWorkflowRepository(locale), [locale]);
   const [workflow, setWorkflow] = useState<WorkflowDefinition | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -55,7 +58,7 @@ export function WorkflowSettings() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [repository]);
 
   const selectedNode = useMemo(
     () => workflow?.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -78,8 +81,8 @@ export function WorkflowSettings() {
     const node: WorkflowNode = {
       id,
       kind,
-      title: `${metadata.label} ${sequence}`,
-      description: metadata.description,
+      title: `${t(metadata.labelKey)} ${sequence}`,
+      description: t(metadata.descriptionKey),
       position: {
         x: 430 + (sequence % 3) * 42,
         y: 250 + (sequence % 4) * 38,
@@ -88,7 +91,7 @@ export function WorkflowSettings() {
         instruction: "",
         ...(kind === "prompt" || kind === "agent" ? { model: "GPT-5" } : {}),
         ...(kind === "tool" ? { tool: "Terminal" } : {}),
-        ...(kind === "condition" ? { condition: "满足条件" } : {}),
+        ...(kind === "condition" ? { condition: t("settings.workflow.defaultCondition") } : {}),
       },
     };
     updateWorkflow((current) => ({ ...current, nodes: [...current.nodes, node] }));
@@ -174,12 +177,12 @@ export function WorkflowSettings() {
             render={
               <Button variant="outline" size="sm" className="lg:hidden">
                 <IconPlus />
-                添加
+                {t("settings.workflow.add")}
                 <IconChevronDown />
               </Button>
             }
           >
-            <span className="sr-only">添加工作流节点</span>
+            <span className="sr-only">{t("settings.workflow.addNode")}</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {WORKFLOW_NODE_CATALOG.map((item) => {
@@ -187,7 +190,7 @@ export function WorkflowSettings() {
               return (
                 <DropdownMenuItem key={item.kind} onClick={() => addNode(item.kind)}>
                   <Icon />
-                  {item.label}
+                  {t(item.labelKey)}
                 </DropdownMenuItem>
               );
             })}
@@ -200,11 +203,13 @@ export function WorkflowSettings() {
           disabled={running}
         >
           <IconPlayerPlay />
-          <span className="hidden sm:inline">测试运行</span>
+          <span className="hidden sm:inline">{t("settings.workflow.testRun")}</span>
         </Button>
         <Button size="sm" onClick={() => void saveWorkflow()} disabled={saving || saved}>
           {saved ? <IconCheck /> : <IconCloudCheck />}
-          <span className="hidden sm:inline">{saving ? "保存中…" : saved ? "已保存" : "保存"}</span>
+          <span className="hidden sm:inline">
+            {saving ? t("common.saving") : saved ? t("settings.workflow.saved") : t("common.save")}
+          </span>
         </Button>
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_260px] lg:grid-cols-[176px_minmax(0,1fr)_280px]">
@@ -248,6 +253,7 @@ export function WorkflowSettings() {
 
 /** Reserves the final editor layout while mock data loads to prevent a visible layout jump. */
 function WorkflowLoading() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center gap-3 border-b border-border px-4">
@@ -258,7 +264,7 @@ function WorkflowLoading() {
         </div>
       </div>
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-xs text-muted-foreground">正在加载 mock 工作流…</p>
+        <p className="text-xs text-muted-foreground">{t("settings.workflow.loading")}</p>
       </div>
     </div>
   );

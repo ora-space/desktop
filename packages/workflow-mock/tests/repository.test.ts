@@ -64,4 +64,27 @@ describe("MockWorkflowRepository", () => {
       ],
     });
   });
+
+  it("returns English fixture and run content for the English locale", async () => {
+    const repository = new MockWorkflowRepository("en-US");
+    const workflowLoad = repository.get(MOCK_WORKFLOW.id);
+    await vi.runAllTimersAsync();
+    const workflow = await workflowLoad;
+    const run = repository.run(workflow.id, "");
+    await vi.runAllTimersAsync();
+    const result = await run;
+
+    expect({
+      workflowName: workflow.name,
+      firstNodeTitle: workflow.nodes[0].title,
+      firstStep: result.steps[0].summary,
+      output: result.output,
+    }).toEqual({
+      workflowName: "Code review workflow",
+      firstNodeTitle: "Start",
+      firstStep: "Start completed",
+      output:
+        'Completed a simulated run of "Code review workflow".\n\nInput: Review uncommitted changes in the current workspace\n\nFound 2 suggestions and no blocking issues.',
+    });
+  });
 });
