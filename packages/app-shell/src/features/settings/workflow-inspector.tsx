@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   IconCircleCheck,
   IconClock,
@@ -53,23 +54,24 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
 
 /** Guides first-time users toward selecting a node while keeping preview readily available. */
 function WorkflowInspectorEmpty({ onRun }: { onRun: (input: string) => void }) {
+  const { t } = useTranslation();
   return (
     <aside className="flex min-h-0 flex-col border-l border-border bg-background">
       <div className="border-b border-border px-4 py-3">
-        <h3 className="text-xs font-semibold">配置</h3>
-        <p className="mt-1 text-[11px] text-muted-foreground">选择节点以编辑详细参数</p>
+        <h3 className="text-xs font-semibold">{t("settings.workflow.configuration")}</h3>
+        <p className="mt-1 text-[11px] text-muted-foreground">{t("settings.workflow.selectNodeHint")}</p>
       </div>
       <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
         <span className="mb-3 flex size-10 items-center justify-center rounded-xl bg-muted">
           <IconSettings className="size-5 text-muted-foreground" />
         </span>
-        <p className="text-xs font-medium">尚未选择节点</p>
+        <p className="text-xs font-medium">{t("settings.workflow.noSelection")}</p>
         <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-          选择画布中的卡片，或直接运行一次 mock 预览。
+          {t("settings.workflow.noSelectionHint")}
         </p>
         <Button className="mt-4" size="sm" onClick={() => onRun("")}>
           <IconPlayerPlay />
-          测试运行
+          {t("settings.workflow.testRun")}
         </Button>
       </div>
     </aside>
@@ -86,6 +88,7 @@ function WorkflowNodeInspector({
   onUpdate: (node: WorkflowNode) => void;
   onDelete: (nodeId: string) => void;
 }) {
+  const { t } = useTranslation();
   const metadata = getNodeMetadata(node.kind);
   const Icon = metadata.icon;
   return (
@@ -96,18 +99,18 @@ function WorkflowNodeInspector({
         </span>
         <div>
           <h3 className="text-xs font-semibold">{node.title}</h3>
-          <p className="text-[10px] text-muted-foreground">{metadata.label}节点</p>
+          <p className="text-[10px] text-muted-foreground">{t("settings.workflow.nodeSuffix", { type: t(metadata.labelKey) })}</p>
         </div>
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-        <InspectorField label="名称" htmlFor="workflow-node-title">
+        <InspectorField label={t("settings.workflow.field.name")} htmlFor="workflow-node-title">
           <Input
             id="workflow-node-title"
             value={node.title}
             onChange={(event) => onUpdate({ ...node, title: event.target.value })}
           />
         </InspectorField>
-        <InspectorField label="说明" htmlFor="workflow-node-description">
+        <InspectorField label={t("settings.workflow.field.description")} htmlFor="workflow-node-description">
           <Input
             id="workflow-node-description"
             value={node.description}
@@ -115,7 +118,7 @@ function WorkflowNodeInspector({
           />
         </InspectorField>
         {(node.kind === "prompt" || node.kind === "agent") && (
-          <InspectorField label="模型" htmlFor="workflow-node-model">
+          <InspectorField label={t("settings.workflow.field.model")} htmlFor="workflow-node-model">
             <Select
               value={node.config.model ?? "GPT-5"}
               onValueChange={(model) => {
@@ -130,13 +133,13 @@ function WorkflowNodeInspector({
               <SelectContent>
                 <SelectItem value="GPT-5">GPT-5</SelectItem>
                 <SelectItem value="Claude Sonnet 4">Claude Sonnet 4</SelectItem>
-                <SelectItem value="本地模型">本地模型</SelectItem>
+                <SelectItem value="Local model">{t("settings.workflow.localModel")}</SelectItem>
               </SelectContent>
             </Select>
           </InspectorField>
         )}
         {node.kind === "tool" && (
-          <InspectorField label="工具" htmlFor="workflow-node-tool">
+          <InspectorField label={t("settings.workflow.field.tool")} htmlFor="workflow-node-tool">
             <Select
               value={node.config.tool ?? "Terminal"}
               onValueChange={(tool) => {
@@ -157,7 +160,7 @@ function WorkflowNodeInspector({
           </InspectorField>
         )}
         {node.kind === "condition" && (
-          <InspectorField label="分支条件" htmlFor="workflow-node-condition">
+          <InspectorField label={t("settings.workflow.field.condition")} htmlFor="workflow-node-condition">
             <Input
               id="workflow-node-condition"
               value={node.config.condition ?? ""}
@@ -170,7 +173,7 @@ function WorkflowNodeInspector({
             />
           </InspectorField>
         )}
-        <InspectorField label="执行指令" htmlFor="workflow-node-instruction">
+        <InspectorField label={t("settings.workflow.field.instruction")} htmlFor="workflow-node-instruction">
           <Textarea
             id="workflow-node-instruction"
             className="min-h-32 resize-none text-xs leading-5"
@@ -191,7 +194,7 @@ function WorkflowNodeInspector({
           onClick={() => onDelete(node.id)}
         >
           <IconTrash />
-          删除节点
+          {t("settings.workflow.deleteNode")}
         </Button>
       </div>
     </aside>
@@ -205,16 +208,17 @@ function WorkflowRunPreview({
   onCloseRun,
   onRun,
 }: WorkflowInspectorProps) {
-  const [input, setInput] = useState("检查当前工作区的未提交改动");
+  const { t } = useTranslation();
+  const [input, setInput] = useState(() => t("settings.workflow.previewInput"));
 
   return (
     <aside className="flex min-h-0 flex-col border-l border-border bg-background" aria-live="polite">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
-          <h3 className="text-xs font-semibold">测试运行</h3>
-          <p className="mt-0.5 text-[10px] text-muted-foreground">仅使用 mock 数据，不会执行真实工具</p>
+          <h3 className="text-xs font-semibold">{t("settings.workflow.testRun")}</h3>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">{t("settings.workflow.mockNotice")}</p>
         </div>
-        <Button variant="ghost" size="icon-sm" aria-label="关闭测试结果" onClick={onCloseRun}>
+        <Button variant="ghost" size="icon-sm" aria-label={t("settings.workflow.closePreview")} onClick={onCloseRun}>
           <IconX />
         </Button>
       </div>
@@ -224,20 +228,20 @@ function WorkflowRunPreview({
             <span className="relative mb-3 flex size-11 items-center justify-center rounded-full bg-primary/10">
               <IconPlayerPlay className="size-5 animate-pulse" />
             </span>
-            <p className="text-xs font-medium">正在模拟工作流…</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">逐步执行节点并收集输出</p>
+            <p className="text-xs font-medium">{t("settings.workflow.running")}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{t("settings.workflow.runningHint")}</p>
           </div>
         ) : runResult !== null ? (
           <div className="space-y-4">
             <div className="flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/8 p-3">
               <IconCircleCheck className="size-4 text-emerald-600 dark:text-emerald-400" />
               <div>
-                <p className="text-xs font-medium">模拟运行成功</p>
+                <p className="text-xs font-medium">{t("settings.workflow.runSuccess")}</p>
                 <p className="text-[10px] text-muted-foreground">{runResult.durationMs} ms</p>
               </div>
             </div>
             <div>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">执行轨迹</p>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("settings.workflow.trace")}</p>
               <ol className="space-y-2">
                 {runResult.steps.map((step) => (
                   <li key={step.nodeId} className="flex items-center gap-2 text-[11px]">
@@ -252,7 +256,7 @@ function WorkflowRunPreview({
               </ol>
             </div>
             <div>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">输出</p>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("settings.workflow.output")}</p>
               <pre data-selectable className="whitespace-pre-wrap rounded-lg bg-muted/70 p-3 font-sans text-[11px] leading-5">
                 {runResult.output}
               </pre>
@@ -261,7 +265,7 @@ function WorkflowRunPreview({
         ) : null}
       </div>
       <div className="space-y-2 border-t border-border p-3">
-        <Label htmlFor="workflow-preview-input" className="text-[10px]">测试输入</Label>
+        <Label htmlFor="workflow-preview-input" className="text-[10px]">{t("settings.workflow.testInput")}</Label>
         <Textarea
           id="workflow-preview-input"
           value={input}
@@ -270,7 +274,7 @@ function WorkflowRunPreview({
         />
         <Button className="w-full" size="sm" disabled={running} onClick={() => onRun(input)}>
           <IconPlayerPlay />
-          再次运行
+          {t("settings.workflow.runAgain")}
         </Button>
       </div>
     </aside>
