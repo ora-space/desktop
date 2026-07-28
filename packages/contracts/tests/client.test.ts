@@ -227,6 +227,11 @@ test("splits task diff comment identifiers from the review body", async () => {
   assert.deepEqual(requests, [
     {
       operationName: "replyTaskDiffComment",
+      request: {
+        taskId: "task-1",
+        commentId: "comment-1",
+        body: "Updated.",
+      },
       method: "POST",
       path: "/api/tasks/task-1/diff/comments/comment-1/replies",
       body: { body: "Updated." },

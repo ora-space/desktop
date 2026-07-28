@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { TaskDiffScope } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
 import { queryKeys } from "./query-keys";
@@ -9,8 +9,6 @@ export function useTaskDiff(taskId: string, scope: TaskDiffScope) {
   return useQuery({
     queryKey: queryKeys.taskDiff(taskId, scope),
     queryFn: () => client.task.getDiff({ taskId, scope }),
-    // Scope switches should feel like changing an IDE view, not reopening a page.
-    placeholderData: keepPreviousData,
   });
 }
 

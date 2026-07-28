@@ -1,4 +1,4 @@
-use crate::service::{FileSystemApi, ProjectWorkContextApi, TaskDiffApi};
+use crate::service::{FileSystemApi, ProjectWorkContextApi};
 use ora_backend::Backend;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,7 +9,6 @@ pub struct AppState {
     backend: Backend,
     file_system_api: Arc<FileSystemApi>,
     project_work_context_api: Arc<ProjectWorkContextApi>,
-    task_diff_api: Arc<TaskDiffApi>,
     ready: Arc<AtomicBool>,
 }
 
@@ -19,13 +18,11 @@ impl AppState {
         backend: Backend,
         file_system_api: Arc<FileSystemApi>,
         project_work_context_api: Arc<ProjectWorkContextApi>,
-        task_diff_api: Arc<TaskDiffApi>,
     ) -> Self {
         Self {
             backend,
             file_system_api,
             project_work_context_api,
-            task_diff_api,
             ready: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -43,11 +40,6 @@ impl AppState {
     /// Returns the shared project work context API that routes delegate into.
     pub fn project_work_context_api(&self) -> &Arc<ProjectWorkContextApi> {
         &self.project_work_context_api
-    }
-
-    /// Returns the shared task diff API that routes delegate into.
-    pub fn task_diff_api(&self) -> &Arc<TaskDiffApi> {
-        &self.task_diff_api
     }
 
     /// Marks the runtime as ready after bootstrap finishes successfully.

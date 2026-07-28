@@ -1,4 +1,4 @@
-use super::handlers::{stable_diff_id, validate_anchor, validate_comment_body};
+use super::handlers::{task_diff_id, validate_anchor, validate_comment_body};
 use crate::ApplicationError;
 use pretty_assertions::assert_eq;
 
@@ -6,12 +6,12 @@ use pretty_assertions::assert_eq;
 #[test]
 fn creates_stable_diff_identifiers() {
     assert_eq!(
-        stable_diff_id("base", "head", "patch"),
-        stable_diff_id("base", "head", "patch")
+        task_diff_id("base", "head", "patch"),
+        task_diff_id("base", "head", "patch")
     );
     assert_ne!(
-        stable_diff_id("base", "head", "patch"),
-        stable_diff_id("base", "head", "changed patch")
+        task_diff_id("base", "head", "patch"),
+        task_diff_id("base", "head", "changed patch")
     );
 }
 

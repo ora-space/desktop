@@ -34,6 +34,28 @@ describe("createTauriTransport", () => {
     expect(invoke).toHaveBeenCalledWith("list_agent_models", { request: {} });
   });
 
+  it("maps task diff reads to the shared desktop backend command", async () => {
+    const response = {
+      baseCommitId: "base",
+      headCommitId: "head",
+      diffId: "diff-1",
+      patch: "diff --git a/README.md b/README.md",
+    };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+    const request = { taskId: "task-1", scope: "branch" as const };
+
+    await expect(transport.send({
+      operationName: "getTaskDiff",
+      request,
+      method: "GET",
+      path: "/api/tasks/task-1/diff?scope=branch",
+      body: undefined,
+      headers: {},
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("get_task_diff", { request });
+  });
+
   it("rejects explicitly unsupported operations before invoking Rust", async () => {
     const invoke = vi.fn();
     const transport = createTauriTransport(invoke, () => ({ onmessage: () => undefined }));
