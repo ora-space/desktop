@@ -18,6 +18,7 @@ type ChannelFactory = <TEvent>() => ChannelLike<TEvent>;
 const MAX_QUEUED_FRAMES = 256;
 
 const unsupportedOperations = {
+  getTaskWorkspace: true,
   openProjectWorkContext: true,
   renewProjectWorkContext: true,
   listDirectory: true,

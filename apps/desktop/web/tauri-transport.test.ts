@@ -70,6 +70,16 @@ describe("createTauriTransport", () => {
         headers: {},
       }),
     ).rejects.toMatchObject({ code: "unsupported_operation", status: null });
+    await expect(
+      transport.send({
+        operationName: "getTaskWorkspace",
+        request: { taskId: "task-1" },
+        method: "GET",
+        path: "/api/tasks/task-1/workspace",
+        body: undefined,
+        headers: {},
+      }),
+    ).rejects.toMatchObject({ code: "unsupported_operation", status: null });
     expect(invoke).not.toHaveBeenCalled();
   });
 
