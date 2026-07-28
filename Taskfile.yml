@@ -56,10 +56,11 @@ tasks:
       - cargo clean
 
   lint:
-    desc: Run linters on all Rust crates and frontend packages
+    desc: Run linters for the frontend, backend, and Desktop app
     cmds:
-      - task: lint:backend
       - task: lint:frontend
+      - task: lint:backend
+      - task: lint:desktop
 
   lint:backend:
     desc: Run linters on all Rust crates
@@ -73,8 +74,15 @@ tasks:
     silent: true
     cmds:
       - pnpm --filter @ora/web-client lint
-      - pnpm --filter @ora/desktop lint
       - pnpm --filter @ora/platform lint
+
+  lint:desktop:
+    desc: Run linters for the Desktop TypeScript package and Tauri Rust workspace
+    silent: true
+    cmds:
+      - pnpm --filter @ora/desktop lint
+      - cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --all
+      - cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
 
   export-contracts:
     desc: Regenerate TypeScript contracts and the frontend SDK package
@@ -110,13 +118,12 @@ tasks:
   test:desktop:
     desc: Run the Desktop transport and independent Tauri Rust workspace tests
     cmds:
+      - task: lint:desktop
       - pnpm --filter @ora/desktop test
-      - cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
-      - cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
       - cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
   test:
-    desc: Run lint, regenerate contracts, then frontend and Rust tests
+    desc: Run all frontend, backend, and Desktop checks (may take a long time)
     silent: true
     cmds:
       - task: test:frontend

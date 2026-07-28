@@ -47,8 +47,18 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
 
 ## Tests
 
-- run format: `cargo fmt --all`
-- run full tests: `task test`
+`task test` runs all frontend, backend, and Desktop lint and test tasks. It can take a
+long time, so prefer the smallest relevant task while iterating and run the full task
+before considering a repository-wide change complete.
+
+- Frontend lint: `task lint:frontend`
+- Frontend tests: `task test:frontend`
+- Backend lint and formatting: `task lint:backend`
+- Backend tests: `task test:backend`
+- Desktop lint: `task lint:desktop`
+- Desktop tests: `task test:desktop`
+- All lint tasks: `task lint`
+- Full lint and test suite (long-running): `task test`
 
 ### Test assertions
 
