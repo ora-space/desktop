@@ -319,12 +319,17 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "SetTaskDiffCommentStatusResponse"
         | "TaskDiffScope" => "task_diff",
         // session
-        "CreateSessionRequest"
-        | "CreateSessionResponse"
+        "AttachSessionRequest"
+        | "AttachSessionResponse"
         | "DeleteSessionRequest"
         | "DeleteSessionResponse"
         | "GetSessionRequest"
         | "GetSessionResponse"
+        | "SetSessionConfigRequest"
+        | "SetSessionConfigResponse"
+        | "WarmSessionRequest"
+        | "WarmSessionResponse"
+        | "WarmSessionTarget"
         | "LoadSessionRequest"
         | "LoadSessionEvent"
         | "ListSessionsRequest"
@@ -339,8 +344,6 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "SwitchSessionAgentResponse"
         | "StopSessionRequest"
         | "StopSessionResponse" => "session",
-        // agentRuntime
-        "ListAgentModelsRequest" | "ListAgentModelsResponse" => "session",
         // skill
         "CreateSkillRequest"
         | "CreateSkillResponse"

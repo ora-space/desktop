@@ -207,6 +207,28 @@ pub(crate) fn resolve_task_cwd(
 ///
 /// Relative project roots remain valid in persisted server configurations, while providers
 /// require a stable absolute working directory after Ora starts them.
+/// Resolves the execution directory for a chat whose Task does not exist yet.
+///
+/// Direct chats create their Task only when the first message is sent, but the
+/// model selector needs a session before that. Those Tasks are always created in
+/// project-root mode, so the project root resolved here matches the directory
+/// the eventual Task resolves to.
+pub(crate) fn resolve_project_cwd(
+    pool: &RepositoryPool,
+    project_id: &ProjectId,
+) -> Result<PathBuf, BackendError> {
+    let project = SqliteProjectRepository::new(pool.clone())
+        .find_project(project_id)
+        .map_err(|_| task_project_root_unavailable())?
+        .ok_or_else(task_project_root_unavailable)?;
+    let cwd = absolute_project_root(PathBuf::from(project.root_path))?;
+    if cwd.is_dir() {
+        Ok(cwd)
+    } else {
+        Err(task_project_root_unavailable())
+    }
+}
+
 fn absolute_project_root(path: PathBuf) -> Result<PathBuf, BackendError> {
     if path.is_absolute() {
         return Ok(path);

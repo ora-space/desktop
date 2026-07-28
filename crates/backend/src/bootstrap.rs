@@ -282,12 +282,28 @@ impl Backend {
     // session
     // =============================================================================
 
-    /// Creates one session through the shared application composition.
-    pub async fn create_session(
+    /// Returns the warm provider session backing one chat surface.
+    pub async fn warm_session(
         &self,
-        request: CreateSessionRequest,
-    ) -> Result<CreateSessionResponse, BackendError> {
-        self.agent_runtime.create_session(request).await
+        request: WarmSessionRequest,
+    ) -> Result<WarmSessionResponse, BackendError> {
+        self.agent_runtime.warm_session(request).await
+    }
+
+    /// Applies one configuration option to a warm or persisted session.
+    pub async fn set_session_config(
+        &self,
+        request: SetSessionConfigRequest,
+    ) -> Result<SetSessionConfigResponse, BackendError> {
+        self.agent_runtime.set_session_config(request).await
+    }
+
+    /// Persists one warm session against the Task that now owns it.
+    pub async fn attach_session(
+        &self,
+        request: AttachSessionRequest,
+    ) -> Result<AttachSessionResponse, BackendError> {
+        self.agent_runtime.attach_session(request).await
     }
 
     /// Gets one session through the shared application composition.
@@ -358,18 +374,6 @@ impl Backend {
         request: DeleteSessionRequest,
     ) -> Result<DeleteSessionResponse, BackendError> {
         self.agent_runtime.delete_session(&request.session_id).await
-    }
-
-    // =============================================================================
-    // agentRuntime
-    // =============================================================================
-
-    /// Lists model identifiers grouped by each CLI that answers discovery successfully.
-    pub async fn list_agent_models(
-        &self,
-        _request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, BackendError> {
-        Ok(self.agent_runtime.list_agent_models().await)
     }
 
     // =============================================================================

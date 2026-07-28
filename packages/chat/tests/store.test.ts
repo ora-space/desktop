@@ -45,6 +45,7 @@ test("loads provider history and reconstructs turns from message boundaries", as
   await store.getState().loadSession("ora-1");
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: [],
     turns: [
       {
         id: "local-1",
@@ -188,6 +189,7 @@ test("loads commands, session metadata, and structured content without creating 
   await store.getState().loadSession("ora-1");
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: [],
     turns: [{
       id: "local-1",
       userMessage: { kind: "message", id: "local-2", role: "user", content: "", structuredContent: [image], createdAt: 42, protocolMessageId: "user-media" },
@@ -380,7 +382,7 @@ test("settles active tools when the provider completes with a cancelled stop rea
   });
 });
 
-test("shows the user turn on a draft key before promoting to the created session", async () => {
+test("shows the user turn before the session is persisted", async () => {
   let promptSessionId: string | undefined;
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),
@@ -396,40 +398,33 @@ test("shows the user turn on a draft key before promoting to the created session
   let nextId = 0;
   const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
 
-  let resolveCreate: (result: { oraSessionId: string; availableCommands: [{ name: string; description: string }] }) => void = () => {};
-  const created = new Promise<{ oraSessionId: string; availableCommands: [{ name: string; description: string }] }>((resolve) => { resolveCreate = resolve; });
-  const drafts: string[] = [];
-  const promoted: string[] = [];
+  type Prepared = { availableCommands: [{ name: string; description: string }] };
+  let finishPrepare: (result: Prepared) => void = () => {};
+  const prepared = new Promise<Prepared>((resolve) => { finishPrepare = resolve; });
 
   const sending = store.getState().sendMessage({
+    oraSessionId: "warm-session",
     text: "hi",
-    createSession: () => created,
-    onDraft: (id) => drafts.push(id),
-    onSessionCreated: (id) => promoted.push(id),
+    prepare: () => prepared,
   });
 
-  // The turn is visible under the draft key while the session is still being created.
-  assert.deepEqual(drafts, ["draft-local-1"]);
-  const draft = store.getState().conversations["draft-local-1"];
-  assert.equal(draft?.turns.length, 1);
-  assert.equal(draft?.turns[0]?.userMessage.content, "hi");
-  assert.equal(draft?.isResponding, true);
-  assert.equal(store.getState().conversations["real-session"], undefined);
+  // The warm session id is final, so the turn is visible under it while the
+  // session is still being persisted.
+  const pending = store.getState().conversations["warm-session"];
+  assert.equal(pending?.turns.length, 1);
+  assert.equal(pending?.turns[0]?.userMessage.content, "hi");
+  assert.equal(pending?.isResponding, true);
 
-  resolveCreate({
-    oraSessionId: "real-session",
+  finishPrepare({
     availableCommands: [{ name: "review", description: "Review current changes" }],
   });
   await sending;
 
-  // The conversation has moved onto the real id and the draft key is gone.
-  assert.deepEqual(promoted, ["real-session"]);
-  assert.equal(promptSessionId, "real-session");
-  assert.equal(store.getState().conversations["draft-local-1"], undefined);
-  const conversation = store.getState().conversations["real-session"];
+  assert.equal(promptSessionId, "warm-session");
+  const conversation = store.getState().conversations["warm-session"];
   assert.equal(conversation?.isResponding, false);
-  // The live turn is authoritative, so the promoted conversation is already
-  // "loaded" and the workspace never re-loads (and re-slides) it.
+  // The live turn is authoritative, so the conversation is already "loaded" and
+  // the workspace never re-loads (and re-slides) it.
   assert.equal(conversation?.isLoaded, true);
   assert.deepEqual(conversation?.availableCommands, [
     { name: "review", description: "Review current changes" },
@@ -466,6 +461,7 @@ test("rolls back staged load updates when replay fails before completion", async
   store.setState({
     conversations: {
       "ora-1": {
+        configOptions: [],
         turns: [previousTurn],
         availableCommands: [],
         sessionTitle: null,
@@ -482,6 +478,7 @@ test("rolls back staged load updates when replay fails before completion", async
   await assert.rejects(store.getState().loadSession("ora-1"), /load failed/);
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: [],
     turns: [previousTurn],
     availableCommands: [],
     sessionTitle: null,

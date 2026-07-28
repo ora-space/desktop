@@ -9,8 +9,8 @@ use ora_contracts::acp::notification::CancelNotification;
 use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_contracts::acp::prompt::{PromptRequest, PromptResponse, StopReason};
 use ora_contracts::acp::session::{
-    CloseSessionRequest, CloseSessionResponse, LoadSessionRequest as AcpLoadSessionRequest,
-    LoadSessionResponse,
+    CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate,
+    LoadSessionRequest as AcpLoadSessionRequest, LoadSessionResponse, SessionUpdate,
 };
 use ora_history::{HistoryRecord, render_handoff};
 use ora_logging::{ora_debug, ora_warn};
@@ -166,8 +166,27 @@ impl RuntimeActor {
             tokio::select! {
                 response = &mut future => {
                     match response {
-                        Ok(_) => {
+                        Ok(response) => {
                             ora_debug!(session_id = %self.session.id, "session/load completed");
+                            // `session/load` reports configuration options in its
+                            // reply rather than as an update, so they are pushed
+                            // into the same stream ahead of the replay. This keeps
+                            // the client's model selector fed by one code path for
+                            // both a warm session and a session reopened from
+                            // history.
+                            if let Some(config_options) = response.config_options
+                                && events
+                                    .send(Ok(LoadSessionEvent::SessionUpdate {
+                                        update: SessionUpdate::ConfigOptionUpdate(
+                                            ConfigOptionUpdate::new(config_options),
+                                        ),
+                                    }))
+                                    .await
+                                    .is_err()
+                            {
+                                self.isolate_channel(channel).await;
+                                return;
+                            }
                             match self.replay_recorded_history(&events).await {
                                 Replay::Delivered
                                     if events.send(Ok(LoadSessionEvent::Completed)).await.is_ok() =>

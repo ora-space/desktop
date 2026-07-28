@@ -233,13 +233,35 @@ backend_command!(
 // session
 // =============================================================================
 
-/// Creates one provider-backed session through the asynchronous runtime manager.
+/// Returns the warm provider session backing one chat surface.
 #[tauri::command]
-pub async fn create_session(
+pub async fn warm_session(
     state: State<'_, DesktopState>,
-    request: CreateSessionRequest,
-) -> Result<CreateSessionResponse, CommandError> {
-    run_async_backend("create_session", state.backend.create_session(request)).await
+    request: WarmSessionRequest,
+) -> Result<WarmSessionResponse, CommandError> {
+    run_async_backend("warm_session", state.backend.warm_session(request)).await
+}
+
+/// Applies one configuration option to a warm or persisted session.
+#[tauri::command]
+pub async fn set_session_config(
+    state: State<'_, DesktopState>,
+    request: SetSessionConfigRequest,
+) -> Result<SetSessionConfigResponse, CommandError> {
+    run_async_backend(
+        "set_session_config",
+        state.backend.set_session_config(request),
+    )
+    .await
+}
+
+/// Persists one warm session against the Task that now owns it.
+#[tauri::command]
+pub async fn attach_session(
+    state: State<'_, DesktopState>,
+    request: AttachSessionRequest,
+) -> Result<AttachSessionResponse, CommandError> {
+    run_async_backend("attach_session", state.backend.attach_session(request)).await
 }
 backend_command!(
     get_session,
@@ -475,23 +497,6 @@ async fn forward_contract_stream<Event>(
     if let Ok(mut registrations) = registry.lock() {
         registrations.remove(&stream_call_id);
     }
-}
-
-// =============================================================================
-// agentRuntime
-// =============================================================================
-
-/// Lists models grouped by every CLI whose discovery command succeeds.
-#[tauri::command]
-pub async fn list_agent_models(
-    state: State<'_, DesktopState>,
-    request: ListAgentModelsRequest,
-) -> Result<ListAgentModelsResponse, CommandError> {
-    run_async_backend(
-        "list_agent_models",
-        state.backend.list_agent_models(request),
-    )
-    .await
 }
 
 // =============================================================================

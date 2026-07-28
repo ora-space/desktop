@@ -1,4 +1,4 @@
-import type { TaskDiffScope } from "@ora/contracts";
+import type { AgentCli, TaskDiffScope, WarmSessionTarget } from "@ora/contracts";
 
 /**
  * Centralised react-query cache keys for the app shell.
@@ -14,11 +14,22 @@ export const queryKeys = {
   agents: ["agents"] as const,
   skills: ["skills"] as const,
   gitIdentity: ["gitIdentity"] as const,
-  agentModels: ["agentModels"] as const,
   taskWorkspace: (taskId: string) => ["task-workspace", taskId] as const,
   taskDiffs: (taskId: string) => ["task-diff", taskId] as const,
   taskDiff: (taskId: string, scope: TaskDiffScope) => ["task-diff", taskId, scope] as const,
   taskDiffComments: (taskId: string) => ["task-diff-comments", taskId] as const,
+  /**
+   * Mirrors the identity the backend keys warm sessions by, so two surfaces
+   * never share one cache entry and revisiting a surface reuses its session.
+   */
+  warmSession: (target: WarmSessionTarget | null, agentCli: AgentCli) =>
+    ["warmSession", target?.type ?? "none", targetId(target), agentCli] as const,
 };
+
+/** Extracts the identifier a warm target is scoped to, for cache-key purposes. */
+function targetId(target: WarmSessionTarget | null): string {
+  if (target === null) return "";
+  return target.type === "task" ? target.taskId : target.projectId;
+}
 
 export type WorkspaceQueryKey = readonly ["projects"] | readonly ["tasks"] | readonly ["sessions"];

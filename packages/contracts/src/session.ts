@@ -3,6 +3,7 @@ import type { ContentBlock } from "./acp/content.js";
 import type { PermissionOption } from "./acp/permission.js";
 import type { StopReason } from "./acp/prompt.js";
 import type { SessionUpdate } from "./acp/session.js";
+import type { SessionConfigOption } from "./acp/session_config_options.js";
 import type { AvailableCommand } from "./acp/slash_command.js";
 import type { ToolCallUpdate } from "./acp/tool_call.js";
 
@@ -12,19 +13,14 @@ import type { ToolCallUpdate } from "./acp/tool_call.js";
 export type AgentCli = "open_code" | "nga" | "code_agent_cli";
 
 /**
- * Groups the model identifiers reported by one currently available CLI.
+ * Binds one warm session to its owning Task and persists the Ora record.
  */
-export type AgentCliModels = { agentCli: AgentCli; models: Array<string> };
+export type AttachSessionRequest = { sessionId: string; taskId: string };
 
 /**
- * Creates a provider-backed session on one selected application-scoped CLI.
+ * Returns the newly persisted session payload.
  */
-export type CreateSessionRequest = { taskId: string; agentCli: AgentCli };
-
-/**
- * Returns the created session after the ACP `session/new` handshake succeeds.
- */
-export type CreateSessionResponse = {
+export type AttachSessionResponse = {
   session: Session;
   availableCommands: Array<AvailableCommand>;
 };
@@ -48,16 +44,6 @@ export type GetSessionRequest = { sessionId: string };
  * Returns one session payload after a successful fetch.
  */
 export type GetSessionResponse = { session: Session };
-
-/**
- * Requests model catalogs from every CLI without failing on unavailable runtimes.
- */
-export type ListAgentModelsRequest = Record<symbol, never>;
-
-/**
- * Returns only CLI groups whose model command completed successfully.
- */
-export type ListAgentModelsResponse = { groups: Array<AgentCliModels> };
 
 /**
  * Requests the full visible session list.
@@ -173,6 +159,26 @@ export type SessionPermissionRequest = {
 export type SessionStatus = "running" | "stopped";
 
 /**
+ * Sets one selectable configuration option on a warm or persisted session.
+ *
+ * `value` is the chosen option's value id. Only id-valued options are
+ * expressible because Ora does not advertise the boolean config-option client
+ * capability, so an agent never offers a value this request cannot carry.
+ */
+export type SetSessionConfigRequest = {
+  sessionId: string;
+  configId: string;
+  value: string;
+};
+
+/**
+ * Returns the full option set after the agent applies the change.
+ */
+export type SetSessionConfigResponse = {
+  configOptions: Array<SessionConfigOption>;
+};
+
+/**
  * Identifies a running session whose child process should be stopped.
  */
 export type StopSessionRequest = { sessionId: string };
@@ -200,4 +206,50 @@ export type SwitchSessionAgentRequest = {
 export type SwitchSessionAgentResponse = {
   session: Session;
   availableCommands: Array<AvailableCommand>;
+};
+
+/**
+ * Requests the reusable warm provider session backing one chat surface.
+ *
+ * The request carries no cwd: the backend derives it from `target` on every
+ * call, so a worktree that moved or was recreated invalidates the warm entry
+ * instead of silently addressing a stale directory.
+ */
+export type WarmSessionRequest = {
+  target: WarmSessionTarget;
+  agentCli: AgentCli;
+  /**
+   * Identifies the client surface that will own the returned session.
+   *
+   * Warm entries are keyed by this value because one backend can serve
+   * several clients (browser tabs against the Web server). Without it two
+   * tabs showing the same selection would share one provider session, and
+   * whichever attached first would take the other tab's conversation.
+   */
+  clientId: string;
+};
+
+/**
+ * Returns the warm session identifier together with the agent's current configuration.
+ */
+export type WarmSessionResponse = {
+  /**
+   * The final Ora session id. It is not persisted until `attachSession`
+   * succeeds, so `getSession` and `listSessions` do not report it yet.
+   */
+  sessionId: string;
+  configOptions: Array<SessionConfigOption>;
+};
+
+/**
+ * Selects the working directory one warm session is created against.
+ *
+ * The two variants mirror how Ora resolves a cwd: an existing Task owns either
+ * a linked worktree or the project root, while a chat whose Task does not exist
+ * yet can only target the project root. Modelling this as an enum keeps callers
+ * from having to pass two optional identifiers and guess which one wins.
+ */
+export type WarmSessionTarget = { "type": "task"; taskId: string } | {
+  "type": "projectRoot";
+  projectId: string;
 };

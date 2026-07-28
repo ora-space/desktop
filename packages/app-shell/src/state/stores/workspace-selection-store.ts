@@ -12,8 +12,14 @@ interface WorkspaceSelectionState {
   selectProject: (projectId: string) => void;
   /** Selects a task under a project and clears any session underneath. */
   selectTask: (taskId: string, projectId: string) => void;
-  /** Selects an optimistic direct-chat draft before its backing task exists. */
-  selectDraftSession: (sessionId: string, projectId: string) => void;
+  /**
+   * Selects a session whose owning task is still being created.
+   *
+   * A direct chat gets its session before its task, because the task's title
+   * comes from the first message. The session id is already final, so this only
+   * leaves the task leg empty until the task exists.
+   */
+  selectSessionBeforeTask: (sessionId: string, projectId: string) => void;
   /** Selects a specific session, recording its owning task and project. */
   selectSession: (sessionId: string, taskId: string, projectId: string) => void;
   /** Clears the entire selection. */
@@ -39,7 +45,7 @@ export const useWorkspaceSelectionStore = create<WorkspaceSelectionState>((set) 
     set({ selection: { projectId, taskId: null, sessionId: null } }),
   selectTask: (taskId, projectId) =>
     set({ selection: { projectId, taskId, sessionId: null } }),
-  selectDraftSession: (sessionId, projectId) =>
+  selectSessionBeforeTask: (sessionId, projectId) =>
     set({ selection: { projectId, taskId: null, sessionId } }),
   selectSession: (sessionId, taskId, projectId) =>
     set({ selection: { projectId, taskId, sessionId } }),

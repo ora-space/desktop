@@ -257,9 +257,9 @@ describe("WorkspaceView", () => {
       },
       session: {
         ...baseClient.session,
-        create: async (request, options) => {
-          calls.push("session");
-          return baseClient.session.create(request, options);
+        attach: async (request, options) => {
+          calls.push("attach");
+          return baseClient.session.attach(request, options);
         },
         prompt: async function* (request, options) {
           calls.push("prompt");
@@ -296,14 +296,14 @@ describe("WorkspaceView", () => {
       screen.getByRole("button", { name: /发送消息|Send message/ }),
     );
 
+    // The warm session id is final before the task exists, so selection points
+    // at it immediately and only the task leg is still empty.
     await waitFor(() => {
-      expect(useWorkspaceSelectionStore.getState().selection.projectId).toBe(
-        "p1",
-      );
-      expect(useWorkspaceSelectionStore.getState().selection.taskId).toBeNull();
-      expect(useWorkspaceSelectionStore.getState().selection.sessionId).toMatch(
-        /^draft-/,
-      );
+      expect(useWorkspaceSelectionStore.getState().selection).toEqual({
+        projectId: "p1",
+        taskId: null,
+        sessionId: "s1",
+      });
     });
     expect(screen.getByText(/你好\s+workspace mode/)).toBeInTheDocument();
     expect(state.tasks).toEqual([]);
@@ -328,7 +328,7 @@ describe("WorkspaceView", () => {
           status: "running",
         },
       ]);
-      expect(calls).toEqual(["task", "session", "prompt"]);
+      expect(calls).toEqual(["task", "attach", "prompt"]);
     });
     expect(useWorkspaceSelectionStore.getState().selection).toEqual({
       projectId: "p1",
@@ -338,13 +338,13 @@ describe("WorkspaceView", () => {
     expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true);
   });
 
-  it("keeps a created direct task when session creation fails and reuses it on retry", async () => {
+  it("keeps a created direct task when attaching fails and reuses it on retry", async () => {
     const user = userEvent.setup();
     const state = createMockClientState();
     state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
     const baseClient = createMockClient(state);
     let taskCreateCalls = 0;
-    let sessionCreateCalls = 0;
+    let attachCalls = 0;
     const client: ContractsClient = {
       ...baseClient,
       task: {
@@ -356,10 +356,10 @@ describe("WorkspaceView", () => {
       },
       session: {
         ...baseClient.session,
-        create: async (request, options) => {
-          sessionCreateCalls += 1;
-          if (sessionCreateCalls === 1) throw new Error("session unavailable");
-          return baseClient.session.create(request, options);
+        attach: async (request, options) => {
+          attachCalls += 1;
+          if (attachCalls === 1) throw new Error("session unavailable");
+          return baseClient.session.attach(request, options);
         },
       },
     };
@@ -404,11 +404,11 @@ describe("WorkspaceView", () => {
 
     await waitFor(() => expect(state.sessions).toHaveLength(1));
     expect(taskCreateCalls).toBe(1);
-    expect(sessionCreateCalls).toBe(2);
+    expect(attachCalls).toBe(2);
     expect(state.tasks).toHaveLength(1);
   });
 
-  it("shows task creation failures in the optimistic draft conversation", async () => {
+  it("shows task creation failures in the optimistic conversation", async () => {
     const user = userEvent.setup();
     const state = createMockClientState();
     state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
@@ -456,9 +456,7 @@ describe("WorkspaceView", () => {
     expect(state.tasks).toEqual([]);
     expect(state.sessions).toEqual([]);
     expect(useWorkspaceSelectionStore.getState().selection.taskId).toBeNull();
-    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toMatch(
-      /^draft-/,
-    );
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe("s1");
   });
 });
 

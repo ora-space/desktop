@@ -2,6 +2,7 @@ use crate::acp::content::ContentBlock;
 use crate::acp::permission::PermissionOption;
 use crate::acp::prompt::StopReason;
 use crate::acp::session::SessionUpdate;
+use crate::acp::session_config_options::SessionConfigOption;
 use crate::acp::slash_command::AvailableCommand;
 use crate::acp::tool_call::ToolCallUpdate;
 use serde::{Deserialize, Serialize};
@@ -56,43 +57,93 @@ pub struct Session {
     pub history_state: SessionHistoryState,
 }
 
-/// Creates a provider-backed session on one selected application-scoped CLI.
+/// Selects the working directory one warm session is created against.
+///
+/// The two variants mirror how Ora resolves a cwd: an existing Task owns either
+/// a linked worktree or the project root, while a chat whose Task does not exist
+/// yet can only target the project root. Modelling this as an enum keeps callers
+/// from having to pass two optional identifiers and guess which one wins.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub enum WarmSessionTarget {
+    Task {
+        #[serde(rename = "taskId")]
+        task_id: String,
+    },
+    ProjectRoot {
+        #[serde(rename = "projectId")]
+        project_id: String,
+    },
+}
+
+/// Requests the reusable warm provider session backing one chat surface.
+///
+/// The request carries no cwd: the backend derives it from `target` on every
+/// call, so a worktree that moved or was recreated invalidates the warm entry
+/// instead of silently addressing a stale directory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct CreateSessionRequest {
+pub struct WarmSessionRequest {
+    pub target: WarmSessionTarget,
+    pub agent_cli: AgentCli,
+    /// Identifies the client surface that will own the returned session.
+    ///
+    /// Warm entries are keyed by this value because one backend can serve
+    /// several clients (browser tabs against the Web server). Without it two
+    /// tabs showing the same selection would share one provider session, and
+    /// whichever attached first would take the other tab's conversation.
+    pub client_id: String,
+}
+
+/// Returns the warm session identifier together with the agent's current configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct WarmSessionResponse {
+    /// The final Ora session id. It is not persisted until `attachSession`
+    /// succeeds, so `getSession` and `listSessions` do not report it yet.
+    pub session_id: String,
+    pub config_options: Vec<SessionConfigOption>,
+}
+
+/// Sets one selectable configuration option on a warm or persisted session.
+///
+/// `value` is the chosen option's value id. Only id-valued options are
+/// expressible because Ora does not advertise the boolean config-option client
+/// capability, so an agent never offers a value this request cannot carry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct SetSessionConfigRequest {
+    pub session_id: String,
+    pub config_id: String,
+    pub value: String,
+}
+
+/// Returns the full option set after the agent applies the change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct SetSessionConfigResponse {
+    pub config_options: Vec<SessionConfigOption>,
+}
+
+/// Binds one warm session to its owning Task and persists the Ora record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct AttachSessionRequest {
+    pub session_id: String,
     pub task_id: String,
-    pub agent_cli: AgentCli,
 }
 
-/// Groups the model identifiers reported by one currently available CLI.
+/// Returns the newly persisted session payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct AgentCliModels {
-    pub agent_cli: AgentCli,
-    pub models: Vec<String>,
-}
-
-/// Requests model catalogs from every CLI without failing on unavailable runtimes.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub struct ListAgentModelsRequest {}
-
-/// Returns only CLI groups whose model command completed successfully.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub struct ListAgentModelsResponse {
-    pub groups: Vec<AgentCliModels>,
-}
-
-/// Returns the created session after the ACP `session/new` handshake succeeds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "session.ts")]
-pub struct CreateSessionResponse {
+pub struct AttachSessionResponse {
     pub session: Session,
     pub available_commands: Vec<AvailableCommand>,
 }
@@ -289,11 +340,13 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     SwitchSessionAgentResponse::export(config)?;
     ResumeSessionHistoryRequest::export(config)?;
     ResumeSessionHistoryResponse::export(config)?;
-    CreateSessionRequest::export(config)?;
-    AgentCliModels::export(config)?;
-    ListAgentModelsRequest::export(config)?;
-    ListAgentModelsResponse::export(config)?;
-    CreateSessionResponse::export(config)?;
+    WarmSessionTarget::export(config)?;
+    WarmSessionRequest::export(config)?;
+    WarmSessionResponse::export(config)?;
+    SetSessionConfigRequest::export(config)?;
+    SetSessionConfigResponse::export(config)?;
+    AttachSessionRequest::export(config)?;
+    AttachSessionResponse::export(config)?;
     GetSessionRequest::export(config)?;
     GetSessionResponse::export(config)?;
     ListSessionsRequest::export(config)?;

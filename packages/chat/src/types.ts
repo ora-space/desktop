@@ -83,6 +83,13 @@ export interface ChatTurn {
 
 /** Holds the in-memory chat state isolated to one stable Ora session identifier. */
 export interface SessionConversation {
+  /**
+   * The agent's configuration selectors (model, and anything else it offers) with
+   * their current values. Session-scoped rather than turn-scoped: they arrive
+   * with the warm session, are refreshed by `config_option_update`, and are the
+   * only source for what the model picker can show.
+   */
+  configOptions: acp.SessionConfigOption[];
   turns: ChatTurn[];
   availableCommands: acp.AvailableCommand[];
   sessionTitle: string | null;
