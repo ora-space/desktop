@@ -17,12 +17,14 @@ import {
   cn,
 } from "@ora/ui";
 import {
+  IconCloudOff,
   IconPencil,
   IconPlus,
   IconRobot,
   IconSearch,
   IconSparkles,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
 import { useAgents } from "../../state/hooks/use-agents";
 import { useSkills } from "../../state/hooks/use-skills";
@@ -34,6 +36,12 @@ import {
   useUpdateSkill,
   useDeleteSkill,
 } from "../../state/hooks/use-atom-mutations";
+import {
+  MOCK_AGENTS,
+  MOCK_SKILLS,
+  isHuaweiAtom,
+  isMockAtom,
+} from "./atom-mock-catalog";
 import { SettingsHeading } from "./settings-heading";
 
 type AtomRecord = Agent | Skill;
@@ -47,9 +55,10 @@ interface AtomManagerConfig {
   icon: TablerIcon;
   /** Roles carry an extra, prototype-only body field; skills do not. */
   hasBody: boolean;
+  /** Restrained accent used to distinguish role and skill catalogs at a glance. */
+  accentClassName: string;
   items: AtomRecord[];
-  loading: boolean;
-  error: boolean;
+  remoteError: boolean;
   onCreate: (name: string, description: string) => Promise<void>;
   onUpdate: (item: AtomRecord, name: string, description: string) => Promise<void>;
   onDelete: (item: AtomRecord) => Promise<void>;
@@ -61,18 +70,33 @@ export function RolesSettings() {
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
   const deleteAgent = useDeleteAgent();
+  const [mockAgents, setMockAgents] = useState<Agent[]>(() => [...MOCK_AGENTS]);
 
   return (
     <AtomManager
       tPrefix="settings.roles"
       icon={IconRobot}
       hasBody
-      items={agentsQuery.data ?? []}
-      loading={agentsQuery.isPending}
-      error={agentsQuery.error !== null}
+      accentClassName="border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+      items={[...(agentsQuery.data ?? []), ...mockAgents]}
+      remoteError={agentsQuery.error !== null}
       onCreate={(name, description) => createAgent.mutateAsync({ name, description }).then(() => undefined)}
-      onUpdate={(item, name, description) => updateAgent.mutateAsync({ agent: item as Agent, name, description }).then(() => undefined)}
-      onDelete={(item) => deleteAgent.mutateAsync({ agentId: item.id }).then(() => undefined)}
+      onUpdate={(item, name, description) => {
+        if (isMockAtom(item)) {
+          setMockAgents((current) => current.map((agent) => (
+            agent.id === item.id ? { ...agent, name, description } : agent
+          )));
+          return Promise.resolve();
+        }
+        return updateAgent.mutateAsync({ agent: item as Agent, name, description }).then(() => undefined);
+      }}
+      onDelete={(item) => {
+        if (isMockAtom(item)) {
+          setMockAgents((current) => current.filter((agent) => agent.id !== item.id));
+          return Promise.resolve();
+        }
+        return deleteAgent.mutateAsync({ agentId: item.id }).then(() => undefined);
+      }}
     />
   );
 }
@@ -83,18 +107,33 @@ export function SkillsSettings() {
   const createSkill = useCreateSkill();
   const updateSkill = useUpdateSkill();
   const deleteSkill = useDeleteSkill();
+  const [mockSkills, setMockSkills] = useState<Skill[]>(() => [...MOCK_SKILLS]);
 
   return (
     <AtomManager
       tPrefix="settings.skills"
       icon={IconSparkles}
       hasBody={false}
-      items={skillsQuery.data ?? []}
-      loading={skillsQuery.isPending}
-      error={skillsQuery.error !== null}
+      accentClassName="border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+      items={[...(skillsQuery.data ?? []), ...mockSkills]}
+      remoteError={skillsQuery.error !== null}
       onCreate={(name, description) => createSkill.mutateAsync({ name, description }).then(() => undefined)}
-      onUpdate={(item, name, description) => updateSkill.mutateAsync({ skill: item as Skill, name, description }).then(() => undefined)}
-      onDelete={(item) => deleteSkill.mutateAsync({ skillId: item.id }).then(() => undefined)}
+      onUpdate={(item, name, description) => {
+        if (isMockAtom(item)) {
+          setMockSkills((current) => current.map((skill) => (
+            skill.id === item.id ? { ...skill, name, description } : skill
+          )));
+          return Promise.resolve();
+        }
+        return updateSkill.mutateAsync({ skill: item as Skill, name, description }).then(() => undefined);
+      }}
+      onDelete={(item) => {
+        if (isMockAtom(item)) {
+          setMockSkills((current) => current.filter((skill) => skill.id !== item.id));
+          return Promise.resolve();
+        }
+        return deleteSkill.mutateAsync({ skillId: item.id }).then(() => undefined);
+      }}
     />
   );
 }
@@ -103,8 +142,19 @@ export function SkillsSettings() {
  * The list-and-editor surface shared by both panes. While creating or editing, the toolbar and
  * list are replaced entirely by {@link AtomEditor}; leaving the editor brings the list back.
  */
-function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, onUpdate, onDelete }: AtomManagerConfig) {
+function AtomManager({
+  tPrefix,
+  icon,
+  hasBody,
+  accentClassName,
+  items,
+  remoteError,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: AtomManagerConfig) {
   const { t } = useTranslation();
+  const CatalogIcon = icon;
   const [query, setQuery] = useState("");
   // `null` = list view; `{ item: null }` = creating; `{ item }` = editing that record.
   const [editing, setEditing] = useState<{ item: AtomRecord | null } | null>(null);
@@ -144,45 +194,107 @@ function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, 
     <div className="space-y-5">
       <SettingsHeading title={t(`${tPrefix}.title`)} description={t(`${tPrefix}.description`)} />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative min-w-0 flex-1">
-          <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t(`${tPrefix}.search`)} className="pl-8" />
+      <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm shadow-foreground/[0.025]">
+        <div className="flex flex-col gap-3 border-b border-border bg-muted/20 p-3 sm:flex-row sm:items-center">
+          <div className="relative min-w-0 flex-1">
+            <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t(`${tPrefix}.search`)}
+              aria-label={t(`${tPrefix}.search`)}
+              className="h-9 bg-background pl-9 pr-9"
+            />
+            {query && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground"
+                aria-label={t(`${tPrefix}.clearSearch`)}
+                onClick={() => setQuery("")}
+              >
+                <IconX />
+              </Button>
+            )}
+          </div>
+          <Button variant="secondary" size="sm" className="h-9 shrink-0 shadow-sm" onClick={() => setEditing({ item: null })}>
+            <IconPlus />{t(`${tPrefix}.new`)}
+          </Button>
         </div>
-        <Button variant="secondary" size="sm" className="shrink-0" onClick={() => setEditing({ item: null })}>
-          <IconPlus />{t(`${tPrefix}.new`)}
-        </Button>
-      </div>
 
-      <div className="overflow-hidden rounded-lg border border-border">
-        <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          <span>{t(`${tPrefix}.sectionLabel`)}</span>
-          <span className="tabular-nums">{items.length}</span>
-        </div>
-        {loading && <p className="px-4 py-10 text-center text-sm text-muted-foreground">{t(`${tPrefix}.loading`)}</p>}
-        {!loading && error && <p className="px-4 py-10 text-center text-sm text-muted-foreground">{t(`${tPrefix}.loadError`)}</p>}
-        {!loading && !error && visibleItems.length === 0 && <p className="px-4 py-10 text-center text-sm text-muted-foreground">{t(`${tPrefix}.empty`)}</p>}
-        {!loading && !error && visibleItems.map((item) => {
-          const Icon = icon;
-          return (
-            <div key={item.id} className="grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-3 py-2 last:border-b-0 hover:bg-muted/30">
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
-                  <Icon className="size-4" />
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{item.name}</p>
-                  <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
-                </div>
-              </div>
-              <div className="flex justify-end gap-1">
-                <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("common.edit")} onClick={() => setEditing({ item })}><IconPencil /></Button>
-                <Button variant="ghost" size="icon-sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" aria-label={t("common.delete")} onClick={() => setDeleteTarget(item)}><IconTrash /></Button>
-              </div>
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <div className={cn("flex size-8 items-center justify-center rounded-lg border", accentClassName)}>
+              <CatalogIcon className="size-4" />
             </div>
-          );
-        })}
-      </div>
+            <div>
+              <h3 className="text-xs font-semibold">{t(`${tPrefix}.sectionLabel`)}</h3>
+              <p className="text-[11px] text-muted-foreground">{t(`${tPrefix}.catalogHint`)}</p>
+            </div>
+          </div>
+          <p className="text-[11px] tabular-nums text-muted-foreground" aria-live="polite">
+            {t(`${tPrefix}.resultCount`, { visible: visibleItems.length, total: items.length })}
+          </p>
+        </div>
+
+        {remoteError && (
+          <div className="mx-3 flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-muted-foreground">
+            <IconCloudOff className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            {t(`${tPrefix}.mockFallback`)}
+          </div>
+        )}
+
+        {visibleItems.length === 0 ? (
+          <div className="flex flex-col items-center px-4 py-12 text-center">
+            <div className={cn("mb-3 flex size-10 items-center justify-center rounded-xl border", accentClassName)}>
+              <IconSearch className="size-4" />
+            </div>
+            <p className="text-sm font-medium">{t(`${tPrefix}.emptySearchTitle`)}</p>
+            <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">{t(`${tPrefix}.emptySearchDescription`, { query })}</p>
+            <Button variant="ghost" size="sm" className="mt-3" onClick={() => setQuery("")}>{t(`${tPrefix}.clearSearch`)}</Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-2.5 p-3 md:grid-cols-2">
+            {visibleItems.map((item) => {
+              const Icon = icon;
+              const mock = isMockAtom(item);
+              const huawei = isHuaweiAtom(item);
+              return (
+                <article
+                  key={item.id}
+                  className="group flex min-h-32 flex-col rounded-xl border border-border bg-background p-3 outline-none transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-foreground/20 hover:shadow-md hover:shadow-foreground/5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
+                >
+                  <div className="flex items-start gap-2">
+                    <div className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg border", accentClassName)}>
+                      <Icon className="size-4" />
+                    </div>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 pt-0.5">
+                      {mock && (
+                        <span className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          {t(`${tPrefix}.mockBadge`)}
+                        </span>
+                      )}
+                      {huawei && (
+                        <span className="rounded-full border border-red-500/20 bg-red-500/5 px-1.5 py-0.5 text-[9px] font-semibold text-red-600 dark:text-red-400">
+                          {t(`${tPrefix}.huaweiBadge`)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 gap-0.5">
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("common.edit")} onClick={() => setEditing({ item })}><IconPencil /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive" aria-label={t("common.delete")} onClick={() => setDeleteTarget(item)}><IconTrash /></Button>
+                    </div>
+                  </div>
+                  <div className="mt-3 min-w-0">
+                    <h4 className="truncate text-sm font-semibold tracking-tight">{item.name}</h4>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <DeleteAtomDialog tPrefix={tPrefix} target={deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)} onDelete={onDelete} />
     </div>
