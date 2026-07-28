@@ -214,6 +214,11 @@ impl AgentRuntimeManager {
     }
 
     /// Persists one warm session against the Task that now owns it.
+    ///
+    /// `warm.take` only reserves the warm session; it stays in the pool until
+    /// the steps below actually succeed. A channel or repository error here no
+    /// longer strands the client's id or leaks the provider session — the
+    /// reservation is released instead, so the same id is attachable again.
     pub(crate) async fn attach_session(
         &self,
         request: AttachSessionRequest,
@@ -225,48 +230,62 @@ impl AgentRuntimeManager {
         // lock is taken, so attaching never blocks other sessions on the network.
         let attachment = self.inner.warm.take(&session_id, &cwd).await?;
 
-        let _lifecycle = self.inner.lifecycle.lock().await;
-        let supervisor = self.inner.connections.for_agent(attachment.agent_cli);
-        let channel = supervisor.open_session_channel(&attachment.agent_session_id)?;
-        let now = self.inner.clock.now_timestamp_millis();
-        let session = Session::new(
-            session_id,
-            task_id,
-            attachment.agent_cli,
-            attachment.agent_session_id,
-            SessionStatus::Running,
-            AuditFields::new(now, now, false),
-        );
-        SqliteSessionRepository::new(self.inner.pool.clone())
-            .create_session(session.clone())
-            .map_err(|source| {
-                BackendError::internal("failed to persist agent CLI session", source)
-            })?;
-        ora_debug!(
-            session_id = %session.id,
-            agent_session_id = %session.agent_session_id,
-            "warm session attached",
-        );
-        // The header opens the file this conversation owns for the rest of its
-        // life, so it is written before the session can be prompted.
-        let mut opened = self.open_recorder(&session)?;
-        let outcome = match opened.failure.take() {
-            Some(reason) => RecordOutcome::JustFailed { reason },
-            None => opened.recorder.record_meta(&session, &attachment.cwd),
-        };
-        let session = self.settle_record(session, outcome);
-        self.insert_actor(
-            session.clone(),
-            attachment.cwd,
-            supervisor,
-            Some(channel),
-            opened.recorder,
-            /*handoff_pending*/ false,
-        )?;
-        Ok(AttachSessionResponse {
-            session: contract_session(session),
-            available_commands: attachment.available_commands,
-        })
+        let result: Result<AttachSessionResponse, BackendError> = async {
+            let _lifecycle = self.inner.lifecycle.lock().await;
+            let supervisor = self.inner.connections.for_agent(attachment.agent_cli);
+            let channel = supervisor.open_session_channel(&attachment.agent_session_id)?;
+            let now = self.inner.clock.now_timestamp_millis();
+            let session = Session::new(
+                session_id.clone(),
+                task_id,
+                attachment.agent_cli,
+                attachment.agent_session_id,
+                SessionStatus::Running,
+                AuditFields::new(now, now, false),
+            );
+            SqliteSessionRepository::new(self.inner.pool.clone())
+                .create_session(session.clone())
+                .map_err(|source| {
+                    BackendError::internal("failed to persist agent CLI session", source)
+                })?;
+            ora_debug!(
+                session_id = %session.id,
+                agent_session_id = %session.agent_session_id,
+                "warm session attached",
+            );
+            // The header opens the file this conversation owns for the rest of its
+            // life, so it is written before the session can be prompted.
+            let mut opened = self.open_recorder(&session)?;
+            let outcome = match opened.failure.take() {
+                Some(reason) => RecordOutcome::JustFailed { reason },
+                None => opened.recorder.record_meta(&session, &attachment.cwd),
+            };
+            let session = self.settle_record(session, outcome);
+            self.insert_actor(
+                session.clone(),
+                attachment.cwd,
+                supervisor,
+                Some(channel),
+                opened.recorder,
+                /*handoff_pending*/ false,
+            )?;
+            Ok(AttachSessionResponse {
+                session: contract_session(session),
+                available_commands: attachment.available_commands,
+            })
+        }
+        .await;
+
+        match result {
+            Ok(response) => {
+                self.inner.warm.commit(&session_id).await;
+                Ok(response)
+            }
+            Err(error) => {
+                self.inner.warm.release_reservation(&session_id).await;
+                Err(error)
+            }
+        }
     }
 
     /// Moves one existing conversation onto a different agent CLI.

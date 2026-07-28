@@ -409,6 +409,84 @@ describe("WorkspaceView", () => {
     expect(state.tasks).toHaveLength(1);
   });
 
+  it("warms a fresh session for retry after attach fails, instead of reusing the consumed id", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    // An already-existing task keeps the warm-session query keyed the same
+    // way across both attempts (no task-creation side effect can re-target
+    // it), so this isolates the retry behavior this fix is about.
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Existing task",
+        status: "todo",
+        workspaceMode: "project_root",
+      },
+    ];
+    const baseClient = createMockClient(state);
+    let attachCalls = 0;
+    const attachedSessionIds: string[] = [];
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        attach: async (request, options) => {
+          attachCalls += 1;
+          attachedSessionIds.push(request.sessionId);
+          // The real backend's warm pool discards its entry the moment an
+          // attach is attempted, whether or not the rest of attach succeeds.
+          // Reusing the same warm session id here would incorrectly pass even
+          // if the client kept retrying with a stale id.
+          if (attachCalls === 1) throw new Error("session unavailable");
+          return baseClient.session.attach(request, options);
+        },
+      },
+    };
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectTask("t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const composer = await screen.findByRole("textbox");
+    await waitFor(() => expect(composer).toBeEnabled());
+    await user.type(composer, "first attempt");
+    await user.click(
+      screen.getByRole("button", { name: /发送消息|Send message/ }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "session unavailable",
+    );
+
+    await user.type(screen.getByRole("textbox"), "retry");
+    await user.click(
+      screen.getByRole("button", { name: /发送消息|Send message/ }),
+    );
+
+    await waitFor(() => expect(state.sessions).toHaveLength(1));
+    expect(attachCalls).toBe(2);
+    // The retry must not reuse the id the failed attach already consumed.
+    expect(attachedSessionIds[1]).not.toBe(attachedSessionIds[0]);
+    expect(state.sessions[0]?.id).toBe(attachedSessionIds[1]);
+  });
+
   it("shows task creation failures in the optimistic conversation", async () => {
     const user = userEvent.setup();
     const state = createMockClientState();

@@ -164,7 +164,8 @@ impl WarmSessions {
             .record_config(session_id, config_id, value, reported)))
     }
 
-    /// Hands one warm session over for persistence against its owning Task.
+    /// Reserves one warm session for persistence against its owning Task,
+    /// without removing it from the pool yet.
     ///
     /// `cwd` is the Task's authoritative directory. A warm session created for a
     /// different one — the chat began before its Task existed, or a worktree
@@ -174,6 +175,12 @@ impl WarmSessions {
     /// Rebuilding is transparent by design: the identifier the client holds keeps
     /// working, and a replay the agent rejects degrades to whatever the agent
     /// reports instead of failing the prompt the user already typed.
+    ///
+    /// The caller finishes the handoff with `commit` once its own persistence
+    /// steps succeed, or `release_reservation` if they fail — attaching can
+    /// still fail after this point (a channel or repository error), and this
+    /// keeps that failure from stranding the client's id or leaking the
+    /// provider session reserved here.
     pub(super) async fn take(
         &self,
         session_id: &SessionId,
@@ -192,7 +199,7 @@ impl WarmSessions {
             ));
         };
         if warm_cwd == cwd
-            && let Some(attached) = self.pool.lock().await.take_for_attach(session_id)
+            && let Some(attached) = self.pool.lock().await.reserve_for_attach(session_id)
         {
             return Ok(WarmAttachment {
                 agent_cli: attached.agent_cli,
@@ -202,15 +209,27 @@ impl WarmSessions {
             });
         }
 
+        let connection = self.connections.for_agent(agent_cli).current()?;
         let created = self.create(agent_cli, cwd).await?;
-        self.replay(
-            agent_cli,
-            &created.agent_session_id,
-            replay,
-            created.config_options,
-        )
-        .await;
-        let superseded = self.pool.lock().await.forget(session_id);
+        let config_options = self
+            .replay(
+                agent_cli,
+                &created.agent_session_id,
+                replay,
+                created.config_options,
+            )
+            .await;
+        let superseded = {
+            let mut pool = self.pool.lock().await;
+            pool.replace_and_reserve(
+                session_id,
+                cwd.to_path_buf(),
+                created.agent_session_id.clone(),
+                config_options,
+                connection.generation,
+                self.clock.now_timestamp_millis(),
+            )
+        };
         self.release(superseded).await;
         Ok(WarmAttachment {
             agent_cli,
@@ -218,6 +237,19 @@ impl WarmSessions {
             cwd: cwd.to_path_buf(),
             available_commands: created.available_commands,
         })
+    }
+
+    /// Finalizes a reservation once the caller has actually persisted the
+    /// session: the provider session now belongs to it, not the warm pool.
+    pub(super) async fn commit(&self, session_id: &SessionId) {
+        self.pool.lock().await.commit_attach(session_id);
+    }
+
+    /// Reverts a reservation after the caller failed to finish attaching, so
+    /// the same warm session — and the provider session behind it — remain
+    /// usable on the next attempt instead of leaking.
+    pub(super) async fn release_reservation(&self, session_id: &SessionId) {
+        self.pool.lock().await.release_reservation(session_id);
     }
 
     /// Drops provider sessions left behind by a CLI that restarted.

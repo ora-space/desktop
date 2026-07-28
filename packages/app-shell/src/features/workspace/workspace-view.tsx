@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Button } from "@ora/ui";
-import type { Session, Task } from "@ora/contracts";
+import type { AttachSessionResponse, Session, Task } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import type { acp } from "@ora/contracts";
 import { useStore } from "zustand";
@@ -212,29 +212,35 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               .selectSession(warmSessionId, taskId, projectId);
           }
 
-          const response = await client.session.attach({
-            sessionId: warmSessionId,
-            taskId,
-          });
+          const attachedTaskId = taskId;
+          let response: AttachSessionResponse;
+          try {
+            response = await client.session.attach({
+              sessionId: warmSessionId,
+              taskId: attachedTaskId,
+            });
+          } finally {
+            // The attach attempt consumes the warm entry whether it succeeds or
+            // fails, so this surface must warm a fresh one next time rather than
+            // keep retrying with an id the backend no longer recognizes.
+            queryClient.removeQueries({
+              queryKey: queryKeys.warmSession(
+                { type: "task", taskId: attachedTaskId },
+                settingsAgentCli,
+              ),
+            });
+            queryClient.removeQueries({
+              queryKey: queryKeys.warmSession(
+                { type: "projectRoot", projectId },
+                settingsAgentCli,
+              ),
+            });
+          }
           queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
             upsertById(current, response.session),
           );
-          // The warm entry has been consumed, so this surface must warm a fresh
-          // one the next time it is opened rather than reuse the cached id.
-          queryClient.removeQueries({
-            queryKey: queryKeys.warmSession(
-              { type: "task", taskId },
-              settingsAgentCli,
-            ),
-          });
-          queryClient.removeQueries({
-            queryKey: queryKeys.warmSession(
-              { type: "projectRoot", projectId },
-              settingsAgentCli,
-            ),
-          });
           useUiStore.getState().expandProject(projectId);
-          useUiStore.getState().expandTask(taskId);
+          useUiStore.getState().expandTask(attachedTaskId);
           return { availableCommands: response.availableCommands };
         },
       });

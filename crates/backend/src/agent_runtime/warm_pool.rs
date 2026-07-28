@@ -73,6 +73,11 @@ struct WarmEntry {
     /// handshake.
     available_commands: Vec<AvailableCommand>,
     last_used_at: i64,
+    /// Set while an attach attempt holds this entry, so `lookup` skips it
+    /// instead of handing its provider session to a second caller, and so a
+    /// failed attach can release the reservation and try again from here
+    /// instead of finding the entry already gone.
+    reserved: bool,
 }
 
 /// What the caller must do to satisfy a warm-session request.
@@ -154,7 +159,11 @@ impl WarmPool {
         now: i64,
         next_session_id: impl FnOnce() -> SessionId,
     ) -> (WarmDecision, Option<ReleasedSession>) {
-        let Some(index) = self.entries.iter().position(|entry| &entry.key == key) else {
+        let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| &entry.key == key && !entry.reserved)
+        else {
             let session_id = next_session_id();
             self.entries.push(WarmEntry {
                 session_id: session_id.clone(),
@@ -165,6 +174,7 @@ impl WarmPool {
                 config_options: Vec::new(),
                 available_commands: Vec::new(),
                 last_used_at: now,
+                reserved: false,
             });
             return (
                 WarmDecision::Create {
@@ -270,34 +280,82 @@ impl WarmPool {
         entry.config_options.clone()
     }
 
-    /// Removes one warm session from the pool so it can be persisted.
+    /// Reserves one warm session for an attach attempt, without removing it yet.
     ///
-    /// Returns `None` when the entry is cold or missing; the caller then rebuilds
-    /// a provider session before attaching rather than failing the user's prompt.
-    pub(super) fn take_for_attach(&mut self, session_id: &SessionId) -> Option<AttachedWarm> {
+    /// The entry stays in the pool — invisible to `lookup` while reserved — so a
+    /// caller whose later persistence steps fail can call `release_reservation`
+    /// and find the same provider session still here to retry with, instead of
+    /// discovering it gone and stranding the client's id. `commit_attach`
+    /// finalizes the removal once persistence actually succeeds.
+    ///
+    /// Returns `None` when the entry is cold, missing, or already reserved by
+    /// another in-flight attach; the caller then rebuilds a provider session
+    /// before attaching rather than failing the user's prompt.
+    pub(super) fn reserve_for_attach(&mut self, session_id: &SessionId) -> Option<AttachedWarm> {
         let index = self.index_of(session_id)?;
-        // A cold entry stays in the pool: it still carries the cwd and the
-        // options needed to rebuild, which `rebuild_plan` reads next.
-        self.entries[index].live.as_ref()?;
-        let entry = self.entries.remove(index);
-        let live = entry.live?;
-        Some(AttachedWarm {
-            session_id: entry.session_id,
+        if self.entries[index].reserved {
+            return None;
+        }
+        let entry = &self.entries[index];
+        let live = entry.live.as_ref()?;
+        let attached = AttachedWarm {
+            session_id: entry.session_id.clone(),
             agent_cli: entry.key.agent_cli,
-            agent_session_id: live.agent_session_id,
-            cwd: entry.cwd,
-            available_commands: entry.available_commands,
-        })
+            agent_session_id: live.agent_session_id.clone(),
+            cwd: entry.cwd.clone(),
+            available_commands: entry.available_commands.clone(),
+        };
+        self.entries[index].reserved = true;
+        Some(attached)
     }
 
-    /// Removes one warm entry outright and reports any provider session it held.
+    /// Finalizes an attach that succeeded: the provider session now belongs to
+    /// the persisted Ora session, so the pool no longer needs to track it.
+    pub(super) fn commit_attach(&mut self, session_id: &SessionId) {
+        if let Some(index) = self.index_of(session_id) {
+            self.entries.remove(index);
+        }
+    }
+
+    /// Reverts a reservation after the caller's persistence steps failed.
     ///
-    /// Used when a rebuilt session replaces the entry, so the superseded one is
-    /// released rather than left running unreferenced.
-    pub(super) fn forget(&mut self, session_id: &SessionId) -> Option<ReleasedSession> {
+    /// The provider session and its entry are left exactly as they were, so the
+    /// next attempt for this same id finds a usable warm session again instead
+    /// of `warm_session_not_found`.
+    pub(super) fn release_reservation(&mut self, session_id: &SessionId) {
+        if let Some(index) = self.index_of(session_id) {
+            self.entries[index].reserved = false;
+        }
+    }
+
+    /// Replaces a superseded entry's provider session with a freshly rebuilt
+    /// one and reserves it for attach, mirroring `reserve_for_attach` for the
+    /// case where the old session could not be reused.
+    ///
+    /// Returns the superseded provider session, if any, for the caller to
+    /// release. Does nothing if the entry disappeared in the meantime (an idle
+    /// eviction racing this rebuild); that residual session is not tracked by
+    /// the pool but is still handed back to the caller for attaching.
+    pub(super) fn replace_and_reserve(
+        &mut self,
+        session_id: &SessionId,
+        cwd: PathBuf,
+        agent_session_id: String,
+        config_options: Vec<SessionConfigOption>,
+        generation: u64,
+        now: i64,
+    ) -> Option<ReleasedSession> {
         let index = self.index_of(session_id)?;
         let released = self.release_live(index);
-        self.entries.remove(index);
+        let entry = &mut self.entries[index];
+        entry.cwd = cwd;
+        entry.live = Some(LiveSession {
+            agent_session_id,
+            generation,
+        });
+        entry.config_options = config_options;
+        entry.reserved = true;
+        entry.last_used_at = now;
         released
     }
 
@@ -658,14 +716,15 @@ mod tests {
         );
     }
 
-    /// Verifies attaching consumes the entry so the next visit warms a fresh session.
+    /// Verifies a reserved entry is hidden from `lookup` so a concurrent surface
+    /// warms a fresh session instead of sharing the one being attached.
     #[test]
-    fn consumes_the_entry_when_it_is_attached() {
+    fn hides_a_reserved_entry_from_lookup() {
         let mut pool = WarmPool::default();
         let key = key("task-1", "client-1");
         let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
 
-        let attached = pool.take_for_attach(&session_id);
+        let attached = pool.reserve_for_attach(&session_id);
         let (decision, _) = pool.lookup(&key, Path::new("/repo"), GENERATION, 5, || {
             SessionId::new("session-2")
         });
@@ -689,6 +748,54 @@ mod tests {
         );
     }
 
+    /// Verifies a second reservation attempt on the same entry is refused.
+    #[test]
+    fn refuses_a_second_reservation_of_the_same_entry() {
+        let mut pool = WarmPool::default();
+        let key = key("task-1", "client-1");
+        let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
+
+        pool.reserve_for_attach(&session_id);
+
+        assert_eq!(pool.reserve_for_attach(&session_id), None);
+    }
+
+    /// Verifies a committed attach removes the entry so the id is no longer warm.
+    #[test]
+    fn removes_the_entry_once_the_attach_is_committed() {
+        let mut pool = WarmPool::default();
+        let key = key("task-1", "client-1");
+        let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
+        pool.reserve_for_attach(&session_id);
+
+        pool.commit_attach(&session_id);
+
+        assert_eq!(pool.rebuild_plan(&session_id), None);
+    }
+
+    /// Verifies a released reservation leaves the same provider session usable,
+    /// so a failed attach can retry instead of finding the id gone.
+    #[test]
+    fn reuses_the_entry_after_a_reservation_is_released() {
+        let mut pool = WarmPool::default();
+        let key = key("task-1", "client-1");
+        let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
+        pool.reserve_for_attach(&session_id);
+
+        pool.release_reservation(&session_id);
+
+        assert_eq!(
+            pool.reserve_for_attach(&session_id),
+            Some(AttachedWarm {
+                session_id,
+                agent_cli: AgentCli::OpenCode,
+                agent_session_id: "agent-session-1".to_string(),
+                cwd: PathBuf::from("/repo"),
+                available_commands: vec![],
+            })
+        );
+    }
+
     /// Verifies a cold session keeps everything needed to rebuild before attaching.
     #[test]
     fn reports_a_rebuild_plan_for_a_cold_session() {
@@ -705,7 +812,7 @@ mod tests {
 
         assert_eq!(
             (
-                pool.take_for_attach(&session_id),
+                pool.reserve_for_attach(&session_id),
                 pool.rebuild_plan(&session_id)
             ),
             (
@@ -715,6 +822,38 @@ mod tests {
                     cwd: PathBuf::from("/repo"),
                     replay: vec![("model".into(), SessionConfigOptionValue::value_id("smart"),)],
                 }),
+            )
+        );
+    }
+
+    /// Verifies a rebuilt session replaces the superseded one and stays
+    /// reserved, with the old provider session reported for release.
+    #[test]
+    fn replaces_and_reserves_the_entry_on_rebuild() {
+        let mut pool = WarmPool::default();
+        let key = key("task-1", "client-1");
+        let session_id = warm(&mut pool, &key, Path::new("/repo/old"), 0, "session-1");
+
+        let released = pool.replace_and_reserve(
+            &session_id,
+            PathBuf::from("/repo/new"),
+            "agent-session-2".to_string(),
+            model_options("fast"),
+            GENERATION,
+            5,
+        );
+
+        assert_eq!(
+            (released, pool.reserve_for_attach(&session_id)),
+            (
+                Some(ReleasedSession {
+                    agent_cli: AgentCli::OpenCode,
+                    agent_session_id: "agent-session-1".to_string(),
+                    generation: GENERATION,
+                }),
+                // Already reserved by `replace_and_reserve`, so a second
+                // reservation attempt is refused.
+                None,
             )
         );
     }
