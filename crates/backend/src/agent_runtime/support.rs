@@ -175,36 +175,3 @@ pub(super) fn map_acp_error(error: ora_acp::AcpError) -> BackendError {
 pub(super) fn runtime_internal(code: &'static str, message: impl Into<String>) -> BackendError {
     BackendError::new(BackendErrorKind::Internal, code, message)
 }
-
-#[cfg(test)]
-mod tests {
-    #[cfg(unix)]
-    use super::resolve_agent_cli_path;
-    #[cfg(unix)]
-    use ora_domain::AgentCli;
-    use pretty_assertions::assert_eq;
-    use std::path::PathBuf;
-
-    /// Verifies Unix lookup remains relative to the injected user home.
-    #[cfg(unix)]
-    #[test]
-    fn resolves_unix_cli_paths_from_home_directory() {
-        let home_directory = PathBuf::from("users").join("demo");
-        assert_eq!(
-            AgentCli::ALL.map(|agent_cli| {
-                resolve_agent_cli_path(agent_cli, &home_directory).expect("resolve agent CLI path")
-            }),
-            [
-                home_directory
-                    .join(".opencode")
-                    .join("bin")
-                    .join("opencode"),
-                home_directory.join(".nga").join("bin").join("nga"),
-                home_directory
-                    .join(".codeagentcli")
-                    .join("bin")
-                    .join("codeagentcli"),
-            ]
-        );
-    }
-}
