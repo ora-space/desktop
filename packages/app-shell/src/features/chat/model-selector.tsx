@@ -1,45 +1,65 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
   Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from "@ora/ui";
-import { IconCheck, IconChevronDown, IconLoader2 } from "@tabler/icons-react";
-import type { AgentCli } from "@ora/contracts";
+import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { useSettingsStore } from "../../state/stores/settings-store";
-import { AGENT_CLI_LABELS, orderedGroups, useAvailableModels } from "./model-catalog";
-import { ProviderLogo } from "./provider-logos";
+import {
+  DEFAULT_MOCK_MODEL_ID,
+  MOCK_MODEL_PROVIDERS,
+  isMockModelId,
+  selectedMockModel,
+  type MockModelCapability,
+} from "./mock-model-catalog";
+import { ModelProviderLogo, ProviderLogo } from "./provider-logos";
+
+const CAPABILITY_LABEL_KEYS: Record<MockModelCapability, string> = {
+  recommended: "chat.modelSelector.capability.recommended",
+  coding: "chat.modelSelector.capability.coding",
+  reasoning: "chat.modelSelector.capability.reasoning",
+  balanced: "chat.modelSelector.capability.balanced",
+  fast: "chat.modelSelector.capability.fast",
+  free: "chat.modelSelector.capability.free",
+  longContext: "chat.modelSelector.capability.longContext",
+};
 
 /**
- * The composer's model picker. It fetches live agent CLI model lists from the
- * backend and groups them by CLI. The active selection is persisted in the
- * settings store so the composer, settings dialog, and session creation all
- * stay in sync.
+ * Presents a compact Codex-style mock catalog while the actual ACP session
+ * continues to use the user's OpenCode configuration and default provider.
  */
 export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
   const { t } = useTranslation();
-  const agentCli = useSettingsStore((state) => state.settings.agentCli);
-  const model = useSettingsStore((state) => state.settings.model);
+  const [open, setOpen] = useState(false);
+  const persistedModelId = useSettingsStore((state) => state.settings.model);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
-  const { data: groups, isLoading } = useAvailableModels();
+  const [displayModelId, setDisplayModelId] = useState(DEFAULT_MOCK_MODEL_ID);
+  const selection = selectedMockModel(displayModelId);
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(
+    selection.provider.id,
+  );
 
-  const selectModel = (nextCli: AgentCli, nextModel: string) =>
-    updateSettings({ agentCli: nextCli, model: nextModel });
+  useEffect(() => {
+    // Removes only fake ids left by the previous implementation. Runtime model
+    // selection remains owned by OpenCode's own config, not this visual picker.
+    if (isMockModelId(persistedModelId)) updateSettings({ model: "" });
+  }, [persistedModelId, updateSettings]);
 
-  // Pick a representative label for the collapsed trigger.
-  const activeLabel = model || (isLoading ? t("chat.modelSelector.loading") : t("chat.modelSelector.placeholder"));
-
-  const visibleGroups = groups && groups.length > 0
-    ? orderedGroups(groups, agentCli)
-    : [];
+  const selectModel = (nextModelId: string) => {
+    setDisplayModelId(nextModelId);
+    setOpen(false);
+  };
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
         render={
           <Button
             type="button"
@@ -47,56 +67,100 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
             size="sm"
             disabled={disabled}
             aria-label={t("chat.modelSelector.label")}
-            className="group/model h-7 gap-1.5 rounded-md px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
+            className="group/model h-7 max-w-60 gap-1.5 rounded-md px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
           />
         }
       >
-        {agentCli && <ProviderLogo agentCli={agentCli} className="size-3.5 shrink-0" />}
-        {/* The CLI name is width-animated in via a 0fr → 1fr grid so the
-            button grows smoothly on hover instead of snapping wider. */}
-        <span className="grid grid-cols-[0fr] opacity-0 transition-all duration-200 group-hover/model:grid-cols-[1fr] group-hover/model:opacity-100 group-aria-expanded/model:grid-cols-[1fr] group-aria-expanded/model:opacity-100">
+        <ProviderLogo agentCli="open_code" className="size-3.5 shrink-0" />
+        <span className="grid grid-cols-[0fr] opacity-0 transition-all duration-200 group-hover/model:grid-cols-[1fr] group-hover/model:opacity-100 group-data-popup-open/model:grid-cols-[1fr] group-data-popup-open/model:opacity-100">
           <span className="min-w-0 overflow-hidden whitespace-nowrap">
-            {agentCli ? AGENT_CLI_LABELS[agentCli] : ""}
+            OpenCode
           </span>
         </span>
-        <span className="whitespace-nowrap">{activeLabel}</span>
-        {isLoading
-          ? <IconLoader2 className="size-3 shrink-0 animate-spin opacity-50" aria-hidden="true" />
-          : <IconChevronDown className="size-3 shrink-0 opacity-50" aria-hidden="true" />}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" side="top" className="w-56">
-        {isLoading && (
-          <div className="flex items-center justify-center gap-2 px-2 py-6 text-xs text-muted-foreground">
-            <IconLoader2 className="size-3.5 animate-spin" />
-            {t("chat.modelSelector.loading")}
-          </div>
-        )}
-        {!isLoading && visibleGroups.length === 0 && (
-          <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-            {t("chat.modelSelector.empty")}
-          </p>
-        )}
-        {visibleGroups.map((group) => (
-          <DropdownMenuGroup key={group.agentCli} className="p-1">
-            <DropdownMenuLabel className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-normal text-muted-foreground">
-              <ProviderLogo agentCli={group.agentCli} className="size-3.5" />
-              {AGENT_CLI_LABELS[group.agentCli]}
-            </DropdownMenuLabel>
-            {group.models.map((candidateModel) => (
-              <DropdownMenuItem
-                key={`${group.agentCli}:${candidateModel}`}
-                className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
-                onClick={() => selectModel(group.agentCli, candidateModel)}
-              >
-                {candidateModel}
-                {group.agentCli === agentCli && candidateModel === model && (
-                  <IconCheck className="ml-auto size-4" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+        <span className="min-w-0 truncate text-foreground">
+          {selection.model.name}
+        </span>
+        <IconChevronDown
+          className="size-3 shrink-0 opacity-50 transition-transform duration-200 group-data-popup-open/model:rotate-180"
+          aria-hidden="true"
+        />
+      </PopoverTrigger>
+
+      <PopoverContent
+        align="end"
+        side="top"
+        className="max-h-[min(20rem,var(--available-height))] w-64 gap-0 overflow-y-auto p-1"
+      >
+        <div className="flex items-center justify-between px-2 py-1.5">
+          <span className="text-xs font-medium text-foreground">
+            {t("chat.modelSelector.catalog")}
+          </span>
+          <span className="text-[10px] text-muted-foreground">OpenCode</span>
+        </div>
+
+        <Accordion
+          value={expandedProvider === null ? [] : [expandedProvider]}
+          onValueChange={(value) => setExpandedProvider(value.at(-1) ?? null)}
+        >
+          {MOCK_MODEL_PROVIDERS.map((provider) => (
+            <AccordionItem
+              key={provider.id}
+              value={provider.id}
+              className="border-border/60"
+            >
+              <AccordionTrigger className="min-h-8 items-center rounded-sm px-2 py-1 hover:bg-muted hover:no-underline">
+                <span className="flex min-w-0 items-center gap-2">
+                  <ModelProviderLogo
+                    provider={provider.id}
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <span className="truncate text-xs font-normal">
+                    {provider.name}
+                  </span>
+                  <span className="text-[10px] font-normal tabular-nums text-muted-foreground">
+                    {provider.models.length}
+                  </span>
+                </span>
+              </AccordionTrigger>
+              <AccordionContent className="pb-1 pl-5 pr-0 pt-0">
+                {provider.models.map((model) => {
+                  const selected = model.id === selection.model.id;
+                  const capability = model.capabilities[0];
+                  return (
+                    <Button
+                      key={model.id}
+                      type="button"
+                      variant="ghost"
+                      aria-pressed={selected}
+                      onClick={() => selectModel(model.id)}
+                      className="h-10 w-full justify-start gap-2 rounded-sm px-2 py-1 text-left font-normal aria-pressed:bg-muted"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs text-foreground">
+                          {model.name}
+                        </span>
+                        <span className="block truncate text-[10px] text-muted-foreground">
+                          {t(CAPABILITY_LABEL_KEYS[capability])}
+                          <span className="px-1" aria-hidden="true">·</span>
+                          {t("chat.modelSelector.contextWindow", {
+                            context: model.contextWindow,
+                          })}
+                        </span>
+                      </span>
+                      {selected && (
+                        <IconCheck
+                          className="size-3.5 shrink-0 text-foreground"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </Button>
+                  );
+                })}
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </PopoverContent>
+    </Popover>
   );
 }

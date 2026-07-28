@@ -1,7 +1,8 @@
 import type { SVGProps } from "react";
-import { IconRobot, IconTerminal } from "@tabler/icons-react";
+import { IconRobot, IconSparkles, IconTerminal } from "@tabler/icons-react";
 import type { AgentCli } from "@ora/contracts";
-import { OpenCodeMark } from "../settings/plugin-marks";
+import { ClaudeMark, OpenCodeMark } from "../settings/plugin-marks";
+import type { MockModelProviderId } from "./mock-model-catalog";
 
 type LogoProps = SVGProps<SVGSVGElement>;
 
@@ -17,6 +18,26 @@ export function ProviderLogo({ agentCli, className }: { agentCli: AgentCli; clas
       return <IconRobot className={className} />;
     case "code_agent_cli":
       return <IconTerminal className={className} />;
+  }
+}
+
+/** Renders the mock catalog's model-provider mark without changing the runtime Agent CLI. */
+export function ModelProviderLogo({
+  provider,
+  className,
+}: {
+  provider: MockModelProviderId;
+  className?: string;
+}) {
+  switch (provider) {
+    case "openai":
+      return <OpenAiLogo className={className} />;
+    case "anthropic":
+      return <ClaudeMark className={className} />;
+    case "deepseek":
+      return <IconSparkles className={className} />;
+    case "opencode":
+      return <OpenCodeMark className={className} />;
   }
 }
 
