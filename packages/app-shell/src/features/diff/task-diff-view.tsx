@@ -5,7 +5,6 @@ import {
   Diff,
   Hunk,
   getChangeKey,
-  parseDiff,
   type ChangeData,
   type FileData,
   type GutterOptions,
@@ -63,6 +62,7 @@ import { useContractsClient } from "../../contracts-client-context";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useTaskDiff, useTaskDiffComments } from "../../state/hooks/use-task-diff";
 import { buildCollapsedDiffSegments } from "./task-diff-collapse";
+import { countChanges, parseTaskDiffPatch } from "./task-diff-data";
 import { diffFilePath, TaskDiffFileTree } from "./task-diff-file-tree";
 
 interface TaskDiffViewProps {
@@ -78,11 +78,6 @@ export type TaskDiffViewType = "unified" | "split";
 interface SelectedAnchor {
   anchor: TaskDiffCommentAnchor;
   changeKey: string;
-}
-
-interface DiffStats {
-  additions: number;
-  deletions: number;
 }
 
 /** Renders a task worktree patch and its line-anchored review discussions. */
@@ -194,6 +189,40 @@ export function TaskDiffView({
     },
   });
 
+  const gitActions = (
+    <div className="flex h-8 items-center gap-0.5 rounded-lg border border-border/70 bg-background p-0.5 shadow-xs">
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2.5"
+        disabled={commitChanges.isPending || pushBranch.isPending}
+        onClick={() => {
+          commitChanges.reset();
+          setGitNotice(null);
+          setCommitOpen(true);
+        }}
+      >
+        <IconGitCommit />
+        {t("diff.commit")}
+      </Button>
+      <span className="h-4 w-px bg-border/70" aria-hidden="true" />
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2.5"
+        disabled={commitChanges.isPending || pushBranch.isPending}
+        onClick={() => {
+          pushBranch.reset();
+          setGitNotice(null);
+          setPushOpen(true);
+        }}
+      >
+        <IconUpload />
+        {t("diff.push")}
+      </Button>
+    </div>
+  );
+
   const refresh = async () => {
     setSelectedAnchor(null);
     await Promise.all([diffQuery.refetch(), commentsQuery.refetch()]);
@@ -239,7 +268,7 @@ export function TaskDiffView({
       aria-busy={diffQuery.isFetching}
     >
       <header
-        className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-4"
+        className="flex min-h-12 shrink-0 flex-nowrap items-center gap-2 overflow-x-auto border-b border-border px-3 py-2 sm:px-4"
       >
         <div className="flex min-w-0 items-center gap-2">
           <IconCode className="size-4 text-muted-foreground" />
@@ -284,35 +313,7 @@ export function TaskDiffView({
           </Button>
         </div>
         <div className="flex-1" />
-        <div className="flex h-8 items-center gap-0.5 rounded-lg border border-border/70 bg-background p-0.5 shadow-xs">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2.5"
-            disabled={commitChanges.isPending || pushBranch.isPending}
-            onClick={() => {
-              commitChanges.reset();
-              setGitNotice(null);
-              setCommitOpen(true);
-            }}
-          >
-            <IconGitCommit />{t("diff.commit")}
-          </Button>
-          <span className="h-4 w-px bg-border/70" aria-hidden="true" />
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2.5"
-            disabled={commitChanges.isPending || pushBranch.isPending}
-            onClick={() => {
-              pushBranch.reset();
-              setGitNotice(null);
-              setPushOpen(true);
-            }}
-          >
-            <IconUpload />{t("diff.push")}
-          </Button>
-        </div>
+        {gitActions}
         {toolbar}
       </header>
       {diffQuery.isFetching && (
@@ -469,11 +470,6 @@ export function TaskDiffView({
       />
     </section>
   );
-}
-
-/** Treats an empty backend snapshot as no files instead of a synthetic blank diff entry. */
-export function parseTaskDiffPatch(patch: string): FileData[] {
-  return patch.trim().length === 0 ? [] : parseDiff(patch);
 }
 
 interface CommitChangesDialogProps {
@@ -690,7 +686,9 @@ function TaskDiffFile({
         </div>
       ) : (
         <div
-          className={`ora-task-diff ora-task-diff--${viewType} ora-task-diff--${file.type} overflow-x-auto`}
+          className={`ora-task-diff ora-task-diff--${viewType} ora-task-diff--${file.type} ${
+            reviewEnabled ? "ora-task-diff--reviewable" : ""
+          } overflow-x-auto`}
         >
           {viewType === "split" && (
             <div className="ora-diff-version-headings" aria-hidden="true">
@@ -820,6 +818,12 @@ interface CommentComposerProps {
 function CommentComposer({ anchor, onCancel, onSubmit, disabled }: CommentComposerProps) {
   const { t } = useTranslation();
   const [body, setBody] = useState("");
+  const composerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    // Wide patches can place the widget off-screen horizontally, so reveal its full action area.
+    composerRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, []);
 
   const submit = async () => {
     const comment = body.trim();
@@ -828,7 +832,10 @@ function CommentComposer({ anchor, onCancel, onSubmit, disabled }: CommentCompos
   };
 
   return (
-    <section className="rounded-md border border-primary/30 bg-background p-3 text-xs shadow-sm">
+    <section
+      ref={composerRef}
+      className="ora-comment-composer flex max-h-[min(20rem,calc(100vh-9rem))] flex-col rounded-md border border-primary/30 bg-background p-3 text-xs shadow-sm"
+    >
       <p className="mb-2 font-medium">
         {t("diff.commentOn", { path: anchor.path, line: anchor.startLine })}
       </p>
@@ -839,9 +846,9 @@ function CommentComposer({ anchor, onCancel, onSubmit, disabled }: CommentCompos
         rows={3}
         placeholder={t("diff.commentPlaceholder")}
         aria-label={t("diff.commentLabel")}
-        className="resize-y text-xs"
+        className="min-h-16 max-h-40 resize-none overflow-y-auto text-xs"
       />
-      <div className="mt-2 flex justify-end gap-2">
+      <div className="mt-2 flex shrink-0 justify-end gap-2">
         <Button size="sm" variant="ghost" disabled={disabled} onClick={onCancel}>{t("common.cancel")}</Button>
         <Button size="sm" disabled={disabled || body.trim() === ""} onClick={() => void submit()}>
           {t("diff.addComment")}
@@ -909,23 +916,6 @@ function DiffMessage({ title, detail, action }: DiffMessageProps) {
         {action && <div className="mt-4">{action}</div>}
       </div>
     </div>
-  );
-}
-
-/** Counts inserted and deleted lines across parsed patch files. */
-export function countChanges(files: FileData[]): DiffStats {
-  return files.reduce(
-    (total, file) => file.hunks.reduce(
-      (fileTotal, hunk) => hunk.changes.reduce(
-        (hunkTotal, change) => ({
-          additions: hunkTotal.additions + (change.type === "insert" ? 1 : 0),
-          deletions: hunkTotal.deletions + (change.type === "delete" ? 1 : 0),
-        }),
-        fileTotal,
-      ),
-      total,
-    ),
-    { additions: 0, deletions: 0 },
   );
 }
 

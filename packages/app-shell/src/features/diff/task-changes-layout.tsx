@@ -9,11 +9,11 @@ import {
   IconArrowsMaximize,
   IconArrowsMinimize,
   IconColumns2,
-  IconFiles,
   IconGitBranch,
+  IconLayoutSidebarRightCollapse,
+  IconLayoutSidebarRightExpand,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
-import { usePlatform } from "@ora/platform";
 import { TaskDiffView, type TaskDiffViewType } from "./task-diff-view";
 
 const EXPANDED_PANEL_EXIT_MS = 180;
@@ -26,7 +26,6 @@ interface TaskChangesLayoutProps {
 /** Adds the independently resizable right-side review surface around existing workspace content. */
 export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) {
   const { t } = useTranslation();
-  const { windowControls } = usePlatform();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -84,7 +83,11 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
             aria-label={t("diff.toggleFileTree")}
             onClick={() => setFileTreeOpen((value) => !value)}
           >
-            <IconFiles />
+            {fileTreeOpen ? (
+              <IconLayoutSidebarRightCollapse />
+            ) : (
+              <IconLayoutSidebarRightExpand />
+            )}
           </Button>
           <Button
             size="icon-sm"
@@ -148,44 +151,40 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
-      <div
-        className="flex min-h-0 min-w-0 flex-1"
-        aria-hidden={expanded || undefined}
-        inert={expanded || undefined}
-      >
-        {workspaceContent}
-      </div>
-      {taskId !== undefined && open && expanded && (
-        <>
-          <button
-            type="button"
-            aria-label={t("diff.closeExpandedPanel")}
-            className={`ora-changes-backdrop fixed inset-0 z-40 bg-background/45 backdrop-blur-[1.5px] ${closing ? "is-closing" : ""}`}
-            onClick={toggleExpanded}
-          />
-          <section
-            aria-label={t("diff.expandedPanel")}
-            className={`ora-changes-overlay fixed bottom-2 left-[clamp(180px,12vw,260px)] right-2 top-2 z-50 overflow-hidden rounded-xl border border-border/80 bg-background shadow-[0_24px_90px_rgba(0,0,0,0.32),0_2px_12px_rgba(0,0,0,0.16)] ring-1 ring-foreground/5 dark:shadow-[0_28px_100px_rgba(0,0,0,0.62),0_2px_16px_rgba(0,0,0,0.32)] ${closing ? "is-closing" : ""}`}
-          >
-            <TaskDiffView
-              taskId={taskId}
-              viewType={viewType}
-              fileTreeOpen={fileTreeOpen}
-              toolbar={changesControls}
-              onFileTreeOpenChange={setFileTreeOpen}
-            />
-          </section>
-        </>
-      )}
       {taskId !== undefined && !open && (
-        <div
-          className={`absolute top-3 z-30 ${
-            windowControls.kind === "overlay" ? "right-56" : "right-3"
-          }`}
-        >
-          {changesControls}
-        </div>
+        <div className="absolute right-4 top-2 z-30">{changesControls}</div>
       )}
+      <div className="relative flex min-h-0 min-w-0 flex-1">
+        <div
+          className="flex min-h-0 min-w-0 flex-1"
+          aria-hidden={expanded || undefined}
+          inert={expanded || undefined}
+        >
+          {workspaceContent}
+        </div>
+        {taskId !== undefined && open && expanded && (
+          <>
+            <button
+              type="button"
+              aria-label={t("diff.closeExpandedPanel")}
+              className={`ora-changes-backdrop absolute inset-0 z-40 bg-background/45 backdrop-blur-[1.5px] ${closing ? "is-closing" : ""}`}
+              onClick={toggleExpanded}
+            />
+            <section
+              aria-label={t("diff.expandedPanel")}
+              className={`ora-changes-overlay absolute inset-2 z-50 overflow-hidden rounded-xl border border-border/80 bg-background shadow-[0_24px_90px_rgba(0,0,0,0.32),0_2px_12px_rgba(0,0,0,0.16)] ring-1 ring-foreground/5 dark:shadow-[0_28px_100px_rgba(0,0,0,0.62),0_2px_16px_rgba(0,0,0,0.32)] ${closing ? "is-closing" : ""}`}
+            >
+              <TaskDiffView
+                taskId={taskId}
+                viewType={viewType}
+                fileTreeOpen={fileTreeOpen}
+                toolbar={changesControls}
+                onFileTreeOpenChange={setFileTreeOpen}
+              />
+            </section>
+          </>
+        )}
+      </div>
     </div>
   );
 }

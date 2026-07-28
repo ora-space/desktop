@@ -12,6 +12,7 @@
   --diff-code-selected-background-color: color-mix(in oklab, var(--primary) 14%, transparent);
   font-size: 12.5px;
   line-height: 1.6;
+  container-type: inline-size;
 }
 
 .ora-task-diff--split {
@@ -32,14 +33,43 @@
 }
 
 .ora-task-diff .diff-gutter {
-  cursor: pointer;
+  position: relative;
+  cursor: default;
   border-right: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
   color: var(--muted-foreground);
 }
 
-.ora-task-diff .diff-gutter:hover {
-  color: var(--foreground);
+.ora-task-diff--reviewable .diff-gutter {
+  cursor: pointer;
+}
+
+.ora-task-diff--reviewable .diff-gutter:hover {
+  color: transparent;
   background: color-mix(in oklab, var(--primary) 14%, transparent);
+}
+
+.ora-task-diff--reviewable .diff-gutter::after {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  content: "+";
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.ora-task-diff--reviewable .diff-gutter:hover::after {
+  opacity: 1;
 }
 
 .ora-task-diff .diff-code {
@@ -157,6 +187,14 @@
 .ora-task-diff .diff-widget-content {
   padding: 10px 12px;
   background: var(--background);
+}
+
+.ora-task-diff .ora-comment-composer {
+  position: sticky;
+  left: 12px;
+  width: min(42rem, calc(100cqi - 24px));
+  max-width: calc(100cqi - 24px);
+  box-sizing: border-box;
 }
 
 .ora-task-diff .ora-diff-collapsed {
