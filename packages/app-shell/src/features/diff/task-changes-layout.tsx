@@ -13,6 +13,7 @@ import {
   IconGitBranch,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
+import { usePlatform } from "@ora/platform";
 import { TaskDiffView, type TaskDiffViewType } from "./task-diff-view";
 
 const EXPANDED_PANEL_EXIT_MS = 180;
@@ -25,6 +26,7 @@ interface TaskChangesLayoutProps {
 /** Adds the independently resizable right-side review surface around existing workspace content. */
 export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) {
   const { t } = useTranslation();
+  const { windowControls } = usePlatform();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -125,7 +127,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
         <div
           role="group"
           aria-label={t("diff.changes")}
-          className={`${expanded ? "fixed z-[60]" : "absolute z-30"} right-3 top-3 flex h-8 items-center gap-0.5 rounded-lg border border-border/70 bg-background/95 p-0.5 shadow-sm backdrop-blur`}
+          className={`${expanded ? "fixed z-[60]" : "absolute z-30"} ${windowControls.kind === "overlay" ? "right-28" : "right-3"} top-3 flex h-8 items-center gap-0.5 rounded-lg border border-border/70 bg-background/95 p-0.5 shadow-sm backdrop-blur`}
         >
           {open && (
             <>

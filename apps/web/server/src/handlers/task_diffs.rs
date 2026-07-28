@@ -11,7 +11,6 @@ use ora_contracts::{
     TaskDiffScope, TaskDiffThreadStatus,
 };
 use serde::Deserialize;
-use std::sync::Arc;
 
 /// Carries the task identifier used by task diff routes.
 #[derive(Debug, Deserialize)]
@@ -68,9 +67,9 @@ pub async fn get_task_diff(
     Path(path): Path<TaskDiffPath>,
     Query(query): Query<TaskDiffQuery>,
 ) -> Result<Json<GetTaskDiffResponse>, WebApiError> {
-    let api = Arc::clone(app_state.task_diff_api());
+    let backend = app_state.backend().clone();
     run_blocking(move || {
-        api.get_diff(GetTaskDiffRequest {
+        backend.get_task_diff(GetTaskDiffRequest {
             task_id: path.task_id,
             scope: query.scope,
         })
@@ -84,9 +83,9 @@ pub async fn commit_task_changes(
     Path(path): Path<TaskDiffPath>,
     Json(body): Json<CommitTaskChangesBody>,
 ) -> Result<Json<CommitTaskChangesResponse>, WebApiError> {
-    let api = Arc::clone(app_state.task_diff_api());
+    let backend = app_state.backend().clone();
     run_blocking(move || {
-        api.commit_changes(CommitTaskChangesRequest {
+        backend.commit_task_changes(CommitTaskChangesRequest {
             task_id: path.task_id,
             message: body.message,
         })
@@ -99,9 +98,9 @@ pub async fn push_task_branch(
     State(app_state): State<AppState>,
     Path(path): Path<TaskDiffPath>,
 ) -> Result<Json<PushTaskBranchResponse>, WebApiError> {
-    let api = Arc::clone(app_state.task_diff_api());
+    let backend = app_state.backend().clone();
     run_blocking(move || {
-        api.push_branch(PushTaskBranchRequest {
+        backend.push_task_branch(PushTaskBranchRequest {
             task_id: path.task_id,
         })
     })
@@ -113,9 +112,9 @@ pub async fn list_task_diff_comments(
     State(app_state): State<AppState>,
     Path(path): Path<TaskDiffPath>,
 ) -> Result<Json<ListTaskDiffCommentsResponse>, WebApiError> {
-    let api = Arc::clone(app_state.task_diff_api());
+    let backend = app_state.backend().clone();
     run_blocking(move || {
-        api.list_comments(ListTaskDiffCommentsRequest {
+        backend.list_task_diff_comments(ListTaskDiffCommentsRequest {
             task_id: path.task_id,
         })
     })
@@ -128,9 +127,9 @@ pub async fn create_task_diff_comment(
     Path(path): Path<TaskDiffPath>,
     Json(body): Json<CreateTaskDiffCommentBody>,
 ) -> Result<Json<CreateTaskDiffCommentResponse>, WebApiError> {
-    let api = Arc::clone(app_state.task_diff_api());
+    let backend = app_state.backend().clone();
     run_blocking(move || {
-        api.create_comment(CreateTaskDiffCommentRequest {
+        backend.create_task_diff_comment(CreateTaskDiffCommentRequest {
             task_id: path.task_id,
             anchor: body.anchor,
             body: body.body,
@@ -145,9 +144,9 @@ pub async fn reply_task_diff_comment(
     Path(path): Path<TaskDiffCommentPath>,
     Json(body): Json<ReplyTaskDiffCommentBody>,
 ) -> Result<Json<ReplyTaskDiffCommentResponse>, WebApiError> {
-    let api = Arc::clone(app_state.task_diff_api());
+    let backend = app_state.backend().clone();
     run_blocking(move || {
-        api.reply_comment(ReplyTaskDiffCommentRequest {
+        backend.reply_task_diff_comment(ReplyTaskDiffCommentRequest {
             task_id: path.task_id,
             comment_id: path.comment_id,
             body: body.body,
@@ -162,9 +161,9 @@ pub async fn set_task_diff_comment_status(
     Path(path): Path<TaskDiffCommentPath>,
     Json(body): Json<SetTaskDiffCommentStatusBody>,
 ) -> Result<Json<SetTaskDiffCommentStatusResponse>, WebApiError> {
-    let api = Arc::clone(app_state.task_diff_api());
+    let backend = app_state.backend().clone();
     run_blocking(move || {
-        api.set_comment_status(SetTaskDiffCommentStatusRequest {
+        backend.set_task_diff_comment_status(SetTaskDiffCommentStatusRequest {
             task_id: path.task_id,
             comment_id: path.comment_id,
             status: body.status,
@@ -179,7 +178,7 @@ async fn run_blocking<Response, Operation>(
 ) -> Result<Json<Response>, WebApiError>
 where
     Response: Send + 'static,
-    Operation: FnOnce() -> Result<Response, ora_application::ApplicationError> + Send + 'static,
+    Operation: FnOnce() -> Result<Response, ora_backend::BackendError> + Send + 'static,
 {
     tokio::task::spawn_blocking(operation)
         .await

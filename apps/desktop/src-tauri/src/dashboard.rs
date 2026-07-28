@@ -84,7 +84,11 @@ pub fn write_locator(
         .unwrap_or_else(|| PathBuf::from("."));
     let mut temp = tempfile::NamedTempFile::new_in(&temp_directory)?;
     use std::io::Write;
-    write!(temp, "{}", serde_json::to_string_pretty(locator).map_err(std::io::Error::other)?)?;
+    write!(
+        temp,
+        "{}",
+        serde_json::to_string_pretty(locator).map_err(std::io::Error::other)?
+    )?;
     temp.write_all(b"\n")?;
     temp.as_file().sync_all()?;
     temp.persist(&target).map(|_| ()).map_err(|e| e.error)
@@ -146,9 +150,7 @@ pub fn resolve_trace_file(
         DashboardAgentType::ClaudeCode => {
             resolve_claude_code_trace(home_directory, agent_session_id)
         }
-        DashboardAgentType::Opencode => {
-            resolve_opencode_trace(home_directory, agent_session_id)
-        }
+        DashboardAgentType::Opencode => resolve_opencode_trace(home_directory, agent_session_id),
     }
 }
 
@@ -197,9 +199,7 @@ impl Iterator for WalkDirIter {
 /// Asserts an Ora session id cannot escape its locator directory via path traversal.
 fn debug_assert_path_safe(id: &str) {
     debug_assert!(
-        !id.contains('/')
-            && !id.contains('\\')
-            && !id.contains(".."),
+        !id.contains('/') && !id.contains('\\') && !id.contains(".."),
         "ora_session_id must not contain path separators or traversal segments: {id:?}",
     );
 }
@@ -267,7 +267,7 @@ pub async fn get_dashboard_url(
             return Err(CommandError::new(
                 "dashboard_trace_resolution_error",
                 "failed to scan the agent trace directory",
-            ))
+            ));
         }
     };
 
@@ -417,10 +417,7 @@ mod tests {
         let resolved = resolve_claude_code_trace(&home, "target-session")
             .expect("scan transcripts")
             .expect("target session should be found");
-        assert_eq!(
-            resolved,
-            p2.join("target-session.jsonl")
-        );
+        assert_eq!(resolved, p2.join("target-session.jsonl"));
 
         assert!(
             resolve_claude_code_trace(&home, "missing")
@@ -453,8 +450,7 @@ mod tests {
             .join("opencode")
             .join("trace");
         fs::create_dir_all(&trace_dir).expect("create trace directory");
-        fs::write(trace_dir.join("ses_abc.ndjson"), b"{}")
-            .expect("write trace file");
+        fs::write(trace_dir.join("ses_abc.ndjson"), b"{}").expect("write trace file");
 
         let resolved = resolve_opencode_trace(&home, "ses_abc")
             .expect("resolve opencode trace")
@@ -476,7 +472,11 @@ mod tests {
         let home = temporary.path().to_path_buf();
 
         // opencode trace file present.
-        let oc_dir = home.join(".local").join("share").join("opencode").join("trace");
+        let oc_dir = home
+            .join(".local")
+            .join("share")
+            .join("opencode")
+            .join("trace");
         fs::create_dir_all(&oc_dir).expect("create opencode trace dir");
         fs::write(oc_dir.join("ses_oc.ndjson"), b"{}").expect("write opencode trace");
         let oc = resolve_trace_file(DashboardAgentType::Opencode, &home, "ses_oc")
@@ -497,12 +497,7 @@ mod tests {
     /// Verifies the IPv6 loopback host is bracketed in the dashboard URL.
     #[test]
     fn brackets_ipv6_loopback_in_dashboard_url() {
-        let url = dashboard_url(
-            "::1",
-            8601,
-            "sess-1",
-            DashboardAgentType::Opencode,
-        );
+        let url = dashboard_url("::1", 8601, "sess-1", DashboardAgentType::Opencode);
         assert!(url.starts_with("http://[::1]:8601/"), "got {url}");
     }
 

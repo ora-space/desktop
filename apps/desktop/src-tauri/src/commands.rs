@@ -117,6 +117,55 @@ backend_command!(
     delete_task,
     "Deletes one task through the shared Backend."
 );
+backend_command!(
+    get_task_diff,
+    GetTaskDiffRequest,
+    GetTaskDiffResponse,
+    get_task_diff,
+    "Reads one task diff through the shared Backend."
+);
+backend_command!(
+    commit_task_changes,
+    CommitTaskChangesRequest,
+    CommitTaskChangesResponse,
+    commit_task_changes,
+    "Commits one task worktree through the shared Backend."
+);
+backend_command!(
+    push_task_branch,
+    PushTaskBranchRequest,
+    PushTaskBranchResponse,
+    push_task_branch,
+    "Pushes one task worktree branch through the shared Backend."
+);
+backend_command!(
+    list_task_diff_comments,
+    ListTaskDiffCommentsRequest,
+    ListTaskDiffCommentsResponse,
+    list_task_diff_comments,
+    "Lists task diff discussions through the shared Backend."
+);
+backend_command!(
+    create_task_diff_comment,
+    CreateTaskDiffCommentRequest,
+    CreateTaskDiffCommentResponse,
+    create_task_diff_comment,
+    "Creates one task diff discussion through the shared Backend."
+);
+backend_command!(
+    reply_task_diff_comment,
+    ReplyTaskDiffCommentRequest,
+    ReplyTaskDiffCommentResponse,
+    reply_task_diff_comment,
+    "Replies to one task diff discussion through the shared Backend."
+);
+backend_command!(
+    set_task_diff_comment_status,
+    SetTaskDiffCommentStatusRequest,
+    SetTaskDiffCommentStatusResponse,
+    set_task_diff_comment_status,
+    "Updates one task diff discussion through the shared Backend."
+);
 
 /// Creates one provider-backed session through the asynchronous runtime manager.
 #[tauri::command]

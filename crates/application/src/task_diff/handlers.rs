@@ -70,7 +70,7 @@ where
                 scope: map_diff_scope(request.scope),
             })
             .map_err(ApplicationError::from_task_diff_reader_error)?;
-        let diff_id = stable_diff_id(base_commit_id, &snapshot.head_commit_id, &snapshot.patch);
+        let diff_id = task_diff_id(base_commit_id, &snapshot.head_commit_id, &snapshot.patch);
 
         Ok(GetTaskDiffResponse {
             base_commit_id: base_commit_id.to_string(),
@@ -229,7 +229,7 @@ where
             })
             .map_err(ApplicationError::from_task_diff_reader_error)?;
         let current_diff_id =
-            stable_diff_id(base_commit_id, &snapshot.head_commit_id, &snapshot.patch);
+            task_diff_id(base_commit_id, &snapshot.head_commit_id, &snapshot.patch);
         if request.anchor.diff_id != current_diff_id {
             return Err(ApplicationError::TaskDiffStale);
         }
@@ -686,7 +686,7 @@ pub(super) fn validate_anchor(
 }
 
 /// Produces a deterministic identifier with explicit field boundaries for stale snapshots.
-pub(super) fn stable_diff_id(base_commit_id: &str, head_commit_id: &str, patch: &str) -> String {
+pub fn task_diff_id(base_commit_id: &str, head_commit_id: &str, patch: &str) -> String {
     const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x00000100000001b3;
     let mut hash = FNV_OFFSET_BASIS;

@@ -6,6 +6,7 @@ use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
+use crate::task_diff::TaskDiffApi;
 use ora_contracts::*;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use std::fs;
@@ -43,6 +44,7 @@ pub struct Backend {
     worktree_root: Arc<RwLock<PathBuf>>,
     project: Arc<ProjectApi>,
     task: Arc<TaskApi>,
+    task_diff: Arc<TaskDiffApi>,
     session: Arc<SessionApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     skill: Arc<SkillApi>,
@@ -71,6 +73,7 @@ impl Backend {
         Ok(Self {
             project: Arc::new(ProjectApi::new(pool.clone(), clock)),
             task: Arc::new(TaskApi::new(pool.clone(), worktree_root.clone(), clock)),
+            task_diff: Arc::new(TaskDiffApi::new(pool.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime: Arc::new(agent_runtime),
             skill: Arc::new(SkillApi::new(pool.clone(), clock)),
@@ -180,6 +183,62 @@ impl Backend {
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
         self.task.delete(request)
+    }
+
+    /// Returns the current Git snapshot for the task directory used by its agent session.
+    pub fn get_task_diff(
+        &self,
+        request: GetTaskDiffRequest,
+    ) -> Result<GetTaskDiffResponse, BackendError> {
+        self.task_diff.get_diff(request)
+    }
+
+    /// Commits every current change in one isolated task worktree.
+    pub fn commit_task_changes(
+        &self,
+        request: CommitTaskChangesRequest,
+    ) -> Result<CommitTaskChangesResponse, BackendError> {
+        self.task_diff.commit_changes(request)
+    }
+
+    /// Pushes the verified branch owned by one isolated task worktree.
+    pub fn push_task_branch(
+        &self,
+        request: PushTaskBranchRequest,
+    ) -> Result<PushTaskBranchResponse, BackendError> {
+        self.task_diff.push_branch(request)
+    }
+
+    /// Lists every persisted review discussion for one task.
+    pub fn list_task_diff_comments(
+        &self,
+        request: ListTaskDiffCommentsRequest,
+    ) -> Result<ListTaskDiffCommentsResponse, BackendError> {
+        self.task_diff.list_comments(request)
+    }
+
+    /// Creates one line-anchored task diff discussion.
+    pub fn create_task_diff_comment(
+        &self,
+        request: CreateTaskDiffCommentRequest,
+    ) -> Result<CreateTaskDiffCommentResponse, BackendError> {
+        self.task_diff.create_comment(request)
+    }
+
+    /// Adds one reply under an existing task diff discussion.
+    pub fn reply_task_diff_comment(
+        &self,
+        request: ReplyTaskDiffCommentRequest,
+    ) -> Result<ReplyTaskDiffCommentResponse, BackendError> {
+        self.task_diff.reply_comment(request)
+    }
+
+    /// Resolves or reopens one root task diff discussion.
+    pub fn set_task_diff_comment_status(
+        &self,
+        request: SetTaskDiffCommentStatusRequest,
+    ) -> Result<SetTaskDiffCommentStatusResponse, BackendError> {
+        self.task_diff.set_comment_status(request)
     }
 
     /// Creates one session through the shared application composition.

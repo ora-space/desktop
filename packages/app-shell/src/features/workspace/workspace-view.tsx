@@ -157,7 +157,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       } finally {
         // Connection failures can stop the provider process, so refresh the persisted
         // lifecycle snapshot after every finite prompt without polling idle sessions.
-        await sessionsQuery.refetch();
+        await Promise.all([
+          sessionsQuery.refetch(),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.taskDiffs(session.taskId),
+          }),
+        ]);
       }
       return;
     }
@@ -232,7 +237,14 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         },
       });
     } finally {
-      await sessionsQuery.refetch();
+      await Promise.all([
+        sessionsQuery.refetch(),
+        taskId === null
+          ? Promise.resolve()
+          : queryClient.invalidateQueries({
+              queryKey: queryKeys.taskDiffs(taskId),
+            }),
+      ]);
     }
   };
 

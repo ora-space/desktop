@@ -2,12 +2,13 @@
 
 ## 目标
 
-Task Diff 以 `taskId` 为业务入口。前端不传递本机 worktree 路径，也不直接调用 Gitlancer：
+Task Diff 以 `taskId` 为业务入口。Web 和 Desktop 前端都不传递本机工作目录，也不直接调用 Gitlancer：
 
-- Worktree 是 Task 拥有的后端资源，不提供独立的前端 CRUD。
-- Application 层校验 Task 与 Worktree 的归属关系并解析真实路径。
+- Backend 根据 Task 的 workspace mode 解析 Agent 实际使用的工作目录。
+- Worktree 是隔离模式 Task 拥有的后端资源，不提供独立的前端 CRUD。
+- Application 层校验 Task 与 Worktree 的归属关系，并提供可测试的 Git diff 用例。
 - Gitlancer 只负责 Git 命令、worktree 安全边界和 Unified Diff 输出。
-- Rust contracts 是 HTTP 与 TypeScript SDK 的唯一数据源。
+- Rust contracts 是 HTTP、Tauri IPC 与 TypeScript SDK 的唯一数据源。
 - 前端使用 `react-diff-view` 解析标准 Unified Diff；单栏、双栏和样式均由前端控制。
 
 ## 调用链路
@@ -16,17 +17,17 @@ Task Diff 以 `taskId` 为业务入口。前端不传递本机 worktree 路径�
 flowchart LR
     UI["React / react-diff-view"]
     SDK["packages/contracts<br/>生成的 TypeScript Client"]
-    HTTP["Axum Route / Handler"]
-    WEB["TaskDiffApi<br/>仅装配和透传"]
+    TRANSPORT["Axum HTTP / Tauri IPC"]
+    BACKEND["Backend TaskDiffApi<br/>工作目录解析与装配"]
     APP["Application Task Diff Handlers"]
     PORT["TaskDiffReader / CommentRepository"]
     ADAPTER["GitTaskDiffReader / SQLite"]
     GIT["Gitlancer"]
-    WT["Task Worktree"]
+    WORKSPACE["Project Root / Task Worktree"]
 
-    UI --> SDK --> HTTP --> WEB --> APP --> PORT
-    PORT --> ADAPTER --> GIT --> WT
-    WT --> GIT --> ADAPTER --> APP --> WEB --> HTTP --> SDK --> UI
+    UI --> SDK --> TRANSPORT --> BACKEND --> APP --> PORT
+    PORT --> ADAPTER --> GIT --> WORKSPACE
+    WORKSPACE --> GIT --> ADAPTER --> APP --> BACKEND --> TRANSPORT --> SDK --> UI
 ```
 
 主要实现位置：
@@ -35,7 +36,9 @@ flowchart LR
 |---|---|
 | Axum 路由 | `apps/web/server/src/routes.rs` |
 | HTTP 请求适配 | `apps/web/server/src/handlers/task_diffs.rs` |
-| Web 依赖装配与透传 | `apps/web/server/src/service/task_diff.rs` |
+| Desktop IPC 注册 | `apps/desktop/src-tauri/src/commands.rs` |
+| Tauri transport 映射 | `apps/desktop/web/tauri-transport.ts` |
+| Web/Desktop 共用装配 | `crates/backend/src/task_diff.rs` |
 | Application 用例 | `crates/application/src/task_diff/handlers.rs` |
 | Application ports | `crates/application/src/task_diff/ports.rs` |
 | Gitlancer adapter | `crates/application/src/task_diff/git_reader.rs` |
@@ -44,7 +47,12 @@ flowchart LR
 | SQLite 评论仓储 | `crates/db/src/repository/task_diff_comment.rs` |
 | 生成的 TypeScript 类型 | `packages/contracts/src/task_diff.ts` |
 
-## 固定基线
+## 工作目录与基线
+
+读取 diff 时，Backend 会复用 Agent session 的 `resolve_task_cwd` 解析结果，保证 Agent 修改的位置与 review 读取的位置一致：
+
+- `project_root` Task 使用项目主 checkout，并在每次读取时比较当前 `HEAD -> working tree`。这与 Codex 的本地变更视图一致，能捕捉 VS Code、Agent 或其他本地工具写入的 staged、unstaged 和 untracked 文件。
+- `worktree` Task 使用该 Task 的 linked worktree，并保持创建时记录的固定基线，从而同时展示该 Task 已提交和未提交的全部改动。
 
 创建 Task worktree 时，后端先读取项目仓库当前 `HEAD`，再创建 linked worktree，并把该 commit 保存为 Worktree 的 `base_commit_id`。
 

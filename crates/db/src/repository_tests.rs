@@ -719,7 +719,9 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
         connection.execute_batch(
             "INSERT INTO projects VALUES ('project-1', 'Ora', '/not/a/repository', 1, 1, 0);
              INSERT INTO tasks VALUES ('task-1', 'project-1', 'Task', 0, 'worktree-1', 1, 1, 0);
-             INSERT INTO worktrees VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0);
+             INSERT INTO worktrees (
+                 id, task_id, branch_name, is_active, created_at, updated_at, is_deleted, base_commit_id
+             ) VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0, 'base-commit');
              INSERT INTO project_work_contexts VALUES ('context-1', 'web', 'main', 'project-1', 100, 1, 1);",
         )?;
         connection.execute(

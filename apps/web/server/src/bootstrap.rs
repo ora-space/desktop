@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use crate::config::{ProjectConfig, RuntimeConfig};
 use crate::error::WebBootstrapError;
-use crate::service::{FileSystemApi, ProjectWorkContextApi, TaskDiffApi};
+use crate::service::{FileSystemApi, ProjectWorkContextApi};
 use ora_application::{
     Clock, OpenProjectWorkContextHandler, ProjectIdGenerator, ProjectRepository,
     ProjectRepositoryError, UuidProjectIdGenerator, UuidProjectWorkContextIdGenerator,
@@ -32,12 +32,6 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
             runtime_config.file_system().home_directory().to_path_buf(),
         )),
         Arc::new(ProjectWorkContextApi::new(pool.clone(), clock)),
-        Arc::new(TaskDiffApi::new(
-            pool.clone(),
-            runtime_config.project().path().to_path_buf(),
-            runtime_config.project().work_dir().to_path_buf(),
-            clock,
-        )),
     ))
 }
 
@@ -62,12 +56,6 @@ pub(crate) fn build_app_state_for_database(
             project_root.parent().unwrap_or(project_root).to_path_buf(),
         )),
         Arc::new(ProjectWorkContextApi::new(pool.clone(), clock)),
-        Arc::new(TaskDiffApi::new(
-            pool.clone(),
-            project_root.to_path_buf(),
-            work_dir.to_path_buf(),
-            clock,
-        )),
     ))
 }
 

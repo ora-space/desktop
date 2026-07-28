@@ -8,6 +8,7 @@ import { PlanBlock } from "./plan-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolCallGroup } from "./tool-call-group";
 import { toolCallGroupKind, type ToolCallGroupKind } from "./tool-call-group-kind";
+import { TurnDiffSummary } from "./turn-diff-summary";
 
 interface ToolGroup {
   kind: "toolGroup";
@@ -66,6 +67,7 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
           }
         })}
         <TurnEnding turn={turn} />
+        <TurnDiffSummary turn={turn} />
       </div>
     </section>
   );

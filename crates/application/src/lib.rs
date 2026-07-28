@@ -45,7 +45,7 @@ pub use task_diff::{
     ReplyTaskDiffCommentHandler, SetTaskDiffCommentStatusHandler, TaskDiffCommentIdGenerator,
     TaskDiffCommentRepository, TaskDiffCommentRepositoryError, TaskDiffReader, TaskDiffReaderError,
     TaskDiffSnapshot, TaskGitCommit, TaskGitPush, TaskGitWriter, TaskGitWriterError,
-    UuidTaskDiffCommentIdGenerator,
+    UuidTaskDiffCommentIdGenerator, task_diff_id,
 };
 pub use worktree::{
     UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository, WorktreeRepositoryError,

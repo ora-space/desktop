@@ -14,7 +14,7 @@ pub use git_writer::GitTaskGitWriter;
 pub use handlers::{
     CommitTaskChangesHandler, CreateTaskDiffCommentHandler, GetTaskDiffHandler,
     ListTaskDiffCommentsHandler, PushTaskBranchHandler, ReplyTaskDiffCommentHandler,
-    SetTaskDiffCommentStatusHandler,
+    SetTaskDiffCommentStatusHandler, task_diff_id,
 };
 pub use id_generator::UuidTaskDiffCommentIdGenerator;
 pub use ports::{
