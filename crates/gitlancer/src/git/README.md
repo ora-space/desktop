@@ -5,7 +5,7 @@ This module exposes the operations callers perform through `Git<R: GitRunner>` a
 ## Responsibilities
 
 - Repository operations discover a Git root, open an already validated repository, and list its worktrees.
-- Worktree operations resolve by path or branch and create or delete linked worktrees with explicit deletion modes.
+- Worktree operations resolve by containing path, exact checkout root, or branch and create or delete linked worktrees with explicit deletion modes.
 - Branch operations list, validate, create, and delete local branches with checked or forced semantics.
 - Commit operations stage `RepoRelativePath` values, create commits without GPG signing, and return typed commit metadata.
 - Status uses porcelain v2 NUL-delimited output; global identity reads treat an unset Git key as `None`, not an execution failure.

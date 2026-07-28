@@ -33,10 +33,11 @@ pub use skill::{
 };
 pub use task::{
     CreateTaskHandler, CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, GetTaskHandler,
-    GitTaskWorktreeProvisioner, ListTasksHandler, TaskIdGenerator, TaskRepository,
-    TaskRepositoryError, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator, branch_name_for_task,
-    branch_prefix_for_task,
+    GitResourceCleanupOutcome, GitTaskGitResourceCleaner, GitTaskWorktreeProvisioner,
+    ListTasksHandler, TaskGitResourceCleaner, TaskGitResourceCleanupReport,
+    TaskGitResourceCleanupRequest, TaskIdGenerator, TaskRepository, TaskRepositoryError,
+    TaskWorktreeDeletionMode, TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
+    UpdateTaskHandler, UuidTaskIdGenerator, branch_name_for_task, branch_prefix_for_task,
 };
 pub use worktree::{
     UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository, WorktreeRepositoryError,

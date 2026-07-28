@@ -44,7 +44,7 @@ pub(crate) struct AgentRuntimeManager {
 struct ManagerInner {
     pool: RepositoryPool,
     actors: RwLock<HashMap<SessionId, RuntimeActorHandle>>,
-    lifecycle: tokio::sync::Mutex<()>,
+    lifecycle: Arc<tokio::sync::Mutex<()>>,
     next_operation_id: AtomicU64,
     connections: ConnectionSupervisors,
     home_directory: PathBuf,
@@ -96,6 +96,7 @@ impl AgentRuntimeManager {
         pool: RepositoryPool,
         home_directory: PathBuf,
         clock: SystemClock,
+        lifecycle: Arc<tokio::sync::Mutex<()>>,
     ) -> Result<Self, BackendError> {
         reconcile_running_sessions(&pool, clock)?;
         let connections = ConnectionSupervisors::start(pool.clone(), home_directory.clone(), clock);
@@ -103,7 +104,7 @@ impl AgentRuntimeManager {
             inner: Arc::new(ManagerInner {
                 pool,
                 actors: RwLock::new(HashMap::new()),
-                lifecycle: tokio::sync::Mutex::new(()),
+                lifecycle,
                 next_operation_id: AtomicU64::new(1),
                 connections,
                 home_directory,

@@ -1,4 +1,5 @@
 mod branch;
+mod git_resource_cleanup;
 mod handlers;
 mod id_generator;
 mod mapper;
@@ -9,6 +10,10 @@ mod worktree_provisioner;
 mod tests;
 
 pub use branch::{branch_name_for_task, branch_prefix_for_task};
+pub use git_resource_cleanup::{
+    GitResourceCleanupOutcome, GitTaskGitResourceCleaner, TaskGitResourceCleaner,
+    TaskGitResourceCleanupReport, TaskGitResourceCleanupRequest,
+};
 pub use handlers::{CreateTaskHandler, GetTaskHandler, ListTasksHandler, UpdateTaskHandler};
 pub use id_generator::UuidTaskIdGenerator;
 pub use ports::{

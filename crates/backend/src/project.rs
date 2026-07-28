@@ -12,6 +12,7 @@ use ora_db::{
     CascadeDeleteOutcome, RepositoryPool, SqliteCascadeRepository, SqliteProjectRepository,
 };
 use ora_domain::ProjectId;
+use std::path::Path;
 
 use crate::git_cleanup::{AggregateDeletionKind, cleanup_git_resources};
 use crate::{BackendError, BackendErrorKind};
@@ -81,6 +82,7 @@ impl ProjectApi {
     pub(crate) fn delete(
         &self,
         request: DeleteProjectRequest,
+        worktree_root: &Path,
     ) -> Result<DeleteProjectResponse, BackendError> {
         let project_id = ProjectId::new(request.project_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
@@ -97,7 +99,11 @@ impl ProjectApi {
             CascadeDeleteOutcome::Deleted {
                 git_cleanup_targets,
             } => {
-                cleanup_git_resources(AggregateDeletionKind::Project, &git_cleanup_targets);
+                cleanup_git_resources(
+                    AggregateDeletionKind::Project,
+                    &git_cleanup_targets,
+                    worktree_root,
+                );
                 Ok(DeleteProjectResponse {
                     project_id: project_id.to_string(),
                 })

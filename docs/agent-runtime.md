@@ -8,8 +8,8 @@
 - The shared child starts in the user's home directory with the single `acp` argument and piped stdin, stdout, and stderr. Session setup requests carry the owning Task worktree as `cwd`.
 - Task worktrees resolve through Task → stored Worktree id → stored branch name → Git's authoritative worktree metadata. A configured worktree creation root is never used to reconstruct an existing path.
 - Backend startup reconciles stale Running rows to Stopped, then one dedicated runtime thread per CLI attempts startup and performs `initialize`. Owning the runtimes here is necessary because synchronous Desktop bootstrap does not guarantee an ambient Tokio runtime. Each CLI retries independently with capped exponential backoff; Ora remains available even if every initial attempt fails, and one unavailable CLI does not disable the others.
-- Create calls `session/new` on the ready shared connection and persists the Ora Session only after setup succeeds. The guarded insert fails if its Task was deleted while the handshake was in flight.
-- Load registers a route on the current connection generation, marks the row Running, and calls `session/load` with the private `agentSessionId`. Every setup or replay failure restores Stopped.
+- Create calls `session/new` on the ready shared connection and persists the Ora Session only after setup succeeds. A shared admission lock prevents Task or Project deletion from entering its cascade while that handshake is in flight.
+- Load marks the row Running before acknowledging admission, then registers a route on the current connection generation and calls `session/load` with the private `agentSessionId`. Every setup or replay failure restores Stopped.
 - Connection loss fails that CLI's in-flight operations, marks only its registered Sessions Stopped, terminates and reaps the old process tree, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - Model discovery runs each CLI's bounded `models` command concurrently. The response is grouped by `agent_cli` and omits CLIs whose command is missing, fails, emits invalid UTF-8, or exceeds the timeout, allowing partial results.
 
@@ -23,6 +23,6 @@ Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIter
 
 ## Ownership Boundaries
 
-Session deletion serializes against new actor operations, unloads its route, and then soft-deletes the row under the same lifecycle guard. Task and Project deletion reject Running descendants and transactionally cascade stopped Ora records. After a successful cascade, the backend best-effort force-removes each validated Ora-owned linked worktree and its local branch; failures are logged without changing the deletion response and are not retried durably. Aggregate deletion does not call ACP session delete or remove provider-owned history.
+Session deletion serializes against new actor operations, unloads its route, and then soft-deletes the row under the same lifecycle guard. Task and Project deletion share that guard with create and load admission, reject Running descendants, and transactionally cascade stopped Ora records. After a successful cascade, the backend delegates each target to `TaskGitResourceCleaner`; failures are logged without changing the deletion response and are not retried durably. Aggregate deletion does not call ACP session delete or remove provider-owned history.
 
 Dropping the last Backend owner asks every supervisor to stop accepting work, cancels routed operations, and initiates bounded termination and reaping of each CLI process tree. Successful processes remain alive while the Backend exists even when no Sessions are registered.

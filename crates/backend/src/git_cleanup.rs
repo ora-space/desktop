@@ -1,11 +1,11 @@
-use gitlancer::git::branch::{BranchDeletionMode, DeleteBranchRequest};
-use gitlancer::git::worktree::{
-    DeleteWorktreeRequest, ResolveWorktreeByBranchRequest, WorktreeDeletionMode,
+use gitlancer::CliGitRunner;
+use ora_application::{
+    GitResourceCleanupOutcome, GitTaskGitResourceCleaner, TaskGitResourceCleaner,
+    TaskGitResourceCleanupRequest, branch_name_for_task,
 };
-use gitlancer::{BranchName, CliGitRunner, DomainError, Git, GitRunner, GitlancerError, RepoRoot};
-use ora_application::branch_name_for_task;
 use ora_db::GitCleanupTarget;
 use ora_logging::ora_error;
+use std::path::Path;
 
 /// Identifies which aggregate deletion initiated a best-effort Git cleanup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,15 +28,22 @@ impl AggregateDeletionKind {
 pub(crate) fn cleanup_git_resources(
     deletion_kind: AggregateDeletionKind,
     targets: &[GitCleanupTarget],
+    worktree_root: &Path,
 ) {
-    cleanup_git_resources_with_runner(deletion_kind, targets, &Git::new(CliGitRunner));
+    cleanup_git_resources_with_cleaner(
+        deletion_kind,
+        targets,
+        worktree_root,
+        &GitTaskGitResourceCleaner::new(CliGitRunner),
+    );
 }
 
-/// Runs cleanup through an injected Git runner so failure ordering remains directly testable.
-fn cleanup_git_resources_with_runner<Runner: GitRunner>(
+/// Runs cleanup through an injected application port so backend policy remains testable.
+fn cleanup_git_resources_with_cleaner<Cleaner: TaskGitResourceCleaner>(
     deletion_kind: AggregateDeletionKind,
     targets: &[GitCleanupTarget],
-    git: &Git<Runner>,
+    worktree_root: &Path,
+    cleaner: &Cleaner,
 ) {
     for target in targets {
         let expected_branch_name = branch_name_for_task(&target.task_id);
@@ -52,35 +59,16 @@ fn cleanup_git_resources_with_runner<Runner: GitRunner>(
             continue;
         }
 
-        let repository = gitlancer::Repository::new(RepoRoot::new(&target.repository_root));
-        match git.resolve_worktree_by_branch(ResolveWorktreeByBranchRequest {
-            repository: &repository,
-            branch_name: &target.branch_name,
-        }) {
-            Ok(worktree) => {
-                if let Err(error) = git.delete_worktree(DeleteWorktreeRequest {
-                    repository: &repository,
-                    worktree: &worktree,
-                    mode: WorktreeDeletionMode::Force,
-                }) {
-                    log_cleanup_failure(deletion_kind, target, "worktree", error.to_string());
-                }
-            }
-            Err(GitlancerError::Domain(DomainError::NotAWorktree(_))) => {}
-            Err(error) => {
-                log_cleanup_failure(deletion_kind, target, "worktree", error.to_string());
-            }
+        let report = cleaner.cleanup_task_git_resources(TaskGitResourceCleanupRequest {
+            repository_root: target.repository_root.clone(),
+            expected_worktree_root: worktree_root.join(target.task_id.as_ref()),
+            branch_name: target.branch_name.clone(),
+        });
+        if let GitResourceCleanupOutcome::Failed { message } = report.worktree {
+            log_cleanup_failure(deletion_kind, target, "worktree", message);
         }
-
-        match git.delete_branch(DeleteBranchRequest {
-            repository: &repository,
-            branch_name: BranchName::new(&target.branch_name),
-            mode: BranchDeletionMode::Force,
-        }) {
-            Ok(_) | Err(GitlancerError::Domain(DomainError::BranchNotFound { .. })) => {}
-            Err(error) => {
-                log_cleanup_failure(deletion_kind, target, "branch", error.to_string());
-            }
+        if let GitResourceCleanupOutcome::Failed { message } = report.branch {
+            log_cleanup_failure(deletion_kind, target, "branch", message);
         }
     }
 }
@@ -105,109 +93,67 @@ fn log_cleanup_failure(
 
 #[cfg(test)]
 mod tests {
-    use super::{AggregateDeletionKind, cleanup_git_resources_with_runner};
-    use gitlancer::{Git, GitCommand, GitExecError, GitOutput, GitRunner};
+    use super::{AggregateDeletionKind, cleanup_git_resources_with_cleaner};
+    use ora_application::{
+        GitResourceCleanupOutcome, TaskGitResourceCleaner, TaskGitResourceCleanupReport,
+        TaskGitResourceCleanupRequest,
+    };
     use ora_db::GitCleanupTarget;
     use ora_domain::{ProjectId, TaskId};
     use ora_logging::with_trace_logging;
     use pretty_assertions::assert_eq;
     use std::cell::RefCell;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
-    /// Records commands while allowing worktree removal to fail independently of branch deletion.
+    /// Records validated cleanup requests while returning independent stage failures.
     #[derive(Debug, Default)]
-    struct FailingWorktreeRunner {
-        commands: RefCell<Vec<GitCommand>>,
+    struct RecordingCleaner {
+        requests: RefCell<Vec<TaskGitResourceCleanupRequest>>,
     }
 
-    impl FailingWorktreeRunner {
-        /// Returns every Git command attempted by the cleanup flow.
-        fn commands(&self) -> Vec<GitCommand> {
-            self.commands.borrow().clone()
+    impl RecordingCleaner {
+        /// Returns every cleanup request accepted by the application port.
+        fn requests(&self) -> Vec<TaskGitResourceCleanupRequest> {
+            self.requests.borrow().clone()
         }
     }
 
-    impl GitRunner for FailingWorktreeRunner {
-        /// Supplies stable discovery output and fails only the worktree removal command.
-        fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
-            self.commands.borrow_mut().push(command.clone());
-            match command.args.as_slice() {
-                [git_area, subcommand, ..]
-                    if git_area == "worktree" && subcommand == "list" =>
-                {
-                    Ok(GitOutput::new(
-                        Some(0),
-                        "worktree /repo\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /worktree\nHEAD 2222222\nbranch refs/heads/ora/12345678\n"
-                            .to_string(),
-                        String::new(),
-                        0,
-                    ))
-                }
-                [git_area, subcommand, ..]
-                    if git_area == "worktree" && subcommand == "remove" =>
-                {
-                    Err(GitExecError::NonZeroExit {
-                        code: Some(1),
-                        args: command.args.clone(),
-                        stdout: String::new(),
-                        stderr: "worktree is locked".to_string(),
-                    })
-                }
-                [git_area, ..] if git_area == "for-each-ref" => Ok(GitOutput::new(
-                    Some(0),
-                    "main\nora/12345678\n".to_string(),
-                    String::new(),
-                    0,
-                )),
-                [git_area, ..] if git_area == "branch" => {
-                    Ok(GitOutput::new(Some(0), String::new(), String::new(), 0))
-                }
-                _ => panic!("unexpected Git command: {:?}", command.args),
+    impl TaskGitResourceCleaner for RecordingCleaner {
+        /// Records requests and simulates a failed worktree with a successful branch removal.
+        fn cleanup_task_git_resources(
+            &self,
+            request: TaskGitResourceCleanupRequest,
+        ) -> TaskGitResourceCleanupReport {
+            self.requests.borrow_mut().push(request);
+            TaskGitResourceCleanupReport {
+                worktree: GitResourceCleanupOutcome::Failed {
+                    message: "worktree is locked".to_string(),
+                },
+                branch: GitResourceCleanupOutcome::Removed,
             }
         }
     }
 
-    /// Verifies a failed worktree removal cannot prevent the independent branch attempt.
+    /// Verifies validated targets include the deterministic task checkout root.
     #[test]
-    fn continues_with_branch_cleanup_after_worktree_failure() {
+    fn delegates_validated_targets_with_the_expected_worktree_root() {
         with_trace_logging(|| {
-            let git = Git::new(FailingWorktreeRunner::default());
+            let cleaner = RecordingCleaner::default();
 
-            cleanup_git_resources_with_runner(
+            cleanup_git_resources_with_cleaner(
                 AggregateDeletionKind::Task,
                 &[cleanup_target("ora/12345678")],
-                &git,
+                Path::new("/ora/worktrees"),
+                &cleaner,
             );
 
             assert_eq!(
-                git.runner()
-                    .commands()
-                    .into_iter()
-                    .map(|command| command.args)
-                    .collect::<Vec<_>>(),
-                vec![
-                    vec![
-                        "worktree".to_string(),
-                        "list".to_string(),
-                        "--porcelain".to_string(),
-                    ],
-                    vec![
-                        "worktree".to_string(),
-                        "remove".to_string(),
-                        "/worktree".to_string(),
-                        "--force".to_string(),
-                    ],
-                    vec![
-                        "for-each-ref".to_string(),
-                        "--format=%(refname:short)".to_string(),
-                        "refs/heads".to_string(),
-                    ],
-                    vec![
-                        "branch".to_string(),
-                        "-D".to_string(),
-                        "ora/12345678".to_string(),
-                    ],
-                ]
+                cleaner.requests(),
+                vec![TaskGitResourceCleanupRequest {
+                    repository_root: PathBuf::from("/repo"),
+                    expected_worktree_root: PathBuf::from("/ora/worktrees/12345678-task"),
+                    branch_name: "ora/12345678".to_string(),
+                }]
             );
         });
     }
@@ -216,15 +162,19 @@ mod tests {
     #[test]
     fn rejects_cleanup_targets_outside_the_task_branch_namespace() {
         with_trace_logging(|| {
-            let git = Git::new(FailingWorktreeRunner::default());
+            let cleaner = RecordingCleaner::default();
 
-            cleanup_git_resources_with_runner(
+            cleanup_git_resources_with_cleaner(
                 AggregateDeletionKind::Project,
                 &[cleanup_target("feature/user-work")],
-                &git,
+                Path::new("/ora/worktrees"),
+                &cleaner,
             );
 
-            assert_eq!(git.runner().commands(), Vec::<GitCommand>::new());
+            assert_eq!(
+                cleaner.requests(),
+                Vec::<TaskGitResourceCleanupRequest>::new()
+            );
         });
     }
 

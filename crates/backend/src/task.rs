@@ -95,6 +95,7 @@ impl TaskApi {
     pub(crate) fn delete(
         &self,
         request: DeleteTaskRequest,
+        worktree_root: &std::path::Path,
     ) -> Result<DeleteTaskResponse, BackendError> {
         let task_id = TaskId::new(request.task_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
@@ -111,7 +112,11 @@ impl TaskApi {
             CascadeDeleteOutcome::Deleted {
                 git_cleanup_targets,
             } => {
-                cleanup_git_resources(AggregateDeletionKind::Task, &git_cleanup_targets);
+                cleanup_git_resources(
+                    AggregateDeletionKind::Task,
+                    &git_cleanup_targets,
+                    worktree_root,
+                );
                 Ok(DeleteTaskResponse {
                     task_id: task_id.to_string(),
                 })
