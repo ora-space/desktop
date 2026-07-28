@@ -22,13 +22,18 @@ import {
   cn,
 } from "@ora/ui";
 import {
+  IconActivity,
+  IconBug,
   IconBuildingStore,
   IconCheck,
+  IconCloud,
   IconCloudOff,
+  IconPackage,
   IconPencil,
   IconPlus,
   IconRobot,
   IconSearch,
+  IconShieldCheck,
   IconSparkles,
   IconStar,
   IconTrash,
@@ -52,11 +57,31 @@ import {
   SKILL_MARKET_ITEMS,
   isCatalogAtom,
   isInternalAtom,
+  type SkillMarketCategory,
+  type SkillMarketItem,
 } from "./atom-catalog";
 import { SettingsHeading } from "./settings-heading";
 
 type AtomRecord = Agent | Skill;
 type TablerIcon = typeof IconRobot;
+type MarketplaceCategory = "all" | SkillMarketCategory;
+
+const MARKETPLACE_CATEGORIES: MarketplaceCategory[] = [
+  "all",
+  "build",
+  "cloud",
+  "observability",
+  "security",
+  "diagnostics",
+];
+
+const MARKETPLACE_CATEGORY_ICONS: Record<SkillMarketCategory, TablerIcon> = {
+  build: IconPackage,
+  cloud: IconCloud,
+  observability: IconActivity,
+  security: IconShieldCheck,
+  diagnostics: IconBug,
+};
 
 /** The i18n namespace and behaviour that distinguish the two atom panes. */
 interface AtomManagerConfig {
@@ -302,7 +327,14 @@ function AtomManager({
                   className="min-w-0 cursor-pointer rounded-lg border border-border bg-background px-2.5 py-2 text-left outline-none transition-colors duration-150 hover:border-foreground/20 hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={() => setEditing({ item })}
                 >
-                  <span className="block truncate text-xs font-medium">{item.name}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium">{item.name}</span>
+                    {isInternalAtom(item) && (
+                      <span className="shrink-0 rounded-full border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[8px] font-semibold text-primary">
+                        {t(`${tPrefix}.internalBadge`)}
+                      </span>
+                    )}
+                  </span>
                   <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{item.description}</span>
                 </button>
               ))}
@@ -469,47 +501,147 @@ function SkillMarketplaceDialog({
   open: boolean;
   installedIds: ReadonlySet<string>;
   onOpenChange: (open: boolean) => void;
-  onInstall: (skill: Skill) => void;
+  onInstall: (skill: SkillMarketItem) => void;
 }) {
   const { t } = useTranslation();
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<MarketplaceCategory>("all");
+  const needle = query.trim().toLowerCase();
+  const visibleSkills = useMemo(
+    () => SKILL_MARKET_ITEMS.filter((skill) => (
+      (category === "all" || skill.category === category)
+      && (!needle
+        || skill.name.toLowerCase().includes(needle)
+        || skill.description.toLowerCase().includes(needle)
+        || skill.publisher.toLowerCase().includes(needle))
+    )),
+    [category, needle],
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(680px,calc(100dvh-2rem))] max-w-2xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <span className="flex size-8 items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-              <IconBuildingStore className="size-4" />
-            </span>
-            {t("settings.skills.marketplaceTitle")}
-          </DialogTitle>
-          <DialogDescription>{t("settings.skills.marketplaceDescription")}</DialogDescription>
+      <DialogContent className="max-h-[min(760px,calc(100dvh-2rem))] w-[min(880px,calc(100vw-2rem))] max-w-none gap-0 overflow-hidden p-0 sm:max-w-none">
+        <DialogHeader className="relative overflow-hidden border-b border-border bg-muted/25 px-5 py-5 pr-12 text-left">
+          <div className="pointer-events-none absolute -right-12 -top-20 size-48 rounded-full bg-primary/10 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-20 left-1/3 size-40 rounded-full bg-amber-500/10 blur-3xl" />
+          <div className="relative">
+            <p className="mb-3 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <IconBuildingStore className="size-3.5" />
+              {t("settings.skills.marketplaceRegistry")}
+            </p>
+            <DialogTitle className="text-xl font-semibold tracking-tight">
+              {t("settings.skills.marketplaceTitle")}
+            </DialogTitle>
+            <DialogDescription className="mt-1.5 max-w-2xl text-xs leading-5">
+              {t("settings.skills.marketplaceDescription")}
+            </DialogDescription>
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1.5"><IconCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />{t("settings.skills.marketplaceCurated")}</span>
+              <span className="flex items-center gap-1.5"><IconPackage className="size-3.5" />{t("settings.skills.marketplaceCount", { count: SKILL_MARKET_ITEMS.length })}</span>
+              <span className="flex items-center gap-1.5"><IconActivity className="size-3.5" />{t("settings.skills.marketplaceInstant")}</span>
+            </div>
+          </div>
         </DialogHeader>
-        <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-2">
-          {SKILL_MARKET_ITEMS.map((skill) => {
-            const installed = installedIds.has(skill.id);
-            return (
-              <article key={skill.id} className="flex min-h-32 flex-col rounded-xl border border-border bg-muted/15 p-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground">
-                    <IconSparkles className="size-4" />
-                  </span>
-                  <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{skill.name}</h3>
-                </div>
-                <p className="mt-2 flex-1 text-xs leading-5 text-muted-foreground">{skill.description}</p>
+
+        <div className="min-h-0 overflow-y-auto p-4">
+          <div className="flex flex-col gap-3">
+            <div className="relative">
+              <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("settings.skills.marketplaceSearch")}
+                aria-label={t("settings.skills.marketplaceSearch")}
+                className="h-10 bg-background pl-9 pr-9 shadow-sm"
+              />
+              {query && (
                 <Button
-                  variant={installed ? "ghost" : "outline"}
-                  size="sm"
-                  className="mt-3 self-end"
-                  disabled={installed}
-                  onClick={() => onInstall(skill)}
+                  variant="ghost"
+                  size="icon-sm"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  aria-label={t("settings.skills.clearSearch")}
+                  onClick={() => setQuery("")}
                 >
-                  {installed ? <IconCheck /> : <IconPlus />}
-                  {t(installed ? "settings.skills.installed" : "settings.skills.install")}
+                  <IconX />
                 </Button>
-              </article>
-            );
-          })}
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t("settings.skills.marketplaceCategories")}>
+              {MARKETPLACE_CATEGORIES.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  aria-pressed={category === item}
+                  className={cn(
+                    "cursor-pointer rounded-full border px-3 py-1.5 text-[11px] font-medium outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring",
+                    category === item
+                      ? "border-foreground/20 bg-foreground text-background"
+                      : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:text-foreground",
+                  )}
+                  onClick={() => setCategory(item)}
+                >
+                  {t(`settings.skills.marketplaceCategory.${item}`)}
+                </button>
+              ))}
+              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
+                {t("settings.skills.marketplaceResults", { count: visibleSkills.length })}
+              </span>
+            </div>
+          </div>
+
+          {visibleSkills.length === 0 ? (
+            <div className="flex flex-col items-center py-14 text-center">
+              <span className="flex size-11 items-center justify-center rounded-xl border border-border bg-muted/30 text-muted-foreground">
+                <IconSearch className="size-4" />
+              </span>
+              <p className="mt-3 text-sm font-medium">{t("settings.skills.marketplaceEmpty")}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t("settings.skills.marketplaceEmptyHint")}</p>
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {visibleSkills.map((skill) => {
+                const installed = installedIds.has(skill.id);
+                const CategoryIcon = MARKETPLACE_CATEGORY_ICONS[skill.category];
+                return (
+                  <article
+                    key={skill.id}
+                    className="group relative flex min-h-40 flex-col overflow-hidden rounded-xl border border-border bg-background p-4 transition-[border-color,box-shadow] duration-200 hover:border-foreground/20 hover:shadow-lg hover:shadow-foreground/5"
+                  >
+                    {skill.featured && (
+                      <span className="absolute right-3 top-3 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[9px] font-semibold text-primary">
+                        {t("settings.skills.marketplaceFeatured")}
+                      </span>
+                    )}
+                    <div className="flex items-center gap-2.5 pr-14">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/35 text-foreground shadow-sm">
+                        <CategoryIcon className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <h3 className="truncate text-sm font-semibold tracking-tight">{skill.name}</h3>
+                        <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{skill.publisher}</p>
+                      </div>
+                    </div>
+                    <p className="mt-3 flex-1 text-xs leading-5 text-muted-foreground">{skill.description}</p>
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/70 pt-3">
+                      <span className="text-[10px] font-medium text-muted-foreground">
+                        {t(`settings.skills.marketplaceCategory.${skill.category}`)}
+                      </span>
+                      <Button
+                        variant={installed ? "ghost" : "secondary"}
+                        size="sm"
+                        className="min-w-20"
+                        disabled={installed}
+                        onClick={() => onInstall(skill)}
+                      >
+                        {installed ? <IconCheck /> : <IconPlus />}
+                        {t(installed ? "settings.skills.installed" : "settings.skills.install")}
+                      </Button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

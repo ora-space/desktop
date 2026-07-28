@@ -146,15 +146,48 @@ export const COMMON_SKILL_IDS = [
   "catalog-skill-ci-diagnosis",
 ] as const;
 
+export type SkillMarketCategory = "build" | "cloud" | "observability" | "security" | "diagnostics";
+
+/** Adds marketplace presentation metadata without leaking it into the persisted skill contract. */
+export interface SkillMarketItem extends Skill {
+  category: SkillMarketCategory;
+  publisher: string;
+  featured?: boolean;
+}
+
 export const SKILL_MARKET_ITEMS = [
-  { id: "catalog-market-bazel", name: "Bazel 构建分析", description: "诊断依赖图、远程缓存和增量构建性能。" },
-  { id: "catalog-market-nix", name: "Nix 可复现环境", description: "生成可复现的开发环境与构建定义。" },
-  { id: "catalog-market-argocd", name: "Argo CD 漂移检查", description: "识别 GitOps 期望状态与集群状态差异。" },
-  { id: "catalog-market-otel", name: "OpenTelemetry 接入", description: "设计跨服务追踪、指标和上下文传播。" },
-  { id: "catalog-market-prometheus", name: "Prometheus 告警审查", description: "优化指标查询、阈值和告警可行动性。" },
-  { id: "catalog-market-valgrind", name: "Valgrind 内存分析", description: "定位泄漏、越界访问和未初始化数据。" },
-  { id: "catalog-market-trivy", name: "Trivy 制品扫描", description: "检查镜像、文件系统和 IaC 安全问题。" },
-] satisfies Skill[];
+  { id: "catalog-market-bazel", name: "Bazel 构建分析", description: "诊断依赖图、远程缓存和增量构建性能。", category: "build", publisher: "Bazel Community", featured: true },
+  { id: "catalog-market-nix", name: "Nix 可复现环境", description: "生成可复现的开发环境与构建定义。", category: "build", publisher: "NixOS Foundation" },
+  { id: "catalog-market-argocd", name: "Argo CD 漂移检查", description: "识别 GitOps 期望状态与集群状态差异。", category: "cloud", publisher: "CNCF" },
+  { id: "catalog-market-otel", name: "OpenTelemetry 接入", description: "设计跨服务追踪、指标和上下文传播。", category: "observability", publisher: "CNCF", featured: true },
+  { id: "catalog-market-prometheus", name: "Prometheus 告警审查", description: "优化指标查询、阈值和告警可行动性。", category: "observability", publisher: "CNCF" },
+  { id: "catalog-market-valgrind", name: "Valgrind 内存分析", description: "定位泄漏、越界访问和未初始化数据。", category: "diagnostics", publisher: "Valgrind Developers" },
+  { id: "catalog-market-trivy", name: "Trivy 制品扫描", description: "检查镜像、文件系统和 IaC 安全问题。", category: "security", publisher: "Aqua Security" },
+] satisfies SkillMarketItem[];
+
+export const INTERNAL_STORAGE_SKILL_IDS = [
+  "catalog-skill-storage-regression",
+  "catalog-skill-object-api-conformance",
+  "catalog-skill-distributed-consistency",
+  "catalog-skill-ceph-troubleshooting",
+  "catalog-skill-data-integrity",
+  "catalog-skill-fio-benchmark",
+  "catalog-skill-filesystem-semantics",
+  "catalog-skill-fault-injection",
+  "catalog-skill-snapshot-replication",
+  "catalog-skill-nvme-validation",
+  "catalog-skill-erasure-coding",
+  "catalog-skill-storage-upgrade",
+  "catalog-skill-ebpf-analysis",
+  "catalog-skill-nfs-smb",
+  "catalog-skill-internal-storage-gate",
+  "catalog-skill-capacity-model",
+  "catalog-skill-storage-metrics",
+  "catalog-skill-backup-restore",
+  "catalog-skill-storage-migration",
+] as const;
+
+const INTERNAL_STORAGE_SKILL_ID_SET = new Set<string>(INTERNAL_STORAGE_SKILL_IDS);
 
 /** Distinguishes bundled catalog records from persisted records without extending API payloads. */
 export function isCatalogAtom(item: Agent | Skill): boolean {
@@ -163,5 +196,6 @@ export function isCatalogAtom(item: Agent | Skill): boolean {
 
 /** Identifies entries that represent organization-specific engineering workflows. */
 export function isInternalAtom(item: Agent | Skill): boolean {
-  return isCatalogAtom(item) && item.id.includes("-internal-");
+  return isCatalogAtom(item)
+    && (item.id.includes("-internal-") || INTERNAL_STORAGE_SKILL_ID_SET.has(item.id));
 }
