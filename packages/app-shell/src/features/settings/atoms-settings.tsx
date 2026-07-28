@@ -11,18 +11,26 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
   Input,
   Label,
   Textarea,
   cn,
 } from "@ora/ui";
 import {
+  IconBuildingStore,
+  IconCheck,
   IconCloudOff,
   IconPencil,
   IconPlus,
   IconRobot,
   IconSearch,
   IconSparkles,
+  IconStar,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
@@ -37,11 +45,14 @@ import {
   useDeleteSkill,
 } from "../../state/hooks/use-atom-mutations";
 import {
-  MOCK_AGENTS,
-  MOCK_SKILLS,
-  isHuaweiAtom,
-  isMockAtom,
-} from "./atom-mock-catalog";
+  CATALOG_AGENTS,
+  CATALOG_SKILLS,
+  COMMON_AGENT_IDS,
+  COMMON_SKILL_IDS,
+  SKILL_MARKET_ITEMS,
+  isCatalogAtom,
+  isInternalAtom,
+} from "./atom-catalog";
 import { SettingsHeading } from "./settings-heading";
 
 type AtomRecord = Agent | Skill;
@@ -53,12 +64,14 @@ interface AtomManagerConfig {
   tPrefix: string;
   /** Neutral mark drawn beside each row. */
   icon: TablerIcon;
-  /** Roles carry an extra, prototype-only body field; skills do not. */
+  /** Roles carry an extra body field; skills do not. */
   hasBody: boolean;
   /** Restrained accent used to distinguish role and skill catalogs at a glance. */
   accentClassName: string;
   items: AtomRecord[];
+  commonItemIds: readonly string[];
   remoteError: boolean;
+  onOpenMarketplace?: () => void;
   onCreate: (name: string, description: string) => Promise<void>;
   onUpdate: (item: AtomRecord, name: string, description: string) => Promise<void>;
   onDelete: (item: AtomRecord) => Promise<void>;
@@ -70,7 +83,7 @@ export function RolesSettings() {
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
   const deleteAgent = useDeleteAgent();
-  const [mockAgents, setMockAgents] = useState<Agent[]>(() => [...MOCK_AGENTS]);
+  const [catalogAgents, setCatalogAgents] = useState<Agent[]>(() => [...CATALOG_AGENTS]);
 
   return (
     <AtomManager
@@ -78,12 +91,13 @@ export function RolesSettings() {
       icon={IconRobot}
       hasBody
       accentClassName="border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300"
-      items={[...(agentsQuery.data ?? []), ...mockAgents]}
+      items={[...catalogAgents, ...(agentsQuery.data ?? [])]}
+      commonItemIds={COMMON_AGENT_IDS}
       remoteError={agentsQuery.error !== null}
       onCreate={(name, description) => createAgent.mutateAsync({ name, description }).then(() => undefined)}
       onUpdate={(item, name, description) => {
-        if (isMockAtom(item)) {
-          setMockAgents((current) => current.map((agent) => (
+        if (isCatalogAtom(item)) {
+          setCatalogAgents((current) => current.map((agent) => (
             agent.id === item.id ? { ...agent, name, description } : agent
           )));
           return Promise.resolve();
@@ -91,8 +105,8 @@ export function RolesSettings() {
         return updateAgent.mutateAsync({ agent: item as Agent, name, description }).then(() => undefined);
       }}
       onDelete={(item) => {
-        if (isMockAtom(item)) {
-          setMockAgents((current) => current.filter((agent) => agent.id !== item.id));
+        if (isCatalogAtom(item)) {
+          setCatalogAgents((current) => current.filter((agent) => agent.id !== item.id));
           return Promise.resolve();
         }
         return deleteAgent.mutateAsync({ agentId: item.id }).then(() => undefined);
@@ -107,34 +121,48 @@ export function SkillsSettings() {
   const createSkill = useCreateSkill();
   const updateSkill = useUpdateSkill();
   const deleteSkill = useDeleteSkill();
-  const [mockSkills, setMockSkills] = useState<Skill[]>(() => [...MOCK_SKILLS]);
+  const [catalogSkills, setCatalogSkills] = useState<Skill[]>(() => [...CATALOG_SKILLS]);
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const installedSkillIds = useMemo(() => new Set(catalogSkills.map(({ id }) => id)), [catalogSkills]);
 
   return (
-    <AtomManager
-      tPrefix="settings.skills"
-      icon={IconSparkles}
-      hasBody={false}
-      accentClassName="border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-      items={[...(skillsQuery.data ?? []), ...mockSkills]}
-      remoteError={skillsQuery.error !== null}
-      onCreate={(name, description) => createSkill.mutateAsync({ name, description }).then(() => undefined)}
-      onUpdate={(item, name, description) => {
-        if (isMockAtom(item)) {
-          setMockSkills((current) => current.map((skill) => (
-            skill.id === item.id ? { ...skill, name, description } : skill
-          )));
-          return Promise.resolve();
-        }
-        return updateSkill.mutateAsync({ skill: item as Skill, name, description }).then(() => undefined);
-      }}
-      onDelete={(item) => {
-        if (isMockAtom(item)) {
-          setMockSkills((current) => current.filter((skill) => skill.id !== item.id));
-          return Promise.resolve();
-        }
-        return deleteSkill.mutateAsync({ skillId: item.id }).then(() => undefined);
-      }}
-    />
+    <>
+      <AtomManager
+        tPrefix="settings.skills"
+        icon={IconSparkles}
+        hasBody={false}
+        accentClassName="border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        items={[...catalogSkills, ...(skillsQuery.data ?? [])]}
+        commonItemIds={COMMON_SKILL_IDS}
+        remoteError={skillsQuery.error !== null}
+        onOpenMarketplace={() => setMarketplaceOpen(true)}
+        onCreate={(name, description) => createSkill.mutateAsync({ name, description }).then(() => undefined)}
+        onUpdate={(item, name, description) => {
+          if (isCatalogAtom(item)) {
+            setCatalogSkills((current) => current.map((skill) => (
+              skill.id === item.id ? { ...skill, name, description } : skill
+            )));
+            return Promise.resolve();
+          }
+          return updateSkill.mutateAsync({ skill: item as Skill, name, description }).then(() => undefined);
+        }}
+        onDelete={(item) => {
+          if (isCatalogAtom(item)) {
+            setCatalogSkills((current) => current.filter((skill) => skill.id !== item.id));
+            return Promise.resolve();
+          }
+          return deleteSkill.mutateAsync({ skillId: item.id }).then(() => undefined);
+        }}
+      />
+      <SkillMarketplaceDialog
+        open={marketplaceOpen}
+        installedIds={installedSkillIds}
+        onOpenChange={setMarketplaceOpen}
+        onInstall={(skill) => setCatalogSkills((current) => (
+          current.some(({ id }) => id === skill.id) ? current : [...current, skill]
+        ))}
+      />
+    </>
   );
 }
 
@@ -148,7 +176,9 @@ function AtomManager({
   hasBody,
   accentClassName,
   items,
+  commonItemIds,
   remoteError,
+  onOpenMarketplace,
   onCreate,
   onUpdate,
   onDelete,
@@ -156,6 +186,7 @@ function AtomManager({
   const { t } = useTranslation();
   const CatalogIcon = icon;
   const [query, setQuery] = useState("");
+  const [visibleLimit, setVisibleLimit] = useState(24);
   // `null` = list view; `{ item: null }` = creating; `{ item }` = editing that record.
   const [editing, setEditing] = useState<{ item: AtomRecord | null } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AtomRecord | null>(null);
@@ -167,6 +198,14 @@ function AtomManager({
       || item.description.toLowerCase().includes(needle)),
     [needle, items],
   );
+  const commonItems = useMemo(
+    () => commonItemIds.flatMap((id) => {
+      const item = items.find((candidate) => candidate.id === id);
+      return item ? [item] : [];
+    }),
+    [commonItemIds, items],
+  );
+  const renderedItems = visibleItems.slice(0, visibleLimit);
 
   const save = async (name: string, description: string) => {
     if (editing?.item) await onUpdate(editing.item, name, description);
@@ -200,7 +239,10 @@ function AtomManager({
             <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setVisibleLimit(24);
+              }}
               placeholder={t(`${tPrefix}.search`)}
               aria-label={t(`${tPrefix}.search`)}
               className="h-9 bg-background pl-9 pr-9"
@@ -211,12 +253,20 @@ function AtomManager({
                 size="icon-sm"
                 className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground"
                 aria-label={t(`${tPrefix}.clearSearch`)}
-                onClick={() => setQuery("")}
+                onClick={() => {
+                  setQuery("");
+                  setVisibleLimit(24);
+                }}
               >
                 <IconX />
               </Button>
             )}
           </div>
+          {onOpenMarketplace && (
+            <Button variant="outline" size="sm" className="h-9 shrink-0" onClick={onOpenMarketplace}>
+              <IconBuildingStore />{t(`${tPrefix}.marketplace`)}
+            </Button>
+          )}
           <Button variant="secondary" size="sm" className="h-9 shrink-0 shadow-sm" onClick={() => setEditing({ item: null })}>
             <IconPlus />{t(`${tPrefix}.new`)}
           </Button>
@@ -237,6 +287,29 @@ function AtomManager({
           </p>
         </div>
 
+        {!needle && commonItems.length > 0 && (
+          <div className="border-b border-border px-3 pb-3">
+            <div className="mb-2 flex items-center gap-1.5 px-1">
+              <IconStar className="size-3.5 text-muted-foreground" />
+              <h3 className="text-xs font-semibold">{t(`${tPrefix}.commonLabel`)}</h3>
+              <span className="text-[11px] text-muted-foreground">{t(`${tPrefix}.commonHint`)}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+              {commonItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="min-w-0 cursor-pointer rounded-lg border border-border bg-background px-2.5 py-2 text-left outline-none transition-colors duration-150 hover:border-foreground/20 hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => setEditing({ item })}
+                >
+                  <span className="block truncate text-xs font-medium">{item.name}</span>
+                  <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{item.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {remoteError && (
           <div className="mx-3 flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-muted-foreground">
             <IconCloudOff className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -251,48 +324,61 @@ function AtomManager({
             </div>
             <p className="text-sm font-medium">{t(`${tPrefix}.emptySearchTitle`)}</p>
             <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">{t(`${tPrefix}.emptySearchDescription`, { query })}</p>
-            <Button variant="ghost" size="sm" className="mt-3" onClick={() => setQuery("")}>{t(`${tPrefix}.clearSearch`)}</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-3"
+              onClick={() => {
+                setQuery("");
+                setVisibleLimit(24);
+              }}
+            >
+              {t(`${tPrefix}.clearSearch`)}
+            </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-2.5 p-3 md:grid-cols-2">
-            {visibleItems.map((item) => {
-              const Icon = icon;
-              const mock = isMockAtom(item);
-              const huawei = isHuaweiAtom(item);
-              return (
-                <article
-                  key={item.id}
-                  className="group flex min-h-32 flex-col rounded-xl border border-border bg-background p-3 outline-none transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-foreground/20 hover:shadow-md hover:shadow-foreground/5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
-                >
-                  <div className="flex items-start gap-2">
-                    <div className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg border", accentClassName)}>
-                      <Icon className="size-4" />
+          <>
+            <div className="grid grid-cols-1 gap-2.5 p-3 md:grid-cols-2">
+              {renderedItems.map((item) => {
+                const Icon = icon;
+                const internal = isInternalAtom(item);
+                return (
+                  <article
+                    key={item.id}
+                    className="group flex min-h-32 flex-col rounded-xl border border-border bg-background p-3 outline-none transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-foreground/20 hover:shadow-md hover:shadow-foreground/5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg border", accentClassName)}>
+                        <Icon className="size-4" />
+                      </div>
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 pt-0.5">
+                        {internal && (
+                          <span className="rounded-full border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold text-primary">
+                            {t(`${tPrefix}.internalBadge`)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 gap-0.5">
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("common.edit")} onClick={() => setEditing({ item })}><IconPencil /></Button>
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive" aria-label={t("common.delete")} onClick={() => setDeleteTarget(item)}><IconTrash /></Button>
+                      </div>
                     </div>
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 pt-0.5">
-                      {mock && (
-                        <span className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          {t(`${tPrefix}.mockBadge`)}
-                        </span>
-                      )}
-                      {huawei && (
-                        <span className="rounded-full border border-red-500/20 bg-red-500/5 px-1.5 py-0.5 text-[9px] font-semibold text-red-600 dark:text-red-400">
-                          {t(`${tPrefix}.huaweiBadge`)}
-                        </span>
-                      )}
+                    <div className="mt-3 min-w-0">
+                      <h4 className="truncate text-sm font-semibold tracking-tight">{item.name}</h4>
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
                     </div>
-                    <div className="flex shrink-0 gap-0.5">
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("common.edit")} onClick={() => setEditing({ item })}><IconPencil /></Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive" aria-label={t("common.delete")} onClick={() => setDeleteTarget(item)}><IconTrash /></Button>
-                    </div>
-                  </div>
-                  <div className="mt-3 min-w-0">
-                    <h4 className="truncate text-sm font-semibold tracking-tight">{item.name}</h4>
-                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+                  </article>
+                );
+              })}
+            </div>
+            {renderedItems.length < visibleItems.length && (
+              <div className="flex justify-center border-t border-border p-3">
+                <Button variant="ghost" size="sm" onClick={() => setVisibleLimit((current) => current + 24)}>
+                  {t(`${tPrefix}.showMore`, { count: Math.min(24, visibleItems.length - renderedItems.length) })}
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </section>
 
@@ -307,7 +393,7 @@ const INLINE_FIELD = "border-transparent bg-transparent px-0 shadow-none focus-v
 /**
  * The full-surface create/edit form. Name and description sit in a card with a label-left
  * layout; roles add a large borderless body editor below. The body and the "improve" button
- * are prototype-only affordances that are intentionally not wired to the backend yet.
+ * are currently UI-only affordances that are intentionally not wired to the backend yet.
  */
 function AtomEditor({ tPrefix, hasBody, item, onCancel, onSave }: {
   tPrefix: string;
@@ -370,6 +456,63 @@ function AtomEditor({ tPrefix, hasBody, item, onCancel, onSave }: {
 
       {error && <p className="text-xs text-destructive">{error}</p>}
     </form>
+  );
+}
+
+/** Lets users add curated community capabilities without leaving the settings flow. */
+function SkillMarketplaceDialog({
+  open,
+  installedIds,
+  onOpenChange,
+  onInstall,
+}: {
+  open: boolean;
+  installedIds: ReadonlySet<string>;
+  onOpenChange: (open: boolean) => void;
+  onInstall: (skill: Skill) => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[min(680px,calc(100dvh-2rem))] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span className="flex size-8 items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+              <IconBuildingStore className="size-4" />
+            </span>
+            {t("settings.skills.marketplaceTitle")}
+          </DialogTitle>
+          <DialogDescription>{t("settings.skills.marketplaceDescription")}</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-2">
+          {SKILL_MARKET_ITEMS.map((skill) => {
+            const installed = installedIds.has(skill.id);
+            return (
+              <article key={skill.id} className="flex min-h-32 flex-col rounded-xl border border-border bg-muted/15 p-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground">
+                    <IconSparkles className="size-4" />
+                  </span>
+                  <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{skill.name}</h3>
+                </div>
+                <p className="mt-2 flex-1 text-xs leading-5 text-muted-foreground">{skill.description}</p>
+                <Button
+                  variant={installed ? "ghost" : "outline"}
+                  size="sm"
+                  className="mt-3 self-end"
+                  disabled={installed}
+                  onClick={() => onInstall(skill)}
+                >
+                  {installed ? <IconCheck /> : <IconPlus />}
+                  {t(installed ? "settings.skills.installed" : "settings.skills.install")}
+                </Button>
+              </article>
+            );
+          })}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

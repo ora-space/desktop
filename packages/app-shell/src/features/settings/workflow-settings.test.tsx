@@ -14,7 +14,7 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
 
-    expect(screen.getByText("正在加载 mock 工作流…")).toBeInTheDocument();
+    expect(screen.getByText("正在加载工作流…")).toBeInTheDocument();
     expect(await screen.findByText("OpenSpec 模式")).toBeInTheDocument();
     expect(screen.getByLabelText("工作流画布")).toBeInTheDocument();
     expect(screen.getByLabelText("画布视图控制")).toHaveClass("right-3", "top-3");
