@@ -1,0 +1,22 @@
+[package]
+name = "ora-scheduler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_scheduler"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ora-logging = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+cron = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
