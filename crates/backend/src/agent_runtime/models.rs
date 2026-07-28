@@ -11,13 +11,15 @@ const MODEL_LIST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Queries every supported CLI concurrently and omits providers that cannot report models.
 pub(super) async fn list_agent_models(home_directory: &Path) -> ListAgentModelsResponse {
-    let (opencode, nga, code_agent_cli) = tokio::join!(
+    let (opencode, nga, code_agent_cli, claude, codex) = tokio::join!(
         query_agent_models(AgentCli::OpenCode, home_directory),
         query_agent_models(AgentCli::Nga, home_directory),
         query_agent_models(AgentCli::CodeAgentCli, home_directory),
+        query_agent_models(AgentCli::Claude, home_directory),
+        query_agent_models(AgentCli::Codex, home_directory),
     );
     ListAgentModelsResponse {
-        groups: [opencode, nga, code_agent_cli]
+        groups: [opencode, nga, code_agent_cli, claude, codex]
             .into_iter()
             .flatten()
             .collect(),

@@ -83,6 +83,8 @@ pub(super) struct ConnectionSupervisors {
     opencode: ConnectionSupervisor,
     nga: ConnectionSupervisor,
     code_agent_cli: ConnectionSupervisor,
+    claude: ConnectionSupervisor,
+    codex: ConnectionSupervisor,
 }
 
 impl ConnectionSupervisors {
@@ -103,10 +105,17 @@ impl ConnectionSupervisors {
             ),
             code_agent_cli: ConnectionSupervisor::start(
                 AgentCli::CodeAgentCli,
-                pool,
-                home_directory,
+                pool.clone(),
+                home_directory.clone(),
                 clock,
             ),
+            claude: ConnectionSupervisor::start(
+                AgentCli::Claude,
+                pool.clone(),
+                home_directory.clone(),
+                clock,
+            ),
+            codex: ConnectionSupervisor::start(AgentCli::Codex, pool, home_directory, clock),
         }
     }
 
@@ -116,6 +125,8 @@ impl ConnectionSupervisors {
             AgentCli::OpenCode => self.opencode.clone(),
             AgentCli::Nga => self.nga.clone(),
             AgentCli::CodeAgentCli => self.code_agent_cli.clone(),
+            AgentCli::Claude => self.claude.clone(),
+            AgentCli::Codex => self.codex.clone(),
         }
     }
 }
@@ -394,7 +405,11 @@ async fn spawn_initialized_process(
         ));
     }
     let mut child = TokioProcessSpawner::new()
-        .spawn(ProcessSpec::new(executable).arg("acp").cwd(home_directory))
+        .spawn(
+            ProcessSpec::new(executable)
+                .args(agent_cli.launch_arguments())
+                .cwd(home_directory),
+        )
         .map_err(|source| BackendError::internal("failed to start agent CLI", source))?;
     let Some(stdin) = child.take_stdin() else {
         terminate_and_reap(&child).await;

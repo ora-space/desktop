@@ -707,6 +707,8 @@ fn domain_agent_cli(agent_cli: ora_contracts::AgentCli) -> AgentCli {
         ora_contracts::AgentCli::OpenCode => AgentCli::OpenCode,
         ora_contracts::AgentCli::Nga => AgentCli::Nga,
         ora_contracts::AgentCli::CodeAgentCli => AgentCli::CodeAgentCli,
+        ora_contracts::AgentCli::Claude => AgentCli::Claude,
+        ora_contracts::AgentCli::Codex => AgentCli::Codex,
     }
 }
 

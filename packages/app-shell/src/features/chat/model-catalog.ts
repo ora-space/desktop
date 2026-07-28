@@ -10,6 +10,8 @@ export const AGENT_CLI_LABELS: Record<AgentCli, string> = {
   open_code: "OpenCode",
   nga: "NGA",
   code_agent_cli: "CodeAgentCLI",
+  claude: "Claude Code",
+  codex: "Codex",
 };
 
 /**
@@ -21,7 +23,7 @@ export function orderedGroups(
   groups: Array<{ agentCli: AgentCli; models: Array<string> }>,
   activeCli: AgentCli,
 ) {
-  const preferred: AgentCli[] = ["open_code", "nga", "code_agent_cli"];
+  const preferred: AgentCli[] = ["open_code", "nga", "code_agent_cli", "claude", "codex"];
   const sorted = [...groups].sort(
     (a, b) => preferred.indexOf(a.agentCli) - preferred.indexOf(b.agentCli),
   );

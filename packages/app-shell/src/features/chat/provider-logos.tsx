@@ -1,7 +1,7 @@
 import type { SVGProps } from "react";
 import { IconRobot, IconTerminal } from "@tabler/icons-react";
 import type { AgentCli } from "@ora/contracts";
-import { OpenCodeMark } from "../settings/plugin-marks";
+import { ClaudeMark, OpenCodeMark } from "../settings/plugin-marks";
 
 type LogoProps = SVGProps<SVGSVGElement>;
 
@@ -17,13 +17,16 @@ export function ProviderLogo({ agentCli, className }: { agentCli: AgentCli; clas
       return <IconRobot className={className} />;
     case "code_agent_cli":
       return <IconTerminal className={className} />;
+    case "claude":
+      return <ClaudeMark className={className} />;
+    case "codex":
+      return <OpenAiLogo className={className} />;
   }
 }
 
 /**
- * Kept for the plugin catalog's Codex entry, which shares the brand mark
- * with the old OpenAI model provider. This function remains available as a
- * standalone export until the plugin catalog is driven by backend data.
+ * Shared by the Codex `ProviderLogo` case and the plugin catalog's Codex
+ * entry, both of which use OpenAI's brand mark for the Codex CLI.
  */
 export function OpenAiLogo(props: LogoProps) {
   return (

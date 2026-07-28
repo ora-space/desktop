@@ -9,7 +9,12 @@ import type { ToolCallUpdate } from "./acp/tool_call.js";
 /**
  * Identifies the shared CLI runtime selected for a provider-backed session.
  */
-export type AgentCli = "open_code" | "nga" | "code_agent_cli";
+export type AgentCli =
+  | "open_code"
+  | "nga"
+  | "code_agent_cli"
+  | "claude"
+  | "codex";
 
 /**
  * Groups the model identifiers reported by one currently available CLI.

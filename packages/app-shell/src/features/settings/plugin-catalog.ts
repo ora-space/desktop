@@ -57,7 +57,7 @@ export interface PluginEntry {
   detectionAgentCli?: AgentCli;
 }
 
-/** No plugin starts pre-installed; the three CLI runtimes report their own detected state instead. */
+/** No plugin starts pre-installed; the five CLI runtimes report their own detected state instead. */
 export const DEFAULT_INSTALLED_PLUGIN_IDS: string[] = [];
 
 /**
@@ -124,9 +124,9 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     name: "Claude Code",
     publisher: "Anthropic",
     identifier: "anthropic.claude-code",
-    version: "2.1.8",
-    updated: "2026-07-21",
-    size: "42.6 MB",
+    version: "—",
+    updated: "—",
+    size: "—",
     collection: "public",
     featured: true,
     categoryKey: "settings.plugins.category.coding",
@@ -135,15 +135,16 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-[#D97757]",
     summaryKey: "settings.plugins.catalog.claude",
     skills: ["Claude Code", "Subagents", "Skills"],
+    detectionAgentCli: "claude",
   },
   {
     id: "codex",
     name: "Codex",
     publisher: "OpenAI",
     identifier: "openai.codex",
-    version: "1.6.0",
-    updated: "2026-07-19",
-    size: "31.2 MB",
+    version: "—",
+    updated: "—",
+    size: "—",
     collection: "public",
     featured: true,
     categoryKey: "settings.plugins.category.coding",
@@ -152,6 +153,7 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-emerald-600 dark:text-emerald-400",
     summaryKey: "settings.plugins.catalog.codex",
     skills: ["Codex", "Code Review"],
+    detectionAgentCli: "codex",
   },
   {
     id: "github",

@@ -15,6 +15,8 @@ pub enum AgentCli {
     OpenCode,
     Nga,
     CodeAgentCli,
+    Claude,
+    Codex,
 }
 
 /// Describes whether a persisted session is registered on its shared CLI connection.

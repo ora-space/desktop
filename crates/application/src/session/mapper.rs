@@ -16,6 +16,8 @@ pub(crate) fn map_session(session: DomainSession) -> ContractSession {
             ora_domain::AgentCli::OpenCode => ContractAgentCli::OpenCode,
             ora_domain::AgentCli::Nga => ContractAgentCli::Nga,
             ora_domain::AgentCli::CodeAgentCli => ContractAgentCli::CodeAgentCli,
+            ora_domain::AgentCli::Claude => ContractAgentCli::Claude,
+            ora_domain::AgentCli::Codex => ContractAgentCli::Codex,
         },
         status: map_session_status(session.status),
         history_state: map_history_state(session.history_state),
