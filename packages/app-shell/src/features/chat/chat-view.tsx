@@ -4,12 +4,14 @@ import { Composer } from "./composer";
 import { LandingHeading, LandingSuggestions } from "./empty-state";
 import { MessageList } from "./message-list";
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
-import type { ChatTurn } from "@ora/chat";
+import type { ChatModelChange, ChatTurn } from "@ora/chat";
 import type { acp, SessionPermissionRequest, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 
 interface ChatViewProps {
   turns: ChatTurn[];
+  /** Model switches to draw between the turns they happened after. */
+  modelChanges?: ChatModelChange[];
   userName: string;
   isResponding: boolean;
   /** Output has begun for the live turn, so the composer shows stop rather than the startup spinner. */
@@ -60,7 +62,7 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
  */
-export function ChatView({ turns, userName, isResponding, isStreaming = false, isLoading = false, error, pendingPermissions = [], disabled = false, onSend, onEmptySubmit, onStop, onRespondToPermission, contextBar, workflowBar, disabledHint, skills = [], availableCommands = [] }: ChatViewProps) {
+export function ChatView({ turns, modelChanges, userName, isResponding, isStreaming = false, isLoading = false, error, pendingPermissions = [], disabled = false, onSend, onEmptySubmit, onStop, onRespondToPermission, contextBar, workflowBar, disabledHint, skills = [], availableCommands = [] }: ChatViewProps) {
   const { t } = useTranslation();
   // A loading session takes the thread layout even before its turns arrive, so the
   // landing (centered) layout is reserved for the genuinely-empty new-task compose
@@ -121,7 +123,7 @@ export function ChatView({ turns, userName, isResponding, isStreaming = false, i
         // has already slid down, so this fills the space above it until turns land.
         <HistoryLoading />
       ) : (
-        <MessageList turns={turns} userName={userName} isResponding={isResponding} />
+        <MessageList turns={turns} modelChanges={modelChanges} userName={userName} isResponding={isResponding} />
       )}
 
       <div

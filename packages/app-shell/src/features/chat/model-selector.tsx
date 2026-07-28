@@ -17,13 +17,8 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
 import { useSetSessionConfig } from "../../state/hooks/use-session-config";
 import { useWarmSession } from "../../state/hooks/use-warm-session";
 import { useSwitchSessionAgent } from "../../state/hooks/use-workspace-mutations";
-import {
-  AGENT_CLI_LABELS,
-  AGENT_CLI_ORDER,
-  currentValueName,
-  findModelOption,
-  selectableValues,
-} from "./model-catalog";
+import { currentValueName, findModelOption, selectableValues } from "@ora/chat";
+import { AGENT_CLI_LABELS, AGENT_CLI_ORDER } from "./model-catalog";
 import { ProviderLogo } from "./provider-logos";
 
 /**

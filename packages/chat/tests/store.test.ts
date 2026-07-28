@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { LoadSessionEvent, PromptSessionEvent, PromptSessionRequest } from "@ora/contracts";
+import type { acp, LoadSessionEvent, PromptSessionEvent, PromptSessionRequest } from "@ora/contracts";
 import { createChatStore, type ChatSessionClient } from "../src/index.js";
 
 /** Builds one ACP text update without exposing protocol transport details to the tests. */
@@ -46,6 +46,7 @@ test("loads provider history and reconstructs turns from message boundaries", as
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
+    modelChanges: [],
     turns: [
       {
         id: "local-1",
@@ -190,6 +191,7 @@ test("loads commands, session metadata, and structured content without creating 
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
+    modelChanges: [],
     turns: [{
       id: "local-1",
       userMessage: { kind: "message", id: "local-2", role: "user", content: "", structuredContent: [image], createdAt: 42, protocolMessageId: "user-media" },
@@ -462,6 +464,7 @@ test("rolls back staged load updates when replay fails before completion", async
     conversations: {
       "ora-1": {
         configOptions: [],
+        modelChanges: [],
         turns: [previousTurn],
         availableCommands: [],
         sessionTitle: null,
@@ -479,6 +482,7 @@ test("rolls back staged load updates when replay fails before completion", async
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
+    modelChanges: [],
     turns: [previousTurn],
     availableCommands: [],
     sessionTitle: null,
@@ -489,4 +493,59 @@ test("rolls back staged load updates when replay fails before completion", async
     pendingPermissions: [],
     error: "load failed",
   });
+});
+
+/** Builds a model selector reporting `current` as the value in effect. */
+function modelOptions(current: string): acp.SessionConfigOption[] {
+  return [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: current,
+      options: [
+        { value: "fast", name: "Fast" },
+        { value: "smart", name: "Smart" },
+      ],
+    },
+  ];
+}
+
+test("marks the thread where the answering model changed", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]),
+    respondToPermission: async () => ({}),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
+
+  // Establishing the first model on an empty thread is not a change.
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+  store.getState().setConfigOptions("ora-1", modelOptions("smart"));
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.modelChanges, [
+    { id: "local-3", afterTurnCount: 1, modelName: "Smart", createdAt: 42 },
+  ]);
+});
+
+test("keeps one marker per point in the thread while the model is cycled", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]),
+    respondToPermission: async () => ({}),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
+
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+  store.getState().setConfigOptions("ora-1", modelOptions("smart"));
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.modelChanges, [
+    { id: "local-4", afterTurnCount: 1, modelName: "Fast", createdAt: 42 },
+  ]);
 });

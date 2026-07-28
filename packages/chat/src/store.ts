@@ -5,16 +5,19 @@ import type {
 } from "@ora/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type {
+  ChatModelChange,
   ChatPlan,
   ChatToolCall,
   ChatTurn,
   SessionConversation,
 } from "./types.js";
+import { currentModel } from "./model-option.js";
 
 export type {
   ChatContent,
   ChatMessage,
   ChatMessageRole,
+  ChatModelChange,
   ChatPlan,
   ChatThought,
   ChatToolCall,
@@ -88,6 +91,7 @@ export type ChatSessionClient = Pick<
 
 const EMPTY_CONVERSATION: SessionConversation = {
   configOptions: [],
+  modelChanges: [],
   turns: [],
   availableCommands: [],
   sessionTitle: null,
@@ -139,6 +143,7 @@ export function createChatStore(
       updateConversation(set, oraSessionId, (conversation) => ({
         ...conversation,
         configOptions,
+        modelChanges: recordModelChange(conversation, configOptions, createId, now()),
       }));
     },
 
@@ -185,6 +190,10 @@ export function createChatStore(
           // An agent that reports nothing on load leaves whatever the warm
           // session already established, rather than blanking the picker.
           configOptions: staged.configOptions ?? previous.configOptions,
+          // Replay rebuilds the transcript from the provider, which knows
+          // nothing about Ora's markers, so any earlier ones cannot be placed
+          // against the new turns and are dropped rather than misplaced.
+          modelChanges: [],
         }));
       } catch (error) {
         updateConversation(set, oraSessionId, () => ({
@@ -850,6 +859,43 @@ function clearPendingPermissions(set: ChatStore["setState"], oraSessionId: strin
     ...conversation,
     pendingPermissions: [],
   }));
+}
+
+/**
+ * Records a model switch in the transcript when one actually happened.
+ *
+ * Deliberately silent in three cases. There is nothing to divide before the
+ * first turn, so choosing a model on an empty chat leaves no mark. The first
+ * options a session reports establish the baseline rather than change it. And
+ * repeated switches at the same point in the thread collapse into one line, so
+ * cycling through the menu does not stack up dividers.
+ */
+function recordModelChange(
+  conversation: SessionConversation,
+  configOptions: acp.SessionConfigOption[],
+  createId: () => string,
+  timestamp: number,
+): ChatModelChange[] {
+  const previous = currentModel(conversation.configOptions);
+  const next = currentModel(configOptions);
+  if (
+    previous === null
+    || next === null
+    || previous.value === next.value
+    || conversation.turns.length === 0
+  ) {
+    return conversation.modelChanges;
+  }
+  const change: ChatModelChange = {
+    id: createId(),
+    afterTurnCount: conversation.turns.length,
+    modelName: next.name,
+    createdAt: timestamp,
+  };
+  const newest = conversation.modelChanges.at(-1);
+  return newest?.afterTurnCount === change.afterTurnCount
+    ? [...conversation.modelChanges.slice(0, -1), change]
+    : [...conversation.modelChanges, change];
 }
 
 /**

@@ -527,6 +527,26 @@ describe("ChatView", () => {
 });
 
 describe("MessageList", () => {
+  it("divides the thread where the answering model changed", () => {
+    renderWithI18n(
+      <MessageList
+        turns={[turn("turn-1", "First", 100), turn("turn-2", "Second", 200)]}
+        modelChanges={[
+          { id: "change-1", afterTurnCount: 1, modelName: "Smart", createdAt: 150 },
+        ]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+
+    const divider = screen.getByRole("separator", { name: /已切换到 Smart|Switched to Smart/ });
+    const [first, second] = screen.getAllByText(/First|Second/);
+    // The divider separates the turns it was recorded between, rather than
+    // landing at either end of the thread.
+    expect(first!.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(second!.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
+  });
+
   it("compresses consecutive reads into a second-level disclosure", async () => {
     const user = userEvent.setup();
     renderWithI18n(

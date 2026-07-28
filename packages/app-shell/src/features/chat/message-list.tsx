@@ -5,10 +5,12 @@ import { AnchorHighlight } from "./anchor-highlight";
 import { ConversationNavigator } from "./conversation-navigator";
 import { MessageBubble } from "./message-bubble";
 import { ResponseTurn } from "./response-turn";
-import type { ChatTurn } from "@ora/chat";
+import type { ChatModelChange, ChatTurn } from "@ora/chat";
 
 interface MessageListProps {
   turns: ChatTurn[];
+  /** Model switches to draw between the turns they happened after. */
+  modelChanges?: ChatModelChange[];
   userName: string;
   isResponding: boolean;
 }
@@ -22,7 +24,7 @@ interface PendingNavigation {
 }
 
 /** The scrollable turn thread, kept pinned to live ACP activity unless the reader scrolls away. */
-export function MessageList({ turns, userName, isResponding }: MessageListProps) {
+export function MessageList({ turns, modelChanges = [], userName, isResponding }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followTailRef = useRef(true);
@@ -173,18 +175,29 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
         className="scrollbar-hide h-full min-h-0 animate-in overflow-y-auto fade-in duration-500"
       >
         <div ref={contentRef} className="mx-auto w-full max-w-[760px] px-3 pb-4 pt-5 sm:px-5 sm:pt-8">
-          {turns.map((turn) => (
-            <div key={turn.id} data-turn-anchor={turn.id}>
-              <div data-turn-user data-conversation-anchor={`${turn.id}:user`}>
-                <MessageBubble message={turn.userMessage} userName={userName} />
-              </div>
-              {(turn.items.length > 0 || turn.status !== "streaming") && (
-                <div data-turn-response data-conversation-anchor={`${turn.id}:response`} className="relative rounded-xl">
-                  <AnchorHighlight />
-                  <ResponseTurn turn={turn} userName={userName} />
+          {turns.map((turn, index) => (
+            <div key={turn.id}>
+              {/* Markers sit between turns rather than inside them, so they are
+                  rendered here instead of carrying a turn anchor: the navigator
+                  maps prompts and responses, and a divider is neither. */}
+              {modelChangesAt(modelChanges, index).map((change) => (
+                <ModelChangeDivider key={change.id} modelName={change.modelName} />
+              ))}
+              <div data-turn-anchor={turn.id}>
+                <div data-turn-user data-conversation-anchor={`${turn.id}:user`}>
+                  <MessageBubble message={turn.userMessage} userName={userName} />
                 </div>
-              )}
+                {(turn.items.length > 0 || turn.status !== "streaming") && (
+                  <div data-turn-response data-conversation-anchor={`${turn.id}:response`} className="relative rounded-xl">
+                    <AnchorHighlight />
+                    <ResponseTurn turn={turn} userName={userName} />
+                  </div>
+                )}
+              </div>
             </div>
+          ))}
+          {modelChangesAt(modelChanges, turns.length).map((change) => (
+            <ModelChangeDivider key={change.id} modelName={change.modelName} />
           ))}
           {showRunning && <RunningIndicator />}
           <div className="h-8" />
@@ -197,6 +210,28 @@ export function MessageList({ turns, userName, isResponding }: MessageListProps)
         onNavigate={navigateToAnchor}
         onNavigateToTail={navigateToTail}
       />
+    </div>
+  );
+}
+
+/** Selects the switches recorded after a given number of turns. */
+function modelChangesAt(modelChanges: ChatModelChange[], turnCount: number): ChatModelChange[] {
+  return modelChanges.filter((change) => change.afterTurnCount === turnCount);
+}
+
+/**
+ * Marks where the answering model changed, so replies above and below a divider
+ * are not mistaken for the work of one model.
+ */
+function ModelChangeDivider({ modelName }: { modelName: string }) {
+  const { t } = useTranslation();
+  return (
+    <div role="separator" aria-label={t("chat.modelChange", { model: modelName })} className="flex items-center gap-3 py-4">
+      <span className="h-px flex-1 bg-border" />
+      <span className="whitespace-nowrap text-xs text-muted-foreground">
+        {t("chat.modelChange", { model: modelName })}
+      </span>
+      <span className="h-px flex-1 bg-border" />
     </div>
   );
 }

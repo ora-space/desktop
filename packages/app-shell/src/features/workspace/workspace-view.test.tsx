@@ -326,6 +326,7 @@ describe("WorkspaceView", () => {
           taskId: "t1",
           agentCli: "open_code",
           status: "running",
+          historyState: { type: "writable" },
         },
       ]);
       expect(calls).toEqual(["task", "attach", "prompt"]);
