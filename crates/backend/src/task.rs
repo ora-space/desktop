@@ -1,5 +1,5 @@
 use crate::clock::SystemClock;
-use crate::git_cleanup::{AggregateDeletionKind, cleanup_git_resources};
+use crate::git_cleanup::CommittedAggregateDeletion;
 use crate::{BackendError, BackendErrorKind};
 use gitlancer::git::worktree::ResolveWorktreeByBranchRequest;
 use gitlancer::{CliGitRunner, Git, RepoRoot, Repository};
@@ -91,12 +91,11 @@ impl TaskApi {
         self.update.handle(request)
     }
 
-    /// Soft-deletes the task aggregate before best-effort cleanup of its Ora-owned Git state.
-    pub(crate) fn delete(
+    /// Commits the task aggregate deletion and returns its external cleanup work.
+    pub(crate) fn commit_delete(
         &self,
         request: DeleteTaskRequest,
-        worktree_root: &std::path::Path,
-    ) -> Result<DeleteTaskResponse, BackendError> {
+    ) -> Result<CommittedAggregateDeletion<DeleteTaskResponse>, BackendError> {
         let task_id = TaskId::new(request.task_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
             .delete_task(&task_id, self.clock.now_timestamp_millis())
@@ -111,16 +110,12 @@ impl TaskApi {
         match outcome {
             CascadeDeleteOutcome::Deleted {
                 git_cleanup_targets,
-            } => {
-                cleanup_git_resources(
-                    AggregateDeletionKind::Task,
-                    &git_cleanup_targets,
-                    worktree_root,
-                );
-                Ok(DeleteTaskResponse {
+            } => Ok(CommittedAggregateDeletion {
+                response: DeleteTaskResponse {
                     task_id: task_id.to_string(),
-                })
-            }
+                },
+                git_cleanup_targets,
+            }),
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
                 BackendErrorKind::NotFound,
                 "task_not_found",

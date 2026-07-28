@@ -143,7 +143,15 @@ mod tests {
     #[derive(Debug)]
     struct DetachedWorktreeRunner {
         linked_worktree_root: PathBuf,
+        worktree_removal: WorktreeRemovalBehavior,
         commands: RefCell<Vec<GitCommand>>,
+    }
+
+    /// Selects whether the fake linked-worktree mutation succeeds.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum WorktreeRemovalBehavior {
+        Succeeds,
+        Fails,
     }
 
     impl DetachedWorktreeRunner {
@@ -151,6 +159,16 @@ mod tests {
         fn new(linked_worktree_root: PathBuf) -> Self {
             Self {
                 linked_worktree_root,
+                worktree_removal: WorktreeRemovalBehavior::Succeeds,
+                commands: RefCell::new(Vec::new()),
+            }
+        }
+
+        /// Builds a runner that fails worktree removal without failing branch deletion.
+        fn with_removal_failure(linked_worktree_root: PathBuf) -> Self {
+            Self {
+                linked_worktree_root,
+                worktree_removal: WorktreeRemovalBehavior::Fails,
                 commands: RefCell::new(Vec::new()),
             }
         }
@@ -183,6 +201,18 @@ mod tests {
                     String::new(),
                     0,
                 )),
+                [git_area, subcommand, ..]
+                    if git_area == "worktree"
+                        && subcommand == "remove"
+                        && self.worktree_removal == WorktreeRemovalBehavior::Fails =>
+                {
+                    Err(GitExecError::NonZeroExit {
+                        code: Some(1),
+                        args: command.args.clone(),
+                        stdout: String::new(),
+                        stderr: "worktree is locked".to_string(),
+                    })
+                }
                 [git_area, subcommand, ..]
                     if (git_area == "worktree" && subcommand == "remove")
                         || git_area == "branch" =>
@@ -253,6 +283,42 @@ mod tests {
             vec![
                 vec!["worktree", "list", "--porcelain"],
                 vec!["worktree", "list", "--porcelain"],
+                vec!["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+                vec!["branch", "-D", "ora/12345678"],
+            ]
+        );
+    }
+
+    /// Verifies branch deletion remains independent after worktree removal fails.
+    #[test]
+    fn continues_with_branch_cleanup_after_worktree_removal_fails() {
+        let cleaner = GitTaskGitResourceCleaner::new(DetachedWorktreeRunner::with_removal_failure(
+            PathBuf::from("/expected"),
+        ));
+
+        let report = cleaner.cleanup_task_git_resources(cleanup_request("/expected"));
+
+        assert_eq!(
+            report,
+            TaskGitResourceCleanupReport {
+                worktree: GitResourceCleanupOutcome::Failed {
+                    message: "git execution failed: git exited with code Some(1) for args [\"worktree\", \"remove\", \"/expected\", \"--force\"]: worktree is locked".to_string(),
+                },
+                branch: GitResourceCleanupOutcome::Removed,
+            }
+        );
+        assert_eq!(
+            cleaner
+                .git
+                .runner()
+                .commands()
+                .into_iter()
+                .map(|command| command.args)
+                .collect::<Vec<_>>(),
+            vec![
+                vec!["worktree", "list", "--porcelain"],
+                vec!["worktree", "list", "--porcelain"],
+                vec!["worktree", "remove", "/expected", "--force"],
                 vec!["for-each-ref", "--format=%(refname:short)", "refs/heads"],
                 vec!["branch", "-D", "ora/12345678"],
             ]

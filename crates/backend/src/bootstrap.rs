@@ -2,13 +2,18 @@ use crate::agent::AgentApi;
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
 use crate::clock::SystemClock;
 use crate::error::{BackendError, BackendErrorKind};
+use crate::git_cleanup::{
+    AggregateDeletionKind, CommittedAggregateDeletion, cleanup_git_resources,
+};
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
 use ora_contracts::*;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
+use ora_logging::ora_error;
 use std::fs;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use thiserror::Error;
@@ -159,10 +164,11 @@ impl Backend {
         &self,
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {
-        let _session_lifecycle = self.session_aggregate_lifecycle.lock().await;
-        let _task_lifecycle = self.task_aggregate_lifecycle_guard()?;
-        let worktree_root = self.worktree_root_snapshot()?;
-        self.project.delete(request, &worktree_root)
+        let project = self.project.clone();
+        self.run_aggregate_deletion(AggregateDeletionKind::Project, move || {
+            project.commit_delete(request)
+        })
+        .await
     }
 
     /// Creates one task through the shared application composition.
@@ -193,21 +199,65 @@ impl Backend {
         &self,
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
-        let _session_lifecycle = self.session_aggregate_lifecycle.lock().await;
-        let _task_lifecycle = self.task_aggregate_lifecycle_guard()?;
+        let task = self.task.clone();
+        self.run_aggregate_deletion(AggregateDeletionKind::Task, move || {
+            task.commit_delete(request)
+        })
+        .await
+    }
+
+    /// Commits one aggregate deletion under lifecycle coordination before unlocked Git cleanup.
+    async fn run_aggregate_deletion<Response, DeleteOperation>(
+        &self,
+        deletion_kind: AggregateDeletionKind,
+        delete_operation: DeleteOperation,
+    ) -> Result<Response, BackendError>
+    where
+        Response: Send + 'static,
+        DeleteOperation:
+            FnOnce() -> Result<CommittedAggregateDeletion<Response>, BackendError> + Send + 'static,
+    {
         let worktree_root = self.worktree_root_snapshot()?;
-        self.task.delete(request, &worktree_root)
+        let session_lifecycle = self.session_aggregate_lifecycle.clone().lock_owned().await;
+        let task_lifecycle = self.task_aggregate_lifecycle.clone();
+        tokio::task::spawn_blocking(move || {
+            let committed = {
+                let _session_lifecycle = session_lifecycle;
+                let _task_lifecycle = task_lifecycle
+                    .lock()
+                    .map_err(|_| aggregate_lifecycle_error())?;
+                delete_operation()?
+            };
+
+            let CommittedAggregateDeletion {
+                response,
+                git_cleanup_targets,
+            } = committed;
+            // Keeping post-commit cleanup in the same blocking job ensures it still
+            // runs if the caller cancels while awaiting the aggregate response.
+            let cleanup = catch_unwind(AssertUnwindSafe(|| {
+                cleanup_git_resources(deletion_kind, &git_cleanup_targets, &worktree_root);
+            }));
+            if cleanup.is_err() {
+                // A panicking cleaner cannot roll back the committed aggregate and
+                // therefore remains an observable best-effort failure.
+                ora_error!(
+                    message = "aggregate Git cleanup worker failed",
+                    operation = deletion_kind.operation()
+                );
+            }
+
+            Ok(response)
+        })
+        .await
+        .map_err(|_| aggregate_worker_error())?
     }
 
     /// Serializes task provisioning against aggregate deletion so cleanup snapshots cannot miss new Git state.
     fn task_aggregate_lifecycle_guard(&self) -> Result<MutexGuard<'_, ()>, BackendError> {
-        self.task_aggregate_lifecycle.lock().map_err(|_| {
-            BackendError::new(
-                BackendErrorKind::Internal,
-                "aggregate_lifecycle_error",
-                "aggregate lifecycle coordination is unavailable",
-            )
-        })
+        self.task_aggregate_lifecycle
+            .lock()
+            .map_err(|_| aggregate_lifecycle_error())
     }
 
     /// Captures one checkout root for every cleanup target in the aggregate transaction.
@@ -360,6 +410,24 @@ impl Backend {
     }
 }
 
+/// Builds the stable error used when lifecycle coordination has been poisoned.
+fn aggregate_lifecycle_error() -> BackendError {
+    BackendError::new(
+        BackendErrorKind::Internal,
+        "aggregate_lifecycle_error",
+        "aggregate lifecycle coordination is unavailable",
+    )
+}
+
+/// Builds the stable error used when the blocking database worker cannot complete.
+fn aggregate_worker_error() -> BackendError {
+    BackendError::new(
+        BackendErrorKind::Internal,
+        "aggregate_worker_error",
+        "aggregate deletion worker failed",
+    )
+}
+
 /// Creates one required runtime directory and preserves its exact failing path.
 fn ensure_directory(path: &Path) -> Result<(), BackendBootstrapError> {
     fs::create_dir_all(path).map_err(|source| BackendBootstrapError::DirectoryCreate {
@@ -374,10 +442,11 @@ mod tests {
     use crate::error::BackendErrorKind;
     use ora_contracts::CreateTaskRequest;
     use ora_contracts::{
-        CreateAgentRequest, CreateProjectRequest, CreateSkillRequest, DeleteAgentRequest,
-        DeleteProjectRequest, DeleteSkillRequest, DeleteTaskRequest, GetProjectRequest,
-        GetTaskRequest, ListAgentsRequest, ListProjectsRequest, ListSkillsRequest, TaskStatus,
-        TaskWorkspaceMode, UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
+        AgentCli, CreateAgentRequest, CreateProjectRequest, CreateSessionRequest,
+        CreateSkillRequest, DeleteAgentRequest, DeleteProjectRequest, DeleteSkillRequest,
+        DeleteTaskRequest, GetProjectRequest, GetTaskRequest, ListAgentsRequest,
+        ListProjectsRequest, ListSkillsRequest, LoadSessionRequest, TaskStatus, TaskWorkspaceMode,
+        UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
     };
     use ora_logging::with_trace_logging;
     use pretty_assertions::assert_eq;
@@ -642,6 +711,44 @@ mod tests {
 
             drop(admission);
             deletion.await.expect("delete after admission completes");
+        });
+    }
+
+    /// Verifies Session create and load enter through the coordinator shared with deletion.
+    #[test]
+    fn session_admissions_use_the_aggregate_lifecycle_coordinator() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+        })
+        .expect("open shared backend");
+
+        block_on(async {
+            let aggregate_lifecycle = backend.session_aggregate_lifecycle.lock().await;
+            let create = backend.create_session(CreateSessionRequest {
+                task_id: "missing-task".to_string(),
+                agent_cli: AgentCli::OpenCode,
+            });
+            tokio::pin!(create);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut create)
+                    .await
+                    .is_err()
+            );
+
+            let load = backend.load_session(LoadSessionRequest {
+                session_id: "missing-session".to_string(),
+            });
+            tokio::pin!(load);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut load)
+                    .await
+                    .is_err()
+            );
+
+            drop(aggregate_lifecycle);
         });
     }
 

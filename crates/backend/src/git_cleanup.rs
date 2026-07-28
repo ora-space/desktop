@@ -4,8 +4,9 @@ use ora_application::{
     TaskGitResourceCleanupRequest, branch_name_for_task,
 };
 use ora_db::GitCleanupTarget;
-use ora_logging::ora_error;
+use ora_logging::{ora_error, ora_info};
 use std::path::Path;
+use uuid::Uuid;
 
 /// Identifies which aggregate deletion initiated a best-effort Git cleanup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,12 +17,18 @@ pub(crate) enum AggregateDeletionKind {
 
 impl AggregateDeletionKind {
     /// Returns the stable operation field shared by cleanup log events.
-    fn operation(self) -> &'static str {
+    pub(crate) fn operation(self) -> &'static str {
         match self {
             Self::Project => "delete_project",
             Self::Task => "delete_task",
         }
     }
+}
+
+/// Carries one committed database response and its post-commit Git cleanup targets.
+pub(crate) struct CommittedAggregateDeletion<Response> {
+    pub(crate) response: Response,
+    pub(crate) git_cleanup_targets: Vec<GitCleanupTarget>,
 }
 
 /// Best-effort removes every validated Ora-owned worktree and branch after database commit.
@@ -46,6 +53,15 @@ fn cleanup_git_resources_with_cleaner<Cleaner: TaskGitResourceCleaner>(
     cleaner: &Cleaner,
 ) {
     for target in targets {
+        if Uuid::parse_str(target.task_id.as_ref()).is_err() {
+            log_cleanup_failure(
+                deletion_kind,
+                target,
+                "ownership_validation",
+                "task id is not a valid UUID".to_string(),
+            );
+            continue;
+        }
         let expected_branch_name = branch_name_for_task(&target.task_id);
         if target.branch_name != expected_branch_name {
             log_cleanup_failure(
@@ -64,11 +80,32 @@ fn cleanup_git_resources_with_cleaner<Cleaner: TaskGitResourceCleaner>(
             expected_worktree_root: worktree_root.join(target.task_id.as_ref()),
             branch_name: target.branch_name.clone(),
         });
-        if let GitResourceCleanupOutcome::Failed { message } = report.worktree {
-            log_cleanup_failure(deletion_kind, target, "worktree", message);
+        log_cleanup_outcome(deletion_kind, target, "worktree", report.worktree);
+        log_cleanup_outcome(deletion_kind, target, "branch", report.branch);
+    }
+}
+
+/// Emits the structured event appropriate for one independent cleanup stage.
+fn log_cleanup_outcome(
+    deletion_kind: AggregateDeletionKind,
+    target: &GitCleanupTarget,
+    stage: &'static str,
+    outcome: GitResourceCleanupOutcome,
+) {
+    match outcome {
+        GitResourceCleanupOutcome::Removed => {}
+        GitResourceCleanupOutcome::AlreadyAbsent => {
+            ora_info!(
+                message = "aggregate Git resource already absent",
+                operation = deletion_kind.operation(),
+                cleanup_stage = stage,
+                project_id = target.project_id.to_string(),
+                task_id = target.task_id.to_string(),
+                branch_name = target.branch_name.clone()
+            );
         }
-        if let GitResourceCleanupOutcome::Failed { message } = report.branch {
-            log_cleanup_failure(deletion_kind, target, "branch", message);
+        GitResourceCleanupOutcome::Failed { message } => {
+            log_cleanup_failure(deletion_kind, target, stage, message);
         }
     }
 }
@@ -104,6 +141,8 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::cell::RefCell;
     use std::path::{Path, PathBuf};
+
+    const TASK_ID: &str = "12345678-1234-4234-8234-1234567890ab";
 
     /// Records validated cleanup requests while returning independent stage failures.
     #[derive(Debug, Default)]
@@ -151,7 +190,9 @@ mod tests {
                 cleaner.requests(),
                 vec![TaskGitResourceCleanupRequest {
                     repository_root: PathBuf::from("/repo"),
-                    expected_worktree_root: PathBuf::from("/ora/worktrees/12345678-task"),
+                    expected_worktree_root: PathBuf::from(
+                        "/ora/worktrees/12345678-1234-4234-8234-1234567890ab",
+                    ),
                     branch_name: "ora/12345678".to_string(),
                 }]
             );
@@ -178,11 +219,33 @@ mod tests {
         });
     }
 
+    /// Verifies malformed persisted identifiers cannot escape the configured worktree root.
+    #[test]
+    fn rejects_cleanup_targets_with_non_uuid_task_ids() {
+        with_trace_logging(|| {
+            let cleaner = RecordingCleaner::default();
+            let mut target = cleanup_target("ora/12345678");
+            target.task_id = TaskId::new("12345678/../../other-worktree");
+
+            cleanup_git_resources_with_cleaner(
+                AggregateDeletionKind::Task,
+                &[target],
+                Path::new("/ora/worktrees"),
+                &cleaner,
+            );
+
+            assert_eq!(
+                cleaner.requests(),
+                Vec::<TaskGitResourceCleanupRequest>::new()
+            );
+        });
+    }
+
     /// Builds one target whose task id has the production eight-character branch prefix.
     fn cleanup_target(branch_name: &str) -> GitCleanupTarget {
         GitCleanupTarget {
             project_id: ProjectId::new("project-1"),
-            task_id: TaskId::new("12345678-task"),
+            task_id: TaskId::new(TASK_ID),
             repository_root: PathBuf::from("/repo"),
             branch_name: branch_name.to_string(),
         }

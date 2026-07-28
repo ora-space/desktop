@@ -12,9 +12,8 @@ use ora_db::{
     CascadeDeleteOutcome, RepositoryPool, SqliteCascadeRepository, SqliteProjectRepository,
 };
 use ora_domain::ProjectId;
-use std::path::Path;
 
-use crate::git_cleanup::{AggregateDeletionKind, cleanup_git_resources};
+use crate::git_cleanup::CommittedAggregateDeletion;
 use crate::{BackendError, BackendErrorKind};
 
 /// Groups the concrete project handlers shared by runtime adapters.
@@ -78,12 +77,11 @@ impl ProjectApi {
         self.update.handle(request)
     }
 
-    /// Soft-deletes the project aggregate before best-effort cleanup of owned Git state.
-    pub(crate) fn delete(
+    /// Commits the project aggregate deletion and returns its external cleanup work.
+    pub(crate) fn commit_delete(
         &self,
         request: DeleteProjectRequest,
-        worktree_root: &Path,
-    ) -> Result<DeleteProjectResponse, BackendError> {
+    ) -> Result<CommittedAggregateDeletion<DeleteProjectResponse>, BackendError> {
         let project_id = ProjectId::new(request.project_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
             .delete_project(&project_id, self.clock.now_timestamp_millis())
@@ -98,16 +96,12 @@ impl ProjectApi {
         match outcome {
             CascadeDeleteOutcome::Deleted {
                 git_cleanup_targets,
-            } => {
-                cleanup_git_resources(
-                    AggregateDeletionKind::Project,
-                    &git_cleanup_targets,
-                    worktree_root,
-                );
-                Ok(DeleteProjectResponse {
+            } => Ok(CommittedAggregateDeletion {
+                response: DeleteProjectResponse {
                     project_id: project_id.to_string(),
-                })
-            }
+                },
+                git_cleanup_targets,
+            }),
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
                 BackendErrorKind::NotFound,
                 "project_not_found",
