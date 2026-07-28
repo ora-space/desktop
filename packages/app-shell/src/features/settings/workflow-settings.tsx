@@ -180,6 +180,14 @@ export function WorkflowSettings() {
     setSelectedNodeId((current) => (current === nodeId ? null : current));
   }
 
+  /** Removes one connection without affecting either endpoint node. */
+  function deleteEdge(edgeId: string): void {
+    updateWorkflow((current) => ({
+      ...current,
+      edges: current.edges.filter((edge) => edge.id !== edgeId),
+    }));
+  }
+
   /** Creates a unique directed edge and ignores duplicate links. */
   function connectNodes(source: string, target: string): void {
     updateWorkflow((current) => {
@@ -198,6 +206,29 @@ export function WorkflowSettings() {
             target,
           },
         ],
+      };
+    });
+  }
+
+  /** Moves either edge endpoint while rejecting self-links and duplicate connections. */
+  function reconnectEdge(edgeId: string, source: string, target: string): void {
+    updateWorkflow((current) => {
+      if (
+        source === target
+        || current.edges.some(
+          (edge) =>
+            edge.id !== edgeId
+            && edge.source === source
+            && edge.target === target,
+        )
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        edges: current.edges.map((edge) =>
+          edge.id === edgeId ? { ...edge, source, target } : edge,
+        ),
       };
     });
   }
@@ -310,6 +341,7 @@ export function WorkflowSettings() {
           <WorkflowEmpty onCreate={() => void createWorkflow()} />
         ) : (
           <WorkflowCanvas
+            key={workflow.id}
             nodes={workflow.nodes}
             edges={workflow.edges}
             selectedNodeId={selectedNodeId}
@@ -324,7 +356,9 @@ export function WorkflowSettings() {
             }
             onAddNode={addNode}
             onConnect={connectNodes}
+            onReconnectEdge={reconnectEdge}
             onDeleteNode={deleteNode}
+            onDeleteEdge={deleteEdge}
           >
             {(onAddNode) => <WorkflowNodeCatalog onAdd={onAddNode} />}
           </WorkflowCanvas>

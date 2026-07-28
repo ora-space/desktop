@@ -49,13 +49,26 @@ interface WorkflowCanvasProps {
   onMoveNode: (nodeId: string, position: WorkflowPosition) => void;
   onAddNode: (kind: WorkflowNodeKind, position: WorkflowPosition) => void;
   onConnect: (source: string, target: string) => void;
+  onReconnectEdge: (edgeId: string, source: string, target: string) => void;
   onDeleteNode: (nodeId: string) => void;
+  onDeleteEdge: (edgeId: string) => void;
 }
 
-interface ConnectionDraft {
-  source: string;
-  pointer: WorkflowPosition;
-}
+type ConnectionDraft =
+  | {
+      kind: "new";
+      source: string;
+      pointer: WorkflowPosition;
+      candidateNodeId: string | null;
+    }
+  | {
+      kind: "reconnect";
+      edgeId: string;
+      endpoint: "source" | "target";
+      fixedNodeId: string;
+      pointer: WorkflowPosition;
+      candidateNodeId: string | null;
+    };
 
 interface PanDraft {
   pointer: WorkflowPosition;
@@ -73,7 +86,9 @@ export function WorkflowCanvas({
   onMoveNode,
   onAddNode,
   onConnect,
+  onReconnectEdge,
   onDeleteNode,
+  onDeleteEdge,
 }: WorkflowCanvasProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLElement>(null);
@@ -85,7 +100,10 @@ export function WorkflowCanvas({
   });
   const [panDraft, setPanDraft] = useState<PanDraft | null>(null);
   const [nodeDropActive, setNodeDropActive] = useState(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const { zoom, pan } = viewport;
+  const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId);
+  const activeSelectedEdgeId = selectedEdge?.id ?? null;
 
   /** Converts viewport pointer coordinates into stable graph coordinates at any zoom. */
   function graphPoint(clientX: number, clientY: number): WorkflowPosition {
@@ -155,28 +173,121 @@ export function WorkflowCanvas({
   function startConnection(event: ReactPointerEvent, source: string): void {
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    setConnection({ source, pointer: graphPoint(event.clientX, event.clientY) });
+    setConnection({
+      kind: "new",
+      source,
+      pointer: graphPoint(event.clientX, event.clientY),
+      candidateNodeId: null,
+    });
   }
 
-  /** Updates the temporary edge in graph space to avoid visual drift while zoomed. */
+  /** Detaches one selected endpoint while preserving the opposite end until a valid drop. */
+  function startEdgeReconnect(
+    event: ReactPointerEvent,
+    edgeId: string,
+    endpoint: "source" | "target",
+    fixedNodeId: string,
+  ): void {
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setConnection({
+      kind: "reconnect",
+      edgeId,
+      endpoint,
+      fixedNodeId,
+      pointer: graphPoint(event.clientX, event.clientY),
+      candidateNodeId: null,
+    });
+  }
+
+  /** Resolves a whole node card as a forgiving drop zone while preserving port direction. */
+  function connectionCandidate(
+    draft: ConnectionDraft,
+    clientX: number,
+    clientY: number,
+  ): string | null {
+    const element = document.elementFromPoint(clientX, clientY);
+    const endpoint = draft.kind === "new" ? "target" : draft.endpoint;
+    const portNodeId = endpoint === "source"
+      ? element?.closest<HTMLElement>("[data-workflow-output]")?.dataset.workflowOutput
+      : element?.closest<HTMLElement>("[data-workflow-input]")?.dataset.workflowInput;
+    const candidateNodeId = portNodeId
+      ?? element
+        ?.closest<HTMLElement>("[data-workflow-node-id]")
+        ?.dataset.workflowNodeId;
+    if (candidateNodeId === undefined) {
+      return null;
+    }
+
+    const source = draft.kind === "new"
+      ? draft.source
+      : endpoint === "source"
+        ? candidateNodeId
+        : draft.fixedNodeId;
+    const target = draft.kind === "new"
+      ? candidateNodeId
+      : endpoint === "target"
+        ? candidateNodeId
+        : draft.fixedNodeId;
+    const editedEdgeId = draft.kind === "reconnect" ? draft.edgeId : null;
+    if (
+      source === target
+      || edges.some(
+        (edge) =>
+          edge.id !== editedEdgeId
+          && edge.source === source
+          && edge.target === target,
+      )
+    ) {
+      return null;
+    }
+    return candidateNodeId;
+  }
+
+  /** Updates the preview and candidate highlight in graph space while zoomed. */
   function moveConnection(event: ReactPointerEvent): void {
     if (connection === null) {
       return;
     }
-    setConnection({ ...connection, pointer: graphPoint(event.clientX, event.clientY) });
+    setConnection({
+      ...connection,
+      pointer: graphPoint(event.clientX, event.clientY),
+      candidateNodeId: connectionCandidate(
+        connection,
+        event.clientX,
+        event.clientY,
+      ),
+    });
   }
 
-  /** Connects only explicit input handles so accidental canvas releases remain harmless. */
+  /** Commits new and edited links only when released over the matching node port. */
   function finishConnection(event: ReactPointerEvent): void {
     if (connection === null) {
       return;
     }
-    const targetElement = document
-      .elementFromPoint(event.clientX, event.clientY)
-      ?.closest<HTMLElement>("[data-workflow-input]");
-    const target = targetElement?.dataset.workflowInput;
-    if (target !== undefined && target !== connection.source) {
-      onConnect(connection.source, target);
+    const candidateNodeId = connectionCandidate(
+      connection,
+      event.clientX,
+      event.clientY,
+    );
+    if (connection.kind === "new") {
+      if (candidateNodeId !== null) {
+        onConnect(connection.source, candidateNodeId);
+      }
+    } else if (connection.endpoint === "target") {
+      if (candidateNodeId !== null) {
+        onReconnectEdge(
+          connection.edgeId,
+          connection.fixedNodeId,
+          candidateNodeId,
+        );
+      }
+    } else if (candidateNodeId !== null) {
+      onReconnectEdge(
+        connection.edgeId,
+        candidateNodeId,
+        connection.fixedNodeId,
+      );
     }
     setConnection(null);
   }
@@ -209,7 +320,7 @@ export function WorkflowCanvas({
     const target = event.target as HTMLElement;
     if (
       target.closest(
-        "[data-workflow-node], [data-workflow-controls], button, input, textarea, [role=combobox]",
+        "[data-workflow-node], [data-workflow-edge], [data-workflow-controls], button, input, textarea, [role=combobox]",
       ) !== null
     ) {
       return;
@@ -248,6 +359,7 @@ export function WorkflowCanvas({
   function finishPanning(): void {
     if (panDraft !== null && !panDraft.moved) {
       onSelectNode(null);
+      setSelectedEdgeId(null);
     }
     setPanDraft(null);
   }
@@ -261,9 +373,16 @@ export function WorkflowCanvas({
     setViewport((current) => zoomWorkflowAtPoint(current, nextZoom, cursor));
   }
 
-  /** Keeps canvas delete behavior scoped to the currently selected node. */
+  /** Deletes the selected graph element while leaving unrelated workflow state intact. */
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
-    if ((event.key === "Delete" || event.key === "Backspace") && selectedNodeId !== null) {
+    if (event.key !== "Delete" && event.key !== "Backspace") {
+      return;
+    }
+    if (activeSelectedEdgeId !== null) {
+      event.preventDefault();
+      onDeleteEdge(activeSelectedEdgeId);
+      setSelectedEdgeId(null);
+    } else if (selectedNodeId !== null) {
       event.preventDefault();
       onDeleteNode(selectedNodeId);
     }
@@ -310,16 +429,55 @@ export function WorkflowCanvas({
         onPointerMove={moveConnection}
         onPointerUp={finishConnection}
       >
-        <WorkflowEdges nodes={nodes} edges={edges} connection={connection} />
+        <WorkflowEdges
+          nodes={nodes}
+          edges={edges}
+          connection={connection}
+          selectedEdgeId={activeSelectedEdgeId}
+          onSelectEdge={(edgeId) => {
+            setSelectedEdgeId(edgeId);
+            onSelectNode(null);
+          }}
+          onDeleteEdge={(edgeId) => {
+            onDeleteEdge(edgeId);
+            setSelectedEdgeId(null);
+          }}
+        />
         {nodes.map((node) => (
           <WorkflowNodeCard
             key={node.id}
             node={node}
             selected={selectedNodeId === node.id}
             zoom={zoom}
-            onSelect={() => onSelectNode(node.id)}
+            onSelect={() => {
+              setSelectedEdgeId(null);
+              onSelectNode(node.id);
+            }}
             onMove={(position) => onMoveNode(node.id, position)}
             onStartConnection={(event) => startConnection(event, node.id)}
+            connectionCandidate={connection?.candidateNodeId === node.id
+              ? connection.kind === "new"
+                ? "target"
+                : connection.endpoint
+              : null}
+            connectionEndpoint={selectedEdge === undefined
+              ? null
+              : selectedEdge.source === node.id
+                ? "source"
+                : selectedEdge.target === node.id
+                  ? "target"
+                  : null}
+            onStartReconnect={(event, endpoint) => {
+              if (selectedEdge === undefined) {
+                return;
+              }
+              startEdgeReconnect(
+                event,
+                selectedEdge.id,
+                endpoint,
+                endpoint === "source" ? selectedEdge.target : selectedEdge.source,
+              );
+            }}
             onDelete={() => onDeleteNode(node.id)}
           />
         ))}
@@ -399,22 +557,32 @@ function WorkflowEdges({
   nodes,
   edges,
   connection,
+  selectedEdgeId,
+  onSelectEdge,
+  onDeleteEdge,
 }: {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   connection: ConnectionDraft | null;
+  selectedEdgeId: string | null;
+  onSelectEdge: (edgeId: string) => void;
+  onDeleteEdge: (edgeId: string) => void;
 }) {
+  const { t } = useTranslation();
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   return (
     <svg
       className="pointer-events-none absolute inset-0 z-0 overflow-visible"
       width={STAGE_WIDTH}
       height={STAGE_HEIGHT}
-      aria-hidden="true"
+      aria-label={t("settings.workflow.connections")}
     >
       <defs>
         <marker id="workflow-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
           <path d="M0,0 L7,3.5 L0,7 Z" className="fill-muted-foreground/70" />
+        </marker>
+        <marker id="workflow-arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+          <path d="M0,0 L7,3.5 L0,7 Z" className="fill-ring" />
         </marker>
       </defs>
       {edges.map((edge) => {
@@ -423,16 +591,59 @@ function WorkflowEdges({
         if (source === undefined || target === undefined) {
           return null;
         }
+        const selected = selectedEdgeId === edge.id;
+        const reconnecting = connection?.kind === "reconnect"
+          && connection.edgeId === edge.id;
         const start = { x: source.position.x + NODE_WIDTH, y: source.position.y + NODE_ANCHOR_Y };
         const end = { x: target.position.x, y: target.position.y + NODE_ANCHOR_Y };
+        const path = edgePath(start, end);
+        const accessibleName = t("settings.workflow.selectConnection", {
+          source: source.title,
+          target: target.title,
+        });
         return (
           <g key={edge.id}>
             <path
-              d={edgePath(start, end)}
+              d={path}
               fill="none"
-              stroke="color-mix(in oklch, var(--foreground) 34%, transparent)"
-              strokeWidth="2"
-              markerEnd="url(#workflow-arrow)"
+              stroke={selected
+                ? "var(--ring)"
+                : "color-mix(in oklch, var(--foreground) 34%, transparent)"}
+              strokeWidth={selected ? "3" : "2"}
+              markerEnd={selected
+                ? "url(#workflow-arrow-selected)"
+                : "url(#workflow-arrow)"}
+              className={cn(
+                "transition-[stroke,stroke-width,opacity] duration-150 motion-reduce:transition-none",
+                reconnecting && "opacity-0",
+              )}
+            />
+            <path
+              data-workflow-edge={edge.id}
+              d={path}
+              fill="none"
+              stroke="transparent"
+              strokeWidth="16"
+              className="pointer-events-auto cursor-pointer outline-none"
+              aria-label={accessibleName}
+              aria-keyshortcuts="Delete Backspace"
+              role="button"
+              tabIndex={0}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectEdge(edge.id);
+              }}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                onDeleteEdge(edge.id);
+              }}
+              onFocus={() => onSelectEdge(edge.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectEdge(edge.id);
+                }
+              }}
             />
             {edge.label !== undefined && (
               <text
@@ -448,16 +659,32 @@ function WorkflowEdges({
         );
       })}
       {connection !== null && (() => {
-        const source = nodeById.get(connection.source);
-        if (source === undefined) {
-          return null;
-        }
+        const candidate = connection.candidateNodeId === null
+          ? undefined
+          : nodeById.get(connection.candidateNodeId);
+        const source = connection.kind === "new"
+          ? nodeById.get(connection.source)
+          : connection.endpoint === "target"
+            ? nodeById.get(connection.fixedNodeId)
+            : candidate;
+        const target = connection.kind === "reconnect" && connection.endpoint === "source"
+          ? nodeById.get(connection.fixedNodeId)
+          : candidate;
+        const start = source === undefined
+          ? connection.pointer
+          : {
+              x: source.position.x + NODE_WIDTH,
+              y: source.position.y + NODE_ANCHOR_Y,
+            };
+        const end = target === undefined
+          ? connection.pointer
+          : {
+              x: target.position.x,
+              y: target.position.y + NODE_ANCHOR_Y,
+            };
         return (
           <path
-            d={edgePath(
-              { x: source.position.x + NODE_WIDTH, y: source.position.y + NODE_ANCHOR_Y },
-              connection.pointer,
-            )}
+            d={edgePath(start, end)}
             fill="none"
             stroke="var(--ring)"
             strokeDasharray="5 4"
@@ -483,6 +710,9 @@ function WorkflowNodeCard({
   onSelect,
   onMove,
   onStartConnection,
+  connectionCandidate,
+  connectionEndpoint,
+  onStartReconnect,
   onDelete,
 }: {
   node: WorkflowNode;
@@ -491,6 +721,12 @@ function WorkflowNodeCard({
   onSelect: () => void;
   onMove: (position: WorkflowPosition) => void;
   onStartConnection: (event: ReactPointerEvent) => void;
+  connectionCandidate: "source" | "target" | null;
+  connectionEndpoint: "source" | "target" | null;
+  onStartReconnect: (
+    event: ReactPointerEvent,
+    endpoint: "source" | "target",
+  ) => void;
   onDelete: () => void;
 }) {
   const { t } = useTranslation();
@@ -513,9 +749,12 @@ function WorkflowNodeCard({
   return (
     <article
       data-workflow-node
+      data-workflow-node-id={node.id}
       className={cn(
         "absolute z-10 w-[230px] cursor-move rounded-xl border bg-card shadow-sm outline-none transition-[border-color,box-shadow] duration-200",
-        selected
+        connectionCandidate !== null
+          ? "border-ring shadow-md ring-2 ring-ring/30"
+          : selected
           ? "border-foreground/45 shadow-md ring-2 ring-ring/25"
           : "border-border hover:border-foreground/25 hover:shadow-md",
       )}
@@ -542,10 +781,23 @@ function WorkflowNodeCard({
       <button
         type="button"
         data-workflow-input={node.id}
-        aria-label={t("settings.workflow.connectTo", { name: node.title })}
-        className="absolute -left-3 top-[49px] flex size-6 items-center justify-center rounded-full outline-none after:size-3 after:rounded-full after:border-2 after:border-background after:bg-muted-foreground after:shadow-sm after:transition-transform hover:after:scale-125 focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={connectionEndpoint === "target"
+          ? t("settings.workflow.moveConnectionTarget", { name: node.title })
+          : t("settings.workflow.connectTo", { name: node.title })}
+        onPointerDown={connectionEndpoint === "target"
+          ? (event) => onStartReconnect(event, "target")
+          : undefined}
+        className={cn(
+          "absolute -left-3 top-[49px] flex size-6 items-center justify-center rounded-full outline-none after:size-3 after:rounded-full after:border-2 after:border-background after:bg-muted-foreground after:shadow-sm after:transition-transform hover:after:scale-125 focus-visible:ring-2 focus-visible:ring-ring",
+          connectionEndpoint === "target" && "cursor-grab bg-ring/15 ring-2 ring-ring/35 after:scale-125 after:bg-ring active:cursor-grabbing",
+          connectionCandidate === "target" && "bg-ring/20 ring-2 ring-ring after:scale-150 after:bg-ring",
+        )}
       >
-        <span className="sr-only">{t("settings.workflow.connectTo", { name: node.title })}</span>
+        <span className="sr-only">
+          {connectionEndpoint === "target"
+            ? t("settings.workflow.moveConnectionTarget", { name: node.title })
+            : t("settings.workflow.connectTo", { name: node.title })}
+        </span>
       </button>
       <div className="flex items-start gap-2.5 border-b border-border px-3 py-3">
         <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg", metadata.tone)}>
@@ -579,11 +831,24 @@ function WorkflowNodeCard({
       </div>
       <button
         type="button"
-        aria-label={t("settings.workflow.connectFrom", { name: node.title })}
-        onPointerDown={onStartConnection}
-        className="absolute -right-3 top-[49px] flex size-6 items-center justify-center rounded-full outline-none after:size-3 after:rounded-full after:border-2 after:border-background after:bg-foreground after:shadow-sm after:transition-transform hover:after:scale-125 focus-visible:ring-2 focus-visible:ring-ring"
+        data-workflow-output={node.id}
+        aria-label={connectionEndpoint === "source"
+          ? t("settings.workflow.moveConnectionSource", { name: node.title })
+          : t("settings.workflow.connectFrom", { name: node.title })}
+        onPointerDown={connectionEndpoint === "source"
+          ? (event) => onStartReconnect(event, "source")
+          : onStartConnection}
+        className={cn(
+          "absolute -right-3 top-[49px] flex size-6 items-center justify-center rounded-full outline-none after:size-3 after:rounded-full after:border-2 after:border-background after:bg-foreground after:shadow-sm after:transition-transform hover:after:scale-125 focus-visible:ring-2 focus-visible:ring-ring",
+          connectionEndpoint === "source" && "cursor-grab bg-ring/15 ring-2 ring-ring/35 after:scale-125 after:bg-ring active:cursor-grabbing",
+          connectionCandidate === "source" && "bg-ring/20 ring-2 ring-ring after:scale-150 after:bg-ring",
+        )}
       >
-        <span className="sr-only">{t("settings.workflow.connectFrom", { name: node.title })}</span>
+        <span className="sr-only">
+          {connectionEndpoint === "source"
+            ? t("settings.workflow.moveConnectionSource", { name: node.title })
+            : t("settings.workflow.connectFrom", { name: node.title })}
+        </span>
       </button>
     </article>
   );
