@@ -499,7 +499,7 @@ export function WorkflowCanvas({
       )}
       <div
         data-workflow-controls
-        className="absolute bottom-2 left-2 z-30 flex w-fit items-center rounded-lg border border-border/80 bg-background/95 p-px shadow-sm backdrop-blur"
+        className="absolute right-3 top-3 z-30 flex w-fit items-center rounded-lg border border-border/80 bg-background/95 p-px shadow-sm backdrop-blur"
         aria-label={t("settings.workflow.canvasControls")}
         aria-orientation="horizontal"
         role="toolbar"

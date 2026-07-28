@@ -17,6 +17,7 @@ describe("WorkflowSettings", () => {
     expect(screen.getByText("正在加载 mock 工作流…")).toBeInTheDocument();
     expect(await screen.findByText("OpenSpec 模式")).toBeInTheDocument();
     expect(screen.getByLabelText("工作流画布")).toBeInTheDocument();
+    expect(screen.getByLabelText("画布视图控制")).toHaveClass("right-3", "top-3");
     expect(screen.getByRole("group", { name: "输入" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "处理" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "触发器" })).toBeInTheDocument();
