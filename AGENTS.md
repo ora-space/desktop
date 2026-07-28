@@ -36,6 +36,15 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
 - Use local time instead of UTC time.
 - Use ora-logging wrapper macros instead of `tracing` macros. Use `ora_logging::clock::now_local` instead of `OffsetDateTime::now_local()`.
 
+## Module READMEs
+
+- Every crate under `crates/` must have an English `README.md` in its crate root.
+- Every directory-based production Rust module under a crate's `src/` tree must have an English `README.md` in the module directory. Single-file modules do not need to be converted into directories; their responsibilities should be covered by the nearest parent README.
+- Test, fixture, generated, example, and other non-production directories do not require module READMEs.
+- `crates/contracts`, `crates/domain`, and `crates/pty`, including their descendant modules, are intentional exceptions. Their type definitions and code-level documentation are the primary documentation because they do not own architectural orchestration that benefits from separate README files.
+- When adding a crate or directory-based module, add its README in the same change. When changing a module's responsibilities, boundaries, core flows, or interactions, update the corresponding README in the same change.
+- READMEs document stable facts that should remain true across internal refactors: responsibilities, non-responsibilities, public boundaries, key invariants, lifecycle, important failure semantics, and module interactions. Put local implementation rationale, algorithm details, data-structure choices, specialized branches, performance trade-offs, and temporary implementation constraints in English code comments instead.
+
 ## Tests
 
 - run format: `cargo fmt --all`
