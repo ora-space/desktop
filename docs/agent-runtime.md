@@ -23,6 +23,6 @@ Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIter
 
 ## Ownership Boundaries
 
-Ora deletion removes only Ora-owned database records. It does not call ACP session delete and does not touch Git branches or worktrees. Session deletion serializes against new actor operations, unloads its route, and then soft-deletes the row under the same lifecycle guard. Task and Project deletion reject Running descendants and transactionally cascade stopped Ora records.
+Session deletion serializes against new actor operations, unloads its route, and then soft-deletes the row under the same lifecycle guard. Task and Project deletion reject Running descendants and transactionally cascade stopped Ora records. After a successful cascade, the backend best-effort force-removes each validated Ora-owned linked worktree and its local branch; failures are logged without changing the deletion response and are not retried durably. Aggregate deletion does not call ACP session delete or remove provider-owned history.
 
 Dropping the last Backend owner asks every supervisor to stop accepting work, cancels routed operations, and initiates bounded termination and reaping of each CLI process tree. Successful processes remain alive while the Backend exists even when no Sessions are registered.

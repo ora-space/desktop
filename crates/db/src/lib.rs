@@ -15,8 +15,8 @@ pub use error::{DatabaseError, MigrationDirection};
 pub use location::DatabaseLocation;
 pub use migration::{AppliedMigration, Migration, MigrationCatalog, default_migration_catalog};
 pub use repository::{
-    CascadeDeleteOutcome, RepositoryPool, SqliteAgentDefinitionRepository, SqliteCascadeRepository,
-    SqliteProjectRepository, SqliteProjectWorkContextRepository, SqliteSessionRepository,
-    SqliteSkillRepository, SqliteTaskRepository, SqliteWorktreeRepository,
+    CascadeDeleteOutcome, GitCleanupTarget, RepositoryPool, SqliteAgentDefinitionRepository,
+    SqliteCascadeRepository, SqliteProjectRepository, SqliteProjectWorkContextRepository,
+    SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository, SqliteWorktreeRepository,
 };
 pub use time::{SystemTimestampSource, TimestampSource};

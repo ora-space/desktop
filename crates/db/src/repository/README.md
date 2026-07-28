@@ -13,9 +13,9 @@ This module implements `ora-application` persistence ports on SQLite and exposes
 
 `SqliteCascadeRepository` soft-deletes task or project aggregates in one immediate transaction. It rechecks existence and running descendants under the write lock so a session cannot become Running between validation and updates.
 
-Task deletion cascades through its sessions and owned worktree record. Project deletion cascades through project contexts, tasks, sessions, and worktree records. A running descendant returns `ResourceInUse`; no partial cascade is committed.
+Task deletion cascades through its sessions and owned worktree record. Project deletion cascades through project contexts, tasks, sessions, and worktree records. A running descendant returns `ResourceInUse`; no partial cascade is committed. Before hiding rows, each successful transaction captures the repository root and task branch identities that the backend needs for post-commit cleanup.
 
-These transactions mutate Ora-owned database state only. They never invoke Git, remove checkout directories or branches, or delete provider-owned ACP history.
+These transactions mutate Ora-owned database state only. They return Git cleanup targets but never invoke Git, remove checkout directories or branches, or delete provider-owned ACP history.
 
 SQL details remain internal to this module; lifecycle policy and public error mapping belong to `ora-application` and `ora-backend`.
 

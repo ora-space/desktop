@@ -3,6 +3,7 @@ use crate::task::ports::{
     CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskIdGenerator, TaskRepository,
     TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
 };
+use crate::task::{branch_name_for_task, branch_prefix_for_task};
 use crate::worktree::{WorktreeIdGenerator, WorktreeRepository};
 use crate::{ApplicationError, Clock};
 use ora_contracts::{
@@ -18,7 +19,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const TASK_BRANCH_PREFIX_LEN: usize = 8;
 const MAX_TASK_ID_GENERATION_ATTEMPTS: usize = 3;
 
 /// Handles task creation without depending on transport-specific concerns.
@@ -216,7 +216,7 @@ where
     fn select_available_task_id(&self) -> Result<TaskId, ApplicationError> {
         for _ in 0..MAX_TASK_ID_GENERATION_ATTEMPTS {
             let task_id = self.task_id_generator.generate_task_id();
-            let branch_prefix = task_branch_prefix(&task_id);
+            let branch_prefix = branch_prefix_for_task(&task_id);
 
             if task_branch_prefix_exists_in_work_dir(&self.work_dir, &branch_prefix)? {
                 continue;
@@ -551,20 +551,6 @@ fn map_contract_task_status(status: TaskStatus) -> DomainTaskStatus {
         TaskStatus::Doing => DomainTaskStatus::Doing,
         TaskStatus::Done => DomainTaskStatus::Done,
     }
-}
-
-/// Derives the stable task branch name from the first eight characters of the generated task id.
-fn branch_name_for_task(task_id: &TaskId) -> String {
-    format!("ora/{}", task_branch_prefix(task_id))
-}
-
-/// Derives the short branch prefix used to keep task branch names readable.
-fn task_branch_prefix(task_id: &TaskId) -> String {
-    task_id
-        .to_string()
-        .chars()
-        .take(TASK_BRANCH_PREFIX_LEN)
-        .collect()
 }
 
 /// Derives the owned linked-worktree path from the configured worktree root and full task id.

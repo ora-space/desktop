@@ -9,7 +9,7 @@ mod task;
 mod worktree;
 
 pub use agent_definition::SqliteAgentDefinitionRepository;
-pub use cascade::{CascadeDeleteOutcome, SqliteCascadeRepository};
+pub use cascade::{CascadeDeleteOutcome, GitCleanupTarget, SqliteCascadeRepository};
 pub use connection::RepositoryPool;
 pub use project::SqliteProjectRepository;
 pub use project_work_context::SqliteProjectWorkContextRepository;

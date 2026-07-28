@@ -3,6 +3,7 @@ mod agent_runtime;
 mod bootstrap;
 mod clock;
 mod error;
+mod git_cleanup;
 mod identity;
 mod project;
 mod session;

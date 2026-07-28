@@ -1,4 +1,5 @@
 use crate::clock::SystemClock;
+use crate::git_cleanup::{AggregateDeletionKind, cleanup_git_resources};
 use crate::{BackendError, BackendErrorKind};
 use gitlancer::git::worktree::ResolveWorktreeByBranchRequest;
 use gitlancer::{CliGitRunner, Git, RepoRoot, Repository};
@@ -90,7 +91,7 @@ impl TaskApi {
         self.update.handle(request)
     }
 
-    /// Soft-deletes the task and Ora worktree record without touching Git state.
+    /// Soft-deletes the task aggregate before best-effort cleanup of its Ora-owned Git state.
     pub(crate) fn delete(
         &self,
         request: DeleteTaskRequest,
@@ -107,9 +108,14 @@ impl TaskApi {
             })?;
 
         match outcome {
-            CascadeDeleteOutcome::Deleted => Ok(DeleteTaskResponse {
-                task_id: task_id.to_string(),
-            }),
+            CascadeDeleteOutcome::Deleted {
+                git_cleanup_targets,
+            } => {
+                cleanup_git_resources(AggregateDeletionKind::Task, &git_cleanup_targets);
+                Ok(DeleteTaskResponse {
+                    task_id: task_id.to_string(),
+                })
+            }
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
                 BackendErrorKind::NotFound,
                 "task_not_found",

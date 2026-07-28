@@ -1,17 +1,29 @@
 use ora_domain::{ProjectId, SessionStatus, TaskId};
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
+use std::path::PathBuf;
 
 use crate::repository::RepositoryPool;
 
-/// Reports the atomic outcome of an Ora-only aggregate deletion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Identifies one Ora-owned Git checkout that the backend should clean up after commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitCleanupTarget {
+    pub project_id: ProjectId,
+    pub task_id: TaskId,
+    pub repository_root: PathBuf,
+    pub branch_name: String,
+}
+
+/// Reports the atomic outcome of an aggregate deletion and any post-commit Git work.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CascadeDeleteOutcome {
-    Deleted,
+    Deleted {
+        git_cleanup_targets: Vec<GitCleanupTarget>,
+    },
     NotFound,
     ActiveSession,
 }
 
-/// Performs aggregate soft deletes in one SQLite transaction without invoking Git.
+/// Performs aggregate soft deletes while returning, but never executing, external cleanup work.
 #[derive(Clone, Debug)]
 pub struct SqliteCascadeRepository {
     pool: RepositoryPool,
@@ -55,6 +67,7 @@ impl SqliteCascadeRepository {
             if running {
                 return Ok(CascadeDeleteOutcome::ActiveSession);
             }
+            let git_cleanup_targets = task_git_cleanup_targets(&transaction, task_id)?;
             transaction.execute(
                 "UPDATE sessions SET updated_at = ?2, is_deleted = 1 WHERE task_id = ?1 AND is_deleted = 0",
                 params![task_id.as_ref(), deleted_at],
@@ -68,7 +81,9 @@ impl SqliteCascadeRepository {
                 params![task_id.as_ref(), deleted_at],
             )?;
             transaction.commit()?;
-            Ok(CascadeDeleteOutcome::Deleted)
+            Ok(CascadeDeleteOutcome::Deleted {
+                git_cleanup_targets,
+            })
         })
     }
 
@@ -82,17 +97,16 @@ impl SqliteCascadeRepository {
             // Project deletion needs the same write reservation across every descendant check.
             let transaction =
                 Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-            let exists = transaction
+            let repository_root = transaction
                 .query_row(
-                    "SELECT 1 FROM projects WHERE id = ?1 AND is_deleted = 0",
+                    "SELECT root_path FROM projects WHERE id = ?1 AND is_deleted = 0",
                     params![project_id.as_ref()],
-                    |_| Ok(()),
+                    |row| row.get::<_, String>(0),
                 )
-                .optional()?
-                .is_some();
-            if !exists {
+                .optional()?;
+            let Some(repository_root) = repository_root else {
                 return Ok(CascadeDeleteOutcome::NotFound);
-            }
+            };
             let running = transaction.query_row(
                 "SELECT EXISTS(
                     SELECT 1 FROM sessions s
@@ -106,6 +120,11 @@ impl SqliteCascadeRepository {
             if running {
                 return Ok(CascadeDeleteOutcome::ActiveSession);
             }
+            let git_cleanup_targets = project_git_cleanup_targets(
+                &transaction,
+                project_id,
+                PathBuf::from(repository_root),
+            )?;
             transaction.execute(
                 "UPDATE sessions SET updated_at = ?2, is_deleted = 1
                  WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?1 AND is_deleted = 0)
@@ -133,7 +152,62 @@ impl SqliteCascadeRepository {
                 params![project_id.as_ref(), deleted_at],
             )?;
             transaction.commit()?;
-            Ok(CascadeDeleteOutcome::Deleted)
+            Ok(CascadeDeleteOutcome::Deleted {
+                git_cleanup_targets,
+            })
         })
     }
+}
+
+/// Captures the linked worktree selected by one task before its records become hidden.
+fn task_git_cleanup_targets(
+    transaction: &Transaction<'_>,
+    task_id: &TaskId,
+) -> Result<Vec<GitCleanupTarget>, rusqlite::Error> {
+    transaction
+        .query_row(
+            "SELECT t.project_id, p.root_path, w.branch_name
+             FROM tasks t
+             JOIN projects p ON p.id = t.project_id
+             JOIN worktrees w ON w.id = t.worktree_id AND w.task_id = t.id
+             WHERE t.id = ?1 AND t.is_deleted = 0
+               AND w.is_deleted = 0 AND w.branch_name IS NOT NULL",
+            params![task_id.as_ref()],
+            |row| {
+                Ok(GitCleanupTarget {
+                    project_id: ProjectId::new(row.get::<_, String>(0)?),
+                    task_id: task_id.clone(),
+                    repository_root: PathBuf::from(row.get::<_, String>(1)?),
+                    branch_name: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+        .map(|target| target.into_iter().collect())
+}
+
+/// Captures every linked worktree selected by the visible tasks in one project.
+fn project_git_cleanup_targets(
+    transaction: &Transaction<'_>,
+    project_id: &ProjectId,
+    repository_root: PathBuf,
+) -> Result<Vec<GitCleanupTarget>, rusqlite::Error> {
+    let mut statement = transaction.prepare(
+        "SELECT t.id, w.branch_name
+         FROM tasks t
+         JOIN worktrees w ON w.id = t.worktree_id AND w.task_id = t.id
+         WHERE t.project_id = ?1 AND t.is_deleted = 0
+           AND w.is_deleted = 0 AND w.branch_name IS NOT NULL
+         ORDER BY t.created_at, t.id",
+    )?;
+    let targets = statement.query_map(params![project_id.as_ref()], |row| {
+        Ok(GitCleanupTarget {
+            project_id: project_id.clone(),
+            task_id: TaskId::new(row.get::<_, String>(0)?),
+            repository_root: repository_root.clone(),
+            branch_name: row.get(1)?,
+        })
+    })?;
+
+    targets.collect()
 }

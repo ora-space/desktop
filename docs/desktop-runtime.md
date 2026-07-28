@@ -31,7 +31,7 @@ On first launch, Desktop creates the app data directory, default worktree direct
 
 The worktree root is non-sensitive configuration. Users can change it from Settings → Data & privacy on Desktop. A selected value must be an absolute path to an existing directory. The new value affects task creations that start after the update; in-flight operations retain their original snapshot, and existing worktrees are not moved.
 
-The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads. Task and project deletion never mutate Git.
+The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts, loads, or is deleted with its owning aggregate. Task and Project deletion first commits the database cascade, then best-effort force-removes validated Ora-owned worktrees and branches from their original repository regardless of later creation-root changes.
 
 ## Logging
 

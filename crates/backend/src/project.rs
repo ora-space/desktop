@@ -13,6 +13,7 @@ use ora_db::{
 };
 use ora_domain::ProjectId;
 
+use crate::git_cleanup::{AggregateDeletionKind, cleanup_git_resources};
 use crate::{BackendError, BackendErrorKind};
 
 /// Groups the concrete project handlers shared by runtime adapters.
@@ -76,7 +77,7 @@ impl ProjectApi {
         self.update.handle(request)
     }
 
-    /// Executes project deletion through the application handler.
+    /// Soft-deletes the project aggregate before best-effort cleanup of owned Git state.
     pub(crate) fn delete(
         &self,
         request: DeleteProjectRequest,
@@ -93,9 +94,14 @@ impl ProjectApi {
             })?;
 
         match outcome {
-            CascadeDeleteOutcome::Deleted => Ok(DeleteProjectResponse {
-                project_id: project_id.to_string(),
-            }),
+            CascadeDeleteOutcome::Deleted {
+                git_cleanup_targets,
+            } => {
+                cleanup_git_resources(AggregateDeletionKind::Project, &git_cleanup_targets);
+                Ok(DeleteProjectResponse {
+                    project_id: project_id.to_string(),
+                })
+            }
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
                 BackendErrorKind::NotFound,
                 "project_not_found",

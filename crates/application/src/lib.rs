@@ -35,7 +35,8 @@ pub use task::{
     CreateTaskHandler, CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, GetTaskHandler,
     GitTaskWorktreeProvisioner, ListTasksHandler, TaskIdGenerator, TaskRepository,
     TaskRepositoryError, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator,
+    TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator, branch_name_for_task,
+    branch_prefix_for_task,
 };
 pub use worktree::{
     UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository, WorktreeRepositoryError,

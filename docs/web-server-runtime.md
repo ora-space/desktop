@@ -7,7 +7,7 @@
 - It boots shared structured logging through `ora-logging`.
 - It exposes health endpoints for process liveness and runtime readiness.
 - It serves persisted HTTP operations for Project, Task, Session, Skill, and Agent through the shared `ora-backend` composition.
-- It provisions task-owned linked worktrees during creation and leaves Git untouched during deletion.
+- It provisions task-owned linked worktrees during creation and best-effort force-removes their worktrees and local branches after successful Task or Project database deletion.
 - It streams ACP load replay and prompt updates as bounded NDJSON responses.
 - It provides read-only server filesystem listings for the Web platform path picker.
 

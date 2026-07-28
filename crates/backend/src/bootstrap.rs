@@ -10,7 +10,7 @@ use ora_contracts::*;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use thiserror::Error;
 
 /// Names the persistent paths required to construct the shared backend.
@@ -41,6 +41,7 @@ pub enum BackendBootstrapError {
 pub struct Backend {
     pool: RepositoryPool,
     worktree_root: Arc<RwLock<PathBuf>>,
+    aggregate_lifecycle: Arc<Mutex<()>>,
     project: Arc<ProjectApi>,
     task: Arc<TaskApi>,
     session: Arc<SessionApi>,
@@ -77,6 +78,7 @@ impl Backend {
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             pool,
             worktree_root,
+            aggregate_lifecycle: Arc::new(Mutex::new(())),
         })
     }
 
@@ -149,6 +151,7 @@ impl Backend {
         &self,
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {
+        let _aggregate_lifecycle = self.aggregate_lifecycle_guard()?;
         self.project.delete(request)
     }
 
@@ -157,6 +160,7 @@ impl Backend {
         &self,
         request: CreateTaskRequest,
     ) -> Result<CreateTaskResponse, BackendError> {
+        let _aggregate_lifecycle = self.aggregate_lifecycle_guard()?;
         self.task.create(request).map_err(BackendError::from)
     }
     /// Gets one task through the shared application composition.
@@ -179,7 +183,19 @@ impl Backend {
         &self,
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
+        let _aggregate_lifecycle = self.aggregate_lifecycle_guard()?;
         self.task.delete(request)
+    }
+
+    /// Serializes task provisioning against aggregate deletion so cleanup snapshots cannot miss new Git state.
+    fn aggregate_lifecycle_guard(&self) -> Result<MutexGuard<'_, ()>, BackendError> {
+        self.aggregate_lifecycle.lock().map_err(|_| {
+            BackendError::new(
+                BackendErrorKind::Internal,
+                "aggregate_lifecycle_error",
+                "aggregate lifecycle coordination is unavailable",
+            )
+        })
     }
 
     /// Creates one session through the shared application composition.
@@ -337,6 +353,8 @@ mod tests {
         GetTaskRequest, ListAgentsRequest, ListProjectsRequest, ListSkillsRequest, TaskStatus,
         UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
     };
+    use ora_logging::with_trace_logging;
+    use pretty_assertions::assert_eq;
     use std::fs;
     use std::path::Path;
     use std::process::Command;
@@ -452,7 +470,7 @@ mod tests {
         assert_eq!(error.code(), "project_not_found");
     }
 
-    /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.
+    /// Verifies task deletion resolves the original checkout and force-removes dirty Git state.
     #[test]
     fn deletes_existing_task_after_worktree_root_changes() {
         let temporary = TempDir::new().expect("create temporary backend directory");
@@ -483,6 +501,11 @@ mod tests {
             .task;
         let original_worktree_path = original_worktree_root.join(&task.id);
         assert!(original_worktree_path.is_dir());
+        fs::write(
+            original_worktree_path.join("uncommitted.txt"),
+            "must be removed",
+        )
+        .expect("create uncommitted task change");
 
         let replacement_root = temporary.path().join("replacement-worktrees");
         fs::create_dir_all(&replacement_root).expect("create replacement worktree root");
@@ -493,14 +516,139 @@ mod tests {
             .delete_task(DeleteTaskRequest {
                 task_id: task.id.clone(),
             })
-            .expect("delete task without Git mutation");
+            .expect("delete task with best-effort Git cleanup");
 
-        assert!(original_worktree_path.exists());
+        assert!(!original_worktree_path.exists());
+        assert_eq!(local_branches(&repository_root), vec!["main".to_string()]);
         assert!(
             backend
                 .get_task(GetTaskRequest { task_id: task.id })
                 .is_err()
         );
+    }
+
+    /// Verifies project deletion cleans every descendant task branch and dirty checkout.
+    #[test]
+    fn deletes_all_project_task_git_resources() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let repository_root = temporary.path().join("repository");
+        initialize_repository(&repository_root);
+        let worktree_root = temporary.path().join("worktrees");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: worktree_root.clone(),
+            home_directory: temporary.path().to_path_buf(),
+        })
+        .expect("open shared backend");
+        let project = backend
+            .create_project(CreateProjectRequest {
+                name: "Ora".to_string(),
+                root_path: repository_root.to_string_lossy().into_owned(),
+            })
+            .expect("create project")
+            .project;
+        let first_task = backend
+            .create_task(CreateTaskRequest {
+                project_id: project.id.clone(),
+                title: "First task".to_string(),
+                status: TaskStatus::Todo,
+                workspace_mode: None,
+            })
+            .expect("create first task")
+            .task;
+        let second_task = backend
+            .create_task(CreateTaskRequest {
+                project_id: project.id.clone(),
+                title: "Second task".to_string(),
+                status: TaskStatus::Todo,
+                workspace_mode: None,
+            })
+            .expect("create second task")
+            .task;
+        let task_paths = [first_task.id.clone(), second_task.id.clone()]
+            .map(|task_id| worktree_root.join(task_id));
+        for task_path in &task_paths {
+            fs::write(task_path.join("uncommitted.txt"), "must be removed")
+                .expect("create uncommitted task change");
+        }
+
+        backend
+            .delete_project(DeleteProjectRequest {
+                project_id: project.id,
+            })
+            .expect("delete project with best-effort Git cleanup");
+
+        assert_eq!(
+            task_paths.map(|task_path| task_path.exists()),
+            [false, false]
+        );
+        assert_eq!(local_branches(&repository_root), vec!["main".to_string()]);
+        assert!(
+            backend
+                .get_task(GetTaskRequest {
+                    task_id: first_task.id,
+                })
+                .is_err()
+        );
+        assert!(
+            backend
+                .get_task(GetTaskRequest {
+                    task_id: second_task.id,
+                })
+                .is_err()
+        );
+    }
+
+    /// Verifies unavailable Git state is logged without changing a committed task deletion.
+    #[test]
+    fn keeps_database_deletion_successful_when_git_cleanup_fails() {
+        with_trace_logging(|| {
+            let temporary = TempDir::new().expect("create temporary backend directory");
+            let repository_root = temporary.path().join("repository");
+            initialize_repository(&repository_root);
+            let worktree_root = temporary.path().join("worktrees");
+            let backend = Backend::open(BackendPaths {
+                database_path: temporary.path().join("ora.sqlite3"),
+                worktree_root: worktree_root.clone(),
+                home_directory: temporary.path().to_path_buf(),
+            })
+            .expect("open shared backend");
+            let project = backend
+                .create_project(CreateProjectRequest {
+                    name: "Ora".to_string(),
+                    root_path: repository_root.to_string_lossy().into_owned(),
+                })
+                .expect("create project")
+                .project;
+            let task = backend
+                .create_task(CreateTaskRequest {
+                    project_id: project.id,
+                    title: "Unavailable repository".to_string(),
+                    status: TaskStatus::Todo,
+                    workspace_mode: None,
+                })
+                .expect("create task")
+                .task;
+            let task_path = worktree_root.join(&task.id);
+            fs::rename(
+                &repository_root,
+                temporary.path().join("unavailable-repository"),
+            )
+            .expect("make repository unavailable");
+
+            backend
+                .delete_task(DeleteTaskRequest {
+                    task_id: task.id.clone(),
+                })
+                .expect("commit database deletion despite Git failure");
+
+            assert!(task_path.exists());
+            assert!(
+                backend
+                    .get_task(GetTaskRequest { task_id: task.id })
+                    .is_err()
+            );
+        });
     }
 
     /// Initializes a repository with one commit so linked worktree operations are available.
@@ -527,5 +675,30 @@ mod tests {
             .unwrap_or_else(|error| panic!("failed to start git {arguments:?}: {error}"));
 
         assert!(status.success(), "git {arguments:?} failed with {status}");
+    }
+
+    /// Lists local branches in stable lexical order for lifecycle assertions.
+    fn local_branches(repository_root: &Path) -> Vec<String> {
+        let output = Command::new("git")
+            .current_dir(repository_root)
+            .args([
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "--sort=refname",
+                "refs/heads",
+            ])
+            .output()
+            .expect("list local branches");
+        assert!(
+            output.status.success(),
+            "git branch listing failed with {}",
+            output.status
+        );
+
+        String::from_utf8(output.stdout)
+            .expect("Git branch output should be UTF-8")
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 }
