@@ -9,8 +9,8 @@ import type { WorkflowNodeKind } from "@ora/workflow-mock";
 import { cn } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import {
-  WORKFLOW_NODE_CATALOG,
   WORKFLOW_NODE_DRAG_DATA_TYPE,
+  WORKFLOW_NODE_GROUPS,
 } from "./workflow-node-metadata";
 
 const MAX_ELASTIC_OFFSET = 18;
@@ -112,28 +112,40 @@ export function WorkflowNodeCatalog({
           )}
           style={{ transform: `translate3d(${elasticOffset}px, 0, 0)` }}
         >
-          {WORKFLOW_NODE_CATALOG.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.kind}
-                type="button"
-                draggable
-                onClick={() => onAdd(item.kind)}
-                onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = "copy";
-                  event.dataTransfer.setData(WORKFLOW_NODE_DRAG_DATA_TYPE, item.kind);
-                }}
-                title={`${t(item.descriptionKey)} · ${t("settings.workflow.dragNodeHint")}`}
-                className="group flex h-10 shrink-0 cursor-grab items-center gap-1.5 rounded-lg border border-transparent px-2 text-left outline-none transition-colors hover:border-border hover:bg-muted/65 focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
-              >
-                <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", item.tone)}>
-                  <Icon className="size-3.5" stroke={1.8} />
-                </span>
-                <span className="text-[10px] font-medium">{t(item.labelKey)}</span>
-              </button>
-            );
-          })}
+          {WORKFLOW_NODE_GROUPS.map((group) => (
+            <div
+              key={group.labelKey}
+              role="group"
+              aria-label={t(group.labelKey)}
+              className="flex items-center gap-1 border-r border-border pr-1 last:border-r-0 last:pr-0"
+            >
+              <span className="px-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {t(group.labelKey)}
+              </span>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.kind}
+                    type="button"
+                    draggable
+                    onClick={() => onAdd(item.kind)}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "copy";
+                      event.dataTransfer.setData(WORKFLOW_NODE_DRAG_DATA_TYPE, item.kind);
+                    }}
+                    title={`${t(item.descriptionKey)} · ${t("settings.workflow.dragNodeHint")}`}
+                    className="group flex h-10 shrink-0 cursor-grab items-center gap-1.5 rounded-lg border border-transparent px-2 text-left outline-none transition-colors hover:border-border hover:bg-muted/65 focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+                  >
+                    <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", item.tone)}>
+                      <Icon className="size-3.5" stroke={1.8} />
+                    </span>
+                    <span className="text-[10px] font-medium">{t(item.labelKey)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </div>
       </div>
     </div>

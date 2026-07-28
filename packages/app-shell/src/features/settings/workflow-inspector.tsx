@@ -117,7 +117,50 @@ function WorkflowNodeInspector({
             onChange={(event) => onUpdate({ ...node, description: event.target.value })}
           />
         </InspectorField>
-        {(node.kind === "prompt" || node.kind === "agent") && (
+        {node.kind === "trigger" && (
+          <InspectorField label={t("settings.workflow.field.trigger")} htmlFor="workflow-node-trigger">
+            <Select
+              value={node.config.trigger ?? "Manual"}
+              onValueChange={(trigger) => {
+                if (trigger !== null) {
+                  onUpdate({ ...node, config: { ...node.config, trigger } });
+                }
+              }}
+            >
+              <SelectTrigger id="workflow-node-trigger" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Manual">Manual</SelectItem>
+                <SelectItem value="Schedule">Schedule</SelectItem>
+                <SelectItem value="Webhook">Webhook</SelectItem>
+              </SelectContent>
+            </Select>
+          </InspectorField>
+        )}
+        {node.kind === "data-source" && (
+          <InspectorField label={t("settings.workflow.field.source")} htmlFor="workflow-node-source">
+            <Select
+              value={node.config.source ?? "Workspace"}
+              onValueChange={(source) => {
+                if (source !== null) {
+                  onUpdate({ ...node, config: { ...node.config, source } });
+                }
+              }}
+            >
+              <SelectTrigger id="workflow-node-source" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Workspace">Workspace</SelectItem>
+                <SelectItem value="Git Diff">Git Diff</SelectItem>
+                <SelectItem value="GitHub">GitHub</SelectItem>
+                <SelectItem value="HTTP API">HTTP API</SelectItem>
+              </SelectContent>
+            </Select>
+          </InspectorField>
+        )}
+        {node.kind === "llm" && (
           <InspectorField label={t("settings.workflow.field.model")} htmlFor="workflow-node-model">
             <Select
               value={node.config.model ?? "GPT-5"}
@@ -168,6 +211,44 @@ function WorkflowNodeInspector({
                 onUpdate({
                   ...node,
                   config: { ...node.config, condition: event.target.value },
+                })
+              }
+            />
+          </InspectorField>
+        )}
+        {node.kind === "code" && (
+          <InspectorField label={t("settings.workflow.field.language")} htmlFor="workflow-node-language">
+            <Select
+              value={node.config.language ?? "Shell"}
+              onValueChange={(language) => {
+                if (language !== null) {
+                  onUpdate({ ...node, config: { ...node.config, language } });
+                }
+              }}
+            >
+              <SelectTrigger id="workflow-node-language" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Shell">Shell</SelectItem>
+                <SelectItem value="TypeScript">TypeScript</SelectItem>
+                <SelectItem value="Python">Python</SelectItem>
+                <SelectItem value="Rust">Rust</SelectItem>
+              </SelectContent>
+            </Select>
+          </InspectorField>
+        )}
+        {(node.kind === "code" || node.kind === "tool" || node.config.command !== undefined) && (
+          <InspectorField label={t("settings.workflow.field.command")} htmlFor="workflow-node-command">
+            <Textarea
+              id="workflow-node-command"
+              spellCheck={false}
+              className="min-h-20 resize-y font-mono text-[11px] leading-5"
+              value={node.config.command ?? ""}
+              onChange={(event) =>
+                onUpdate({
+                  ...node,
+                  config: { ...node.config, command: event.target.value },
                 })
               }
             />

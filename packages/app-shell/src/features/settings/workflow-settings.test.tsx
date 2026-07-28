@@ -15,13 +15,19 @@ describe("WorkflowSettings", () => {
     render(<WorkflowSettings />);
 
     expect(screen.getByText("正在加载 mock 工作流…")).toBeInTheDocument();
-    expect(await screen.findByText("代码审查工作流")).toBeInTheDocument();
+    expect(await screen.findByText("OpenSpec 模式")).toBeInTheDocument();
     expect(screen.getByLabelText("工作流画布")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "输入" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "处理" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "触发器" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "数据来源" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "LLM" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "代码" })).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "测试运行" })[0]);
 
     expect(await screen.findByText("模拟运行成功")).toBeInTheDocument();
-    expect(screen.getByText(/发现 2 个建议项，未发现阻塞问题。/)).toBeInTheDocument();
+    expect(screen.getByText(/主规格已同步，变更已归档。/)).toBeInTheDocument();
   });
 
   it("zooms around the pointer with the mouse wheel", async () => {
@@ -72,10 +78,10 @@ describe("WorkflowSettings", () => {
       bottom: 600,
     });
 
-    await user.click(screen.getByRole("button", { name: "提示词" }));
+    await user.click(screen.getByRole("button", { name: "模板转换" }));
 
-    expect(screen.getAllByText("提示词 1")).toHaveLength(2);
-    const addedNode = screen.getByLabelText("提示词节点: 提示词 1");
+    expect(screen.getAllByText("模板转换 1")).toHaveLength(2);
+    const addedNode = screen.getByLabelText("模板转换节点: 模板转换 1");
     expect({
       left: addedNode.style.left,
       top: addedNode.style.top,
@@ -130,6 +136,9 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
 
+    const codeReviewWorkflow = await screen.findByText("代码审查工作流");
+    await user.click(codeReviewWorkflow.closest("button")!);
+
     const connection = await screen.findByRole("button", {
       name: "选择从开始到理解改动的连线",
     });
@@ -154,6 +163,9 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
 
+    const codeReviewWorkflow = await screen.findByText("代码审查工作流");
+    await user.click(codeReviewWorkflow.closest("button")!);
+
     const connection = await screen.findByRole("button", {
       name: "选择从开始到理解改动的连线",
     });
@@ -165,7 +177,7 @@ describe("WorkflowSettings", () => {
     const nextSourceHandle = screen.getByRole("button", {
       name: "从运行检查开始连接",
     });
-    const nextSourceNode = screen.getByLabelText("工具节点: 运行检查");
+    const nextSourceNode = screen.getByLabelText("代码节点: 运行检查");
     sourceHandle.setPointerCapture = () => {};
     const elementFromPoint = vi.fn(() => nextSourceNode);
     Object.defineProperty(document, "elementFromPoint", {
@@ -239,14 +251,59 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
 
-    await screen.findByText("代码审查工作流");
+    await screen.findByText("OpenSpec 模式");
     await user.click(screen.getByRole("button", { name: "新建工作流" }));
-    const nameInput = await screen.findByDisplayValue("新工作流 4");
+    const nameInput = await screen.findByDisplayValue("新工作流 7");
     await user.clear(nameInput);
     await user.type(nameInput, "发布复盘");
 
     expect(screen.getByDisplayValue("发布复盘")).toBeInTheDocument();
-    expect(screen.getByText("4 个工作流")).toBeInTheDocument();
+    expect(screen.getByText("7 个工作流")).toBeInTheDocument();
+  });
+
+  it("shows the OpenSpec preset with the same lifecycle as OpenSpec mode", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    const openspecWorkflow = await screen.findByText("OpenSpec 模式");
+    await user.click(openspecWorkflow.closest("button")!);
+
+    expect(screen.getByDisplayValue("OpenSpec 模式")).toBeInTheDocument();
+    expect(screen.getByLabelText("LLM节点: 探索需求")).toBeInTheDocument();
+    expect(screen.getByLabelText("LLM节点: 创建提案")).toBeInTheDocument();
+    expect(screen.getByLabelText("LLM节点: 实施变更")).toBeInTheDocument();
+    expect(screen.getByLabelText("LLM节点: 同步主规格")).toBeInTheDocument();
+    expect(screen.getByLabelText("工具节点: 归档变更")).toBeInTheDocument();
+
+    fireEvent.focus(screen.getByLabelText("LLM节点: 探索需求"));
+
+    expect(screen.getByLabelText("命令 / Skill")).toHaveValue("$openspec-explore");
+    expect(screen.getByLabelText("执行指令")).toHaveValue(
+      "使用 openspec-explore skill 检查相关代码与现有规格，澄清用户路径和边界条件。此阶段只探索，不写实现。",
+    );
+    expect(screen.getByText("CI 失败修复")).toBeInTheDocument();
+    expect(screen.getByText("依赖安全升级")).toBeInTheDocument();
+  });
+
+  it("shows type-specific configuration for triggers, data sources, and code", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    fireEvent.focus(await screen.findByLabelText("触发器节点: 开始变更"));
+    expect(screen.getByLabelText("触发方式")).toHaveTextContent("Manual");
+
+    const ciWorkflow = screen.getByText("CI 失败修复");
+    await user.click(ciWorkflow.closest("button")!);
+    fireEvent.focus(screen.getByLabelText("数据来源节点: 拉取失败日志"));
+    expect(screen.getByLabelText("数据来源")).toHaveTextContent("GitHub");
+
+    const dependencyWorkflow = screen.getByText("依赖安全升级");
+    await user.click(dependencyWorkflow.closest("button")!);
+    fireEvent.focus(screen.getByLabelText("代码节点: 扫描依赖风险"));
+    expect(screen.getByLabelText("运行语言")).toHaveTextContent("Shell");
+    expect(screen.getByLabelText("命令 / Skill")).toHaveValue(
+      "cargo audit\npnpm audit --prod",
+    );
   });
 
   it("localizes workflow chrome and mock content in English", async () => {
@@ -254,14 +311,14 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
 
-    expect(await screen.findByText("Code review workflow")).toBeInTheDocument();
+    expect(await screen.findByText("OpenSpec mode")).toBeInTheDocument();
     expect(screen.getByLabelText("Workflow canvas")).toBeInTheDocument();
     expect(screen.getByText("Scroll to zoom · Drag to pan")).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "Test run" })[0]);
 
     expect(await screen.findByText("Simulation successful")).toBeInTheDocument();
-    expect(screen.getByText(/Found 2 suggestions and no blocking issues./)).toBeInTheDocument();
+    expect(screen.getByText(/main specs were synced, and the change was archived./)).toBeInTheDocument();
   });
 });
 

@@ -826,7 +826,14 @@ function WorkflowNodeCard({
         )}
       </div>
       <div className="flex items-center justify-between px-3 py-2 text-[10px] text-muted-foreground">
-        <span className="truncate">{node.config.model ?? node.config.tool ?? t("settings.workflow.immediate")}</span>
+        <span className="truncate">
+          {node.config.model
+            ?? node.config.source
+            ?? node.config.language
+            ?? node.config.tool
+            ?? node.config.trigger
+            ?? t("settings.workflow.immediate")}
+        </span>
         <span className="font-mono text-[9px]">{node.id}</span>
       </div>
       <button

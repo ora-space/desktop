@@ -248,7 +248,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     }
   };
 
-  // Composer send. In Spec mode, a message typed while a stage is highlighted (none
+  // Composer send. In OpenSpec mode, a message typed while a stage is highlighted (none
   // running) launches that stage and rides its reminder; the reminder shows only in
   // `agentText`, never the transcript. Within a running stage nothing is injected.
   const sendOrStartSession = async (text: string) => {

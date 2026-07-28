@@ -157,8 +157,12 @@ export function WorkflowSettings() {
       position,
       config: {
         instruction: "",
-        ...(kind === "prompt" || kind === "agent" ? { model: "GPT-5" } : {}),
+        ...(kind === "trigger" ? { trigger: "Manual" } : {}),
+        ...(kind === "data-source" ? { source: "Workspace" } : {}),
+        ...(kind === "llm" ? { model: "GPT-5" } : {}),
+        ...(kind === "code" ? { language: "Shell", command: "" } : {}),
         ...(kind === "tool" ? { tool: "Terminal" } : {}),
+        ...(kind === "tool" ? { command: "" } : {}),
         ...(kind === "condition"
           ? { condition: t("settings.workflow.defaultCondition") }
           : {}),

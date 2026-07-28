@@ -10,7 +10,7 @@ import { WorkflowToggle } from "../workflow/workflow-toggle";
 interface ComposerProps {
   onSend: (text: string) => void;
   /**
-   * Invoked when Enter (or send) is pressed with an empty input. Used in Spec mode
+   * Invoked when Enter (or send) is pressed with an empty input. Used in OpenSpec mode
    * to run the highlighted stage directly; absent when there is nothing to launch.
    */
   onEmptySubmit?: () => void;

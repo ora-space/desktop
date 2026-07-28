@@ -1,9 +1,11 @@
 export type WorkflowNodeKind =
-  | "start"
-  | "prompt"
-  | "agent"
+  | "trigger"
+  | "data-source"
+  | "llm"
+  | "code"
   | "condition"
   | "tool"
+  | "template"
   | "output";
 
 export type WorkflowLocale = "zh-CN" | "en-US";
@@ -18,6 +20,10 @@ export interface WorkflowNodeConfig {
   model?: string;
   tool?: string;
   condition?: string;
+  command?: string;
+  trigger?: string;
+  source?: string;
+  language?: string;
 }
 
 export interface WorkflowNode {

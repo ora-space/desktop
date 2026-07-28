@@ -26,7 +26,7 @@ interface ChatViewProps {
   pendingPermissions?: SessionPermissionRequest[];
   disabled?: boolean;
   onSend: (text: string) => void;
-  /** Fired on Enter with an empty input; used in Spec mode to run the highlighted stage. */
+  /** Fired on Enter with an empty input; used in OpenSpec mode to run the highlighted stage. */
   onEmptySubmit?: () => void;
   onStop?: () => void;
   onRespondToPermission?: (permissionRequestId: string, optionId: string) => void;
