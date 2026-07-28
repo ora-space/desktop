@@ -20,10 +20,13 @@ import {
   IconDots,
   IconDownload,
   IconExternalLink,
+  IconPlayerPause,
   IconPlayerPlay,
   IconTrash,
 } from "@tabler/icons-react";
+import type { AgentCliStatus } from "@ora/contracts";
 import type { PluginEntry } from "./plugin-catalog";
+import { PluginDetectionStatus } from "./plugin-detection-status";
 import { PluginTile } from "./plugin-tile";
 
 /** The prompt suggestions and feature bullets are generic; each is filled with the plugin's name. */
@@ -46,10 +49,13 @@ const RESOURCE_KEYS = [
  * the skills it contributes, a details section and a VS Code-style info table. Every
  * value is read from the hard-coded catalog; the skill switches are local-only.
  */
-export function PluginDetail({ plugin, installed, onBack, onToggleInstall }: {
+export function PluginDetail({ plugin, installed, enabled, detectionStatus, onBack, onToggleEnabled, onToggleInstall }: {
   plugin: PluginEntry;
   installed: boolean;
+  enabled: boolean;
+  detectionStatus?: AgentCliStatus;
   onBack: () => void;
+  onToggleEnabled: () => void;
   onToggleInstall: () => void;
 }) {
   const { i18n, t } = useTranslation();
@@ -60,7 +66,11 @@ export function PluginDetail({ plugin, installed, onBack, onToggleInstall }: {
   ));
 
   const summary = t(plugin.summaryKey);
-  const updated = new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium" }).format(new Date(plugin.updated));
+  // Detection-driven CLI plugins carry no real catalog metadata, so `updated` is the
+  // literal placeholder "—" rather than a formattable date.
+  const updated = plugin.updated === "—"
+    ? plugin.updated
+    : new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium" }).format(new Date(plugin.updated));
 
   return (
     <div className="space-y-6">
@@ -81,23 +91,38 @@ export function PluginDetail({ plugin, installed, onBack, onToggleInstall }: {
           <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {installed
+          {detectionStatus
             ? (
               <>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={<Button variant="ghost" size="icon-sm" aria-label={t("settings.plugins.openMenu", { name: plugin.name })} className="text-muted-foreground" />}
-                  >
-                    <IconDots />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-40">
-                    <DropdownMenuItem variant="destructive" onClick={onToggleInstall}><IconTrash />{t("settings.plugins.uninstall")}</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <Button><IconPlayerPlay />{t("settings.plugins.tryNow")}</Button>
+                <PluginDetectionStatus status={detectionStatus} />
+                {detectionStatus === "ready" && (
+                  <Button variant={enabled ? "outline" : "default"} onClick={onToggleEnabled}>
+                    {enabled ? <IconPlayerPause /> : <IconPlayerPlay />}
+                    {t(enabled ? "settings.plugins.disable" : "settings.plugins.enable")}
+                  </Button>
+                )}
               </>
             )
-            : <Button variant="outline" onClick={onToggleInstall}><IconDownload />{t("settings.plugins.install")}</Button>}
+            : installed
+              ? (
+                <>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={<Button variant="ghost" size="icon-sm" aria-label={t("settings.plugins.openMenu", { name: plugin.name })} className="text-muted-foreground" />}
+                    >
+                      <IconDots />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-40">
+                      <DropdownMenuItem variant="destructive" onClick={onToggleInstall}><IconTrash />{t("settings.plugins.uninstall")}</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button variant={enabled ? "outline" : "default"} onClick={onToggleEnabled}>
+                    {enabled ? <IconPlayerPause /> : <IconPlayerPlay />}
+                    {t(enabled ? "settings.plugins.disable" : "settings.plugins.enable")}
+                  </Button>
+                </>
+              )
+              : <Button variant="outline" onClick={onToggleInstall}><IconDownload />{t("settings.plugins.install")}</Button>}
         </div>
       </header>
 

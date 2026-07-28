@@ -88,6 +88,39 @@ pub struct ListAgentModelsResponse {
     pub groups: Vec<AgentCliModels>,
 }
 
+/// Describes the live ACP handshake state of one application-scoped CLI runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub enum AgentCliStatus {
+    Ready,
+    Starting,
+    Unavailable,
+}
+
+/// Pairs one CLI identity with its current runtime detection status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct AgentCliRuntimeStatus {
+    pub agent_cli: AgentCli,
+    pub status: AgentCliStatus,
+}
+
+/// Requests the live detection status of every application-scoped CLI runtime.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct GetAgentRuntimeStatusRequest {}
+
+/// Returns the live detection status of every application-scoped CLI runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct GetAgentRuntimeStatusResponse {
+    pub statuses: Vec<AgentCliRuntimeStatus>,
+}
+
 /// Returns the created session after the ACP `session/new` handshake succeeds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -293,6 +326,10 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentCliModels::export(config)?;
     ListAgentModelsRequest::export(config)?;
     ListAgentModelsResponse::export(config)?;
+    AgentCliStatus::export(config)?;
+    AgentCliRuntimeStatus::export(config)?;
+    GetAgentRuntimeStatusRequest::export(config)?;
+    GetAgentRuntimeStatusResponse::export(config)?;
     CreateSessionResponse::export(config)?;
     GetSessionRequest::export(config)?;
     GetSessionResponse::export(config)?;

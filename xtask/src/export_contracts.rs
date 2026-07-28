@@ -294,6 +294,8 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "CreateSessionResponse"
         | "DeleteSessionRequest"
         | "DeleteSessionResponse"
+        | "GetAgentRuntimeStatusRequest"
+        | "GetAgentRuntimeStatusResponse"
         | "GetSessionRequest"
         | "GetSessionResponse"
         | "LoadSessionRequest"

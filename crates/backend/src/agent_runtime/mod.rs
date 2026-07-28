@@ -13,7 +13,7 @@ use support::*;
 use crate::clock::SystemClock;
 use crate::task::resolve_task_cwd;
 use crate::{BackendError, ErrorClassification};
-use connection::{ConnectionSupervisor, ConnectionSupervisors};
+use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
 use ora_contracts::acp::content::ContentBlock;
 use ora_contracts::acp::session::SessionUpdate;
@@ -153,6 +153,23 @@ impl AgentRuntimeManager {
     /// Lists model identifiers from every CLI whose discovery command succeeds.
     pub(crate) async fn list_agent_models(&self) -> ora_contracts::ListAgentModelsResponse {
         models::list_agent_models(&self.inner.home_directory).await
+    }
+
+    /// Reports the live ACP handshake status of every application-scoped CLI runtime.
+    pub(crate) fn agent_runtime_status(&self) -> ora_contracts::GetAgentRuntimeStatusResponse {
+        ora_contracts::GetAgentRuntimeStatusResponse {
+            statuses: AgentCli::ALL
+                .into_iter()
+                .map(|agent_cli| ora_contracts::AgentCliRuntimeStatus {
+                    agent_cli: contract_agent_cli(agent_cli),
+                    status: match self.inner.connections.for_agent(agent_cli).status() {
+                        ConnectionStatus::Ready => ora_contracts::AgentCliStatus::Ready,
+                        ConnectionStatus::Starting => ora_contracts::AgentCliStatus::Starting,
+                        ConnectionStatus::Unavailable => ora_contracts::AgentCliStatus::Unavailable,
+                    },
+                })
+                .collect(),
+        }
     }
 
     /// Creates a session over the selected application-scoped CLI connection.

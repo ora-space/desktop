@@ -85,6 +85,7 @@ pub const SESSION_STOP_PATH: &str = "/api/sessions/{sessionId}/stop";
 pub const SESSION_SWITCH_AGENT_PATH: &str = "/api/sessions/{sessionId}/agent";
 pub const SESSION_RESUME_HISTORY_PATH: &str = "/api/sessions/{sessionId}/history/resume";
 pub const AGENT_MODELS_PATH: &str = "/api/agent-models";
+pub const AGENT_RUNTIME_STATUS_PATH: &str = "/api/agent-runtime/status";
 pub const SKILLS_PATH: &str = "/api/skills";
 pub const SKILL_PATH: &str = "/api/skills/{skillId}";
 pub const AGENTS_PATH: &str = "/api/agents";
@@ -403,6 +404,17 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_template: AGENT_MODELS_PATH,
         request_type: "ListAgentModelsRequest",
         response_type: "ListAgentModelsResponse",
+        path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "getAgentRuntimeStatus",
+        namespace: AGENT_RUNTIME_NAMESPACE,
+        member_name: "getStatus",
+        method: FrontendHttpMethod::Get,
+        path_template: AGENT_RUNTIME_STATUS_PATH,
+        request_type: "GetAgentRuntimeStatusRequest",
+        response_type: "GetAgentRuntimeStatusResponse",
         path_params: NO_PATH_PARAMS,
         has_json_body: false,
     },

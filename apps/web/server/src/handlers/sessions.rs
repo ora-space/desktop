@@ -8,11 +8,12 @@ use futures_util::stream;
 use ora_backend::{BackendError, SessionEventStream};
 use ora_contracts::{
     AgentCli, ContractError, CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest,
-    DeleteSessionResponse, EmptyErrorParams, GetSessionRequest, GetSessionResponse,
-    ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse,
-    LoadSessionRequest, PromptSessionRequest, PublicError, RespondToPermissionRequest,
-    RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse,
-    StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
+    DeleteSessionResponse, EmptyErrorParams, GetAgentRuntimeStatusRequest,
+    GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest,
+    ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
+    PromptSessionRequest, PublicError, RespondToPermissionRequest, RespondToPermissionResponse,
+    ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, StopSessionRequest,
+    StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -75,6 +76,17 @@ pub async fn list_agent_models(
         .backend()
         .list_agent_models(ListAgentModelsRequest {})
         .await
+        .map(Json)
+        .map_err(WebApiError::from)
+}
+
+/// Reports the live detection status of every application-scoped CLI runtime.
+pub async fn get_agent_runtime_status(
+    State(app_state): State<AppState>,
+) -> Result<Json<GetAgentRuntimeStatusResponse>, WebApiError> {
+    app_state
+        .backend()
+        .get_agent_runtime_status(GetAgentRuntimeStatusRequest {})
         .map(Json)
         .map_err(WebApiError::from)
 }

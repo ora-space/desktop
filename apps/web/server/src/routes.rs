@@ -6,11 +6,12 @@ use axum::Router;
 use axum::middleware;
 use axum::routing::{get, post};
 use ora_contracts::{
-    AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
-    PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
-    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_RESUME_HISTORY_PATH, SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH,
-    SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    AGENT_MODELS_PATH, AGENT_PATH, AGENT_RUNTIME_STATUS_PATH, AGENTS_PATH,
+    FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
+    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_RESUME_HISTORY_PATH,
+    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH,
+    TASK_PATH, TASKS_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -87,6 +88,10 @@ pub fn build_router(app_state: AppState) -> Router {
         // agentRuntime
         // =============================================================================
         .route(AGENT_MODELS_PATH, get(sessions::list_agent_models))
+        .route(
+            AGENT_RUNTIME_STATUS_PATH,
+            get(sessions::get_agent_runtime_status),
+        )
         // =============================================================================
         // skill
         // =============================================================================

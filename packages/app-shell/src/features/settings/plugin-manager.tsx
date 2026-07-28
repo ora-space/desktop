@@ -103,8 +103,13 @@ export function PluginManager({ plugins, disabledIds, onBack, onOpen, onToggleEn
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-44">
                     <DropdownMenuItem onClick={() => onOpen(plugin.id)}><IconInfoCircle />{t("settings.plugins.viewDetails")}</DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onClick={() => onUninstall(plugin.id)}><IconTrash />{t("settings.plugins.uninstall")}</DropdownMenuItem>
+                    {/* The CLI runtimes' install state is detected, not managed here, so they never offer uninstall. */}
+                    {!plugin.detectionAgentCli && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem variant="destructive" onClick={() => onUninstall(plugin.id)}><IconTrash />{t("settings.plugins.uninstall")}</DropdownMenuItem>
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <Switch

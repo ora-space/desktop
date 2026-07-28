@@ -47,6 +47,14 @@ enum ConnectionState {
     Unavailable,
 }
 
+/// Reports one CLI's live detection state without exposing its private connection handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConnectionStatus {
+    Ready,
+    Starting,
+    Unavailable,
+}
+
 /// Keeps one supervisor generation's fixed dependencies together as the retry loop evolves.
 struct SupervisorContext {
     agent_cli: AgentCli,
@@ -154,6 +162,15 @@ impl ConnectionSupervisor {
             active_generation,
             routes,
             shutdown,
+        }
+    }
+
+    /// Reports the live tri-state detection status without exposing the connection itself.
+    pub fn status(&self) -> ConnectionStatus {
+        match &*self.state.borrow() {
+            ConnectionState::Ready(_) => ConnectionStatus::Ready,
+            ConnectionState::Starting => ConnectionStatus::Starting,
+            ConnectionState::Unavailable => ConnectionStatus::Unavailable,
         }
     }
 

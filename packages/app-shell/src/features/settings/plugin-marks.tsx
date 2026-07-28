@@ -32,3 +32,51 @@ export function ClaudeMark(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+/**
+ * NGA's mark: an abstract hexagonal node with a crossing lattice, standing in
+ * as a neutral placeholder for Ora's internal NGA runtime until it has its
+ * own product identity (it is not a real published CLI yet).
+ */
+export function NgaMark(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M12 3L20 7.5V16.5L12 21L4 16.5V7.5L12 3Z" />
+      <path opacity={0.45} d="M12 3V21M4 7.5L20 16.5M20 7.5L4 16.5" />
+    </svg>
+  );
+}
+
+/**
+ * CodeAgentCLI's mark: a pair of outward chevrons around a cursor dot,
+ * standing in as a neutral placeholder for Ora's internal CodeAgentCLI
+ * runtime until it has its own product identity (it is not a real published
+ * CLI yet).
+ */
+export function CodeAgentCliMark(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M8 6L2.5 12L8 18" />
+      <path d="M16 6L21.5 12L16 18" />
+      <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

@@ -292,6 +292,14 @@ impl Backend {
         Ok(self.agent_runtime.list_agent_models().await)
     }
 
+    /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.
+    pub fn get_agent_runtime_status(
+        &self,
+        _request: GetAgentRuntimeStatusRequest,
+    ) -> Result<GetAgentRuntimeStatusResponse, BackendError> {
+        Ok(self.agent_runtime.agent_runtime_status())
+    }
+
     // =============================================================================
     // skill
     // =============================================================================

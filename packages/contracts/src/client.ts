@@ -93,6 +93,8 @@ export function createContractsClient(
     agentRuntime: {
       listModels: (request, options) =>
         executeOperation("listAgentModels", request, transport, options),
+      getStatus: (request, options) =>
+        executeOperation("getAgentRuntimeStatus", request, transport, options),
     },
     skill: {
       create: (request, options) => executeOperation("createSkill", request, transport, options),

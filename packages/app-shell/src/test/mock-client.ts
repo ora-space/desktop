@@ -123,6 +123,13 @@ export function createMockClient(state: MockClientState): ContractsClient {
           { agentCli: "code_agent_cli", models: ["codeagentcli/default"] },
         ],
       }),
+      getStatus: async () => ({
+        statuses: [
+          { agentCli: "open_code", status: "ready" },
+          { agentCli: "nga", status: "ready" },
+          { agentCli: "code_agent_cli", status: "ready" },
+        ],
+      }),
     },
     agent: {
       list: async () => ({ agents: [...state.agents] }),

@@ -25,13 +25,13 @@ pub use file_system::{
     ListDirectoryResponse,
 };
 pub use frontend::{
-    AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, FrontendEndpoint,
-    FrontendHttpMethod, FrontendPathParam, FrontendQueryParam, FrontendResponseMode,
-    GIT_IDENTITY_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
-    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
-    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_RESUME_HISTORY_PATH,
-    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH,
-    TASK_PATH, TASKS_PATH, frontend_endpoints,
+    AGENT_MODELS_PATH, AGENT_PATH, AGENT_RUNTIME_STATUS_PATH, AGENTS_PATH,
+    FILE_SYSTEM_DIRECTORY_PATH, FrontendEndpoint, FrontendHttpMethod, FrontendPathParam,
+    FrontendQueryParam, FrontendResponseMode, GIT_IDENTITY_PATH, PROJECT_PATH,
+    PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
+    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
+    SESSION_RESUME_HISTORY_PATH, SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH,
+    SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
 };
 pub use git::{GetGitIdentityRequest, GitIdentityResponse};
 pub use project::{
@@ -44,13 +44,15 @@ pub use project_work_context::{
     ProjectWorkContextSurface, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse,
 };
 pub use session::{
-    AgentCli, AgentCliModels, CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest,
-    DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest,
-    ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent,
-    LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
-    RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse,
-    Session, SessionHistoryState, SessionPermissionRequest, SessionStatus, StopSessionRequest,
-    StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
+    AgentCli, AgentCliModels, AgentCliRuntimeStatus, AgentCliStatus, CreateSessionRequest,
+    CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
+    GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest,
+    GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest,
+    ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent,
+    PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse,
+    ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, Session, SessionHistoryState,
+    SessionPermissionRequest, SessionStatus, StopSessionRequest, StopSessionResponse,
+    SwitchSessionAgentRequest, SwitchSessionAgentResponse,
 };
 pub use skill::{
     CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,

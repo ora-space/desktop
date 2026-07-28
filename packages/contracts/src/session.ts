@@ -17,6 +17,19 @@ export type AgentCli = "open_code" | "nga" | "code_agent_cli";
 export type AgentCliModels = { agentCli: AgentCli; models: Array<string> };
 
 /**
+ * Pairs one CLI identity with its current runtime detection status.
+ */
+export type AgentCliRuntimeStatus = {
+  agentCli: AgentCli;
+  status: AgentCliStatus;
+};
+
+/**
+ * Describes the live ACP handshake state of one application-scoped CLI runtime.
+ */
+export type AgentCliStatus = "ready" | "starting" | "unavailable";
+
+/**
  * Creates a provider-backed session on one selected application-scoped CLI.
  */
 export type CreateSessionRequest = { taskId: string; agentCli: AgentCli };
@@ -38,6 +51,18 @@ export type DeleteSessionRequest = { sessionId: string };
  * Returns the removed Ora session identifier without deleting provider history.
  */
 export type DeleteSessionResponse = { sessionId: string };
+
+/**
+ * Requests the live detection status of every application-scoped CLI runtime.
+ */
+export type GetAgentRuntimeStatusRequest = Record<symbol, never>;
+
+/**
+ * Returns the live detection status of every application-scoped CLI runtime.
+ */
+export type GetAgentRuntimeStatusResponse = {
+  statuses: Array<AgentCliRuntimeStatus>;
+};
 
 /**
  * Identifies which session to fetch.
