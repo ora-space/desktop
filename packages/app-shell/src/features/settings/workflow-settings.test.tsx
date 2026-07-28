@@ -6,6 +6,7 @@ import { WorkflowSettings } from "./workflow-settings";
 
 describe("WorkflowSettings", () => {
   afterEach(async () => {
+    Reflect.deleteProperty(document, "elementFromPoint");
     await appI18n.changeLanguage("zh-CN");
   });
 
@@ -123,6 +124,115 @@ describe("WorkflowSettings", () => {
       top: "257px",
     });
     expect(screen.queryByText("释放以添加节点")).not.toBeInTheDocument();
+  });
+
+  it("deletes workflow connections by double-click or keyboard", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    const connection = await screen.findByRole("button", {
+      name: "选择从开始到理解改动的连线",
+    });
+    await user.dblClick(connection);
+
+    expect(screen.queryByRole("button", {
+      name: "选择从开始到理解改动的连线",
+    })).not.toBeInTheDocument();
+
+    const keyboardConnection = screen.getByRole("button", {
+      name: "选择从理解改动到质量门禁的连线",
+    });
+    await user.click(keyboardConnection);
+    fireEvent.keyDown(keyboardConnection, { key: "Delete" });
+
+    expect(screen.queryByRole("button", {
+      name: "选择从理解改动到质量门禁的连线",
+    })).not.toBeInTheDocument();
+  });
+
+  it("moves a selected connection endpoint to another node", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    const connection = await screen.findByRole("button", {
+      name: "选择从开始到理解改动的连线",
+    });
+    await user.click(connection);
+
+    const sourceHandle = screen.getByRole("button", {
+      name: "移动连线起点：开始",
+    });
+    const nextSourceHandle = screen.getByRole("button", {
+      name: "从运行检查开始连接",
+    });
+    const nextSourceNode = screen.getByLabelText("工具节点: 运行检查");
+    sourceHandle.setPointerCapture = () => {};
+    const elementFromPoint = vi.fn(() => nextSourceNode);
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: elementFromPoint,
+    });
+
+    fireEvent.pointerDown(sourceHandle, {
+      pointerId: 1,
+      clientX: 302,
+      clientY: 347,
+    });
+    fireEvent.pointerMove(screen.getByLabelText("工作流连线"), {
+      pointerId: 1,
+      clientX: 1168,
+      clientY: 153,
+    });
+
+    expect(nextSourceNode.className).toContain("border-ring");
+    expect(nextSourceHandle.className).toContain("ring-2");
+
+    fireEvent.pointerUp(screen.getByLabelText("工作流连线"), {
+      pointerId: 1,
+      clientX: 1168,
+      clientY: 153,
+    });
+
+    expect(screen.getByRole("button", {
+      name: "选择从运行检查到理解改动的连线",
+    })).toBeInTheDocument();
+    expect(screen.queryByRole("button", {
+      name: "选择从开始到理解改动的连线",
+    })).not.toBeInTheDocument();
+
+    const targetHandle = screen.getByRole("button", {
+      name: "移动连线终点：理解改动",
+    });
+    const nextTargetHandle = screen.getByRole("button", {
+      name: "连接到质量门禁",
+    });
+    const nextTargetNode = screen.getByLabelText("条件分支节点: 质量门禁");
+    targetHandle.setPointerCapture = () => {};
+    elementFromPoint.mockReturnValue(nextTargetNode);
+
+    fireEvent.pointerDown(targetHandle, {
+      pointerId: 2,
+      clientX: 356,
+      clientY: 249,
+    });
+    fireEvent.pointerMove(screen.getByLabelText("工作流连线"), {
+      pointerId: 2,
+      clientX: 650,
+      clientY: 249,
+    });
+
+    expect(nextTargetNode.className).toContain("border-ring");
+    expect(nextTargetHandle.className).toContain("ring-2");
+
+    fireEvent.pointerUp(screen.getByLabelText("工作流连线"), {
+      pointerId: 2,
+      clientX: 650,
+      clientY: 249,
+    });
+
+    expect(screen.getByRole("button", {
+      name: "选择从运行检查到质量门禁的连线",
+    })).toBeInTheDocument();
   });
 
   it("creates a workflow from the left manager and allows renaming it", async () => {
