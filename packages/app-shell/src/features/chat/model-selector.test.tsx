@@ -14,7 +14,7 @@ beforeEach(() => {
 });
 
 describe("ModelSelector", () => {
-  it("shows a bounded provider catalog with one provider expanded", async () => {
+  it("shows a bounded coding-agent catalog with one agent expanded", async () => {
     const user = userEvent.setup();
     render(
       <AppI18nProvider>
@@ -25,20 +25,27 @@ describe("ModelSelector", () => {
     await user.click(screen.getByRole("button", { name: /选择模型|Select model/ }));
 
     const catalog = screen
-      .getByText(/模型目录|Model catalog/)
+      .getByText(/Agent 模型|Agent models/)
       .closest('[data-slot="popover-content"]');
     expect(catalog).toHaveClass(
-      "max-h-[min(20rem,var(--available-height))]",
+      "max-h-[min(24rem,var(--available-height))]",
       "overflow-y-auto",
+      "w-72",
     );
     expect(
-      screen.getByRole("button", { name: /^DeepSeek/, expanded: true }),
+      screen.getByText(/4 个 Agent|4 Agents/),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: /^Claude/, expanded: false }),
+      screen.getByRole("button", { name: /^OpenCode/, expanded: true }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: /^OpenAI/ })).toBeVisible();
-    expect(screen.getByRole("button", { name: /^OpenCode/ })).toBeVisible();
+    for (const agentName of ["Codex", "Claude Code", "CodeAgent"]) {
+      expect(
+        screen.getByRole("button", {
+          name: new RegExp(`^${agentName}`),
+          expanded: false,
+        }),
+      ).toBeVisible();
+    }
   });
 
   it("keeps mock selection local and preserves the OpenCode runtime settings", async () => {
@@ -50,22 +57,27 @@ describe("ModelSelector", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /选择模型|Select model/ }));
-    await user.click(screen.getByRole("button", { name: /^Claude/ }));
+    await user.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await user.click(
-      screen.getByRole("button", { name: /Claude Sonnet 4\.5/ }),
+      screen.getByRole("button", { name: /Claude Sonnet 5/ }),
     );
 
     expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);
+    const trigger = screen.getByRole("button", {
+      name: /选择模型|Select model/,
+    });
+    expect(trigger).toHaveTextContent("Claude Sonnet 5");
+    expect(trigger).not.toHaveTextContent("OpenCode");
     expect(
-      screen.getByRole("button", { name: /选择模型|Select model/ }),
-    ).toHaveTextContent("Claude Sonnet 4.5");
+      trigger.querySelector("[data-coding-agent]"),
+    ).toHaveAttribute("data-coding-agent", "claude_code");
   });
 
   it("clears mock ids persisted by the previous coupled implementation", async () => {
     useSettingsStore.setState({
       settings: {
         ...DEFAULT_SETTINGS,
-        model: "anthropic/claude-sonnet-4.5",
+        model: "claude-code/claude-sonnet-5",
       },
     });
 

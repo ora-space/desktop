@@ -14,12 +14,12 @@ import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import {
   DEFAULT_MOCK_MODEL_ID,
-  MOCK_MODEL_PROVIDERS,
+  MOCK_CODING_AGENTS,
   isMockModelId,
   selectedMockModel,
   type MockModelCapability,
 } from "./mock-model-catalog";
-import { ModelProviderLogo, ProviderLogo } from "./provider-logos";
+import { CodingAgentLogo } from "./provider-logos";
 
 const CAPABILITY_LABEL_KEYS: Record<MockModelCapability, string> = {
   recommended: "chat.modelSelector.capability.recommended",
@@ -29,7 +29,18 @@ const CAPABILITY_LABEL_KEYS: Record<MockModelCapability, string> = {
   fast: "chat.modelSelector.capability.fast",
   free: "chat.modelSelector.capability.free",
   longContext: "chat.modelSelector.capability.longContext",
+  multimodal: "chat.modelSelector.capability.multimodal",
+  agentic: "chat.modelSelector.capability.agentic",
 };
+
+/** Removes a repeated brand prefix when an agent label is shown beside the model. */
+function modelNameWithoutAgent(agentName: string, modelName: string) {
+  const prefixes = [`${agentName} `, `${agentName.split(" ")[0]} `];
+  return prefixes.reduce(
+    (name, prefix) => (name.startsWith(prefix) ? name.slice(prefix.length) : name),
+    modelName,
+  );
+}
 
 /**
  * Presents a compact Codex-style mock catalog while the actual ACP session
@@ -42,8 +53,12 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
   const updateSettings = useSettingsStore((state) => state.updateSettings);
   const [displayModelId, setDisplayModelId] = useState(DEFAULT_MOCK_MODEL_ID);
   const selection = selectedMockModel(displayModelId);
-  const [expandedProvider, setExpandedProvider] = useState<string | null>(
-    selection.provider.id,
+  const compactModelName = modelNameWithoutAgent(
+    selection.agent.name,
+    selection.model.name,
+  );
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(
+    selection.agent.id,
   );
 
   useEffect(() => {
@@ -71,14 +86,27 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
           />
         }
       >
-        <ProviderLogo agentCli="open_code" className="size-3.5 shrink-0" />
+        <span
+          data-coding-agent={selection.agent.id}
+          className="flex size-3.5 shrink-0 items-center justify-center"
+        >
+          <CodingAgentLogo
+            agent={selection.agent.id}
+            className="size-3.5"
+          />
+        </span>
         <span className="grid grid-cols-[0fr] opacity-0 transition-all duration-200 group-hover/model:grid-cols-[1fr] group-hover/model:opacity-100 group-data-popup-open/model:grid-cols-[1fr] group-data-popup-open/model:opacity-100">
           <span className="min-w-0 overflow-hidden whitespace-nowrap">
-            OpenCode
+            {selection.agent.name}
           </span>
         </span>
         <span className="min-w-0 truncate text-foreground">
-          {selection.model.name}
+          <span className="group-hover/model:hidden group-data-popup-open/model:hidden">
+            {selection.model.name}
+          </span>
+          <span className="hidden group-hover/model:inline group-data-popup-open/model:inline">
+            {compactModelName}
+          </span>
         </span>
         <IconChevronDown
           className="size-3 shrink-0 opacity-50 transition-transform duration-200 group-data-popup-open/model:rotate-180"
@@ -89,41 +117,42 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
       <PopoverContent
         align="end"
         side="top"
-        className="max-h-[min(20rem,var(--available-height))] w-64 gap-0 overflow-y-auto p-1"
+        className="max-h-[min(24rem,var(--available-height))] w-72 gap-0 overflow-y-auto p-1"
       >
         <div className="flex items-center justify-between px-2 py-1.5">
           <span className="text-xs font-medium text-foreground">
             {t("chat.modelSelector.catalog")}
           </span>
-          <span className="text-[10px] text-muted-foreground">OpenCode</span>
+          <span className="text-[10px] tabular-nums text-muted-foreground">
+            {t("chat.modelSelector.catalogSummary", {
+              agents: MOCK_CODING_AGENTS.length,
+            })}
+          </span>
         </div>
 
         <Accordion
-          value={expandedProvider === null ? [] : [expandedProvider]}
-          onValueChange={(value) => setExpandedProvider(value.at(-1) ?? null)}
+          value={expandedAgent === null ? [] : [expandedAgent]}
+          onValueChange={(value) => setExpandedAgent(value.at(-1) ?? null)}
         >
-          {MOCK_MODEL_PROVIDERS.map((provider) => (
+          {MOCK_CODING_AGENTS.map((agent) => (
             <AccordionItem
-              key={provider.id}
-              value={provider.id}
+              key={agent.id}
+              value={agent.id}
               className="border-border/60"
             >
               <AccordionTrigger className="min-h-8 items-center rounded-sm px-2 py-1 hover:bg-muted hover:no-underline">
                 <span className="flex min-w-0 items-center gap-2">
-                  <ModelProviderLogo
-                    provider={provider.id}
+                  <CodingAgentLogo
+                    agent={agent.id}
                     className="size-3.5 shrink-0 text-muted-foreground"
                   />
                   <span className="truncate text-xs font-normal">
-                    {provider.name}
-                  </span>
-                  <span className="text-[10px] font-normal tabular-nums text-muted-foreground">
-                    {provider.models.length}
+                    {agent.name}
                   </span>
                 </span>
               </AccordionTrigger>
               <AccordionContent className="pb-1 pl-5 pr-0 pt-0">
-                {provider.models.map((model) => {
+                {agent.models.map((model) => {
                   const selected = model.id === selection.model.id;
                   const capability = model.capabilities[0];
                   return (
