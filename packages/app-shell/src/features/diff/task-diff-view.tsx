@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Decoration,
@@ -69,7 +69,7 @@ interface TaskDiffViewProps {
   taskId: string;
   viewType: TaskDiffViewType;
   fileTreeOpen: boolean;
-  expanded?: boolean;
+  toolbar?: ReactNode;
   onFileTreeOpenChange: (open: boolean) => void;
 }
 
@@ -90,7 +90,7 @@ export function TaskDiffView({
   taskId,
   viewType,
   fileTreeOpen,
-  expanded = false,
+  toolbar,
   onFileTreeOpenChange,
 }: TaskDiffViewProps) {
   const { t } = useTranslation();
@@ -110,7 +110,7 @@ export function TaskDiffView({
   const fileTreePanelRef = useRef<ResizablePanelHandle | null>(null);
 
   const files = useMemo(
-    () => diffQuery.data === undefined ? [] : parseDiff(diffQuery.data.patch),
+    () => diffQuery.data === undefined ? [] : parseTaskDiffPatch(diffQuery.data.patch),
     [diffQuery.data],
   );
   const stats = useMemo(() => countChanges(files), [files]);
@@ -239,9 +239,7 @@ export function TaskDiffView({
       aria-busy={diffQuery.isFetching}
     >
       <header
-        className={`flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border py-2 pl-3 sm:pl-4 ${
-          expanded ? "pr-[13.5rem]" : "pr-40"
-        }`}
+        className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-4"
       >
         <div className="flex min-w-0 items-center gap-2">
           <IconCode className="size-4 text-muted-foreground" />
@@ -315,6 +313,7 @@ export function TaskDiffView({
             <IconUpload />{t("diff.push")}
           </Button>
         </div>
+        {toolbar}
       </header>
       {diffQuery.isFetching && (
         <div
@@ -470,6 +469,11 @@ export function TaskDiffView({
       />
     </section>
   );
+}
+
+/** Treats an empty backend snapshot as no files instead of a synthetic blank diff entry. */
+export function parseTaskDiffPatch(patch: string): FileData[] {
+  return patch.trim().length === 0 ? [] : parseDiff(patch);
 }
 
 interface CommitChangesDialogProps {

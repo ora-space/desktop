@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parseDiff } from "react-diff-view";
-import { countChanges, createCommentAnchor } from "./task-diff-view";
+import {
+  countChanges,
+  createCommentAnchor,
+  parseTaskDiffPatch,
+} from "./task-diff-view";
 
 const PATCH = [
   "diff --git a/src/main.ts b/src/main.ts",
@@ -15,8 +19,12 @@ const PATCH = [
 ].join("\n");
 
 describe("task diff view mapping", () => {
+  it("maps an empty backend patch to an empty file list", () => {
+    expect(parseTaskDiffPatch(" \r\n")).toEqual([]);
+  });
+
   it("counts additions and deletions from parsed backend patches", () => {
-    expect(countChanges(parseDiff(PATCH))).toEqual({ additions: 1, deletions: 1 });
+    expect(countChanges(parseTaskDiffPatch(PATCH))).toEqual({ additions: 1, deletions: 1 });
   });
 
   it("maps a parsed insertion to the backend comment anchor contract", () => {

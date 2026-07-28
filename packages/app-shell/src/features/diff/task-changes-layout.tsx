@@ -58,6 +58,59 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
     }, EXPANDED_PANEL_EXIT_MS);
   };
 
+  const changesControls = (
+    <div
+      role="group"
+      aria-label={t("diff.changes")}
+      className="flex h-8 shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-background/95 p-0.5 shadow-sm backdrop-blur"
+    >
+      {open && (
+        <>
+          {expanded && (
+            <Button
+              size="icon-sm"
+              variant={viewType === "split" ? "secondary" : "ghost"}
+              className="size-7"
+              aria-label={t(viewType === "split" ? "diff.useUnifiedView" : "diff.useSplitView")}
+              onClick={() => setViewType((value) => value === "unified" ? "split" : "unified")}
+            >
+              <IconColumns2 />
+            </Button>
+          )}
+          <Button
+            size="icon-sm"
+            variant={fileTreeOpen ? "secondary" : "ghost"}
+            className="size-7"
+            aria-label={t("diff.toggleFileTree")}
+            onClick={() => setFileTreeOpen((value) => !value)}
+          >
+            <IconFiles />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant={expanded ? "secondary" : "ghost"}
+            className="size-7"
+            aria-label={t(expanded ? "diff.restorePanel" : "diff.expandPanel")}
+            onClick={toggleExpanded}
+          >
+            {expanded ? <IconArrowsMinimize /> : <IconArrowsMaximize />}
+          </Button>
+          <span className="mx-0.5 h-4 w-px bg-border/70" aria-hidden="true" />
+        </>
+      )}
+      <Button
+        size="sm"
+        variant={open ? "secondary" : "ghost"}
+        className="h-7 px-2.5 shadow-none"
+        aria-pressed={open}
+        onClick={() => open ? close() : setOpen(true)}
+      >
+        <IconGitBranch />
+        {t("diff.changes")}
+      </Button>
+    </div>
+  );
+
   const workspaceContent = taskId === undefined || !open || expanded ? children : (
     <ResizablePanelGroup orientation="horizontal" className="min-h-0 min-w-0 flex-1">
       <ResizablePanel id="task-conversation" minSize={360}>
@@ -86,6 +139,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
           taskId={taskId}
           viewType={viewType}
           fileTreeOpen={fileTreeOpen}
+          toolbar={changesControls}
           onFileTreeOpenChange={setFileTreeOpen}
         />
       </ResizablePanel>
@@ -117,62 +171,19 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
               taskId={taskId}
               viewType={viewType}
               fileTreeOpen={fileTreeOpen}
-              expanded
+              toolbar={changesControls}
               onFileTreeOpenChange={setFileTreeOpen}
             />
           </section>
         </>
       )}
-      {taskId !== undefined && (
+      {taskId !== undefined && !open && (
         <div
-          role="group"
-          aria-label={t("diff.changes")}
-          className={`${expanded ? "fixed z-[60]" : "absolute z-30"} ${windowControls.kind === "overlay" ? "right-28" : "right-3"} top-3 flex h-8 items-center gap-0.5 rounded-lg border border-border/70 bg-background/95 p-0.5 shadow-sm backdrop-blur`}
+          className={`absolute top-3 z-30 ${
+            windowControls.kind === "overlay" ? "right-56" : "right-3"
+          }`}
         >
-          {open && (
-            <>
-              {expanded && (
-                <Button
-                  size="icon-sm"
-                  variant={viewType === "split" ? "secondary" : "ghost"}
-                  className="size-7"
-                  aria-label={t(viewType === "split" ? "diff.useUnifiedView" : "diff.useSplitView")}
-                  onClick={() => setViewType((value) => value === "unified" ? "split" : "unified")}
-                >
-                  <IconColumns2 />
-                </Button>
-              )}
-              <Button
-                size="icon-sm"
-                variant={fileTreeOpen ? "secondary" : "ghost"}
-                className="size-7"
-                aria-label={t("diff.toggleFileTree")}
-                onClick={() => setFileTreeOpen((value) => !value)}
-              >
-                <IconFiles />
-              </Button>
-              <Button
-                size="icon-sm"
-                variant={expanded ? "secondary" : "ghost"}
-                className="size-7"
-                aria-label={t(expanded ? "diff.restorePanel" : "diff.expandPanel")}
-                onClick={toggleExpanded}
-              >
-                {expanded ? <IconArrowsMinimize /> : <IconArrowsMaximize />}
-              </Button>
-              <span className="mx-0.5 h-4 w-px bg-border/70" aria-hidden="true" />
-            </>
-          )}
-          <Button
-            size="sm"
-            variant={open ? "secondary" : "ghost"}
-            className="h-7 px-2.5 shadow-none"
-            aria-pressed={open}
-            onClick={() => open ? close() : setOpen(true)}
-          >
-            <IconGitBranch />
-            {t("diff.changes")}
-          </Button>
+          {changesControls}
         </div>
       )}
     </div>
