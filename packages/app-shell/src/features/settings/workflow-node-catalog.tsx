@@ -8,13 +8,15 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { IconAdjustmentsAlt } from "@tabler/icons-react";
-import type { WorkflowNodeKind } from "@ora/workflow-mock";
+import {
+  createMockWorkflowCapabilities,
+  createMockWorkflowNodeType,
+  type WorkflowLocale,
+  type WorkflowNodeKind,
+} from "@ora/workflow-mock";
 import { cn } from "@ora/ui";
 import { useTranslation } from "react-i18next";
-import {
-  getNodeMetadata,
-  WORKFLOW_NODE_CATALOG,
-} from "./workflow-node-metadata";
+import { getNodeMetadata } from "./workflow-node-metadata";
 
 const MAX_ELASTIC_OFFSET = 18;
 const ELASTIC_RESISTANCE = 0.14;
@@ -46,7 +48,9 @@ export function WorkflowNodeCatalog({
   onAdd: (kind: WorkflowNodeKind) => void;
   onDrop: (kind: WorkflowNodeKind, position: ClientPosition) => void;
 }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
+  const nodeTypes = createMockWorkflowCapabilities(locale).nodeTypes;
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const returnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const elasticOffsetRef = useRef(0);
@@ -220,25 +224,29 @@ export function WorkflowNodeCatalog({
           )}
           style={{ transform: `translate3d(${elasticOffset}px, 0, 0)` }}
         >
-          {WORKFLOW_NODE_CATALOG.map((item) => {
-            const Icon = item.icon;
+          {nodeTypes.map((nodeType) => {
+            const metadata = getNodeMetadata(nodeType.kind);
+            const Icon = metadata.icon;
             return (
               <button
-                key={item.kind}
+                key={nodeType.kind}
                 type="button"
-                onClick={(event) => addNodeFromClick(event, item.kind)}
-                onPointerDown={(event) => startNodeDrag(event, item.kind)}
+                onClick={(event) => addNodeFromClick(event, nodeType.kind)}
+                onPointerDown={(event) => startNodeDrag(event, nodeType.kind)}
                 onPointerMove={moveNodeDrag}
                 onPointerUp={finishNodeDrag}
                 onPointerCancel={cancelNodeDrag}
                 onLostPointerCapture={cancelNodeDrag}
-                title={`${t(item.descriptionKey)} · ${t("settings.workflow.dragNodeHint")}`}
+                title={`${nodeType.description} · ${t("settings.workflow.dragNodeHint")}`}
                 className="group flex h-10 shrink-0 touch-none cursor-grab items-center gap-1.5 rounded-lg border border-transparent px-2 text-left outline-none transition-colors hover:border-border hover:bg-muted/65 focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
               >
-                <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", item.tone)}>
+                <span className={cn(
+                  "flex size-7 shrink-0 items-center justify-center rounded-md",
+                  metadata.tone,
+                )}>
                   <Icon className="size-3.5" stroke={1.8} />
                 </span>
-                <span className="text-[10px] font-medium">{t(item.labelKey)}</span>
+                <span className="text-[10px] font-medium">{nodeType.label}</span>
               </button>
             );
           })}
@@ -257,8 +265,10 @@ function WorkflowNodeDragPreview({
   kind,
   position,
 }: NodeDragPreview) {
-  const { t } = useTranslation();
+  const { i18n } = useTranslation();
+  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
   const metadata = getNodeMetadata(kind);
+  const nodeType = createMockWorkflowNodeType(kind, locale);
   const Icon = metadata.icon;
 
   return (
@@ -278,7 +288,7 @@ function WorkflowNodeDragPreview({
       )}>
         <Icon className="size-3.5" stroke={1.8} />
       </span>
-      <span className="pr-1 text-[10px] font-medium">{t(metadata.labelKey)}</span>
+      <span className="pr-1 text-[10px] font-medium">{nodeType.label}</span>
     </div>
   );
 }

@@ -12,11 +12,13 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { Button, cn } from "@ora/ui";
-import type {
-  WorkflowEdge,
-  WorkflowNode,
-  WorkflowNodeKind,
-  WorkflowPosition,
+import {
+  createMockWorkflowNodeType,
+  type WorkflowLocale,
+  type WorkflowEdge,
+  type WorkflowNode,
+  type WorkflowNodeKind,
+  type WorkflowPosition,
 } from "@ora/workflow-mock";
 import { getNodeMetadata } from "./workflow-node-metadata";
 import { WorkflowNodeCatalog } from "./workflow-node-catalog";
@@ -706,9 +708,10 @@ function WorkflowNodeCard({
   ) => void;
   onDelete: () => void;
 }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
   const metadata = getNodeMetadata(node.kind);
-  const nodeKindLabel = t(metadata.labelKey);
+  const nodeKindLabel = createMockWorkflowNodeType(node.kind, locale).label;
   const Icon = metadata.icon;
   const dragOrigin = useRef<{ pointer: WorkflowPosition; node: WorkflowPosition } | null>(null);
 
