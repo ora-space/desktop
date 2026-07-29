@@ -56,6 +56,8 @@ export function createContractsClient(
         executeOperation("createProject", request, transport, options),
       get: (request, options) => executeOperation("getProject", request, transport, options),
       list: (request, options) => executeOperation("listProjects", request, transport, options),
+      listBranches: (request, options) =>
+        executeOperation("listProjectBranches", request, transport, options),
       update: (request, options) =>
         executeOperation("updateProject", request, transport, options),
       delete: (request, options) =>

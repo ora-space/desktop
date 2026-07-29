@@ -34,6 +34,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
   return {
     project: {
       list: async () => ({ projects: [...state.projects] }),
+      listBranches: async () => ({ branches: [{ name: "main", displayName: "main" }] }),
       get: async (req) => ({ project: state.projects.find((p) => p.id === req.projectId)! }),
       create: async (req) => {
         const project: Project = { id: nextId("p", state.projects.length), name: req.name, rootPath: req.rootPath };

@@ -34,4 +34,5 @@ The public application surface is split across `ora-application`, `ora-contracts
 - `ora-application` emits structured operational `tracing` events for project CRUD handlers with an `operation` field and, when available, a `project_id`. Success events log at `INFO`, and not-found or repository failures log at `ERROR` with failure details under `error`.
 - The application layer emits events only; logging initialization, sink selection, and writer lifetimes stay owned by runtime composition roots such as `apps/web/server`.
 - `UpdateTaskRequest` cannot change project ownership. Task creation resolves the requested project's Git root. Deletion changes Ora database records only and deliberately leaves the linked Git worktree and branch untouched.
+- Worktree task creation accepts a selected local base branch. The backend resolves it to a commit ID before mutation, and the project branch-list contract supplies both the real Git name and a display name that replaces managed Ora branch identifiers with task titles.
 - Worktree paths are composed only when creating a new worktree. Existing worktree paths are never reconstructed from the configured creation root.

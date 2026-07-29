@@ -274,8 +274,11 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "DeleteProjectResponse"
         | "GetProjectRequest"
         | "GetProjectResponse"
+        | "ListProjectBranchesRequest"
+        | "ListProjectBranchesResponse"
         | "ListProjectsRequest"
         | "ListProjectsResponse"
+        | "ProjectBranch"
         | "UpdateProjectRequest"
         | "UpdateProjectResponse" => "project",
         "OpenProjectWorkContextRequest"

@@ -124,6 +124,16 @@ impl From<ApplicationError> for BackendError {
                 "worktree_requires_git_repository",
                 "worktree mode requires a Git repository",
             ),
+            ApplicationError::TaskBaseBranchRequired => Self::new(
+                BackendErrorKind::BadRequest,
+                "base_branch_required",
+                "worktree mode requires a base branch",
+            ),
+            ApplicationError::TaskBaseBranchNotFound { branch_name } => Self::new(
+                BackendErrorKind::BadRequest,
+                "base_branch_not_found",
+                format!("base branch not found: {branch_name}"),
+            ),
             ApplicationError::TaskWorktree { .. } => {
                 internal("task_worktree_error", "task worktree operation failed")
             }

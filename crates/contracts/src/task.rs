@@ -46,6 +46,9 @@ pub struct CreateTaskRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub workspace_mode: Option<TaskWorkspaceMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub base_branch: Option<String>,
 }
 
 /// Returns the created task after a successful create request.
@@ -164,6 +167,7 @@ mod tests {
             title: "Ship handlers".to_string(),
             status: TaskStatus::Todo,
             workspace_mode: None,
+            base_branch: Some("main".to_string()),
         };
         let get_request = GetTaskRequest {
             task_id: "task-1".to_string(),
@@ -194,6 +198,7 @@ mod tests {
                 "projectId": "project-1",
                 "title": "Ship handlers",
                 "status": "todo",
+                "baseBranch": "main",
             }),
         );
         assert_serialized_json(

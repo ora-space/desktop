@@ -72,6 +72,7 @@ impl FrontendEndpoint {
 
 pub const PROJECTS_PATH: &str = "/api/projects";
 pub const PROJECT_PATH: &str = "/api/projects/{projectId}";
+pub const PROJECT_BRANCHES_PATH: &str = "/api/projects/{projectId}/branches";
 pub const PROJECT_WORK_CONTEXT_OPEN_PATH: &str = "/api/project-work-contexts/open";
 pub const PROJECT_WORK_CONTEXT_RENEW_PATH: &str = "/api/project-work-contexts/renew";
 pub const TASKS_PATH: &str = "/api/tasks";
@@ -167,6 +168,17 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "ListProjectsRequest",
         response_type: "ListProjectsResponse",
         path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "listProjectBranches",
+        namespace: PROJECT_NAMESPACE,
+        member_name: "listBranches",
+        method: FrontendHttpMethod::Get,
+        path_template: PROJECT_BRANCHES_PATH,
+        request_type: "ListProjectBranchesRequest",
+        response_type: "ListProjectBranchesResponse",
+        path_params: PROJECT_PATH_PARAMS,
         has_json_body: false,
     },
     FrontendEndpoint {

@@ -86,14 +86,16 @@ export function useCreateTask() {
       title,
       status,
       workspaceMode,
+      baseBranch,
     }: {
       projectId: string;
       title: string;
       status: TaskStatus;
       workspaceMode?: TaskWorkspaceMode;
+      baseBranch?: string;
     }) =>
       client.task
-        .create({ projectId, title, status, workspaceMode })
+        .create({ projectId, title, status, workspaceMode, baseBranch })
         .then((response) => response.task),
     onSuccess: (task) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks });

@@ -141,6 +141,7 @@ pub struct ListWorktreesRequest<'a> {
 pub struct CreateBranchRequest<'a> {
     pub repository: &'a Repository,
     pub branch_name: BranchName,
+    pub commit_id: CommitId,
 }
 
 pub struct DeleteWorktreeRequest<'a> {

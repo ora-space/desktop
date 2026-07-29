@@ -5,7 +5,7 @@ Define the backend-owned linked-worktree lifecycle that task creation and deleti
 ## Requirements
 
 ### Requirement: Task creation SHALL provision exactly one internal linked worktree
-The system SHALL treat linked worktree provisioning as part of task creation. When a new task is created, the backend SHALL derive a task-owned branch name and worktree root from the generated task identifier, SHALL create one linked Git worktree from the configured project repository, SHALL persist one worktree record for that checkout, and SHALL persist the task with the new internal `worktree_id`.
+The system SHALL treat linked worktree provisioning as part of task creation. When a new task is created, the backend SHALL resolve the selected local base branch to its immutable commit ID, SHALL derive a task-owned branch name and worktree root from the generated task identifier, SHALL create one linked Git worktree at that commit from the configured project repository, SHALL persist one worktree record for that checkout, and SHALL persist the task with the new internal `worktree_id`.
 
 #### Scenario: Creating a task provisions and links a worktree
 - **WHEN** the backend handles a valid task creation request for the configured project
@@ -14,6 +14,15 @@ The system SHALL treat linked worktree provisioning as part of task creation. Wh
 #### Scenario: Branch and path are derived from the generated task identity
 - **WHEN** the backend generates a new task identifier during task creation
 - **THEN** it derives the Git branch name from a short task-id prefix and the worktree directory from the full task identifier under the configured worktree root
+
+#### Scenario: Selected base branch fixes the worktree start commit
+- **WHEN** a caller selects an existing local base branch for a new task
+- **THEN** the backend resolves that branch to a commit ID before creating the task branch
+- **THEN** the task worktree starts at that resolved commit even if another branch is currently checked out
+
+#### Scenario: Ora branch labels use task titles
+- **WHEN** the frontend lists a managed `ora/<prefix>` branch
+- **THEN** it displays the owning task title while retaining the real branch name for Git requests
 
 #### Scenario: Short branch-prefix collisions regenerate the task identity
 - **WHEN** the generated short task-id prefix is already used by a task worktree directory or a local `ora/<prefix>` branch

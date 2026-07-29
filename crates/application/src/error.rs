@@ -37,6 +37,10 @@ pub enum ApplicationError {
     TaskRepository { message: String },
     #[error("worktree mode requires a Git repository")]
     TaskWorktreeRequiresGitRepository,
+    #[error("worktree mode requires a base branch")]
+    TaskBaseBranchRequired,
+    #[error("base branch not found: {branch_name}")]
+    TaskBaseBranchNotFound { branch_name: String },
     #[error("task worktree operation failed: {message}")]
     TaskWorktree { message: String },
     #[error("worktree not found: {worktree_id}")]
@@ -118,6 +122,9 @@ impl ApplicationError {
     ) -> Self {
         match error {
             TaskWorktreeProvisionerError::NotARepository => Self::TaskWorktreeRequiresGitRepository,
+            TaskWorktreeProvisionerError::BaseBranchNotFound(branch_name) => {
+                Self::TaskBaseBranchNotFound { branch_name }
+            }
             TaskWorktreeProvisionerError::OperationFailed(message) => {
                 Self::TaskWorktree { message }
             }

@@ -126,9 +126,17 @@ where
             .inspect_err(|error| log_task_failure("create_task", None, error))?;
         let branch_name = branch_name_for_task(&task_id);
         let worktree_path = worktree_path_for_task(&self.work_dir, &task_id);
+        let base_branch_name = request
+            .base_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+            .ok_or(ApplicationError::TaskBaseBranchRequired)?
+            .to_string();
         self.worktree_provisioner
             .create_task_worktree(CreateTaskWorktreeRequest {
                 branch_name: branch_name.clone(),
+                base_branch_name,
                 worktree_path,
             })
             .map_err(|error| {

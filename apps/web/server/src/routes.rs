@@ -6,9 +6,10 @@ use axum::Router;
 use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
-    PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
-    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    PROJECT_BRANCHES_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
+    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH,
+    SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
 };
 
 /// Builds the top-level router for health checks and the persisted CRUD routes.
@@ -29,6 +30,7 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(projects::update_project)
                 .delete(projects::delete_project),
         )
+        .route(PROJECT_BRANCHES_PATH, get(projects::list_project_branches))
         .route(
             PROJECT_WORK_CONTEXT_OPEN_PATH,
             post(project_work_contexts::open_project_work_context),
@@ -689,6 +691,7 @@ mod tests {
                             "projectId": project_id,
                             "title": "Ship handlers",
                             "status": "todo",
+                            "baseBranch": "main",
                         })
                         .to_string(),
                     ))
@@ -704,6 +707,17 @@ mod tests {
             Some(task_id) => task_id.to_string(),
             None => panic!("response did not include a task id"),
         };
+        let branch_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/projects/{project_id}/branches"))
+                    .body(Body::empty())
+                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
         let list_response = match app
             .clone()
             .oneshot(
@@ -781,6 +795,21 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "todo",
                 "workspaceMode": "worktree",
+            })
+        );
+        assert_eq!(
+            response_json(branch_response).await,
+            json!({
+                "branches": [
+                    {
+                        "name": "main",
+                        "displayName": "main",
+                    },
+                    {
+                        "name": format!("ora/{}", &task_id[..8]),
+                        "displayName": "Ship handlers",
+                    },
+                ],
             })
         );
         assert_eq!(

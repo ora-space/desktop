@@ -58,6 +58,31 @@ pub struct ListProjectsResponse {
     pub projects: Vec<Project>,
 }
 
+/// Identifies which project's local Git branches should be listed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "project.ts")]
+pub struct ListProjectBranchesRequest {
+    pub project_id: String,
+}
+
+/// Returns local branch names that can be selected as a new worktree base.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "project.ts")]
+pub struct ListProjectBranchesResponse {
+    pub branches: Vec<ProjectBranch>,
+}
+
+/// Separates Git's stable branch identity from the label shown to users.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "project.ts")]
+pub struct ProjectBranch {
+    pub name: String,
+    pub display_name: String,
+}
+
 /// Carries the mutable project name while the repository root remains immutable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +125,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     GetProjectResponse::export(config)?;
     ListProjectsRequest::export(config)?;
     ListProjectsResponse::export(config)?;
+    ListProjectBranchesRequest::export(config)?;
+    ListProjectBranchesResponse::export(config)?;
+    ProjectBranch::export(config)?;
     UpdateProjectRequest::export(config)?;
     UpdateProjectResponse::export(config)?;
     DeleteProjectRequest::export(config)?;

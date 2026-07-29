@@ -94,9 +94,10 @@ The persisted runtime exposes CRUD routes for the supported public models:
 - `PUT /api/agents/{agent_id}`
 - `DELETE /api/agents/{agent_id}`
 - `GET /api/file-system/directory?path={absolute_path}`
+- `GET /api/projects/{project_id}/branches`
 
 Request and response payloads use `ora-contracts` DTO shapes, so transport behavior stays aligned with the shared application contract.
-Task payloads do not expose backend-owned worktree identifiers, and the runtime does not expose standalone public worktree CRUD endpoints.
+Task payloads do not expose backend-owned worktree identifiers, and the runtime does not expose standalone public worktree CRUD endpoints. Project branch responses separate the real Git branch name from its display label so managed Ora branches can be shown with their task titles.
 
 Backend construction immediately attempts `<home>/.opencode/bin/opencode acp`, `<home>/.nga/bin/nga acp`, and `<home>/.codeagentcli/bin/codeagentcli acp` children rooted at the user's home directory. Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Session create calls `session/new` on the connection selected by `agentCli`; load calls `session/load` using the private provider session id and the Task worktree `cwd`. The public Session payload never exposes that id. `GET /api/agent-models` concurrently runs each CLI's bounded `models` discovery command and returns only successful groups.
 

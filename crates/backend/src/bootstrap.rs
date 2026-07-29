@@ -137,6 +137,13 @@ impl Backend {
     ) -> Result<ListProjectsResponse, BackendError> {
         self.project.list(request).map_err(BackendError::from)
     }
+    /// Lists local branches for one project repository.
+    pub fn list_project_branches(
+        &self,
+        request: ListProjectBranchesRequest,
+    ) -> Result<ListProjectBranchesResponse, BackendError> {
+        self.project.list_branches(request)
+    }
     /// Updates one project through the shared application composition.
     pub fn update_project(
         &self,
@@ -478,6 +485,7 @@ mod tests {
                 title: "Move configuration".to_string(),
                 status: TaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .expect("create task")
             .task;

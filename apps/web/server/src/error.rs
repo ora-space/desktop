@@ -174,6 +174,16 @@ impl From<ApplicationError> for WebApiError {
                 code: "worktree_requires_git_repository",
                 message: "worktree mode requires a Git repository".to_string(),
             },
+            ApplicationError::TaskBaseBranchRequired => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "base_branch_required",
+                message: "worktree mode requires a base branch".to_string(),
+            },
+            ApplicationError::TaskBaseBranchNotFound { branch_name } => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "base_branch_not_found",
+                message: format!("base branch not found: {branch_name}"),
+            },
             ApplicationError::TaskWorktree { message } => Self {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "task_worktree_error",

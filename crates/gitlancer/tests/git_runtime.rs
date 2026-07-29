@@ -13,7 +13,7 @@ use gitlancer::git::worktree::{
     CreateWorktreeRequest, DeleteWorktreeRequest, FindWorktreeRequest,
     ResolveWorktreeByBranchRequest, ResolveWorktreeRequest, WorktreeDeletionMode,
 };
-use gitlancer::{BranchName, CliGitRunner, Git, RepoRoot, WorktreeKind, WorktreeRoot};
+use gitlancer::{BranchName, CliGitRunner, CommitId, Git, RepoRoot, WorktreeKind, WorktreeRoot};
 use pretty_assertions::assert_eq;
 
 /// Creates an initial commit so linked worktrees can be created from a valid repository history.
@@ -226,13 +226,26 @@ fn runtime_creates_and_deletes_local_branches() {
     let scaffold = TestScaffold::new("runtime-branch-lifecycle").expect("create scaffold");
     seed_repository(&scaffold);
     let (git, repository) = runtime_repository(&scaffold);
+    let base_commit = scaffold
+        .run_git(["rev-parse", "HEAD"])
+        .expect("resolve base commit");
+    scaffold
+        .write_file(scaffold.repo_path(), "later.txt", "later commit\n")
+        .expect("write later commit");
+    scaffold
+        .stage_all_and_commit("later commit")
+        .expect("create later commit");
 
     let created = git
         .create_branch(CreateBranchRequest {
             repository: &repository,
             branch_name: BranchName::new("feature/runtime"),
+            commit_id: CommitId::new(base_commit.trim()),
         })
         .expect("create branch");
+    let created_commit = scaffold
+        .run_git(["rev-parse", "feature/runtime"])
+        .expect("resolve created branch");
     let branches_after_create = git
         .list_branches(ListBranchesRequest {
             repository: &repository,
@@ -252,6 +265,7 @@ fn runtime_creates_and_deletes_local_branches() {
         .expect("list branches after delete");
 
     assert_eq!(created.branch, BranchName::new("feature/runtime"));
+    assert_eq!(created_commit.trim(), base_commit.trim());
     assert!(
         branches_after_create
             .branches
@@ -276,14 +290,27 @@ fn runtime_creates_and_deletes_linked_worktrees() {
     seed_repository(&scaffold);
     let (git, repository) = runtime_repository(&scaffold);
     let worktree_path = scaffold.linked_worktree_path("feature-tree");
+    let base_commit = scaffold
+        .run_git(["rev-parse", "HEAD"])
+        .expect("resolve base commit");
+    scaffold
+        .write_file(scaffold.repo_path(), "later.txt", "later commit\n")
+        .expect("write later commit");
+    scaffold
+        .stage_all_and_commit("later commit")
+        .expect("create later commit");
 
     let created = git
         .create_worktree(CreateWorktreeRequest {
             repository: &repository,
             worktree_root: WorktreeRoot::new(&worktree_path),
             branch_name: BranchName::new("feature/runtime"),
+            base_commit_id: CommitId::new(base_commit.trim()),
         })
         .expect("create worktree");
+    let worktree_commit = scaffold
+        .run_git_in(&worktree_path, ["rev-parse", "HEAD"])
+        .expect("resolve worktree commit");
     let worktrees_after_create = git
         .list_worktrees(ListWorktreesRequest {
             repository: &repository,
@@ -302,6 +329,7 @@ fn runtime_creates_and_deletes_linked_worktrees() {
         })
         .expect("list worktrees after delete");
 
+    assert_eq!(worktree_commit.trim(), base_commit.trim());
     assert!(
         matches!(created.worktree.kind(), WorktreeKind::Linked { name } if name == "feature-tree"),
         "created worktrees should come back as linked worktrees"

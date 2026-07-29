@@ -60,6 +60,7 @@ pub trait TaskWorktreeProvisioner {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTaskWorktreeRequest {
     pub branch_name: String,
+    pub base_branch_name: String,
     pub worktree_path: PathBuf,
 }
 
@@ -86,5 +87,6 @@ pub enum TaskRepositoryError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskWorktreeProvisionerError {
     NotARepository,
+    BaseBranchNotFound(String),
     OperationFailed(String),
 }

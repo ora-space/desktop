@@ -31,6 +31,7 @@ pub fn run() {
             commands::create_project,
             commands::get_project,
             commands::list_projects,
+            commands::list_project_branches,
             commands::update_project,
             commands::delete_project,
             commands::create_task,

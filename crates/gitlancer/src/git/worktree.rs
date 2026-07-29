@@ -1,5 +1,5 @@
 use crate::domain::paths::WorktreeRoot;
-use crate::domain::refs::BranchName;
+use crate::domain::refs::{BranchName, CommitId};
 use crate::domain::repo::Repository;
 use crate::domain::worktree::{WorktreeHandle, WorktreeKind};
 use crate::error::{DomainError, GitlancerError};
@@ -47,6 +47,7 @@ pub struct CreateWorktreeRequest<'a> {
     pub repository: &'a Repository,
     pub worktree_root: WorktreeRoot,
     pub branch_name: BranchName,
+    pub base_commit_id: CommitId,
 }
 
 /// Returns the linked worktree created by the runtime API.
@@ -268,6 +269,7 @@ pub fn build_create_worktree_command(request: &CreateWorktreeRequest<'_>) -> Git
                 .as_path()
                 .to_string_lossy()
                 .into_owned(),
+            request.base_commit_id.as_str().to_string(),
         ],
         GitEnv::default(),
         GitIntent::Mutating,

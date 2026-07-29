@@ -51,6 +51,7 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -70,6 +71,7 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/12345678".to_string(),
+                base_branch_name: "main".to_string(),
                 worktree_path: Path::new(WORK_DIR).join(TASK_ID),
             }]
         );
@@ -120,6 +122,7 @@ fn creates_project_root_tasks_without_worktrees() {
                 title: "Chat in project root".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: Some(TaskWorkspaceMode::ProjectRoot),
+                base_branch: None,
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -165,6 +168,7 @@ fn rejects_worktree_tasks_outside_git_repositories() {
                 title: "Cannot create worktree here".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: Some(TaskWorkspaceMode::Worktree),
+                base_branch: Some("main".to_string()),
             })
             .expect_err("non-Git project root should be rejected");
 
@@ -204,6 +208,7 @@ fn regenerates_task_ids_when_branch_prefix_folder_exists() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -223,6 +228,7 @@ fn regenerates_task_ids_when_branch_prefix_folder_exists() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/87654321".to_string(),
+                base_branch_name: "main".to_string(),
                 worktree_path: work_dir.join("87654321-1234-5678-90ab-1234567890ab"),
             }]
         );
@@ -267,6 +273,7 @@ fn regenerates_task_ids_when_orphaned_branch_exists() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -286,6 +293,7 @@ fn regenerates_task_ids_when_orphaned_branch_exists() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/87654321".to_string(),
+                base_branch_name: "main".to_string(),
                 worktree_path: work_dir.join("87654321-1234-5678-90ab-1234567890ab"),
             }]
         );
@@ -314,6 +322,7 @@ fn creates_task_when_work_dir_does_not_exist() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -333,6 +342,7 @@ fn creates_task_when_work_dir_does_not_exist() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/12345678".to_string(),
+                base_branch_name: "main".to_string(),
                 worktree_path: work_dir.join(TASK_ID),
             }]
         );
@@ -365,6 +375,7 @@ fn reports_task_worktree_error_when_task_id_retries_are_exhausted() {
                     title: "Ship handlers".to_string(),
                     status: ContractTaskStatus::Doing,
                     workspace_mode: None,
+                    base_branch: Some("main".to_string()),
                 })
                 .unwrap_err(),
             ApplicationError::TaskWorktree {
@@ -559,6 +570,7 @@ fn cleans_up_created_worktree_when_task_persistence_fails() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_err();
 
@@ -611,6 +623,7 @@ fn reports_application_errors() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_err();
 
@@ -668,6 +681,7 @@ fn emits_structured_operational_events() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap();
         assert_eq!(
@@ -677,6 +691,7 @@ fn emits_structured_operational_events() {
                     title: "Ship handlers".to_string(),
                     status: ContractTaskStatus::Todo,
                     workspace_mode: None,
+                    base_branch: Some("main".to_string()),
                 })
                 .unwrap_err(),
             ApplicationError::TaskWorktree {

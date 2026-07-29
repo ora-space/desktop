@@ -25,6 +25,7 @@ import {
 } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore, type DialogState, type DeleteTarget } from "../../state/stores/ui-store";
 import { useSettingsStore } from "../../state/stores/settings-store";
+import { useProjectBranches } from "../../state/hooks/use-project-branches";
 
 /** Derives a project name from either a Windows or POSIX directory path. */
 export function projectNameFromPath(rootPath: string): string {
@@ -131,6 +132,8 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
   const updateTask = useUpdateTask();
   const createSession = useCreateSession();
   const settingsAgentCli = useSettingsStore((state) => state.settings.agentCli);
+  const branchProjectId = dialog.kind === "task" && !dialog.entity ? dialog.projectId : null;
+  const { data: projectBranches = [] } = useProjectBranches(branchProjectId);
   let title: string;
   let description: string | undefined;
   let fields: EntityField[];
@@ -160,6 +163,13 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
     submitLabel = dialog.entity ? t("dialog.saveTask") : t("dialog.createTask");
     fields = [
       { kind: "text", name: "title", label: t("dialog.taskTitle"), value: dialog.entity?.title ?? "" },
+      ...(!dialog.entity ? [{
+        kind: "select" as const,
+        name: "baseBranch",
+        label: t("dialog.baseBranch"),
+        value: preferredBaseBranch(projectBranches.map((branch) => branch.name)),
+        options: projectBranches.map((branch) => ({ label: branch.displayName, value: branch.name })),
+      }] : []),
       // Status is only meaningful once a task exists; a new task always starts at "todo".
       ...(dialog.entity ? [{ kind: "select" as const, name: "status", label: t("dialog.status"), value: dialog.entity.status, options: [
         { label: t("common.todo"), value: "todo" }, { label: t("common.doing"), value: "doing" }, { label: t("common.done"), value: "done" },
@@ -175,6 +185,7 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
             title: values.title!,
             status: "todo",
             workspaceMode: "worktree",
+            baseBranch: values.baseBranch!,
           });
         } catch (error) {
           if (
@@ -202,4 +213,12 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
   const dialogKey = `${dialog.kind}-${dialog.entity?.id ?? "new"}`;
 
   return <EntityDialog key={dialogKey} open title={title} description={description} submitLabel={submitLabel} fields={fields} onOpenChange={onOpenChange} onSubmit={submit} />;
+}
+
+/** Prefers conventional primary branch names while preserving repositories with custom defaults. */
+function preferredBaseBranch(branches: string[]): string {
+  return branches.find((branch) => branch === "main")
+    ?? branches.find((branch) => branch === "master")
+    ?? branches[0]
+    ?? "";
 }

@@ -33,6 +33,7 @@ const tauriCommands = {
   createProject: "create_project",
   getProject: "get_project",
   listProjects: "list_projects",
+  listProjectBranches: "list_project_branches",
   updateProject: "update_project",
   deleteProject: "delete_project",
   createTask: "create_task",

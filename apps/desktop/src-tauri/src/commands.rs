@@ -60,6 +60,13 @@ backend_command!(
     "Lists projects through the shared Backend."
 );
 backend_command!(
+    list_project_branches,
+    ListProjectBranchesRequest,
+    ListProjectBranchesResponse,
+    list_project_branches,
+    "Lists local branches for one project through the shared Backend."
+);
+backend_command!(
     update_project,
     UpdateProjectRequest,
     UpdateProjectResponse,

@@ -44,8 +44,8 @@ The runtime SHALL expose local branches, status entries, and commit metadata thr
 The runtime SHALL expose typed APIs to create and delete local branches from repository-aware inputs without requiring callers to assemble raw Git arguments.
 
 #### Scenario: Creating a local branch
-- **WHEN** a caller requests creation of a new local branch in a repository
-- **THEN** the runtime creates that branch through the Git CLI
+- **WHEN** a caller requests creation of a new local branch at a specific commit ID
+- **THEN** the runtime creates that branch at the requested commit through the Git CLI
 - **THEN** the response identifies the created branch as a `BranchName`
 
 #### Scenario: Deleting a local branch
@@ -57,8 +57,8 @@ The runtime SHALL expose typed APIs to create and delete local branches from rep
 The runtime SHALL expose typed APIs to create and delete linked worktrees while preserving the distinction between the main worktree and linked worktrees.
 
 #### Scenario: Creating a linked worktree
-- **WHEN** a caller requests creation of a linked worktree for a repository at a target checkout path
-- **THEN** the runtime creates the linked worktree through the Git CLI
+- **WHEN** a caller requests creation of a linked worktree for a repository at a target checkout path and base commit ID
+- **THEN** the runtime creates the linked worktree and its branch at the requested commit through the Git CLI
 - **THEN** `list_worktrees` returns the new worktree as `WorktreeKind::Linked`
 
 #### Scenario: Deleting a linked worktree

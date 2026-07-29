@@ -1,4 +1,4 @@
-use crate::domain::refs::BranchName;
+use crate::domain::refs::{BranchName, CommitId};
 use crate::domain::repo::Repository;
 use crate::error::{DomainError, GitlancerError};
 use crate::exec::command::{GitCommand, GitIntent};
@@ -23,12 +23,26 @@ pub struct ListBranchesResponse {
 pub struct CreateBranchRequest<'a> {
     pub repository: &'a Repository,
     pub branch_name: BranchName,
+    pub commit_id: CommitId,
 }
 
 /// Returns the branch created through the runtime API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateBranchResponse {
     pub branch: BranchName,
+}
+
+/// Carries the local branch whose current commit should be resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolveBranchCommitRequest<'a> {
+    pub repository: &'a Repository,
+    pub branch_name: &'a BranchName,
+}
+
+/// Returns the immutable commit currently referenced by one local branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolveBranchCommitResponse {
+    pub commit_id: CommitId,
 }
 
 /// Describes how branch deletion should behave when Git would otherwise protect the branch.
@@ -107,6 +121,39 @@ impl<R: GitRunner> Git<R> {
         })
     }
 
+    /// Resolves a local branch to a commit before callers perform mutations based on that branch.
+    pub fn resolve_branch_commit(
+        &self,
+        request: ResolveBranchCommitRequest<'_>,
+    ) -> Result<ResolveBranchCommitResponse, GitlancerError> {
+        let existing_branches = self.list_branches(ListBranchesRequest {
+            repository: request.repository,
+        })?;
+        if !existing_branches
+            .branches
+            .iter()
+            .any(|branch| branch == request.branch_name)
+        {
+            return Err(GitlancerError::Domain(DomainError::BranchNotFound {
+                repo: request.repository.root().as_path().to_path_buf(),
+                branch: request.branch_name.as_str().to_string(),
+            }));
+        }
+
+        let output = self.runner().run(&GitCommand::new(
+            request.repository.root().as_path().to_path_buf(),
+            vec![
+                "rev-parse".to_string(),
+                format!("{}^{{commit}}", request.branch_name.as_str()),
+            ],
+            GitEnv::default(),
+            GitIntent::ReadOnly,
+        ))?;
+        let commit_id = crate::parse::commit::parse_commit_id(&output.stdout)?;
+
+        Ok(ResolveBranchCommitResponse { commit_id })
+    }
+
     /// Deletes one local branch after validating the named branch exists in the supplied repository.
     pub fn delete_branch(
         &self,
@@ -142,6 +189,7 @@ pub fn build_create_branch_command(request: &CreateBranchRequest<'_>) -> GitComm
         vec![
             "branch".to_string(),
             request.branch_name.as_str().to_string(),
+            request.commit_id.as_str().to_string(),
         ],
         GitEnv::default(),
         GitIntent::Mutating,
@@ -178,7 +226,7 @@ mod tests {
         build_delete_branch_command,
     };
     use crate::domain::paths::RepoRoot;
-    use crate::domain::refs::BranchName;
+    use crate::domain::refs::{BranchName, CommitId};
     use crate::domain::repo::Repository;
     use crate::error::{DomainError, GitExecError, GitlancerError};
     use crate::exec::command::{GitCommand, GitIntent};
@@ -275,6 +323,7 @@ mod tests {
             .create_branch(CreateBranchRequest {
                 repository: &repository,
                 branch_name: BranchName::new("feature/runtime"),
+                commit_id: CommitId::new("0123456789abcdef"),
             })
             .expect("create branch");
 
@@ -294,7 +343,11 @@ mod tests {
                 ),
                 GitCommand::new(
                     repository.root().as_path().to_path_buf(),
-                    vec!["branch".to_string(), "feature/runtime".to_string()],
+                    vec![
+                        "branch".to_string(),
+                        "feature/runtime".to_string(),
+                        "0123456789abcdef".to_string(),
+                    ],
                     crate::GitEnv::default(),
                     GitIntent::Mutating,
                 ),
@@ -317,6 +370,7 @@ mod tests {
             .create_branch(CreateBranchRequest {
                 repository: &repository,
                 branch_name: BranchName::new("feature/runtime"),
+                commit_id: CommitId::new("0123456789abcdef"),
             })
             .expect_err("duplicate branch should be rejected");
 
@@ -408,6 +462,7 @@ mod tests {
         let create_command = build_create_branch_command(&CreateBranchRequest {
             repository: &repository,
             branch_name: BranchName::new("feature/runtime"),
+            commit_id: CommitId::new("0123456789abcdef"),
         });
         let delete_command = build_delete_branch_command(&DeleteBranchRequest {
             repository: &repository,
@@ -419,7 +474,11 @@ mod tests {
             create_command,
             GitCommand::new(
                 repository.root().as_path().to_path_buf(),
-                vec!["branch".to_string(), "feature/runtime".to_string()],
+                vec![
+                    "branch".to_string(),
+                    "feature/runtime".to_string(),
+                    "0123456789abcdef".to_string(),
+                ],
                 crate::GitEnv::default(),
                 GitIntent::Mutating,
             )

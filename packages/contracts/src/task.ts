@@ -8,6 +8,7 @@ export type CreateTaskRequest = {
   title: string;
   status: TaskStatus;
   workspaceMode?: TaskWorkspaceMode;
+  baseBranch?: string;
 };
 
 /**

@@ -31,6 +31,16 @@ export type GetProjectRequest = { projectId: string };
 export type GetProjectResponse = { project: Project };
 
 /**
+ * Identifies which project's local Git branches should be listed.
+ */
+export type ListProjectBranchesRequest = { projectId: string };
+
+/**
+ * Returns local branch names that can be selected as a new worktree base.
+ */
+export type ListProjectBranchesResponse = { branches: Array<ProjectBranch> };
+
+/**
  * Requests the full visible project list.
  */
 export type ListProjectsRequest = Record<symbol, never>;
@@ -44,6 +54,11 @@ export type ListProjectsResponse = { projects: Array<Project> };
  * Describes the public project payload shared across adapter responses.
  */
 export type Project = { id: string; name: string; rootPath: string };
+
+/**
+ * Separates Git's stable branch identity from the label shown to users.
+ */
+export type ProjectBranch = { name: string; displayName: string };
 
 /**
  * Carries the mutable project name while the repository root remains immutable.

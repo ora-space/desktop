@@ -6,6 +6,7 @@
  */
 export const queryKeys = {
   projects: ["projects"] as const,
+  projectBranches: (projectId: string) => ["project-branches", projectId] as const,
   tasks: ["tasks"] as const,
   sessions: ["sessions"] as const,
   agents: ["agents"] as const,
