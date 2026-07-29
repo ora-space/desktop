@@ -588,6 +588,70 @@ describe("WorkspaceView", () => {
     expect(picker).toHaveTextContent("Big Pickle");
   });
 
+  it("keeps a switched model after the surface remounts with a still-warm session", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    const baseClient = createMockClient(state);
+    const warm = vi.fn(baseClient.session.warm);
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        warm,
+        // Reports back whichever model was requested, the way an agent answers
+        // a switch it accepted — the mock's default ignores the request.
+        setConfig: async (req) => ({
+          configOptions: state.configOptions.map((option) =>
+            option.type === "select" ? { ...option, currentValue: req.value } : option,
+          ),
+        }),
+      },
+    };
+    // One query client and one chat store across both renders, so this is the
+    // same app session leaving a surface and coming back to it.
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    const renderView = () =>
+      render(
+        <Wrapper>
+          <AppI18nProvider>
+            <PlatformProvider adapter={createStubPlatform()}>
+              <TooltipProvider>
+                <WorkspaceView userName="Eric" />
+              </TooltipProvider>
+            </PlatformProvider>
+          </AppI18nProvider>
+        </Wrapper>,
+      );
+
+    const first = renderView();
+    let picker = await screen.findByRole("button", {
+      name: /选择模型|Select model/,
+    });
+    await waitFor(() => expect(picker).toHaveTextContent("Big Pickle"));
+    await user.click(picker);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Small Pickle" }),
+    );
+    await waitFor(() => expect(picker).toHaveTextContent("Small Pickle"));
+
+    first.unmount();
+    renderView();
+
+    picker = await screen.findByRole("button", { name: /选择模型|Select model/ });
+    // The warm session is reused rather than re-opened, so its pinned handshake
+    // response — which still names the opening model — is what a remount sees.
+    // Replaying it would silently undo a switch the agent already accepted.
+    await waitFor(() => expect(picker).toHaveTextContent("Small Pickle"));
+    expect(warm).toHaveBeenCalledOnce();
+  });
+
   it("says the model list is still arriving while the session is being warmed", async () => {
     const user = userEvent.setup();
     const state = createMockClientState();

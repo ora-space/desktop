@@ -66,8 +66,15 @@ export function useWarmSession(
 
   useEffect(() => {
     if (data === undefined) return;
+    // This response is a snapshot of the handshake, and the query holding it is
+    // pinned (`staleTime`/`gcTime: Infinity`) so every remount hands back the
+    // same one. The store is where the session's options actually live — a model
+    // picked since the handshake exists only there — so this seeds a session the
+    // store has not heard of yet and never replays over one it has. Without that,
+    // returning to a still-warm surface would restore its opening model.
+    if (chatStore.getState().conversations[data.sessionId] !== undefined) return;
     setConfigOptions(data.sessionId, data.configOptions);
-  }, [data, setConfigOptions]);
+  }, [chatStore, data, setConfigOptions]);
 
   // `isLoading` is `isPending && isFetching`, so a disabled query (nothing to
   // warm) and a failed handshake — which does not retry — both read as false.
