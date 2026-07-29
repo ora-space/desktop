@@ -84,7 +84,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const queryClient = useQueryClient();
   // Opens the provider session for this surface before anything is sent, so the
   // model picker has real options and the send path skips the agent handshake.
-  const warmSessionId = useWarmSession(selection, settingsAgentCli);
+  const { sessionId: warmSessionId } = useWarmSession(selection, settingsAgentCli);
 
   const project = projects.find((item) => item.id === selection.projectId);
   const task = tasks.find((item) => item.id === selection.taskId);

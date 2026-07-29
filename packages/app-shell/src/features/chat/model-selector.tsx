@@ -26,7 +26,8 @@ import { ProviderLogo } from "./provider-logos";
  *
  * Both lists describe the session the composer will send into. Which CLIs exist
  * is static; which models are available is whatever that CLI reported for this
- * session, so the model list is empty until a session has been established.
+ * session, so the model list has three states rather than two — still arriving,
+ * genuinely offering no choice, or a real set to pick from.
  *
  * With a session selected, choosing a different CLI moves that conversation onto
  * it rather than only changing the default for the next one. Ora owns the
@@ -44,16 +45,36 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
 
   // Shares the workspace's warm-session query key, so this is a cache read
   // rather than a second provider session.
-  const warmSessionId = useWarmSession(selection, agentCli);
-  const activeSessionId = selection.sessionId ?? warmSessionId;
+  const warmSession = useWarmSession(selection, agentCli);
+  const activeSessionId = selection.sessionId ?? warmSession.sessionId;
+  // Selected narrowly rather than as one conversation object, so a streaming
+  // turn does not re-render the picker on every token.
   const configOptions = useStore(chatStore, (state) =>
     activeSessionId === null ? undefined : state.conversations[activeSessionId]?.configOptions,
   );
+  const isReplayingHistory = useStore(chatStore, (state) =>
+    activeSessionId === null
+      ? false
+      : state.conversations[activeSessionId]?.isLoading === true,
+  );
   const modelOption = configOptions ? findModelOption(configOptions) : null;
+
+  // An agent only reports its models as part of the handshake — warming this
+  // surface's session, or replaying a selected one — so until that lands the
+  // list is unknown rather than empty. Saying "no models" here would answer a
+  // question that has not been asked yet, and a handshake can take a second.
+  // Replay is its own case: it seeds the conversation with empty options first,
+  // which would otherwise read as a settled answer while the stream is still
+  // running. A surface that never started warming, or whose handshake failed,
+  // is not loading and still reports empty.
+  const isLoadingModels =
+    activeSessionId === null
+      ? warmSession.isOpening
+      : configOptions === undefined || isReplayingHistory;
 
   const activeLabel = modelOption
     ? currentValueName(modelOption)
-    : t("chat.modelSelector.placeholder");
+    : t(isLoadingModels ? "chat.modelSelector.loading" : "chat.modelSelector.placeholder");
 
   /**
    * A persisted session is moved onto the chosen CLI rather than left behind;
@@ -98,7 +119,7 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
           </span>
         </span>
         <span className="whitespace-nowrap">{activeLabel}</span>
-        {setSessionConfig.isPending || switchAgent.isPending
+        {setSessionConfig.isPending || switchAgent.isPending || isLoadingModels
           ? <IconLoader2 className="size-3 shrink-0 animate-spin opacity-50" aria-hidden="true" />
           : <IconChevronDown className="size-3 shrink-0 opacity-50" aria-hidden="true" />}
       </DropdownMenuTrigger>
@@ -125,7 +146,7 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
           </DropdownMenuLabel>
           {modelOption === null ? (
             <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-              {t("chat.modelSelector.empty")}
+              {t(isLoadingModels ? "chat.modelSelector.loading" : "chat.modelSelector.empty")}
             </p>
           ) : (
             selectableValues(modelOption).map((value) => (

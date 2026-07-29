@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createChatStore } from "@ora/chat";
-import type { ContractsClient } from "@ora/contracts";
+import type { ContractsClient, WarmSessionResponse } from "@ora/contracts";
 import { TooltipProvider } from "@ora/ui";
 import { PlatformProvider } from "@ora/platform";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -586,6 +586,172 @@ describe("WorkspaceView", () => {
     );
     // The rejected switch must not be shown as if it took effect.
     expect(picker).toHaveTextContent("Big Pickle");
+  });
+
+  it("says the model list is still arriving while the session is being warmed", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    const baseClient = createMockClient(state);
+    let openHandshake: (response: WarmSessionResponse) => void = () => {};
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        // Held open so the picker can be inspected mid-handshake, which is what
+        // a real agent's a second or so of start-up looks like.
+        warm: () =>
+          new Promise<WarmSessionResponse>((resolve) => {
+            openHandshake = resolve;
+          }),
+      },
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /选择模型|Select model/ }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText(/加载中|Loading/)).toBeInTheDocument();
+    // Announcing "no models" here would be a definite answer to a question the
+    // agent has not been asked yet.
+    expect(
+      within(menu).queryByText(/未提供可选模型|offers no model choice/),
+    ).toBeNull();
+
+    openHandshake({ sessionId: "s1", configOptions: state.configOptions });
+
+    expect(
+      await screen.findByRole("menuitem", { name: "Small Pickle" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says the model list is still arriving while a selected session replays", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Replaying",
+        status: "todo",
+        workspaceMode: "worktree",
+      },
+    ];
+    state.sessions = [
+      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running" },
+    ];
+    const client = createMockClient(state);
+    let finishReplay: () => void = () => {};
+    const replayed = new Promise<void>((resolve) => {
+      finishReplay = resolve;
+    });
+    // A selected session gets its options from `session/load`, which reports
+    // them partway through the stream rather than at its start.
+    client.session.load = async function* () {
+      await replayed;
+      yield {
+        type: "session_update" as const,
+        update: {
+          sessionUpdate: "config_option_update" as const,
+          configOptions: state.configOptions,
+        },
+      };
+      yield { type: "completed" as const };
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /选择模型|Select model/ }),
+    );
+    const menu = await screen.findByRole("menu");
+    // The replay seeds an empty option set before the agent reports the real
+    // one, which must not be mistaken for a settled "no models" answer.
+    await waitFor(() =>
+      expect(within(menu).getByText(/加载中|Loading/)).toBeInTheDocument(),
+    );
+    expect(
+      within(menu).queryByText(/未提供可选模型|offers no model choice/),
+    ).toBeNull();
+
+    finishReplay();
+
+    expect(
+      await screen.findByRole("menuitem", { name: "Small Pickle" }),
+    ).toBeInTheDocument();
+  });
+
+  it("still reports an agent that offers no model choice", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.configOptions = [];
+    const client = createMockClient(state);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /选择模型|Select model/ }),
+    );
+    const menu = await screen.findByRole("menu");
+
+    await waitFor(() =>
+      expect(
+        within(menu).getByText(/未提供可选模型|offers no model choice/),
+      ).toBeInTheDocument(),
+    );
+    expect(within(menu).queryByText(/加载中|Loading/)).toBeNull();
   });
 });
 

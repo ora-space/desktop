@@ -8,6 +8,20 @@ import { clientId } from "../client-id";
 import { queryKeys } from "./query-keys";
 import { useSessions } from "./use-sessions";
 
+/** The provider session backing one chat surface, and whether it is still being opened. */
+export interface WarmSession {
+  /** The warm session's id, or `null` until this surface has one. */
+  sessionId: string | null;
+  /**
+   * True only while this surface's handshake is in flight.
+   *
+   * A surface with nothing to warm and one whose handshake failed both report
+   * `false`, so a caller can tell "not yet" from "never" — a null `sessionId`
+   * alone cannot distinguish them.
+   */
+  isOpening: boolean;
+}
+
 /**
  * Opens the provider session that backs a chat surface before anything is sent.
  *
@@ -16,13 +30,13 @@ import { useSessions } from "./use-sessions";
  * until one exists. Warming here is what lets the composer show real models on
  * an empty chat, and it moves the agent handshake off the send path.
  *
- * Returns `null` when there is nothing to warm: a persisted session is already
+ * The id is `null` when there is nothing to warm: a persisted session is already
  * selected (its options arrive with `session/load`), or no project is chosen.
  */
 export function useWarmSession(
   selection: { projectId: string | null; taskId: string | null; sessionId: string | null },
   agentCli: AgentCli,
-): string | null {
+): WarmSession {
   const client = useContractsClient();
   const chatStore = useChatStore();
   const setConfigOptions = useStore(chatStore, (state) => state.setConfigOptions);
@@ -38,7 +52,7 @@ export function useWarmSession(
   // The backend keys warm sessions by exactly these values, so the same surface
   // always resolves to the same session and repeated calls are cache hits rather
   // than new provider sessions.
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: queryKeys.warmSession(target, agentCli),
     enabled: target !== null,
     queryFn: () =>
@@ -55,7 +69,10 @@ export function useWarmSession(
     setConfigOptions(data.sessionId, data.configOptions);
   }, [data, setConfigOptions]);
 
-  return data?.sessionId ?? null;
+  // `isLoading` is `isPending && isFetching`, so a disabled query (nothing to
+  // warm) and a failed handshake — which does not retry — both read as false.
+  // Only a request actually in flight counts as still opening.
+  return { sessionId: data?.sessionId ?? null, isOpening: isLoading };
 }
 
 /** Derives what a chat surface should warm against, or `null` when nothing should. */
