@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import {
   Button,
   ResizableHandle,
@@ -14,7 +14,12 @@ import {
   IconLayoutSidebarRightExpand,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
-import { TaskDiffView, type TaskDiffViewType } from "./task-diff-view";
+import {
+  TaskDiffView,
+  type TaskDiffFileRequest,
+  type TaskDiffViewType,
+} from "./task-diff-view";
+import { TaskChangesNavigationProvider } from "./task-changes-navigation";
 
 const EXPANDED_PANEL_EXIT_MS = 180;
 
@@ -31,7 +36,16 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
   const [closing, setClosing] = useState(false);
   const [viewType, setViewType] = useState<TaskDiffViewType>("unified");
   const [fileTreeOpen, setFileTreeOpen] = useState(true);
+  const [fileRequest, setFileRequest] = useState<TaskDiffFileRequest | undefined>();
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileRequestSequence = useRef(0);
+
+  const openFile = useCallback((path: string) => {
+    if (taskId === undefined) return;
+    fileRequestSequence.current += 1;
+    setFileRequest({ path, requestId: fileRequestSequence.current });
+    setOpen(true);
+  }, [taskId]);
 
   const close = () => {
     if (closeTimer.current !== null) clearTimeout(closeTimer.current);
@@ -142,6 +156,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
           taskId={taskId}
           viewType={viewType}
           fileTreeOpen={fileTreeOpen}
+          fileRequest={fileRequest}
           toolbar={changesControls}
           onFileTreeOpenChange={setFileTreeOpen}
         />
@@ -150,41 +165,44 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
   );
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1">
-      {taskId !== undefined && !open && (
-        <div className="absolute right-4 top-2 z-30">{changesControls}</div>
-      )}
+    <TaskChangesNavigationProvider onOpenFile={openFile}>
       <div className="relative flex min-h-0 min-w-0 flex-1">
-        <div
-          className="flex min-h-0 min-w-0 flex-1"
-          aria-hidden={expanded || undefined}
-          inert={expanded || undefined}
-        >
-          {workspaceContent}
-        </div>
-        {taskId !== undefined && open && expanded && (
-          <>
-            <button
-              type="button"
-              aria-label={t("diff.closeExpandedPanel")}
-              className={`ora-changes-backdrop absolute inset-0 z-40 bg-background/45 backdrop-blur-[1.5px] ${closing ? "is-closing" : ""}`}
-              onClick={toggleExpanded}
-            />
-            <section
-              aria-label={t("diff.expandedPanel")}
-              className={`ora-changes-overlay absolute inset-2 z-50 overflow-hidden rounded-xl border border-border/80 bg-background shadow-[0_24px_90px_rgba(0,0,0,0.32),0_2px_12px_rgba(0,0,0,0.16)] ring-1 ring-foreground/5 dark:shadow-[0_28px_100px_rgba(0,0,0,0.62),0_2px_16px_rgba(0,0,0,0.32)] ${closing ? "is-closing" : ""}`}
-            >
-              <TaskDiffView
-                taskId={taskId}
-                viewType={viewType}
-                fileTreeOpen={fileTreeOpen}
-                toolbar={changesControls}
-                onFileTreeOpenChange={setFileTreeOpen}
-              />
-            </section>
-          </>
+        {taskId !== undefined && !open && (
+          <div className="absolute right-4 top-2 z-30">{changesControls}</div>
         )}
+        <div className="relative flex min-h-0 min-w-0 flex-1">
+          <div
+            className="flex min-h-0 min-w-0 flex-1"
+            aria-hidden={expanded || undefined}
+            inert={expanded || undefined}
+          >
+            {workspaceContent}
+          </div>
+          {taskId !== undefined && open && expanded && (
+            <>
+              <button
+                type="button"
+                aria-label={t("diff.closeExpandedPanel")}
+                className={`ora-changes-backdrop absolute inset-0 z-40 bg-background/45 backdrop-blur-[1.5px] ${closing ? "is-closing" : ""}`}
+                onClick={toggleExpanded}
+              />
+              <section
+                aria-label={t("diff.expandedPanel")}
+                className={`ora-changes-overlay absolute inset-2 z-50 overflow-hidden rounded-xl border border-border/80 bg-background shadow-[0_24px_90px_rgba(0,0,0,0.32),0_2px_12px_rgba(0,0,0,0.16)] ring-1 ring-foreground/5 dark:shadow-[0_28px_100px_rgba(0,0,0,0.62),0_2px_16px_rgba(0,0,0,0.32)] ${closing ? "is-closing" : ""}`}
+              >
+                <TaskDiffView
+                  taskId={taskId}
+                  viewType={viewType}
+                  fileTreeOpen={fileTreeOpen}
+                  fileRequest={fileRequest}
+                  toolbar={changesControls}
+                  onFileTreeOpenChange={setFileTreeOpen}
+                />
+              </section>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </TaskChangesNavigationProvider>
   );
 }

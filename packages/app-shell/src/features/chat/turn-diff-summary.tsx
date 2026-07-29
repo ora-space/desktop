@@ -1,27 +1,19 @@
-import { useMemo, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@ora/ui";
+import { useMemo } from "react";
 import { IconChevronRight, IconFileDiff } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurn } from "@ora/chat";
-import { DiffView } from "./diff-view";
+import { useTaskChangesNavigation } from "../diff/task-changes-navigation";
 import { collectTurnDiffFiles } from "./turn-diff-files";
 
 interface TurnDiffSummaryProps {
   turn: ChatTurn;
 }
 
-/** Shows the completed file changes owned by one response and opens their inline diff viewer. */
+/** Shows the completed file changes owned by one response and opens them in task Changes. */
 export function TurnDiffSummary({ turn }: TurnDiffSummaryProps) {
   const { t } = useTranslation();
+  const changesNavigation = useTaskChangesNavigation();
   const files = useMemo(() => collectTurnDiffFiles(turn), [turn]);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const selectedFile = files.find((file) => file.path === selectedPath) ?? null;
   const totals = files.reduce(
     (result, file) => ({
       additions: result.additions + file.additions,
@@ -33,7 +25,6 @@ export function TurnDiffSummary({ turn }: TurnDiffSummaryProps) {
   if (turn.status === "streaming" || files.length === 0) return null;
 
   return (
-    <>
       <section
         aria-label={t("chat.turnDiff.title", { count: files.length })}
         className="overflow-hidden rounded-lg border border-border/80 bg-background shadow-xs"
@@ -59,7 +50,7 @@ export function TurnDiffSummary({ turn }: TurnDiffSummaryProps) {
               key={file.path}
               type="button"
               className="flex min-h-9 w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              onClick={() => setSelectedPath(file.path)}
+              onClick={() => changesNavigation?.openFile(file.path)}
             >
               <span className="min-w-0 flex-1 truncate font-mono text-[11px]" title={file.path}>
                 {file.path}
@@ -79,38 +70,5 @@ export function TurnDiffSummary({ turn }: TurnDiffSummaryProps) {
           ))}
         </div>
       </section>
-
-      <Dialog
-        open={selectedFile !== null}
-        onOpenChange={(open) => {
-          if (!open) setSelectedPath(null);
-        }}
-      >
-        <DialogContent className="flex max-h-[min(860px,calc(100vh-2rem))] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-3 overflow-hidden p-4">
-          <DialogHeader className="min-w-0 pr-10">
-            <DialogTitle className="truncate font-mono text-sm">
-              {selectedFile?.path ?? t("chat.turnDiff.viewerTitle")}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedFile === null
-                ? t("chat.turnDiff.viewerDescription")
-                : t("chat.turnDiff.viewerStats", {
-                    additions: selectedFile.additions,
-                    deletions: selectedFile.deletions,
-                  })}
-            </DialogDescription>
-          </DialogHeader>
-          {selectedFile !== null && (
-            <div className="min-h-0 overflow-auto">
-              <DiffView
-                path={selectedFile.path}
-                oldText={selectedFile.oldText}
-                newText={selectedFile.newText}
-              />
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </>
   );
 }

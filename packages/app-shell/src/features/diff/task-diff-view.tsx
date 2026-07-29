@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Decoration,
@@ -69,11 +69,17 @@ interface TaskDiffViewProps {
   taskId: string;
   viewType: TaskDiffViewType;
   fileTreeOpen: boolean;
+  fileRequest?: TaskDiffFileRequest;
   toolbar?: ReactNode;
   onFileTreeOpenChange: (open: boolean) => void;
 }
 
 export type TaskDiffViewType = "unified" | "split";
+
+export interface TaskDiffFileRequest {
+  path: string;
+  requestId: number;
+}
 
 interface SelectedAnchor {
   anchor: TaskDiffCommentAnchor;
@@ -85,6 +91,7 @@ export function TaskDiffView({
   taskId,
   viewType,
   fileTreeOpen,
+  fileRequest,
   toolbar,
   onFileTreeOpenChange,
 }: TaskDiffViewProps) {
@@ -114,6 +121,33 @@ export function TaskDiffView({
     : files.some((file) => diffFilePath(file) === selectedFilePath)
       ? selectedFilePath!
       : diffFilePath(files[0]!);
+
+  /** Selects a changed file and aligns its first line with the top of the Diff viewport. */
+  const selectFile = useCallback((path: string, behavior: ScrollBehavior = "smooth") => {
+    setSelectedAnchor(null);
+    setSelectedFilePath(path);
+    const root = scrollContainerRef.current;
+    const element = fileElementsRef.current.get(path);
+    if (root === null || element === undefined) return;
+    const top = element.getBoundingClientRect().top
+      - root.getBoundingClientRect().top
+      + root.scrollTop
+      - 16;
+    root.scrollTo({ top: Math.max(0, top), behavior });
+  }, []);
+
+  useEffect(() => {
+    if (fileRequest === undefined || files.length === 0) return;
+    const requestedPath = normalizeDiffPath(fileRequest.path);
+    const matchingPath = files
+      .map(diffFilePath)
+      .find((path) => {
+        const normalizedPath = normalizeDiffPath(path);
+        return requestedPath === normalizedPath
+          || requestedPath.endsWith(`/${normalizedPath}`);
+      });
+    if (matchingPath !== undefined) selectFile(matchingPath, "auto");
+  }, [fileRequest, files, selectFile]);
 
   useEffect(() => {
     const panel = fileTreePanelRef.current;
@@ -434,18 +468,7 @@ export function TaskDiffView({
                 <TaskDiffFileTree
                   files={files}
                   selectedPath={activeFilePath}
-                  onSelect={(path) => {
-                    setSelectedAnchor(null);
-                    setSelectedFilePath(path);
-                    const root = scrollContainerRef.current;
-                    const element = fileElementsRef.current.get(path);
-                    if (root === null || element === undefined) return;
-                    const top = element.getBoundingClientRect().top
-                      - root.getBoundingClientRect().top
-                      + root.scrollTop
-                      - 16;
-                    root.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
-                  }}
+                  onSelect={(path) => selectFile(path)}
                 />
               )}
             </ResizablePanel>
@@ -470,6 +493,11 @@ export function TaskDiffView({
       />
     </section>
   );
+}
+
+/** Normalizes provider and Git path styles before matching a chat file to the task patch. */
+function normalizeDiffPath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.?\//, "");
 }
 
 interface CommitChangesDialogProps {

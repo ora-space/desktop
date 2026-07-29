@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ChatToolCall, ChatTurn } from "@ora/chat";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { TaskChangesNavigationProvider } from "../diff/task-changes-navigation";
 import { collectTurnDiffFiles } from "./turn-diff-files";
 import { TurnDiffSummary } from "./turn-diff-summary";
 
@@ -71,21 +72,50 @@ describe("turn diff summary", () => {
 
   it("opens the selected file in the diff viewer", async () => {
     const user = userEvent.setup();
+    const openFile = vi.fn();
     render(
       <AppI18nProvider>
-        <TurnDiffSummary
-          turn={turn([
-            editTool("edit-1", "src/main.ts", "const value = 1;\n", "const value = 2;\n"),
-          ])}
-        />
+        <TaskChangesNavigationProvider onOpenFile={openFile}>
+          <TurnDiffSummary
+            turn={turn([
+              editTool("edit-1", "src/main.ts", "const value = 1;\n", "const value = 2;\n"),
+            ])}
+          />
+        </TaskChangesNavigationProvider>
       </AppI18nProvider>,
     );
 
     await user.click(screen.getByRole("button", { name: /src\/main\.ts/ }));
 
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "src/main.ts" })).toBeInTheDocument();
-    expect(screen.getByText("const value = 2;")).toBeInTheDocument();
+    expect(openFile).toHaveBeenCalledWith("src/main.ts");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows a full-content OpenCode write when the adapter omits ACP diff content", async () => {
+    const user = userEvent.setup();
+    const openFile = vi.fn();
+    const newFile = editTool("write-1", "quicksort.py", "", "");
+    newFile.content = [];
+    newFile.locations = [{
+      path: "C:\\Users\\Blue\\AppData\\Roaming\\space.ora.desktop\\worktrees\\task-1\\quicksort.py",
+    }];
+    newFile.rawInput = {
+      filePath: newFile.locations[0].path,
+      content: "def quicksort(values):\n    return values\n",
+    };
+
+    render(
+      <AppI18nProvider>
+        <TaskChangesNavigationProvider onOpenFile={openFile}>
+          <TurnDiffSummary turn={turn([newFile])} />
+        </TaskChangesNavigationProvider>
+      </AppI18nProvider>,
+    );
+
+    const fileButton = screen.getByRole("button", { name: /quicksort\.py.*2.*0/ });
+    await user.click(fileButton);
+
+    expect(openFile).toHaveBeenCalledWith("quicksort.py");
   });
 
   it("waits for turn completion before showing the summary", () => {
