@@ -6,6 +6,7 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileSystemAction {
     CreateDirectory,
+    OpenFile,
     ReadDirectory,
     RemoveFile,
 }

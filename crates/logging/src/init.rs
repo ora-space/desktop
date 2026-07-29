@@ -45,7 +45,7 @@ where
             Ok((Dispatch::new(subscriber), LoggingGuard::default()))
         }
         LogOutput::File(file_config) => {
-            let prepared_output = prepare_file_output(file_config)?;
+            let prepared_output = prepare_file_output(file_config, config.timezone)?;
             let subscriber = tracing_subscriber::registry()
                 .with(CorrelationLayer)
                 .with(level_filter)
@@ -62,7 +62,7 @@ where
             ))
         }
         LogOutput::StdoutAndFile(file_config) => {
-            let prepared_output = prepare_file_output(file_config)?;
+            let prepared_output = prepare_file_output(file_config, config.timezone)?;
             let subscriber = tracing_subscriber::registry()
                 .with(CorrelationLayer)
                 .with(level_filter)

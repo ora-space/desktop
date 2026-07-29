@@ -82,6 +82,11 @@ pub(crate) fn now_local_in(timezone: chrono_tz::Tz) -> OffsetDateTime {
     localize(OffsetDateTime::now_utc(), timezone)
 }
 
+/// Resolves the local calendar date for one instant in an explicitly supplied timezone.
+pub(crate) fn local_date_at(instant: OffsetDateTime, timezone: chrono_tz::Tz) -> time::Date {
+    localize(instant, timezone).date()
+}
+
 /// Expresses a fixed UTC instant in an IANA timezone while preserving the represented instant.
 fn localize(utc_now: OffsetDateTime, timezone: chrono_tz::Tz) -> OffsetDateTime {
     let offset = offset_for_unix_timestamp(timezone, utc_now.unix_timestamp());

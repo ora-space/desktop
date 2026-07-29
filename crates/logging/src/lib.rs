@@ -7,6 +7,7 @@ mod formatter;
 mod gitlancer_bridge;
 mod guard;
 mod init;
+mod local_daily_appender;
 mod macros;
 mod method_name;
 mod test_support;

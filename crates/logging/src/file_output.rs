@@ -1,10 +1,12 @@
 use std::ffi::OsStr;
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use time::{Date, macros::format_description};
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 
+use crate::local_daily_appender::{LocalDailyAppender, SystemFileOpener, SystemTimeSource};
 use crate::{FileLoggingConfig, FileSystemAction, LoggingInitError, RotationPolicy};
 
 /// Contains the prepared writer state needed for one file-backed sink.
@@ -13,18 +15,22 @@ pub(crate) struct PreparedFileOutput {
     pub(crate) guard: WorkerGuard,
 }
 
-/// Creates the rotating file writer and applies retention cleanup before the sink starts writing.
+/// Creates the local-calendar rotating writer used by one file-backed sink.
 pub(crate) fn prepare_file_output(
     config: &FileLoggingConfig,
+    timezone: chrono_tz::Tz,
 ) -> Result<PreparedFileOutput, LoggingInitError> {
     let active_path = ActiveLogPath::from_path(&config.path)?;
     ensure_directory_exists(active_path.directory())?;
-    cleanup_old_logs(&active_path, config.max_days.get())?;
 
     let appender = match config.rotation {
-        RotationPolicy::Daily => {
-            tracing_appender::rolling::daily(active_path.directory(), active_path.file_name())
-        }
+        RotationPolicy::Daily => LocalDailyAppender::new(
+            active_path,
+            timezone,
+            config.max_days,
+            SystemTimeSource,
+            SystemFileOpener,
+        )?,
     };
     let (writer, guard) = tracing_appender::non_blocking(appender);
 
@@ -40,10 +46,11 @@ fn ensure_directory_exists(directory: &Path) -> Result<(), LoggingInitError> {
     })
 }
 
-/// Deletes only the oldest matching rotated log files until the retained window fits `max_days`.
+/// Deletes the oldest inactive files until the rotated series fits `max_days`.
 pub(crate) fn cleanup_old_logs(
     active_path: &ActiveLogPath,
-    max_days: usize,
+    max_days: NonZeroUsize,
+    current_log_path: &Path,
 ) -> Result<(), LoggingInitError> {
     let directory =
         fs::read_dir(active_path.directory()).map_err(|source| LoggingInitError::FileSystem {
@@ -58,8 +65,12 @@ pub(crate) fn cleanup_old_logs(
         .collect::<Vec<_>>();
     dated_files.sort_by_key(|candidate| candidate.date);
 
-    let files_to_delete = dated_files.len().saturating_sub(max_days);
-    for candidate in dated_files.into_iter().take(files_to_delete) {
+    let files_to_delete = dated_files.len().saturating_sub(max_days.get());
+    for candidate in dated_files
+        .into_iter()
+        .filter(|candidate| candidate.path != current_log_path)
+        .take(files_to_delete)
+    {
         fs::remove_file(&candidate.path).map_err(|source| LoggingInitError::FileSystem {
             action: FileSystemAction::RemoveFile,
             path: candidate.path,
@@ -125,6 +136,11 @@ impl ActiveLogPath {
     /// Returns the filename prefix that identifies one log stream inside its directory.
     pub(crate) fn file_name(&self) -> &str {
         &self.file_name
+    }
+
+    /// Builds the path for one local calendar date in this rotated log series.
+    pub(crate) fn path_for_date(&self, date: Date) -> PathBuf {
+        self.directory.join(format!("{}.{date}", self.file_name))
     }
 }
 

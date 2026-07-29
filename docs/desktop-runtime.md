@@ -40,7 +40,8 @@ Desktop initializes `ora-logging` before opening the backend and registers the G
 At startup, Desktop reads the operating system's IANA timezone and fixes it for the process
 lifetime. Structured event timestamps use that timezone. If the system timezone cannot be read or
 parsed, Desktop records a warning, uses UTC, and continues startup. A system timezone change takes
-effect after Ora restarts. Daily log files continue to rotate at UTC boundaries.
+effect after Ora restarts. Daily log filenames and rollover boundaries use the same configured
+timezone; rollover occurs on the first event written after local midnight.
 
 ## Verification
 

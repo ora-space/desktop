@@ -328,7 +328,8 @@ fn cleans_up_rotated_files_by_retention_window() {
 
     cleanup_old_logs(
         &ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap(),
-        3,
+        NonZeroUsize::new(/*n*/ 3).unwrap(),
+        &temp_dir.path().join("ora.log.2026-05-04"),
     )
     .unwrap();
 
@@ -339,6 +340,32 @@ fn cleans_up_rotated_files_by_retention_window() {
             "ora.log.2026-05-03".to_string(),
             "ora.log.2026-05-04".to_string(),
             "unrelated.log.2026-05-01".to_string(),
+        ]
+    );
+}
+
+/// Verifies retention cannot unlink the open local-date file when stale UTC dates sort later.
+#[test]
+fn preserves_the_current_log_when_retention_dates_sort_later() {
+    let temp_dir = TempDir::new().unwrap();
+    create_log_file(temp_dir.path(), "ora.log.2026-05-01");
+    create_log_file(temp_dir.path(), "ora.log.2026-05-02");
+    create_log_file(temp_dir.path(), "ora.log.2026-05-03");
+    create_log_file(temp_dir.path(), "ora.log.2026-05-04");
+
+    cleanup_old_logs(
+        &ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap(),
+        NonZeroUsize::new(/*n*/ 3).unwrap(),
+        &temp_dir.path().join("ora.log.2026-05-01"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_file_names(temp_dir.path()),
+        vec![
+            "ora.log.2026-05-01".to_string(),
+            "ora.log.2026-05-03".to_string(),
+            "ora.log.2026-05-04".to_string(),
         ]
     );
 }
