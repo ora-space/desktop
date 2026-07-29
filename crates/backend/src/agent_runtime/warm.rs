@@ -14,6 +14,7 @@ use super::warm_pool::{
 use crate::BackendError;
 use crate::clock::SystemClock;
 use ora_application::{Clock, SessionIdGenerator, UuidSessionIdGenerator};
+use ora_contracts::WarmSessionTarget;
 use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
 use ora_contracts::acp::session::{
     CloseSessionRequest, CloseSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
@@ -370,9 +371,20 @@ impl WarmSessions {
         }
     }
 
-    /// Retires idle and over-capacity sessions after the pool changed shape.
+    /// Releases every warm session whose chat surface was deleted.
+    ///
+    /// Nothing else reclaims these: their targets are gone, so no request will
+    /// ever name them again and no bound will reach them in time to matter.
+    pub(super) async fn discard(&self, targets: &[WarmSessionTarget]) {
+        let released = lock_pool(&self.pool).discard_targets(targets);
+        for session in released {
+            self.release(Some(session)).await;
+        }
+    }
+
+    /// Retires over-capacity sessions after the pool changed shape.
     async fn sweep(&self) {
-        let released = lock_pool(&self.pool).evict(self.clock.now_timestamp_millis());
+        let released = lock_pool(&self.pool).evict();
         for session in released {
             self.release(Some(session)).await;
         }

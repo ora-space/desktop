@@ -23,7 +23,9 @@ ACP reports a session's configuration options — the model selector among them 
 - Each warm session is keyed by `(target, agent_cli, client_id)`, where target is a Task or a project root. The key includes the client because one backend serves several clients; without it two browser tabs on the same selection would share a session and the first attach would take the other tab's conversation.
 - The Ora session identifier is minted when the session is warmed, not when it is persisted, so the client never has to follow an identifier change. Before attach that identifier is absent from `getSession` and `listSessions`.
 - The working directory is re-derived from the target on every request and compared with the one the session was created against. A worktree that moved or was recreated retires the session instead of quietly addressing a stale path.
-- Configuration changes apply to warm and persisted sessions alike and are remembered. A superseded connection generation, an idle timeout, or the live-session bound releases the provider session while the entry survives as a cold record of the identifier, its directory, and the options the user chose.
+- Configuration changes apply to warm and persisted sessions alike and are remembered. A superseded connection generation or the live-session bound releases the provider session while the entry survives as a cold record of the identifier, its directory, and the options the user chose.
+- Nothing releases a warm session for having sat unused. A warm session is one the user never prompted, so an idle entry holds no conversation to reclaim; the live-session bound alone caps how many exist, and it is applied when another session is created. A chat left open and returned to is still live rather than rebuilt.
+- Deleting a Task or project discards the warm sessions for its chat surfaces and returns their provider sessions. This is the only thing that reclaims them: the target is gone, so no request can name the entry again, and the live-session bound displaces it only once enough new surfaces are opened. A project delete cascades to its Tasks, so their surfaces are discarded alongside the project root's. A warm session being attached is left alone — that attach owns its provider session now.
 - A cold entry is rebuilt transparently on the next use, replaying those options. A replay the agent rejects degrades to whatever the agent reports rather than failing a prompt the user already typed, and the corrected options reach the client as a `session/update`.
 - Attach rebuilds rather than reuses when the Task's directory differs from the warm session's, which is what makes it safe to warm a direct chat against its project root before its Task exists.
 
@@ -86,7 +88,6 @@ History replay is the one stream that applies backpressure instead of failing fa
 | Load and prompt inactivity deadline | 30 s, reset by each session update |
 | Cancellation settlement grace | 5 s |
 | Connection retry backoff | 250 ms, doubling to a 30 s cap |
-| Model discovery per CLI | 15 s |
 | Session update and event queue depth | 256 items |
 | JSON-RPC frame size | 8 MiB |
 | Serialized structured prompt size | 16 MiB |

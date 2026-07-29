@@ -17,6 +17,7 @@ use ora_db::{
     SqliteTaskRepository, SqliteWorktreeRepository,
 };
 use ora_domain::{Project, ProjectId, TaskId, WorktreeActivity};
+use ora_logging::ora_warn;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -152,6 +153,30 @@ impl TaskApi {
 /// Converts project repository failures encountered during dynamic task routing.
 fn project_repository_error(error: RepositoryError) -> ApplicationError {
     ApplicationError::ProjectRepository { source: error }
+}
+
+/// Lists every visible task belonging to one project.
+///
+/// Read before a cascading project delete, which soft-deletes those rows and
+/// leaves this query with nothing to report afterwards. A failure here yields an
+/// empty list rather than an error: the caller uses it to clean up warm sessions
+/// the deleted project owned, and failing the user's delete over a cleanup query
+/// would be the larger harm.
+pub(crate) fn task_ids_in_project(pool: &RepositoryPool, project_id: &ProjectId) -> Vec<TaskId> {
+    match SqliteTaskRepository::new(pool.clone()).list_tasks() {
+        Ok(tasks) => tasks
+            .into_iter()
+            .filter(|task| &task.project_id == project_id)
+            .map(|task| task.id)
+            .collect(),
+        Err(_) => {
+            ora_warn!(
+                project_id = %project_id,
+                "listing project tasks for warm session cleanup failed",
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// Resolves the task's authoritative execution directory from its selected workspace mode.

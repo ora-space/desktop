@@ -17,9 +17,16 @@ use ora_domain::{AgentCli, SessionId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// How long a warm session may sit unused before its provider session is released.
-const IDLE_TTL_MILLIS: i64 = 10 * 60 * 1000;
 /// How many provider sessions the pool keeps alive at once.
+///
+/// This is the only bound on live sessions; nothing releases one for having sat
+/// unused. A warm session is by definition one the user never prompted — the
+/// first prompt attaches it and removes it from the pool — so an idle entry
+/// holds no conversation to reclaim, only an empty session on the agent side.
+/// Bounding the count is enough to cap that, and unlike a deadline it is
+/// enforceable at the one moment it can be exceeded: creating another session.
+/// A deadline would need a timer to be honest, and would charge a user who
+/// steps away and returns a full rebuild for no benefit.
 const MAX_LIVE_ENTRIES: usize = 8;
 /// How many entries — live or cold — the pool remembers at once.
 ///
@@ -443,15 +450,54 @@ impl WarmPool {
         }
     }
 
-    /// Retires sessions that idled out or exceeded the pool's bounds.
+    /// Drops every entry for a chat surface that no longer exists, reporting
+    /// their provider sessions for release.
+    ///
+    /// A warm session is only ever reached again through its target, so an entry
+    /// whose Task or project was deleted is unreachable: no lookup can reuse it,
+    /// and because reuse is what triggers a rebuild, nothing retires it either.
+    /// The count bounds would push it out eventually, but only once enough new
+    /// surfaces are opened to do so — which for a user who deletes a Task and
+    /// carries on in a handful of others may be never. Deleting the target is
+    /// the last moment its provider session can be reclaimed.
+    ///
+    /// Reserved entries are kept for the reason [`WarmPool::evict`] keeps them:
+    /// an attach already holds the provider session, and releasing it would
+    /// leave that attach addressing an identifier the agent dropped. Losing the
+    /// entry costs nothing — the attach is taking ownership of the session — but
+    /// losing the session under it is exactly the failure the reservation exists
+    /// to prevent.
+    pub(super) fn discard_targets(
+        &mut self,
+        targets: &[WarmSessionTarget],
+    ) -> Vec<ReleasedSession> {
+        let mut released = Vec::new();
+        let mut index = 0;
+        while index < self.entries.len() {
+            let entry = &self.entries[index];
+            if entry.reserved || !targets.contains(&entry.key.target) {
+                index += 1;
+                continue;
+            }
+            released.extend(self.release_live(index));
+            self.entries.remove(index);
+        }
+        released
+    }
+
+    /// Retires the least recently used sessions once the pool's bounds are passed.
+    ///
+    /// Both bounds are pure counts, so this is driven by the one operation that
+    /// can exceed them — installing a newly created provider session — and needs
+    /// no notion of the current time.
     ///
     /// Reserved entries are exempt from every bound here. An attach already
     /// holds their provider session id and is racing to persist an Ora session
     /// against it, so releasing it would delete that session out from under the
     /// row being written, and removing the entry would leave a failed attach
-    /// with nothing to fall back to. Eviction is driven by `session/new`, which
-    /// runs on any chat surface, so nothing stops it from landing inside an
-    /// unrelated surface's attach window.
+    /// with nothing to fall back to. Eviction runs on whichever chat surface
+    /// created a session, so nothing stops it from landing inside an unrelated
+    /// surface's attach window.
     ///
     /// Both bounds are therefore measured against what is actually evictable
     /// rather than against every entry, which lets the pool briefly exceed them
@@ -460,17 +506,8 @@ impl WarmPool {
     /// for one that is leaving the pool anyway, and — when reservations
     /// outnumber the bound — deleting every remaining entry in a doomed attempt
     /// to reach a total no amount of eviction can reach.
-    pub(super) fn evict(&mut self, now: i64) -> Vec<ReleasedSession> {
+    pub(super) fn evict(&mut self) -> Vec<ReleasedSession> {
         let mut released = Vec::new();
-        for index in 0..self.entries.len() {
-            if self.entries[index].live.is_some()
-                && !self.entries[index].reserved
-                && now.saturating_sub(self.entries[index].last_used_at) >= IDLE_TTL_MILLIS
-            {
-                released.extend(self.release_live(index));
-            }
-        }
-
         let mut live: Vec<usize> = (0..self.entries.len())
             .filter(|index| self.entries[*index].live.is_some() && !self.entries[*index].reserved)
             .collect();
@@ -534,9 +571,8 @@ pub(super) struct RebuildPlan {
 #[cfg(test)]
 mod tests {
     use super::{
-        AttachedWarm, ConfigTarget, CreatedProvider, IDLE_TTL_MILLIS, Install, MAX_ENTRIES,
-        MAX_LIVE_ENTRIES, RebuildPlan, ReleasedSession, Reservation, WarmDecision, WarmKey,
-        WarmPool,
+        AttachedWarm, ConfigTarget, CreatedProvider, Install, MAX_ENTRIES, MAX_LIVE_ENTRIES,
+        RebuildPlan, ReleasedSession, Reservation, WarmDecision, WarmKey, WarmPool,
     };
     use ora_contracts::WarmSessionTarget;
     use ora_contracts::acp::session_config_options::{
@@ -743,24 +779,24 @@ mod tests {
         );
     }
 
-    /// Verifies an idle session is released while its entry survives for reuse.
+    /// Verifies a session that is merely unused keeps its provider session, so
+    /// returning to a chat left open does not pay for a rebuild.
     #[test]
-    fn releases_sessions_that_idled_out() {
+    fn keeps_an_unused_session_within_the_live_bound() {
         let mut pool = WarmPool::default();
         let key = key("task-1", "client-1");
         let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
 
-        let released = pool.evict(IDLE_TTL_MILLIS);
+        let released = pool.evict();
 
         assert_eq!(
-            (released, pool.config_target(&session_id, IDLE_TTL_MILLIS)),
+            (released, pool.config_target(&session_id, i64::MAX)),
             (
-                vec![ReleasedSession {
+                vec![],
+                Some(ConfigTarget::Live {
                     agent_cli: AgentCli::OpenCode,
                     agent_session_id: "agent-session-1".to_string(),
-                    generation: GENERATION,
-                }],
-                Some(ConfigTarget::Deferred),
+                }),
             )
         );
     }
@@ -780,35 +816,12 @@ mod tests {
         }
 
         assert_eq!(
-            pool.evict(MAX_LIVE_ENTRIES as i64),
+            pool.evict(),
             vec![ReleasedSession {
                 agent_cli: AgentCli::OpenCode,
                 agent_session_id: "agent-session-0".to_string(),
                 generation: GENERATION,
             }]
-        );
-    }
-
-    /// Verifies an idle session being attached is not released, so the provider
-    /// session the attach is persisting is not deleted underneath it.
-    #[test]
-    fn keeps_an_idle_session_that_is_being_attached() {
-        let mut pool = WarmPool::default();
-        let key = key("task-1", "client-1");
-        let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
-        pool.reserve_for_attach(&session_id, Path::new("/repo"));
-
-        let released = pool.evict(IDLE_TTL_MILLIS);
-
-        assert_eq!(
-            (released, pool.config_target(&session_id, IDLE_TTL_MILLIS)),
-            (
-                vec![],
-                Some(ConfigTarget::Live {
-                    agent_cli: AgentCli::OpenCode,
-                    agent_session_id: "agent-session-1".to_string(),
-                }),
-            )
         );
     }
 
@@ -831,7 +844,7 @@ mod tests {
         pool.reserve_for_attach(&session_ids[0], Path::new("/repo"));
 
         assert_eq!(
-            pool.evict(MAX_LIVE_ENTRIES as i64 + 1),
+            pool.evict(),
             vec![ReleasedSession {
                 agent_cli: AgentCli::OpenCode,
                 agent_session_id: "agent-session-1".to_string(),
@@ -866,7 +879,7 @@ mod tests {
             );
         }
 
-        pool.evict(MAX_ENTRIES as i64);
+        pool.evict();
 
         assert_eq!(
             (
@@ -911,7 +924,7 @@ mod tests {
             "session-usable",
         );
 
-        pool.evict(MAX_ENTRIES as i64 + 1);
+        pool.evict();
 
         assert_eq!(
             (
@@ -919,6 +932,89 @@ mod tests {
                 pool.rebuild_plan(&reserved[0]).is_some(),
             ),
             (true, true)
+        );
+    }
+
+    /// Verifies a deleted target takes its warm sessions with it, across every
+    /// client that had one open, while leaving other surfaces untouched.
+    #[test]
+    fn discards_every_warm_session_for_a_deleted_target() {
+        let mut pool = WarmPool::default();
+        let doomed_first = warm(
+            &mut pool,
+            &key("task-1", "client-1"),
+            Path::new("/repo"),
+            0,
+            "session-1",
+        );
+        let doomed_second = warm(
+            &mut pool,
+            &key("task-1", "client-2"),
+            Path::new("/repo"),
+            1,
+            "session-2",
+        );
+        let survivor = warm(
+            &mut pool,
+            &key("task-2", "client-1"),
+            Path::new("/repo"),
+            2,
+            "session-3",
+        );
+
+        let released = pool.discard_targets(&[WarmSessionTarget::Task {
+            task_id: "task-1".to_string(),
+        }]);
+
+        assert_eq!(
+            (
+                released,
+                pool.rebuild_plan(&doomed_first),
+                pool.rebuild_plan(&doomed_second),
+                pool.rebuild_plan(&survivor).is_some(),
+            ),
+            (
+                vec![
+                    ReleasedSession {
+                        agent_cli: AgentCli::OpenCode,
+                        agent_session_id: "agent-session-1".to_string(),
+                        generation: GENERATION,
+                    },
+                    ReleasedSession {
+                        agent_cli: AgentCli::OpenCode,
+                        agent_session_id: "agent-session-2".to_string(),
+                        generation: GENERATION,
+                    },
+                ],
+                None,
+                None,
+                true,
+            )
+        );
+    }
+
+    /// Verifies a deleted target leaves an in-flight attach alone, so the
+    /// provider session it is persisting is not deleted underneath it.
+    #[test]
+    fn keeps_the_session_being_attached_when_its_target_is_deleted() {
+        let mut pool = WarmPool::default();
+        let key = key("task-1", "client-1");
+        let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
+        pool.reserve_for_attach(&session_id, Path::new("/repo"));
+
+        let released = pool.discard_targets(&[WarmSessionTarget::Task {
+            task_id: "task-1".to_string(),
+        }]);
+
+        assert_eq!(
+            (released, pool.config_target(&session_id, 5)),
+            (
+                vec![],
+                Some(ConfigTarget::Live {
+                    agent_cli: AgentCli::OpenCode,
+                    agent_session_id: "agent-session-1".to_string(),
+                }),
+            )
         );
     }
 

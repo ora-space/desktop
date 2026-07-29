@@ -132,13 +132,21 @@ backend_command!(
     update_project,
     "Updates one project through the shared Backend."
 );
-backend_command!(
-    delete_project,
-    DeleteProjectRequest,
-    DeleteProjectResponse,
-    delete_project,
-    "Deletes one project through the shared Backend."
-);
+/// Deletes one project through the shared Backend.
+///
+/// Not a `backend_command!` because deleting also returns the warm provider
+/// sessions the project owned, which is asynchronous.
+#[tauri::command]
+pub async fn delete_project(
+    state: State<'_, DesktopState>,
+    request: DeleteProjectRequest,
+) -> Result<DeleteProjectResponse, CommandError> {
+    state
+        .backend
+        .delete_project(request)
+        .await
+        .map_err(CommandError::from)
+}
 
 // =============================================================================
 // task
@@ -172,13 +180,21 @@ backend_command!(
     update_task,
     "Updates one task through the shared Backend."
 );
-backend_command!(
-    delete_task,
-    DeleteTaskRequest,
-    DeleteTaskResponse,
-    delete_task,
-    "Deletes one task through the shared Backend."
-);
+/// Deletes one task through the shared Backend.
+///
+/// Not a `backend_command!` because deleting also returns the warm provider
+/// session the Task owned, which is asynchronous.
+#[tauri::command]
+pub async fn delete_task(
+    state: State<'_, DesktopState>,
+    request: DeleteTaskRequest,
+) -> Result<DeleteTaskResponse, CommandError> {
+    state
+        .backend
+        .delete_task(request)
+        .await
+        .map_err(CommandError::from)
+}
 backend_command!(
     get_task_diff,
     GetTaskDiffRequest,

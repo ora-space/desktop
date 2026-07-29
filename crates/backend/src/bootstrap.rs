@@ -178,11 +178,36 @@ impl Backend {
         self.project.update(request).map_err(BackendError::from)
     }
     /// Deletes one project through the shared application composition.
-    pub fn delete_project(
+    ///
+    /// The delete cascades to the project's Tasks, so every chat surface beneath
+    /// it dies along with the project root's and their warm sessions are
+    /// discarded together. The Task identifiers are collected first because the
+    /// delete is what makes those rows invisible; both queries share one blocking
+    /// hop so that ordering cannot be broken by a scheduling decision.
+    pub async fn delete_project(
         &self,
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {
-        self.project.delete(request)
+        let project = self.project.clone();
+        let pool = self.pool.clone();
+        let project_id = ora_domain::ProjectId::new(request.project_id.as_str());
+        let (response, task_ids) = spawn_repository_work(move || {
+            let task_ids = crate::task::task_ids_in_project(&pool, &project_id);
+            project.delete(request).map(|response| (response, task_ids))
+        })
+        .await?;
+
+        let mut targets: Vec<WarmSessionTarget> = task_ids
+            .into_iter()
+            .map(|task_id| WarmSessionTarget::Task {
+                task_id: task_id.to_string(),
+            })
+            .collect();
+        targets.push(WarmSessionTarget::ProjectRoot {
+            project_id: response.project_id.clone(),
+        });
+        self.agent_runtime.discard_warm_sessions(&targets).await;
+        Ok(response)
     }
 
     // =============================================================================
@@ -212,11 +237,22 @@ impl Backend {
         self.task.update(request).map_err(BackendError::from)
     }
     /// Deletes one task through the shared application composition.
-    pub fn delete_task(
+    ///
+    /// Discards the Task's warm session on the way out. Nothing else would: the
+    /// target is gone, so no request can name it again, and the pool's bounds
+    /// only reclaim an entry once enough new surfaces are opened to displace it.
+    pub async fn delete_task(
         &self,
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
-        self.task.delete(request)
+        let task = self.task.clone();
+        let response = spawn_repository_work(move || task.delete(request)).await?;
+        self.agent_runtime
+            .discard_warm_sessions(&[WarmSessionTarget::Task {
+                task_id: response.task_id.clone(),
+            }])
+            .await;
+        Ok(response)
     }
 
     // =============================================================================
@@ -502,6 +538,25 @@ fn skills_storage_dir(database_path: &Path) -> PathBuf {
         .join("skills")
 }
 
+/// Runs one blocking repository operation off the async runtime's worker threads.
+///
+/// The SQLite work behind a delete genuinely blocks: acquiring a pooled
+/// connection waits when every slot is taken, and a cascading delete opens an
+/// immediate transaction that parks on the busy timeout while another writer
+/// holds the reservation. Parking an async worker for that long starves every
+/// other request the runtime is serving, so the wait belongs on the blocking
+/// pool even though the caller is asynchronous for unrelated reasons.
+async fn spawn_repository_work<T>(
+    work: impl FnOnce() -> Result<T, BackendError> + Send + 'static,
+) -> Result<T, BackendError>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|source| BackendError::internal("repository operation did not complete", source))?
+}
+
 /// Creates one required runtime directory and preserves its exact failing path.
 fn ensure_directory(path: &Path) -> Result<(), BackendBootstrapError> {
     fs::create_dir_all(path).map_err(|source| BackendBootstrapError::DirectoryCreate {
@@ -527,8 +582,8 @@ mod tests {
     use tempfile::TempDir;
 
     /// Verifies the shared composition owns storage bootstrap and complete non-Git CRUD flows.
-    #[test]
-    fn opens_storage_and_serves_shared_crud_apis() {
+    #[tokio::test]
+    async fn opens_storage_and_serves_shared_crud_apis() {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let database_path = temporary.path().join("data").join("ora.sqlite3");
         let worktree_root = temporary.path().join("worktrees");
@@ -626,6 +681,7 @@ mod tests {
             .delete_project(DeleteProjectRequest {
                 project_id: project.id.clone(),
             })
+            .await
             .expect("delete project");
 
         let error = backend
@@ -638,8 +694,8 @@ mod tests {
     }
 
     /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.
-    #[test]
-    fn deletes_existing_task_after_worktree_root_changes() {
+    #[tokio::test]
+    async fn deletes_existing_task_after_worktree_root_changes() {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let repository_root = temporary.path().join("repository");
         initialize_repository(&repository_root);
@@ -680,6 +736,7 @@ mod tests {
             .delete_task(DeleteTaskRequest {
                 task_id: task.id.clone(),
             })
+            .await
             .expect("delete task without Git mutation");
 
         assert!(original_worktree_path.exists());

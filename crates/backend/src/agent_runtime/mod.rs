@@ -182,6 +182,15 @@ impl AgentRuntimeManager {
         })
     }
 
+    /// Discards the warm sessions belonging to chat surfaces that were deleted.
+    ///
+    /// Called when a Task or project goes away. Those surfaces can never be
+    /// requested again, so this is the only point at which their provider
+    /// sessions are returned to the agent.
+    pub(crate) async fn discard_warm_sessions(&self, targets: &[WarmSessionTarget]) {
+        self.inner.warm.discard(targets).await;
+    }
+
     /// Applies one configuration option to a warm or persisted session.
     pub(crate) async fn set_session_config(
         &self,
