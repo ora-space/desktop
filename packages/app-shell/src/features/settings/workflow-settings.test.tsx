@@ -97,24 +97,39 @@ describe("WorkflowSettings", () => {
       right: 800,
       bottom: 600,
     });
-    const dataTransfer = createDataTransfer();
     const toolButton = screen.getByRole("button", { name: "工具" });
+    toolButton.setPointerCapture = () => {};
 
-    fireEvent.dragStart(toolButton, { dataTransfer });
-    fireEvent.dragEnter(canvas, { dataTransfer });
-
-    expect(screen.getByText("释放以添加节点")).toBeInTheDocument();
-
-    fireEvent.dragOver(canvas, { clientX: 500, clientY: 350, dataTransfer });
-    const dropEvent = new MouseEvent("drop", {
-      bubbles: true,
-      cancelable: true,
+    expect(canvas).not.toContainElement(toolButton);
+    fireEvent.pointerDown(toolButton, {
+      button: 0,
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 400,
+      clientY: 650,
+    });
+    fireEvent.pointerMove(toolButton, {
+      isPrimary: true,
+      pointerId: 1,
       clientX: 500,
       clientY: 350,
     });
-    Object.defineProperty(dropEvent, "dataTransfer", { value: dataTransfer });
-    fireEvent(canvas, dropEvent);
 
+    expect(document.querySelector("[data-workflow-node-preview]")).toHaveStyle({
+      left: "500px",
+      top: "350px",
+      transform: "translate(-50%, -50%)",
+    });
+
+    fireEvent.pointerUp(toolButton, {
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 500,
+      clientY: 350,
+    });
+    fireEvent.click(toolButton);
+
+    expect(document.querySelector("[data-workflow-node-preview]")).not.toBeInTheDocument();
     const addedNode = screen.getByLabelText("工具节点: 工具 1");
     expect({
       left: addedNode.style.left,
@@ -264,36 +279,3 @@ describe("WorkflowSettings", () => {
     expect(screen.getByText(/Found 2 suggestions and no blocking issues./)).toBeInTheDocument();
   });
 });
-
-/** Provides the subset of native drag data behavior used by the workflow catalog. */
-function createDataTransfer(): DataTransfer {
-  const values = new Map<string, string>();
-  const types: string[] = [];
-  return {
-    dropEffect: "none",
-    effectAllowed: "all",
-    files: [] as unknown as FileList,
-    items: [] as unknown as DataTransferItemList,
-    types,
-    clearData: (format?: string) => {
-      if (format === undefined) {
-        values.clear();
-        types.splice(0);
-        return;
-      }
-      values.delete(format);
-      const index = types.indexOf(format);
-      if (index >= 0) {
-        types.splice(index, 1);
-      }
-    },
-    getData: (format: string) => values.get(format) ?? "",
-    setData: (format: string, data: string) => {
-      values.set(format, data);
-      if (!types.includes(format)) {
-        types.push(format);
-      }
-    },
-    setDragImage: () => {},
-  };
-}
