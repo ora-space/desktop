@@ -8,17 +8,17 @@ import {
 } from "@tabler/icons-react";
 import { Button, Input, Skeleton } from "@ora/ui";
 import {
+  createMockWorkflowNode,
   MockWorkflowRepository,
   type WorkflowDefinition,
   type WorkflowLocale,
-  type WorkflowNode,
   type WorkflowNodeKind,
+  type WorkflowPosition,
   type WorkflowRunResult,
 } from "@ora/workflow-mock";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowManager } from "./workflow-manager";
-import { getNodeMetadata } from "./workflow-node-metadata";
 
 /** Owns the frontend-only workflow editor state and coordinates the mock repository boundary. */
 export function WorkflowSettings() {
@@ -144,27 +144,16 @@ export function WorkflowSettings() {
   }
 
   /** Adds a catalog node at a canvas-provided position and selects it for immediate editing. */
-  function addNode(kind: WorkflowNodeKind, position: WorkflowNode["position"]): void {
-    const metadata = getNodeMetadata(kind);
+  function addNode(kind: WorkflowNodeKind, position: WorkflowPosition): void {
     const sequence = nextNodeNumber.current++;
-    const id = `${kind}-${sequence}`;
-    const node: WorkflowNode = {
-      id,
+    const node = createMockWorkflowNode({
       kind,
-      title: `${t(metadata.labelKey)} ${sequence}`,
-      description: t(metadata.descriptionKey),
+      sequence,
       position,
-      config: {
-        instruction: "",
-        ...(kind === "prompt" || kind === "agent" ? { model: "GPT-5" } : {}),
-        ...(kind === "tool" ? { tool: "Terminal" } : {}),
-        ...(kind === "condition"
-          ? { condition: t("settings.workflow.defaultCondition") }
-          : {}),
-      },
-    };
+      locale,
+    });
     updateWorkflow((current) => ({ ...current, nodes: [...current.nodes, node] }));
-    setSelectedNodeId(id);
+    setSelectedNodeId(node.id);
   }
 
   /** Removes a node and all incident edges so dangling graph references are impossible. */

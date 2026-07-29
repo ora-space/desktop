@@ -19,9 +19,12 @@ import {
   SelectValue,
   Textarea,
 } from "@ora/ui";
-import type {
-  WorkflowNode,
-  WorkflowRunResult,
+import {
+  createMockWorkflowCapabilities,
+  createMockWorkflowNodeType,
+  type WorkflowLocale,
+  type WorkflowNode,
+  type WorkflowRunResult,
 } from "@ora/workflow-mock";
 import { getNodeMetadata } from "./workflow-node-metadata";
 
@@ -88,8 +91,11 @@ function WorkflowNodeInspector({
   onUpdate: (node: WorkflowNode) => void;
   onDelete: (nodeId: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
+  const capabilities = createMockWorkflowCapabilities(locale);
   const metadata = getNodeMetadata(node.kind);
+  const nodeType = createMockWorkflowNodeType(node.kind, locale);
   const Icon = metadata.icon;
   return (
     <aside className="flex min-h-0 flex-col border-l border-border bg-background">
@@ -99,7 +105,9 @@ function WorkflowNodeInspector({
         </span>
         <div>
           <h3 className="text-xs font-semibold">{node.title}</h3>
-          <p className="text-[10px] text-muted-foreground">{t("settings.workflow.nodeSuffix", { type: t(metadata.labelKey) })}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {t("settings.workflow.nodeSuffix", { type: nodeType.label })}
+          </p>
         </div>
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
@@ -120,7 +128,7 @@ function WorkflowNodeInspector({
         {(node.kind === "prompt" || node.kind === "agent") && (
           <InspectorField label={t("settings.workflow.field.model")} htmlFor="workflow-node-model">
             <Select
-              value={node.config.model ?? "GPT-5"}
+              value={node.config.model ?? capabilities.defaultModel}
               onValueChange={(model) => {
                 if (model !== null) {
                   onUpdate({ ...node, config: { ...node.config, model } });
@@ -131,9 +139,11 @@ function WorkflowNodeInspector({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="GPT-5">GPT-5</SelectItem>
-                <SelectItem value="Claude Sonnet 4">Claude Sonnet 4</SelectItem>
-                <SelectItem value="Local model">{t("settings.workflow.localModel")}</SelectItem>
+                {capabilities.models.map((model) => (
+                  <SelectItem key={model.value} value={model.value}>
+                    {model.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </InspectorField>
@@ -141,7 +151,7 @@ function WorkflowNodeInspector({
         {node.kind === "tool" && (
           <InspectorField label={t("settings.workflow.field.tool")} htmlFor="workflow-node-tool">
             <Select
-              value={node.config.tool ?? "Terminal"}
+              value={node.config.tool ?? capabilities.defaultTool}
               onValueChange={(tool) => {
                 if (tool !== null) {
                   onUpdate({ ...node, config: { ...node.config, tool } });
@@ -152,9 +162,11 @@ function WorkflowNodeInspector({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="Terminal">Terminal</SelectItem>
-                <SelectItem value="File system">File system</SelectItem>
-                <SelectItem value="GitHub">GitHub</SelectItem>
+                {capabilities.tools.map((tool) => (
+                  <SelectItem key={tool.value} value={tool.value}>
+                    {tool.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </InspectorField>
