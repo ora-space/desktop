@@ -1,20 +1,18 @@
 import { useMutation } from "@tanstack/react-query";
 import { useStore } from "zustand";
-import { useContractsClient } from "../../contracts-client-context";
 import { useChatStore } from "../../chat-store-context";
 
 /**
  * Applies one configuration selection — in practice the model — to a session.
  *
- * The agent's reply is authoritative rather than the requested value: an agent
- * that adjusted or rejected the choice describes the result, and the picker
- * renders that. Works on a warm session as well as a persisted one, so a model
- * can be chosen before the first message is sent.
+ * The request is owned by the chat store, which records both the agent's
+ * authoritative answer and any failure to reach it. This wrapper exists for the
+ * pending flag the picker shows while the round trip is in flight; the rejection
+ * it re-raises is already on screen through the conversation's error.
  */
 export function useSetSessionConfig() {
-  const client = useContractsClient();
   const chatStore = useChatStore();
-  const setConfigOptions = useStore(chatStore, (state) => state.setConfigOptions);
+  const setSessionConfig = useStore(chatStore, (state) => state.setSessionConfig);
   return useMutation({
     mutationFn: ({
       sessionId,
@@ -24,12 +22,6 @@ export function useSetSessionConfig() {
       sessionId: string;
       configId: string;
       value: string;
-    }) =>
-      client.session
-        .setConfig({ sessionId, configId, value })
-        .then((response) => ({ sessionId, configOptions: response.configOptions })),
-    onSuccess: ({ sessionId, configOptions }) => {
-      setConfigOptions(sessionId, configOptions);
-    },
+    }) => setSessionConfig(sessionId, configId, value),
   });
 }

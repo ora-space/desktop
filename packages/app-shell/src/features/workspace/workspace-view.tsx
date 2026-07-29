@@ -89,10 +89,15 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const project = projects.find((item) => item.id === selection.projectId);
   const task = tasks.find((item) => item.id === selection.taskId);
   const session = sessions.find((item) => item.id === selection.sessionId);
+  // Until the first message binds this surface to a persisted session, its
+  // conversation lives under the warm one — the same id the composer and the
+  // model picker act on. Resolving it the same way here is what lets anything
+  // reported before that first send reach the screen.
+  const conversationSessionId = selection.sessionId ?? warmSessionId;
   const conversation = useStore(chatStore, (state) =>
-    selection.sessionId === null
+    conversationSessionId === null
       ? undefined
-      : state.conversations[selection.sessionId],
+      : state.conversations[conversationSessionId],
   );
 
   // Workflow state is isolated per session (per task before the session exists).

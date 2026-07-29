@@ -537,6 +537,56 @@ describe("WorkspaceView", () => {
     expect(useWorkspaceSelectionStore.getState().selection.taskId).toBeNull();
     expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe("s1");
   });
+
+  it("shows a model switch that never reached the agent", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    const baseClient = createMockClient(state);
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        setConfig: async () => {
+          throw new Error("agent unreachable");
+        },
+      },
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    // The warm session supplies the picker's models, so wait for them to land.
+    const picker = await screen.findByRole("button", {
+      name: /选择模型|Select model/,
+    });
+    await waitFor(() => expect(picker).toHaveTextContent("Big Pickle"));
+    await user.click(picker);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Small Pickle" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "agent unreachable",
+    );
+    // The rejected switch must not be shown as if it took effect.
+    expect(picker).toHaveTextContent("Big Pickle");
+  });
 });
 
 describe("directChatTitle", () => {

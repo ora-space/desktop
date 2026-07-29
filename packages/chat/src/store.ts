@@ -66,10 +66,19 @@ export interface ChatState {
   /**
    * Records the configuration selectors an agent reported for one session.
    *
-   * Used to seed a warm session's options before any turn exists, and to apply
-   * the agent's answer to a selection the user just made.
+   * Used to seed a warm session's options before any turn exists, from a warm
+   * or attach response the store did not issue itself.
    */
   setConfigOptions(oraSessionId: string, configOptions: acp.SessionConfigOption[]): void;
+  /**
+   * Applies one configuration selection — in practice the model — to a session.
+   *
+   * The agent's reply is authoritative rather than the requested value: an agent
+   * that adjusted or rejected the choice describes the result, and that is what
+   * gets recorded. Works on a warm session as well as a persisted one, so a model
+   * can be chosen before the first message is sent.
+   */
+  setSessionConfig(oraSessionId: string, configId: string, value: string): Promise<void>;
   loadSession(oraSessionId: string): Promise<void>;
   sendMessage(request: SendMessageRequest): Promise<void>;
   stopGeneration(oraSessionId: string): void;
@@ -86,7 +95,7 @@ export interface ChatStoreOptions {
 export type ChatStore = StoreApi<ChatState>;
 export type ChatSessionClient = Pick<
   ContractsClient["session"],
-  "load" | "prompt" | "respondToPermission"
+  "load" | "prompt" | "respondToPermission" | "setConfig"
 >;
 
 const EMPTY_CONVERSATION: SessionConversation = {
@@ -140,11 +149,33 @@ export function createChatStore(
     },
 
     setConfigOptions: (oraSessionId, configOptions) => {
-      updateConversation(set, oraSessionId, (conversation) => ({
-        ...conversation,
-        configOptions,
-        modelChanges: recordModelChange(conversation, configOptions, createId, now()),
-      }));
+      updateConversation(set, oraSessionId, (conversation) =>
+        withConfigOptions(conversation, configOptions, createId, now()),
+      );
+    },
+
+    setSessionConfig: async (oraSessionId, configId, value) => {
+      try {
+        const { configOptions } = await client.setConfig({
+          sessionId: oraSessionId,
+          configId,
+          value,
+        });
+        updateConversation(set, oraSessionId, (conversation) => ({
+          ...withConfigOptions(conversation, configOptions, createId, now()),
+          error: null,
+        }));
+      } catch (error) {
+        // Only the round trip itself can fail here — a rejected selection comes
+        // back as a successful response carrying the agent's own options. So the
+        // picker must not silently snap back to its old value; report it like
+        // every other session action that could not reach the agent.
+        updateConversation(set, oraSessionId, (conversation) => ({
+          ...conversation,
+          error: errorMessage(error),
+        }));
+        throw error;
+      }
     },
 
     loadSession: async (oraSessionId) => {
@@ -859,6 +890,20 @@ function clearPendingPermissions(set: ChatStore["setState"], oraSessionId: strin
     ...conversation,
     pendingPermissions: [],
   }));
+}
+
+/** Adopts one reported option set, marking the transcript if it switched models. */
+function withConfigOptions(
+  conversation: SessionConversation,
+  configOptions: acp.SessionConfigOption[],
+  createId: () => string,
+  timestamp: number,
+): SessionConversation {
+  return {
+    ...conversation,
+    configOptions,
+    modelChanges: recordModelChange(conversation, configOptions, createId, timestamp),
+  };
 }
 
 /**

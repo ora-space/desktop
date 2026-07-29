@@ -35,6 +35,7 @@ test("loads provider history and reconstructs turns from message boundaries", as
     ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, {
@@ -301,6 +302,7 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
       },
     }),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "id-1", now: () => 42 });
   const sending = store.getState().sendMessage({ oraSessionId: "ora-1", text: " hello " });
@@ -396,6 +398,7 @@ test("shows the user turn before the session is persisted", async () => {
       ]);
     },
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
@@ -447,6 +450,7 @@ test("rolls back staged load updates when replay fails before completion", async
     }),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "local", now: () => 42 });
   const previousTurn = {
@@ -512,11 +516,63 @@ function modelOptions(current: string): acp.SessionConfigOption[] {
   ];
 }
 
+test("adopts the agent's answer to a model selection over the requested value", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    // The agent declined the switch and reported that it stayed on "fast".
+    setConfig: async () => ({ configOptions: modelOptions("fast") }),
+  };
+  const store = createChatStore(client, { createId: () => "local", now: () => 42 });
+
+  await store.getState().setSessionConfig("ora-1", "model", "smart");
+
+  assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: modelOptions("fast"),
+    modelChanges: [],
+    turns: [],
+    isLoaded: false,
+    isLoading: false,
+    isResponding: false,
+    pendingPermissions: [],
+    error: null,
+  });
+});
+
+test("reports an unreachable model selection instead of silently keeping the old value", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => { throw new Error("session is gone"); },
+  };
+  const store = createChatStore(client, { createId: () => "local", now: () => 42 });
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+
+  await assert.rejects(
+    store.getState().setSessionConfig("ora-1", "model", "smart"),
+    /session is gone/,
+  );
+
+  assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: modelOptions("fast"),
+    modelChanges: [],
+    turns: [],
+    isLoaded: false,
+    isLoading: false,
+    isResponding: false,
+    pendingPermissions: [],
+    error: "session is gone",
+  });
+});
+
 test("marks the thread where the answering model changed", async () => {
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),
     prompt: () => events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
@@ -536,6 +592,7 @@ test("keeps one marker per point in the thread while the model is cycled", async
     load: () => events<LoadSessionEvent>([]),
     prompt: () => events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
