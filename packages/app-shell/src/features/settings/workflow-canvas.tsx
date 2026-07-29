@@ -1,8 +1,6 @@
 import {
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
-  type ReactNode,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
@@ -20,11 +18,8 @@ import type {
   WorkflowNodeKind,
   WorkflowPosition,
 } from "@ora/workflow-mock";
-import {
-  getNodeMetadata,
-  WORKFLOW_NODE_CATALOG,
-  WORKFLOW_NODE_DRAG_DATA_TYPE,
-} from "./workflow-node-metadata";
+import { getNodeMetadata } from "./workflow-node-metadata";
+import { WorkflowNodeCatalog } from "./workflow-node-catalog";
 import {
   DEFAULT_WORKFLOW_PAN,
   DEFAULT_WORKFLOW_ZOOM,
@@ -41,7 +36,6 @@ const NODE_WIDTH = 230;
 const NODE_ANCHOR_Y = 61;
 
 interface WorkflowCanvasProps {
-  children?: (onAddNode: (kind: WorkflowNodeKind) => void) => ReactNode;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   selectedNodeId: string | null;
@@ -52,6 +46,11 @@ interface WorkflowCanvasProps {
   onReconnectEdge: (edgeId: string, source: string, target: string) => void;
   onDeleteNode: (nodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
+}
+
+interface ClientPosition {
+  clientX: number;
+  clientY: number;
 }
 
 type ConnectionDraft =
@@ -78,7 +77,6 @@ interface PanDraft {
 
 /** Renders and manipulates the node graph without coupling it to persistence or preview behavior. */
 export function WorkflowCanvas({
-  children,
   nodes,
   edges,
   selectedNodeId,
@@ -99,7 +97,6 @@ export function WorkflowCanvas({
     pan: DEFAULT_WORKFLOW_PAN,
   });
   const [panDraft, setPanDraft] = useState<PanDraft | null>(null);
-  const [nodeDropActive, setNodeDropActive] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const { zoom, pan } = viewport;
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId);
@@ -140,33 +137,25 @@ export function WorkflowCanvas({
     onAddNode(kind, nodePositionAt(center));
   }
 
-  /** Reads a supported node kind without trusting arbitrary drag payloads. */
-  function draggedNodeKind(event: ReactDragEvent<HTMLElement>): WorkflowNodeKind | null {
-    const value = event.dataTransfer.getData(WORKFLOW_NODE_DRAG_DATA_TYPE);
-    return WORKFLOW_NODE_CATALOG.some((item) => item.kind === value)
-      ? value as WorkflowNodeKind
-      : null;
-  }
-
-  /** Enables native drop feedback only for workflow node payloads. */
-  function dragNodeOverCanvas(event: ReactDragEvent<HTMLElement>): void {
-    if (!Array.from(event.dataTransfer.types).includes(WORKFLOW_NODE_DRAG_DATA_TYPE)) {
+  /** Adds a pointer-dragged catalog node only when it is released over this canvas. */
+  function dropNodeAtClientPosition(
+    kind: WorkflowNodeKind,
+    position: ClientPosition,
+  ): void {
+    const bounds = canvasRef.current?.getBoundingClientRect();
+    if (
+      bounds === undefined
+      || position.clientX < bounds.left
+      || position.clientX > bounds.right
+      || position.clientY < bounds.top
+      || position.clientY > bounds.bottom
+    ) {
       return;
     }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    setNodeDropActive(true);
-  }
-
-  /** Creates a dragged node at the release point in graph coordinates. */
-  function dropNodeOnCanvas(event: ReactDragEvent<HTMLElement>): void {
-    const kind = draggedNodeKind(event);
-    setNodeDropActive(false);
-    if (kind === null) {
-      return;
-    }
-    event.preventDefault();
-    onAddNode(kind, nodePositionAt(graphPoint(event.clientX, event.clientY)));
+    onAddNode(
+      kind,
+      nodePositionAt(graphPoint(position.clientX, position.clientY)),
+    );
   }
 
   /** Starts a connection preview and resolves the target beneath the pointer on release. */
@@ -389,166 +378,154 @@ export function WorkflowCanvas({
   }
 
   return (
-    <section
-      ref={canvasRef}
-      className={cn(
-        "relative min-h-0 min-w-0 touch-none overflow-hidden bg-muted/25 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        panDraft === null ? "cursor-grab" : "cursor-grabbing",
-      )}
-      aria-label={t("settings.workflow.canvas")}
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-      onWheel={handleWheel}
-      onPointerDown={startPanning}
-      onPointerMove={movePanning}
-      onPointerUp={finishPanning}
-      onPointerCancel={finishPanning}
-      onDragEnter={dragNodeOverCanvas}
-      onDragOver={dragNodeOverCanvas}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setNodeDropActive(false);
-        }
-      }}
-      onDrop={dropNodeOnCanvas}
-      style={{
-        backgroundImage:
-          "radial-gradient(circle, color-mix(in oklch, var(--foreground) 18%, transparent) 1px, transparent 1px)",
-        backgroundPosition: `${pan.x}px ${pan.y}px`,
-        backgroundSize: `${20 * zoom}px ${20 * zoom}px`,
-      }}
-    >
-      <div
-        ref={stageRef}
-        className="absolute left-0 top-0 origin-top-left"
+    <div className="relative min-h-0 min-w-0">
+      <section
+        ref={canvasRef}
+        className={cn(
+          "absolute inset-0 touch-none overflow-hidden bg-muted/25 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          panDraft === null ? "cursor-grab" : "cursor-grabbing",
+        )}
+        aria-label={t("settings.workflow.canvas")}
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        onWheel={handleWheel}
+        onPointerDown={startPanning}
+        onPointerMove={movePanning}
+        onPointerUp={finishPanning}
+        onPointerCancel={finishPanning}
         style={{
-          width: STAGE_WIDTH,
-          height: STAGE_HEIGHT,
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          backgroundImage:
+            "radial-gradient(circle, color-mix(in oklch, var(--foreground) 18%, transparent) 1px, transparent 1px)",
+          backgroundPosition: `${pan.x}px ${pan.y}px`,
+          backgroundSize: `${20 * zoom}px ${20 * zoom}px`,
         }}
-        onPointerMove={moveConnection}
-        onPointerUp={finishConnection}
       >
-        <WorkflowEdges
-          nodes={nodes}
-          edges={edges}
-          connection={connection}
-          selectedEdgeId={activeSelectedEdgeId}
-          onSelectEdge={(edgeId) => {
-            setSelectedEdgeId(edgeId);
-            onSelectNode(null);
+        <div
+          ref={stageRef}
+          className="absolute left-0 top-0 origin-top-left"
+          style={{
+            width: STAGE_WIDTH,
+            height: STAGE_HEIGHT,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           }}
-          onDeleteEdge={(edgeId) => {
-            onDeleteEdge(edgeId);
-            setSelectedEdgeId(null);
-          }}
-        />
-        {nodes.map((node) => (
-          <WorkflowNodeCard
-            key={node.id}
-            node={node}
-            selected={selectedNodeId === node.id}
-            zoom={zoom}
-            onSelect={() => {
+          onPointerMove={moveConnection}
+          onPointerUp={finishConnection}
+        >
+          <WorkflowEdges
+            nodes={nodes}
+            edges={edges}
+            connection={connection}
+            selectedEdgeId={activeSelectedEdgeId}
+            onSelectEdge={(edgeId) => {
+              setSelectedEdgeId(edgeId);
+              onSelectNode(null);
+            }}
+            onDeleteEdge={(edgeId) => {
+              onDeleteEdge(edgeId);
               setSelectedEdgeId(null);
-              onSelectNode(node.id);
             }}
-            onMove={(position) => onMoveNode(node.id, position)}
-            onStartConnection={(event) => startConnection(event, node.id)}
-            connectionCandidate={connection?.candidateNodeId === node.id
-              ? connection.kind === "new"
-                ? "target"
-                : connection.endpoint
-              : null}
-            connectionEndpoint={selectedEdge === undefined
-              ? null
-              : selectedEdge.source === node.id
-                ? "source"
-                : selectedEdge.target === node.id
-                  ? "target"
-                  : null}
-            onStartReconnect={(event, endpoint) => {
-              if (selectedEdge === undefined) {
-                return;
-              }
-              startEdgeReconnect(
-                event,
-                selectedEdge.id,
-                endpoint,
-                endpoint === "source" ? selectedEdge.target : selectedEdge.source,
-              );
-            }}
-            onDelete={() => onDeleteNode(node.id)}
           />
-        ))}
-      </div>
-      {nodeDropActive && (
-        <div className="pointer-events-none absolute inset-3 z-20 rounded-xl border-2 border-dashed border-ring/55 bg-ring/[0.03]">
-          <span className="absolute left-1/2 top-4 -translate-x-1/2 rounded-full border border-ring/20 bg-background/95 px-3 py-1 text-[10px] font-medium text-foreground shadow-sm">
-            {t("settings.workflow.dropNode")}
-          </span>
+          {nodes.map((node) => (
+            <WorkflowNodeCard
+              key={node.id}
+              node={node}
+              selected={selectedNodeId === node.id}
+              zoom={zoom}
+              onSelect={() => {
+                setSelectedEdgeId(null);
+                onSelectNode(node.id);
+              }}
+              onMove={(position) => onMoveNode(node.id, position)}
+              onStartConnection={(event) => startConnection(event, node.id)}
+              connectionCandidate={connection?.candidateNodeId === node.id
+                ? connection.kind === "new"
+                  ? "target"
+                  : connection.endpoint
+                : null}
+              connectionEndpoint={selectedEdge === undefined
+                ? null
+                : selectedEdge.source === node.id
+                  ? "source"
+                  : selectedEdge.target === node.id
+                    ? "target"
+                    : null}
+              onStartReconnect={(event, endpoint) => {
+                if (selectedEdge === undefined) {
+                  return;
+                }
+                startEdgeReconnect(
+                  event,
+                  selectedEdge.id,
+                  endpoint,
+                  endpoint === "source" ? selectedEdge.target : selectedEdge.source,
+                );
+              }}
+              onDelete={() => onDeleteNode(node.id)}
+            />
+          ))}
         </div>
-      )}
-      {children !== undefined && (
         <div
           data-workflow-controls
-          className="absolute bottom-3 left-1/2 z-30 w-fit max-w-[calc(100%_-_12rem)] -translate-x-1/2"
+          className="absolute right-2 top-2 z-30 flex w-fit items-center rounded-lg border border-border/80 bg-background/95 p-px shadow-sm backdrop-blur"
+          aria-label={t("settings.workflow.canvasControls")}
+          aria-orientation="horizontal"
+          role="toolbar"
         >
-          {children(addNodeAtViewportCenter)}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 rounded-md"
+            aria-label={t("settings.workflow.zoomOut")}
+            disabled={zoom <= MIN_WORKFLOW_ZOOM}
+            onClick={() => zoomFromCenter(zoom - 0.1)}
+          >
+            <IconMinus />
+          </Button>
+          <span
+            className="flex h-7 w-8 items-center justify-center text-[9px] font-medium tabular-nums text-muted-foreground"
+            aria-live="polite"
+          >
+            {Math.round(zoom * 100)}%
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 rounded-md"
+            aria-label={t("settings.workflow.zoomIn")}
+            disabled={zoom >= MAX_WORKFLOW_ZOOM}
+            onClick={() => zoomFromCenter(zoom + 0.1)}
+          >
+            <IconPlus />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 rounded-md"
+            aria-label={t("settings.workflow.resetView")}
+            onClick={() =>
+              setViewport({
+                zoom: DEFAULT_WORKFLOW_ZOOM,
+                pan: DEFAULT_WORKFLOW_PAN,
+              })
+            }
+          >
+            <IconFocusCentered />
+          </Button>
+          <span className="sr-only">
+            {t("settings.workflow.canvasHint")}
+          </span>
         </div>
-      )}
+      </section>
       <div
         data-workflow-controls
-        className="absolute right-2 top-2 z-30 flex w-fit items-center rounded-lg border border-border/80 bg-background/95 p-px shadow-sm backdrop-blur"
-        aria-label={t("settings.workflow.canvasControls")}
-        aria-orientation="horizontal"
-        role="toolbar"
+        className="absolute bottom-3 left-1/2 z-30 w-fit max-w-[calc(100%_-_12rem)] -translate-x-1/2"
       >
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="size-7 rounded-md"
-          aria-label={t("settings.workflow.zoomOut")}
-          disabled={zoom <= MIN_WORKFLOW_ZOOM}
-          onClick={() => zoomFromCenter(zoom - 0.1)}
-        >
-          <IconMinus />
-        </Button>
-        <span
-          className="flex h-7 w-8 items-center justify-center text-[9px] font-medium tabular-nums text-muted-foreground"
-          aria-live="polite"
-        >
-          {Math.round(zoom * 100)}%
-        </span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="size-7 rounded-md"
-          aria-label={t("settings.workflow.zoomIn")}
-          disabled={zoom >= MAX_WORKFLOW_ZOOM}
-          onClick={() => zoomFromCenter(zoom + 0.1)}
-        >
-          <IconPlus />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="size-7 rounded-md"
-          aria-label={t("settings.workflow.resetView")}
-          onClick={() =>
-            setViewport({
-              zoom: DEFAULT_WORKFLOW_ZOOM,
-              pan: DEFAULT_WORKFLOW_PAN,
-            })
-          }
-        >
-          <IconFocusCentered />
-        </Button>
-        <span className="sr-only">
-          {t("settings.workflow.canvasHint")}
-        </span>
+        <WorkflowNodeCatalog
+          onAdd={addNodeAtViewportCenter}
+          onDrop={dropNodeAtClientPosition}
+        />
       </div>
-    </section>
+    </div>
   );
 }
 

@@ -18,7 +18,6 @@ import {
 import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowManager } from "./workflow-manager";
-import { WorkflowNodeCatalog } from "./workflow-node-catalog";
 import { getNodeMetadata } from "./workflow-node-metadata";
 
 /** Owns the frontend-only workflow editor state and coordinates the mock repository boundary. */
@@ -359,9 +358,7 @@ export function WorkflowSettings() {
             onReconnectEdge={reconnectEdge}
             onDeleteNode={deleteNode}
             onDeleteEdge={deleteEdge}
-          >
-            {(onAddNode) => <WorkflowNodeCatalog onAdd={onAddNode} />}
-          </WorkflowCanvas>
+          />
         )}
         <WorkflowInspector
           node={selectedNode}
