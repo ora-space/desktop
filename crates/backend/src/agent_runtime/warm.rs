@@ -8,7 +8,8 @@ use super::collect_setup_commands;
 use super::connection::ConnectionSupervisors;
 use super::support::{map_acp_error, runtime_internal};
 use super::warm_pool::{
-    ConfigTarget, CreatedProvider, RebuildPlan, ReleasedSession, WarmDecision, WarmKey, WarmPool,
+    ConfigTarget, CreatedProvider, Install, RebuildPlan, ReleasedSession, Reservation,
+    WarmDecision, WarmKey, WarmPool,
 };
 use crate::BackendError;
 use crate::clock::SystemClock;
@@ -27,7 +28,7 @@ use ora_domain::{AgentCli, SessionId};
 use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
@@ -38,7 +39,13 @@ const SESSION_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Owns every warm session and serializes work per chat surface.
 pub(super) struct WarmSessions {
-    pool: Mutex<WarmPool>,
+    /// Guarded by a blocking mutex on purpose. [`WarmPool`] performs no I/O, so
+    /// no critical section here spans an `.await`, and a reservation can only be
+    /// returned from `Drop` — which cannot await — if taking this lock does not
+    /// either. Every future that reaches this module must be `Send`, so the
+    /// compiler rejects any later change that holds the guard across a
+    /// suspension point rather than letting it deadlock the executor.
+    pool: StdMutex<WarmPool>,
     /// One gate per key so concurrent requests for the same surface queue
     /// instead of each starting a `session/new`. A client that mounts its chat
     /// view twice — React's development double-mount does exactly this — would
@@ -56,10 +63,89 @@ pub(super) struct WarmAttachment {
     pub available_commands: Vec<AvailableCommand>,
 }
 
+/// A warm session held for one attach attempt, returned to the pool on drop.
+///
+/// The reservation lives in a value rather than in a pair of calls because the
+/// caller cannot be relied upon to make the second one. Attaching waits on the
+/// runtime's lifecycle lock while holding a reservation, and the HTTP surface
+/// drops the whole request future when its client disconnects; unwinding from a
+/// panic loses the call the same way. Both paths run `Drop`, which is the only
+/// reason a lost caller cannot strand an entry — eviction deliberately skips
+/// reserved entries, so a reservation nothing releases would pin a provider
+/// session that no bound can ever reclaim.
+pub(super) struct WarmReservation<'a> {
+    /// Borrowed rather than reached through [`WarmSessions`] so the reservation
+    /// depends only on the state it actually changes, and can be exercised
+    /// without standing up a CLI connection.
+    pool: &'a StdMutex<WarmPool>,
+    session_id: SessionId,
+    attachment: WarmAttachment,
+    /// Set by `commit`, which already removed the entry; `Drop` then has
+    /// nothing to return.
+    committed: bool,
+}
+
+impl<'a> WarmReservation<'a> {
+    fn new(
+        pool: &'a StdMutex<WarmPool>,
+        session_id: SessionId,
+        attachment: WarmAttachment,
+    ) -> Self {
+        Self {
+            pool,
+            session_id,
+            attachment,
+            committed: false,
+        }
+    }
+
+    /// Describes the provider session this reservation offers the caller.
+    pub(super) fn attachment(&self) -> &WarmAttachment {
+        &self.attachment
+    }
+
+    /// Finalizes the handoff once the caller has actually persisted the
+    /// session: the provider session now belongs to it, not the warm pool.
+    pub(super) fn commit(mut self) {
+        lock_pool(self.pool).commit_attach(&self.session_id);
+        self.committed = true;
+    }
+}
+
+impl Drop for WarmReservation<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            lock_pool(self.pool).release_reservation(&self.session_id);
+        }
+    }
+}
+
+/// Reports that another attach already owns the warm session being claimed.
+///
+/// Failing is the point: the alternative — rebuilding — would hand this caller
+/// a provider session while releasing the one the first attach is persisting,
+/// leaving a session the user can see but the agent has already dropped.
+fn attach_in_flight() -> BackendError {
+    runtime_internal(
+        "warm_session_attach_in_flight",
+        "warm session is already being attached",
+    )
+}
+
+/// Locks a warm pool, adopting the state a panicking caller left behind.
+///
+/// Nothing here can be left half-written: every pool method replaces whole
+/// entries, so a poisoned lock carries no torn invariant worth propagating, and
+/// refusing to serve chat surfaces for the rest of the process would be the
+/// larger failure.
+fn lock_pool(pool: &StdMutex<WarmPool>) -> MutexGuard<'_, WarmPool> {
+    pool.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl WarmSessions {
     pub(super) fn new(connections: ConnectionSupervisors, clock: SystemClock) -> Self {
         Self {
-            pool: Mutex::new(WarmPool::default()),
+            pool: StdMutex::new(WarmPool::default()),
             gates: StdMutex::new(HashMap::new()),
             connections,
             clock,
@@ -78,12 +164,10 @@ impl WarmSessions {
         let supervisor = self.connections.for_agent(key.agent_cli);
         let connection = supervisor.current()?;
         let now = self.clock.now_timestamp_millis();
-        let (decision, released) = {
-            let mut pool = self.pool.lock().await;
-            pool.lookup(&key, &cwd, connection.generation, now, || {
+        let (decision, released) =
+            lock_pool(&self.pool).lookup(&key, &cwd, connection.generation, now, || {
                 UuidSessionIdGenerator::new().generate_session_id()
-            })
-        };
+            });
         self.release(released).await;
 
         match decision {
@@ -105,18 +189,23 @@ impl WarmSessions {
                 let config_options = self
                     .replay(key.agent_cli, &agent_session_id, replay, config_options)
                     .await;
-                let orphan = {
-                    let mut pool = self.pool.lock().await;
-                    pool.commit_created(
-                        &session_id,
-                        CreatedProvider {
-                            agent_session_id,
-                            config_options: config_options.clone(),
-                            available_commands,
-                        },
-                        connection.generation,
-                        self.clock.now_timestamp_millis(),
-                    )
+                let installed = lock_pool(&self.pool).commit_created(
+                    &session_id,
+                    CreatedProvider {
+                        agent_session_id: agent_session_id.clone(),
+                        config_options: config_options.clone(),
+                        available_commands,
+                    },
+                    connection.generation,
+                    self.clock.now_timestamp_millis(),
+                );
+                let orphan = match installed {
+                    Install::Accepted(superseded) => superseded,
+                    Install::Refused => Some(ReleasedSession {
+                        agent_cli: key.agent_cli,
+                        agent_session_id,
+                        generation: connection.generation,
+                    }),
                 };
                 self.release(orphan).await;
                 self.sweep().await;
@@ -138,7 +227,7 @@ impl WarmSessions {
     ) -> Option<Result<Vec<SessionConfigOption>, BackendError>> {
         self.refresh_generations().await;
         let now = self.clock.now_timestamp_millis();
-        let target = self.pool.lock().await.config_target(session_id, now)?;
+        let target = lock_pool(&self.pool).config_target(session_id, now)?;
         let reported = match target {
             ConfigTarget::Deferred => None,
             ConfigTarget::Live {
@@ -157,11 +246,9 @@ impl WarmSessions {
                 Err(error) => return Some(Err(error)),
             },
         };
-        Some(Ok(self
-            .pool
-            .lock()
-            .await
-            .record_config(session_id, config_id, value, reported)))
+        Some(Ok(
+            lock_pool(&self.pool).record_config(session_id, config_id, value, reported)
+        ))
     }
 
     /// Reserves one warm session for persistence against its owning Task,
@@ -176,37 +263,47 @@ impl WarmSessions {
     /// working, and a replay the agent rejects degrades to whatever the agent
     /// reports instead of failing the prompt the user already typed.
     ///
-    /// The caller finishes the handoff with `commit` once its own persistence
-    /// steps succeed, or `release_reservation` if they fail — attaching can
-    /// still fail after this point (a channel or repository error), and this
-    /// keeps that failure from stranding the client's id or leaking the
+    /// The returned [`WarmReservation`] finishes the handoff: `commit` once the
+    /// caller's own persistence steps succeed, and otherwise nothing at all —
+    /// dropping it returns the entry to the pool. Attaching can still fail after
+    /// this point (a channel or repository error), and it can also be abandoned
+    /// without failing, so tying the release to a value rather than to a call
+    /// keeps either outcome from stranding the client's id or pinning the
     /// provider session reserved here.
     pub(super) async fn take(
         &self,
         session_id: &SessionId,
         cwd: &Path,
-    ) -> Result<WarmAttachment, BackendError> {
+    ) -> Result<WarmReservation<'_>, BackendError> {
         self.refresh_generations().await;
         let Some(RebuildPlan {
-            agent_cli,
-            cwd: warm_cwd,
-            replay,
-        }) = self.pool.lock().await.rebuild_plan(session_id)
+            agent_cli, replay, ..
+        }) = lock_pool(&self.pool).rebuild_plan(session_id)
         else {
             return Err(runtime_internal(
                 "warm_session_not_found",
                 "warm session is no longer available",
             ));
         };
-        if warm_cwd == cwd
-            && let Some(attached) = self.pool.lock().await.reserve_for_attach(session_id)
-        {
-            return Ok(WarmAttachment {
-                agent_cli: attached.agent_cli,
-                agent_session_id: attached.agent_session_id,
-                cwd: attached.cwd,
-                available_commands: attached.available_commands,
-            });
+        // Bound to a `let` rather than matched inline: a match holds its
+        // scrutinee's temporaries for every arm, and the pool lock is not
+        // reentrant against the `Drop` the arms below build on.
+        let reservation = lock_pool(&self.pool).reserve_for_attach(session_id, cwd);
+        match reservation {
+            Reservation::Held(attached) => {
+                return Ok(WarmReservation::new(
+                    &self.pool,
+                    session_id.clone(),
+                    WarmAttachment {
+                        agent_cli: attached.agent_cli,
+                        agent_session_id: attached.agent_session_id,
+                        cwd: attached.cwd,
+                        available_commands: attached.available_commands,
+                    },
+                ));
+            }
+            Reservation::Unavailable => return Err(attach_in_flight()),
+            Reservation::NeedsRebuild => {}
         }
 
         let connection = self.connections.for_agent(agent_cli).current()?;
@@ -219,37 +316,42 @@ impl WarmSessions {
                 created.config_options,
             )
             .await;
-        let superseded = {
-            let mut pool = self.pool.lock().await;
-            pool.replace_and_reserve(
-                session_id,
-                cwd.to_path_buf(),
-                created.agent_session_id.clone(),
+        let installed = lock_pool(&self.pool).replace_and_reserve(
+            session_id,
+            cwd.to_path_buf(),
+            CreatedProvider {
+                agent_session_id: created.agent_session_id.clone(),
                 config_options,
-                connection.generation,
-                self.clock.now_timestamp_millis(),
-            )
+                available_commands: created.available_commands.clone(),
+            },
+            connection.generation,
+            self.clock.now_timestamp_millis(),
+        );
+        let Install::Accepted(superseded) = installed else {
+            // Another attach took the entry during the handshake above, so the
+            // session just created belongs to nobody.
+            self.release(Some(ReleasedSession {
+                agent_cli,
+                agent_session_id: created.agent_session_id,
+                generation: connection.generation,
+            }))
+            .await;
+            return Err(attach_in_flight());
         };
+        // Built before the release below, which is the last `.await` a caller
+        // can be dropped at while this entry is already reserved.
+        let reservation = WarmReservation::new(
+            &self.pool,
+            session_id.clone(),
+            WarmAttachment {
+                agent_cli,
+                agent_session_id: created.agent_session_id,
+                cwd: cwd.to_path_buf(),
+                available_commands: created.available_commands,
+            },
+        );
         self.release(superseded).await;
-        Ok(WarmAttachment {
-            agent_cli,
-            agent_session_id: created.agent_session_id,
-            cwd: cwd.to_path_buf(),
-            available_commands: created.available_commands,
-        })
-    }
-
-    /// Finalizes a reservation once the caller has actually persisted the
-    /// session: the provider session now belongs to it, not the warm pool.
-    pub(super) async fn commit(&self, session_id: &SessionId) {
-        self.pool.lock().await.commit_attach(session_id);
-    }
-
-    /// Reverts a reservation after the caller failed to finish attaching, so
-    /// the same warm session — and the provider session behind it — remain
-    /// usable on the next attempt instead of leaking.
-    pub(super) async fn release_reservation(&self, session_id: &SessionId) {
-        self.pool.lock().await.release_reservation(session_id);
+        Ok(reservation)
     }
 
     /// Drops provider sessions left behind by a CLI that restarted.
@@ -260,7 +362,7 @@ impl WarmSessions {
     /// per CLI. The entries themselves survive as cold, so the identifiers
     /// clients already hold keep resolving.
     async fn refresh_generations(&self) {
-        let mut pool = self.pool.lock().await;
+        let mut pool = lock_pool(&self.pool);
         for agent_cli in AgentCli::ALL {
             if let Ok(connection) = self.connections.for_agent(agent_cli).current() {
                 pool.invalidate_generation(agent_cli, connection.generation);
@@ -270,11 +372,7 @@ impl WarmSessions {
 
     /// Retires idle and over-capacity sessions after the pool changed shape.
     async fn sweep(&self) {
-        let released = self
-            .pool
-            .lock()
-            .await
-            .evict(self.clock.now_timestamp_millis());
+        let released = lock_pool(&self.pool).evict(self.clock.now_timestamp_millis());
         for session in released {
             self.release(Some(session)).await;
         }
@@ -442,4 +540,90 @@ pub(super) async fn request_config_option(
     })?
     .map_err(map_acp_error)?;
     Ok(response.config_options)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WarmAttachment, WarmPool, WarmReservation, lock_pool};
+    use crate::agent_runtime::warm_pool::{AttachedWarm, CreatedProvider, Reservation, WarmKey};
+    use ora_contracts::WarmSessionTarget;
+    use ora_domain::{AgentCli, SessionId};
+    use pretty_assertions::assert_eq;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex as StdMutex;
+
+    const GENERATION: u64 = 1;
+
+    /// Builds a pool holding one live warm session already reserved for attach.
+    fn reserved_pool() -> (StdMutex<WarmPool>, SessionId) {
+        let mut pool = WarmPool::default();
+        let key = WarmKey {
+            target: WarmSessionTarget::Task {
+                task_id: "task-1".to_string(),
+            },
+            agent_cli: AgentCli::OpenCode,
+            client_id: "client-1".to_string(),
+        };
+        let session_id = SessionId::new("session-1");
+        let _ = pool.lookup(&key, Path::new("/repo"), GENERATION, 0, || {
+            session_id.clone()
+        });
+        let _ = pool.commit_created(
+            &session_id,
+            CreatedProvider {
+                agent_session_id: "agent-session-1".to_string(),
+                config_options: Vec::new(),
+                available_commands: Vec::new(),
+            },
+            GENERATION,
+            0,
+        );
+        let _ = pool.reserve_for_attach(&session_id, Path::new("/repo"));
+        (StdMutex::new(pool), session_id)
+    }
+
+    fn attachment() -> WarmAttachment {
+        WarmAttachment {
+            agent_cli: AgentCli::OpenCode,
+            agent_session_id: "agent-session-1".to_string(),
+            cwd: PathBuf::from("/repo"),
+            available_commands: Vec::new(),
+        }
+    }
+
+    /// Verifies dropping a reservation returns the entry, which is what an
+    /// attach lost to a panic or a disconnected client relies on to avoid
+    /// pinning a provider session no bound would reclaim.
+    #[test]
+    fn returns_the_entry_when_the_reservation_is_dropped() {
+        let (pool, session_id) = reserved_pool();
+
+        drop(WarmReservation::new(
+            &pool,
+            session_id.clone(),
+            attachment(),
+        ));
+
+        assert_eq!(
+            lock_pool(&pool).reserve_for_attach(&session_id, Path::new("/repo")),
+            Reservation::Held(AttachedWarm {
+                session_id,
+                agent_cli: AgentCli::OpenCode,
+                agent_session_id: "agent-session-1".to_string(),
+                cwd: PathBuf::from("/repo"),
+                available_commands: vec![],
+            })
+        );
+    }
+
+    /// Verifies a committed reservation removes the entry instead of returning
+    /// it, so the provider session belongs to the persisted session alone.
+    #[test]
+    fn removes_the_entry_when_the_reservation_is_committed() {
+        let (pool, session_id) = reserved_pool();
+
+        WarmReservation::new(&pool, session_id.clone(), attachment()).commit();
+
+        assert_eq!(lock_pool(&pool).rebuild_plan(&session_id), None);
+    }
 }

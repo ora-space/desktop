@@ -94,6 +94,7 @@ test("restores a cancelled turn and its unfinished tools from the recorded bound
     ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, {
@@ -131,6 +132,7 @@ test("keeps consecutive prompts apart when neither produced agent output", async
     ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
     createId: (() => {
@@ -181,6 +183,7 @@ test("loads commands, session metadata, and structured content without creating 
     ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, {
@@ -228,6 +231,7 @@ test("applies live command and partial session-info updates outside the response
       { type: "completed", stopReason: "end_turn" },
     ]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "local", now: () => 42 });
 
@@ -249,6 +253,7 @@ test("sends structured image prompts", async () => {
       return events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]);
     },
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "local", now: () => 42 });
 
@@ -355,6 +360,7 @@ test("settles active tools when the provider completes with a cancelled stop rea
       { type: "completed", stopReason: "cancelled" },
     ]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "id-1", now: () => 42 });
 
@@ -532,6 +538,9 @@ test("adopts the agent's answer to a model selection over the requested value", 
     configOptions: modelOptions("fast"),
     modelChanges: [],
     turns: [],
+    availableCommands: [],
+    sessionTitle: null,
+    sessionUpdatedAt: null,
     isLoaded: false,
     isLoading: false,
     isResponding: false,
@@ -559,6 +568,9 @@ test("reports an unreachable model selection instead of silently keeping the old
     configOptions: modelOptions("fast"),
     modelChanges: [],
     turns: [],
+    availableCommands: [],
+    sessionTitle: null,
+    sessionUpdatedAt: null,
     isLoaded: false,
     isLoading: false,
     isResponding: false,

@@ -216,9 +216,11 @@ impl AgentRuntimeManager {
     /// Persists one warm session against the Task that now owns it.
     ///
     /// `warm.take` only reserves the warm session; it stays in the pool until
-    /// the steps below actually succeed. A channel or repository error here no
-    /// longer strands the client's id or leaks the provider session — the
-    /// reservation is released instead, so the same id is attachable again.
+    /// `commit` below, which runs on the one path where the session is durably
+    /// persisted. Every other way out of this function — an error, or a caller
+    /// dropped mid-await — drops the reservation instead, which returns the
+    /// entry to the pool rather than stranding the client's id or pinning the
+    /// provider session behind it.
     pub(crate) async fn attach_session(
         &self,
         request: AttachSessionRequest,
@@ -228,18 +230,23 @@ impl AgentRuntimeManager {
         let cwd = resolve_task_cwd(&self.inner.pool, &task_id)?;
         // The provider handshake a rebuild may need runs before the lifecycle
         // lock is taken, so attaching never blocks other sessions on the network.
-        let attachment = self.inner.warm.take(&session_id, &cwd).await?;
+        let reservation = self.inner.warm.take(&session_id, &cwd).await?;
+        let attachment = reservation.attachment();
+        let agent_cli = attachment.agent_cli;
+        let agent_session_id = attachment.agent_session_id.clone();
+        let session_cwd = attachment.cwd.clone();
+        let available_commands = attachment.available_commands.clone();
 
-        let result: Result<AttachSessionResponse, BackendError> = async {
+        let response = async {
             let _lifecycle = self.inner.lifecycle.lock().await;
-            let supervisor = self.inner.connections.for_agent(attachment.agent_cli);
-            let channel = supervisor.open_session_channel(&attachment.agent_session_id)?;
+            let supervisor = self.inner.connections.for_agent(agent_cli);
+            let channel = supervisor.open_session_channel(&agent_session_id)?;
             let now = self.inner.clock.now_timestamp_millis();
             let session = Session::new(
                 session_id.clone(),
                 task_id,
-                attachment.agent_cli,
-                attachment.agent_session_id,
+                agent_cli,
+                agent_session_id,
                 SessionStatus::Running,
                 AuditFields::new(now, now, false),
             );
@@ -258,34 +265,26 @@ impl AgentRuntimeManager {
             let mut opened = self.open_recorder(&session)?;
             let outcome = match opened.failure.take() {
                 Some(reason) => RecordOutcome::JustFailed { reason },
-                None => opened.recorder.record_meta(&session, &attachment.cwd),
+                None => opened.recorder.record_meta(&session, &session_cwd),
             };
             let session = self.settle_record(session, outcome);
             self.insert_actor(
                 session.clone(),
-                attachment.cwd,
+                session_cwd,
                 supervisor,
                 Some(channel),
                 opened.recorder,
                 /*handoff_pending*/ false,
             )?;
-            Ok(AttachSessionResponse {
+            Ok::<_, BackendError>(AttachSessionResponse {
                 session: contract_session(session),
-                available_commands: attachment.available_commands,
+                available_commands,
             })
         }
-        .await;
+        .await?;
 
-        match result {
-            Ok(response) => {
-                self.inner.warm.commit(&session_id).await;
-                Ok(response)
-            }
-            Err(error) => {
-                self.inner.warm.release_reservation(&session_id).await;
-                Err(error)
-            }
-        }
+        reservation.commit();
+        Ok(response)
     }
 
     /// Moves one existing conversation onto a different agent CLI.
