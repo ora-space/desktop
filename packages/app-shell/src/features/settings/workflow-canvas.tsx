@@ -116,17 +116,11 @@ export function WorkflowCanvas({
     };
   }
 
-  /** Centers a new node around a graph point while keeping the card inside the stage. */
+  /** Centers a new node around a graph point without imposing an invisible graph origin. */
   function nodePositionAt(point: WorkflowPosition): WorkflowPosition {
     return {
-      x: Math.min(
-        STAGE_WIDTH - NODE_WIDTH - 16,
-        Math.max(16, point.x - NODE_WIDTH / 2),
-      ),
-      y: Math.min(
-        STAGE_HEIGHT - NODE_ANCHOR_Y * 2 - 16,
-        Math.max(16, point.y - NODE_ANCHOR_Y),
-      ),
+      x: point.x - NODE_WIDTH / 2,
+      y: point.y - NODE_ANCHOR_Y,
     };
   }
 
@@ -721,8 +715,10 @@ function WorkflowNodeCard({
       return;
     }
     onMove({
-      x: Math.max(16, dragOrigin.current.node.x + (event.clientX - dragOrigin.current.pointer.x) / zoom),
-      y: Math.max(16, dragOrigin.current.node.y + (event.clientY - dragOrigin.current.pointer.y) / zoom),
+      x: dragOrigin.current.node.x
+        + (event.clientX - dragOrigin.current.pointer.x) / zoom,
+      y: dragOrigin.current.node.y
+        + (event.clientY - dragOrigin.current.pointer.y) / zoom,
     });
   }
 
