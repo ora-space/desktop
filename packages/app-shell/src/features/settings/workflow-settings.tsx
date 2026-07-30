@@ -27,16 +27,22 @@ import {
 import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowManager } from "./workflow-manager";
+import {
+  animateWorkflowPanel,
+  cancelWorkflowPanelAnimation,
+} from "./workflow-panel-motion";
 
 const DEFAULT_WORKFLOW_LIBRARY_WIDTH = 220;
 const MIN_WORKFLOW_LIBRARY_WIDTH = 180;
 const MAX_WORKFLOW_LIBRARY_WIDTH = 320;
+const WORKFLOW_LIBRARY_COLLAPSE_THRESHOLD = 130;
+const WORKFLOW_LIBRARY_FADE_START = 90;
 const DEFAULT_WORKFLOW_INSPECTOR_WIDTH = 320;
 const MIN_WORKFLOW_INSPECTOR_WIDTH = 240;
 const MAX_WORKFLOW_INSPECTOR_WIDTH = 480;
 const WORKFLOW_INSPECTOR_COLLAPSE_THRESHOLD = 180;
 const WORKFLOW_INSPECTOR_FADE_START = 120;
-const WORKFLOW_INSPECTOR_SETTLE_DURATION = 180;
+const WORKFLOW_PANEL_SETTLE_DURATION = 180;
 const MIN_WORKFLOW_CANVAS_WIDTH = 360;
 const NARROW_WORKFLOW_EDITOR_WIDTH = 1_000;
 const WORKFLOW_LIBRARY_WIDTH_KEY = "ora.workflow.library-width";
@@ -68,11 +74,6 @@ function rememberPanelWidth(key: string, width: number): void {
   }
 }
 
-/** Keeps motion optional for users who request reduced interface animation. */
-function prefersReducedMotion(): boolean {
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-}
-
 /** Owns the frontend-only workflow editor state and coordinates the mock repository boundary. */
 export function WorkflowSettings() {
   const { i18n, t } = useTranslation();
@@ -93,6 +94,7 @@ export function WorkflowSettings() {
   const editorLayoutRef = useRef<HTMLDivElement>(null);
   const libraryPanelRef = useRef<ResizablePanelHandle | null>(null);
   const inspectorPanelRef = useRef<ResizablePanelHandle | null>(null);
+  const libraryAnimationRef = useRef<number | null>(null);
   const inspectorAnimationRef = useRef<number | null>(null);
   const [initialLibraryWidth] = useState(() =>
     storedPanelWidth(
@@ -112,9 +114,11 @@ export function WorkflowSettings() {
   );
   const libraryWidthRef = useRef(initialLibraryWidth);
   const inspectorWidthRef = useRef(initialInspectorWidth);
+  const libraryCurrentWidthRef = useRef(initialLibraryWidth);
   const inspectorCurrentWidthRef = useRef(0);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
+  const [libraryVisualWidth, setLibraryVisualWidth] = useState(initialLibraryWidth);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
   const workflow = useMemo(
     () => workflows.find((candidate) => candidate.id === selectedWorkflowId) ?? null,
@@ -154,17 +158,15 @@ export function WorkflowSettings() {
 
   useEffect(
     () => () => {
-      if (inspectorAnimationRef.current !== null) {
-        window.cancelAnimationFrame(inspectorAnimationRef.current);
-      }
+      cancelWorkflowPanelAnimation(libraryAnimationRef);
+      cancelWorkflowPanelAnimation(inspectorAnimationRef);
     },
     [],
   );
 
   /** Collapses the workflow library while keeping its last expanded width available. */
   function collapseLibrary(): void {
-    setLibraryCollapsed(true);
-    libraryPanelRef.current?.collapse();
+    animateLibraryTo(0);
   }
 
   /** Restores the workflow library to the last width chosen by the user. */
@@ -178,12 +180,12 @@ export function WorkflowSettings() {
       // to finish its exit instead of letting both panels fight the constraints.
       animateInspectorTo(0, () => {
         setLibraryCollapsed(false);
-        libraryPanelRef.current?.resize(libraryWidthRef.current);
+        animateLibraryTo(libraryWidthRef.current);
       });
       return;
     }
     setLibraryCollapsed(false);
-    libraryPanelRef.current?.resize(libraryWidthRef.current);
+    animateLibraryTo(libraryWidthRef.current);
   }
 
   /** Opens the contextual inspector and yields library space first on narrow editors. */
@@ -192,7 +194,11 @@ export function WorkflowSettings() {
       (editorLayoutRef.current?.getBoundingClientRect().width ?? Number.POSITIVE_INFINITY)
       < NARROW_WORKFLOW_EDITOR_WIDTH
     ) {
-      collapseLibrary();
+      animateLibraryTo(0, () => {
+        setInspectorCollapsed(false);
+        animateInspectorTo(inspectorWidthRef.current);
+      });
+      return;
     }
     setInspectorCollapsed(false);
     animateInspectorTo(inspectorWidthRef.current);
@@ -216,61 +222,47 @@ export function WorkflowSettings() {
     expandInspector();
   }
 
-  /** Stops a scripted settle immediately so pointer input always remains responsive. */
-  function cancelInspectorAnimation(): void {
-    if (inspectorAnimationRef.current === null) {
-      return;
-    }
-    window.cancelAnimationFrame(inspectorAnimationRef.current);
-    inspectorAnimationRef.current = null;
+  /** Moves the library to a stable width with the shared panel motion behavior. */
+  function animateLibraryTo(
+    targetWidth: number,
+    onComplete?: () => void,
+  ): void {
+    animateWorkflowPanel({
+      animationRef: libraryAnimationRef,
+      duration: WORKFLOW_PANEL_SETTLE_DURATION,
+      onCollapsed: () => setLibraryCollapsed(true),
+      onComplete,
+      panel: libraryPanelRef.current,
+      targetWidth,
+    });
   }
 
-  /** Moves the inspector to a stable width with a short, interruptible ease-out settle. */
+  /** Moves the inspector to a stable width with the shared panel motion behavior. */
   function animateInspectorTo(
     targetWidth: number,
     onComplete?: () => void,
   ): void {
-    const panel = inspectorPanelRef.current;
-    if (panel === null) {
+    animateWorkflowPanel({
+      animationRef: inspectorAnimationRef,
+      duration: WORKFLOW_PANEL_SETTLE_DURATION,
+      onCollapsed: () => setInspectorCollapsed(true),
+      onComplete,
+      panel: inspectorPanelRef.current,
+      targetWidth,
+    });
+  }
+
+  /** Snaps an undersized library only after release so direct dragging stays linear. */
+  function settleLibraryAfterUserResize(): void {
+    const width = libraryCurrentWidthRef.current;
+    if (width <= 0 || width >= MIN_WORKFLOW_LIBRARY_WIDTH) {
       return;
     }
-    cancelInspectorAnimation();
-    const startWidth = panel.getSize().inPixels;
-    if (
-      prefersReducedMotion()
-      || Math.abs(startWidth - targetWidth) < 1
-    ) {
-      if (targetWidth === 0) {
-        panel.collapse();
-        setInspectorCollapsed(true);
-      } else {
-        panel.resize(targetWidth);
-      }
-      onComplete?.();
-      return;
-    }
-    const startedAt = window.performance.now();
-    const animate = (now: number): void => {
-      const progress = Math.min(
-        1,
-        (now - startedAt) / WORKFLOW_INSPECTOR_SETTLE_DURATION,
-      );
-      const easedProgress = 1 - (1 - progress) ** 3;
-      panel.resize(startWidth + (targetWidth - startWidth) * easedProgress);
-      if (progress < 1) {
-        inspectorAnimationRef.current = window.requestAnimationFrame(animate);
-      } else {
-        inspectorAnimationRef.current = null;
-        if (targetWidth === 0) {
-          // The primitive tracks collapsed state separately from a zero resize;
-          // commit it only after the visual settle so reopen controls stay reliable.
-          panel.collapse();
-          setInspectorCollapsed(true);
-        }
-        onComplete?.();
-      }
-    };
-    inspectorAnimationRef.current = window.requestAnimationFrame(animate);
+    animateLibraryTo(
+      width < WORKFLOW_LIBRARY_COLLAPSE_THRESHOLD
+        ? 0
+        : MIN_WORKFLOW_LIBRARY_WIDTH,
+    );
   }
 
   /** Snaps an undersized inspector only after release, never while it tracks the pointer. */
@@ -555,8 +547,10 @@ export function WorkflowSettings() {
       <div ref={editorLayoutRef} className="min-h-0 flex-1">
         <ResizablePanelGroup
           orientation="horizontal"
+          resizeTargetMinimumSize={{ coarse: 28, fine: 12 }}
           onLayoutChanged={(_layout, meta) => {
             if (meta.isUserInteraction) {
+              settleLibraryAfterUserResize();
               settleInspectorAfterUserResize();
             }
           }}
@@ -565,37 +559,55 @@ export function WorkflowSettings() {
             id="workflow-library"
             panelRef={libraryPanelRef}
             defaultSize={initialLibraryWidth}
-            minSize={MIN_WORKFLOW_LIBRARY_WIDTH}
+            minSize={1}
             maxSize={MAX_WORKFLOW_LIBRARY_WIDTH}
             collapsedSize={0}
             collapsible
             groupResizeBehavior="preserve-pixel-size"
             onResize={(size) => {
               const collapsed = size.inPixels < 1;
+              libraryCurrentWidthRef.current = size.inPixels;
+              setLibraryVisualWidth(size.inPixels);
               setLibraryCollapsed(collapsed);
-              if (!collapsed) {
+              if (size.inPixels >= MIN_WORKFLOW_LIBRARY_WIDTH) {
                 libraryWidthRef.current = size.inPixels;
                 rememberPanelWidth(WORKFLOW_LIBRARY_WIDTH_KEY, size.inPixels);
               }
             }}
           >
-            <WorkflowManager
-              workflows={workflows}
-              selectedWorkflowId={selectedWorkflowId}
-              busy={managing}
-              error={managerError}
-              onSelect={selectWorkflow}
-              onCreate={() => void createWorkflow()}
-              onDelete={(workflowId) => void deleteWorkflow(workflowId)}
-              onImport={(file) => void importWorkflow(file)}
-              onCollapse={collapseLibrary}
-            />
+            <div
+              aria-hidden={libraryCollapsed}
+              className="flex min-h-0 flex-1"
+              style={{
+                opacity: Math.max(
+                  0,
+                  Math.min(
+                    1,
+                    (libraryVisualWidth - WORKFLOW_LIBRARY_FADE_START)
+                      / (MIN_WORKFLOW_LIBRARY_WIDTH - WORKFLOW_LIBRARY_FADE_START),
+                  ),
+                ),
+              }}
+            >
+              <WorkflowManager
+                workflows={workflows}
+                selectedWorkflowId={selectedWorkflowId}
+                busy={managing}
+                error={managerError}
+                onSelect={selectWorkflow}
+                onCreate={() => void createWorkflow()}
+                onDelete={(workflowId) => void deleteWorkflow(workflowId)}
+                onImport={(file) => void importWorkflow(file)}
+                onCollapse={collapseLibrary}
+              />
+            </div>
           </ResizablePanel>
           <ResizableHandle
             withHandle
             aria-label={t("settings.workflow.resizeLibrary")}
             title={t("settings.workflow.resizeLibrary")}
-            className="z-20 transition-colors hover:bg-ring focus-visible:bg-ring"
+            className="z-20 after:w-3 transition-colors hover:bg-ring focus-visible:bg-ring"
+            onPointerDown={() => cancelWorkflowPanelAnimation(libraryAnimationRef)}
             onDoubleClick={() => {
               libraryWidthRef.current = DEFAULT_WORKFLOW_LIBRARY_WIDTH;
               rememberPanelWidth(
@@ -640,8 +652,8 @@ export function WorkflowSettings() {
             withHandle
             aria-label={t("settings.workflow.resizeConfiguration")}
             title={t("settings.workflow.resizeConfiguration")}
-            className="z-20 transition-colors hover:bg-ring focus-visible:bg-ring"
-            onPointerDown={cancelInspectorAnimation}
+            className="z-20 after:w-3 transition-colors hover:bg-ring focus-visible:bg-ring"
+            onPointerDown={() => cancelWorkflowPanelAnimation(inspectorAnimationRef)}
             onDoubleClick={() => {
               inspectorWidthRef.current = DEFAULT_WORKFLOW_INSPECTOR_WIDTH;
               rememberPanelWidth(
