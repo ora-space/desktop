@@ -171,7 +171,9 @@ fn internal(code: &'static str, message: &'static str) -> BackendError {
 mod tests {
     use super::{BackendError, BackendErrorKind};
     use ora_application::ApplicationError;
+    use pretty_assertions::assert_eq;
 
+    /// Verifies non-Git roots retain the stable bad-request contract used by runtime adapters.
     #[test]
     fn exposes_non_git_worktree_roots_as_a_stable_bad_request() {
         let error = BackendError::from(ApplicationError::TaskWorktreeRequiresGitRepository);
@@ -179,5 +181,17 @@ mod tests {
         assert_eq!(error.kind(), BackendErrorKind::BadRequest);
         assert_eq!(error.code(), "worktree_requires_git_repository");
         assert_eq!(error.message(), "worktree mode requires a Git repository");
+    }
+
+    /// Verifies missing base branches remain actionable and retain their selected ref name.
+    #[test]
+    fn exposes_missing_base_branches_as_a_stable_bad_request() {
+        let error = BackendError::from(ApplicationError::TaskBaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        });
+
+        assert_eq!(error.kind(), BackendErrorKind::BadRequest);
+        assert_eq!(error.code(), "base_branch_not_found");
+        assert_eq!(error.message(), "base branch not found: ghost-branch");
     }
 }

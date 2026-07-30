@@ -144,6 +144,11 @@ impl From<ApplicationError> for WebApiError {
                 code: "project_repository_error",
                 message,
             },
+            ApplicationError::ProjectBranchListing { .. } => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "project_branches_error",
+                message: "failed to list project branches".to_string(),
+            },
             ApplicationError::ProjectOccupied { project_id } => Self {
                 status: StatusCode::CONFLICT,
                 code: "project_occupied",
@@ -331,6 +336,36 @@ mod tests {
         );
     }
 
+    /// Verifies Git branch-listing failures become sanitized HTTP 500 payloads.
+    #[tokio::test]
+    async fn maps_project_branch_listing_errors_to_http_500() {
+        let response = WebApiError::from(ApplicationError::ProjectBranchListing {
+            message: "fetch exposed a credential".to_string(),
+        })
+        .into_response();
+        let status = response.status();
+        let body = response.into_body();
+        let bytes = match to_bytes(body, usize::MAX).await {
+            Ok(bytes) => bytes,
+            Err(error) => panic!("failed to read response body: {error}"),
+        };
+        let actual = match serde_json::from_slice::<Value>(&bytes) {
+            Ok(actual) => actual,
+            Err(error) => panic!("failed to decode JSON body: {error}"),
+        };
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            actual,
+            json!({
+                "error": {
+                    "code": "project_branches_error",
+                    "message": "failed to list project branches",
+                },
+            })
+        );
+    }
+
     /// Verifies occupied project errors become stable HTTP 409 payloads.
     #[tokio::test]
     async fn maps_project_occupied_errors_to_http_409() {
@@ -384,6 +419,36 @@ mod tests {
                 "error": {
                     "code": "worktree_requires_git_repository",
                     "message": "worktree mode requires a Git repository",
+                },
+            })
+        );
+    }
+
+    /// Verifies missing base branches become HTTP 400 payloads that retain the selected ref name.
+    #[tokio::test]
+    async fn maps_missing_base_branches_to_http_400() {
+        let response = WebApiError::from(ApplicationError::TaskBaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        })
+        .into_response();
+        let status = response.status();
+        let body = response.into_body();
+        let bytes = match to_bytes(body, usize::MAX).await {
+            Ok(bytes) => bytes,
+            Err(error) => panic!("failed to read response body: {error}"),
+        };
+        let actual = match serde_json::from_slice::<Value>(&bytes) {
+            Ok(actual) => actual,
+            Err(error) => panic!("failed to decode JSON body: {error}"),
+        };
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            actual,
+            json!({
+                "error": {
+                    "code": "base_branch_not_found",
+                    "message": "base branch not found: ghost-branch",
                 },
             })
         );

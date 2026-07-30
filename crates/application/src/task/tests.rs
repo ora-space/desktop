@@ -179,6 +179,48 @@ fn rejects_worktree_tasks_outside_git_repositories() {
     });
 }
 
+/// Verifies missing base branches retain their name and do not persist task or worktree records.
+#[test]
+fn rejects_missing_base_branches_without_persisting_ora_records() {
+    with_trace_logging(|| {
+        let task_repository = Rc::new(FakeTaskRepository::default());
+        let worktree_repository = Rc::new(FakeWorktreeRepository::default());
+        let provisioner = Rc::new(FakeTaskWorktreeProvisioner::default());
+        provisioner.fail_next_create(TaskWorktreeProvisionerError::BaseBranchNotFound(
+            "ghost-branch".to_string(),
+        ));
+        let handler = CreateTaskHandler::new(
+            task_repository.clone(),
+            worktree_repository.clone(),
+            FixedTaskIdGenerator::new(TASK_ID),
+            FixedWorktreeIdGenerator::new("worktree-1"),
+            provisioner.clone(),
+            PathBuf::from(WORK_DIR),
+            FixedClock::new(1_700_000_000_000),
+        );
+
+        let error = handler
+            .handle(CreateTaskRequest {
+                project_id: "project-1".to_string(),
+                title: "Cannot find base branch".to_string(),
+                status: ContractTaskStatus::Doing,
+                workspace_mode: Some(TaskWorkspaceMode::Worktree),
+                base_branch: Some("ghost-branch".to_string()),
+            })
+            .expect_err("missing base branch should be rejected");
+
+        assert_eq!(
+            error,
+            ApplicationError::TaskBaseBranchNotFound {
+                branch_name: "ghost-branch".to_string(),
+            }
+        );
+        assert!(provisioner.created_requests().is_empty());
+        assert!(worktree_repository.visible_worktrees().is_empty());
+        assert!(task_repository.visible_tasks().is_empty());
+    });
+}
+
 /// Verifies task creation regenerates ids when the short branch prefix already exists as a worktree folder.
 #[test]
 fn regenerates_task_ids_when_branch_prefix_folder_exists() {

@@ -803,10 +803,12 @@ mod tests {
                 "branches": [
                     {
                         "name": "main",
+                        "refName": "main",
                         "displayName": "main",
                     },
                     {
                         "name": format!("ora/{}", &task_id[..8]),
+                        "refName": format!("ora/{}", &task_id[..8]),
                         "displayName": "Ship handlers",
                     },
                 ],
