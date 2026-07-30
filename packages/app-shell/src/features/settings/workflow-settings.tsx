@@ -301,13 +301,11 @@ export function WorkflowSettings() {
   }
 
   /** Creates a usable blank workflow and immediately opens it for editing. */
-  async function createWorkflow(): Promise<void> {
+  async function createWorkflow(name: string): Promise<void> {
     setManaging(true);
     setManagerError(null);
     try {
-      const created = await repository.create(
-        t("settings.workflow.untitledWorkflow", { count: workflows.length + 1 }),
-      );
+      const created = await repository.create(name);
       setWorkflows((current) => [...current, created]);
       selectWorkflow(created.id);
     } catch {
@@ -315,6 +313,20 @@ export function WorkflowSettings() {
     } finally {
       setManaging(false);
     }
+  }
+
+  /** Renames one workflow in local state and marks it dirty for explicit save. */
+  function renameWorkflow(workflowId: string, name: string): void {
+    const nextName = name.trim();
+    if (nextName === "") {
+      return;
+    }
+    setWorkflows((current) =>
+      current.map((candidate) =>
+        candidate.id === workflowId ? { ...candidate, name: nextName } : candidate,
+      ),
+    );
+    setDirtyWorkflowIds((current) => new Set(current).add(workflowId));
   }
 
   /** Deletes a workflow and selects the nearest remaining item to avoid a dead editor state. */
@@ -595,7 +607,8 @@ export function WorkflowSettings() {
                 busy={managing}
                 error={managerError}
                 onSelect={selectWorkflow}
-                onCreate={() => void createWorkflow()}
+                onCreate={(name) => void createWorkflow(name)}
+                onRename={renameWorkflow}
                 onDelete={(workflowId) => void deleteWorkflow(workflowId)}
                 onImport={(file) => void importWorkflow(file)}
                 onCollapse={collapseLibrary}
@@ -619,7 +632,13 @@ export function WorkflowSettings() {
           />
           <ResizablePanel id="workflow-canvas" minSize={MIN_WORKFLOW_CANVAS_WIDTH}>
             {workflow === null ? (
-              <WorkflowEmpty onCreate={() => void createWorkflow()} />
+              <WorkflowEmpty
+                onCreate={() =>
+                  void createWorkflow(
+                    t("settings.workflow.untitledWorkflow", { count: workflows.length + 1 }),
+                  )
+                }
+              />
             ) : (
               <WorkflowCanvas
                 key={workflow.id}
