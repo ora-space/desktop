@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconFileImport,
+  IconLayoutSidebarLeftCollapse,
   IconPlus,
   IconRoute,
   IconSearch,
@@ -31,6 +32,7 @@ interface WorkflowManagerProps {
   onCreate: () => void;
   onDelete: (workflowId: string) => void;
   onImport: (file: File) => void;
+  onCollapse: () => void;
 }
 
 /** Keeps workflow-level actions separate from graph construction controls. */
@@ -43,6 +45,7 @@ export function WorkflowManager({
   onCreate,
   onDelete,
   onImport,
+  onCollapse,
 }: WorkflowManagerProps) {
   const { i18n, t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -68,7 +71,7 @@ export function WorkflowManager({
   }
 
   return (
-    <aside className="flex min-h-0 flex-col border-r border-border bg-background">
+    <aside className="flex min-h-0 flex-1 flex-col border-r border-border bg-background">
       <div className="space-y-3 border-b border-border p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -77,14 +80,24 @@ export function WorkflowManager({
               {t("settings.workflow.workflowCount", { count: workflows.length })}
             </p>
           </div>
-          <Button
-            size="icon-sm"
-            aria-label={t("settings.workflow.newWorkflow")}
-            disabled={busy}
-            onClick={onCreate}
-          >
-            <IconPlus />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t("settings.workflow.collapseLibrary")}
+              onClick={onCollapse}
+            >
+              <IconLayoutSidebarLeftCollapse />
+            </Button>
+            <Button
+              size="icon-sm"
+              aria-label={t("settings.workflow.newWorkflow")}
+              disabled={busy}
+              onClick={onCreate}
+            >
+              <IconPlus />
+            </Button>
+          </div>
         </div>
         <div className="relative">
           <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
