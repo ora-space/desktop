@@ -322,6 +322,16 @@ export function WorkflowCanvas({
     ) {
       return;
     }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const nearestHorizontalEdge = Math.min(
+      event.clientX - bounds.left,
+      bounds.right - event.clientX,
+    );
+    if (bounds.width > 24 && nearestHorizontalEdge <= 12) {
+      // Panel separators intentionally overlap this guard zone so a near miss
+      // never turns a resize gesture into an unexpected canvas pan.
+      return;
+    }
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setPanDraft({
