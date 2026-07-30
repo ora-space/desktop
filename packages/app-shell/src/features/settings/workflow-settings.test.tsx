@@ -52,6 +52,39 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("allows nodes to move continuously through the graph origin", async () => {
+    render(<WorkflowSettings />);
+    const startNode = await screen.findByLabelText("开始节点: 开始");
+    startNode.setPointerCapture = () => {};
+
+    fireEvent.pointerDown(startNode, {
+      button: 0,
+      pointerId: 1,
+      clientX: 200,
+      clientY: 300,
+    });
+    fireEvent.pointerMove(startNode, {
+      pointerId: 1,
+      clientX: 50,
+      clientY: -50,
+    });
+    fireEvent.pointerUp(startNode, {
+      pointerId: 1,
+      clientX: 50,
+      clientY: -50,
+    });
+
+    await waitFor(() => {
+      expect({
+        left: startNode.style.left,
+        top: startNode.style.top,
+      }).toEqual({
+        left: "-78px",
+        top: "-64px",
+      });
+    });
+  });
+
   it("switches workflows from the manager and adds nodes from the bottom dock", async () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
