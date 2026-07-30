@@ -3,6 +3,9 @@ mod common;
 use std::path::Path;
 
 use common::TestScaffold;
+use gitlancer::git::base_branch::{
+    ListWorktreeBasesRequest, ResolveWorktreeBaseCommitRequest, WorktreeBase,
+};
 use gitlancer::git::branch::{
     BranchDeletionMode, CreateBranchRequest, DeleteBranchRequest, ListBranchesRequest,
 };
@@ -281,6 +284,93 @@ fn runtime_creates_and_deletes_local_branches() {
             .any(|branch| branch.as_str() == "feature/runtime"),
         "deleted branches should no longer be visible through list_branches"
     );
+}
+
+/// Verifies fetched remote refs replace stale local duplicates and expose remote-only branches.
+#[test]
+fn runtime_lists_and_resolves_fresh_remote_worktree_bases() {
+    let scaffold = TestScaffold::new("runtime-remote-worktree-bases").expect("create scaffold");
+    seed_repository(&scaffold);
+    let remote_path = scaffold.sandbox_root().join("remote.git");
+    let remote_path_arg = remote_path.to_string_lossy().into_owned();
+    scaffold
+        .run_git_in(
+            scaffold.sandbox_root(),
+            ["init", "--bare", "--initial-branch=main", &remote_path_arg],
+        )
+        .expect("create bare remote");
+    scaffold
+        .run_git(["remote", "add", "origin", &remote_path_arg])
+        .expect("configure origin");
+    scaffold
+        .run_git(["push", "-u", "origin", "main"])
+        .expect("push initial main");
+
+    let stale_main_commit = scaffold
+        .run_git(["rev-parse", "main"])
+        .expect("resolve stale main");
+    scaffold
+        .run_git(["switch", "-c", "frontend"])
+        .expect("create frontend branch");
+    scaffold
+        .write_file(scaffold.repo_path(), "frontend.txt", "remote-only branch\n")
+        .expect("write frontend fixture");
+    scaffold
+        .stage_all_and_commit("add frontend branch")
+        .expect("commit frontend branch");
+    scaffold
+        .run_git(["push", "origin", "frontend"])
+        .expect("push frontend branch");
+    scaffold
+        .run_git(["switch", "main"])
+        .expect("switch back to main");
+    scaffold
+        .run_git(["branch", "-D", "frontend"])
+        .expect("delete local frontend branch");
+    scaffold
+        .write_file(scaffold.repo_path(), "latest.txt", "latest remote main\n")
+        .expect("write latest main fixture");
+    scaffold
+        .stage_all_and_commit("advance remote main")
+        .expect("commit latest main");
+    let fresh_main_commit = scaffold
+        .run_git(["rev-parse", "main"])
+        .expect("resolve fresh main");
+    scaffold
+        .run_git(["push", "origin", "main"])
+        .expect("push latest main");
+    scaffold
+        .run_git(["reset", "--hard", stale_main_commit.trim()])
+        .expect("restore stale local main");
+
+    let (git, repository) = runtime_repository(&scaffold);
+    let bases = git
+        .list_worktree_bases(ListWorktreeBasesRequest {
+            repository: &repository,
+        })
+        .expect("list refreshed worktree bases");
+    let resolved = git
+        .resolve_worktree_base_commit(ResolveWorktreeBaseCommitRequest {
+            repository: &repository,
+            reference_name: &BranchName::new("origin/main"),
+        })
+        .expect("resolve refreshed remote main");
+
+    assert_eq!(
+        bases.bases,
+        vec![
+            WorktreeBase::Remote {
+                remote_name: "origin".to_string(),
+                branch_name: BranchName::new("frontend"),
+            },
+            WorktreeBase::Remote {
+                remote_name: "origin".to_string(),
+                branch_name: BranchName::new("main"),
+            },
+        ]
+    );
+    assert_eq!(resolved.commit_id.as_str(), fresh_main_commit.trim());
+    assert_ne!(resolved.commit_id.as_str(), stale_main_commit.trim());
 }
 
 /// Verifies linked worktree lifecycle APIs create and delete linked worktrees through typed runtime requests.

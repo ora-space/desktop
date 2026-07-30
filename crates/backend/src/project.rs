@@ -17,7 +17,7 @@ use ora_domain::ProjectId;
 use std::collections::HashMap;
 
 use crate::{BackendError, BackendErrorKind};
-use gitlancer::git::branch::{ListBranchesRequest, ListBranchesResponse};
+use gitlancer::git::base_branch::{ListWorktreeBasesRequest, ListWorktreeBasesResponse};
 use gitlancer::{CliGitRunner, Git, RepoRoot, Repository};
 
 /// Groups the concrete project handlers shared by runtime adapters.
@@ -73,7 +73,7 @@ impl ProjectApi {
         self.list.handle(request)
     }
 
-    /// Lists repository-local branches that can seed a new task worktree.
+    /// Lists freshly fetched remote branches plus local-only branches that can seed a task worktree.
     pub(crate) fn list_branches(
         &self,
         request: ListProjectBranchesRequest,
@@ -96,8 +96,8 @@ impl ProjectApi {
                     "worktree mode requires a Git repository",
                 )
             })?;
-        let ListBranchesResponse { branches } = git
-            .list_branches(ListBranchesRequest {
+        let ListWorktreeBasesResponse { bases } = git
+            .list_worktree_bases(ListWorktreeBasesRequest {
                 repository: &repository,
             })
             .map_err(|_| {
@@ -139,15 +139,20 @@ impl ProjectApi {
             .collect::<HashMap<_, _>>();
 
         Ok(ListProjectBranchesResponse {
-            branches: branches
+            branches: bases
                 .into_iter()
-                .map(|branch| {
-                    let name = branch.as_str().to_string();
+                .map(|base| {
+                    let name = base.branch_name().as_str().to_string();
+                    let ref_name = base.reference_name();
                     let display_name = managed_branch_titles
                         .get(&name)
                         .cloned()
                         .unwrap_or_else(|| name.clone());
-                    ProjectBranch { name, display_name }
+                    ProjectBranch {
+                        name,
+                        ref_name,
+                        display_name,
+                    }
                 })
                 .collect(),
         })

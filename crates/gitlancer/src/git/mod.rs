@@ -1,3 +1,4 @@
+pub mod base_branch;
 pub mod branch;
 pub mod commit;
 pub mod config;

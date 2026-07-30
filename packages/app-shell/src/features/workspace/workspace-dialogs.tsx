@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ContractTransportError, type TaskStatus } from "@ora/contracts";
+import { ContractTransportError, type ProjectBranch, type TaskStatus } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -167,8 +167,8 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
         kind: "select" as const,
         name: "baseBranch",
         label: t("dialog.baseBranch"),
-        value: preferredBaseBranch(projectBranches.map((branch) => branch.name)),
-        options: projectBranches.map((branch) => ({ label: branch.displayName, value: branch.name })),
+        value: preferredBaseBranch(projectBranches),
+        options: projectBranches.map((branch) => ({ label: branch.displayName, value: branch.refName })),
       }] : []),
       // Status is only meaningful once a task exists; a new task always starts at "todo".
       ...(dialog.entity ? [{ kind: "select" as const, name: "status", label: t("dialog.status"), value: dialog.entity.status, options: [
@@ -215,10 +215,10 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
   return <EntityDialog key={dialogKey} open title={title} description={description} submitLabel={submitLabel} fields={fields} onOpenChange={onOpenChange} onSubmit={submit} />;
 }
 
-/** Prefers conventional primary branch names while preserving repositories with custom defaults. */
-function preferredBaseBranch(branches: string[]): string {
-  return branches.find((branch) => branch === "main")
-    ?? branches.find((branch) => branch === "master")
-    ?? branches[0]
+/** Prefers a fetched conventional primary branch while preserving repositories with custom defaults. */
+function preferredBaseBranch(branches: ProjectBranch[]): string {
+  return branches.find((branch) => branch.name === "main")?.refName
+    ?? branches.find((branch) => branch.name === "master")?.refName
+    ?? branches[0]?.refName
     ?? "";
 }

@@ -120,7 +120,7 @@ describe("WorkspaceDialogs task creation", () => {
       status: "todo",
       workspaceMode: "worktree",
     }]));
-    expect(submittedBaseBranch).toBe("main");
+    expect(submittedBaseBranch).toBe("origin/main");
   });
 
   it("does not show helper text when editing a worktree task", () => {

@@ -53,6 +53,20 @@ The runtime SHALL expose typed APIs to create and delete local branches from rep
 - **THEN** the runtime deletes that branch through the Git CLI
 - **THEN** the deleted branch no longer appears in `list_branches`
 
+### Requirement: Runtime worktree bases prefer freshly fetched collaboration refs
+The runtime SHALL select `upstream` when configured or otherwise `origin`, SHALL fetch that remote before listing or resolving worktree bases, and SHALL merge remote-tracking branches with local-only branches while preferring the remote ref when both have the same logical branch name.
+
+#### Scenario: Listing remote and local worktree bases
+- **WHEN** a repository contains an `upstream` or `origin` remote
+- **THEN** the runtime fetches that remote before listing worktree bases
+- **THEN** remote-only and local-only branches are both returned
+- **THEN** a remote-tracking ref replaces a same-named local branch as the selectable base
+
+#### Scenario: Resolving a selected worktree base
+- **WHEN** a caller resolves a selected remote worktree base
+- **THEN** the runtime fetches the preferred remote again before resolution
+- **THEN** it resolves the exact remote-tracking ref to an immutable commit ID
+
 ### Requirement: Runtime worktree lifecycle commands manage linked worktrees explicitly
 The runtime SHALL expose typed APIs to create and delete linked worktrees while preserving the distinction between the main worktree and linked worktrees.
 

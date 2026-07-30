@@ -69,6 +69,7 @@ The Git layer exposes typed use cases that Ora can call directly:
 - worktree discovery and selection,
 - add / commit / status,
 - branch-oriented read and lifecycle flows,
+- freshly fetched worktree-base discovery across local and preferred-remote refs,
 - linked-worktree lifecycle flows.
 
 Each use case should take a typed request object and return a typed response object.

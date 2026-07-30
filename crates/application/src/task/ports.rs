@@ -60,7 +60,7 @@ pub trait TaskWorktreeProvisioner {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTaskWorktreeRequest {
     pub branch_name: String,
-    pub base_branch_name: String,
+    pub base_reference_name: String,
     pub worktree_path: PathBuf,
 }
 

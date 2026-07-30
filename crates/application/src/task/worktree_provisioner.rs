@@ -2,7 +2,8 @@ use super::{
     CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskWorktreeDeletionMode,
     TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
 };
-use gitlancer::git::branch::{ListBranchesRequest, ResolveBranchCommitRequest};
+use gitlancer::git::base_branch::ResolveWorktreeBaseCommitRequest;
+use gitlancer::git::branch::ListBranchesRequest;
 use gitlancer::git::worktree::{
     CreateWorktreeRequest as GitCreateWorktreeRequest,
     DeleteWorktreeRequest as GitDeleteWorktreeRequest, ResolveWorktreeByBranchRequest,
@@ -72,12 +73,12 @@ impl TaskWorktreeProvisioner for GitTaskWorktreeProvisioner {
         request: CreateTaskWorktreeRequest,
     ) -> Result<(), TaskWorktreeProvisionerError> {
         create_parent_directory(&request.worktree_path)?;
-        let base_branch_name = BranchName::new(request.base_branch_name);
+        let base_reference_name = BranchName::new(request.base_reference_name);
         let base_commit_id = self
             .git
-            .resolve_branch_commit(ResolveBranchCommitRequest {
+            .resolve_worktree_base_commit(ResolveWorktreeBaseCommitRequest {
                 repository: &self.repository,
-                branch_name: &base_branch_name,
+                reference_name: &base_reference_name,
             })
             .map_err(|error| match error {
                 GitlancerError::Domain(DomainError::BranchNotFound { branch, .. }) => {

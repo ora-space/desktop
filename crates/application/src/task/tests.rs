@@ -71,7 +71,7 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/12345678".to_string(),
-                base_branch_name: "main".to_string(),
+                base_reference_name: "main".to_string(),
                 worktree_path: Path::new(WORK_DIR).join(TASK_ID),
             }]
         );
@@ -228,7 +228,7 @@ fn regenerates_task_ids_when_branch_prefix_folder_exists() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/87654321".to_string(),
-                base_branch_name: "main".to_string(),
+                base_reference_name: "main".to_string(),
                 worktree_path: work_dir.join("87654321-1234-5678-90ab-1234567890ab"),
             }]
         );
@@ -293,7 +293,7 @@ fn regenerates_task_ids_when_orphaned_branch_exists() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/87654321".to_string(),
-                base_branch_name: "main".to_string(),
+                base_reference_name: "main".to_string(),
                 worktree_path: work_dir.join("87654321-1234-5678-90ab-1234567890ab"),
             }]
         );
@@ -342,7 +342,7 @@ fn creates_task_when_work_dir_does_not_exist() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/12345678".to_string(),
-                base_branch_name: "main".to_string(),
+                base_reference_name: "main".to_string(),
                 worktree_path: work_dir.join(TASK_ID),
             }]
         );

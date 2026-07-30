@@ -36,7 +36,7 @@ export type GetProjectResponse = { project: Project };
 export type ListProjectBranchesRequest = { projectId: string };
 
 /**
- * Returns local branch names that can be selected as a new worktree base.
+ * Returns refreshed remote branches plus local-only branches that can seed a new worktree.
  */
 export type ListProjectBranchesResponse = { branches: Array<ProjectBranch> };
 
@@ -56,9 +56,13 @@ export type ListProjectsResponse = { projects: Array<Project> };
 export type Project = { id: string; name: string; rootPath: string };
 
 /**
- * Separates Git's stable branch identity from the label shown to users.
+ * Separates the logical branch name, resolvable ref, and label shown to users.
  */
-export type ProjectBranch = { name: string; displayName: string };
+export type ProjectBranch = {
+  name: string;
+  refName: string;
+  displayName: string;
+};
 
 /**
  * Carries the mutable project name while the repository root remains immutable.
