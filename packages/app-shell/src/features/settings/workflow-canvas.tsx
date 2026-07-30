@@ -759,11 +759,22 @@ function WorkflowNodeCard({
   const nodeKindLabel = createMockWorkflowNodeType(node.kind, locale).label;
   const Icon = metadata.icon;
   const dragOrigin = useRef<{ pointer: WorkflowPosition; node: WorkflowPosition } | null>(null);
+  const pointerInteraction = useRef<{ pointerId: number; moved: boolean } | null>(null);
 
   /** Moves a node from its original graph-space position to avoid cumulative pointer rounding. */
   function handlePointerMove(event: ReactPointerEvent): void {
     if (dragOrigin.current === null) {
       return;
+    }
+    const distance = Math.hypot(
+      event.clientX - dragOrigin.current.pointer.x,
+      event.clientY - dragOrigin.current.pointer.y,
+    );
+    if (distance >= 4 && pointerInteraction.current !== null && !pointerInteraction.current.moved) {
+      pointerInteraction.current = {
+        ...pointerInteraction.current,
+        moved: true,
+      };
     }
     onMove({
       x: dragOrigin.current.node.x
@@ -788,20 +799,39 @@ function WorkflowNodeCard({
       style={{ left: node.position.x, top: node.position.y }}
       tabIndex={0}
       aria-label={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${node.title}`}
-      onFocus={onSelect}
+      onFocus={() => {
+        if (pointerInteraction.current === null) {
+          onSelect();
+        }
+      }}
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest("button") !== null) {
           return;
         }
-        onSelect();
         event.currentTarget.setPointerCapture(event.pointerId);
         dragOrigin.current = {
           pointer: { x: event.clientX, y: event.clientY },
           node: node.position,
         };
+        pointerInteraction.current = {
+          pointerId: event.pointerId,
+          moved: false,
+        };
       }}
       onPointerMove={handlePointerMove}
-      onPointerUp={() => {
+      onPointerUp={(event) => {
+        if (
+          pointerInteraction.current !== null
+          && pointerInteraction.current.pointerId === event.pointerId
+          && !pointerInteraction.current.moved
+        ) {
+          onSelect();
+        }
+        pointerInteraction.current = null;
+        dragOrigin.current = null;
+      }}
+      onPointerCancel={() => {
+        pointerInteraction.current = null;
         dragOrigin.current = null;
       }}
     >
