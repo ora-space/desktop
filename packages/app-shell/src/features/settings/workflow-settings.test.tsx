@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../../i18n/i18n-instance";
@@ -418,11 +418,26 @@ describe("WorkflowSettings", () => {
 
     await screen.findByText("代码审查工作流");
     await user.click(screen.getByRole("button", { name: "新建工作流" }));
-    const nameInput = await screen.findByDisplayValue("新工作流 4");
-    fireEvent.change(nameInput, { target: { value: "发布复盘" } });
+    const createDialog = await screen.findByRole("alertdialog", { name: "新建工作流" });
+    const createNameInput = within(createDialog).getByLabelText("工作流名称");
+    await user.type(createNameInput, "发布复盘");
+    await user.click(within(createDialog).getByRole("button", { name: "新建工作流" }));
 
-    expect(screen.getByDisplayValue("发布复盘")).toBeInTheDocument();
-    expect(screen.getByText("4 个工作流")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("发布复盘")).toBeInTheDocument();
+      expect(screen.getByText("4 个工作流")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "重命名发布复盘" }));
+    const renameDialog = await screen.findByRole("alertdialog", { name: "重命名“发布复盘”" });
+    const renameNameInput = within(renameDialog).getByDisplayValue("发布复盘");
+    await user.clear(renameNameInput);
+    await user.type(renameNameInput, "发布复盘 v2");
+    await user.click(within(renameDialog).getByRole("button", { name: "重命名" }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("发布复盘 v2")).toBeInTheDocument();
+    });
   });
 
   it("localizes workflow chrome and mock content in English", async () => {
