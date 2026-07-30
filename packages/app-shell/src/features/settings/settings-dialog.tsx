@@ -95,7 +95,9 @@ export function SettingsDialog() {
         className={cn(
           "max-w-none gap-0 overflow-hidden p-0 transition-[width,height] duration-200 sm:max-w-none",
           category === "workflow"
-            ? "h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)]"
+            // Keep clear of the frameless titlebar controls so the app close
+            // button stays reachable beside this near-fullscreen editor.
+            ? "h-[calc(100dvh-6rem)] w-[calc(100vw-3rem)]"
             : "h-[min(720px,calc(100dvh-2rem))] w-[min(1040px,calc(100vw-2rem))]",
         )}
       >
