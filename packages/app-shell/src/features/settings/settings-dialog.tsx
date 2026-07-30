@@ -103,9 +103,26 @@ export function SettingsDialog() {
           <DialogTitle>{t("common.settings")}</DialogTitle>
           <DialogDescription>{t("settings.description")}</DialogDescription>
         </DialogHeader>
-        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-cols-[210px_minmax(0,1fr)] sm:grid-rows-1">
-          <aside className="border-b border-border bg-muted/35 p-3 sm:border-b-0 sm:border-r">
-            <div className="hidden h-11 items-center gap-2 px-2 sm:flex">
+        <div
+          className={cn(
+            "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-rows-1",
+            category === "workflow"
+              ? "sm:grid-cols-[144px_minmax(0,1fr)]"
+              : "sm:grid-cols-[210px_minmax(0,1fr)]",
+          )}
+        >
+          <aside
+            className={cn(
+              "border-b border-border bg-muted/35 p-3 sm:border-b-0 sm:border-r",
+              category === "workflow" && "sm:px-2 sm:py-3",
+            )}
+          >
+            <div
+              className={cn(
+                "hidden h-11 items-center gap-2 px-2 sm:flex",
+                category === "workflow" && "px-1.5",
+              )}
+            >
               <div className="flex size-7 items-center justify-center rounded-md bg-foreground text-background"><IconAdjustments className="size-4" /></div>
               <span className="text-sm font-semibold">{t("common.settings")}</span>
             </div>
@@ -118,17 +135,27 @@ export function SettingsDialog() {
                     type="button"
                     onClick={() => setCategory(item.id)}
                     className={cn(
-                      "flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring sm:w-full",
+                      "flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                      category === "workflow"
+                        ? "sm:w-full sm:px-2"
+                        : "sm:w-full",
                       category === item.id ? "bg-background text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
                     )}
                   >
                     <Icon className="size-4" />
-                    <span>{item.label}</span>
+                    <span className="truncate">{item.label}</span>
                   </button>
                 );
               })}
             </nav>
-            <p className="mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block">{t("settings.productName")}<br />{t("settings.prototypeLabel")}</p>
+            <p
+              className={cn(
+                "mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block",
+                category === "workflow" && "sm:hidden",
+              )}
+            >
+              {t("settings.productName")}<br />{t("settings.prototypeLabel")}
+            </p>
           </aside>
 
           {category === "workflow" ? (

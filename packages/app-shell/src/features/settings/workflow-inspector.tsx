@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   IconCircleCheck,
   IconClock,
+  IconLayoutSidebarRightCollapse,
   IconPlayerPlay,
   IconSettings,
   IconTrash,
@@ -35,6 +36,7 @@ interface WorkflowInspectorProps {
   onUpdate: (node: WorkflowNode) => void;
   onDelete: (nodeId: string) => void;
   onCloseRun: () => void;
+  onCloseNode: () => void;
   onRun: (input: string) => void;
 }
 
@@ -51,6 +53,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
       node={props.node}
       onUpdate={props.onUpdate}
       onDelete={props.onDelete}
+      onClose={props.onCloseNode}
     />
   );
 }
@@ -59,7 +62,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
 function WorkflowInspectorEmpty({ onRun }: { onRun: (input: string) => void }) {
   const { t } = useTranslation();
   return (
-    <aside className="flex min-h-0 flex-col border-l border-border bg-background">
+    <aside className="flex min-h-0 flex-1 flex-col border-l border-border bg-background">
       <div className="border-b border-border px-4 py-3">
         <h3 className="text-xs font-semibold">{t("settings.workflow.configuration")}</h3>
         <p className="mt-1 text-[11px] text-muted-foreground">{t("settings.workflow.selectNodeHint")}</p>
@@ -86,10 +89,12 @@ function WorkflowNodeInspector({
   node,
   onUpdate,
   onDelete,
+  onClose,
 }: {
   node: WorkflowNode;
   onUpdate: (node: WorkflowNode) => void;
   onDelete: (nodeId: string) => void;
+  onClose: () => void;
 }) {
   const { i18n, t } = useTranslation();
   const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
@@ -98,17 +103,25 @@ function WorkflowNodeInspector({
   const nodeType = createMockWorkflowNodeType(node.kind, locale);
   const Icon = metadata.icon;
   return (
-    <aside className="flex min-h-0 flex-col border-l border-border bg-background">
+    <aside className="flex min-h-0 flex-1 flex-col border-l border-border bg-background">
       <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
         <span className={`flex size-8 items-center justify-center rounded-lg ${metadata.tone}`}>
           <Icon className="size-4" />
         </span>
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="text-xs font-semibold">{node.title}</h3>
           <p className="text-[10px] text-muted-foreground">
             {t("settings.workflow.nodeSuffix", { type: nodeType.label })}
           </p>
         </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("settings.workflow.closeConfiguration")}
+          onClick={onClose}
+        >
+          <IconLayoutSidebarRightCollapse />
+        </Button>
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
         <InspectorField label={t("settings.workflow.field.name")} htmlFor="workflow-node-title">
@@ -224,7 +237,7 @@ function WorkflowRunPreview({
   const [input, setInput] = useState(() => t("settings.workflow.previewInput"));
 
   return (
-    <aside className="flex min-h-0 flex-col border-l border-border bg-background" aria-live="polite">
+    <aside className="flex min-h-0 flex-1 flex-col border-l border-border bg-background" aria-live="polite">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
           <h3 className="text-xs font-semibold">{t("settings.workflow.testRun")}</h3>
