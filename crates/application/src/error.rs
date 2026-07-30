@@ -1,7 +1,7 @@
 use crate::{
-    AgentDefinitionRepositoryError, ProjectRepositoryError, ProjectWorkContextRepositoryError,
-    SessionRepositoryError, SkillRepositoryError, TaskRepositoryError,
-    TaskWorktreeProvisionerError, WorktreeRepositoryError,
+    AgentDefinitionRepositoryError, BranchListingError, ProjectRepositoryError,
+    ProjectWorkContextRepositoryError, SessionRepositoryError, SkillRepositoryError,
+    TaskRepositoryError, TaskWorktreeProvisionerError, WorktreeRepositoryError,
 };
 use ora_domain::DomainModelError;
 use thiserror::Error;
@@ -25,6 +25,8 @@ pub enum ApplicationError {
     ProjectNotFound { project_id: String },
     #[error("project repository operation failed: {message}")]
     ProjectRepository { message: String },
+    #[error("project branch listing failed: {message}")]
+    ProjectBranchListing { message: String },
     #[error("project is already occupied: {project_id}")]
     ProjectOccupied { project_id: String },
     #[error("project work context not found for {surface}/{window_id}")]
@@ -95,6 +97,14 @@ impl ApplicationError {
     pub(crate) fn from_project_repository_error(error: ProjectRepositoryError) -> Self {
         match error {
             ProjectRepositoryError::OperationFailed(message) => Self::ProjectRepository { message },
+        }
+    }
+
+    /// Maps Git-facing branch listing failures into stable application errors.
+    pub(crate) fn from_branch_listing_error(error: BranchListingError) -> Self {
+        match error {
+            BranchListingError::NotARepository => Self::TaskWorktreeRequiresGitRepository,
+            BranchListingError::OperationFailed(message) => Self::ProjectBranchListing { message },
         }
     }
 

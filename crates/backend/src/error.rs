@@ -97,6 +97,9 @@ impl From<ApplicationError> for BackendError {
                 "project_repository_error",
                 "project repository operation failed",
             ),
+            ApplicationError::ProjectBranchListing { .. } => {
+                internal("project_branches_error", "failed to list project branches")
+            }
             ApplicationError::ProjectOccupied { project_id } => Self::new(
                 BackendErrorKind::Conflict,
                 "project_occupied",

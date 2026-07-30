@@ -1,4 +1,24 @@
 use ora_domain::{Project, ProjectId};
+use std::path::Path;
+
+/// Describes one logical branch and the exact local or remote-tracking ref Git should resolve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchReference {
+    pub name: String,
+    pub ref_name: String,
+}
+
+/// Supplies refreshed Git branches without coupling project use cases to a Git implementation.
+///
+/// Implementations are expected to return resolvable ref names and to apply their own
+/// freshness policy before exposing branches to the application layer.
+pub trait BranchLister {
+    /// Lists selectable branch references for the repository rooted at the supplied path.
+    fn list_branches(
+        &self,
+        repository_root: &Path,
+    ) -> Result<Vec<BranchReference>, BranchListingError>;
+}
 
 /// Supplies application-owned persistence operations for project CRUD use cases.
 ///
@@ -49,5 +69,12 @@ pub trait Clock {
 /// Captures repository failures that handlers convert into stable application errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectRepositoryError {
+    OperationFailed(String),
+}
+
+/// Captures branch-infrastructure failures that project handlers normalize for adapters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchListingError {
+    NotARepository,
     OperationFailed(String),
 }

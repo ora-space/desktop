@@ -137,12 +137,14 @@ impl Backend {
     ) -> Result<ListProjectsResponse, BackendError> {
         self.project.list(request).map_err(BackendError::from)
     }
-    /// Lists local branches for one project repository.
+    /// Lists selectable branches for one project repository.
     pub fn list_project_branches(
         &self,
         request: ListProjectBranchesRequest,
     ) -> Result<ListProjectBranchesResponse, BackendError> {
-        self.project.list_branches(request)
+        self.project
+            .list_branches(request)
+            .map_err(BackendError::from)
     }
     /// Updates one project through the shared application composition.
     pub fn update_project(

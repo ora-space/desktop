@@ -1,24 +1,31 @@
 use crate::clock::SystemClock;
 use ora_application::{
-    ApplicationError, Clock, CreateProjectHandler, GetProjectHandler, ListProjectsHandler,
-    TaskRepository, UpdateProjectHandler, UuidProjectIdGenerator, WorktreeRepository,
+    ApplicationError, BranchLister, BranchListingError, BranchReference, Clock,
+    CreateProjectHandler, GetProjectHandler, ListProjectBranchesHandler, ListProjectsHandler,
+    UpdateProjectHandler, UuidProjectIdGenerator,
 };
 use ora_contracts::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
     GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse,
-    ListProjectsRequest, ListProjectsResponse, ProjectBranch, UpdateProjectRequest,
-    UpdateProjectResponse,
+    ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse,
 };
 use ora_db::{
     CascadeDeleteOutcome, RepositoryPool, SqliteCascadeRepository, SqliteProjectRepository,
     SqliteTaskRepository, SqliteWorktreeRepository,
 };
 use ora_domain::ProjectId;
-use std::collections::HashMap;
+use std::path::Path;
 
 use crate::{BackendError, BackendErrorKind};
 use gitlancer::git::base_branch::{ListWorktreeBasesRequest, ListWorktreeBasesResponse};
-use gitlancer::{CliGitRunner, Git, RepoRoot, Repository};
+use gitlancer::{CliGitRunner, Git, RepoRoot};
+
+type ProjectBranchListHandler = ListProjectBranchesHandler<
+    SqliteProjectRepository,
+    SqliteTaskRepository,
+    SqliteWorktreeRepository,
+    GitBranchLister,
+>;
 
 /// Groups the concrete project handlers shared by runtime adapters.
 pub(crate) struct ProjectApi {
@@ -26,6 +33,7 @@ pub(crate) struct ProjectApi {
     create: CreateProjectHandler<SqliteProjectRepository, UuidProjectIdGenerator, SystemClock>,
     get: GetProjectHandler<SqliteProjectRepository>,
     list: ListProjectsHandler<SqliteProjectRepository>,
+    list_branches: ProjectBranchListHandler,
     update: UpdateProjectHandler<SqliteProjectRepository, SystemClock>,
     clock: SystemClock,
 }
@@ -36,7 +44,7 @@ impl ProjectApi {
         let repository = SqliteProjectRepository::new(pool.clone());
 
         Self {
-            pool,
+            pool: pool.clone(),
             create: CreateProjectHandler::new(
                 repository.clone(),
                 UuidProjectIdGenerator::new(),
@@ -44,6 +52,12 @@ impl ProjectApi {
             ),
             get: GetProjectHandler::new(repository.clone()),
             list: ListProjectsHandler::new(repository.clone()),
+            list_branches: ListProjectBranchesHandler::new(
+                repository.clone(),
+                SqliteTaskRepository::new(pool.clone()),
+                SqliteWorktreeRepository::new(pool),
+                GitBranchLister,
+            ),
             update: UpdateProjectHandler::new(repository, clock),
             clock,
         }
@@ -73,89 +87,12 @@ impl ProjectApi {
         self.list.handle(request)
     }
 
-    /// Lists freshly fetched remote branches plus local-only branches that can seed a task worktree.
+    /// Executes project branch listing through the application handler.
     pub(crate) fn list_branches(
         &self,
         request: ListProjectBranchesRequest,
-    ) -> Result<ListProjectBranchesResponse, BackendError> {
-        let project = self
-            .get
-            .handle(GetProjectRequest {
-                project_id: request.project_id,
-            })
-            .map_err(BackendError::from)?
-            .project;
-        let project_id = ProjectId::new(&project.id);
-        let repository = Repository::new(RepoRoot::new(project.root_path));
-        let git = Git::new(CliGitRunner);
-        git.discover_repository(repository.root().clone())
-            .map_err(|_| {
-                BackendError::new(
-                    BackendErrorKind::BadRequest,
-                    "worktree_requires_git_repository",
-                    "worktree mode requires a Git repository",
-                )
-            })?;
-        let ListWorktreeBasesResponse { bases } = git
-            .list_worktree_bases(ListWorktreeBasesRequest {
-                repository: &repository,
-            })
-            .map_err(|_| {
-                BackendError::new(
-                    BackendErrorKind::Internal,
-                    "project_branches_error",
-                    "failed to list project branches",
-                )
-            })?;
-        let task_titles = SqliteTaskRepository::new(self.pool.clone())
-            .list_tasks()
-            .map_err(|_| {
-                BackendError::new(
-                    BackendErrorKind::Internal,
-                    "task_repository_error",
-                    "task repository operation failed",
-                )
-            })?
-            .into_iter()
-            .filter(|task| task.project_id == project_id)
-            .map(|task| (task.id, task.title))
-            .collect::<HashMap<_, _>>();
-        let managed_branch_titles = SqliteWorktreeRepository::new(self.pool.clone())
-            .list_worktrees()
-            .map_err(|_| {
-                BackendError::new(
-                    BackendErrorKind::Internal,
-                    "worktree_repository_error",
-                    "worktree repository operation failed",
-                )
-            })?
-            .into_iter()
-            .filter_map(|worktree| {
-                Some((
-                    worktree.branch_name?,
-                    task_titles.get(&worktree.task_id)?.clone(),
-                ))
-            })
-            .collect::<HashMap<_, _>>();
-
-        Ok(ListProjectBranchesResponse {
-            branches: bases
-                .into_iter()
-                .map(|base| {
-                    let name = base.branch_name().as_str().to_string();
-                    let ref_name = base.reference_name();
-                    let display_name = managed_branch_titles
-                        .get(&name)
-                        .cloned()
-                        .unwrap_or_else(|| name.clone());
-                    ProjectBranch {
-                        name,
-                        ref_name,
-                        display_name,
-                    }
-                })
-                .collect(),
-        })
+    ) -> Result<ListProjectBranchesResponse, ApplicationError> {
+        self.list_branches.handle(request)
     }
 
     /// Executes project replacement through the application handler.
@@ -197,5 +134,35 @@ impl ProjectApi {
                 "project has a running session and cannot be deleted",
             )),
         }
+    }
+}
+
+/// Adapts Gitlancer's refreshed worktree bases to the application branch-listing port.
+#[derive(Debug, Clone, Copy)]
+struct GitBranchLister;
+
+impl BranchLister for GitBranchLister {
+    /// Discovers the repository and returns logical names paired with resolvable refs.
+    fn list_branches(
+        &self,
+        repository_root: &Path,
+    ) -> Result<Vec<BranchReference>, BranchListingError> {
+        let git = Git::new(CliGitRunner);
+        let repository = git
+            .discover_repository(RepoRoot::new(repository_root))
+            .map_err(|_| BranchListingError::NotARepository)?;
+        let ListWorktreeBasesResponse { bases } = git
+            .list_worktree_bases(ListWorktreeBasesRequest {
+                repository: &repository,
+            })
+            .map_err(|error| BranchListingError::OperationFailed(error.to_string()))?;
+
+        Ok(bases
+            .into_iter()
+            .map(|base| BranchReference {
+                name: base.branch_name().as_str().to_string(),
+                ref_name: base.reference_name(),
+            })
+            .collect())
     }
 }

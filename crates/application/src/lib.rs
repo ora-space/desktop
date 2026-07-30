@@ -15,7 +15,8 @@ pub use agent_definition::{
 };
 pub use error::ApplicationError;
 pub use project::{
-    Clock, CreateProjectHandler, GetProjectHandler, ListProjectsHandler, ProjectIdGenerator,
+    BranchLister, BranchListingError, BranchReference, Clock, CreateProjectHandler,
+    GetProjectHandler, ListProjectBranchesHandler, ListProjectsHandler, ProjectIdGenerator,
     ProjectRepository, ProjectRepositoryError, UpdateProjectHandler, UuidProjectIdGenerator,
 };
 pub use project_work_context::{
