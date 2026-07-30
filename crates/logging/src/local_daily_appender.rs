@@ -9,15 +9,15 @@ use crate::clock::local_date_at;
 use crate::file_output::{ActiveLogPath, cleanup_old_logs};
 use crate::{FileSystemAction, LoggingInitError};
 
-/// Supplies absolute instants to local-calendar rotation without coupling tests to wall time.
+/// Supplies processing-time instants to local-calendar rotation without coupling tests to wall time.
 pub(crate) trait TimeSource: Send + 'static {
-    /// Returns the current absolute instant used to select the active local date.
+    /// Returns the worker's current absolute instant used to select the active local date.
     fn now(&self) -> OffsetDateTime;
 }
 
 /// Opens append-only log files so rotation failures can be exercised without platform tricks.
 pub(crate) trait FileOpener: Send + 'static {
-    /// Opens or creates the file that owns one local calendar day's events.
+    /// Opens or creates the file selected for one local processing date.
     fn open(&self, path: &Path) -> io::Result<File>;
 }
 
@@ -43,7 +43,7 @@ impl FileOpener for SystemFileOpener {
     }
 }
 
-/// Writes each configured local calendar date into its matching append-only file.
+/// Routes each write to the append-only file for the worker's current local processing date.
 pub(crate) struct LocalDailyAppender<T, O> {
     active_path: ActiveLogPath,
     timezone: chrono_tz::Tz,
@@ -59,7 +59,7 @@ where
     T: TimeSource,
     O: FileOpener,
 {
-    /// Opens the current local-date file and enforces retention before accepting events.
+    /// Opens the current local processing-date file and enforces retention before accepting writes.
     pub(crate) fn new(
         active_path: ActiveLogPath,
         timezone: chrono_tz::Tz,
@@ -144,7 +144,9 @@ mod tests {
     use std::io::{self, Write};
     use std::num::NonZeroUsize;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, mpsc};
+    use std::time::Duration;
 
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -177,6 +179,26 @@ mod tests {
     impl TimeSource for TestTimeSource {
         fn now(&self) -> OffsetDateTime {
             *self.now.lock().unwrap()
+        }
+    }
+
+    /// Pauses the first worker-time read after initialization so queue timing is deterministic.
+    #[derive(Debug)]
+    struct GatedWorkerTimeSource {
+        initial_now: OffsetDateTime,
+        initialization_read: AtomicBool,
+        worker_waiting: mpsc::Sender<()>,
+        resumed_now: mpsc::Receiver<OffsetDateTime>,
+    }
+
+    impl TimeSource for GatedWorkerTimeSource {
+        fn now(&self) -> OffsetDateTime {
+            if !self.initialization_read.swap(true, Ordering::SeqCst) {
+                return self.initial_now;
+            }
+
+            self.worker_waiting.send(()).unwrap();
+            self.resumed_now.recv().unwrap()
         }
     }
 
@@ -252,6 +274,56 @@ mod tests {
             datetime!(2026-07-29 23:59:59 UTC),
             datetime!(2026-07-30 00:00 UTC),
             ["ora.log.2026-07-29", "ora.log.2026-07-30"],
+        );
+    }
+
+    /// Verifies queued bytes use the worker's processing date without changing their timestamp.
+    #[test]
+    fn queued_event_after_midnight_uses_worker_processing_date() {
+        const EVENT: &[u8] = concat!(
+            r#"{"timestamp":"2026-07-29T23:59:59+08:00","#,
+            r#""message":"queued before midnight"}"#,
+            "\n",
+        )
+        .as_bytes();
+
+        let temp_dir = TempDir::new().unwrap();
+        let (worker_waiting_tx, worker_waiting_rx) = mpsc::channel();
+        let (resume_worker_tx, resume_worker_rx) = mpsc::channel();
+        let appender = LocalDailyAppender::new(
+            ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap(),
+            chrono_tz::Asia::Shanghai,
+            NonZeroUsize::new(/*n*/ 3).unwrap(),
+            GatedWorkerTimeSource {
+                initial_now: datetime!(2026-07-29 15:59:59 UTC),
+                initialization_read: AtomicBool::new(false),
+                worker_waiting: worker_waiting_tx,
+                resumed_now: resume_worker_rx,
+            },
+            ControlledFileOpener::default(),
+        )
+        .unwrap();
+        let (mut writer, guard) = tracing_appender::non_blocking(appender);
+
+        writer.write_all(EVENT).unwrap();
+        worker_waiting_rx
+            .recv_timeout(Duration::from_secs(/*secs*/ 5))
+            .unwrap();
+        resume_worker_tx
+            .send(datetime!(2026-07-29 16:00 UTC))
+            .unwrap();
+        drop(writer);
+        drop(guard);
+
+        assert_eq!(
+            read_log_files(&temp_dir),
+            vec![
+                ("ora.log.2026-07-29".to_string(), String::new()),
+                (
+                    "ora.log.2026-07-30".to_string(),
+                    String::from_utf8(EVENT.to_vec()).unwrap(),
+                ),
+            ]
         );
     }
 

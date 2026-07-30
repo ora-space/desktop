@@ -19,10 +19,12 @@ Ora Rust services initialize shared structured logging through `ora-logging`.
 - `ORA_TIMEZONE`: IANA timezone used by structured event timestamps, daily filename dates, and
   rollover boundaries, such as `Asia/Shanghai` or `Europe/London`.
 
-`ORA_LOG_MODE=stdout` ignores file path and retention settings. File-backed modes rotate on the
-first event written after midnight in the configured process timezone. The filename suffix is that
-local calendar date. Startup and every successful rollover clean up the oldest matching files once
-the retained file count would exceed `ORA_LOG_MAX_DAYS`.
+`ORA_LOG_MODE=stdout` ignores file path and retention settings. File-backed modes rotate when the
+non-blocking worker processes its first write after midnight in the configured process timezone.
+The filename suffix is the worker's local processing date. An event formatted before midnight but
+processed after midnight can therefore appear in the next day's file while retaining its earlier
+JSON timestamp. Startup and every successful rollover clean up the oldest matching files once the
+retained file count would exceed `ORA_LOG_MAX_DAYS`.
 
 The Web server resolves its process timezone once during startup. A non-empty `ORA_TIMEZONE` takes
 precedence over the generic `TZ` environment variable. If neither is configured, startup warns and
@@ -60,10 +62,12 @@ Business metadata belongs under `context`, and failure details belong under `err
 }
 ```
 
-The RFC 3339 timestamp uses the configured process timezone and includes its UTC offset. During
-normal operation, daily log filename dates and rollover boundaries use that same timezone, so each
-file represents one local calendar date. If the next file cannot be opened, logging continues in
-the previous file and retries the rollover on a later event rather than dropping the event.
+The RFC 3339 timestamp records the event formatting time in the configured process timezone and
+includes its UTC offset. Daily log filename dates and rollover boundaries use that same timezone
+but are selected later from the non-blocking worker's processing time. Files are therefore
+processing-date buckets rather than strict partitions of event timestamp dates. If the next file
+cannot be opened, logging continues in the previous file and retries the rollover on a later event
+rather than dropping the event.
 
 `ora-logging` also provides helper APIs for correlation-aware spans so runtime crates can attach `span`, `trace_id`, and `request_id` consistently.
 For runtime event calls, prefer `ora_logging::ora_debug!`, `ora_logging::ora_info!`, `ora_logging::ora_warn!`, and `ora_logging::ora_error!`; these wrappers automatically attach the current function name as the top-level `method` field.

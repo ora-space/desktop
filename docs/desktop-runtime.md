@@ -41,7 +41,10 @@ At startup, Desktop reads the operating system's IANA timezone and fixes it for 
 lifetime. Structured event timestamps use that timezone. If the system timezone cannot be read or
 parsed, Desktop records a warning, uses UTC, and continues startup. A system timezone change takes
 effect after Ora restarts. Daily log filenames and rollover boundaries use the same configured
-timezone; rollover occurs on the first event written after local midnight.
+timezone; rollover occurs when the non-blocking worker processes its first write after local
+midnight. An event formatted before midnight but processed afterward can appear in the next day's
+file while retaining its earlier JSON timestamp. If the next file cannot be opened, logging
+temporarily continues in the previous file and retries rollover on a later event.
 
 ## Verification
 
