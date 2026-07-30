@@ -81,7 +81,7 @@ tasks:
     silent: true
     cmds:
       - pnpm --filter @ora/desktop lint
-      - cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --all
+      - cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --all
       - cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
 
   export-contracts:
