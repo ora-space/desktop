@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   IconFileImport,
   IconLayoutSidebarLeftCollapse,
+  IconPencil,
   IconPlus,
   IconRoute,
   IconSearch,
@@ -29,7 +30,8 @@ interface WorkflowManagerProps {
   busy: boolean;
   error: string | null;
   onSelect: (workflowId: string) => void;
-  onCreate: () => void;
+  onCreate: (name: string) => void;
+  onRename: (workflowId: string, name: string) => void;
   onDelete: (workflowId: string) => void;
   onImport: (file: File) => void;
   onCollapse: () => void;
@@ -43,12 +45,17 @@ export function WorkflowManager({
   error,
   onSelect,
   onCreate,
+  onRename,
   onDelete,
   onImport,
   onCollapse,
 }: WorkflowManagerProps) {
   const { i18n, t } = useTranslation();
   const [query, setQuery] = useState("");
+  const [newWorkflowName, setNewWorkflowName] = useState("");
+  const [renameWorkflowName, setRenameWorkflowName] = useState("");
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<WorkflowDefinition | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkflowDefinition | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const visibleWorkflows = useMemo(() => {
@@ -68,6 +75,41 @@ export function WorkflowManager({
       onImport(file);
     }
     event.target.value = "";
+  }
+
+  /** Opens workflow creation with an empty name so the user must choose one. */
+  function openCreateDialog(): void {
+    setNewWorkflowName("");
+    setCreateDialogOpen(true);
+  }
+
+  /** Creates a workflow only when the submitted name remains non-empty after trimming. */
+  function submitCreateWorkflow(): void {
+    const name = newWorkflowName.trim();
+    if (name === "") {
+      return;
+    }
+    onCreate(name);
+    setCreateDialogOpen(false);
+  }
+
+  /** Opens workflow rename with the current name so edits are incremental. */
+  function openRenameDialog(workflow: WorkflowDefinition): void {
+    setRenameWorkflowName(workflow.name);
+    setRenameTarget(workflow);
+  }
+
+  /** Persists workflow rename using the selected entry as the stable identity source. */
+  function submitRenameWorkflow(): void {
+    if (renameTarget === null) {
+      return;
+    }
+    const name = renameWorkflowName.trim();
+    if (name === "") {
+      return;
+    }
+    onRename(renameTarget.id, name);
+    setRenameTarget(null);
   }
 
   return (
@@ -93,7 +135,7 @@ export function WorkflowManager({
               size="icon-sm"
               aria-label={t("settings.workflow.newWorkflow")}
               disabled={busy}
-              onClick={onCreate}
+              onClick={openCreateDialog}
             >
               <IconPlus />
             </Button>
@@ -148,6 +190,18 @@ export function WorkflowManager({
               </button>
               <button
                 type="button"
+                aria-label={t("settings.workflow.renameNamed", { name: workflow.name })}
+                disabled={busy}
+                onClick={() => openRenameDialog(workflow)}
+                className={cn(
+                  "absolute right-8 top-1.5 flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                  selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                )}
+              >
+                <IconPencil className="size-3.5" />
+              </button>
+              <button
+                type="button"
                 aria-label={t("settings.workflow.deleteNamed", { name: workflow.name })}
                 disabled={busy}
                 onClick={() => setDeleteTarget(workflow)}
@@ -194,6 +248,80 @@ export function WorkflowManager({
           {t("settings.workflow.importHint")}
         </p>
       </div>
+      <AlertDialog
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !busy) {
+            setCreateDialogOpen(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("settings.workflow.createWorkflowTitle")}</AlertDialogTitle>
+          </AlertDialogHeader>
+          <Input
+            value={newWorkflowName}
+            onChange={(event) => setNewWorkflowName(event.target.value)}
+            aria-label={t("settings.workflow.workflowName")}
+            placeholder={t("settings.workflow.workflowNamePlaceholder")}
+            autoFocus
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                submitCreateWorkflow();
+              }
+            }}
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy || newWorkflowName.trim() === ""}
+              onClick={submitCreateWorkflow}
+            >
+              {t("settings.workflow.newWorkflow")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={renameTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) {
+            setRenameTarget(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("settings.workflow.renameWorkflowTitle", { name: renameTarget?.name ?? "" })}
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          <Input
+            value={renameWorkflowName}
+            onChange={(event) => setRenameWorkflowName(event.target.value)}
+            aria-label={t("settings.workflow.workflowName")}
+            placeholder={t("settings.workflow.workflowNamePlaceholder")}
+            autoFocus
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                submitRenameWorkflow();
+              }
+            }}
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy || renameWorkflowName.trim() === ""}
+              onClick={submitRenameWorkflow}
+            >
+              {t("settings.workflow.renameWorkflow")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
