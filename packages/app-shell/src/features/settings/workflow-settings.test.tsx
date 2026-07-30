@@ -74,6 +74,41 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("does not pan from the panel-resize guard zones at canvas edges", async () => {
+    render(<WorkflowSettings />);
+    const canvas = await screen.findByLabelText("工作流画布");
+    canvas.setPointerCapture = () => {};
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      ...canvas.getBoundingClientRect(),
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 600,
+      right: 800,
+      bottom: 600,
+    });
+    const stage = canvas.querySelector<HTMLElement>(".origin-top-left");
+
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      clientX: 6,
+      clientY: 200,
+      pointerId: 1,
+    });
+    fireEvent.pointerMove(canvas, {
+      clientX: 80,
+      clientY: 240,
+      pointerId: 1,
+    });
+    fireEvent.pointerUp(canvas, {
+      clientX: 80,
+      clientY: 240,
+      pointerId: 1,
+    });
+
+    expect(stage?.style.transform).toBe("translate(32px, 32px) scale(1)");
+  });
+
   it("allows nodes to move continuously through the graph origin", async () => {
     render(<WorkflowSettings />);
     const startNode = await screen.findByLabelText("开始节点: 开始");
