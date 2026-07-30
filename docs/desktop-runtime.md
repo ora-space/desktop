@@ -8,15 +8,17 @@ Desktop constructs one cloneable `ora-backend::Backend`. Unary operations use ty
 
 The frontend injects `createTauriTransport()` into `createContractsClient`. The transport maps contract operation names to Tauri commands and forwards the original request DTO unchanged. Shared backend errors retain the same public code and message as Web errors; Tauri transport errors have no HTTP status.
 
-Backend construction immediately attempts supervised `opencode acp`, `nga acp`, and `codeagentcli acp` children in the user's home directory. Sessions share the connection selected by their `agentCli` while retaining their own ACP session id and Task worktree `cwd`. Each CLI retries independently; failures leave the Desktop shell and healthy CLIs available, while operations targeting an unavailable CLI report `agent_runtime_unavailable`.
+Backend construction immediately attempts supervised `opencode acp`, `nga acp`, and `codeagentcli acp` children in the user's home directory. Sessions share the connection selected by their `agentCli` while retaining their own ACP session id and Task worktree `cwd`. Each CLI retries independently; failures leave the Desktop shell and healthy CLIs available, while operations targeting an unavailable CLI report `agent_runtime_unavailable`. Executable lookup is platform-specific — see [ACP Agent Runtime](agent-runtime.md).
 
-The current Desktop slice explicitly returns `unsupported_operation` for:
+Beyond the shared contract surface, Desktop registers four platform-only commands with no HTTP counterpart: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`.
+
+Three contract operations are not implemented on Desktop:
 
 - opening a project work context;
 - renewing a project work context;
 - listing a server filesystem directory.
 
-`ProjectWorkContext` remains outside this extraction.
+No Tauri command exists for them. The contracts transport rejects them with `unsupported_operation` before any IPC call is made, so the exclusion is enforced client-side rather than by a stub command. `ProjectWorkContext` remains outside this extraction; see [Project Work Contexts](project-work-contexts.md).
 
 ## Persistent Paths
 
@@ -27,11 +29,13 @@ The Tauri identifier is `space.ora.desktop`. Tauri's system `app_data_dir` owns 
 - Logs: `app_data_dir/logs/ora.log`
 - Default new-worktree root: `app_data_dir/worktrees`
 
-On first launch, Desktop creates the app data directory, default worktree directory, and a versioned configuration file using an atomic sibling-temporary-file replacement. Existing malformed, unknown-version, or otherwise invalid configuration is fatal; Desktop does not silently reset it.
+On first launch, Desktop creates the app data directory, default worktree directory, and a versioned configuration file using an atomic sibling-temporary-file replacement. `config.json` currently holds version `1` and the `worktreeRoot`. Existing malformed, unknown-version, or otherwise invalid configuration is fatal; Desktop does not silently reset it.
+
+Unlike the Web server, Desktop reads no environment variables for these paths. Everything is derived from Tauri's `app_data_dir` and the versioned configuration file.
 
 The worktree root is non-sensitive configuration. Users can change it from Settings → Data & privacy on Desktop. A selected value must be an absolute path to an existing directory. The new value affects task creations that start after the update; in-flight operations retain their original snapshot, and existing worktrees are not moved.
 
-The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads. Task and project deletion never mutate Git.
+The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads, and `resolve_task_cwd` exposes that same resolution to the shell. Task and project deletion never mutate Git. See [Task Worktrees](task-worktrees.md).
 
 ## Logging
 

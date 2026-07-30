@@ -1,9 +1,8 @@
 # Gitlancer Architecture
 
-## Goals
+`gitlancer` is Ora's typed Git CLI runtime.
 
-`gitlancer` is designed as a Git CLI runtime for Ora, an AI-agent-oriented IDE.
-The main goals are:
+## Goals
 
 - Make multi-worktree support a first-class capability instead of an afterthought.
 - Provide stable typed request/response contracts for upper layers.
@@ -11,75 +10,39 @@ The main goals are:
 - Make execution observable, injectable, and easy to test.
 - Prefer repository- and worktree-aware domain types that prevent invalid states.
 
-## Design Principles
+## Design principles
 
-1. Model repository shapes explicitly.
-   Main worktrees, linked worktrees, repo roots, git dirs, and repo-relative paths are different concepts and should use different types.
-2. Separate domain, execution, parsing, and Git use cases.
-   Command construction should not be mixed with filesystem validation or stdout parsing.
-3. Keep requests and responses explicit.
-   Ora will benefit from stable typed command boundaries more than extension traits on a mutable handle.
-4. Prefer static dispatch.
-   `Git<R: GitRunner>` keeps the execution backend generic and testable without dynamic dispatch.
-5. Parse only stable Git outputs.
-   Prefer porcelain and plumbing commands such as `git worktree list --porcelain`, `git status --porcelain=v2 -z`, and `git rev-parse`.
+1. **Model repository shapes explicitly.** Main worktrees, linked worktrees, repo roots, git dirs, and repo-relative paths are different concepts and use different types.
+2. **Separate domain, execution, parsing, and Git use cases.** Command construction is not mixed with filesystem validation or stdout parsing.
+3. **Keep requests and responses explicit.** Stable typed command boundaries serve Ora better than extension traits on a mutable handle.
+4. **Prefer static dispatch.** `Git<R: GitRunner>` keeps the execution backend generic and testable without dynamic dispatch.
+5. **Parse only stable Git outputs.** Porcelain and plumbing formats only.
 
-## Layer Responsibilities
+## Layer responsibilities
 
 ### `domain`
 
-The domain layer owns repository facts and invariants:
+Owns repository facts and invariants: `RepoRoot`, `WorktreeRoot`, `GitDir`, `RepoRelativePath`, `BranchName`, `CommitId`, `Repository`, `WorktreeHandle`, `WorktreeKind`.
 
-- `RepoRoot`, `WorktreeRoot`, `GitDir`
-- `RepoRelativePath`
-- `Repository`
-- `WorktreeHandle`
-- `WorktreeKind`
+It answers questions such as which repo a worktree belongs to, and whether a path is safe to pass to `git add` from this worktree. `WorktreeHandle::resolve_repo_relative_path` lexically normalizes a caller path and rejects absolute paths and traversal outside the worktree; it does not require the target to exist and does not canonicalize through the filesystem. `RepoRelativePath` is obtainable only through that worktree-aware boundary.
 
-This layer should answer questions such as:
-
-- Is this path a repository root?
-- Which repo does this worktree belong to?
-- Is this path safe to pass to `git add` from this worktree?
-
-It should not spawn processes or parse command output directly.
+Constructors for repository and worktree roots assume their callers already validated Git identity — discovery and validation belong to `git`. This layer spawns no processes and parses no output.
 
 ### `exec`
 
-The execution layer wraps Git CLI invocation:
+Wraps Git CLI invocation: `GitCommand`, `GitIntent`, `GitEnv`, `GitOutput`, `GitRunner`, `CliGitRunner`, `RecordingGitRunner`.
 
-- `GitCommand`
-- `GitIntent`
-- `GitEnv`
-- `GitOutput`
-- `GitRunner`
-- `CliGitRunner`
-
-This layer exists so upper layers can:
-
-- inject a fake runner in tests,
-- record commands for debugging or telemetry,
-- distinguish read-only, mutating, and networked Git operations.
+It exists so upper layers can inject a fake runner in tests, record commands for debugging or telemetry, and distinguish read-only, mutating, and networked operations.
 
 ### `git`
 
-The Git layer exposes typed use cases that Ora can call directly:
-
-- repository discovery,
-- worktree discovery and selection,
-- add / commit / status,
-- branch-oriented read and lifecycle flows,
-- linked-worktree lifecycle flows.
-
-Each use case should take a typed request object and return a typed response object.
-That keeps option growth manageable and produces better call boundaries for agent orchestration.
+Exposes the typed use cases Ora calls directly — repository discovery, worktree discovery and lifecycle, branch read and lifecycle, add/commit, status, and global identity. Each takes a typed request and returns a typed response, which keeps option growth manageable and produces better call boundaries for agent orchestration.
 
 ### `parse`
 
-The parse layer converts stable Git output into typed results.
-It should focus on porcelain/plumbing formats and avoid parsing human-oriented messages whenever possible.
+Converts stable Git output into typed results, focusing on porcelain and plumbing formats and avoiding human-oriented messages. An empty or structurally incomplete required payload is a `ParseError`; parsers never invent missing identities. A detached worktree is represented by an absent branch rather than rejected.
 
-## Core Types
+## Core types
 
 ### Runtime
 
@@ -89,10 +52,9 @@ pub struct Git<R: GitRunner> {
 }
 ```
 
-`Git` is the entry point for all Git use cases.
-It owns the execution strategy but not repository state.
+`Git` is the entry point for all Git use cases. It owns the execution strategy but no mutable repository state.
 
-### Repository and Worktree
+### Repository and worktree
 
 ```rust
 pub struct Repository {
@@ -104,6 +66,7 @@ pub struct WorktreeHandle {
     worktree_root: WorktreeRoot,
     git_dir: GitDir,
     kind: WorktreeKind,
+    branch_name: Option<BranchName>,
 }
 
 pub enum WorktreeKind {
@@ -112,15 +75,44 @@ pub enum WorktreeKind {
 }
 ```
 
-This structure makes multi-worktree support explicit and removes ambiguity between:
+This removes ambiguity between the repository root, the directory where a command should run, and the gitdir backing that worktree. Fields are private and read through accessors.
 
-- the repository root,
-- the directory where a command should run,
-- the gitdir backing that worktree.
+## Typed operations
 
-## Request / Response Style
+### Worktree queries
 
-Instead of attaching methods directly to `Worktree`, gitlancer favors explicit request objects:
+`list_worktrees` parses `git worktree list --porcelain` and returns `WorktreeHandle` values whose `repo_root` points to the owning repository, whose `worktree_root` points to the checkout root, and whose `kind` distinguishes the main worktree from linked worktrees. A repository with its main checkout plus one linked worktree returns two handles, exactly one of them `WorktreeKind::Main`.
+
+Three resolution paths exist:
+
+- `resolve_worktree` finds a linked worktree by its configured worktree name.
+- `resolve_worktree_by_branch` finds the worktree that has a given branch checked out. This is the path Ora's agent runtime uses to recover a task's checkout directory from its persisted branch name.
+- `find_worktree` locates which worktree contains an arbitrary nested filesystem path.
+
+### Inspection
+
+- `list_branches` returns each local branch as a `BranchName`.
+- `status` returns one `StatusEntry` per porcelain-v2 record, from `git status --porcelain=v2 -z`.
+- `commit` returns the resulting `HEAD` commit id and the latest commit summary.
+- `read_global_identity` returns `GlobalIdentity { name, email }`, treating an unset Git config key as `None` rather than an execution failure.
+
+### Lifecycle
+
+Branch and worktree lifecycle commands are typed APIs, so callers never assemble raw Git arguments:
+
+- `create_branch` / `delete_branch`, with `BranchDeletionMode` selecting checked or forced deletion. A deleted branch no longer appears in `list_branches`.
+- `create_worktree` / `delete_worktree`, with `WorktreeDeletionMode` selecting checked or forced removal. A created linked worktree appears in `list_worktrees` as `WorktreeKind::Linked`; a removed one disappears.
+- `add` stages `RepoRelativePath` values; `commit` creates commits without GPG signing.
+
+Mutating operations perform domain validation *before* invoking Git whenever the invalid state is determinable from repository and worktree metadata, and no Git command is issued when validation fails:
+
+- Deleting the repository's main worktree returns `DomainError::CannotDeleteMainWorktree`.
+- Deleting a linked worktree that belongs to a different repository returns `DomainError::WorktreeMismatch`.
+- Creating a branch that already exists, or deleting one that does not, returns the corresponding `BranchAlreadyExists` / `BranchNotFound` domain error.
+
+## Request / response style
+
+Rather than attaching methods to a mutable worktree handle, gitlancer favors explicit request objects:
 
 ```rust
 pub struct AddRequest<'a> {
@@ -134,12 +126,9 @@ pub struct CommitRequest<'a> {
     pub allow_empty: bool,
 }
 
-pub struct ListWorktreesRequest<'a> {
+pub struct CreateWorktreeRequest<'a> {
     pub repository: &'a Repository,
-}
-
-pub struct CreateBranchRequest<'a> {
-    pub repository: &'a Repository,
+    pub worktree_root: WorktreeRoot,
     pub branch_name: BranchName,
 }
 
@@ -150,16 +139,9 @@ pub struct DeleteWorktreeRequest<'a> {
 }
 ```
 
-This is a better fit for Ora because requests are:
+Requests in this shape are easier to log, extend with options, serialize into agent tool payloads, and validate before execution. Every use case executes in a `Repository` or `WorktreeHandle` context, so a caller cannot confuse the main checkout, a linked checkout, and the shared repository root.
 
-- easier to log,
-- easier to extend with options,
-- easier to serialize into agent tool payloads,
-- easier to validate before execution.
-
-## Execution Semantics
-
-`GitCommand` should carry enough metadata for policy and observability:
+## Execution semantics
 
 ```rust
 pub struct GitCommand {
@@ -170,36 +152,29 @@ pub struct GitCommand {
 }
 ```
 
-Suggested intents:
+`GitIntent` is `ReadOnly`, `Mutating`, or `Network`. gitlancer classifies but does not enforce: Ora's upper layers use the intent to decide whether a command may run automatically, needs confirmation, or should be retried.
 
-- `ReadOnly`
-- `Mutating`
-- `Network`
+`GitEnv::automation_defaults` disables terminal prompts, fixes `LANG` to `C`, and disables paging, so an agent-driven command cannot block on interactive UI or return localized output.
 
-Ora can use those intents to decide whether a command can run automatically, needs confirmation, or should be retried.
+`CliGitRunner` invokes the system `git` binary, measures duration, emits optional command telemetry through the logger registry, and returns a normalized `GitOutput { code, stdout, stderr, duration_ms }`. A non-zero exit retains the exit code, arguments, stdout, and stderr for upper-layer diagnostics. `RecordingGitRunner` executes nothing and exists for command-construction tests.
 
-## Parsing Strategy
+Command telemetry is opt-in through `gitlancer::logging::register`; `ora-logging` supplies the bridge Ora installs at startup. See [Runtime Logging](runtime-logging.md#git-command-logging).
 
-gitlancer should rely on stable machine-readable outputs:
+## Parsing strategy
 
-- `git rev-parse --show-toplevel`
-- `git rev-parse --git-dir`
-- `git worktree list --porcelain`
-- `git status --porcelain=v2 -z`
-- `git rev-parse HEAD`
-- `git log -1 --pretty=%s`
+gitlancer relies on stable machine-readable outputs:
 
-Human-readable stderr remains useful for diagnostics, but it should not be the primary source of structured state.
+- `git worktree list --porcelain` — repository discovery, worktree listing, and worktree resolution
+- `git status --porcelain=v2 -z` — status entries
+- `git rev-parse HEAD` and `git log -1 --pretty=%s` — commit id and summary after a commit
 
-## Error Model
+`discover_repository` reads the main checkout out of the porcelain worktree list rather than calling `git rev-parse --show-toplevel`, so discovery from a nested directory and from inside a linked worktree both resolve to the owning repository root. A non-zero exit there is reported as `DomainError::NotARepository` rather than a raw execution error.
 
-The public error hierarchy should clearly distinguish:
+Human-readable stderr remains useful for diagnostics but is never the primary source of structured state.
 
-- domain validation failures,
-- process spawning or execution failures,
-- parsing failures.
+## Error model
 
-Suggested shape:
+The public error hierarchy separates the three failure kinds:
 
 ```rust
 GitlancerError
@@ -208,33 +183,22 @@ GitlancerError
   - Parse(ParseError)
 ```
 
-Key examples:
+Key variants:
 
-- `DomainError::NotARepository`
-- `DomainError::PathOutsideWorktree`
-- `DomainError::WorktreeMismatch`
-- `GitExecError::GitNotFound`
-- `GitExecError::SpawnFailed`
-- `GitExecError::NonZeroExit`
-- `ParseError::InvalidWorktreeList`
+- `DomainError::NotARepository`, `NotAWorktreeRoot`, `PathOutsideWorktree`, `WorktreeMismatch`, `CannotDeleteMainWorktree`, `BranchNotFound`, `BranchAlreadyExists`
+- `GitExecError::GitNotFound`, `SpawnFailed`, `NonZeroExit`
+- `ParseError::MissingLine`, `InvalidWorktreeList`, `InvalidStatus`
 
-## Testing Strategy
+## Boundaries
 
-gitlancer should be tested at three levels:
+gitlancer does not use `libgit2`, manage Ora database records, clean up database state after a Git failure, decide user-confirmation policy, or retry commands. Ora task and worktree lifecycle policy lives in `ora-application`; see [Task Worktrees](task-worktrees.md).
+
+## Testing strategy
+
+gitlancer is tested at three levels:
 
 1. Unit tests for parsers and path/domain validation.
 2. Fake-runner tests for command assembly and option handling.
 3. Real Git integration tests for multi-worktree scenarios.
 
-Priority integration scenarios:
-
-- open repository from nested directory,
-- list main and linked worktrees,
-- add and commit from a linked worktree,
-- detect worktree mismatch,
-- parse `status --porcelain=v2 -z`,
-- handle linked-worktree `.git` indirection correctly.
-
-## Notes
-
-The Rust skeleton added alongside this document is intentionally light on behavior and heavy on boundaries, so the next implementation step can focus on filling in domain validation, command assembly, and parsing logic without redesigning the module graph again.
+Priority integration scenarios: open repository from a nested directory, list main and linked worktrees, add and commit from a linked worktree, detect worktree mismatch, parse `status --porcelain=v2 -z`, and handle linked-worktree `.git` indirection correctly.
