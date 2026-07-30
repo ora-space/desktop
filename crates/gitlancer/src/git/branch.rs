@@ -32,19 +32,6 @@ pub struct CreateBranchResponse {
     pub branch: BranchName,
 }
 
-/// Carries the local branch whose current commit should be resolved.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolveBranchCommitRequest<'a> {
-    pub repository: &'a Repository,
-    pub branch_name: &'a BranchName,
-}
-
-/// Returns the immutable commit currently referenced by one local branch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolveBranchCommitResponse {
-    pub commit_id: CommitId,
-}
-
 /// Describes how branch deletion should behave when Git would otherwise protect the branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchDeletionMode {
@@ -119,39 +106,6 @@ impl<R: GitRunner> Git<R> {
         Ok(CreateBranchResponse {
             branch: request.branch_name,
         })
-    }
-
-    /// Resolves a local branch to a commit before callers perform mutations based on that branch.
-    pub fn resolve_branch_commit(
-        &self,
-        request: ResolveBranchCommitRequest<'_>,
-    ) -> Result<ResolveBranchCommitResponse, GitlancerError> {
-        let existing_branches = self.list_branches(ListBranchesRequest {
-            repository: request.repository,
-        })?;
-        if !existing_branches
-            .branches
-            .iter()
-            .any(|branch| branch == request.branch_name)
-        {
-            return Err(GitlancerError::Domain(DomainError::BranchNotFound {
-                repo: request.repository.root().as_path().to_path_buf(),
-                branch: request.branch_name.as_str().to_string(),
-            }));
-        }
-
-        let output = self.runner().run(&GitCommand::new(
-            request.repository.root().as_path().to_path_buf(),
-            vec![
-                "rev-parse".to_string(),
-                format!("{}^{{commit}}", request.branch_name.as_str()),
-            ],
-            GitEnv::default(),
-            GitIntent::ReadOnly,
-        ))?;
-        let commit_id = crate::parse::commit::parse_commit_id(&output.stdout)?;
-
-        Ok(ResolveBranchCommitResponse { commit_id })
     }
 
     /// Deletes one local branch after validating the named branch exists in the supplied repository.
