@@ -17,11 +17,33 @@ describe("WorkflowSettings", () => {
     expect(screen.getByText("正在加载 mock 工作流…")).toBeInTheDocument();
     expect(await screen.findByText("代码审查工作流")).toBeInTheDocument();
     expect(screen.getByLabelText("工作流画布")).toBeInTheDocument();
+    expect(screen.getByRole("separator", {
+      name: "调整工作流列表宽度；双击恢复默认宽度",
+    })).toBeInTheDocument();
+    expect(screen.getByRole("separator", {
+      name: "调整节点配置宽度；双击恢复默认宽度",
+    })).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "测试运行" })[0]);
 
     expect(await screen.findByText("模拟运行成功")).toBeInTheDocument();
     expect(screen.getByText(/发现 2 个建议项，未发现阻塞问题。/)).toBeInTheDocument();
+
+    const canvas = screen.getByLabelText("工作流画布");
+    canvas.setPointerCapture = () => {};
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      pointerId: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(canvas, {
+      pointerId: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+
+    expect(screen.getByText("模拟运行成功")).toBeInTheDocument();
   });
 
   it("zooms around the pointer with the mouse wheel", async () => {
@@ -82,6 +104,78 @@ describe("WorkflowSettings", () => {
         left: "-78px",
         top: "-64px",
       });
+    });
+  });
+
+  it("collapses node configuration after a stationary blank-canvas click", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    const canvas = await screen.findByLabelText("工作流画布");
+    const startNode = screen.getByLabelText("开始节点: 开始");
+    canvas.setPointerCapture = () => {};
+    startNode.setPointerCapture = () => {};
+
+    await user.click(startNode);
+    expect(screen.getByRole("button", { name: "收起节点配置" })).toBeInTheDocument();
+
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      pointerId: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(canvas, {
+      pointerId: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "收起节点配置" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("collapses and restores the workflow library from visible controls", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    await screen.findByText("代码审查工作流");
+
+    await user.click(screen.getByRole("button", { name: "收起工作流列表" }));
+    const expandButton = await screen.findByRole("button", { name: "展开工作流列表" });
+    await user.click(expandButton);
+
+    expect(screen.getByRole("button", { name: "收起工作流列表" })).toBeInTheDocument();
+  });
+
+  it("keeps only one auxiliary panel expanded in a narrow editor", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    const startNode = await screen.findByLabelText("开始节点: 开始");
+    startNode.setPointerCapture = () => {};
+
+    await user.click(startNode);
+    await user.click(screen.getByRole("button", { name: "展开工作流列表" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "展开节点配置" })).toBeInTheDocument();
+    });
+  });
+
+  it("closes node configuration with its button or Escape", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    const startNode = await screen.findByLabelText("开始节点: 开始");
+    startNode.setPointerCapture = () => {};
+
+    await user.click(startNode);
+    await user.click(screen.getByRole("button", { name: "收起节点配置" }));
+    expect(screen.queryByRole("button", { name: "收起节点配置" })).not.toBeInTheDocument();
+
+    await user.click(startNode);
+    fireEvent.keyDown(startNode, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "收起节点配置" })).not.toBeInTheDocument();
     });
   });
 
@@ -290,8 +384,7 @@ describe("WorkflowSettings", () => {
     await screen.findByText("代码审查工作流");
     await user.click(screen.getByRole("button", { name: "新建工作流" }));
     const nameInput = await screen.findByDisplayValue("新工作流 4");
-    await user.clear(nameInput);
-    await user.type(nameInput, "发布复盘");
+    fireEvent.change(nameInput, { target: { value: "发布复盘" } });
 
     expect(screen.getByDisplayValue("发布复盘")).toBeInTheDocument();
     expect(screen.getByText("4 个工作流")).toBeInTheDocument();

@@ -7,6 +7,8 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   IconFocusCentered,
+  IconLayoutSidebarLeftExpand,
+  IconLayoutSidebarRightExpand,
   IconMinus,
   IconPlus,
   IconTrash,
@@ -48,6 +50,11 @@ interface WorkflowCanvasProps {
   onReconnectEdge: (edgeId: string, source: string, target: string) => void;
   onDeleteNode: (nodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
+  libraryCollapsed: boolean;
+  inspectorCollapsed: boolean;
+  inspectorAvailable: boolean;
+  onExpandLibrary: () => void;
+  onExpandInspector: () => void;
 }
 
 interface ClientPosition {
@@ -89,6 +96,11 @@ export function WorkflowCanvas({
   onReconnectEdge,
   onDeleteNode,
   onDeleteEdge,
+  libraryCollapsed,
+  inspectorCollapsed,
+  inspectorAvailable,
+  onExpandLibrary,
+  onExpandInspector,
 }: WorkflowCanvasProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLElement>(null);
@@ -374,7 +386,7 @@ export function WorkflowCanvas({
   }
 
   return (
-    <div className="relative min-h-0 min-w-0">
+    <div className="relative min-h-0 min-w-0 flex-1">
       <section
         ref={canvasRef}
         className={cn(
@@ -511,6 +523,35 @@ export function WorkflowCanvas({
             {t("settings.workflow.canvasHint")}
           </span>
         </div>
+        {(libraryCollapsed || inspectorCollapsed) && (
+          <div
+            data-workflow-controls
+            className="absolute left-2 top-2 z-30 flex items-center gap-px rounded-lg border border-border/80 bg-background/95 p-px shadow-sm backdrop-blur"
+          >
+            {libraryCollapsed && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="size-7 rounded-md"
+                aria-label={t("settings.workflow.expandLibrary")}
+                onClick={onExpandLibrary}
+              >
+                <IconLayoutSidebarLeftExpand />
+              </Button>
+            )}
+            {inspectorCollapsed && inspectorAvailable && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="size-7 rounded-md"
+                aria-label={t("settings.workflow.expandConfiguration")}
+                onClick={onExpandInspector}
+              >
+                <IconLayoutSidebarRightExpand />
+              </Button>
+            )}
+          </div>
+        )}
       </section>
       <div
         data-workflow-controls
