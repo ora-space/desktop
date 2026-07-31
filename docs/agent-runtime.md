@@ -9,7 +9,7 @@
 - The shared child starts in the user's home directory with the single `acp` argument and piped stdin, stdout, and stderr. Stderr is drained continuously so provider diagnostics can never block the process. Session setup requests carry the owning Task worktree as `cwd`.
 - Task worktrees resolve through Task → stored Worktree id → stored branch name → Git's authoritative worktree metadata. A configured worktree creation root is never used to reconstruct an existing path.
 - Backend startup reconciles stale Running rows to Stopped, then one dedicated runtime thread per CLI attempts startup and performs `initialize`. Owning the runtimes here is necessary because synchronous Desktop bootstrap does not guarantee an ambient Tokio runtime. Each CLI retries independently with capped exponential backoff; Ora remains available even if every initial attempt fails, and one unavailable CLI does not disable the others. Operations targeting an unavailable CLI report `agent_runtime_unavailable`.
-- Create calls `session/new` on the ready shared connection and persists the Ora Session only after setup succeeds. The guarded insert fails if its Task was deleted while the handshake was in flight.
+- Create opens a temporary setup-registration window and calls `session/new` on the ready shared connection. Because the provider session id is not known until the response arrives, otherwise-unrouted setup notifications are buffered during that window and transferred to the matching session route once its id is known. The latest setup-time `available_commands_update` becomes `CreateSessionResponse.availableCommands`; other setup updates are retained and emitted at the start of the first prompt. The Ora Session is persisted only after setup succeeds, and the guarded insert fails if its Task was deleted while the handshake was in flight.
 - Load registers a route on the current connection generation, marks the row Running, and calls `session/load` with the private `agentSessionId`. Every setup or replay failure restores Stopped.
 - Connection loss fails that CLI's in-flight operations, marks only its registered Sessions Stopped, terminates and reaps the old process tree, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - Model discovery runs each CLI's bounded `models` command concurrently. The response is grouped by `agent_cli` and omits CLIs whose command is missing, fails, emits invalid UTF-8, or exceeds the timeout, allowing partial results.
@@ -17,6 +17,8 @@
 ## Flow Control
 
 ACP stdout is newline-delimited JSON-RPC with an 8 MiB frame limit. The connection reader uses an unbounded handoff to the always-running central router, while each registered Session owns a bounded 256-item update queue and an independent control queue. This keeps connection-wide parsing from imposing one Session's backpressure on another. A per-Session overflow stops only the affected Session; no data is silently discarded.
+
+Session setup has a separate bounded buffer for notifications that arrive before `session/new` reveals their provider session id. It is active only while one or more creates are in flight, holds at most 256 notifications across those setups, and retains the newest notifications when full. Registering a session drains only notifications whose provider id matches that route; when the final setup window closes, any still-unmatched notifications are discarded as stale.
 
 Unknown agent-originated JSON-RPC requests receive a correlated `-32601` method-not-found response and do not terminate the connection. Malformed frames, unmatched responses, oversized frames, and stdio loss are connection failures. Routes are generation-bound, so updates from an old connection or an unloaded Session are treated as stale and discarded rather than taking down unrelated work.
 
@@ -35,9 +37,9 @@ Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIter
 | Model discovery per CLI | 15 s |
 | Session update and event queue depth | 256 items |
 | JSON-RPC frame size | 8 MiB |
-| Prompt text size | 1 MiB |
+| Serialized structured prompt size | 16 MiB |
 
-The load and prompt deadline is an inactivity timer rather than a total budget: a provider that keeps streaming updates can run indefinitely, while one that goes silent for 30 seconds fails that Session alone. An oversized prompt is rejected before it reaches the provider.
+The load and prompt deadline is an inactivity timer rather than a total budget: a provider that keeps streaming updates can run indefinitely, while one that goes silent for 30 seconds fails that Session alone. Prompts are passed through as ordered ACP `ContentBlock` values, including text, images, audio, resource links, and embedded resources. An empty list or a list containing only blank text is rejected, and the 16 MiB limit is measured from the serialized JSON payload before it reaches the provider.
 
 ## Ownership Boundaries
 

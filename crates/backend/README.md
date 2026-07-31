@@ -6,7 +6,7 @@
 
 - `Backend::open` creates required directories, bootstraps and migrates SQLite, constructs CRUD APIs, and starts the [agent runtime](src/agent_runtime/README.md).
 - Project, task, skill, and agent operations delegate to `ora-application`; aggregate deletion uses transactional database cascades.
-- Session creation, loading, prompting, permissions, stopping, deletion, and model discovery delegate to the agent runtime.
+- Session creation, loading, structured ACP prompting, permissions, stopping, deletion, and model discovery delegate to the agent runtime. Creation also returns the provider's setup-time available-command catalog.
 - `BackendError` converts internal failures into stable codes and transport-neutral categories. HTTP and Tauri adapters map those categories into their native error semantics.
 - The configured worktree root affects only task creations that begin after an update. Existing task paths are resolved from persisted worktree identity and Git's authoritative metadata.
 
