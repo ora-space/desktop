@@ -32,6 +32,7 @@ pub async fn create_task(
     app_state
         .backend()
         .create_task(request)
+        .await
         .map(Json)
         .map_err(WebApiError::from)
 }

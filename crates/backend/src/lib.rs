@@ -1,5 +1,6 @@
 mod agent;
 mod agent_runtime;
+mod aggregate_lifecycle;
 mod bootstrap;
 mod clock;
 mod error;

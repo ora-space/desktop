@@ -27,6 +27,8 @@ Because the branch name is shortened, collision checking has to cover both place
 
 `GitTaskWorktreeProvisioner` adapts the typed `gitlancer` runtime to the port. A unit test can substitute a fake provisioner and exercise the complete create flow with no Git repository or filesystem side effects.
 
+Backend task creation runs this synchronous Git and database work on a blocking worker. It holds a shared lifecycle permit scoped to the owning Project until persistence or compensation completes. Multiple task creations can therefore proceed concurrently, and work in one Project does not delay deletion of another Project. Project deletion takes the exclusive permit for only that Project so its database cascade cannot miss a worktree whose provisioning is still in flight.
+
 ## Failure handling
 
 Git and database state must not drift apart, and a partially created workspace is never exposed.
@@ -38,14 +40,16 @@ The Web runtime maps these into structured HTTP server errors that identify task
 
 ## Path resolution after creation
 
-The configured worktree root is a **creation target only**. It affects task creations that begin after it is updated; in-flight operations keep their original snapshot, and existing worktrees are never moved.
+The configured worktree root is primarily a **creation target**. It affects task creations that begin after it is updated; in-flight operations keep their original snapshot, and existing worktrees are never moved.
 
-Existing checkout paths are never recomposed from the configured root. When an agent session starts or loads, the path is resolved live: task → persisted `Worktree` id → stored branch name → `git worktree list --porcelain`, which is the authoritative source. `Backend::resolve_task_cwd` reuses that same resolution so any caller sees the directory the session actually runs in.
+When an agent session starts or loads, the path is resolved live: task → persisted `Worktree` id → stored branch name → `git worktree list --porcelain`, which is the authoritative source. `Backend::resolve_task_cwd` reuses that same resolution so any caller sees the directory the session actually runs in. Aggregate cleanup may reconstruct `<configured_worktree_root>/<full-task-id>` only as an exact-root fallback when branch metadata no longer identifies a detached checkout.
 
 ## Deletion
 
-Task and project deletion remove Ora-owned database records only. `SqliteCascadeRepository` soft-deletes the aggregate — sessions and the owned worktree record — in one transaction, and rejects the operation with `resource_in_use` when a descendant session is still `Running`.
+Task and Project deletion first ask `SqliteCascadeRepository` to soft-delete the aggregate — sessions and owned worktree records — in one transaction. A descendant Session that is still `Running` rejects the operation with `resource_in_use`. The transaction returns the exact repository, task, and branch identities that require post-commit cleanup.
 
-These paths deliberately **do not** call Git. The linked worktree directory and its `ora/<prefix>` branch survive task deletion, and provider-owned ACP history is never deleted. Forced worktree removal happens only as compensating cleanup for a failed creation.
+After commit and after lifecycle guards are released, `TaskGitResourceCleaner` best-effort force-removes each linked worktree and its validated local `ora/<prefix>` branch. It resolves by branch metadata first, accepts only the exact deterministic task path as a detached fallback, and refuses the main checkout. Worktree and branch outcomes are independent, and a panic or failure for one target does not prevent attempts for sibling targets. Missing resources and failures are logged without changing the successful database response.
+
+Cleanup has no durable retry or completion mechanism, never deletes remote branches, and never removes provider-owned ACP history.
 
 See [Application and Contracts Boundary](application-contracts.md), [Gitlancer Architecture](gitlancer-architecture.md), and [ACP Agent Runtime](agent-runtime.md).

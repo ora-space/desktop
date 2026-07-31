@@ -87,13 +87,18 @@ backend_command!(
     "Reads the host's global Git identity through the shared Backend."
 );
 
-backend_command!(
-    create_task,
-    CreateTaskRequest,
-    CreateTaskResponse,
-    create_task,
-    "Creates one task through the shared Backend."
-);
+/// Creates one task without blocking the asynchronous Desktop command worker.
+#[tauri::command]
+pub async fn create_task(
+    state: State<'_, DesktopState>,
+    request: CreateTaskRequest,
+) -> Result<CreateTaskResponse, CommandError> {
+    state
+        .backend
+        .create_task(request)
+        .await
+        .map_err(CommandError::from)
+}
 backend_command!(
     get_task,
     GetTaskRequest,
