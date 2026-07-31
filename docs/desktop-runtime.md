@@ -35,7 +35,7 @@ The configured root is only a creation target. Existing worktree locations are r
 
 ## Logging
 
-Desktop initializes `ora-logging` before opening the backend and registers the Gitlancer logger bridge. Logs rotate daily and retain three files. Debug builds write to stdout and the file; release builds write to the file only. The logging guard remains managed for the application lifetime.
+Desktop initializes `ora-logging` before opening the backend and registers the Gitlancer logger bridge. Logs rotate daily and retain three files. Debug builds write to stdout and the file; release builds write to the file only. The logging guard remains managed for the application lifetime, while the cloneable health handle is stored in `DesktopState`. The `get_logging_health` Tauri command returns its passive snapshot; no frontend presentation is prescribed yet.
 
 At startup, Desktop reads the operating system's IANA timezone and fixes it for the process
 lifetime. Structured event timestamps use that timezone. If the system timezone cannot be read or
@@ -44,7 +44,10 @@ effect after Ora restarts. Daily log filenames and rollover boundaries use the s
 timezone; rollover occurs when the non-blocking worker processes its first write after local
 midnight. An event formatted before midnight but processed afterward can appear in the next day's
 file while retaining its earlier JSON timestamp. If the next file cannot be opened, logging
-temporarily continues in the previous file and retries rollover on a later event.
+temporarily continues in the previous file and retries with capped exponential backoff. Runtime
+retention uses a separate worker so scanning and deleting old files cannot block the log writer.
+Cleanup failure leaves Desktop running and is reported through logging health, while initial
+directory creation or active-file open failure remains fatal.
 
 ## Verification
 

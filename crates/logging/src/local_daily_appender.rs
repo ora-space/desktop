@@ -1,57 +1,36 @@
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Write};
-use std::num::NonZeroUsize;
-use std::path::Path;
 
-use time::{Date, OffsetDateTime};
+use time::Date;
 
+use crate::appender_dependencies::{FileOpener, TimeSource};
 use crate::clock::local_date_at;
-use crate::file_output::{ActiveLogPath, cleanup_old_logs};
+use crate::file_output::ActiveLogPath;
+use crate::health::LoggingHealthRecorder;
+use crate::retention::{
+    LogFileProtection, RetentionCleaner, RetentionHandle, RetentionWorkerGuard,
+    RotationTargetProtection, start_retention_worker_with,
+};
+use crate::rotation_retry::RotationRetry;
 use crate::{FileSystemAction, LoggingInitError};
-
-/// Supplies processing-time instants to local-calendar rotation without coupling tests to wall time.
-pub(crate) trait TimeSource: Send + 'static {
-    /// Returns the worker's current absolute instant used to select the active local date.
-    fn now(&self) -> OffsetDateTime;
-}
-
-/// Opens append-only log files so rotation failures can be exercised without platform tricks.
-pub(crate) trait FileOpener: Send + 'static {
-    /// Opens or creates the file selected for one local processing date.
-    fn open(&self, path: &Path) -> io::Result<File>;
-}
-
-/// Reads wall time from the operating system for production file outputs.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct SystemTimeSource;
-
-impl TimeSource for SystemTimeSource {
-    fn now(&self) -> OffsetDateTime {
-        // UTC is only the unambiguous source instant; the appender applies its configured IANA
-        // timezone before this value can select a filename or rollover boundary.
-        OffsetDateTime::now_utc()
-    }
-}
-
-/// Uses standard append semantics for production log files.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct SystemFileOpener;
-
-impl FileOpener for SystemFileOpener {
-    fn open(&self, path: &Path) -> io::Result<File> {
-        OpenOptions::new().create(true).append(true).open(path)
-    }
-}
 
 /// Routes each write to the append-only file for the worker's current local processing date.
 pub(crate) struct LocalDailyAppender<T, O> {
     active_path: ActiveLogPath,
     timezone: chrono_tz::Tz,
-    max_days: NonZeroUsize,
     active_date: Date,
     active_file: File,
     time_source: T,
     file_opener: O,
+    rotation_retry: RotationRetry,
+    retention: RetentionHandle,
+    health: LoggingHealthRecorder,
+}
+
+/// Couples the appender with the independent worker that owns runtime retention.
+pub(crate) struct LocalDailyAppenderRuntime<T, O> {
+    pub(crate) appender: LocalDailyAppender<T, O>,
+    pub(crate) retention_guard: RetentionWorkerGuard,
 }
 
 impl<T, O> LocalDailyAppender<T, O>
@@ -59,14 +38,18 @@ where
     T: TimeSource,
     O: FileOpener,
 {
-    /// Opens the current local processing-date file and enforces retention before accepting writes.
-    pub(crate) fn new(
+    /// Opens the current file, records non-fatal startup cleanup failures, and starts retention.
+    pub(crate) fn prepare<C>(
         active_path: ActiveLogPath,
         timezone: chrono_tz::Tz,
-        max_days: NonZeroUsize,
         time_source: T,
         file_opener: O,
-    ) -> Result<Self, LoggingInitError> {
+        cleaner: C,
+        health: LoggingHealthRecorder,
+    ) -> Result<LocalDailyAppenderRuntime<T, O>, LoggingInitError>
+    where
+        C: RetentionCleaner,
+    {
         let active_date = local_date_at(time_source.now(), timezone);
         let active_file_path = active_path.path_for_date(active_date);
         let active_file =
@@ -77,16 +60,30 @@ where
                     path: active_file_path.clone(),
                     source,
                 })?;
-        cleanup_old_logs(&active_path, max_days, &active_file_path)?;
+        let protection = LogFileProtection::new(active_file_path);
+        if let Err(error) = cleaner.cleanup(&protection) {
+            health.record_retention_failure(active_path.directory().to_path_buf(), &error);
+        }
+        let retention_runtime = start_retention_worker_with(
+            cleaner,
+            active_path.directory().to_path_buf(),
+            protection,
+            health.clone(),
+        );
 
-        Ok(Self {
-            active_path,
-            timezone,
-            max_days,
-            active_date,
-            active_file,
-            time_source,
-            file_opener,
+        Ok(LocalDailyAppenderRuntime {
+            appender: Self {
+                active_path,
+                timezone,
+                active_date,
+                active_file,
+                time_source,
+                file_opener,
+                rotation_retry: RotationRetry::Ready,
+                retention: retention_runtime.handle,
+                health,
+            },
+            retention_guard: retention_runtime.guard,
         })
     }
 
@@ -96,30 +93,53 @@ where
         if current_date <= self.active_date {
             return;
         }
+        let monotonic_elapsed = self.time_source.monotonic_elapsed();
+        if !self
+            .rotation_retry
+            .allows_attempt(current_date, monotonic_elapsed)
+        {
+            return;
+        }
 
         let next_file_path = self.active_path.path_for_date(current_date);
-        // This sink cannot emit a structured event about itself without recursively writing it.
+        match self
+            .retention
+            .protect_rotation_target(next_file_path.clone())
+        {
+            RotationTargetProtection::Protected => {}
+            RotationTargetProtection::DeletionInProgress => {
+                let error = io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "retention cleanup is deleting the rollover target",
+                );
+                self.health.record_rotation_failure(next_file_path, &error);
+                self.rotation_retry
+                    .record_failure(current_date, monotonic_elapsed);
+                return;
+            }
+        }
         let next_file = match self.file_opener.open(&next_file_path) {
             Ok(next_file) => next_file,
             Err(error) => {
-                eprintln!(
-                    "failed to open rotated log file at {}: {error}",
-                    next_file_path.display()
-                );
+                self.health.record_rotation_failure(next_file_path, &error);
+                self.rotation_retry
+                    .record_failure(current_date, monotonic_elapsed);
                 return;
             }
         };
 
         if let Err(error) = self.active_file.flush() {
-            eprintln!("failed to flush the previous daily log file: {error}");
+            self.health.record_output_flush_failure(
+                self.active_path.path_for_date(self.active_date),
+                &error,
+            );
         }
         self.active_file = next_file;
         self.active_date = current_date;
-
-        // Runtime retention cannot interrupt a healthy new sink after startup has completed.
-        if let Err(error) = cleanup_old_logs(&self.active_path, self.max_days, &next_file_path) {
-            eprintln!("failed to clean up rotated log files: {error}");
-        }
+        self.retention.activate(next_file_path);
+        self.rotation_retry = RotationRetry::Ready;
+        self.health.record_rotation_recovered();
+        self.retention.schedule();
     }
 }
 
@@ -130,11 +150,27 @@ where
 {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         self.rotate_if_needed();
-        self.active_file.write(buffer)
+        let result = self.active_file.write(buffer);
+        match &result {
+            Ok(_) => self.health.record_output_write_recovered(),
+            Err(error) => self.health.record_output_write_failure(
+                self.active_path.path_for_date(self.active_date),
+                error,
+            ),
+        }
+        result
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.active_file.flush()
+        let result = self.active_file.flush();
+        match &result {
+            Ok(()) => self.health.record_output_flush_recovered(),
+            Err(error) => self.health.record_output_flush_failure(
+                self.active_path.path_for_date(self.active_date),
+                error,
+            ),
+        }
+        result
     }
 }
 
@@ -146,20 +182,29 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, mpsc};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
     use time::{OffsetDateTime, macros::datetime};
 
-    use super::{FileOpener, LocalDailyAppender, SystemFileOpener, TimeSource};
+    use super::LocalDailyAppender;
+    use crate::appender_dependencies::{FileOpener, SystemFileOpener, TimeSource};
     use crate::file_output::ActiveLogPath;
-    use crate::{FileSystemAction, LoggingInitError};
+    use crate::health::LoggingHealthHandle;
+    use crate::retention::{
+        FilesystemRetentionCleaner, LogFileProtection, RetentionCleaner, RetentionWorkerGuard,
+    };
+    use crate::{
+        FileSystemAction, LoggingHealthSnapshot, LoggingHealthStatus, LoggingInitError,
+        LoggingIssue,
+    };
 
     /// Allows each test to move wall time across calendar boundaries without waiting.
     #[derive(Clone, Debug)]
     struct TestTimeSource {
         now: Arc<Mutex<OffsetDateTime>>,
+        monotonic_elapsed: Arc<Mutex<Duration>>,
     }
 
     impl TestTimeSource {
@@ -167,6 +212,7 @@ mod tests {
         fn new(now: OffsetDateTime) -> Self {
             Self {
                 now: Arc::new(Mutex::new(now)),
+                monotonic_elapsed: Arc::new(Mutex::new(Duration::ZERO)),
             }
         }
 
@@ -174,11 +220,21 @@ mod tests {
         fn set(&self, now: OffsetDateTime) {
             *self.now.lock().unwrap() = now;
         }
+
+        /// Advances only monotonic time so retry backoff tests do not sleep.
+        fn advance(&self, duration: Duration) {
+            let mut elapsed = self.monotonic_elapsed.lock().unwrap();
+            *elapsed = elapsed.saturating_add(duration);
+        }
     }
 
     impl TimeSource for TestTimeSource {
         fn now(&self) -> OffsetDateTime {
             *self.now.lock().unwrap()
+        }
+
+        fn monotonic_elapsed(&self) -> Duration {
+            *self.monotonic_elapsed.lock().unwrap()
         }
     }
 
@@ -199,6 +255,10 @@ mod tests {
 
             self.worker_waiting.send(()).unwrap();
             self.resumed_now.recv().unwrap()
+        }
+
+        fn monotonic_elapsed(&self) -> Duration {
+            Duration::ZERO
         }
     }
 
@@ -230,6 +290,30 @@ mod tests {
             }
 
             SystemFileOpener.open(path)
+        }
+    }
+
+    /// Keeps the retention worker alive while exposing the appender through the Write contract.
+    struct TestAppender {
+        appender: LocalDailyAppender<TestTimeSource, ControlledFileOpener>,
+        _retention_guard: RetentionWorkerGuard,
+        health: LoggingHealthHandle,
+    }
+
+    impl TestAppender {
+        /// Returns the complete backend-visible health state for assertions.
+        fn health(&self) -> LoggingHealthSnapshot {
+            self.health.snapshot()
+        }
+    }
+
+    impl Write for TestAppender {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.appender.write(buffer)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.appender.flush()
         }
     }
 
@@ -290,10 +374,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let (worker_waiting_tx, worker_waiting_rx) = mpsc::channel();
         let (resume_worker_tx, resume_worker_rx) = mpsc::channel();
-        let appender = LocalDailyAppender::new(
-            ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap(),
+        let active_path = ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap();
+        let health = LoggingHealthHandle::default();
+        let runtime = LocalDailyAppender::prepare(
+            active_path.clone(),
             chrono_tz::Asia::Shanghai,
-            NonZeroUsize::new(/*n*/ 3).unwrap(),
             GatedWorkerTimeSource {
                 initial_now: datetime!(2026-07-29 15:59:59 UTC),
                 initialization_read: AtomicBool::new(false),
@@ -301,9 +386,11 @@ mod tests {
                 resumed_now: resume_worker_rx,
             },
             ControlledFileOpener::default(),
+            FilesystemRetentionCleaner::new(active_path, NonZeroUsize::new(/*n*/ 3).unwrap()),
+            health.recorder(),
         )
         .unwrap();
-        let (mut writer, guard) = tracing_appender::non_blocking(appender);
+        let (mut writer, writer_guard) = tracing_appender::non_blocking(runtime.appender);
 
         writer.write_all(EVENT).unwrap();
         worker_waiting_rx
@@ -313,7 +400,8 @@ mod tests {
             .send(datetime!(2026-07-29 16:00 UTC))
             .unwrap();
         drop(writer);
-        drop(guard);
+        drop(writer_guard);
+        drop(runtime.retention_guard);
 
         assert_eq!(
             read_log_files(&temp_dir),
@@ -380,13 +468,46 @@ mod tests {
         }
         appender.flush().unwrap();
 
+        let expected_file_names = vec![
+            "ora.log.2026-07-03".to_string(),
+            "ora.log.2026-07-04".to_string(),
+            "ora.log.2026-07-05".to_string(),
+        ];
+        wait_for_file_names(&temp_dir, &expected_file_names);
+        assert_eq!(read_file_names(&temp_dir), expected_file_names);
+    }
+
+    /// Verifies coalesced cleanup never removes the newest file during rapid date advances.
+    #[test]
+    fn preserves_the_active_file_during_rapid_rotations() {
+        let temp_dir = TempDir::new().unwrap();
+        let time_source = TestTimeSource::new(datetime!(2026-07-01 12:00 UTC));
+        let mut appender = new_test_appender(
+            &temp_dir,
+            chrono_tz::UTC,
+            /*max_days*/ 1,
+            time_source.clone(),
+            ControlledFileOpener::default(),
+        );
+
+        for day in 1..=5 {
+            time_source.set(
+                OffsetDateTime::from_unix_timestamp(
+                    datetime!(2026-07-01 12:00 UTC).unix_timestamp() + i64::from(day - 1) * 86_400,
+                )
+                .unwrap(),
+            );
+            appender
+                .write_all(format!("day {day}\n").as_bytes())
+                .unwrap();
+        }
+        appender.flush().unwrap();
+
+        let expected_file_names = vec!["ora.log.2026-07-05".to_string()];
+        wait_for_file_names(&temp_dir, &expected_file_names);
         assert_eq!(
-            read_file_names(&temp_dir),
-            vec![
-                "ora.log.2026-07-03".to_string(),
-                "ora.log.2026-07-04".to_string(),
-                "ora.log.2026-07-05".to_string(),
-            ]
+            read_log_files(&temp_dir),
+            vec![("ora.log.2026-07-05".to_string(), "day 5\n".to_string(),)]
         );
     }
 
@@ -411,6 +532,8 @@ mod tests {
         appender.write_all(b"during failure\n").unwrap();
 
         file_opener.allow_all();
+        appender.write_all(b"before retry delay\n").unwrap();
+        time_source.advance(Duration::from_secs(/*secs*/ 1));
         appender.write_all(b"after retry\n").unwrap();
         appender.flush().unwrap();
 
@@ -419,13 +542,23 @@ mod tests {
             vec![
                 (
                     "ora.log.2026-07-01".to_string(),
-                    "before\nduring failure\n".to_string(),
+                    "before\nduring failure\nbefore retry delay\n".to_string(),
                 ),
                 (
                     "ora.log.2026-07-02".to_string(),
                     "after retry\n".to_string(),
                 ),
             ]
+        );
+        assert_eq!(
+            appender.health(),
+            LoggingHealthSnapshot {
+                status: LoggingHealthStatus::Healthy,
+                counters: crate::LoggingHealthCounters {
+                    rotation_open_failures: 1,
+                    ..crate::LoggingHealthCounters::default()
+                },
+            }
         );
     }
 
@@ -438,12 +571,14 @@ mod tests {
         let file_opener = ControlledFileOpener::default();
         file_opener.reject(expected_path.clone());
 
-        let error = match LocalDailyAppender::new(
-            active_path,
+        let health = LoggingHealthHandle::default();
+        let error = match LocalDailyAppender::prepare(
+            active_path.clone(),
             chrono_tz::UTC,
-            NonZeroUsize::new(/*n*/ 3).unwrap(),
             TestTimeSource::new(datetime!(2026-07-01 12:00 UTC)),
             file_opener,
+            FilesystemRetentionCleaner::new(active_path, NonZeroUsize::new(/*n*/ 3).unwrap()),
+            health.recorder(),
         ) {
             Ok(_) => panic!("the simulated open failure must reject initialization"),
             Err(error) => error,
@@ -464,6 +599,62 @@ mod tests {
                 io::ErrorKind::PermissionDenied,
             ))
         );
+    }
+
+    /// Rejects every retention pass while allowing the active log file to remain usable.
+    struct FailingRetentionCleaner;
+
+    impl RetentionCleaner for FailingRetentionCleaner {
+        fn cleanup(&self, protection: &LogFileProtection) -> Result<(), LoggingInitError> {
+            Err(LoggingInitError::FileSystem {
+                action: FileSystemAction::RemoveFile,
+                path: protection.current_log_path(),
+                source: io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "simulated startup cleanup failure",
+                ),
+            })
+        }
+    }
+
+    /// Verifies old-log deletion failures degrade health but do not reject initialization.
+    #[test]
+    fn allows_startup_when_initial_retention_cleanup_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let active_path = ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap();
+        let active_file_path = temp_dir.path().join("ora.log.2026-07-01");
+        let health = LoggingHealthHandle::default();
+
+        let runtime = LocalDailyAppender::prepare(
+            active_path,
+            chrono_tz::UTC,
+            TestTimeSource::new(datetime!(2026-07-01 12:00 UTC)),
+            ControlledFileOpener::default(),
+            FailingRetentionCleaner,
+            health.recorder(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            health.snapshot(),
+            LoggingHealthSnapshot {
+                status: LoggingHealthStatus::Degraded {
+                    primary: LoggingIssue::RetentionFailed {
+                        directory: temp_dir.path().to_path_buf(),
+                        error: format!(
+                            "failed to RemoveFile at {}: simulated startup cleanup failure",
+                            active_file_path.display()
+                        ),
+                    },
+                    additional: Vec::new(),
+                },
+                counters: crate::LoggingHealthCounters {
+                    retention_failures: 1,
+                    ..crate::LoggingHealthCounters::default()
+                },
+            }
+        );
+        drop(runtime);
     }
 
     /// Exercises one before-and-after pair and compares the complete produced file set.
@@ -505,23 +696,50 @@ mod tests {
         max_days: usize,
         time_source: TestTimeSource,
         file_opener: ControlledFileOpener,
-    ) -> LocalDailyAppender<TestTimeSource, ControlledFileOpener> {
-        LocalDailyAppender::new(
-            ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap(),
+    ) -> TestAppender {
+        let active_path = ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap();
+        let health = LoggingHealthHandle::default();
+        let runtime = LocalDailyAppender::prepare(
+            active_path.clone(),
             timezone,
-            NonZeroUsize::new(max_days).unwrap(),
             time_source,
             file_opener,
+            FilesystemRetentionCleaner::new(active_path, NonZeroUsize::new(max_days).unwrap()),
+            health.recorder(),
         )
-        .unwrap()
+        .unwrap();
+
+        TestAppender {
+            appender: runtime.appender,
+            _retention_guard: runtime.retention_guard,
+            health,
+        }
     }
 
     /// Reads sorted file names so boundary and retention tests compare complete outcomes.
     fn read_file_names(temp_dir: &TempDir) -> Vec<String> {
-        read_log_files(temp_dir)
-            .into_iter()
-            .map(|(file_name, _)| file_name)
-            .collect()
+        let mut file_names = fs::read_dir(temp_dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        file_names.sort();
+        file_names
+    }
+
+    /// Waits for asynchronous retention to produce the expected complete file set.
+    fn wait_for_file_names(temp_dir: &TempDir, expected: &[String]) {
+        let deadline = Instant::now() + Duration::from_secs(/*secs*/ 5);
+        loop {
+            let actual = read_file_names(temp_dir);
+            if actual == expected {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "retention did not converge: expected {expected:?}, actual {actual:?}"
+            );
+            std::thread::sleep(Duration::from_millis(/*millis*/ 10));
+        }
     }
 
     /// Reads every sorted file and its full contents from one temporary log directory.

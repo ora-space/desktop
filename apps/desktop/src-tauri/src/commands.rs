@@ -3,11 +3,18 @@ use crate::error::CommandError;
 use crate::state::DesktopState;
 use ora_backend::{Backend, BackendError};
 use ora_contracts::*;
+use ora_logging::LoggingHealthSnapshot;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
 use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
+
+/// Returns the passive logging health snapshot without emitting another log event.
+#[tauri::command]
+pub fn get_logging_health(state: State<'_, DesktopState>) -> LoggingHealthSnapshot {
+    state.logging_health.snapshot()
+}
 
 /// Executes one synchronous backend operation on the runtime's blocking executor.
 async fn run_backend<Request, Response>(

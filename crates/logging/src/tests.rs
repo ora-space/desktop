@@ -8,10 +8,12 @@ use serde_json::Value;
 use tempfile::TempDir;
 use tracing::dispatcher::with_default;
 
-use crate::file_output::{ActiveLogPath, cleanup_old_logs};
+use crate::file_output::ActiveLogPath;
+use crate::retention::{LogFileProtection, cleanup_old_logs};
 use crate::{
-    FileLoggingConfig, LogLevel, LogOutput, LoggingConfig, LoggingInitError, RotationPolicy,
-    build_dispatch, init_logging, runtime_span, span_with_correlation,
+    FileLoggingConfig, LogLevel, LogOutput, LoggingConfig, LoggingHealthCounters,
+    LoggingHealthSnapshot, LoggingHealthStatus, LoggingInitError, RotationPolicy, build_dispatch,
+    init_logging, runtime_span, span_with_correlation,
 };
 
 /// Verifies the public configuration model stays small, explicit, and equality-friendly.
@@ -230,6 +232,13 @@ fn selects_stdout_only_sink_behavior() {
     });
 
     assert_eq!(guard.has_file_writer(), false);
+    assert_eq!(
+        guard.health(),
+        LoggingHealthSnapshot {
+            status: LoggingHealthStatus::Healthy,
+            counters: LoggingHealthCounters::default(),
+        }
+    );
     assert_eq!(stdout.json_lines().len(), 1);
 }
 
@@ -329,7 +338,7 @@ fn cleans_up_rotated_files_by_retention_window() {
     cleanup_old_logs(
         &ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap(),
         NonZeroUsize::new(/*n*/ 3).unwrap(),
-        &temp_dir.path().join("ora.log.2026-05-04"),
+        &LogFileProtection::new(temp_dir.path().join("ora.log.2026-05-04")),
     )
     .unwrap();
 
@@ -356,7 +365,7 @@ fn preserves_the_current_log_when_retention_dates_sort_later() {
     cleanup_old_logs(
         &ActiveLogPath::from_path(&temp_dir.path().join("ora.log")).unwrap(),
         NonZeroUsize::new(/*n*/ 3).unwrap(),
-        &temp_dir.path().join("ora.log.2026-05-01"),
+        &LogFileProtection::new(temp_dir.path().join("ora.log.2026-05-01")),
     )
     .unwrap();
 

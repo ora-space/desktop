@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 pub struct DesktopState {
     pub backend: Backend,
     pub config: DesktopConfigStore,
+    pub logging_health: ora_logging::LoggingHealthHandle,
     pub stream_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 

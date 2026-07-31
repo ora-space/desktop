@@ -1,18 +1,22 @@
 use std::ffi::OsStr;
 use std::fs;
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use time::{Date, macros::format_description};
-use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
+use time::Date;
+use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 
-use crate::local_daily_appender::{LocalDailyAppender, SystemFileOpener, SystemTimeSource};
+use crate::appender_dependencies::{SystemFileOpener, SystemTimeSource};
+use crate::health::LoggingHealthHandle;
+use crate::local_daily_appender::LocalDailyAppender;
+use crate::retention::{FilesystemRetentionCleaner, RetentionWorkerGuard};
 use crate::{FileLoggingConfig, FileSystemAction, LoggingInitError, RotationPolicy};
 
 /// Contains the prepared writer state needed for one file-backed sink.
 pub(crate) struct PreparedFileOutput {
     pub(crate) writer: NonBlocking,
-    pub(crate) guard: WorkerGuard,
+    pub(crate) writer_guard: WorkerGuard,
+    pub(crate) retention_guard: RetentionWorkerGuard,
+    pub(crate) health: LoggingHealthHandle,
 }
 
 /// Creates the local-calendar rotating writer used by one file-backed sink.
@@ -22,19 +26,29 @@ pub(crate) fn prepare_file_output(
 ) -> Result<PreparedFileOutput, LoggingInitError> {
     let active_path = ActiveLogPath::from_path(&config.path)?;
     ensure_directory_exists(active_path.directory())?;
+    let health = LoggingHealthHandle::default();
 
-    let appender = match config.rotation {
-        RotationPolicy::Daily => LocalDailyAppender::new(
-            active_path,
+    let runtime = match config.rotation {
+        RotationPolicy::Daily => LocalDailyAppender::prepare(
+            active_path.clone(),
             timezone,
-            config.max_days,
-            SystemTimeSource,
+            SystemTimeSource::default(),
             SystemFileOpener,
+            FilesystemRetentionCleaner::new(active_path, config.max_days),
+            health.recorder(),
         )?,
     };
-    let (writer, guard) = tracing_appender::non_blocking(appender);
+    let (writer, writer_guard) = NonBlockingBuilder::default()
+        .lossy(/*is_lossy*/ true)
+        .finish(runtime.appender);
+    health.add_drop_counter(writer.error_counter());
 
-    Ok(PreparedFileOutput { writer, guard })
+    Ok(PreparedFileOutput {
+        writer,
+        writer_guard,
+        retention_guard: runtime.retention_guard,
+        health,
+    })
 }
 
 /// Creates the parent directory tree when file-backed logging targets a nested location.
@@ -43,59 +57,6 @@ fn ensure_directory_exists(directory: &Path) -> Result<(), LoggingInitError> {
         action: FileSystemAction::CreateDirectory,
         path: directory.to_path_buf(),
         source,
-    })
-}
-
-/// Deletes the oldest inactive files until the rotated series fits `max_days`.
-pub(crate) fn cleanup_old_logs(
-    active_path: &ActiveLogPath,
-    max_days: NonZeroUsize,
-    current_log_path: &Path,
-) -> Result<(), LoggingInitError> {
-    let directory =
-        fs::read_dir(active_path.directory()).map_err(|source| LoggingInitError::FileSystem {
-            action: FileSystemAction::ReadDirectory,
-            path: active_path.directory().to_path_buf(),
-            source,
-        })?;
-
-    let mut dated_files = directory
-        .filter_map(Result::ok)
-        .filter_map(|entry| parse_dated_log_file(&entry.path(), active_path))
-        .collect::<Vec<_>>();
-    dated_files.sort_by_key(|candidate| candidate.date);
-
-    let files_to_delete = dated_files.len().saturating_sub(max_days.get());
-    for candidate in dated_files
-        .into_iter()
-        .filter(|candidate| candidate.path != current_log_path)
-        .take(files_to_delete)
-    {
-        fs::remove_file(&candidate.path).map_err(|source| LoggingInitError::FileSystem {
-            action: FileSystemAction::RemoveFile,
-            path: candidate.path,
-            source,
-        })?;
-    }
-
-    Ok(())
-}
-
-/// Recognizes only the files owned by one configured log-file prefix.
-fn parse_dated_log_file(path: &Path, active_path: &ActiveLogPath) -> Option<DatedLogFile> {
-    let file_name = path.file_name()?.to_str()?;
-    let prefix = format!("{}.", active_path.file_name());
-
-    if !file_name.starts_with(&prefix) {
-        return None;
-    }
-
-    let suffix = &file_name[prefix.len()..];
-    let date = Date::parse(suffix, &format_description!("[year]-[month]-[day]")).ok()?;
-
-    Some(DatedLogFile {
-        path: path.to_path_buf(),
-        date,
     })
 }
 
@@ -142,11 +103,4 @@ impl ActiveLogPath {
     pub(crate) fn path_for_date(&self, date: Date) -> PathBuf {
         self.directory.join(format!("{}.{date}", self.file_name))
     }
-}
-
-/// Couples one rotated log file path with its parsed date for retention ordering.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct DatedLogFile {
-    path: PathBuf,
-    date: Date,
 }

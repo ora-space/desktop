@@ -58,6 +58,7 @@ pub fn run() {
             commands::update_agent,
             commands::delete_agent,
             commands::get_git_identity,
+            commands::get_logging_health,
             commands::get_desktop_config,
             commands::set_worktree_root,
             commands::resolve_task_cwd,
@@ -82,6 +83,7 @@ fn bootstrap_desktop(
         &app_data_directory,
         resolved_timezone.timezone,
     ))?;
+    let logging_health = logging.health_handle();
     match &resolved_timezone.warning {
         Some(DesktopTimezoneWarning::SystemRead { error }) => {
             ora_warn!(
@@ -120,6 +122,7 @@ fn bootstrap_desktop(
         DesktopState {
             backend,
             config,
+            logging_health,
             stream_cancellations: Arc::new(Mutex::new(HashMap::new())),
         },
         DesktopRuntimeGuard { _logging: logging },

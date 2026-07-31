@@ -1,3 +1,4 @@
+mod appender_dependencies;
 pub mod clock;
 mod config;
 mod correlation;
@@ -6,10 +7,13 @@ mod file_output;
 mod formatter;
 mod gitlancer_bridge;
 mod guard;
+mod health;
 mod init;
 mod local_daily_appender;
 mod macros;
 mod method_name;
+mod retention;
+mod rotation_retry;
 mod test_support;
 
 #[cfg(test)]
@@ -22,6 +26,10 @@ pub use correlation::{
 pub use error::{FileSystemAction, LoggingInitError};
 pub use gitlancer_bridge::{OraGitlancerLogger, register_gitlancer_logger};
 pub use guard::LoggingGuard;
+pub use health::{
+    LoggingHealthCounters, LoggingHealthHandle, LoggingHealthSnapshot, LoggingHealthStatus,
+    LoggingIssue,
+};
 pub use init::init_logging;
 pub use test_support::{with_recorded_trace_logging, with_trace_logging};
 
