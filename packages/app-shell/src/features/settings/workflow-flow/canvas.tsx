@@ -1,39 +1,27 @@
 import {
-  useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Background,
   BackgroundVariant,
-  MarkerType,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
-  useStore,
   type Connection,
+  type DefaultEdgeOptions,
   type Edge,
-  type EdgeChange,
-  type NodeChange,
+  type FinalConnectionState,
+  type HandleType,
+  type OnConnectStartParams,
   type Viewport,
 } from "@xyflow/react";
-import {
-  IconFocusCentered,
-  IconLayoutSidebarLeftExpand,
-  IconLayoutSidebarRightExpand,
-  IconMinus,
-  IconPlus,
-} from "@tabler/icons-react";
-import { Button } from "@ora/ui";
 import type {
-  WorkflowEdge,
-  WorkflowNode,
   WorkflowNodeKind,
-  WorkflowPosition,
 } from "@ora/workflow-mock";
 import { WorkflowNodeCatalog } from "../workflow-node-catalog";
 import {
@@ -41,18 +29,22 @@ import {
   DEFAULT_WORKFLOW_ZOOM,
   MAX_WORKFLOW_ZOOM,
   MIN_WORKFLOW_ZOOM,
-  clampWorkflowZoom,
-} from "../workflow-viewport";
+} from "./viewport";
 import {
   WORKFLOW_FLOW_EDGE_TYPE,
   WORKFLOW_FLOW_NODE_TYPE,
+  WORKFLOW_SNAP_GRID,
   nodePositionAt,
-  toFlowEdges,
-  toFlowNodes,
+  snapNodePosition,
 } from "./adapters";
 import { WorkflowFlowCallbacksProvider } from "./callbacks";
+import { WorkflowConnectionLine } from "./connection-line";
+import { WorkflowCanvasControls } from "./controls";
 import { WorkflowFlowEdgeView } from "./edge";
 import { WorkflowFlowNodeView } from "./node";
+import { WorkflowFlowOverview } from "./overview";
+import type { ClientPosition, WorkflowCanvasProps } from "./types";
+import { useWorkflowFlowState } from "./use-workflow-flow-state";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
 
@@ -69,28 +61,71 @@ const DEFAULT_VIEWPORT: Viewport = {
   y: DEFAULT_WORKFLOW_PAN.y,
   zoom: DEFAULT_WORKFLOW_ZOOM,
 };
+const DEFAULT_EDGE_OPTIONS = {
+  type: WORKFLOW_FLOW_EDGE_TYPE,
+} satisfies DefaultEdgeOptions;
+const CONNECTION_LINE_STYLE = {
+  stroke: "var(--ring)",
+  strokeWidth: 2,
+  strokeDasharray: "5 4",
+} satisfies CSSProperties;
 
-interface WorkflowCanvasProps {
-  nodes: WorkflowNode[];
-  edges: WorkflowEdge[];
-  selectedNodeId: string | null;
-  onSelectNode: (nodeId: string | null) => void;
-  onMoveNode: (nodeId: string, position: WorkflowPosition) => void;
-  onAddNode: (kind: WorkflowNodeKind, position: WorkflowPosition) => void;
-  onConnect: (source: string, target: string) => void;
-  onReconnectEdge: (edgeId: string, source: string, target: string) => void;
-  onDeleteNode: (nodeId: string) => void;
-  onDeleteEdge: (edgeId: string) => void;
-  libraryCollapsed: boolean;
-  inspectorCollapsed: boolean;
-  inspectorAvailable: boolean;
-  onExpandLibrary: () => void;
-  onExpandInspector: () => void;
+type ConnectionDraft =
+  | {
+      kind: "new";
+      source: string;
+    }
+  | {
+      kind: "reconnect";
+      edgeId: string;
+      endpoint: HandleType;
+      source: string;
+      target: string;
+    };
+
+/** Finds the workflow card under a pointer so the whole card remains a forgiving drop zone. */
+function workflowNodeAtClientPoint(clientX: number, clientY: number): string | null {
+  const element = document.elementFromPoint(clientX, clientY);
+  if (!(element instanceof Element)) {
+    return null;
+  }
+  return element
+    .closest<HTMLElement>("[data-workflow-node-id]")
+    ?.dataset.workflowNodeId ?? null;
 }
 
-interface ClientPosition {
-  clientX: number;
-  clientY: number;
+/** Normalizes mouse and touch releases for whole-card connection fallback. */
+function connectionEndClientPoint(
+  event: MouseEvent | TouchEvent,
+): { clientX: number; clientY: number } | null {
+  if ("changedTouches" in event) {
+    const touch = event.changedTouches.item(0);
+    return touch === null
+      ? null
+      : { clientX: touch.clientX, clientY: touch.clientY };
+  }
+  return { clientX: event.clientX, clientY: event.clientY };
+}
+
+/** Resolves the directed pair represented by a new or reconnect drag. */
+function connectionForCandidate(
+  draft: ConnectionDraft,
+  candidateNodeId: string,
+): Connection {
+  if (draft.kind === "new") {
+    return {
+      source: draft.source,
+      target: candidateNodeId,
+      sourceHandle: null,
+      targetHandle: null,
+    };
+  }
+  return {
+    source: draft.endpoint === "source" ? candidateNodeId : draft.source,
+    target: draft.endpoint === "target" ? candidateNodeId : draft.target,
+    sourceHandle: null,
+    targetHandle: null,
+  };
 }
 
 /** Wraps the flow in a provider so catalog drop can convert screen coordinates. */
@@ -104,6 +139,7 @@ export function WorkflowCanvas(props: WorkflowCanvasProps) {
 
 /** Renders and manipulates the node graph without coupling it to persistence or preview behavior. */
 function WorkflowCanvasInner({
+  capabilities,
   nodes,
   edges,
   selectedNodeId,
@@ -122,111 +158,145 @@ function WorkflowCanvasInner({
 }: WorkflowCanvasProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLDivElement>(null);
-  const reconnectingEdgeIdRef = useRef<string | null>(null);
-  const { screenToFlowPosition, setViewport, getViewport, zoomTo } = useReactFlow();
-  const zoom = useStore((state) => state.transform[2]);
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const flowCallbacks = useMemo(
-    () => ({
-      onDeleteNode,
-      onDeleteEdge,
-      onSelectEdge: (edgeId: string) => {
-        setSelectedEdgeId(edgeId);
-        onSelectNode(null);
-      },
-    }),
-    [onDeleteEdge, onDeleteNode, onSelectNode],
+  const connectionDraftRef = useRef<ConnectionDraft | null>(null);
+  const [connectionCandidateNodeId, setConnectionCandidateNodeId] =
+    useState<string | null>(null);
+  const { screenToFlowPosition } = useReactFlow();
+  const {
+    clearSelection,
+    deleteEdge,
+    flowCallbacks,
+    flowEdges,
+    flowNodes,
+    handleConnect,
+    handleEdgesChange,
+    handleNodeDragStop,
+    handleNodesChange,
+    handleReconnect,
+    isValidConnection,
+    reconnectingEdgeIdRef,
+    selectEdge,
+    setSelectedEdgeId,
+  } = useWorkflowFlowState({
+    nodes,
+    edges,
+    selectedNodeId,
+    onSelectNode,
+    onMoveNode,
+    onConnect,
+    onReconnectEdge,
+    onDeleteNode,
+    onDeleteEdge,
+  });
+  const rendererCallbacks = useMemo(
+    () => {
+      const draft = connectionDraftRef.current;
+      return {
+        ...flowCallbacks,
+        connectionCandidateEndpoint: connectionCandidateNodeId === null
+          ? null
+          : draft?.kind === "new"
+            ? "target" as const
+            : draft?.endpoint ?? null,
+        connectionCandidateNodeId,
+      };
+    },
+    [connectionCandidateNodeId, flowCallbacks],
   );
 
-  const flowNodes = useMemo(
-    () => toFlowNodes(nodes, selectedNodeId),
-    [nodes, selectedNodeId],
-  );
-  const flowEdges = useMemo(
-    () => toFlowEdges(edges, nodes, selectedEdgeId),
-    [edges, nodes, selectedEdgeId],
-  );
+  /** Clears connection-only state after React Flow has completed or cancelled a gesture. */
+  function finishConnectionGesture(): void {
+    connectionDraftRef.current = null;
+    reconnectingEdgeIdRef.current = null;
+    setConnectionCandidateNodeId(null);
+  }
 
-  useEffect(() => {
-    if (
-      selectedEdgeId !== null
-      && !edges.some((edge) => edge.id === selectedEdgeId)
-    ) {
-      setSelectedEdgeId(null);
+  /** Updates the whole-card candidate highlight without writing graph state on pointer move. */
+  function updateConnectionCandidate(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ): void {
+    const draft = connectionDraftRef.current;
+    if (draft === null) {
+      return;
     }
-  }, [edges, selectedEdgeId]);
+    const candidate = workflowNodeAtClientPoint(event.clientX, event.clientY);
+    const validCandidate = candidate !== null
+      && isValidConnection(connectionForCandidate(draft, candidate))
+      ? candidate
+      : null;
+    setConnectionCandidateNodeId((current) =>
+      current === validCandidate ? current : validCandidate,
+    );
+  }
 
-  /** Rejects self-loops and duplicate directed pairs so graph edits stay unambiguous. */
-  const isValidConnection = useCallback(
-    (connection: Connection | Edge) => {
-      const source = connection.source;
-      const target = connection.target;
-      if (source === null || target === null || source === target) {
-        return false;
-      }
-      const reconnectingEdgeId = reconnectingEdgeIdRef.current;
-      return !edges.some(
-        (edge) =>
-          edge.id !== reconnectingEdgeId
-          && edge.source === source
-          && edge.target === target,
-      );
-    },
-    [edges],
-  );
+  /** Records a source drag so nearby cards can provide the original forgiving target. */
+  function startConnection(params: OnConnectStartParams): void {
+    // React Flow also emits the generic connection lifecycle while reconnecting.
+    // The reconnect draft must remain authoritative or a moved endpoint becomes
+    // an accidental new edge.
+    if (
+      reconnectingEdgeIdRef.current === null
+      && params.nodeId !== null
+      && params.handleType === "source"
+    ) {
+      connectionDraftRef.current = {
+        kind: "new",
+        source: params.nodeId,
+      };
+    }
+  }
 
-  /** Forwards drag position updates only; ignore init/measure noise that would loop setState. */
-  const handleNodesChange = useCallback(
-    (changes: NodeChange[]) => {
-      for (const change of changes) {
-        if (
-          change.type === "position"
-          && change.position !== undefined
-          && change.dragging !== undefined
-        ) {
-          onMoveNode(change.id, change.position);
-        } else if (change.type === "remove") {
-          onDeleteNode(change.id);
+  /** Commits a card drop when React Flow did not hit the card's smaller target handle. */
+  function finishNewConnection(
+    event: MouseEvent | TouchEvent,
+    connectionState: FinalConnectionState,
+  ): void {
+    const draft = connectionDraftRef.current;
+    // A reconnect has its own end callback. Clearing it from this generic
+    // callback makes the later reconnect end look like a cancelled gesture.
+    if (draft?.kind !== "new") {
+      return;
+    }
+    const point = connectionEndClientPoint(event);
+    if (
+      connectionState.isValid !== true
+      && point !== null
+    ) {
+      const candidate = workflowNodeAtClientPoint(point.clientX, point.clientY);
+      if (candidate !== null) {
+        const connection = connectionForCandidate(draft, candidate);
+        if (isValidConnection(connection)) {
+          handleConnect(connection);
         }
       }
-    },
-    [onDeleteNode, onMoveNode],
-  );
+    }
+    finishConnectionGesture();
+  }
 
-  /** Applies edge deletions while selection stays parent/local controlled via click handlers. */
-  const handleEdgesChange = useCallback(
-    (changes: EdgeChange[]) => {
-      for (const change of changes) {
-        if (change.type === "remove") {
-          onDeleteEdge(change.id);
-          setSelectedEdgeId((current) => (current === change.id ? null : current));
+  /** Commits a source or target reconnect when it is released anywhere on a valid card. */
+  function finishReconnect(
+    event: MouseEvent | TouchEvent,
+    edge: Edge,
+    _handleType: HandleType,
+    connectionState: FinalConnectionState,
+  ): void {
+    const draft = connectionDraftRef.current;
+    const point = connectionEndClientPoint(event);
+    if (
+      connectionState.isValid !== true
+      && draft?.kind === "reconnect"
+      && point !== null
+    ) {
+      const candidate = workflowNodeAtClientPoint(point.clientX, point.clientY);
+      if (candidate !== null) {
+        const connection = connectionForCandidate(draft, candidate);
+        if (isValidConnection(connection)) {
+          handleReconnect(edge, connection);
         }
       }
-    },
-    [onDeleteEdge],
-  );
-
-  /** Commits a new domain edge after React Flow validates the connection handles. */
-  const handleConnect = useCallback(
-    (connection: Connection) => {
-      if (connection.source === null || connection.target === null) {
-        return;
-      }
-      onConnect(connection.source, connection.target);
-    },
-    [onConnect],
-  );
-
-  /** Updates one existing edge when a reconnect drag lands on a valid endpoint. */
-  const handleReconnect = useCallback(
-    (oldEdge: Edge, connection: Connection) => {
-      if (connection.source === null || connection.target === null) {
-        return;
-      }
-      onReconnectEdge(oldEdge.id, connection.source, connection.target);
-    },
-    [onReconnectEdge],
-  );
+    }
+    finishConnectionGesture();
+  }
 
   /** Adds a clicked catalog item to the center of the currently visible canvas. */
   function addNodeAtViewportCenter(kind: WorkflowNodeKind): void {
@@ -235,11 +305,14 @@ function WorkflowCanvasInner({
       onAddNode(kind, nodePositionAt({ x: 0, y: 0 }));
       return;
     }
-    const point = screenToFlowPosition({
-      x: bounds.left + bounds.width / 2,
-      y: bounds.top + bounds.height / 2,
-    });
-    onAddNode(kind, nodePositionAt(point));
+    const point = screenToFlowPosition(
+      {
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2,
+      },
+      { snapToGrid: false },
+    );
+    onAddNode(kind, snapNodePosition(nodePositionAt(point)));
   }
 
   /** Adds a pointer-dragged catalog node only when it is released over this canvas. */
@@ -259,11 +332,16 @@ function WorkflowCanvasInner({
     }
     onAddNode(
       kind,
-      nodePositionAt(
-        screenToFlowPosition({
-          x: position.clientX,
-          y: position.clientY,
-        }),
+      snapNodePosition(
+        nodePositionAt(
+          screenToFlowPosition(
+            {
+              x: position.clientX,
+              y: position.clientY,
+            },
+            { snapToGrid: false },
+          ),
+        ),
       ),
     );
   }
@@ -283,27 +361,6 @@ function WorkflowCanvasInner({
     }
   }
 
-  /** Applies toolbar zoom around the viewport center as a predictable button alternative. */
-  function zoomFromCenter(nextZoom: number): void {
-    const clamped = clampWorkflowZoom(nextZoom);
-    const bounds = canvasRef.current?.getBoundingClientRect();
-    if (bounds === undefined) {
-      zoomTo(clamped);
-      return;
-    }
-    const viewport = getViewport();
-    const cursor = { x: bounds.width / 2, y: bounds.height / 2 };
-    const worldPoint = {
-      x: (cursor.x - viewport.x) / viewport.zoom,
-      y: (cursor.y - viewport.y) / viewport.zoom,
-    };
-    setViewport({
-      zoom: clamped,
-      x: cursor.x - worldPoint.x * clamped,
-      y: cursor.y - worldPoint.y * clamped,
-    });
-  }
-
   return (
     <div className="relative min-h-0 min-w-0 flex-1">
       <div
@@ -313,8 +370,9 @@ function WorkflowCanvasInner({
         data-workflow-edge-count={flowEdges.length}
         data-workflow-node-count={flowNodes.length}
         onPointerDownCapture={guardPanelResizeEdge}
+        onPointerMoveCapture={updateConnectionCandidate}
       >
-        <WorkflowFlowCallbacksProvider value={flowCallbacks}>
+        <WorkflowFlowCallbacksProvider value={rendererCallbacks}>
           <ReactFlow
             className="workflow-flow bg-muted/25"
             nodes={flowNodes}
@@ -329,8 +387,11 @@ function WorkflowCanvasInner({
             edgesFocusable
             edgesReconnectable
             reconnectRadius={28}
+            connectionRadius={24}
             deleteKeyCode={["Backspace", "Delete"]}
             multiSelectionKeyCode={null}
+            snapGrid={WORKFLOW_SNAP_GRID}
+            snapToGrid
             panOnScroll={false}
             zoomOnScroll
             zoomOnPinch
@@ -338,45 +399,42 @@ function WorkflowCanvasInner({
             selectNodesOnDrag={false}
             isValidConnection={isValidConnection}
             onNodesChange={handleNodesChange}
+            onNodeDragStop={handleNodeDragStop}
             onEdgesChange={handleEdgesChange}
+            onConnectStart={(_event, params) => {
+              startConnection(params);
+            }}
             onConnect={handleConnect}
-            onReconnectStart={(_event, edge) => {
+            onConnectEnd={finishNewConnection}
+            onReconnectStart={(_event, edge, handleType) => {
               reconnectingEdgeIdRef.current = edge.id;
+              connectionDraftRef.current = {
+                kind: "reconnect",
+                edgeId: edge.id,
+                // React Flow reports the fixed opposite handle here: dragging
+                // the visible source endpoint therefore reports "target".
+                endpoint: handleType === "target" ? "source" : "target",
+                source: edge.source,
+                target: edge.target,
+              };
             }}
             onReconnect={handleReconnect}
-            onReconnectEnd={() => {
-              reconnectingEdgeIdRef.current = null;
-            }}
+            onReconnectEnd={finishReconnect}
             onNodeClick={(_event, node) => {
               setSelectedEdgeId(null);
               onSelectNode(node.id);
             }}
             onEdgeClick={(_event, edge) => {
-              setSelectedEdgeId(edge.id);
-              onSelectNode(null);
+              selectEdge(edge.id);
             }}
-            onPaneClick={() => {
-              onSelectNode(null);
-              setSelectedEdgeId(null);
-            }}
+            onPaneClick={clearSelection}
             onEdgeDoubleClick={(_event, edge) => {
-              onDeleteEdge(edge.id);
-              setSelectedEdgeId(null);
+              deleteEdge(edge.id);
             }}
-            defaultEdgeOptions={{
-              type: WORKFLOW_FLOW_EDGE_TYPE,
-              markerEnd: {
-                type: MarkerType.ArrowClosed,
-                width: 7,
-                height: 7,
-                color: "color-mix(in oklch, var(--foreground) 70%, transparent)",
-              },
-            }}
-            connectionLineStyle={{
-              stroke: "var(--ring)",
-              strokeWidth: 2,
-              strokeDasharray: "5 4",
-            }}
+            connectionLineComponent={WorkflowConnectionLine}
+            elevateEdgesOnSelect
+            defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+            connectionLineStyle={CONNECTION_LINE_STYLE}
           >
             <Background
               id="workflow-dots"
@@ -385,87 +443,18 @@ function WorkflowCanvasInner({
               size={1}
               color="color-mix(in oklch, var(--foreground) 18%, transparent)"
             />
+            <WorkflowFlowOverview nodeCount={flowNodes.length} />
           </ReactFlow>
         </WorkflowFlowCallbacksProvider>
 
-        <div
-          data-workflow-controls
-          className="pointer-events-auto absolute right-2 top-2 z-30 flex w-fit items-center rounded-lg border border-border/80 bg-background/95 p-px shadow-sm backdrop-blur"
-          aria-label={t("settings.workflow.canvasControls")}
-          aria-orientation="horizontal"
-          role="toolbar"
-        >
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="size-7 rounded-md"
-            aria-label={t("settings.workflow.zoomOut")}
-            disabled={zoom <= MIN_WORKFLOW_ZOOM}
-            onClick={() => zoomFromCenter(zoom - 0.1)}
-          >
-            <IconMinus />
-          </Button>
-          <span
-            className="flex h-7 w-8 items-center justify-center text-[9px] font-medium tabular-nums text-muted-foreground"
-            aria-live="polite"
-          >
-            {Math.round(zoom * 100)}%
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="size-7 rounded-md"
-            aria-label={t("settings.workflow.zoomIn")}
-            disabled={zoom >= MAX_WORKFLOW_ZOOM}
-            onClick={() => zoomFromCenter(zoom + 0.1)}
-          >
-            <IconPlus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="size-7 rounded-md"
-            aria-label={t("settings.workflow.resetView")}
-            onClick={() => {
-              setViewport(DEFAULT_VIEWPORT);
-            }}
-          >
-            <IconFocusCentered />
-          </Button>
-          <span className="sr-only">
-            {t("settings.workflow.canvasHint")}
-          </span>
-        </div>
-
-        {(libraryCollapsed || inspectorCollapsed) && (
-          <div
-            data-workflow-controls
-            className="pointer-events-auto absolute left-2 top-2 z-30 flex items-center gap-px rounded-lg border border-border/80 bg-background/95 p-px shadow-sm backdrop-blur"
-          >
-            {libraryCollapsed && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="size-7 rounded-md"
-                aria-label={t("settings.workflow.expandLibrary")}
-                onClick={onExpandLibrary}
-              >
-                <IconLayoutSidebarLeftExpand />
-              </Button>
-            )}
-            {inspectorCollapsed && inspectorAvailable && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="size-7 rounded-md"
-                aria-label={t("settings.workflow.expandConfiguration")}
-                onClick={onExpandInspector}
-              >
-                <IconLayoutSidebarRightExpand />
-              </Button>
-            )}
-          </div>
-        )}
+        <WorkflowCanvasControls
+          defaultViewport={DEFAULT_VIEWPORT}
+          libraryCollapsed={libraryCollapsed}
+          inspectorCollapsed={inspectorCollapsed}
+          inspectorAvailable={inspectorAvailable}
+          onExpandLibrary={onExpandLibrary}
+          onExpandInspector={onExpandInspector}
+        />
       </div>
 
       <div
@@ -473,6 +462,7 @@ function WorkflowCanvasInner({
         className="absolute bottom-3 left-1/2 z-30 w-fit max-w-[calc(100%_-_12rem)] -translate-x-1/2"
       >
         <WorkflowNodeCatalog
+          capabilities={capabilities}
           onAdd={addNodeAtViewportCenter}
           onDrop={dropNodeAtClientPosition}
         />

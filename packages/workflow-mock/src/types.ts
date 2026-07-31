@@ -60,13 +60,16 @@ export interface WorkflowRunResult {
   steps: WorkflowRunStep[];
 }
 
+export type WorkflowDataSourceKind = "mock" | "remote";
+
 /** Defines the async boundary the real workflow backend can implement later. */
 export interface WorkflowRepository {
+  readonly dataSourceKind: WorkflowDataSourceKind;
   list(): Promise<WorkflowDefinition[]>;
   get(id: string): Promise<WorkflowDefinition>;
   create(name: string): Promise<WorkflowDefinition>;
   save(workflow: WorkflowDefinition): Promise<WorkflowDefinition>;
   delete(id: string): Promise<void>;
   importDefinition(value: unknown): Promise<WorkflowDefinition>;
-  run(id: string, input: string): Promise<WorkflowRunResult>;
+  run(workflow: WorkflowDefinition, input: string): Promise<WorkflowRunResult>;
 }

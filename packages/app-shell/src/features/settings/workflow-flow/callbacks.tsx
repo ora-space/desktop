@@ -1,6 +1,8 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 export interface WorkflowFlowCallbacks {
+  connectionCandidateEndpoint?: "source" | "target" | null;
+  connectionCandidateNodeId?: string | null;
   onDeleteNode: (nodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
   onSelectEdge: (edgeId: string) => void;

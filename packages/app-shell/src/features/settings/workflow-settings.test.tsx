@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../../i18n/i18n-instance";
@@ -92,6 +92,9 @@ describe("WorkflowSettings", () => {
     await waitFor(() => {
       expect(screen.queryByText("100%")).not.toBeInTheDocument();
     });
+
+    expect(screen.getByRole("button", { name: "显示完整工作流" })).toBeInTheDocument();
+    expect(screen.getByLabelText("工作流小地图")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "重置画布视图" }));
     await waitFor(() => {
@@ -226,8 +229,8 @@ describe("WorkflowSettings", () => {
 
     expect(screen.getAllByText("提示词 1")).toHaveLength(2);
     expect(nodeGraphPosition("提示词节点: 提示词 1")).toEqual({
-      x: "253px",
-      y: "207px",
+      x: "260px",
+      y: "200px",
     });
   });
 
@@ -277,8 +280,8 @@ describe("WorkflowSettings", () => {
 
     expect(document.querySelector("[data-workflow-node-preview]")).not.toBeInTheDocument();
     expect(nodeGraphPosition("工具节点: 工具 1")).toEqual({
-      x: "353px",
-      y: "257px",
+      x: "360px",
+      y: "260px",
     });
     expect(screen.queryByText("释放以添加节点")).not.toBeInTheDocument();
   });
@@ -350,6 +353,45 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("keeps newer draft edits when an older save finishes", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    const nameInput = await screen.findByLabelText("工作流名称");
+
+    fireEvent.change(nameInput, { target: { value: "保存中的版本" } });
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.change(screen.getByLabelText("工作流名称"), {
+      target: { value: "保存后继续编辑" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("保存后继续编辑")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    });
+  });
+
+  it("runs the unsaved draft visible in the editor", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    const nameInput = await screen.findByLabelText("工作流名称");
+
+    fireEvent.change(nameInput, { target: { value: "未保存草稿" } });
+    await user.click(screen.getAllByRole("button", { name: "测试运行" })[0]);
+
+    expect(await screen.findByText(/已完成“未保存草稿”的模拟运行/)).toBeInTheDocument();
+  });
+
+  it("preserves the current draft when the display language changes", async () => {
+    render(<WorkflowSettings />);
+    const nameInput = await screen.findByLabelText("工作流名称");
+
+    fireEvent.change(nameInput, { target: { value: "保留这个草稿" } });
+    await act(() => appI18n.changeLanguage("en-US"));
+
+    expect(screen.getByDisplayValue("保留这个草稿")).toBeInTheDocument();
+    expect(screen.getByLabelText("Workflow canvas")).toBeInTheDocument();
+  });
+
   it("localizes workflow chrome and mock content in English", async () => {
     await appI18n.changeLanguage("en-US");
     const user = userEvent.setup();
@@ -357,7 +399,9 @@ describe("WorkflowSettings", () => {
 
     expect(await screen.findByText("Code review workflow")).toBeInTheDocument();
     expect(screen.getByLabelText("Workflow canvas")).toBeInTheDocument();
-    expect(screen.getByText("Scroll to zoom · Drag to pan")).toBeInTheDocument();
+    expect(
+      screen.getByText("Scroll to zoom · Drag to pan · Nodes snap to grid"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "Test run" })[0]);
 

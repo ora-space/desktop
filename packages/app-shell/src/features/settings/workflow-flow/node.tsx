@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import { IconTrash } from "@tabler/icons-react";
@@ -11,7 +12,7 @@ import { type WorkflowFlowNode } from "./adapters";
 import { useWorkflowFlowCallbacks } from "./callbacks";
 
 /** Renders one workflow card with left/right handles styled for the settings editor. */
-export function WorkflowFlowNodeView({
+export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   id,
   data,
   selected,
@@ -19,7 +20,7 @@ export function WorkflowFlowNodeView({
   positionAbsoluteY,
 }: NodeProps<WorkflowFlowNode>) {
   const { i18n, t } = useTranslation();
-  const { onDeleteNode } = useWorkflowFlowCallbacks();
+  const { connectionCandidateNodeId, onDeleteNode } = useWorkflowFlowCallbacks();
   const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
   const metadata = getNodeMetadata(data.kind);
   const nodeKindLabel = createMockWorkflowNodeType(data.kind, locale).label;
@@ -35,10 +36,12 @@ export function WorkflowFlowNodeView({
       data-x={String(Math.round(positionAbsoluteX))}
       data-y={String(Math.round(positionAbsoluteY))}
       className={cn(
-        "w-[230px] rounded-xl border bg-card shadow-sm outline-none transition-[border-color,box-shadow] duration-200",
+        "group/workflow-node w-[230px] rounded-xl border bg-card shadow-sm outline-none transition-[border-color,box-shadow] duration-200",
         selected
           ? "border-foreground/45 shadow-md ring-2 ring-ring/25"
           : "border-border hover:border-foreground/25 hover:shadow-md",
+        connectionCandidateNodeId === id
+          && "border-ring shadow-md ring-4 ring-ring/20",
       )}
       aria-label={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${data.title}`}
     >
@@ -47,7 +50,7 @@ export function WorkflowFlowNodeView({
         position={Position.Left}
         data-workflow-input={id}
         aria-label={t("settings.workflow.connectTo", { name: data.title })}
-        className="!size-3 !border-2 !border-background !bg-muted-foreground !shadow-sm transition-transform hover:!scale-125"
+        className="!size-6 !border-[6px] !border-transparent !bg-muted-foreground !bg-clip-content !shadow-sm opacity-0 transition-[opacity,transform,box-shadow] group-hover/workflow-node:opacity-100 hover:!scale-110 hover:!shadow-md focus:opacity-100"
         style={{ top: 61 }}
       />
       <div className="flex items-start gap-2.5 border-b border-border px-3 py-3">
@@ -85,9 +88,9 @@ export function WorkflowFlowNodeView({
         position={Position.Right}
         data-workflow-output={id}
         aria-label={t("settings.workflow.connectFrom", { name: data.title })}
-        className="!size-3 !border-2 !border-background !bg-foreground !shadow-sm transition-transform hover:!scale-125"
+        className="!size-6 !border-[6px] !border-transparent !bg-foreground !bg-clip-content !shadow-sm opacity-0 transition-[opacity,transform,box-shadow] group-hover/workflow-node:opacity-100 hover:!scale-110 hover:!shadow-md focus:opacity-100"
         style={{ top: 61 }}
       />
     </article>
   );
-}
+});

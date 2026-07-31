@@ -5,6 +5,7 @@ import {
   NODE_HEIGHT,
   NODE_WIDTH,
   nodePositionAt,
+  snapNodePosition,
   toFlowEdges,
   toFlowNodes,
 } from "./adapters";
@@ -44,18 +45,18 @@ describe("workflow-flow adapters", () => {
           {
             type: "target",
             position: Position.Left,
-            x: -6,
-            y: 55,
-            width: 12,
-            height: 12,
+            x: 0,
+            y: 49,
+            width: 24,
+            height: 24,
           },
           {
             type: "source",
             position: Position.Right,
-            x: NODE_WIDTH - 6,
-            y: 55,
-            width: 12,
-            height: 12,
+            x: NODE_WIDTH - 24,
+            y: 49,
+            width: 24,
+            height: 24,
           },
         ],
         data: {
@@ -79,18 +80,18 @@ describe("workflow-flow adapters", () => {
           {
             type: "target",
             position: Position.Left,
-            x: -6,
-            y: 55,
-            width: 12,
-            height: 12,
+            x: 0,
+            y: 49,
+            width: 24,
+            height: 24,
           },
           {
             type: "source",
             position: Position.Right,
-            x: NODE_WIDTH - 6,
-            y: 55,
-            width: 12,
-            height: 12,
+            x: NODE_WIDTH - 24,
+            y: 49,
+            width: 24,
+            height: 24,
           },
         ],
         data: {
@@ -120,6 +121,12 @@ describe("workflow-flow adapters", () => {
         label: "ok",
         selected: true,
         reconnectable: true,
+        markerEnd: {
+          type: "arrowclosed",
+          width: 12,
+          height: 12,
+          color: "var(--ring)",
+        },
         data: {
           sourceTitle: "开始",
           targetTitle: "输出",
@@ -132,6 +139,13 @@ describe("workflow-flow adapters", () => {
     expect(nodePositionAt({ x: 400, y: 300 })).toEqual({
       x: 400 - NODE_WIDTH / 2,
       y: 300 - 61,
+    });
+  });
+
+  it("aligns new node positions to the canvas grid", () => {
+    expect(snapNodePosition({ x: 253, y: 207 })).toEqual({
+      x: 260,
+      y: 200,
     });
   });
 });

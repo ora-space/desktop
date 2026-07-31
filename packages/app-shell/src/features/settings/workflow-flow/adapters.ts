@@ -1,4 +1,10 @@
-import { Position, type Edge, type Node } from "@xyflow/react";
+import {
+  MarkerType,
+  Position,
+  type Edge,
+  type Node,
+  type SnapGrid,
+} from "@xyflow/react";
 import type {
   WorkflowEdge,
   WorkflowNode,
@@ -14,6 +20,7 @@ export const NODE_WIDTH = 230;
 export const NODE_HEIGHT = 98;
 /** Vertical offset from the card top to the connection handle center. */
 export const NODE_ANCHOR_Y = 61;
+export const WORKFLOW_SNAP_GRID: SnapGrid = [20, 20];
 
 export interface WorkflowFlowNodeData {
   kind: WorkflowNodeKind;
@@ -32,18 +39,18 @@ function workflowHandles() {
     {
       type: "target" as const,
       position: Position.Left,
-      x: -6,
-      y: NODE_ANCHOR_Y - 6,
-      width: 12,
-      height: 12,
+      x: 0,
+      y: NODE_ANCHOR_Y - 12,
+      width: 24,
+      height: 24,
     },
     {
       type: "source" as const,
       position: Position.Right,
-      x: NODE_WIDTH - 6,
-      y: NODE_ANCHOR_Y - 6,
-      width: 12,
-      height: 12,
+      x: NODE_WIDTH - 24,
+      y: NODE_ANCHOR_Y - 12,
+      width: 24,
+      height: 24,
     },
   ];
 }
@@ -88,6 +95,14 @@ export function toFlowEdges(
     label: edge.label,
     selected: selectedEdgeId === edge.id,
     reconnectable: true,
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      width: 12,
+      height: 12,
+      color: selectedEdgeId === edge.id
+        ? "var(--ring)"
+        : "color-mix(in oklch, var(--foreground) 46%, transparent)",
+    },
     data: {
       sourceTitle: titles.get(edge.source) ?? edge.source,
       targetTitle: titles.get(edge.target) ?? edge.target,
@@ -100,5 +115,13 @@ export function nodePositionAt(point: { x: number; y: number }): { x: number; y:
   return {
     x: point.x - NODE_WIDTH / 2,
     y: point.y - NODE_ANCHOR_Y,
+  };
+}
+
+/** Aligns a node's top-left position to the same grid rendered by the workflow canvas. */
+export function snapNodePosition(position: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: Math.round(position.x / WORKFLOW_SNAP_GRID[0]) * WORKFLOW_SNAP_GRID[0],
+    y: Math.round(position.y / WORKFLOW_SNAP_GRID[1]) * WORKFLOW_SNAP_GRID[1],
   };
 }
