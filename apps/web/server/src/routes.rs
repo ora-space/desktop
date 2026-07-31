@@ -14,11 +14,14 @@ use ora_contracts::{
 /// Builds the top-level router for health checks and the persisted CRUD routes.
 pub fn build_router(app_state: AppState) -> Router {
     Router::new()
+        // =============================================================================
+        // health
+        // =============================================================================
         .route("/health/live", get(health::liveness))
         .route("/health/ready", get(health::readiness))
-        .route(FILE_SYSTEM_DIRECTORY_PATH, get(file_system::list_directory))
-        .route(GIT_IDENTITY_PATH, get(git::get_identity))
-        .route(AGENT_MODELS_PATH, get(sessions::list_agent_models))
+        // =============================================================================
+        // project
+        // =============================================================================
         .route(
             PROJECTS_PATH,
             post(projects::create_project).get(projects::list_projects),
@@ -29,6 +32,9 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(projects::update_project)
                 .delete(projects::delete_project),
         )
+        // =============================================================================
+        // projectWorkContext
+        // =============================================================================
         .route(
             PROJECT_WORK_CONTEXT_OPEN_PATH,
             post(project_work_contexts::open_project_work_context),
@@ -37,6 +43,9 @@ pub fn build_router(app_state: AppState) -> Router {
             PROJECT_WORK_CONTEXT_RENEW_PATH,
             post(project_work_contexts::renew_project_work_context),
         )
+        // =============================================================================
+        // task
+        // =============================================================================
         .route(TASKS_PATH, post(tasks::create_task).get(tasks::list_tasks))
         .route(
             TASK_PATH,
@@ -44,6 +53,9 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(tasks::update_task)
                 .delete(tasks::delete_task),
         )
+        // =============================================================================
+        // session
+        // =============================================================================
         .route(
             SESSIONS_PATH,
             post(sessions::create_session).get(sessions::list_sessions),
@@ -59,6 +71,13 @@ pub fn build_router(app_state: AppState) -> Router {
             post(sessions::respond_to_permission),
         )
         .route(SESSION_STOP_PATH, post(sessions::stop_session))
+        // =============================================================================
+        // agentRuntime
+        // =============================================================================
+        .route(AGENT_MODELS_PATH, get(sessions::list_agent_models))
+        // =============================================================================
+        // skill
+        // =============================================================================
         .route(
             SKILLS_PATH,
             post(skills::create_skill).get(skills::list_skills),
@@ -69,6 +88,9 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(skills::update_skill)
                 .delete(skills::delete_skill),
         )
+        // =============================================================================
+        // agent
+        // =============================================================================
         .route(
             AGENTS_PATH,
             post(agents::create_agent).get(agents::list_agents),
@@ -79,6 +101,14 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(agents::update_agent)
                 .delete(agents::delete_agent),
         )
+        // =============================================================================
+        // fileSystem
+        // =============================================================================
+        .route(FILE_SYSTEM_DIRECTORY_PATH, get(file_system::list_directory))
+        // =============================================================================
+        // gitIdentity
+        // =============================================================================
+        .route(GIT_IDENTITY_PATH, get(git::get_identity))
         .with_state(app_state)
 }
 

@@ -268,6 +268,7 @@ fn collect_contract_type_imports(
 /// Maps one exported contract type name to the TypeScript module that contains it.
 fn contract_module_for_type(type_name: &str) -> &'static str {
     match type_name {
+        // project
         "CreateProjectRequest"
         | "CreateProjectResponse"
         | "DeleteProjectRequest"
@@ -278,22 +279,23 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListProjectsResponse"
         | "UpdateProjectRequest"
         | "UpdateProjectResponse" => "project",
+        // projectWorkContext
         "OpenProjectWorkContextRequest"
         | "OpenProjectWorkContextResponse"
         | "ProjectWorkContext"
         | "RenewProjectWorkContextRequest"
         | "RenewProjectWorkContextResponse" => "project-work-context",
+        // task
         "CreateTaskRequest" | "CreateTaskResponse" | "DeleteTaskRequest" | "DeleteTaskResponse"
         | "GetTaskRequest" | "GetTaskResponse" | "ListTasksRequest" | "ListTasksResponse"
         | "UpdateTaskRequest" | "UpdateTaskResponse" => "task",
+        // session
         "CreateSessionRequest"
         | "CreateSessionResponse"
         | "DeleteSessionRequest"
         | "DeleteSessionResponse"
         | "GetSessionRequest"
         | "GetSessionResponse"
-        | "ListAgentModelsRequest"
-        | "ListAgentModelsResponse"
         | "LoadSessionRequest"
         | "LoadSessionEvent"
         | "ListSessionsRequest"
@@ -304,6 +306,9 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "RespondToPermissionResponse"
         | "StopSessionRequest"
         | "StopSessionResponse" => "session",
+        // agentRuntime
+        "ListAgentModelsRequest" | "ListAgentModelsResponse" => "session",
+        // skill
         "CreateSkillRequest"
         | "CreateSkillResponse"
         | "DeleteSkillRequest"
@@ -314,6 +319,7 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListSkillsResponse"
         | "UpdateSkillRequest"
         | "UpdateSkillResponse" => "skill",
+        // agent
         "CreateAgentRequest"
         | "CreateAgentResponse"
         | "DeleteAgentRequest"
@@ -324,7 +330,9 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListAgentsResponse"
         | "UpdateAgentRequest"
         | "UpdateAgentResponse" => "agent",
+        // fileSystem
         "ListDirectoryRequest" | "ListDirectoryResponse" => "file-system",
+        // gitIdentity
         "GetGitIdentityRequest" | "GitIdentityResponse" => "git",
         other => panic!("unknown contract type `{other}`"),
     }

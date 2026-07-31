@@ -136,6 +136,9 @@ const FILE_SYSTEM_DIRECTORY_QUERY_PARAMS: &[FrontendQueryParam] =
 const NO_QUERY_PARAMS: &[FrontendQueryParam] = &[];
 
 const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
+    // =============================================================================
+    // project
+    // =============================================================================
     FrontendEndpoint {
         operation_name: "createProject",
         namespace: PROJECT_NAMESPACE,
@@ -191,6 +194,9 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_params: PROJECT_PATH_PARAMS,
         has_json_body: false,
     },
+    // =============================================================================
+    // projectWorkContext
+    // =============================================================================
     FrontendEndpoint {
         operation_name: "openProjectWorkContext",
         namespace: PROJECT_WORK_CONTEXT_NAMESPACE,
@@ -213,6 +219,9 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_params: NO_PATH_PARAMS,
         has_json_body: true,
     },
+    // =============================================================================
+    // task
+    // =============================================================================
     FrontendEndpoint {
         operation_name: "createTask",
         namespace: TASK_NAMESPACE,
@@ -268,6 +277,9 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_params: TASK_PATH_PARAMS,
         has_json_body: false,
     },
+    // =============================================================================
+    // session
+    // =============================================================================
     FrontendEndpoint {
         operation_name: "createSession",
         namespace: SESSION_NAMESPACE,
@@ -278,17 +290,6 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "CreateSessionResponse",
         path_params: NO_PATH_PARAMS,
         has_json_body: true,
-    },
-    FrontendEndpoint {
-        operation_name: "listAgentModels",
-        namespace: AGENT_RUNTIME_NAMESPACE,
-        member_name: "listModels",
-        method: FrontendHttpMethod::Get,
-        path_template: AGENT_MODELS_PATH,
-        request_type: "ListAgentModelsRequest",
-        response_type: "ListAgentModelsResponse",
-        path_params: NO_PATH_PARAMS,
-        has_json_body: false,
     },
     FrontendEndpoint {
         operation_name: "getSession",
@@ -367,6 +368,23 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_params: SESSION_PATH_PARAMS,
         has_json_body: false,
     },
+    // =============================================================================
+    // agentRuntime
+    // =============================================================================
+    FrontendEndpoint {
+        operation_name: "listAgentModels",
+        namespace: AGENT_RUNTIME_NAMESPACE,
+        member_name: "listModels",
+        method: FrontendHttpMethod::Get,
+        path_template: AGENT_MODELS_PATH,
+        request_type: "ListAgentModelsRequest",
+        response_type: "ListAgentModelsResponse",
+        path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    // =============================================================================
+    // skill
+    // =============================================================================
     FrontendEndpoint {
         operation_name: "createSkill",
         namespace: SKILL_NAMESPACE,
@@ -422,6 +440,9 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_params: SKILL_PATH_PARAMS,
         has_json_body: false,
     },
+    // =============================================================================
+    // agent
+    // =============================================================================
     FrontendEndpoint {
         operation_name: "createAgent",
         namespace: AGENT_NAMESPACE,
@@ -477,6 +498,9 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_params: AGENT_PATH_PARAMS,
         has_json_body: false,
     },
+    // =============================================================================
+    // fileSystem
+    // =============================================================================
     FrontendEndpoint {
         operation_name: "listDirectory",
         namespace: FILE_SYSTEM_NAMESPACE,
@@ -488,6 +512,9 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_params: NO_PATH_PARAMS,
         has_json_body: false,
     },
+    // =============================================================================
+    // gitIdentity
+    // =============================================================================
     FrontendEndpoint {
         operation_name: "getGitIdentity",
         namespace: GIT_NAMESPACE,

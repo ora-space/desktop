@@ -38,6 +38,10 @@ macro_rules! backend_command {
     };
 }
 
+// =============================================================================
+// project
+// =============================================================================
+
 backend_command!(
     create_project,
     CreateProjectRequest,
@@ -74,13 +78,9 @@ backend_command!(
     "Deletes one project through the shared Backend."
 );
 
-backend_command!(
-    get_git_identity,
-    GetGitIdentityRequest,
-    GitIdentityResponse,
-    read_git_identity,
-    "Reads the host's global Git identity through the shared Backend."
-);
+// =============================================================================
+// task
+// =============================================================================
 
 backend_command!(
     create_task,
@@ -118,6 +118,10 @@ backend_command!(
     "Deletes one task through the shared Backend."
 );
 
+// =============================================================================
+// session
+// =============================================================================
+
 /// Creates one provider-backed session through the asynchronous runtime manager.
 #[tauri::command]
 pub async fn create_session(
@@ -127,19 +131,6 @@ pub async fn create_session(
     state
         .backend
         .create_session(request)
-        .await
-        .map_err(CommandError::from)
-}
-
-/// Lists models grouped by every CLI whose discovery command succeeds.
-#[tauri::command]
-pub async fn list_agent_models(
-    state: State<'_, DesktopState>,
-    request: ListAgentModelsRequest,
-) -> Result<ListAgentModelsResponse, CommandError> {
-    state
-        .backend
-        .list_agent_models(request)
         .await
         .map_err(CommandError::from)
 }
@@ -316,6 +307,27 @@ async fn forward_contract_stream<Event>(
     }
 }
 
+// =============================================================================
+// agentRuntime
+// =============================================================================
+
+/// Lists models grouped by every CLI whose discovery command succeeds.
+#[tauri::command]
+pub async fn list_agent_models(
+    state: State<'_, DesktopState>,
+    request: ListAgentModelsRequest,
+) -> Result<ListAgentModelsResponse, CommandError> {
+    state
+        .backend
+        .list_agent_models(request)
+        .await
+        .map_err(CommandError::from)
+}
+
+// =============================================================================
+// skill
+// =============================================================================
+
 backend_command!(
     create_skill,
     CreateSkillRequest,
@@ -352,6 +364,10 @@ backend_command!(
     "Deletes one skill through the shared Backend."
 );
 
+// =============================================================================
+// agent
+// =============================================================================
+
 backend_command!(
     create_agent,
     CreateAgentRequest,
@@ -387,6 +403,22 @@ backend_command!(
     delete_agent,
     "Deletes one configurable agent through the shared Backend."
 );
+
+// =============================================================================
+// gitIdentity
+// =============================================================================
+
+backend_command!(
+    get_git_identity,
+    GetGitIdentityRequest,
+    GitIdentityResponse,
+    read_git_identity,
+    "Reads the host's global Git identity through the shared Backend."
+);
+
+// =============================================================================
+// desktop
+// =============================================================================
 
 /// Carries the empty request used to read Desktop runtime configuration consistently.
 #[derive(Clone, Debug, Default, Deserialize)]

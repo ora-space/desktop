@@ -65,18 +65,29 @@ Logging variables are documented in [Runtime Logging](runtime-logging.md).
 
 Route paths come from the `ora-contracts` endpoint manifest constants, so a route and its generated client entry cannot drift apart. Path parameters are camelCase.
 
+### project
+
 - `POST /api/projects`
 - `GET /api/projects`
 - `GET /api/projects/{projectId}`
 - `PUT /api/projects/{projectId}`
 - `DELETE /api/projects/{projectId}`
+
+### projectWorkContext
+
 - `POST /api/project-work-contexts/open`
 - `POST /api/project-work-contexts/renew`
+
+### task
+
 - `POST /api/tasks`
 - `GET /api/tasks`
 - `GET /api/tasks/{taskId}`
 - `PUT /api/tasks/{taskId}`
 - `DELETE /api/tasks/{taskId}`
+
+### session
+
 - `POST /api/sessions`
 - `GET /api/sessions`
 - `GET /api/sessions/{sessionId}`
@@ -85,19 +96,34 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 - `POST /api/sessions/{sessionId}/permissions/respond`
 - `POST /api/sessions/{sessionId}/stop`
 - `DELETE /api/sessions/{sessionId}`
+
+### agentRuntime
+
 - `GET /api/agent-models`
+
+### skill
+
 - `POST /api/skills`
 - `GET /api/skills`
 - `GET /api/skills/{skillId}`
 - `PUT /api/skills/{skillId}`
 - `DELETE /api/skills/{skillId}`
+
+### agent
+
 - `POST /api/agents`
 - `GET /api/agents`
 - `GET /api/agents/{agentId}`
 - `PUT /api/agents/{agentId}`
 - `DELETE /api/agents/{agentId}`
-- `GET /api/git/identity`
+
+### fileSystem
+
 - `GET /api/file-system/directory?path={absolute_path}`
+
+### gitIdentity
+
+- `GET /api/git/identity`
 
 Each route translates transport input into the matching `ora-contracts` request DTO, delegates to the shared backend, and serializes the returned contract response without adding adapter-local response shapes.
 

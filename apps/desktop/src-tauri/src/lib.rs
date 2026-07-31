@@ -28,18 +28,26 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // =============================================================================
+            // project
+            // =============================================================================
             commands::create_project,
             commands::get_project,
             commands::list_projects,
             commands::update_project,
             commands::delete_project,
+            // =============================================================================
+            // task
+            // =============================================================================
             commands::create_task,
             commands::get_task,
             commands::list_tasks,
             commands::update_task,
             commands::delete_task,
+            // =============================================================================
+            // session
+            // =============================================================================
             commands::create_session,
-            commands::list_agent_models,
             commands::get_session,
             commands::list_sessions,
             commands::respond_to_session_permission,
@@ -47,17 +55,33 @@ pub fn run() {
             commands::delete_session,
             commands::stream_contract,
             commands::cancel_contract_stream,
+            // =============================================================================
+            // agentRuntime
+            // =============================================================================
+            commands::list_agent_models,
+            // =============================================================================
+            // skill
+            // =============================================================================
             commands::create_skill,
             commands::get_skill,
             commands::list_skills,
             commands::update_skill,
             commands::delete_skill,
+            // =============================================================================
+            // agent
+            // =============================================================================
             commands::create_agent,
             commands::get_agent,
             commands::list_agents,
             commands::update_agent,
             commands::delete_agent,
+            // =============================================================================
+            // gitIdentity
+            // =============================================================================
             commands::get_git_identity,
+            // =============================================================================
+            // desktop
+            // =============================================================================
             commands::get_desktop_config,
             commands::set_worktree_root,
             commands::resolve_task_cwd,

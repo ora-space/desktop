@@ -107,14 +107,9 @@ impl Backend {
         crate::task::resolve_task_cwd(&self.pool, &ora_domain::TaskId::new(task_id))
     }
 
-    /// Reads the host identity for the sidebar profile: global git config first,
-    /// falling back to the authenticated GitHub CLI account when git has no name set.
-    pub fn read_git_identity(
-        &self,
-        _request: GetGitIdentityRequest,
-    ) -> Result<GitIdentityResponse, BackendError> {
-        Ok(crate::identity::resolve_git_identity())
-    }
+    // =============================================================================
+    // project
+    // =============================================================================
 
     /// Creates one project through the shared application composition.
     pub fn create_project(
@@ -152,6 +147,10 @@ impl Backend {
         self.project.delete(request)
     }
 
+    // =============================================================================
+    // task
+    // =============================================================================
+
     /// Creates one task through the shared application composition.
     pub fn create_task(
         &self,
@@ -182,6 +181,10 @@ impl Backend {
         self.task.delete(request)
     }
 
+    // =============================================================================
+    // session
+    // =============================================================================
+
     /// Creates one session through the shared application composition.
     pub async fn create_session(
         &self,
@@ -190,13 +193,6 @@ impl Backend {
         self.agent_runtime.create_session(request).await
     }
 
-    /// Lists model identifiers grouped by each CLI that answers discovery successfully.
-    pub async fn list_agent_models(
-        &self,
-        _request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, BackendError> {
-        Ok(self.agent_runtime.list_agent_models().await)
-    }
     /// Gets one session through the shared application composition.
     pub fn get_session(
         &self,
@@ -251,6 +247,22 @@ impl Backend {
         self.agent_runtime.delete_session(&request.session_id).await
     }
 
+    // =============================================================================
+    // agentRuntime
+    // =============================================================================
+
+    /// Lists model identifiers grouped by each CLI that answers discovery successfully.
+    pub async fn list_agent_models(
+        &self,
+        _request: ListAgentModelsRequest,
+    ) -> Result<ListAgentModelsResponse, BackendError> {
+        Ok(self.agent_runtime.list_agent_models().await)
+    }
+
+    // =============================================================================
+    // skill
+    // =============================================================================
+
     /// Creates one skill through the shared application composition.
     pub fn create_skill(
         &self,
@@ -284,6 +296,10 @@ impl Backend {
         self.skill.delete(request).map_err(BackendError::from)
     }
 
+    // =============================================================================
+    // agent
+    // =============================================================================
+
     /// Creates one configurable agent through the shared application composition.
     pub fn create_agent(
         &self,
@@ -315,6 +331,19 @@ impl Backend {
         request: DeleteAgentRequest,
     ) -> Result<DeleteAgentResponse, BackendError> {
         self.agent.delete(request).map_err(BackendError::from)
+    }
+
+    // =============================================================================
+    // gitIdentity
+    // =============================================================================
+
+    /// Reads the host identity for the sidebar profile: global git config first,
+    /// falling back to the authenticated GitHub CLI account when git has no name set.
+    pub fn read_git_identity(
+        &self,
+        _request: GetGitIdentityRequest,
+    ) -> Result<GitIdentityResponse, BackendError> {
+        Ok(crate::identity::resolve_git_identity())
     }
 }
 

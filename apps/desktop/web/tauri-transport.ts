@@ -30,33 +30,60 @@ type SupportedTauriOperation = Exclude<
 >;
 
 const tauriCommands = {
+  // =============================================================================
+  // project
+  // =============================================================================
   createProject: "create_project",
   getProject: "get_project",
   listProjects: "list_projects",
   updateProject: "update_project",
   deleteProject: "delete_project",
+
+  // =============================================================================
+  // task
+  // =============================================================================
   createTask: "create_task",
   getTask: "get_task",
   listTasks: "list_tasks",
   updateTask: "update_task",
   deleteTask: "delete_task",
+
+  // =============================================================================
+  // session
+  // =============================================================================
   createSession: "create_session",
-  listAgentModels: "list_agent_models",
   getSession: "get_session",
   listSessions: "list_sessions",
   respondToSessionPermission: "respond_to_session_permission",
   stopSession: "stop_session",
   deleteSession: "delete_session",
+
+  // =============================================================================
+  // agentRuntime
+  // =============================================================================
+  listAgentModels: "list_agent_models",
+
+  // =============================================================================
+  // skill
+  // =============================================================================
   createSkill: "create_skill",
   getSkill: "get_skill",
   listSkills: "list_skills",
   updateSkill: "update_skill",
   deleteSkill: "delete_skill",
+
+  // =============================================================================
+  // agent
+  // =============================================================================
   createAgent: "create_agent",
   getAgent: "get_agent",
   listAgents: "list_agents",
   updateAgent: "update_agent",
   deleteAgent: "delete_agent",
+
+  // =============================================================================
+  // gitIdentity
+  // =============================================================================
   getGitIdentity: "get_git_identity",
 } as const satisfies Record<SupportedTauriOperation, string>;
 
