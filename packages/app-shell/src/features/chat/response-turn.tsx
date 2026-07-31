@@ -56,7 +56,15 @@ export function ResponseTurn({ turn, userName }: ResponseTurnProps) {
             case "toolGroup":
               return <ToolCallGroup key={item.id} kind={item.groupKind} tools={item.tools} />;
             case "message":
-              return <MessageBubble key={item.id} message={item} userName={userName} embeddedAssistant />;
+              return (
+                <MessageBubble
+                  key={item.id}
+                  message={item}
+                  userName={userName}
+                  embeddedAssistant
+                  streaming={turn.status === "streaming" && index === displayItems.length - 1}
+                />
+              );
             case "unsupportedContent":
               return (
                 <p key={item.id} className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">

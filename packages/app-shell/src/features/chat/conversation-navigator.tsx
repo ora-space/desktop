@@ -9,7 +9,9 @@ import { ConversationPreviewMarkdown } from "./conversation-preview-markdown";
 interface ConversationNavigatorProps {
   turns: ChatTurn[];
   activeAnchorId: string | null;
+  isAtTail: boolean;
   onNavigate: (anchorId: string) => void;
+  onNavigateToTail: () => void;
 }
 
 interface ConversationAnchor {
@@ -41,7 +43,13 @@ const ANCHOR_WIDTH = {
 } as const;
 
 /** Renders a Grok-style minimap with separate beats for prompts and responses. */
-export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: ConversationNavigatorProps) {
+export function ConversationNavigator({
+  turns,
+  activeAnchorId,
+  isAtTail,
+  onNavigate,
+  onNavigateToTail,
+}: ConversationNavigatorProps) {
   const { t } = useTranslation();
   const anchorListRef = useRef<HTMLDivElement>(null);
   const anchorTrackRef = useRef<HTMLDivElement>(null);
@@ -187,11 +195,19 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
 
   const matchedActiveIndex = anchors.findIndex((anchor) => anchor.id === activeAnchorId);
   const activeIndex = matchedActiveIndex >= 0 ? matchedActiveIndex : Math.max(0, anchors.length - 1);
+  const isAtLastAnchor = activeIndex === anchors.length - 1;
+  const isAtNavigationEnd = isAtLastAnchor && isAtTail;
 
   /** Moves through prompts and responses in the same order as the visible anchor track. */
   const navigateByAnchor = (offset: -1 | 1) => {
     const nextAnchor = anchors[activeIndex + offset];
-    if (nextAnchor) onNavigate(nextAnchor.id);
+    if (nextAnchor) {
+      onNavigate(nextAnchor.id);
+      return;
+    }
+    // The final response can become active before its trailing content reaches the
+    // viewport bottom. A second downward action should finish that journey.
+    if (offset === 1 && !isAtTail) onNavigateToTail();
   };
 
   return (
@@ -276,7 +292,7 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
           </div>
         </div>
 
-        <Tooltip open={activeIndex === anchors.length - 1 && nextControlHovered}>
+        <Tooltip open={isAtLastAnchor && nextControlHovered}>
           <TooltipTrigger
             render={
               <span
@@ -288,8 +304,12 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
           >
             <button
               type="button"
-              aria-label={activeIndex === anchors.length - 1 ? t("chat.lastMessageReached") : t("chat.nextMessage")}
-              disabled={activeIndex === anchors.length - 1}
+              aria-label={isAtNavigationEnd
+                ? t("chat.conversationBottomReached")
+                : isAtLastAnchor
+                  ? t("chat.scrollToBottom")
+                  : t("chat.nextMessage")}
+              disabled={isAtNavigationEnd}
               onClick={() => navigateByAnchor(1)}
               className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-[color,background-color,opacity] duration-150 group-hover/history-nav:opacity-100 group-focus-within/history-nav:opacity-100 hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:text-muted-foreground/35"
             >
@@ -297,7 +317,23 @@ export function ConversationNavigator({ turns, activeAnchorId, onNavigate }: Con
             </button>
           </TooltipTrigger>
           <TooltipContent side="left" className={NAVIGATION_OVERLAY_SURFACE_CLASS}>
-            {t("chat.lastMessageReached")}
+            <span className="grid">
+              {/* Invisible copies keep the overlay's footprint stable while the
+                  visible label changes, so the positioner has nothing to reflow. */}
+              <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                {t("chat.scrollToBottom")}
+              </span>
+              <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                {t("chat.conversationBottomReached")}
+              </span>
+              <span
+                key={isAtNavigationEnd ? "reached" : "action"}
+                data-testid="conversation-navigation-end-hint"
+                className="col-start-1 row-start-1 animate-in fade-in-0 duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none"
+              >
+                {isAtNavigationEnd ? t("chat.conversationBottomReached") : t("chat.scrollToBottom")}
+              </span>
+            </span>
           </TooltipContent>
         </Tooltip>
         </div>

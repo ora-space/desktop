@@ -14,6 +14,10 @@ import {
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import type { ChatThought, ChatToolCall, ChatTurnStatus } from "@ora/chat";
+import {
+  StreamingThoughtReveal,
+  useStreamingThoughtRevealStart,
+} from "./streaming-thought-reveal";
 import { ToolCallBlock } from "./tool-call-block";
 
 export type ActivityItem = ChatThought | ChatToolCall;
@@ -88,6 +92,7 @@ export function ActivityGroup({ items, turnStatus, isLatestActivity }: ActivityG
                 <ThoughtTimelineItem
                   thought={entry.thought}
                   open={selectedId === entry.id}
+                  streaming={status === "active" && entry.id === latestItemId}
                   onOpenChange={(nextOpen) => toggleItem(entry.id, nextOpen)}
                 />
               ) : entry.tools.length === 1 ? (
@@ -204,27 +209,65 @@ function ActivityMetrics({ items }: { items: ActivityItem[] }) {
 function ThoughtTimelineItem({
   thought,
   open,
+  streaming,
   onOpenChange,
 }: {
   thought: ChatThought;
   open: boolean;
+  streaming: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const revealStart = useStreamingThoughtRevealStart(thought.content, streaming);
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <CollapsibleTrigger className={`flex min-h-11 w-full items-center gap-2 rounded-r-sm px-2 py-1.5 text-left text-xs outline-none transition-colors duration-200 hover:bg-muted/25 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 ${open ? "bg-muted/25 text-foreground" : "text-muted-foreground"}`}>
         <IconRoute className="size-4 shrink-0 text-violet-600 dark:text-violet-400" />
         <span className="shrink-0 font-medium">{t("chat.thought")}</span>
-        <span className="min-w-0 flex-1 truncate opacity-80">{thought.content}</span>
+        <span className="min-w-0 flex-1 truncate opacity-80">
+          <StreamingThoughtText
+            content={thought.content}
+            reveal={streaming && !open}
+            revealStart={revealStart}
+          />
+        </span>
         <IconChevronDown className={`size-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none ${open ? "rotate-180" : ""}`} />
       </CollapsibleTrigger>
       <CollapsibleContent>
         <p data-selectable className="ml-6 rounded-r-sm border-l-2 border-violet-500/50 bg-muted/20 px-3 py-2 text-xs leading-5 whitespace-pre-wrap text-muted-foreground">
-          {thought.content}
+          <StreamingThoughtText
+            content={thought.content}
+            reveal={streaming && open}
+            revealStart={revealStart}
+          />
         </p>
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+/** Reveals only the live thought suffix while leaving completed reasoning visually stable. */
+function StreamingThoughtText({
+  content,
+  reveal,
+  revealStart,
+}: {
+  content: string;
+  reveal: boolean;
+  revealStart: number;
+}) {
+  if (!reveal) return content;
+  const stableText = content.slice(0, revealStart);
+  const revealedText = content.slice(revealStart);
+  return (
+    <>
+      {stableText}
+      {revealedText !== "" && (
+        <StreamingThoughtReveal key={`${revealStart}-${content.length}`}>
+          {revealedText}
+        </StreamingThoughtReveal>
+      )}
+    </>
   );
 }
 
