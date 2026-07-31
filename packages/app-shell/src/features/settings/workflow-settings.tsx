@@ -16,12 +16,15 @@ import {
   type ResizablePanelHandle,
 } from "@ora/ui";
 import {
+  createMockWorkflowCapabilities,
   createMockWorkflowNode,
   MockWorkflowRepository,
+  type WorkflowCapabilities,
   type WorkflowDefinition,
   type WorkflowLocale,
   type WorkflowNodeKind,
   type WorkflowPosition,
+  type WorkflowRepository,
   type WorkflowRunResult,
 } from "@ora/workflow-mock";
 import { WorkflowCanvas } from "./workflow-canvas";
@@ -47,6 +50,24 @@ const MIN_WORKFLOW_CANVAS_WIDTH = 360;
 const NARROW_WORKFLOW_EDITOR_WIDTH = 1_000;
 const WORKFLOW_LIBRARY_WIDTH_KEY = "ora.workflow.library-width";
 const WORKFLOW_INSPECTOR_WIDTH_KEY = "ora.workflow.inspector-width";
+
+export interface WorkflowSettingsProps {
+  repository?: WorkflowRepository;
+  capabilities?: WorkflowCapabilities;
+}
+
+/** Finds the first readable graph ID that does not collide with imported or persisted elements. */
+function uniqueGraphId(prefix: string, existingIds: Iterable<string>): {
+  id: string;
+  sequence: number;
+} {
+  const existing = new Set(existingIds);
+  let sequence = 1;
+  while (existing.has(`${prefix}-${sequence}`)) {
+    sequence += 1;
+  }
+  return { id: `${prefix}-${sequence}`, sequence };
+}
 
 /** Restores a valid panel width without letting stale storage break the editor layout. */
 function storedPanelWidth(
@@ -75,10 +96,18 @@ function rememberPanelWidth(key: string, width: number): void {
 }
 
 /** Owns the frontend-only workflow editor state and coordinates the mock repository boundary. */
-export function WorkflowSettings() {
+export function WorkflowSettings({
+  repository: repositoryOverride,
+  capabilities: capabilitiesOverride,
+}: WorkflowSettingsProps = {}) {
   const { i18n, t } = useTranslation();
   const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
-  const repository = useMemo(() => new MockWorkflowRepository(locale), [locale]);
+  const [defaultRepository] = useState(() => new MockWorkflowRepository(locale));
+  const repository = repositoryOverride ?? defaultRepository;
+  const capabilities = useMemo(
+    () => capabilitiesOverride ?? createMockWorkflowCapabilities(locale),
+    [capabilitiesOverride, locale],
+  );
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -89,8 +118,8 @@ export function WorkflowSettings() {
   const [dirtyWorkflowIds, setDirtyWorkflowIds] = useState<Set<string>>(() => new Set());
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
-  const nextNodeNumber = useRef(1);
-  const nextEdgeNumber = useRef(1);
+  const workflowRevisionsRef = useRef(new Map<string, number>());
+  const runRequestRef = useRef(0);
   const editorLayoutRef = useRef<HTMLDivElement>(null);
   const libraryPanelRef = useRef<ResizablePanelHandle | null>(null);
   const inspectorPanelRef = useRef<ResizablePanelHandle | null>(null);
@@ -141,6 +170,16 @@ export function WorkflowSettings() {
       active = false;
     };
   }, [repository]);
+
+  useEffect(() => {
+    if (
+      !loading
+      && workflows.length > 0
+      && !workflows.some((candidate) => candidate.id === selectedWorkflowId)
+    ) {
+      setSelectedWorkflowId(workflows[0].id);
+    }
+  }, [loading, selectedWorkflowId, workflows]);
 
   const selectedNode = useMemo(
     () => workflow?.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -288,12 +327,18 @@ export function WorkflowSettings() {
       ),
     );
     if (selectedWorkflowId !== null) {
+      workflowRevisionsRef.current.set(
+        selectedWorkflowId,
+        (workflowRevisionsRef.current.get(selectedWorkflowId) ?? 0) + 1,
+      );
       setDirtyWorkflowIds((current) => new Set(current).add(selectedWorkflowId));
     }
   }
 
   /** Switches the active graph and clears transient state that belongs to the previous workflow. */
   function selectWorkflow(workflowId: string): void {
+    runRequestRef.current += 1;
+    setRunning(false);
     setSelectedWorkflowId(workflowId);
     setSelectedNodeId(null);
     setRunResult(null);
@@ -326,6 +371,10 @@ export function WorkflowSettings() {
         candidate.id === workflowId ? { ...candidate, name: nextName } : candidate,
       ),
     );
+    workflowRevisionsRef.current.set(
+      workflowId,
+      (workflowRevisionsRef.current.get(workflowId) ?? 0) + 1,
+    );
     setDirtyWorkflowIds((current) => new Set(current).add(workflowId));
   }
 
@@ -335,13 +384,21 @@ export function WorkflowSettings() {
     setManagerError(null);
     try {
       await repository.delete(workflowId);
-      const remaining = workflows.filter((candidate) => candidate.id !== workflowId);
-      setWorkflows(remaining);
+      setWorkflows((current) =>
+        current.filter((candidate) => candidate.id !== workflowId),
+      );
+      setSelectedWorkflowId((current) => {
+        if (current === workflowId) {
+          runRequestRef.current += 1;
+          return null;
+        }
+        return current;
+      });
       if (selectedWorkflowId === workflowId) {
-        setSelectedWorkflowId(remaining[0]?.id ?? null);
         setSelectedNodeId(null);
         setRunResult(null);
       }
+      workflowRevisionsRef.current.delete(workflowId);
       setDirtyWorkflowIds((current) => {
         const next = new Set(current);
         next.delete(workflowId);
@@ -371,7 +428,13 @@ export function WorkflowSettings() {
 
   /** Adds a catalog node at a canvas-provided position and selects it for immediate editing. */
   function addNode(kind: WorkflowNodeKind, position: WorkflowPosition): void {
-    const sequence = nextNodeNumber.current++;
+    if (workflow === null) {
+      return;
+    }
+    const { sequence } = uniqueGraphId(kind, [
+      ...workflow.nodes.map((node) => node.id),
+      ...workflow.edges.map((edge) => edge.id),
+    ]);
     const node = createMockWorkflowNode({
       kind,
       sequence,
@@ -406,16 +469,23 @@ export function WorkflowSettings() {
   function connectNodes(source: string, target: string): void {
     updateWorkflow((current) => {
       if (
-        current.edges.some((edge) => edge.source === source && edge.target === target)
+        source === target
+        || !current.nodes.some((node) => node.id === source)
+        || !current.nodes.some((node) => node.id === target)
+        || current.edges.some((edge) => edge.source === source && edge.target === target)
       ) {
         return current;
       }
+      const { id } = uniqueGraphId("edge", [
+        ...current.nodes.map((node) => node.id),
+        ...current.edges.map((edge) => edge.id),
+      ]);
       return {
         ...current,
         edges: [
           ...current.edges,
           {
-            id: `edge-${source}-${target}-${nextEdgeNumber.current++}`,
+            id,
             source,
             target,
           },
@@ -453,16 +523,21 @@ export function WorkflowSettings() {
       return;
     }
     setSaving(true);
+    const savingRevision = workflowRevisionsRef.current.get(workflow.id) ?? 0;
     try {
       const persisted = await repository.save(workflow);
-      setWorkflows((current) =>
-        current.map((candidate) => candidate.id === persisted.id ? persisted : candidate),
-      );
-      setDirtyWorkflowIds((current) => {
-        const next = new Set(current);
-        next.delete(persisted.id);
-        return next;
-      });
+      if ((workflowRevisionsRef.current.get(persisted.id) ?? 0) === savingRevision) {
+        setWorkflows((current) =>
+          current.map((candidate) => candidate.id === persisted.id ? persisted : candidate),
+        );
+        setDirtyWorkflowIds((current) => {
+          const next = new Set(current);
+          next.delete(persisted.id);
+          return next;
+        });
+      }
+    } catch {
+      setManagerError(t("settings.workflow.manageError"));
     } finally {
       setSaving(false);
     }
@@ -474,12 +549,28 @@ export function WorkflowSettings() {
       return;
     }
     expandInspector();
+    const request = ++runRequestRef.current;
+    const draft = workflow;
     setRunning(true);
     setRunResult(null);
     try {
-      setRunResult(await repository.run(workflow.id, input));
+      const result = await repository.run(draft, input);
+      if (runRequestRef.current === request) {
+        setRunResult(result);
+      }
+    } catch {
+      if (runRequestRef.current === request) {
+        setRunResult({
+          status: "failed",
+          durationMs: 0,
+          output: t("settings.workflow.runError"),
+          steps: [],
+        });
+      }
     } finally {
-      setRunning(false);
+      if (runRequestRef.current === request) {
+        setRunning(false);
+      }
     }
   }
 
@@ -522,9 +613,11 @@ export function WorkflowSettings() {
                   aria-label={t("settings.workflow.workflowName")}
                   className="h-7 max-w-72 border-transparent bg-transparent px-1 text-sm font-semibold shadow-none hover:border-border focus-visible:border-border"
                 />
-                <span className="hidden rounded-full border border-border px-2 py-0.5 text-[9px] font-medium text-muted-foreground sm:inline">
-                  MOCK
-                </span>
+                {repository.dataSourceKind === "mock" && (
+                  <span className="hidden rounded-full border border-border px-2 py-0.5 text-[9px] font-medium text-muted-foreground sm:inline">
+                    MOCK
+                  </span>
+                )}
               </div>
               <p className="truncate px-1 text-[10px] text-muted-foreground">
                 {workflow.description}
@@ -642,6 +735,7 @@ export function WorkflowSettings() {
             ) : (
               <WorkflowCanvas
                 key={workflow.id}
+                capabilities={capabilities}
                 nodes={workflow.nodes}
                 edges={workflow.edges}
                 selectedNodeId={selectedNodeId}
@@ -720,6 +814,7 @@ export function WorkflowSettings() {
                 node={selectedNode}
                 running={running}
                 runResult={runResult}
+                capabilities={capabilities}
                 onUpdate={(updatedNode) =>
                   updateWorkflow((current) => ({
                     ...current,

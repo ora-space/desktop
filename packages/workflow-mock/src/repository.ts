@@ -15,6 +15,7 @@ function cloneWorkflow(workflow: WorkflowDefinition): WorkflowDefinition {
 
 /** Simulates the future workflow API while keeping all prototype state inside this package. */
 export class MockWorkflowRepository implements WorkflowRepository {
+  readonly dataSourceKind = "mock" as const;
   private workflows: Map<string, WorkflowDefinition>;
   private nextWorkflowId = 1;
 
@@ -71,6 +72,9 @@ export class MockWorkflowRepository implements WorkflowRepository {
   /** Persists changes in memory for the lifetime of the current application process. */
   async save(workflow: WorkflowDefinition): Promise<WorkflowDefinition> {
     await waitForMockLatency();
+    if (!isWorkflowDefinition(workflow)) {
+      throw new Error("Invalid workflow definition");
+    }
     const saved = {
       ...cloneWorkflow(workflow),
       updatedAt: new Date().toISOString(),
@@ -107,9 +111,11 @@ export class MockWorkflowRepository implements WorkflowRepository {
   }
 
   /** Produces deterministic preview output without executing tools or contacting a model. */
-  async run(id: string, input: string): Promise<WorkflowRunResult> {
-    const workflow = await this.get(id);
+  async run(workflow: WorkflowDefinition, input: string): Promise<WorkflowRunResult> {
     await waitForMockLatency();
+    if (!isWorkflowDefinition(workflow)) {
+      throw new Error("Invalid workflow definition");
+    }
     const steps = workflow.nodes.map((node, index) => ({
       nodeId: node.id,
       durationMs: 140 + index * 37,
@@ -133,7 +139,7 @@ function isWorkflowDefinition(value: unknown): value is WorkflowDefinition {
     return false;
   }
   const candidate = value as Partial<WorkflowDefinition>;
-  return typeof candidate.id === "string"
+  if (!(typeof candidate.id === "string"
     && candidate.id.trim() !== ""
     && typeof candidate.name === "string"
     && candidate.name.trim() !== ""
@@ -145,22 +151,73 @@ function isWorkflowDefinition(value: unknown): value is WorkflowDefinition {
       typeof node === "object"
       && node !== null
       && typeof (node as WorkflowDefinition["nodes"][number]).id === "string"
+      && (node as WorkflowDefinition["nodes"][number]).id.trim() !== ""
       && ["start", "prompt", "agent", "condition", "tool", "output"].includes(
         (node as WorkflowDefinition["nodes"][number]).kind,
       )
       && typeof (node as WorkflowDefinition["nodes"][number]).title === "string"
       && typeof (node as WorkflowDefinition["nodes"][number]).description === "string"
-      && typeof (node as WorkflowDefinition["nodes"][number]).position?.x === "number"
-      && typeof (node as WorkflowDefinition["nodes"][number]).position?.y === "number"
+      && Number.isFinite((node as WorkflowDefinition["nodes"][number]).position?.x)
+      && Number.isFinite((node as WorkflowDefinition["nodes"][number]).position?.y)
       && typeof (node as WorkflowDefinition["nodes"][number]).config?.instruction === "string"
+      && hasValidKindConfig(node as WorkflowDefinition["nodes"][number])
     )
     && candidate.edges.every((edge) =>
       typeof edge === "object"
       && edge !== null
       && typeof (edge as WorkflowDefinition["edges"][number]).id === "string"
+      && (edge as WorkflowDefinition["edges"][number]).id.trim() !== ""
       && typeof (edge as WorkflowDefinition["edges"][number]).source === "string"
       && typeof (edge as WorkflowDefinition["edges"][number]).target === "string"
-    );
+      && (
+        (edge as WorkflowDefinition["edges"][number]).label === undefined
+        || typeof (edge as WorkflowDefinition["edges"][number]).label === "string"
+      )
+    ))) {
+    return false;
+  }
+
+  const nodeIds = new Set(candidate.nodes.map((node) => node.id));
+  const edgeIds = new Set(candidate.edges.map((edge) => edge.id));
+  return nodeIds.size === candidate.nodes.length
+    && edgeIds.size === candidate.edges.length
+    && new Set([...nodeIds, ...edgeIds]).size
+      === candidate.nodes.length + candidate.edges.length
+    && candidate.nodes.filter((node) => node.kind === "start").length === 1
+    && candidate.edges.every((edge) =>
+      edge.source !== edge.target
+      && nodeIds.has(edge.source)
+      && nodeIds.has(edge.target)
+    )
+    && new Set(candidate.edges.map((edge) => `${edge.source}\u0000${edge.target}`)).size
+      === candidate.edges.length;
+}
+
+/** Keeps node-specific configuration invariants intact at every persistence boundary. */
+function hasValidKindConfig(node: WorkflowDefinition["nodes"][number]): boolean {
+  switch (node.kind) {
+    case "start":
+    case "output":
+      return node.config.model === undefined
+        && node.config.tool === undefined
+        && node.config.condition === undefined;
+    case "prompt":
+    case "agent":
+      return typeof node.config.model === "string"
+        && node.config.model.trim() !== ""
+        && node.config.tool === undefined
+        && node.config.condition === undefined;
+    case "condition":
+      return typeof node.config.condition === "string"
+        && node.config.condition.trim() !== ""
+        && node.config.model === undefined
+        && node.config.tool === undefined;
+    case "tool":
+      return typeof node.config.tool === "string"
+        && node.config.tool.trim() !== ""
+        && node.config.model === undefined
+        && node.config.condition === undefined;
+  }
 }
 
 /** Keeps mock timing in one place so it can be replaced or disabled in tests later. */

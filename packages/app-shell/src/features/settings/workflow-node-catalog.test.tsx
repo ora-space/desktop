@@ -1,6 +1,9 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createMockWorkflowCapabilities } from "@ora/workflow-mock";
 import { WorkflowNodeCatalog } from "./workflow-node-catalog";
+
+const capabilities = createMockWorkflowCapabilities("en-US");
 
 describe("WorkflowNodeCatalog", () => {
   afterEach(() => {
@@ -8,7 +11,13 @@ describe("WorkflowNodeCatalog", () => {
   });
 
   it("maps wheel movement to horizontal scrolling without moving the canvas", () => {
-    render(<WorkflowNodeCatalog onAdd={vi.fn()} onDrop={vi.fn()} />);
+    render(
+      <WorkflowNodeCatalog
+        capabilities={capabilities}
+        onAdd={vi.fn()}
+        onDrop={vi.fn()}
+      />,
+    );
     const catalog = screen.getByRole("toolbar");
     const viewport = catalog.querySelector<HTMLElement>("[data-workflow-node-scroll]");
     expect(viewport).not.toBeNull();
@@ -28,7 +37,13 @@ describe("WorkflowNodeCatalog", () => {
 
   it("shows edge resistance even when every button already fits and returns after the wheel stops", () => {
     vi.useFakeTimers();
-    render(<WorkflowNodeCatalog onAdd={vi.fn()} onDrop={vi.fn()} />);
+    render(
+      <WorkflowNodeCatalog
+        capabilities={capabilities}
+        onAdd={vi.fn()}
+        onDrop={vi.fn()}
+      />,
+    );
     const catalog = screen.getByRole("toolbar");
     const viewport = catalog.querySelector<HTMLElement>("[data-workflow-node-scroll]");
     const track = catalog.querySelector<HTMLElement>("[data-workflow-node-track]");
