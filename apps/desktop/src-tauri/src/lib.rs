@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod dashboard;
 mod error;
+mod skill_marketplace;
 mod state;
 
 use crate::config::DesktopConfigStore;
@@ -71,6 +72,7 @@ pub fn run() {
             commands::resolve_task_cwd,
             commands::open_location,
             dashboard::get_dashboard_url,
+            skill_marketplace::open_skill_marketplace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
