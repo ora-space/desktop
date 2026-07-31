@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createMockClient, createMockClientState } from "../../test/mock-client";
 import { createTestQueryClient, renderHookWithClient } from "../../test/hook-harness";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
+import { queryKeys } from "./query-keys";
 import { useCreateTask } from "./use-workspace-mutations";
 
 beforeEach(() => {
@@ -35,5 +36,30 @@ describe("useCreateTask", () => {
     expect(useWorkspaceSelectionStore.getState().selection).toEqual(workspaceMode === "worktree"
       ? { projectId: "p1", taskId: "t1", sessionId: null }
       : { projectId: "p1", taskId: null, sessionId: null });
+  });
+
+  it("invalidates project branches after creating a worktree", async () => {
+    const state = createMockClientState();
+    const client = createMockClient(state);
+    const queryClient = createTestQueryClient();
+    const projectBranchesKey = queryKeys.projectBranches("p1");
+    queryClient.setQueryData(projectBranchesKey, []);
+    const { result } = renderHookWithClient(
+      () => useCreateTask(),
+      client,
+      queryClient,
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        projectId: "p1",
+        title: "Task",
+        status: "todo",
+        workspaceMode: "worktree",
+        baseBranch: "main",
+      });
+    });
+
+    expect(queryClient.getQueryState(projectBranchesKey)?.isInvalidated).toBe(true);
   });
 });
