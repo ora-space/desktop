@@ -9,9 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import { IconAdjustmentsAlt } from "@tabler/icons-react";
 import {
-  createMockWorkflowCapabilities,
-  createMockWorkflowNodeType,
-  type WorkflowLocale,
+  type WorkflowCapabilities,
   type WorkflowNodeKind,
 } from "@ora/workflow-mock";
 import { cn } from "@ora/ui";
@@ -42,15 +40,16 @@ interface NodeDragPreview {
 
 /** Presents node types as a compact bottom dock that stays close to the canvas. */
 export function WorkflowNodeCatalog({
+  capabilities,
   onAdd,
   onDrop,
 }: {
+  capabilities: WorkflowCapabilities;
   onAdd: (kind: WorkflowNodeKind) => void;
   onDrop: (kind: WorkflowNodeKind, position: ClientPosition) => void;
 }) {
-  const { i18n, t } = useTranslation();
-  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
-  const nodeTypes = createMockWorkflowCapabilities(locale).nodeTypes;
+  const { t } = useTranslation();
+  const nodeTypes = capabilities.nodeTypes;
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const returnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const elasticOffsetRef = useRef(0);
@@ -253,7 +252,13 @@ export function WorkflowNodeCatalog({
         </div>
       </div>
       {nodeDragPreview !== null && createPortal(
-        <WorkflowNodeDragPreview {...nodeDragPreview} />,
+        <WorkflowNodeDragPreview
+          {...nodeDragPreview}
+          label={
+            nodeTypes.find((nodeType) => nodeType.kind === nodeDragPreview.kind)?.label
+              ?? nodeDragPreview.kind
+          }
+        />,
         document.body,
       )}
     </div>
@@ -263,12 +268,10 @@ export function WorkflowNodeCatalog({
 /** Renders a non-interactive node capsule centered on the pointer during a catalog drag. */
 function WorkflowNodeDragPreview({
   kind,
+  label,
   position,
-}: NodeDragPreview) {
-  const { i18n } = useTranslation();
-  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
+}: NodeDragPreview & { label: string }) {
   const metadata = getNodeMetadata(kind);
-  const nodeType = createMockWorkflowNodeType(kind, locale);
   const Icon = metadata.icon;
 
   return (
@@ -288,7 +291,7 @@ function WorkflowNodeDragPreview({
       )}>
         <Icon className="size-3.5" stroke={1.8} />
       </span>
-      <span className="pr-1 text-[10px] font-medium">{nodeType.label}</span>
+      <span className="pr-1 text-[10px] font-medium">{label}</span>
     </div>
   );
 }

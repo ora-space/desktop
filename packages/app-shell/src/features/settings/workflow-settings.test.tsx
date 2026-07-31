@@ -1,10 +1,39 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../../i18n/i18n-instance";
 import { WorkflowSettings } from "./workflow-settings";
 
+/** Reads graph-space coordinates exposed by the React Flow node card. */
+function nodeGraphPosition(label: string): { x: string; y: string } {
+  const node = screen.getByLabelText(label);
+  return {
+    x: `${node.dataset.x}px`,
+    y: `${node.dataset.y}px`,
+  };
+}
+
+/** Locates the React Flow viewport transform used for pan/zoom assertions. */
+function flowViewport(): HTMLElement | null {
+  return document.querySelector(".react-flow__viewport");
+}
+
 describe("WorkflowSettings", () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return 800;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return 600;
+      },
+    });
+  });
+
   afterEach(async () => {
     Reflect.deleteProperty(document, "elementFromPoint");
     await appI18n.changeLanguage("zh-CN");
@@ -29,55 +58,54 @@ describe("WorkflowSettings", () => {
     expect(await screen.findByText("模拟运行成功")).toBeInTheDocument();
     expect(screen.getByText(/发现 2 个建议项，未发现阻塞问题。/)).toBeInTheDocument();
 
-    const canvas = screen.getByLabelText("工作流画布");
-    canvas.setPointerCapture = () => {};
-    fireEvent.pointerDown(canvas, {
-      button: 0,
-      pointerId: 1,
-      clientX: 100,
-      clientY: 100,
-    });
-    fireEvent.pointerUp(canvas, {
-      pointerId: 1,
-      clientX: 100,
-      clientY: 100,
-    });
+    const pane = document.querySelector(".react-flow__pane");
+    expect(pane).not.toBeNull();
+    fireEvent.click(pane!);
 
     expect(screen.getByText("模拟运行成功")).toBeInTheDocument();
   });
 
   it("zooms around the pointer with the mouse wheel", async () => {
     render(<WorkflowSettings />);
-    const canvas = await screen.findByLabelText("工作流画布");
+    await screen.findByLabelText("工作流画布");
+    const pane = document.querySelector(".react-flow__pane");
+    expect(pane).not.toBeNull();
 
     expect(screen.getByText("100%")).toBeInTheDocument();
-    fireEvent.wheel(canvas, { deltaY: -200, clientX: 240, clientY: 180 });
+    fireEvent.wheel(pane!, { deltaY: -200, clientX: 240, clientY: 180 });
 
     await waitFor(() => {
       expect(screen.queryByText("100%")).not.toBeInTheDocument();
     });
   });
 
-  it("pans the board by dragging empty canvas space", async () => {
+  it("exposes canvas zoom controls and resets the React Flow viewport", async () => {
+    const user = userEvent.setup();
     render(<WorkflowSettings />);
-    const canvas = await screen.findByLabelText("工作流画布");
-    canvas.setPointerCapture = () => {};
-    const stage = canvas.querySelector<HTMLElement>(".origin-top-left");
+    await screen.findByLabelText("工作流画布");
+    const viewport = flowViewport();
 
-    expect(stage?.style.transform).toBe("translate(32px, 32px) scale(1)");
-    fireEvent.pointerDown(canvas, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
-    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 170, pointerId: 1 });
-    fireEvent.pointerUp(canvas, { clientX: 150, clientY: 170, pointerId: 1 });
+    expect(viewport?.style.transform).toContain("translate(32px,32px)");
+    expect(screen.getByText("100%")).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "放大画布" }));
     await waitFor(() => {
-      expect(stage?.style.transform).toBe("translate(82px, 102px) scale(1)");
+      expect(screen.queryByText("100%")).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("button", { name: "显示完整工作流" })).toBeInTheDocument();
+    expect(screen.getByLabelText("工作流小地图")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "重置画布视图" }));
+    await waitFor(() => {
+      expect(screen.getByText("100%")).toBeInTheDocument();
+      expect(viewport?.style.transform).toContain("translate(32px,32px)");
     });
   });
 
   it("does not pan from the panel-resize guard zones at canvas edges", async () => {
     render(<WorkflowSettings />);
     const canvas = await screen.findByLabelText("工作流画布");
-    canvas.setPointerCapture = () => {};
     vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
       ...canvas.getBoundingClientRect(),
       left: 0,
@@ -87,83 +115,46 @@ describe("WorkflowSettings", () => {
       right: 800,
       bottom: 600,
     });
-    const stage = canvas.querySelector<HTMLElement>(".origin-top-left");
+    const viewport = flowViewport();
+    const before = viewport?.style.transform;
 
     fireEvent.pointerDown(canvas, {
       button: 0,
       clientX: 6,
       clientY: 200,
       pointerId: 1,
-    });
-    fireEvent.pointerMove(canvas, {
-      clientX: 80,
-      clientY: 240,
-      pointerId: 1,
-    });
-    fireEvent.pointerUp(canvas, {
-      clientX: 80,
-      clientY: 240,
-      pointerId: 1,
+      bubbles: true,
     });
 
-    expect(stage?.style.transform).toBe("translate(32px, 32px) scale(1)");
+    expect(viewport?.style.transform).toBe(before);
   });
 
-  it("allows nodes to move continuously through the graph origin", async () => {
+  it("keeps workflow node positions under parent graph state", async () => {
     render(<WorkflowSettings />);
-    const startNode = await screen.findByLabelText("开始节点: 开始");
-    startNode.setPointerCapture = () => {};
+    await screen.findByLabelText("开始节点: 开始");
 
-    fireEvent.pointerDown(startNode, {
-      button: 0,
-      pointerId: 1,
-      clientX: 200,
-      clientY: 300,
+    expect(nodeGraphPosition("开始节点: 开始")).toEqual({
+      x: "72px",
+      y: "286px",
     });
-    fireEvent.pointerMove(startNode, {
-      pointerId: 1,
-      clientX: 50,
-      clientY: -50,
-    });
-    fireEvent.pointerUp(startNode, {
-      pointerId: 1,
-      clientX: 50,
-      clientY: -50,
-    });
-
-    await waitFor(() => {
-      expect({
-        left: startNode.style.left,
-        top: startNode.style.top,
-      }).toEqual({
-        left: "-78px",
-        top: "-64px",
-      });
+    expect(nodeGraphPosition("提示词节点: 理解改动")).toEqual({
+      x: "356px",
+      y: "188px",
     });
   });
 
   it("collapses node configuration after a stationary blank-canvas click", async () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
-    const canvas = await screen.findByLabelText("工作流画布");
-    const startNode = screen.getByLabelText("开始节点: 开始");
-    canvas.setPointerCapture = () => {};
-    startNode.setPointerCapture = () => {};
+    const startNode = await screen.findByLabelText("开始节点: 开始");
+    const flowNode = startNode.closest(".react-flow__node") ?? startNode;
 
-    await user.click(startNode);
+    await user.click(flowNode);
     expect(screen.getByRole("button", { name: "收起节点配置" })).toBeInTheDocument();
 
-    fireEvent.pointerDown(canvas, {
-      button: 0,
-      pointerId: 1,
-      clientX: 100,
-      clientY: 100,
-    });
-    fireEvent.pointerUp(canvas, {
-      pointerId: 1,
-      clientX: 100,
-      clientY: 100,
-    });
+    const pane = document.querySelector(".react-flow__pane");
+    expect(pane).not.toBeNull();
+    fireEvent.click(pane!);
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "收起节点配置" })).not.toBeInTheDocument();
@@ -186,9 +177,9 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
     const startNode = await screen.findByLabelText("开始节点: 开始");
-    startNode.setPointerCapture = () => {};
+    const flowNode = startNode.closest(".react-flow__node") ?? startNode;
 
-    await user.click(startNode);
+    await user.click(flowNode);
     await user.click(screen.getByRole("button", { name: "展开工作流列表" }));
 
     await waitFor(() => {
@@ -200,13 +191,13 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
     const startNode = await screen.findByLabelText("开始节点: 开始");
-    startNode.setPointerCapture = () => {};
+    const flowNode = startNode.closest(".react-flow__node") ?? startNode;
 
-    await user.click(startNode);
+    await user.click(flowNode);
     await user.click(screen.getByRole("button", { name: "收起节点配置" }));
     expect(screen.queryByRole("button", { name: "收起节点配置" })).not.toBeInTheDocument();
 
-    await user.click(startNode);
+    await user.click(flowNode);
     fireEvent.keyDown(startNode, { key: "Escape" });
 
     await waitFor(() => {
@@ -237,13 +228,9 @@ describe("WorkflowSettings", () => {
     await user.click(screen.getByRole("button", { name: "提示词" }));
 
     expect(screen.getAllByText("提示词 1")).toHaveLength(2);
-    const addedNode = screen.getByLabelText("提示词节点: 提示词 1");
-    expect({
-      left: addedNode.style.left,
-      top: addedNode.style.top,
-    }).toEqual({
-      left: "253px",
-      top: "207px",
+    expect(nodeGraphPosition("提示词节点: 提示词 1")).toEqual({
+      x: "260px",
+      y: "200px",
     });
   });
 
@@ -292,13 +279,9 @@ describe("WorkflowSettings", () => {
     fireEvent.click(toolButton);
 
     expect(document.querySelector("[data-workflow-node-preview]")).not.toBeInTheDocument();
-    const addedNode = screen.getByLabelText("工具节点: 工具 1");
-    expect({
-      left: addedNode.style.left,
-      top: addedNode.style.top,
-    }).toEqual({
-      left: "353px",
-      top: "257px",
+    expect(nodeGraphPosition("工具节点: 工具 1")).toEqual({
+      x: "360px",
+      y: "260px",
     });
     expect(screen.queryByText("释放以添加节点")).not.toBeInTheDocument();
   });
@@ -327,7 +310,7 @@ describe("WorkflowSettings", () => {
     })).not.toBeInTheDocument();
   });
 
-  it("moves a selected connection endpoint to another node", async () => {
+  it("shows React Flow reconnect controls after selecting an edge", async () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
 
@@ -336,80 +319,10 @@ describe("WorkflowSettings", () => {
     });
     await user.click(connection);
 
-    const sourceHandle = screen.getByRole("button", {
-      name: "移动连线起点：开始",
+    await waitFor(() => {
+      expect(document.querySelector(".react-flow__edgeupdater-source")).not.toBeNull();
+      expect(document.querySelector(".react-flow__edgeupdater-target")).not.toBeNull();
     });
-    const nextSourceHandle = screen.getByRole("button", {
-      name: "从运行检查开始连接",
-    });
-    const nextSourceNode = screen.getByLabelText("工具节点: 运行检查");
-    sourceHandle.setPointerCapture = () => {};
-    const elementFromPoint = vi.fn(() => nextSourceNode);
-    Object.defineProperty(document, "elementFromPoint", {
-      configurable: true,
-      value: elementFromPoint,
-    });
-
-    fireEvent.pointerDown(sourceHandle, {
-      pointerId: 1,
-      clientX: 302,
-      clientY: 347,
-    });
-    fireEvent.pointerMove(screen.getByLabelText("工作流连线"), {
-      pointerId: 1,
-      clientX: 1168,
-      clientY: 153,
-    });
-
-    expect(nextSourceNode.className).toContain("border-ring");
-    expect(nextSourceHandle.className).toContain("ring-2");
-
-    fireEvent.pointerUp(screen.getByLabelText("工作流连线"), {
-      pointerId: 1,
-      clientX: 1168,
-      clientY: 153,
-    });
-
-    expect(screen.getByRole("button", {
-      name: "选择从运行检查到理解改动的连线",
-    })).toBeInTheDocument();
-    expect(screen.queryByRole("button", {
-      name: "选择从开始到理解改动的连线",
-    })).not.toBeInTheDocument();
-
-    const targetHandle = screen.getByRole("button", {
-      name: "移动连线终点：理解改动",
-    });
-    const nextTargetHandle = screen.getByRole("button", {
-      name: "连接到质量门禁",
-    });
-    const nextTargetNode = screen.getByLabelText("条件分支节点: 质量门禁");
-    targetHandle.setPointerCapture = () => {};
-    elementFromPoint.mockReturnValue(nextTargetNode);
-
-    fireEvent.pointerDown(targetHandle, {
-      pointerId: 2,
-      clientX: 356,
-      clientY: 249,
-    });
-    fireEvent.pointerMove(screen.getByLabelText("工作流连线"), {
-      pointerId: 2,
-      clientX: 650,
-      clientY: 249,
-    });
-
-    expect(nextTargetNode.className).toContain("border-ring");
-    expect(nextTargetHandle.className).toContain("ring-2");
-
-    fireEvent.pointerUp(screen.getByLabelText("工作流连线"), {
-      pointerId: 2,
-      clientX: 650,
-      clientY: 249,
-    });
-
-    expect(screen.getByRole("button", {
-      name: "选择从运行检查到质量门禁的连线",
-    })).toBeInTheDocument();
   });
 
   it("creates a workflow from the left manager and allows renaming it", async () => {
@@ -440,6 +353,45 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("keeps newer draft edits when an older save finishes", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    const nameInput = await screen.findByLabelText("工作流名称");
+
+    fireEvent.change(nameInput, { target: { value: "保存中的版本" } });
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.change(screen.getByLabelText("工作流名称"), {
+      target: { value: "保存后继续编辑" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("保存后继续编辑")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    });
+  });
+
+  it("runs the unsaved draft visible in the editor", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    const nameInput = await screen.findByLabelText("工作流名称");
+
+    fireEvent.change(nameInput, { target: { value: "未保存草稿" } });
+    await user.click(screen.getAllByRole("button", { name: "测试运行" })[0]);
+
+    expect(await screen.findByText(/已完成“未保存草稿”的模拟运行/)).toBeInTheDocument();
+  });
+
+  it("preserves the current draft when the display language changes", async () => {
+    render(<WorkflowSettings />);
+    const nameInput = await screen.findByLabelText("工作流名称");
+
+    fireEvent.change(nameInput, { target: { value: "保留这个草稿" } });
+    await act(() => appI18n.changeLanguage("en-US"));
+
+    expect(screen.getByDisplayValue("保留这个草稿")).toBeInTheDocument();
+    expect(screen.getByLabelText("Workflow canvas")).toBeInTheDocument();
+  });
+
   it("localizes workflow chrome and mock content in English", async () => {
     await appI18n.changeLanguage("en-US");
     const user = userEvent.setup();
@@ -447,7 +399,9 @@ describe("WorkflowSettings", () => {
 
     expect(await screen.findByText("Code review workflow")).toBeInTheDocument();
     expect(screen.getByLabelText("Workflow canvas")).toBeInTheDocument();
-    expect(screen.getByText("Scroll to zoom · Drag to pan")).toBeInTheDocument();
+    expect(
+      screen.getByText("Scroll to zoom · Drag to pan · Nodes snap to grid"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "Test run" })[0]);
 

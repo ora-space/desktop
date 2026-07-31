@@ -104,7 +104,7 @@ describe("MockWorkflowRepository", () => {
 
   it("creates a deterministic successful preview trace", async () => {
     const repository = new MockWorkflowRepository();
-    const run = repository.run(MOCK_WORKFLOW.id, "Review the workspace");
+    const run = repository.run(MOCK_WORKFLOW, "Review the workspace");
     await vi.runAllTimersAsync();
     const result = await run;
 
@@ -129,7 +129,7 @@ describe("MockWorkflowRepository", () => {
     const workflowLoad = repository.get(MOCK_WORKFLOW.id);
     await vi.runAllTimersAsync();
     const workflow = await workflowLoad;
-    const run = repository.run(workflow.id, "");
+    const run = repository.run(workflow, "");
     await vi.runAllTimersAsync();
     const result = await run;
 
@@ -145,5 +145,65 @@ describe("MockWorkflowRepository", () => {
       output:
         'Completed a simulated run of "Code review workflow".\n\nInput: Review uncommitted changes in the current workspace\n\nFound 2 suggestions and no blocking issues.',
     });
+  });
+
+  it("runs the provided draft instead of reloading the persisted workflow", async () => {
+    const repository = new MockWorkflowRepository();
+    const draft = {
+      ...MOCK_WORKFLOW,
+      name: "Unsaved draft",
+      nodes: MOCK_WORKFLOW.nodes.slice(0, 1),
+      edges: [],
+    };
+    const run = repository.run(draft, "Draft input");
+    await vi.runAllTimersAsync();
+
+    await expect(run).resolves.toEqual(expect.objectContaining({
+      durationMs: 140,
+      output: expect.stringContaining("Unsaved draft"),
+      steps: [
+        { nodeId: "start", durationMs: 140, summary: "开始 已完成" },
+      ],
+    }));
+  });
+
+  it("rejects duplicate IDs, dangling edges, and invalid kind-specific config", async () => {
+    const repository = new MockWorkflowRepository();
+    const invalidDefinitions = [
+      {
+        ...MOCK_WORKFLOW,
+        id: "duplicate-node",
+        nodes: [...MOCK_WORKFLOW.nodes, MOCK_WORKFLOW.nodes[0]],
+      },
+      {
+        ...MOCK_WORKFLOW,
+        id: "dangling-edge",
+        edges: [{ id: "dangling", source: "start", target: "missing" }],
+      },
+      {
+        ...MOCK_WORKFLOW,
+        id: "invalid-config",
+        nodes: MOCK_WORKFLOW.nodes.map((node, index) =>
+          index === 0
+            ? { ...node, config: { ...node.config, model: "GPT-5" } }
+            : node,
+        ),
+      },
+      {
+        ...MOCK_WORKFLOW,
+        id: "missing-start",
+        nodes: MOCK_WORKFLOW.nodes.filter((node) => node.kind !== "start"),
+        edges: MOCK_WORKFLOW.edges.filter((edge) => edge.source !== "start"),
+      },
+    ];
+
+    const imports = invalidDefinitions.map((definition) =>
+      expect(repository.importDefinition(definition)).rejects.toThrow(
+        "Invalid workflow definition",
+      ),
+    );
+    await vi.runAllTimersAsync();
+
+    await Promise.all(imports);
   });
 });

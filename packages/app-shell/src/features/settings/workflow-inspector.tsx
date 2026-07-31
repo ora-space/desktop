@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconCircleCheck,
+  IconCircleX,
   IconClock,
   IconLayoutSidebarRightCollapse,
   IconPlayerPlay,
@@ -21,9 +22,7 @@ import {
   Textarea,
 } from "@ora/ui";
 import {
-  createMockWorkflowCapabilities,
-  createMockWorkflowNodeType,
-  type WorkflowLocale,
+  type WorkflowCapabilities,
   type WorkflowNode,
   type WorkflowRunResult,
 } from "@ora/workflow-mock";
@@ -33,6 +32,7 @@ interface WorkflowInspectorProps {
   node: WorkflowNode | null;
   runResult: WorkflowRunResult | null;
   running: boolean;
+  capabilities: WorkflowCapabilities;
   onUpdate: (node: WorkflowNode) => void;
   onDelete: (nodeId: string) => void;
   onCloseRun: () => void;
@@ -51,6 +51,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
   return (
     <WorkflowNodeInspector
       node={props.node}
+      capabilities={props.capabilities}
       onUpdate={props.onUpdate}
       onDelete={props.onDelete}
       onClose={props.onCloseNode}
@@ -87,20 +88,23 @@ function WorkflowInspectorEmpty({ onRun }: { onRun: (input: string) => void }) {
 /** Edits a node in place with visible labels and progressive, kind-specific fields. */
 function WorkflowNodeInspector({
   node,
+  capabilities,
   onUpdate,
   onDelete,
   onClose,
 }: {
   node: WorkflowNode;
+  capabilities: WorkflowCapabilities;
   onUpdate: (node: WorkflowNode) => void;
   onDelete: (nodeId: string) => void;
   onClose: () => void;
 }) {
-  const { i18n, t } = useTranslation();
-  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
-  const capabilities = createMockWorkflowCapabilities(locale);
+  const { t } = useTranslation();
   const metadata = getNodeMetadata(node.kind);
-  const nodeType = createMockWorkflowNodeType(node.kind, locale);
+  const nodeType = capabilities.nodeTypes.find((candidate) => candidate.kind === node.kind);
+  if (nodeType === undefined) {
+    throw new Error(`Missing workflow capability for node kind "${node.kind}"`);
+  }
   const Icon = metadata.icon;
   return (
     <aside className="flex min-h-0 flex-1 flex-col border-l border-border bg-background">
@@ -138,7 +142,7 @@ function WorkflowNodeInspector({
             onChange={(event) => onUpdate({ ...node, description: event.target.value })}
           />
         </InspectorField>
-        {(node.kind === "prompt" || node.kind === "agent") && (
+        {nodeType.configFields.includes("model") && (
           <InspectorField label={t("settings.workflow.field.model")} htmlFor="workflow-node-model">
             <Select
               value={node.config.model ?? capabilities.defaultModel}
@@ -161,7 +165,7 @@ function WorkflowNodeInspector({
             </Select>
           </InspectorField>
         )}
-        {node.kind === "tool" && (
+        {nodeType.configFields.includes("tool") && (
           <InspectorField label={t("settings.workflow.field.tool")} htmlFor="workflow-node-tool">
             <Select
               value={node.config.tool ?? capabilities.defaultTool}
@@ -184,7 +188,7 @@ function WorkflowNodeInspector({
             </Select>
           </InspectorField>
         )}
-        {node.kind === "condition" && (
+        {nodeType.configFields.includes("condition") && (
           <InspectorField label={t("settings.workflow.field.condition")} htmlFor="workflow-node-condition">
             <Input
               id="workflow-node-condition"
@@ -198,25 +202,28 @@ function WorkflowNodeInspector({
             />
           </InspectorField>
         )}
-        <InspectorField label={t("settings.workflow.field.instruction")} htmlFor="workflow-node-instruction">
-          <Textarea
-            id="workflow-node-instruction"
-            className="min-h-32 resize-none text-xs leading-5"
-            value={node.config.instruction}
-            onChange={(event) =>
-              onUpdate({
-                ...node,
-                config: { ...node.config, instruction: event.target.value },
-              })
-            }
-          />
-        </InspectorField>
+        {nodeType.configFields.includes("instruction") && (
+          <InspectorField label={t("settings.workflow.field.instruction")} htmlFor="workflow-node-instruction">
+            <Textarea
+              id="workflow-node-instruction"
+              className="min-h-32 resize-none text-xs leading-5"
+              value={node.config.instruction}
+              onChange={(event) =>
+                onUpdate({
+                  ...node,
+                  config: { ...node.config, instruction: event.target.value },
+                })
+              }
+            />
+          </InspectorField>
+        )}
       </div>
       <div className="border-t border-border p-3">
         <Button
           variant="ghost"
           className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive"
           onClick={() => onDelete(node.id)}
+          disabled={node.kind === "start"}
         >
           <IconTrash />
           {t("settings.workflow.deleteNode")}
@@ -235,6 +242,8 @@ function WorkflowRunPreview({
 }: WorkflowInspectorProps) {
   const { t } = useTranslation();
   const [input, setInput] = useState(() => t("settings.workflow.previewInput"));
+  const succeeded = runResult?.status !== "failed";
+  const ResultIcon = succeeded ? IconCircleCheck : IconCircleX;
 
   return (
     <aside className="flex min-h-0 flex-1 flex-col border-l border-border bg-background" aria-live="polite">
@@ -258,10 +267,28 @@ function WorkflowRunPreview({
           </div>
         ) : runResult !== null ? (
           <div className="space-y-4">
-            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/8 p-3">
-              <IconCircleCheck className="size-4 text-emerald-600 dark:text-emerald-400" />
+            <div
+              className={`flex items-center gap-2 rounded-lg border p-3 ${
+                succeeded
+                  ? "border-emerald-500/25 bg-emerald-500/8"
+                  : "border-destructive/25 bg-destructive/8"
+              }`}
+            >
+              <ResultIcon
+                className={`size-4 ${
+                  succeeded
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-destructive"
+                }`}
+              />
               <div>
-                <p className="text-xs font-medium">{t("settings.workflow.runSuccess")}</p>
+                <p className="text-xs font-medium">
+                  {t(
+                    succeeded
+                      ? "settings.workflow.runSuccess"
+                      : "settings.workflow.runFailed",
+                  )}
+                </p>
                 <p className="text-[10px] text-muted-foreground">{runResult.durationMs} ms</p>
               </div>
             </div>
@@ -270,7 +297,13 @@ function WorkflowRunPreview({
               <ol className="space-y-2">
                 {runResult.steps.map((step) => (
                   <li key={step.nodeId} className="flex items-center gap-2 text-[11px]">
-                    <IconCircleCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <ResultIcon
+                      className={`size-3.5 ${
+                        succeeded
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-destructive"
+                      }`}
+                    />
                     <span className="min-w-0 flex-1 truncate">{step.summary}</span>
                     <span className="flex items-center gap-1 tabular-nums text-muted-foreground">
                       <IconClock className="size-3" />
