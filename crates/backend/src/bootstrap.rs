@@ -1,7 +1,11 @@
 use crate::agent::AgentApi;
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
+use crate::aggregate_lifecycle::ProjectTaskLifecycleCoordinator;
 use crate::clock::SystemClock;
 use crate::error::{BackendError, BackendErrorKind};
+use crate::git_cleanup::{
+    AggregateDeletionKind, CommittedAggregateDeletion, cleanup_git_resources,
+};
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
@@ -41,12 +45,21 @@ pub enum BackendBootstrapError {
 pub struct Backend {
     pool: RepositoryPool,
     worktree_root: Arc<RwLock<PathBuf>>,
+    project_task_lifecycle: Arc<ProjectTaskLifecycleCoordinator>,
+    session_aggregate_lifecycle: Arc<tokio::sync::Mutex<()>>,
     project: Arc<ProjectApi>,
     task: Arc<TaskApi>,
     session: Arc<SessionApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     skill: Arc<SkillApi>,
     agent: Arc<AgentApi>,
+}
+
+/// Selects whether an aggregate deletion can conflict with in-flight task provisioning.
+#[derive(Debug)]
+enum TaskProvisioningCoordination {
+    Project(String),
+    Unrelated,
 }
 
 impl Backend {
@@ -65,8 +78,14 @@ impl Backend {
             .map_err(BackendBootstrapError::Database)?;
         let clock = SystemClock;
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
-        let agent_runtime = AgentRuntimeManager::new(pool.clone(), paths.home_directory, clock)
-            .map_err(BackendBootstrapError::AgentRuntime)?;
+        let session_aggregate_lifecycle = Arc::new(tokio::sync::Mutex::new(()));
+        let agent_runtime = AgentRuntimeManager::new(
+            pool.clone(),
+            paths.home_directory,
+            clock,
+            session_aggregate_lifecycle.clone(),
+        )
+        .map_err(BackendBootstrapError::AgentRuntime)?;
 
         Ok(Self {
             project: Arc::new(ProjectApi::new(pool.clone(), clock)),
@@ -77,6 +96,8 @@ impl Backend {
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             pool,
             worktree_root,
+            project_task_lifecycle: Arc::new(ProjectTaskLifecycleCoordinator::default()),
+            session_aggregate_lifecycle,
         })
     }
 
@@ -145,19 +166,38 @@ impl Backend {
         self.project.update(request).map_err(BackendError::from)
     }
     /// Deletes one project through the shared application composition.
-    pub fn delete_project(
+    pub async fn delete_project(
         &self,
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {
-        self.project.delete(request)
+        let project_id = request.project_id.clone();
+        let project = self.project.clone();
+        self.run_aggregate_deletion(
+            AggregateDeletionKind::Project,
+            TaskProvisioningCoordination::Project(project_id),
+            move || project.commit_delete(request),
+        )
+        .await
     }
 
     /// Creates one task through the shared application composition.
-    pub fn create_task(
+    pub async fn create_task(
         &self,
         request: CreateTaskRequest,
     ) -> Result<CreateTaskResponse, BackendError> {
-        self.task.create(request).map_err(BackendError::from)
+        let project_id = request.project_id.clone();
+        let provisioning = self
+            .project_task_lifecycle
+            .project(&project_id)?
+            .read_owned()
+            .await;
+        let task = self.task.clone();
+        tokio::task::spawn_blocking(move || {
+            let _provisioning = provisioning;
+            task.create(request).map_err(BackendError::from)
+        })
+        .await
+        .map_err(|_| task_creation_worker_error())?
     }
     /// Gets one task through the shared application composition.
     pub fn get_task(&self, request: GetTaskRequest) -> Result<GetTaskResponse, BackendError> {
@@ -175,11 +215,75 @@ impl Backend {
         self.task.update(request).map_err(BackendError::from)
     }
     /// Deletes one task through the shared application composition.
-    pub fn delete_task(
+    pub async fn delete_task(
         &self,
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
-        self.task.delete(request)
+        let task = self.task.clone();
+        self.run_aggregate_deletion(
+            AggregateDeletionKind::Task,
+            TaskProvisioningCoordination::Unrelated,
+            move || task.commit_delete(request),
+        )
+        .await
+    }
+
+    /// Commits one aggregate deletion under lifecycle coordination before unlocked Git cleanup.
+    async fn run_aggregate_deletion<Response, DeleteOperation>(
+        &self,
+        deletion_kind: AggregateDeletionKind,
+        task_coordination: TaskProvisioningCoordination,
+        delete_operation: DeleteOperation,
+    ) -> Result<Response, BackendError>
+    where
+        Response: Send + 'static,
+        DeleteOperation:
+            FnOnce() -> Result<CommittedAggregateDeletion<Response>, BackendError> + Send + 'static,
+    {
+        let worktree_root = self.worktree_root_snapshot()?;
+        let project_deletion = match task_coordination {
+            TaskProvisioningCoordination::Project(project_id) => Some(
+                self.project_task_lifecycle
+                    .project(&project_id)?
+                    .write_owned()
+                    .await,
+            ),
+            TaskProvisioningCoordination::Unrelated => None,
+        };
+        let session_lifecycle = self.session_aggregate_lifecycle.clone().lock_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let committed = {
+                let _session_lifecycle = session_lifecycle;
+                let _project_deletion = project_deletion;
+                delete_operation()?
+            };
+
+            let CommittedAggregateDeletion {
+                response,
+                git_cleanup_targets,
+            } = committed;
+            // Keeping post-commit cleanup in the same blocking job ensures it still
+            // runs if the caller cancels while awaiting the aggregate response.
+            cleanup_git_resources(deletion_kind, &git_cleanup_targets, &worktree_root);
+
+            Ok(response)
+        })
+        .await
+        .map_err(|_| aggregate_worker_error())?
+    }
+
+    /// Captures one checkout root for every cleanup target in the aggregate transaction.
+    fn worktree_root_snapshot(&self) -> Result<PathBuf, BackendError> {
+        self.worktree_root
+            .read()
+            .map(|root| root.clone())
+            .map_err(|_| {
+                BackendError::new(
+                    BackendErrorKind::Internal,
+                    "worktree_configuration_error",
+                    "worktree root configuration is unavailable",
+                )
+            })
     }
 
     /// Creates one session through the shared application composition.
@@ -318,6 +422,24 @@ impl Backend {
     }
 }
 
+/// Builds the stable error used when the blocking database worker cannot complete.
+fn aggregate_worker_error() -> BackendError {
+    BackendError::new(
+        BackendErrorKind::Internal,
+        "aggregate_worker_error",
+        "aggregate deletion worker failed",
+    )
+}
+
+/// Builds the stable error used when the blocking task-creation worker cannot complete.
+fn task_creation_worker_error() -> BackendError {
+    BackendError::new(
+        BackendErrorKind::Internal,
+        "task_creation_worker_error",
+        "task creation worker failed",
+    )
+}
+
 /// Creates one required runtime directory and preserves its exact failing path.
 fn ensure_directory(path: &Path) -> Result<(), BackendBootstrapError> {
     fs::create_dir_all(path).map_err(|source| BackendBootstrapError::DirectoryCreate {
@@ -332,14 +454,18 @@ mod tests {
     use crate::error::BackendErrorKind;
     use ora_contracts::CreateTaskRequest;
     use ora_contracts::{
-        CreateAgentRequest, CreateProjectRequest, CreateSkillRequest, DeleteAgentRequest,
-        DeleteProjectRequest, DeleteSkillRequest, DeleteTaskRequest, GetProjectRequest,
-        GetTaskRequest, ListAgentsRequest, ListProjectsRequest, ListSkillsRequest, TaskStatus,
+        AgentCli, CreateAgentRequest, CreateProjectRequest, CreateSessionRequest,
+        CreateSkillRequest, DeleteAgentRequest, DeleteProjectRequest, DeleteSkillRequest,
+        DeleteTaskRequest, GetProjectRequest, GetTaskRequest, ListAgentsRequest,
+        ListProjectsRequest, ListSkillsRequest, LoadSessionRequest, TaskStatus, TaskWorkspaceMode,
         UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
     };
+    use ora_logging::with_trace_logging;
+    use pretty_assertions::assert_eq;
     use std::fs;
     use std::path::Path;
     use std::process::Command;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     /// Verifies the shared composition owns storage bootstrap and complete non-Git CRUD flows.
@@ -437,11 +563,10 @@ mod tests {
         backend
             .delete_skill(DeleteSkillRequest { skill_id: skill.id })
             .expect("delete skill");
-        backend
-            .delete_project(DeleteProjectRequest {
-                project_id: project.id.clone(),
-            })
-            .expect("delete project");
+        block_on(backend.delete_project(DeleteProjectRequest {
+            project_id: project.id.clone(),
+        }))
+        .expect("delete project");
 
         let error = backend
             .get_project(GetProjectRequest {
@@ -452,7 +577,7 @@ mod tests {
         assert_eq!(error.code(), "project_not_found");
     }
 
-    /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.
+    /// Verifies task deletion resolves the original checkout and force-removes dirty Git state.
     #[test]
     fn deletes_existing_task_after_worktree_root_changes() {
         let temporary = TempDir::new().expect("create temporary backend directory");
@@ -472,35 +597,390 @@ mod tests {
             })
             .expect("create project")
             .project;
-        let task = backend
-            .create_task(CreateTaskRequest {
-                project_id: project.id,
-                title: "Move configuration".to_string(),
-                status: TaskStatus::Todo,
-                workspace_mode: None,
-            })
-            .expect("create task")
-            .task;
+        let task = block_on(backend.create_task(CreateTaskRequest {
+            project_id: project.id,
+            title: "Move configuration".to_string(),
+            status: TaskStatus::Todo,
+            workspace_mode: None,
+        }))
+        .expect("create task")
+        .task;
         let original_worktree_path = original_worktree_root.join(&task.id);
         assert!(original_worktree_path.is_dir());
+        fs::write(
+            original_worktree_path.join("uncommitted.txt"),
+            "must be removed",
+        )
+        .expect("create uncommitted task change");
 
         let replacement_root = temporary.path().join("replacement-worktrees");
         fs::create_dir_all(&replacement_root).expect("create replacement worktree root");
         backend
             .set_worktree_root(replacement_root)
             .expect("replace worktree creation root");
-        backend
-            .delete_task(DeleteTaskRequest {
-                task_id: task.id.clone(),
-            })
-            .expect("delete task without Git mutation");
+        block_on(backend.delete_task(DeleteTaskRequest {
+            task_id: task.id.clone(),
+        }))
+        .expect("delete task with best-effort Git cleanup");
 
-        assert!(original_worktree_path.exists());
+        assert!(!original_worktree_path.exists());
+        assert_eq!(local_branches(&repository_root), vec!["main".to_string()]);
         assert!(
             backend
                 .get_task(GetTaskRequest { task_id: task.id })
                 .is_err()
         );
+    }
+
+    /// Verifies deterministic-root fallback removes a detached task checkout.
+    #[test]
+    fn deletes_a_detached_worktree_from_its_expected_root() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let repository_root = temporary.path().join("repository");
+        initialize_repository(&repository_root);
+        let worktree_root = temporary.path().join("worktrees");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: worktree_root.clone(),
+            home_directory: temporary.path().to_path_buf(),
+        })
+        .expect("open shared backend");
+        let project = backend
+            .create_project(CreateProjectRequest {
+                name: "Ora".to_string(),
+                root_path: repository_root.to_string_lossy().into_owned(),
+            })
+            .expect("create project")
+            .project;
+        let task = block_on(backend.create_task(CreateTaskRequest {
+            project_id: project.id,
+            title: "Detached checkout".to_string(),
+            status: TaskStatus::Todo,
+            workspace_mode: None,
+        }))
+        .expect("create task")
+        .task;
+        let task_path = worktree_root.join(&task.id);
+        run_git(&task_path, &["switch", "--detach"]);
+
+        block_on(backend.delete_task(DeleteTaskRequest { task_id: task.id }))
+            .expect("delete detached task checkout");
+
+        assert!(!task_path.exists());
+        assert_eq!(local_branches(&repository_root), vec!["main".to_string()]);
+    }
+
+    /// Verifies an in-flight Session admission prevents aggregate deletion from entering SQLite.
+    #[test]
+    fn waits_for_session_admission_before_deleting_a_task() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let project_root = temporary.path().join("project");
+        fs::create_dir_all(&project_root).expect("create project root");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+        })
+        .expect("open shared backend");
+        let project = backend
+            .create_project(CreateProjectRequest {
+                name: "Ora".to_string(),
+                root_path: project_root.to_string_lossy().into_owned(),
+            })
+            .expect("create project")
+            .project;
+        let task = block_on(backend.create_task(CreateTaskRequest {
+            project_id: project.id,
+            title: "Admission race".to_string(),
+            status: TaskStatus::Todo,
+            workspace_mode: Some(TaskWorkspaceMode::ProjectRoot),
+        }))
+        .expect("create project-root task")
+        .task;
+
+        block_on(async {
+            let admission = backend.session_aggregate_lifecycle.lock().await;
+            let deletion = backend.delete_task(DeleteTaskRequest {
+                task_id: task.id.clone(),
+            });
+            tokio::pin!(deletion);
+
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut deletion)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                backend
+                    .get_task(GetTaskRequest {
+                        task_id: task.id.clone(),
+                    })
+                    .is_ok()
+            );
+
+            drop(admission);
+            deletion.await.expect("delete after admission completes");
+        });
+    }
+
+    /// Verifies Session create and load enter through the coordinator shared with deletion.
+    #[test]
+    fn session_admissions_use_the_aggregate_lifecycle_coordinator() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+        })
+        .expect("open shared backend");
+
+        block_on(async {
+            let aggregate_lifecycle = backend.session_aggregate_lifecycle.lock().await;
+            let create = backend.create_session(CreateSessionRequest {
+                task_id: "missing-task".to_string(),
+                agent_cli: AgentCli::OpenCode,
+            });
+            tokio::pin!(create);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut create)
+                    .await
+                    .is_err()
+            );
+
+            let load = backend.load_session(LoadSessionRequest {
+                session_id: "missing-session".to_string(),
+            });
+            tokio::pin!(load);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut load)
+                    .await
+                    .is_err()
+            );
+
+            drop(aggregate_lifecycle);
+        });
+    }
+
+    /// Verifies task provisioning blocks only deletion of its owning Project.
+    #[test]
+    fn scopes_task_provisioning_coordination_to_its_project() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let first_root = temporary.path().join("first-project");
+        let second_root = temporary.path().join("second-project");
+        fs::create_dir_all(&first_root).expect("create first project root");
+        fs::create_dir_all(&second_root).expect("create second project root");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+        })
+        .expect("open shared backend");
+        let first_project = backend
+            .create_project(CreateProjectRequest {
+                name: "First".to_string(),
+                root_path: first_root.to_string_lossy().into_owned(),
+            })
+            .expect("create first project")
+            .project;
+        let second_project = backend
+            .create_project(CreateProjectRequest {
+                name: "Second".to_string(),
+                root_path: second_root.to_string_lossy().into_owned(),
+            })
+            .expect("create second project")
+            .project;
+
+        block_on(async {
+            let provisioning = backend
+                .project_task_lifecycle
+                .project(&first_project.id)
+                .expect("resolve first project lifecycle")
+                .read_owned()
+                .await;
+
+            let task = tokio::time::timeout(
+                Duration::from_secs(/*secs*/ 1),
+                backend.create_task(CreateTaskRequest {
+                    project_id: first_project.id.clone(),
+                    title: "Concurrent task".to_string(),
+                    status: TaskStatus::Todo,
+                    workspace_mode: Some(TaskWorkspaceMode::ProjectRoot),
+                }),
+            )
+            .await
+            .expect("shared task provisioning should remain concurrent")
+            .expect("create concurrent task")
+            .task;
+            tokio::time::timeout(
+                Duration::from_secs(/*secs*/ 1),
+                backend.delete_task(DeleteTaskRequest { task_id: task.id }),
+            )
+            .await
+            .expect("task deletion should ignore unrelated provisioning")
+            .expect("delete task");
+            tokio::time::timeout(
+                Duration::from_secs(/*secs*/ 1),
+                backend.delete_project(DeleteProjectRequest {
+                    project_id: second_project.id,
+                }),
+            )
+            .await
+            .expect("unrelated Project deletion should remain available")
+            .expect("delete unrelated project");
+
+            let owning_project_deletion = backend.delete_project(DeleteProjectRequest {
+                project_id: first_project.id,
+            });
+            tokio::pin!(owning_project_deletion);
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(/*millis*/ 20),
+                    &mut owning_project_deletion
+                )
+                .await
+                .is_err()
+            );
+            let session_lifecycle = tokio::time::timeout(
+                Duration::from_secs(/*secs*/ 1),
+                backend.session_aggregate_lifecycle.lock(),
+            )
+            .await
+            .expect("Project lock wait must not block unrelated Session admission");
+            drop(session_lifecycle);
+
+            drop(provisioning);
+            owning_project_deletion
+                .await
+                .expect("delete owning project after provisioning completes");
+        });
+    }
+
+    /// Verifies project deletion cleans every descendant task branch and dirty checkout.
+    #[test]
+    fn deletes_all_project_task_git_resources() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let repository_root = temporary.path().join("repository");
+        initialize_repository(&repository_root);
+        let worktree_root = temporary.path().join("worktrees");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: worktree_root.clone(),
+            home_directory: temporary.path().to_path_buf(),
+        })
+        .expect("open shared backend");
+        let project = backend
+            .create_project(CreateProjectRequest {
+                name: "Ora".to_string(),
+                root_path: repository_root.to_string_lossy().into_owned(),
+            })
+            .expect("create project")
+            .project;
+        let first_task = block_on(backend.create_task(CreateTaskRequest {
+            project_id: project.id.clone(),
+            title: "First task".to_string(),
+            status: TaskStatus::Todo,
+            workspace_mode: None,
+        }))
+        .expect("create first task")
+        .task;
+        let second_task = block_on(backend.create_task(CreateTaskRequest {
+            project_id: project.id.clone(),
+            title: "Second task".to_string(),
+            status: TaskStatus::Todo,
+            workspace_mode: None,
+        }))
+        .expect("create second task")
+        .task;
+        let task_paths = [first_task.id.clone(), second_task.id.clone()]
+            .map(|task_id| worktree_root.join(task_id));
+        for task_path in &task_paths {
+            fs::write(task_path.join("uncommitted.txt"), "must be removed")
+                .expect("create uncommitted task change");
+        }
+
+        block_on(backend.delete_project(DeleteProjectRequest {
+            project_id: project.id,
+        }))
+        .expect("delete project with best-effort Git cleanup");
+
+        assert_eq!(
+            task_paths.map(|task_path| task_path.exists()),
+            [false, false]
+        );
+        assert_eq!(local_branches(&repository_root), vec!["main".to_string()]);
+        assert!(
+            backend
+                .get_task(GetTaskRequest {
+                    task_id: first_task.id,
+                })
+                .is_err()
+        );
+        assert!(
+            backend
+                .get_task(GetTaskRequest {
+                    task_id: second_task.id,
+                })
+                .is_err()
+        );
+    }
+
+    /// Verifies unavailable Git state is logged without changing a committed task deletion.
+    #[test]
+    fn keeps_database_deletion_successful_when_git_cleanup_fails() {
+        with_trace_logging(|| {
+            let temporary = TempDir::new().expect("create temporary backend directory");
+            let repository_root = temporary.path().join("repository");
+            initialize_repository(&repository_root);
+            let worktree_root = temporary.path().join("worktrees");
+            let backend = Backend::open(BackendPaths {
+                database_path: temporary.path().join("ora.sqlite3"),
+                worktree_root: worktree_root.clone(),
+                home_directory: temporary.path().to_path_buf(),
+            })
+            .expect("open shared backend");
+            let project = backend
+                .create_project(CreateProjectRequest {
+                    name: "Ora".to_string(),
+                    root_path: repository_root.to_string_lossy().into_owned(),
+                })
+                .expect("create project")
+                .project;
+            let task = block_on(backend.create_task(CreateTaskRequest {
+                project_id: project.id,
+                title: "Unavailable repository".to_string(),
+                status: TaskStatus::Todo,
+                workspace_mode: None,
+            }))
+            .expect("create task")
+            .task;
+            let task_path = worktree_root.join(&task.id);
+            fs::rename(
+                &repository_root,
+                temporary.path().join("unavailable-repository"),
+            )
+            .expect("make repository unavailable");
+
+            block_on(backend.delete_task(DeleteTaskRequest {
+                task_id: task.id.clone(),
+            }))
+            .expect("commit database deletion despite Git failure");
+
+            assert!(task_path.exists());
+            assert!(
+                backend
+                    .get_task(GetTaskRequest { task_id: task.id })
+                    .is_err()
+            );
+        });
+    }
+
+    /// Drives one async Backend admission boundary from otherwise synchronous integration tests.
+    fn block_on<Output>(future: impl std::future::Future<Output = Output>) -> Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime")
+            .block_on(future)
     }
 
     /// Initializes a repository with one commit so linked worktree operations are available.
@@ -527,5 +1007,30 @@ mod tests {
             .unwrap_or_else(|error| panic!("failed to start git {arguments:?}: {error}"));
 
         assert!(status.success(), "git {arguments:?} failed with {status}");
+    }
+
+    /// Lists local branches in stable lexical order for lifecycle assertions.
+    fn local_branches(repository_root: &Path) -> Vec<String> {
+        let output = Command::new("git")
+            .current_dir(repository_root)
+            .args([
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "--sort=refname",
+                "refs/heads",
+            ])
+            .output()
+            .expect("list local branches");
+        assert!(
+            output.status.success(),
+            "git branch listing failed with {}",
+            output.status
+        );
+
+        String::from_utf8(output.stdout)
+            .expect("Git branch output should be UTF-8")
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 }

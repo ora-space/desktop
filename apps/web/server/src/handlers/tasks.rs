@@ -32,6 +32,7 @@ pub async fn create_task(
     app_state
         .backend()
         .create_task(request)
+        .await
         .map(Json)
         .map_err(WebApiError::from)
 }
@@ -88,6 +89,7 @@ pub async fn delete_task(
         .delete_task(DeleteTaskRequest {
             task_id: path.task_id,
         })
+        .await
         .map(Json)
         .map_err(WebApiError::from)
 }

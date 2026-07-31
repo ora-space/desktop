@@ -48,8 +48,7 @@ impl RuntimeActor {
                     events,
                     accepted,
                 } => {
-                    let _ = accepted.send(Ok(()));
-                    self.run_load(operation_id, events).await;
+                    self.run_load(operation_id, events, accepted).await;
                 }
                 RuntimeCommand::Prompt {
                     operation_id,
@@ -83,6 +82,7 @@ impl RuntimeActor {
         &mut self,
         operation_id: u64,
         events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
+        accepted: oneshot::Sender<Result<(), BackendError>>,
     ) {
         self.unload().await;
         let running = self
@@ -90,10 +90,13 @@ impl RuntimeActor {
             .clone()
             .with_status(SessionStatus::Running, self.clock.now_timestamp_millis());
         if self.repository.update_session(running.clone()).is_err() {
-            let _ = events.try_send(Err(session_not_found(self.session.id.as_ref())));
+            let _ = accepted.send(Err(session_not_found(self.session.id.as_ref())));
             return;
         }
         self.session = running;
+        // Aggregate deletion may proceed only after the durable row exposes this
+        // admission as Running to the cascade transaction.
+        let _ = accepted.send(Ok(()));
         let channel = match self
             .connection
             .open_session_channel(&self.session.agent_session_id)

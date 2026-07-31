@@ -18,7 +18,7 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 
 ## Lifecycle boundaries
 
-Startup reconciles stale persisted Running sessions to Stopped. Create persists only after `session/new` succeeds; load restores Stopped on setup failure. A session accepts only one load or prompt operation at a time.
+Startup reconciles stale persisted Running sessions to Stopped. Create persists only after `session/new` succeeds; load restores Stopped on setup failure. Create and load admission share the backend's aggregate lifecycle lock, and load is acknowledged only after Running persistence, so Task or Project deletion cannot remove the checkout during provider setup. A session accepts only one load or prompt operation at a time.
 
 Cancellation sends `session/cancel` and waits for bounded settlement. Explicit stop may call `session/close` when supported, unloads routing, and retains provider history. Deletion removes only Ora's stopped record after serialized unload; it does not delete provider history.
 

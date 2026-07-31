@@ -35,7 +35,7 @@ Unlike the Web server, Desktop reads no environment variables for these paths. E
 
 The worktree root is non-sensitive configuration. Users can change it from Settings → Data & privacy on Desktop. A selected value must be an absolute path to an existing directory. The new value affects task creations that start after the update; in-flight operations retain their original snapshot, and existing worktrees are not moved.
 
-The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads, and `resolve_task_cwd` exposes that same resolution to the shell. Task and project deletion never mutate Git. See [Task Worktrees](task-worktrees.md).
+The configured root is primarily a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads, and `resolve_task_cwd` exposes that same resolution to the shell. Task and Project deletion commits the database cascade in a blocking job and releases lifecycle locks before post-commit Git cleanup begins in that same job, so caller cancellation cannot skip cleanup after a commit. Cleanup requires a full UUID task id and first resolves each checkout by its validated branch; if the branch association is absent, it accepts only an exact `configured_worktree_root/full_task_id` match and explicitly refuses the main checkout. A later creation-root change can therefore limit detached-checkout fallback, while ordinary branch-associated cleanup still resolves from Git metadata. See [Task Worktrees](task-worktrees.md).
 
 ## Logging
 

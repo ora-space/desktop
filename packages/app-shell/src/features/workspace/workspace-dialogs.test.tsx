@@ -223,6 +223,7 @@ describe("WorkspaceDialogs project deletion", () => {
       </Wrapper>,
     );
 
+    expect(screen.getByText(/所有任务和会话都会被删除；工作树任务对应的 Git 工作树和 Ora 分支也会被清理/)).not.toBeNull();
     await user.click(screen.getByRole("button", { name: /^删除$|^Delete$/ }));
 
     await waitFor(() => {
@@ -235,8 +236,8 @@ describe("WorkspaceDialogs project deletion", () => {
 
 describe("WorkspaceDialogs task deletion", () => {
   it.each([
-    ["direct chat", "project_root", ["s1"], "该会话将被删除，此操作无法撤销。"],
-    ["worktree", "worktree", ["s1", "s2"], "该工作树任务下的所有会话也会被删除，此操作无法撤销。"],
+    ["direct chat", "project_root", ["s1"], "该任务及其所有会话都会被删除，此操作无法撤销。"],
+    ["worktree", "worktree", ["s1", "s2"], "该任务的 Git 工作树、分支和所有会话都会被删除。未提交修改和仅存在于该分支的提交可能永久丢失，此操作无法撤销。"],
   ] as const)("deletes every %s session before deleting its task", async (_label, workspaceMode, sessionIds, description) => {
     const user = userEvent.setup();
     const state = createMockClientState();

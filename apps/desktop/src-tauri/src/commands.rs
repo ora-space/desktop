@@ -66,13 +66,18 @@ backend_command!(
     update_project,
     "Updates one project through the shared Backend."
 );
-backend_command!(
-    delete_project,
-    DeleteProjectRequest,
-    DeleteProjectResponse,
-    delete_project,
-    "Deletes one project through the shared Backend."
-);
+/// Deletes one project while coordinating asynchronous Session admission.
+#[tauri::command]
+pub async fn delete_project(
+    state: State<'_, DesktopState>,
+    request: DeleteProjectRequest,
+) -> Result<DeleteProjectResponse, CommandError> {
+    state
+        .backend
+        .delete_project(request)
+        .await
+        .map_err(CommandError::from)
+}
 
 backend_command!(
     get_git_identity,
@@ -82,13 +87,18 @@ backend_command!(
     "Reads the host's global Git identity through the shared Backend."
 );
 
-backend_command!(
-    create_task,
-    CreateTaskRequest,
-    CreateTaskResponse,
-    create_task,
-    "Creates one task through the shared Backend."
-);
+/// Creates one task without blocking the asynchronous Desktop command worker.
+#[tauri::command]
+pub async fn create_task(
+    state: State<'_, DesktopState>,
+    request: CreateTaskRequest,
+) -> Result<CreateTaskResponse, CommandError> {
+    state
+        .backend
+        .create_task(request)
+        .await
+        .map_err(CommandError::from)
+}
 backend_command!(
     get_task,
     GetTaskRequest,
@@ -110,13 +120,18 @@ backend_command!(
     update_task,
     "Updates one task through the shared Backend."
 );
-backend_command!(
-    delete_task,
-    DeleteTaskRequest,
-    DeleteTaskResponse,
-    delete_task,
-    "Deletes one task through the shared Backend."
-);
+/// Deletes one task while coordinating asynchronous Session admission.
+#[tauri::command]
+pub async fn delete_task(
+    state: State<'_, DesktopState>,
+    request: DeleteTaskRequest,
+) -> Result<DeleteTaskResponse, CommandError> {
+    state
+        .backend
+        .delete_task(request)
+        .await
+        .map_err(CommandError::from)
+}
 
 /// Creates one provider-backed session through the asynchronous runtime manager.
 #[tauri::command]

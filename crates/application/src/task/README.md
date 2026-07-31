@@ -11,9 +11,9 @@ This module coordinates task CRUD with optional backend-owned Git worktree provi
 
 ## Boundaries and invariants
 
-`TaskRepository`, `WorktreeRepository`, identifier generators, `Clock`, and `TaskWorktreeProvisioner` keep database and Git details outside the use-case logic. `GitTaskWorktreeProvisioner` adapts the typed `gitlancer` runtime to that port.
+`TaskRepository`, `WorktreeRepository`, identifier generators, `Clock`, `TaskWorktreeProvisioner`, and `TaskGitResourceCleaner` keep database and Git details outside orchestration policy. `GitTaskWorktreeProvisioner` owns creation and creation-failure compensation. `GitTaskGitResourceCleaner` independently reports aggregate worktree and branch cleanup outcomes so the backend can apply best-effort logging after a database commit.
 
-Task updates preserve project ownership and the existing worktree association. Aggregate deletion is handled by backend/database cascade logic and deliberately does not remove Git branches or worktrees.
+Task updates preserve project ownership and the existing worktree association. Aggregate deletion timing and database cascading remain backend/database responsibilities. Cleanup resolves worktrees by validated branch metadata first and accepts only an exact deterministic checkout root as its detached fallback; it never selects a parent checkout or the main worktree. The shared task-id-derived branch naming function lets creation and destructive-cleanup ownership validation enforce the same `ora/<first-eight-task-id-characters>` invariant.
 
 Branch creation uses a short task-id prefix, so creation checks both existing task worktree directories and repository branches before accepting an id. Worktree mode fails explicitly when the project root is not a Git repository.
 

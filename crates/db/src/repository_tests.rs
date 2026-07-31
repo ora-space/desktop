@@ -16,7 +16,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use crate::{
-    CascadeDeleteOutcome, DatabaseBootstrapper, DatabaseLocation, RepositoryPool,
+    CascadeDeleteOutcome, DatabaseBootstrapper, DatabaseLocation, GitCleanupTarget, RepositoryPool,
     SqliteAgentDefinitionRepository, SqliteCascadeRepository, SqliteProjectRepository,
     SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillRepository,
     SqliteTaskRepository, SqliteWorktreeRepository, TimestampSource, default_migration_catalog,
@@ -518,7 +518,9 @@ fn session_repository_rejects_soft_deleted_task() {
     let cascade = SqliteCascadeRepository::new(pool.clone());
     assert_eq!(
         cascade.delete_task(&TaskId::new("task-1"), 20).unwrap(),
-        CascadeDeleteOutcome::Deleted
+        CascadeDeleteOutcome::Deleted {
+            git_cleanup_targets: vec![cascade_git_cleanup_target()],
+        }
     );
     let session = Session::new(
         SessionId::new("session-after-delete"),
@@ -689,14 +691,16 @@ fn task_cascade_delete_is_atomic_and_does_not_require_git() {
 
     assert_eq!(
         repository.delete_task(&TaskId::new("task-1"), 30).unwrap(),
-        CascadeDeleteOutcome::Deleted
+        CascadeDeleteOutcome::Deleted {
+            git_cleanup_targets: vec![cascade_git_cleanup_target()],
+        }
     );
     assert_eq!(cascade_flags(&pool), (0, 1, 1, 1, 1));
 }
 
-/// Verifies project deletion removes its transient lease and soft-deletes the full Ora aggregate.
+/// Verifies project deletion returns post-commit Git work and soft-deletes the full Ora aggregate.
 #[test]
-fn project_cascade_delete_removes_work_context_without_touching_external_state() {
+fn project_cascade_delete_returns_git_cleanup_targets_and_removes_work_context() {
     let (_temp_dir, pool) = bootstrapped_repository_pool();
     insert_cascade_fixture(&pool, SessionStatus::Stopped);
     let repository = SqliteCascadeRepository::new(pool.clone());
@@ -705,7 +709,9 @@ fn project_cascade_delete_removes_work_context_without_touching_external_state()
         repository
             .delete_project(&ProjectId::new("project-1"), 30)
             .unwrap(),
-        CascadeDeleteOutcome::Deleted
+        CascadeDeleteOutcome::Deleted {
+            git_cleanup_targets: vec![cascade_git_cleanup_target()],
+        }
     );
     assert_eq!(cascade_flags(&pool), (1, 1, 1, 1, 0));
 }
@@ -726,6 +732,16 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
         Ok(())
     })
     .unwrap();
+}
+
+/// Returns the external cleanup work represented by the shared aggregate fixture.
+fn cascade_git_cleanup_target() -> GitCleanupTarget {
+    GitCleanupTarget {
+        project_id: ProjectId::new("project-1"),
+        task_id: TaskId::new("task-1"),
+        repository_root: PathBuf::from("/not/a/repository"),
+        branch_name: "ora/task-1".to_string(),
+    }
 }
 
 /// Reads all aggregate deletion markers plus the remaining transient work-context count.

@@ -7,7 +7,7 @@
 - It boots shared structured logging through `ora-logging` and registers the Gitlancer command-logging bridge.
 - It exposes health endpoints for process liveness and runtime readiness.
 - It serves persisted HTTP operations for Project, Task, Session, Skill, Agent, and Git identity through the shared `ora-backend` composition.
-- It provisions task-owned linked worktrees during creation and leaves Git untouched during deletion.
+- It provisions task-owned linked worktrees during creation and best-effort force-removes their worktrees and local branches after successful Task or Project database deletion.
 - It streams ACP load replay and prompt updates as bounded NDJSON responses.
 - It provides read-only server filesystem listings for the Web platform path picker.
 - It owns the project work context routes, which are outside `ora-backend`.

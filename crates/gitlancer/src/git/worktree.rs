@@ -22,6 +22,13 @@ pub struct ResolveWorktreeByBranchRequest<'a> {
     pub branch_name: &'a str,
 }
 
+/// Carries the exact checkout root used to resolve one existing worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolveWorktreeByRootRequest<'a> {
+    pub repository: &'a Repository,
+    pub worktree_root: &'a std::path::Path,
+}
+
 /// Carries the information needed to locate which worktree contains a caller path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FindWorktreeRequest<'a> {
@@ -128,6 +135,31 @@ impl<R: GitRunner> Git<R> {
             .ok_or_else(|| {
                 GitlancerError::Domain(DomainError::NotAWorktree(
                     request.repository.root().as_path().to_path_buf(),
+                ))
+            })
+    }
+
+    /// Resolves one worktree only when Git reports the exact requested checkout root.
+    pub fn resolve_worktree_by_root(
+        &self,
+        request: ResolveWorktreeByRootRequest<'_>,
+    ) -> Result<WorktreeHandle, GitlancerError> {
+        let requested_root = normalize_path_for_worktree_match(request.worktree_root);
+        let worktrees = self
+            .list_worktrees(crate::git::repository::ListWorktreesRequest {
+                repository: request.repository,
+            })?
+            .worktrees;
+
+        worktrees
+            .into_iter()
+            .find(|worktree| {
+                normalize_path_for_worktree_match(worktree.worktree_root().as_path())
+                    == requested_root
+            })
+            .ok_or_else(|| {
+                GitlancerError::Domain(DomainError::NotAWorktree(
+                    request.worktree_root.to_path_buf(),
                 ))
             })
     }
