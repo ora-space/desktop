@@ -1,0 +1,52 @@
+/* Keep React Flow chrome aligned with the Ora workflow editor look. */
+.workflow-flow.react-flow {
+  --xy-node-border-default: transparent;
+  --xy-node-background-color-default: transparent;
+  --xy-handle-background-color: transparent;
+  --xy-handle-border-color: transparent;
+  --xy-edge-stroke: color-mix(in oklch, var(--foreground) 34%, transparent);
+  --xy-connectionline-stroke: var(--ring);
+}
+
+.workflow-flow .react-flow__node {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workflow-flow .react-flow__node.selectable:focus,
+.workflow-flow .react-flow__node.selectable:focus-visible {
+  outline: none;
+}
+
+.workflow-flow .react-flow__edge-path {
+  stroke-linecap: round;
+}
+
+.workflow-flow .react-flow__edge.selected .react-flow__edge-path,
+.workflow-flow .react-flow__edge:focus .react-flow__edge-path,
+.workflow-flow .react-flow__edge:focus-visible .react-flow__edge-path {
+  stroke: var(--ring);
+}
+
+.workflow-flow .react-flow__edgeupdater {
+  cursor: grab;
+}
+
+.workflow-flow .react-flow__edgeupdater:active {
+  cursor: grabbing;
+}
+
+.workflow-flow .react-flow__handle {
+  border-radius: 9999px;
+}
+
+.workflow-flow .react-flow__pane {
+  cursor: grab;
+}
+
+.workflow-flow .react-flow__pane.dragging {
+  cursor: grabbing;
+}
