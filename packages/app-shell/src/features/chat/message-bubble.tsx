@@ -12,6 +12,7 @@ interface MessageBubbleProps {
   message: ChatMessage;
   userName: string;
   embeddedAssistant?: boolean;
+  streaming?: boolean;
 }
 
 /** Copies message content to the clipboard and briefly confirms with a check. */
@@ -29,7 +30,7 @@ function useCopyMessage(content: string) {
 }
 
 /** A single chat message: avatar + content, with hover actions on replies. */
-export function MessageBubble({ message, userName, embeddedAssistant = false }: MessageBubbleProps) {
+export function MessageBubble({ message, userName, embeddedAssistant = false, streaming = false }: MessageBubbleProps) {
   const { t } = useTranslation();
   const { copied, copy } = useCopyMessage(message.content);
   const isUser = message.role === "user";
@@ -45,7 +46,7 @@ export function MessageBubble({ message, userName, embeddedAssistant = false }: 
             <p data-selectable className="relative whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
           </div>
         ) : (
-          <MarkdownMessage content={message.content} />
+          <MarkdownMessage content={message.content} streaming={streaming} />
         )}
 
         <div className={`flex min-h-6 items-center gap-2 ${isUser ? "pr-1" : ""}`}>

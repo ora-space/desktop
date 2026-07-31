@@ -89,6 +89,16 @@ const EMPTY_CONVERSATION: SessionConversation = {
   error: null,
 };
 
+/** Caps one live text batch so streamed output stays responsive under very large responses. */
+const STREAMING_TEXT_BATCH_LIMIT = 4 * 1024;
+
+interface BufferedTextChunk {
+  itemKind: "message" | "thought";
+  messageId: string | undefined;
+  text: string;
+  timestamp: number;
+}
+
 /** Creates a per-session chat state owner backed directly by generated Ora contracts. */
 export function createChatStore(
   client: ChatSessionClient,
@@ -177,6 +187,60 @@ export function createChatStore(
       }
       const controller = new AbortController();
       operations.set(key, controller);
+      let pendingTextChunk: BufferedTextChunk | null = null;
+      let pendingFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+      /** Flushes one buffered text batch into the live turn before a boundary update. */
+      const flushPendingTextChunk = () => {
+        if (pendingFlushTimer !== null) {
+          clearTimeout(pendingFlushTimer);
+          pendingFlushTimer = null;
+        }
+        const batch = pendingTextChunk;
+        if (batch === null) return;
+        updateTurn(set, key, turnId, (current) =>
+          appendTextContentChunk(
+            current,
+            batch.itemKind,
+            batch.messageId,
+            batch.text,
+            batch.timestamp,
+          ),
+        );
+        pendingTextChunk = null;
+      };
+
+      /** Schedules a near-term flush so streaming remains visible without repainting every token. */
+      const schedulePendingTextFlush = () => {
+        if (pendingFlushTimer !== null) return;
+        pendingFlushTimer = setTimeout(() => {
+          pendingFlushTimer = null;
+          flushPendingTextChunk();
+        }, 16);
+      };
+
+      /** Collects one text chunk so repeated provider frames collapse into larger UI updates. */
+      const queueTextChunk = (itemKind: "message" | "thought", chunk: acp.ContentChunk) => {
+        if (chunk.content.type !== "text") return;
+        if (pendingTextChunk !== null && (pendingTextChunk.itemKind !== itemKind || pendingTextChunk.messageId !== (chunk.messageId ?? undefined))) {
+          flushPendingTextChunk();
+        }
+        if (pendingTextChunk === null) {
+          pendingTextChunk = {
+            itemKind,
+            messageId: chunk.messageId ?? undefined,
+            text: chunk.content.text,
+            timestamp: now(),
+          };
+        } else {
+          pendingTextChunk.text += chunk.content.text;
+        }
+        if (pendingTextChunk.text.length >= STREAMING_TEXT_BATCH_LIMIT) {
+          flushPendingTextChunk();
+        } else {
+          schedulePendingTextFlush();
+        }
+      };
 
       const createdAt = now();
       const turnId = createId();
@@ -254,12 +318,23 @@ export function createChatStore(
             // The user turn is already materialized, so the echoed prompt chunk
             // would only duplicate it; every other update belongs to this turn.
             if (event.update.sessionUpdate === "user_message_chunk") continue;
+            if (event.update.sessionUpdate === "agent_message_chunk") {
+              queueTextChunk("message", event.update);
+              continue;
+            }
+            if (event.update.sessionUpdate === "agent_thought_chunk") {
+              queueTextChunk("thought", event.update);
+              continue;
+            }
+            flushPendingTextChunk();
             updateTurn(set, key, turnId, (current) =>
               applyAgentUpdate(current, event.update, createId, now()),
             );
           } else if (event.type === "permission_request") {
+            flushPendingTextChunk();
             appendPermission(set, key, event);
           } else {
+            flushPendingTextChunk();
             updateTurn(set, key, turnId, (current) => ({
               ...current,
               status: event.stopReason === "cancelled" ? "cancelled" : "completed",
@@ -268,6 +343,7 @@ export function createChatStore(
           }
         }
       } catch (error) {
+        flushPendingTextChunk();
         if (isAbortError(error)) {
           updateTurn(set, key, turnId, (current) =>
             current.status === "streaming" ? { ...current, status: "cancelled" } : current,
@@ -287,6 +363,7 @@ export function createChatStore(
           throw error;
         }
       } finally {
+        flushPendingTextChunk();
         operations.delete(key);
         updateTurn(set, key, turnId, (current) =>
           current.status === "streaming" ? { ...current, status: "completed" } : current,
@@ -469,34 +546,44 @@ function appendContentChunk(
     };
   }
 
-  const protocolMessageId = chunk.messageId ?? undefined;
+  return appendTextContentChunk(turn, itemKind, chunk.messageId ?? undefined, content.text, timestamp);
+}
+
+/** Appends one live text batch while preserving the per-message identity rules. */
+function appendTextContentChunk(
+  turn: ChatTurn,
+  itemKind: "message" | "thought",
+  messageId: string | undefined,
+  text: string,
+  timestamp: number,
+): ChatTurn {
   const implicitId = `${itemKind}-implicit-${turn.id}`;
-  const itemId = protocolMessageId === undefined ? implicitId : `${itemKind}-${protocolMessageId}`;
+  const itemId = messageId === undefined ? implicitId : `${itemKind}-${messageId}`;
   const itemIndex = turn.items.findIndex((item) => item.id === itemId && item.kind === itemKind);
   if (itemIndex === -1) {
     const item = itemKind === "message"
       ? {
-        kind: "message" as const,
-        id: itemId,
-        role: "assistant" as const,
-        content: content.text,
-        createdAt: timestamp,
-        ...(protocolMessageId === undefined ? {} : { protocolMessageId }),
-      }
+          kind: "message" as const,
+          id: itemId,
+          role: "assistant" as const,
+          content: text,
+          createdAt: timestamp,
+          ...(messageId === undefined ? {} : { protocolMessageId: messageId }),
+        }
       : {
-        kind: "thought" as const,
-        id: itemId,
-        content: content.text,
-        createdAt: timestamp,
-        ...(protocolMessageId === undefined ? {} : { protocolMessageId }),
-      };
+          kind: "thought" as const,
+          id: itemId,
+          content: text,
+          createdAt: timestamp,
+          ...(messageId === undefined ? {} : { protocolMessageId: messageId }),
+        };
     return { ...turn, items: [...turn.items, item] };
   }
 
   const items = [...turn.items];
   const item = items[itemIndex]!;
   if (item.kind === "message" || item.kind === "thought") {
-    items[itemIndex] = { ...item, content: item.content + content.text };
+    items[itemIndex] = { ...item, content: item.content + text };
   }
   return { ...turn, items };
 }
