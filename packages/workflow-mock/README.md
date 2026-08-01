@@ -15,6 +15,10 @@ Executable fields (`instruction`, `model`, `tool`, and `condition`) live in the
 official `Node.data` extension point. There is no parallel workflow node, edge,
 position, or config DTO and no adapter layer.
 
+The UI captures graphs with React Flow's `toObject()` at commit boundaries.
+Workflow metadata is added beside that native snapshot without translating its
+nodes, edges, or viewport.
+
 `createMockWorkflowNode` owns demo node-data defaults so UI components only
 provide interaction-derived `XYPosition` values and localized display text.
 `createMockWorkflowCapabilities` supplies the model and tool choices rendered by
@@ -23,5 +27,6 @@ the inspector, plus the node-type catalog and configuration-field schema.
 Imported definitions are validated before entering session state. React Flow's
 `isNode` and `isEdge` guards validate its element boundaries; business
 validation additionally enforces unique element IDs, valid edge endpoints,
-finite positions and viewport values, unique directed connections, exactly one
-Start node, and the required node-data shape.
+registered workflow edge and handle types, finite positions and viewport values,
+unique directed connections, exactly one Start node, and the required node-data
+shape.

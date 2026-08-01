@@ -3,8 +3,10 @@ import {
   useReactFlow,
   type ConnectionLineComponentProps,
 } from "@xyflow/react";
-import { workflowConnectionAnchor } from "./path";
-import { NODE_ANCHOR_Y, NODE_WIDTH } from "./layout";
+import {
+  WORKFLOW_NODE_ANCHOR_Y,
+  WORKFLOW_NODE_WIDTH,
+} from "@ora/workflow-mock";
 import { useWorkflowConnectionState } from "./connection-state";
 
 /** Uses the same soft curve for a connection preview as for a committed edge. */
@@ -13,8 +15,6 @@ export function WorkflowConnectionLine({
   fromY,
   toX,
   toY,
-  fromHandle,
-  toHandle,
   fromPosition,
   toPosition,
   connectionLineStyle,
@@ -25,13 +25,6 @@ export function WorkflowConnectionLine({
     connectionCandidateNodeId,
   } = useWorkflowConnectionState();
   const { getInternalNode } = useReactFlow();
-  const source = workflowConnectionAnchor({
-    x: fromX,
-    y: fromY,
-    position: fromPosition,
-    width: fromHandle.width,
-    height: fromHandle.height,
-  });
   const candidateNode = connectionCandidateNodeId === null
     || connectionCandidateNodeId === undefined
     ? undefined
@@ -41,21 +34,13 @@ export function WorkflowConnectionLine({
     && connectionCandidateEndpoint !== undefined
     ? {
         x: candidateNode.internals.positionAbsolute.x
-          + (connectionCandidateEndpoint === "source" ? NODE_WIDTH : 0),
-        y: candidateNode.internals.positionAbsolute.y + NODE_ANCHOR_Y,
+          + (connectionCandidateEndpoint === "source" ? WORKFLOW_NODE_WIDTH : 0),
+        y: candidateNode.internals.positionAbsolute.y + WORKFLOW_NODE_ANCHOR_Y,
       }
-    : toHandle === null
-      ? { x: toX, y: toY }
-      : workflowConnectionAnchor({
-        x: toX,
-        y: toY,
-        position: toPosition,
-        width: toHandle.width,
-        height: toHandle.height,
-      });
+    : { x: toX, y: toY };
   const [path] = getBezierPath({
-    sourceX: source.x,
-    sourceY: source.y,
+    sourceX: fromX,
+    sourceY: fromY,
     sourcePosition: fromPosition,
     targetX: target.x,
     targetY: target.y,

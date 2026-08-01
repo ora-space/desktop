@@ -11,6 +11,8 @@ import { IconTrash } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
 import {
   createMockWorkflowNodeType,
+  WORKFLOW_NODE_ANCHOR_Y,
+  WORKFLOW_NODE_WIDTH,
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import { getNodeMetadata } from "../workflow-node-metadata";
@@ -51,12 +53,13 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
       data-x={String(Math.round(positionAbsoluteX))}
       data-y={String(Math.round(positionAbsoluteY))}
       className={cn(
-        "group/workflow-node w-[230px] rounded-xl border bg-card shadow-sm outline-none transition-[border-color,box-shadow] duration-200",
+        "group/workflow-node rounded-xl border bg-card shadow-sm outline-none transition-[border-color,box-shadow] duration-200",
         selected
           ? "border-foreground/45 shadow-md ring-2 ring-ring/25"
           : "border-border hover:border-foreground/25 hover:shadow-md",
         isConnectionCandidate && "border-ring/60 shadow-md ring-2 ring-ring/10",
       )}
+      style={{ width: WORKFLOW_NODE_WIDTH }}
       aria-label={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${data.title}`}
     >
       <Handle
@@ -65,10 +68,10 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         data-workflow-input={id}
         aria-label={t("settings.workflow.connectTo", { name: data.title })}
         className={cn(
-          "workflow-port workflow-port-input !size-6 !border-0 !bg-transparent",
+          "workflow-port workflow-port-input !size-2.5 !border-0 !bg-transparent",
           isInputCandidate && "workflow-port-candidate",
         )}
-        style={{ top: 61 }}
+        style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
       />
       <div className="flex items-start gap-2.5 border-b border-border px-3 py-3">
         <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg", metadata.tone)}>
@@ -108,10 +111,10 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         data-workflow-output={id}
         aria-label={t("settings.workflow.connectFrom", { name: data.title })}
         className={cn(
-          "workflow-port workflow-port-output !size-6 !border-0 !bg-transparent",
+          "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
           isOutputCandidate && "workflow-port-candidate",
         )}
-        style={{ top: 61 }}
+        style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
       />
     </article>
   );

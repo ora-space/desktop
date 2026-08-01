@@ -12,7 +12,6 @@ import {
   type EdgeChange,
   type Node,
   type NodeChange,
-  type Viewport,
   type XYPosition,
 } from "@xyflow/react";
 import {
@@ -93,7 +92,7 @@ function WorkflowSettingsContent({
   capabilities: capabilitiesOverride,
 }: WorkflowSettingsProps) {
   const { i18n, t } = useTranslation();
-  const { deleteElements } = useReactFlow();
+  const { deleteElements, toObject } = useReactFlow<Node<WorkflowNodeData, "workflow">, Edge>();
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
   const capabilities = useMemo(
     () => capabilitiesOverride ?? createMockWorkflowCapabilities(locale),
@@ -273,8 +272,21 @@ function WorkflowSettingsContent({
     );
   }
 
+  /** Commits the mounted graph through React Flow's database-ready snapshot boundary. */
+  function commitCurrentWorkflowSnapshot(): DemoWorkflow | null {
+    if (workflow === null) {
+      return null;
+    }
+    const snapshot = { ...workflow, ...toObject() };
+    setWorkflows((current) => current.map((candidate) =>
+      candidate.id === snapshot.id ? snapshot : candidate,
+    ));
+    return snapshot;
+  }
+
   /** Switches the active graph while preserving its React Flow snapshot. */
   function selectWorkflow(workflowId: string): void {
+    commitCurrentWorkflowSnapshot();
     runRequestRef.current += 1;
     setRunning(false);
     setSelectedWorkflowId(workflowId);
@@ -400,19 +412,14 @@ function WorkflowSettingsContent({
     }));
   }
 
-  /** Stores React Flow's viewport alongside its nodes and edges for exact restoration. */
-  function changeViewport(viewport: Viewport): void {
-    updateWorkflow((current) => ({ ...current, viewport }));
-  }
-
   /** Runs the deterministic mock preview and exposes progress before showing its trace. */
   async function runWorkflow(input: string): Promise<void> {
-    if (workflow === null) {
+    const draft = commitCurrentWorkflowSnapshot();
+    if (draft === null) {
       return;
     }
     expandInspector();
     const request = ++runRequestRef.current;
-    const draft = workflow;
     setRunning(true);
     setRunResult(null);
     try {
@@ -577,7 +584,6 @@ function WorkflowSettingsContent({
                 initialViewport={workflow.viewport}
                 onNodesChange={changeNodes}
                 onEdgesChange={changeEdges}
-                onViewportChange={changeViewport}
                 onAddNode={addNode}
                 onConnect={connectNodes}
                 onReconnect={reconnectEdge}

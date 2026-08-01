@@ -34,8 +34,9 @@ React Flow–based canvas for the session-only settings workflow demo.
 - The full card is a forgiving connection drop zone while directional ports and
   candidate feedback remain visible.
 - Selected-edge reconnect hit areas remain centered on visible endpoints.
-- Each session workflow carries React Flow's `ReactFlowJsonObject` viewport so
-  switching or importing a workflow restores its exact pan and zoom state.
+- Each session workflow carries a `ReactFlowJsonObject`; graph transitions
+  capture it with `toObject()` so nodes, edges, selection, and viewport restore
+  from the same React Flow snapshot.
 - Catalog drops only commit inside canvas bounds and snap to the visible grid.
 
 ## Interactions

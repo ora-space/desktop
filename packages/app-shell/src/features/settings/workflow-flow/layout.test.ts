@@ -1,14 +1,11 @@
 import { describe, expect, it } from "vitest";
-import {
-  NODE_WIDTH,
-  nodePositionAt,
-  snapNodePosition,
-} from "./layout";
+import { WORKFLOW_NODE_WIDTH } from "@ora/workflow-mock";
+import { nodePositionAt, snapNodePosition } from "./layout";
 
 describe("workflow-flow layout", () => {
   it("centers a dropped card around the pointer at handle height", () => {
     expect(nodePositionAt({ x: 400, y: 300 })).toEqual({
-      x: 400 - NODE_WIDTH / 2,
+      x: 400 - WORKFLOW_NODE_WIDTH / 2,
       y: 239,
     });
   });

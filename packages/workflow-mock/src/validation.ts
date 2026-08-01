@@ -41,8 +41,11 @@ export function isDemoWorkflow(value: unknown): value is DemoWorkflow {
       isEdge(edge)
       && typeof edge.id === "string"
       && edge.id.trim() !== ""
+      && edge.type === "workflow"
       && typeof edge.source === "string"
       && typeof edge.target === "string"
+      && (edge.sourceHandle === undefined || edge.sourceHandle === null)
+      && (edge.targetHandle === undefined || edge.targetHandle === null)
     ))) {
     return false;
   }

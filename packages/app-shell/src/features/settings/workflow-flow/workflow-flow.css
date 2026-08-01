@@ -73,8 +73,8 @@
 }
 
 /*
- * The 24px Handle remains a forgiving hit target while pseudo-elements draw
- * the smaller port independently, so visual animation never moves the anchor.
+ * The measured Handle matches the visible port so React Flow anchors edges at
+ * the dot. A larger pseudo-element preserves the forgiving pointer target.
  */
 .workflow-flow .workflow-port::before,
 .workflow-flow .workflow-port::after {
@@ -115,6 +115,7 @@
   border: 2px solid color-mix(in oklch, var(--ring) 60%, transparent);
   background: color-mix(in oklch, var(--ring) 12%, var(--background));
   opacity: 0;
+  pointer-events: auto;
   transform: translate(-50%, -50%);
   transition: opacity 160ms ease-out;
 }

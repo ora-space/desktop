@@ -45,6 +45,33 @@ describe("workflow demo", () => {
     expect(imported.viewport).toEqual({ x: -120, y: 48, zoom: 0.75 });
   });
 
+  it("round-trips the native React Flow snapshot through JSON storage", () => {
+    const source = createMockWorkflow("en-US");
+    source.nodes[1]!.selected = true;
+    source.edges[0]!.selected = true;
+    source.viewport = { x: -84, y: 26, zoom: 1.25 };
+
+    const restored = parseDemoWorkflow(JSON.parse(JSON.stringify(source)));
+
+    expect(restored).toEqual(source);
+  });
+
+  it("uses only React Flow's dynamic initial measurements for demo fixtures", () => {
+    const [node] = createMockWorkflow("en-US").nodes;
+
+    expect(node).toMatchObject({
+      initialWidth: 230,
+      initialHeight: 98,
+      handles: [
+        { type: "target", position: "left", x: -5, y: 56, width: 10, height: 10 },
+        { type: "source", position: "right", x: 225, y: 56, width: 10, height: 10 },
+      ],
+    });
+    expect(node).not.toHaveProperty("width");
+    expect(node).not.toHaveProperty("height");
+    expect(node).not.toHaveProperty("style");
+  });
+
   it("rejects malformed imports", () => {
     expect(() => parseDemoWorkflow({ nodes: [], edges: [] })).toThrow(
       "Invalid workflow definition",
@@ -53,6 +80,18 @@ describe("workflow demo", () => {
     const deletableStart = createMockWorkflow("en-US");
     deletableStart.nodes[0]!.deletable = true;
     expect(() => parseDemoWorkflow(deletableStart)).toThrow(
+      "Invalid workflow definition",
+    );
+
+    const unsupportedEdge = createMockWorkflow("en-US");
+    unsupportedEdge.edges[0]!.type = "unknown";
+    expect(() => parseDemoWorkflow(unsupportedEdge)).toThrow(
+      "Invalid workflow definition",
+    );
+
+    const missingHandle = createMockWorkflow("en-US");
+    missingHandle.edges[0]!.sourceHandle = "missing";
+    expect(() => parseDemoWorkflow(missingHandle)).toThrow(
       "Invalid workflow definition",
     );
   });

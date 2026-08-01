@@ -149,7 +149,6 @@ function WorkflowCanvasInner({
   initialViewport,
   onNodesChange,
   onEdgesChange,
-  onViewportChange,
   onAddNode,
   onConnect,
   onReconnect,
@@ -446,7 +445,6 @@ function WorkflowCanvasInner({
             isValidConnection={isValidConnection}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
-            onMoveEnd={(_event, viewport) => onViewportChange(viewport)}
             onConnectStart={(_event, params) => {
               startConnection(params);
             }}

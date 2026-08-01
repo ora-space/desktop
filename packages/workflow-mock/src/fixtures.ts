@@ -1,10 +1,10 @@
-import {
-  Position,
-  type Edge,
-  type Node,
-  type ReactFlowJsonObject,
-} from "@xyflow/react";
+import type { Edge, Node, ReactFlowJsonObject } from "@xyflow/react";
 import type { WorkflowNodeData } from "./node-data";
+import {
+  WORKFLOW_NODE_INITIAL_HANDLES,
+  WORKFLOW_NODE_INITIAL_HEIGHT,
+  WORKFLOW_NODE_WIDTH,
+} from "./node-layout";
 
 export interface DemoWorkflow
   extends ReactFlowJsonObject<Node<WorkflowNodeData, "workflow">, Edge> {
@@ -150,15 +150,9 @@ export function createMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkflow {
   // custom cards are measured, which also makes server/test rendering stable.
   workflow.nodes = workflow.nodes.map((node) => ({
     ...node,
-    width: 230,
-    height: 98,
-    initialWidth: 230,
-    initialHeight: 98,
-    handles: [
-      { type: "target", position: Position.Left, x: 0, y: 49, width: 24, height: 24 },
-      { type: "source", position: Position.Right, x: 206, y: 49, width: 24, height: 24 },
-    ],
-    style: { width: 230 },
+    initialWidth: WORKFLOW_NODE_WIDTH,
+    initialHeight: WORKFLOW_NODE_INITIAL_HEIGHT,
+    handles: WORKFLOW_NODE_INITIAL_HANDLES.map((handle) => ({ ...handle })),
   }));
   if (locale === "zh-CN") {
     return workflow;
