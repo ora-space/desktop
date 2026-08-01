@@ -170,3 +170,16 @@ tasks:
     cmds:
       - task: run:prepare
       - cargo run --bin ora_web_server
+
+  run:logdy:
+    desc: Follow Ora's daily logs in the local Logdy UI
+    preconditions:
+      - sh: command -v logdy >/dev/null 2>&1
+        msg: "Logdy is not available on PATH. Provide Logdy before running this task."
+      - sh: ls .data/logs/ora.log.* >/dev/null 2>&1
+        msg: "No Ora daily log files found in .data/logs (expected ora.log.YYYY-MM-DD). Start the file-backed backend first."
+    cmds:
+      - |
+        set -- .data/logs/ora.log.*
+        logdy follow --full-read "$@" --ui-ip 127.0.0.1 --port 8080 --no-analytics --no-updates --config logdy.config.json
+
