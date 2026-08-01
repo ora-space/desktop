@@ -143,6 +143,19 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("keeps each workflow port independently visible without node-wide hover styles", async () => {
+    render(<WorkflowSettings />);
+    const input = await screen.findByLabelText("连接到理解改动");
+    const output = screen.getByLabelText("从理解改动开始连接");
+
+    expect(input).toHaveClass("workflow-port", "workflow-port-input");
+    expect(output).toHaveClass("workflow-port", "workflow-port-output");
+    expect(input).not.toHaveClass("opacity-0");
+    expect(output).not.toHaveClass("opacity-0");
+    expect(input.className).not.toContain("group-hover");
+    expect(output.className).not.toContain("group-hover");
+  });
+
   it("collapses node configuration after a stationary blank-canvas click", async () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);

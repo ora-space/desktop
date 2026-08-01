@@ -97,11 +97,12 @@ export function toFlowEdges(
     reconnectable: true,
     markerEnd: {
       type: MarkerType.ArrowClosed,
-      width: 12,
-      height: 12,
+      width: 28,
+      height: 28,
+      markerUnits: "userSpaceOnUse",
       color: selectedEdgeId === edge.id
         ? "var(--ring)"
-        : "color-mix(in oklch, var(--foreground) 46%, transparent)",
+        : "color-mix(in oklch, var(--foreground) 64%, transparent)",
     },
     data: {
       sourceTitle: titles.get(edge.source) ?? edge.source,

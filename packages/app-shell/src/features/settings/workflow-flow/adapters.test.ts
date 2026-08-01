@@ -123,8 +123,9 @@ describe("workflow-flow adapters", () => {
         reconnectable: true,
         markerEnd: {
           type: "arrowclosed",
-          width: 12,
-          height: 12,
+          width: 28,
+          height: 28,
+          markerUnits: "userSpaceOnUse",
           color: "var(--ring)",
         },
         data: {

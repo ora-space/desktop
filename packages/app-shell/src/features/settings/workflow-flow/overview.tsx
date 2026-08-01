@@ -1,9 +1,22 @@
+import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import { MiniMap, type Node } from "@xyflow/react";
 import type { WorkflowFlowNodeData } from "./adapters";
 
+/** Resolves minimap node color without allocating a new callback on canvas renders. */
+function workflowOverviewNodeColor(node: Node<WorkflowFlowNodeData>): string {
+  if (node.selected) {
+    return "var(--ring)";
+  }
+  return "color-mix(in oklch, var(--foreground) 45%, var(--muted))";
+}
+
 /** Shows an interactive graph overview when multiple nodes benefit from spatial navigation. */
-export function WorkflowFlowOverview({ nodeCount }: { nodeCount: number }) {
+export const WorkflowFlowOverview = memo(function WorkflowFlowOverview({
+  nodeCount,
+}: {
+  nodeCount: number;
+}) {
   const { t } = useTranslation();
 
   if (nodeCount < 2) {
@@ -17,12 +30,7 @@ export function WorkflowFlowOverview({ nodeCount }: { nodeCount: number }) {
       maskColor="color-mix(in oklch, var(--background) 72%, transparent)"
       maskStrokeColor="color-mix(in oklch, var(--foreground) 22%, transparent)"
       nodeBorderRadius={8}
-      nodeColor={(node: Node<WorkflowFlowNodeData>) => {
-        if (node.selected) {
-          return "var(--ring)";
-        }
-        return "color-mix(in oklch, var(--foreground) 45%, var(--muted))";
-      }}
+      nodeColor={workflowOverviewNodeColor}
       nodeStrokeColor="var(--background)"
       nodeStrokeWidth={2}
       pannable
@@ -30,4 +38,4 @@ export function WorkflowFlowOverview({ nodeCount }: { nodeCount: number }) {
       zoomable
     />
   );
-}
+});

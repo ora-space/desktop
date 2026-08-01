@@ -7,7 +7,7 @@ import {
   workflowEdgePath,
 } from "./path";
 import { NODE_ANCHOR_Y, NODE_WIDTH } from "./adapters";
-import { useWorkflowFlowCallbacks } from "./callbacks";
+import { useWorkflowFlowConnectionState } from "./callbacks";
 
 /** Uses the same soft curve for a connection preview as for a committed edge. */
 export function WorkflowConnectionLine({
@@ -25,7 +25,7 @@ export function WorkflowConnectionLine({
   const {
     connectionCandidateEndpoint,
     connectionCandidateNodeId,
-  } = useWorkflowFlowCallbacks();
+  } = useWorkflowFlowConnectionState();
   const { getInternalNode } = useReactFlow();
   const source = workflowConnectionAnchor({
     x: fromX,
