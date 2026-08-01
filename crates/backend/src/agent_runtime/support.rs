@@ -1,4 +1,4 @@
-use crate::{BackendError, BackendErrorKind};
+use crate::{BackendError, ErrorClassification};
 use ora_acp::AcpClient;
 use ora_contracts::acp::permission::{
     PermissionOptionId, RequestPermissionOutcome, RequestPermissionResponse,
@@ -8,6 +8,7 @@ use ora_contracts::{
     AgentCli as ContractAgentCli, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionStatus as ContractSessionStatus,
 };
+use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_domain::{AgentCli, Session, SessionStatus};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,16 +22,16 @@ pub(super) async fn respond_permission(
 ) -> Result<RespondToPermissionResponse, BackendError> {
     let Some((request_id, options)) = permissions.remove(&request.permission_request_id) else {
         return Err(BackendError::new(
-            BackendErrorKind::Conflict,
-            "permission_request_not_pending",
+            ErrorClassification::Conflict,
+            PublicError::PermissionRequestNotPending(EmptyErrorParams {}),
             "permission request is not pending",
         ));
     };
     if !options.contains(&request.option_id) {
         permissions.insert(request.permission_request_id, (request_id, options));
         return Err(BackendError::new(
-            BackendErrorKind::BadRequest,
-            "permission_option_invalid",
+            ErrorClassification::InvalidRequest,
+            PublicError::PermissionOptionInvalid(EmptyErrorParams {}),
             "permission option does not belong to this request",
         ));
     }
@@ -75,7 +76,7 @@ pub(super) fn resolve_agent_cli_path(
     let output = std::process::Command::new("where.exe")
         .arg(agent_cli.executable_name())
         .output()
-        .map_err(|_| runtime_internal("agent_cli_resolution_failed", "failed to run where.exe"))?;
+        .map_err(|source| BackendError::internal("failed to run where.exe", source))?;
     if !output.status.success() {
         return Err(runtime_internal(
             "agent_cli_not_found",
@@ -143,8 +144,8 @@ pub(super) async fn drain_stderr(mut stderr: tokio::process::ChildStderr) {
 /// Builds the stable public error for an unknown or deleted Ora session.
 pub(super) fn session_not_found(session_id: &str) -> BackendError {
     BackendError::new(
-        BackendErrorKind::NotFound,
-        "session_not_found",
+        ErrorClassification::NotFound,
+        PublicError::SessionNotFound(EmptyErrorParams {}),
         format!("session not found: {session_id}"),
     )
 }
@@ -152,8 +153,8 @@ pub(super) fn session_not_found(session_id: &str) -> BackendError {
 /// Builds the conflict returned when a prompt targets an unloaded logical session.
 pub(super) fn session_stopped() -> BackendError {
     BackendError::new(
-        BackendErrorKind::Conflict,
-        "session_stopped",
+        ErrorClassification::Conflict,
+        PublicError::SessionStopped(EmptyErrorParams {}),
         "session must be loaded before prompting",
     )
 }
@@ -166,12 +167,42 @@ pub(super) fn runtime_unavailable() -> BackendError {
     )
 }
 
+pub(super) fn runtime_unavailable_with(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> BackendError {
+    BackendError::with_source(
+        ErrorClassification::Internal,
+        PublicError::AgentRuntimeUnavailable(EmptyErrorParams {}),
+        "agent CLI runtime is unavailable",
+        source,
+    )
+}
+
 /// Hides transport internals behind the backend's stable protocol error.
 pub(super) fn map_acp_error(error: ora_acp::AcpError) -> BackendError {
-    runtime_internal("agent_protocol_error", error.to_string())
+    BackendError::with_source(
+        ErrorClassification::Internal,
+        PublicError::InternalError(EmptyErrorParams {}),
+        "agent protocol operation failed",
+        error,
+    )
 }
 
 /// Builds an internal runtime error with a caller-selected stable code.
 pub(super) fn runtime_internal(code: &'static str, message: impl Into<String>) -> BackendError {
-    BackendError::new(BackendErrorKind::Internal, code, message)
+    let (classification, public_error) = match code {
+        "agent_cli_not_found" => (
+            ErrorClassification::NotFound,
+            PublicError::AgentCliNotFound(EmptyErrorParams {}),
+        ),
+        "agent_runtime_unavailable" => (
+            ErrorClassification::Internal,
+            PublicError::AgentRuntimeUnavailable(EmptyErrorParams {}),
+        ),
+        _ => (
+            ErrorClassification::Internal,
+            PublicError::InternalError(EmptyErrorParams {}),
+        ),
+    };
+    BackendError::new(classification, public_error, message)
 }

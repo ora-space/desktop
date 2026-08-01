@@ -1,0 +1,221 @@
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use ts_rs::{Config, ExportError, TS};
+use uuid::Uuid;
+
+/// Identifies one Ora request across adapters, spans, responses, and completion events.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TS)]
+#[serde(transparent)]
+#[ts(type = "string", export_to = "error.ts")]
+pub struct RequestId(Uuid);
+
+impl RequestId {
+    /// Generates a random version-four request identifier.
+    pub fn new_v4() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// Wraps a UUID supplied by a deterministic test generator.
+    pub const fn from_uuid(value: Uuid) -> Self {
+        Self(value)
+    }
+
+    /// Returns the UUID representation used by protocol adapters.
+    pub const fn as_uuid(&self) -> &Uuid {
+        &self.0
+    }
+}
+
+impl fmt::Display for RequestId {
+    /// Formats the canonical hyphenated UUID representation.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// Represents the deliberately empty parameters used by errors with no safe interpolation data.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[ts(type = "{ [key: string]: never }")]
+#[ts(export_to = "error.ts")]
+pub struct EmptyErrorParams {}
+
+/// Lists the finite Desktop targets that can fail to open.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "error.ts")]
+pub enum OpenLocationTarget {
+    Explorer,
+    Terminal,
+    Vscode,
+}
+
+/// Carries the safe target name for an open-location failure.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct OpenLocationFailedParams {
+    pub target: OpenLocationTarget,
+}
+
+/// Carries the configured upload limit without exposing uploaded file names.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct SkillUploadTooManyFilesParams {
+    pub max_files: usize,
+}
+
+/// Carries a validated skill name when its destination folder already exists.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct SkillFolderConflictParams {
+    pub name: String,
+}
+
+/// Enumerates every user-visible Ora failure and its exact interpolation parameters.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(tag = "code", content = "params", rename_all = "snake_case")]
+#[ts(export_to = "error.ts")]
+pub enum PublicError {
+    InternalError(EmptyErrorParams),
+    InvalidRequest(EmptyErrorParams),
+    SkillNameBlank(EmptyErrorParams),
+    SkillNotFound(EmptyErrorParams),
+    AgentNameBlank(EmptyErrorParams),
+    AgentNotFound(EmptyErrorParams),
+    ProjectNotFound(EmptyErrorParams),
+    ProjectOccupied(EmptyErrorParams),
+    ProjectWorkContextNotFound(EmptyErrorParams),
+    TaskNotFound(EmptyErrorParams),
+    ResourceInUse(EmptyErrorParams),
+    WorktreeRequiresGitRepository(EmptyErrorParams),
+    WorktreeNotFound(EmptyErrorParams),
+    SessionNotFound(EmptyErrorParams),
+    AgentCliNotFound(EmptyErrorParams),
+    AgentRuntimeUnavailable(EmptyErrorParams),
+    SessionBusy(EmptyErrorParams),
+    SessionStopped(EmptyErrorParams),
+    SessionLoadUnsupported(EmptyErrorParams),
+    PermissionRequestNotPending(EmptyErrorParams),
+    PermissionOptionInvalid(EmptyErrorParams),
+    PromptEmpty(EmptyErrorParams),
+    PromptTooLarge(EmptyErrorParams),
+    TaskWorktreeUnavailable(EmptyErrorParams),
+    TaskProjectRootUnavailable(EmptyErrorParams),
+    FileSystemPathNotAbsolute(EmptyErrorParams),
+    FileSystemPathNotDirectory(EmptyErrorParams),
+    FileSystemPathNotFound(EmptyErrorParams),
+    FileSystemPathPermissionDenied(EmptyErrorParams),
+    WorktreeRootNotAbsolute(EmptyErrorParams),
+    WorktreeRootNotDirectory(EmptyErrorParams),
+    OpenLocationFailed(OpenLocationFailedParams),
+    SkillUploadEmpty(EmptyErrorParams),
+    SkillUploadTooManyFiles(SkillUploadTooManyFilesParams),
+    SkillUploadPathInvalid(EmptyErrorParams),
+    SkillUploadPathDuplicate(EmptyErrorParams),
+    SkillManifestMissing(EmptyErrorParams),
+    SkillManifestInvalid(EmptyErrorParams),
+    SkillManifestNameBlank(EmptyErrorParams),
+    SkillManifestDescriptionBlank(EmptyErrorParams),
+    SkillManifestNameInvalid(EmptyErrorParams),
+    SkillFolderConflict(SkillFolderConflictParams),
+}
+
+impl PublicError {
+    /// Returns the stable code without requiring adapters to repeat a second mapping table.
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::InternalError(_) => "internal_error",
+            Self::InvalidRequest(_) => "invalid_request",
+            Self::SkillNameBlank(_) => "skill_name_blank",
+            Self::SkillNotFound(_) => "skill_not_found",
+            Self::AgentNameBlank(_) => "agent_name_blank",
+            Self::AgentNotFound(_) => "agent_not_found",
+            Self::ProjectNotFound(_) => "project_not_found",
+            Self::ProjectOccupied(_) => "project_occupied",
+            Self::ProjectWorkContextNotFound(_) => "project_work_context_not_found",
+            Self::TaskNotFound(_) => "task_not_found",
+            Self::ResourceInUse(_) => "resource_in_use",
+            Self::WorktreeRequiresGitRepository(_) => "worktree_requires_git_repository",
+            Self::WorktreeNotFound(_) => "worktree_not_found",
+            Self::SessionNotFound(_) => "session_not_found",
+            Self::AgentCliNotFound(_) => "agent_cli_not_found",
+            Self::AgentRuntimeUnavailable(_) => "agent_runtime_unavailable",
+            Self::SessionBusy(_) => "session_busy",
+            Self::SessionStopped(_) => "session_stopped",
+            Self::SessionLoadUnsupported(_) => "session_load_unsupported",
+            Self::PermissionRequestNotPending(_) => "permission_request_not_pending",
+            Self::PermissionOptionInvalid(_) => "permission_option_invalid",
+            Self::PromptEmpty(_) => "prompt_empty",
+            Self::PromptTooLarge(_) => "prompt_too_large",
+            Self::TaskWorktreeUnavailable(_) => "task_worktree_unavailable",
+            Self::TaskProjectRootUnavailable(_) => "task_project_root_unavailable",
+            Self::FileSystemPathNotAbsolute(_) => "file_system_path_not_absolute",
+            Self::FileSystemPathNotDirectory(_) => "file_system_path_not_directory",
+            Self::FileSystemPathNotFound(_) => "file_system_path_not_found",
+            Self::FileSystemPathPermissionDenied(_) => "file_system_path_permission_denied",
+            Self::WorktreeRootNotAbsolute(_) => "worktree_root_not_absolute",
+            Self::WorktreeRootNotDirectory(_) => "worktree_root_not_directory",
+            Self::OpenLocationFailed(_) => "open_location_failed",
+            Self::SkillUploadEmpty(_) => "skill_upload_empty",
+            Self::SkillUploadTooManyFiles(_) => "skill_upload_too_many_files",
+            Self::SkillUploadPathInvalid(_) => "skill_upload_path_invalid",
+            Self::SkillUploadPathDuplicate(_) => "skill_upload_path_duplicate",
+            Self::SkillManifestMissing(_) => "skill_manifest_missing",
+            Self::SkillManifestInvalid(_) => "skill_manifest_invalid",
+            Self::SkillManifestNameBlank(_) => "skill_manifest_name_blank",
+            Self::SkillManifestDescriptionBlank(_) => "skill_manifest_description_blank",
+            Self::SkillManifestNameInvalid(_) => "skill_manifest_name_invalid",
+            Self::SkillFolderConflict(_) => "skill_folder_conflict",
+        }
+    }
+}
+
+/// Carries one validated public error and the request identifier used in runtime logs.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct ContractError {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub error: PublicError,
+    pub request_id: RequestId,
+}
+
+pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
+    RequestId::export_all(config)?;
+    EmptyErrorParams::export_all(config)?;
+    OpenLocationTarget::export_all(config)?;
+    OpenLocationFailedParams::export_all(config)?;
+    SkillUploadTooManyFilesParams::export_all(config)?;
+    SkillFolderConflictParams::export_all(config)?;
+    PublicError::export_all(config)?;
+    ContractError::export_all(config)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ContractError, EmptyErrorParams, PublicError, RequestId};
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use uuid::uuid;
+
+    #[test]
+    fn serializes_a_transport_neutral_error_without_a_message_or_envelope() {
+        let error = ContractError {
+            error: PublicError::ProjectNotFound(EmptyErrorParams {}),
+            request_id: RequestId::from_uuid(uuid!("550e8400-e29b-41d4-a716-446655440000")),
+        };
+
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            json!({
+                "code": "project_not_found",
+                "params": {},
+                "requestId": "550e8400-e29b-41d4-a716-446655440000",
+            })
+        );
+    }
+}

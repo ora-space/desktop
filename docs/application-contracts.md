@@ -5,14 +5,14 @@ The public application surface is split across `ora-domain`, `ora-contracts`, `o
 ## Ownership
 
 - `ora-domain` owns schema-backed entities, identifier newtypes, and categorical enums. See [Domain Models](domain-models.md).
-- `ora-contracts` owns serialization-friendly request, response, and stream-event DTOs for Project, Task, Session, Skill, Agent, and Git identity operations, plus the Web-only project work context and filesystem operations.
+- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Session, Skill, Agent, and Git identity operations, plus the Web-only project work context and filesystem operations.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
 - `ora-contracts` also owns the frontend endpoint manifest for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode.
 - `ora-contracts` exports TypeScript DTOs into `packages/contracts/src` so frontend packages consume the contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`. See [Frontend Contract SDK](frontend-contract-sdk.md).
 - `ora-application` owns use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports those handlers depend on, and domain-to-contract mapping. It also owns project work context lease timing and occupancy conflicts.
 - `ora-db` implements those ports on SQLite and owns schema reconciliation. See [Database Repositories](database-repositories.md).
-- `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, and transport-neutral public error normalization.
-- Transport adapters stay thin: Web handlers and Tauri commands accept contract requests, delegate to the same `Backend`, then map its stable error categories into HTTP or IPC semantics.
+- `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
+- Transport adapters stay thin: Web handlers and Tauri commands accept contract requests, delegate to the same `Backend`, then map its stable public errors into HTTP or IPC semantics.
 - `ProjectWorkContext` and filesystem browsing are deliberately outside `ora-backend`. The Web server keeps those services composed directly from the repository pool; Desktop's transport reports `unsupported_operation` for those three contract operations.
 
 ## Contract shapes
@@ -31,6 +31,12 @@ Public payloads expose documented business fields only. `createdAt`, `updatedAt`
 - A session's private provider session id is never exposed. It is persisted and used internally for `session/load`, but the public `Session` payload omits it.
 
 Because adapters and generated frontend types bind to `ora-contracts` rather than to domain models, the domain layer can add internal fields or invariants without those details leaking into the protocol.
+
+## Public errors
+
+Public failures serialize directly as `{ code, params, requestId }`. `RequestId` is UUID-backed, and `PublicError` is a discriminated union with one named parameter shape per code, including explicit empty parameters. The contract exposes neither an internal message nor an outer error envelope.
+
+The backend maps the highest semantic application error exhaustively to both a public error and one transport-neutral classification: `InvalidRequest`, `NotFound`, `Conflict`, or `Internal`. Infrastructure failures become `internal_error` while their Rust `Error::source()` chains remain available for diagnostics outside the serialized contract. Adapters never infer public codes by inspecting source chains or matching error strings.
 
 ## Handlers
 
@@ -60,11 +66,11 @@ Notable consequences:
 
 Deletion stays a normal delete use case at the boundary even though the repository implements it as a soft delete. Callers interact with delete-oriented request and response contracts and never see soft-delete or archive semantics.
 
-## Structured events
+## Error propagation and completion logging
 
-Handlers emit structured operational `tracing` events without introducing transport concerns. Success events log at `INFO` with the use-case `operation` and the relevant entity identifier when one is available; not-found and repository failures log at `ERROR` with details under `error`. An adapter never has to add the log entry itself.
+Application handlers preserve semantic errors and infrastructure source chains without emitting generic success or propagation-only failure events. Repository adapters likewise do not add another event merely to report the same failure. Web, Tauri, and stream entry seams own the single correlated request-completion event and derive its level from the public classification.
 
-The application layer emits events only. Logging initialization, sink selection, and writer lifetimes stay with runtime composition roots. See [Runtime Logging](runtime-logging.md).
+Bootstrap, migration, state-transition, and secondary-cleanup events remain independent lifecycle facts. Logging initialization, sink selection, and writer lifetimes stay with runtime composition roots. See [Runtime Logging](runtime-logging.md).
 
 ## Slice invariants
 

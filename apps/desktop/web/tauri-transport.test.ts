@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ContractTransportError } from "@ora/contracts";
+import { LocalTransportError, RemoteContractError } from "@ora/contracts";
 import { createTauriTransport } from "./tauri-transport";
 
 describe("createTauriTransport", () => {
@@ -47,14 +47,15 @@ describe("createTauriTransport", () => {
         body: undefined,
         headers: {},
       }),
-    ).rejects.toMatchObject({ code: "unsupported_operation", status: null });
+    ).rejects.toMatchObject({ kind: "unsupported_operation" });
     expect(invoke).not.toHaveBeenCalled();
   });
 
   it("normalizes structured command errors", async () => {
     const invoke = vi.fn().mockRejectedValue({
       code: "project_not_found",
-      message: "project not found: project-1",
+      params: {},
+      requestId: "550e8400-e29b-41d4-a716-446655440000",
     });
     const transport = createTauriTransport(invoke);
 
@@ -69,13 +70,14 @@ describe("createTauriTransport", () => {
       });
       throw new Error("expected transport to reject");
     } catch (error) {
-      expect(error).toBeInstanceOf(ContractTransportError);
+      expect(error).toBeInstanceOf(RemoteContractError);
       expect(error).toMatchObject({
         code: "project_not_found",
         status: null,
         responseBody: {
           code: "project_not_found",
-          message: "project not found: project-1",
+          params: {},
+          requestId: "550e8400-e29b-41d4-a716-446655440000",
         },
       });
     }
@@ -115,7 +117,7 @@ describe("createTauriTransport", () => {
     }));
     expect(invoke).toHaveBeenCalledWith("cancel_contract_stream", expect.any(Object));
     expect(() => stream[Symbol.asyncIterator]()).toThrowError(
-      expect.objectContaining({ code: "stream_already_consumed" }),
+      expect.objectContaining({ kind: "stream_already_consumed" }),
     );
   });
 
@@ -145,6 +147,6 @@ describe("createTauriTransport", () => {
         // The transport detects overflow before yielding buffered business events.
         void event;
       }
-    }).rejects.toMatchObject({ code: "stream_queue_overflow" });
+    }).rejects.toBeInstanceOf(LocalTransportError);
   });
 });

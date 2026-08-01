@@ -1,11 +1,20 @@
 use axum::Json;
+use axum::extract::Request;
 use axum::extract::rejection::JsonRejection;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header::HeaderName};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use ora_application::ApplicationError;
-use ora_backend::{BackendError, BackendErrorKind};
-use serde::Serialize;
+use ora_backend::{BackendError, ErrorClassification, RequestLifecycle, UuidRequestIdGenerator};
+use ora_contracts::{EmptyErrorParams, PublicError};
 use thiserror::Error;
+use tracing::Instrument;
+
+pub const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+
+tokio::task_local! {
+    static REQUEST_LIFECYCLE: RequestLifecycle;
+}
 
 /// Reports bootstrap-time configuration, listener, and logging failures for the web server entry point.
 #[derive(Debug, Error)]
@@ -34,6 +43,8 @@ pub enum WebBootstrapError {
     },
     #[error("ORA_DATA_DIR must not be empty")]
     InvalidDatabasePathEmpty,
+    #[error("failed to resolve the current directory")]
+    CurrentDirectory(#[source] std::io::Error),
     #[error("ORA_PROJECT_NAME must not be empty")]
     InvalidProjectNameEmpty,
     #[error("ORA_PROJECT_PATH must not be empty")]
@@ -48,8 +59,11 @@ pub enum WebBootstrapError {
     DataDirectoryCreate(#[source] std::io::Error),
     #[error("failed to bootstrap SQLite database")]
     DatabaseBootstrap(#[source] ora_db::DatabaseError),
-    #[error("failed to reconcile bootstrap project: {message}")]
-    ProjectBootstrap { message: String },
+    #[error("failed to reconcile bootstrap project")]
+    ProjectBootstrap {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
     #[error(transparent)]
     LoggingInit(#[from] ora_logging::LoggingInitError),
     #[error("failed to bind HTTP listener")]
@@ -58,324 +72,140 @@ pub enum WebBootstrapError {
     Serve(#[source] std::io::Error),
 }
 
-/// Represents one structured error response returned by the HTTP adapter.
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct ErrorEnvelope {
-    error: ErrorPayload,
-}
-
-/// Carries the stable machine-readable and human-readable fields for one API failure.
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct ErrorPayload {
-    code: &'static str,
-    message: String,
-}
-
-/// Centralizes application and transport failures into stable HTTP responses.
+/// Owns the internal failure until Axum serializes its typed public projection.
 pub struct WebApiError {
-    status: StatusCode,
-    code: &'static str,
-    message: String,
+    error: BackendError,
 }
 
 impl WebApiError {
-    /// Creates a bad-request API error for malformed transport input.
-    pub fn bad_request(message: impl Into<String>) -> Self {
+    /// Creates a malformed-input failure without returning parser-generated diagnostics.
+    pub fn invalid_request(context: &'static str) -> Self {
+        Self::semantic(
+            ErrorClassification::InvalidRequest,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            context,
+        )
+    }
+
+    /// Creates a source-free semantic failure from a typed public variant.
+    pub fn semantic(
+        classification: ErrorClassification,
+        public_error: PublicError,
+        context: &'static str,
+    ) -> Self {
         Self {
-            status: StatusCode::BAD_REQUEST,
-            code: "bad_request",
-            message: message.into(),
+            error: BackendError::new(classification, public_error, context),
         }
     }
 
-    /// Creates a filesystem API error with a stable transport code and status.
-    pub fn file_system(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
+    /// Creates a typed filesystem failure and retains the concrete filesystem source.
+    pub fn with_source(
+        classification: ErrorClassification,
+        public_error: PublicError,
+        context: &'static str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Self {
-            status,
-            code,
-            message: message.into(),
+            error: BackendError::with_source(classification, public_error, context, source),
+        }
+    }
+
+    /// Creates an internal adapter failure and retains its concrete source.
+    pub fn internal(
+        context: &'static str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            error: BackendError::internal(context, source),
         }
     }
 }
 
 impl From<ApplicationError> for WebApiError {
-    /// Maps stable application errors into transport-visible HTTP status codes.
     fn from(error: ApplicationError) -> Self {
-        match error {
-            ApplicationError::SkillNameBlank => Self {
-                status: StatusCode::BAD_REQUEST,
-                code: "skill_name_blank",
-                message: "skill name must not be blank".to_string(),
-            },
-            ApplicationError::SkillNotFound { skill_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "skill_not_found",
-                message: format!("skill not found: {skill_id}"),
-            },
-            ApplicationError::SkillRepository { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "skill_repository_error",
-                message,
-            },
-            ApplicationError::AgentDefinitionNameBlank => Self {
-                status: StatusCode::BAD_REQUEST,
-                code: "agent_name_blank",
-                message: "agent definition name must not be blank".to_string(),
-            },
-            ApplicationError::AgentDefinitionNotFound { agent_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "agent_not_found",
-                message: format!("agent definition not found: {agent_id}"),
-            },
-            ApplicationError::AgentDefinitionRepository { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "agent_repository_error",
-                message,
-            },
-            ApplicationError::ProjectNotFound { project_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "project_not_found",
-                message: format!("project not found: {project_id}"),
-            },
-            ApplicationError::ProjectRepository { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "project_repository_error",
-                message,
-            },
-            ApplicationError::ProjectOccupied { project_id } => Self {
-                status: StatusCode::CONFLICT,
-                code: "project_occupied",
-                message: format!("project is already occupied: {project_id}"),
-            },
-            ApplicationError::ProjectWorkContextNotFound { surface, window_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "project_work_context_not_found",
-                message: format!("project work context not found for {surface}/{window_id}"),
-            },
-            ApplicationError::ProjectWorkContextRepository { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "project_work_context_repository_error",
-                message,
-            },
-            ApplicationError::TaskNotFound { task_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "task_not_found",
-                message: format!("task not found: {task_id}"),
-            },
-            ApplicationError::TaskRepository { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "task_repository_error",
-                message,
-            },
-            ApplicationError::TaskWorktreeRequiresGitRepository => Self {
-                status: StatusCode::BAD_REQUEST,
-                code: "worktree_requires_git_repository",
-                message: "worktree mode requires a Git repository".to_string(),
-            },
-            ApplicationError::TaskWorktree { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "task_worktree_error",
-                message,
-            },
-            ApplicationError::WorktreeNotFound { worktree_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "worktree_not_found",
-                message: format!("worktree not found: {worktree_id}"),
-            },
-            ApplicationError::WorktreeRepository { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "worktree_repository_error",
-                message,
-            },
-            ApplicationError::SessionNotFound { session_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "session_not_found",
-                message: format!("session not found: {session_id}"),
-            },
-            ApplicationError::SessionRepository { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "session_repository_error",
-                message,
-            },
+        Self {
+            error: BackendError::from(error),
         }
     }
 }
 
 impl From<BackendError> for WebApiError {
-    /// Adds HTTP status semantics to the shared backend error code and message.
     fn from(error: BackendError) -> Self {
-        let status = match error.kind() {
-            BackendErrorKind::BadRequest => StatusCode::BAD_REQUEST,
-            BackendErrorKind::NotFound => StatusCode::NOT_FOUND,
-            BackendErrorKind::Conflict => StatusCode::CONFLICT,
-            BackendErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-
-        Self {
-            status,
-            code: error.code(),
-            message: error.message().to_string(),
-        }
+        Self { error }
     }
 }
 
 impl From<JsonRejection> for WebApiError {
-    /// Maps JSON decoding failures into a stable bad-request API response.
-    fn from(error: JsonRejection) -> Self {
-        Self::bad_request(error.body_text())
+    fn from(_error: JsonRejection) -> Self {
+        Self::invalid_request("failed to decode JSON request")
     }
 }
 
 impl From<axum::extract::rejection::QueryRejection> for WebApiError {
-    /// Maps query decoding failures into the same stable bad-request envelope as JSON failures.
-    fn from(error: axum::extract::rejection::QueryRejection) -> Self {
-        Self::bad_request(error.body_text())
+    fn from(_error: axum::extract::rejection::QueryRejection) -> Self {
+        Self::invalid_request("failed to decode query request")
     }
 }
 
 impl IntoResponse for WebApiError {
-    /// Converts the web adapter error into the HTTP response shape shared by every route.
     fn into_response(self) -> Response {
+        let lifecycle = current_lifecycle();
+        lifecycle.complete_failure(&self.error);
+        let status = status_for(self.error.classification());
         (
-            self.status,
-            Json(ErrorEnvelope {
-                error: ErrorPayload {
-                    code: self.code,
-                    message: self.message,
-                },
-            }),
+            status,
+            Json(self.error.contract_error(lifecycle.request_id())),
         )
             .into_response()
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::WebApiError;
-    use axum::body::to_bytes;
-    use axum::http::StatusCode;
-    use axum::response::IntoResponse;
-    use ora_application::ApplicationError;
-    use pretty_assertions::assert_eq;
-    use serde_json::{Value, json};
+/// Establishes the canonical request ID before any extractor or handler can fail.
+pub async fn request_context(mut request: Request, next: Next) -> Response {
+    let path = request.uri().path().to_string();
+    let is_health_check = matches!(path.as_str(), "/health/live" | "/health/ready");
+    let operation = format!("{} {}", request.method(), path);
+    let lifecycle = RequestLifecycle::start(operation, &UuidRequestIdGenerator);
+    let request_span =
+        ora_logging::span_with_request_id("web_request", &lifecycle.request_id().to_string());
+    let header_value = HeaderValue::from_str(&lifecycle.request_id().to_string())
+        .unwrap_or_else(|error| panic!("UUID request ID was not a valid header value: {error}"));
+    request.headers_mut().insert(X_REQUEST_ID, header_value);
 
-    /// Verifies not-found application errors become stable HTTP 404 payloads.
-    #[tokio::test]
-    async fn maps_not_found_errors_to_http_404() {
-        let response = WebApiError::from(ApplicationError::ProjectNotFound {
-            project_id: "project-1".to_string(),
-        })
-        .into_response();
-        let status = response.status();
-        let body = response.into_body();
-        let bytes = match to_bytes(body, usize::MAX).await {
-            Ok(bytes) => bytes,
-            Err(error) => panic!("failed to read response body: {error}"),
-        };
-        let actual = match serde_json::from_slice::<Value>(&bytes) {
-            Ok(actual) => actual,
-            Err(error) => panic!("failed to decode JSON body: {error}"),
-        };
+    REQUEST_LIFECYCLE
+        .scope(
+            lifecycle.clone(),
+            async move {
+                let response = next.run(request).await;
+                if response.extensions().get::<DeferredCompletion>().is_none() {
+                    if is_health_check {
+                        lifecycle.complete_success_debug();
+                    } else {
+                        lifecycle.complete_success();
+                    }
+                }
+                response
+            }
+            .instrument(request_span),
+        )
+        .await
+}
 
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(
-            actual,
-            json!({
-                "error": {
-                    "code": "project_not_found",
-                    "message": "project not found: project-1",
-                },
-            })
-        );
-    }
+pub(crate) fn current_lifecycle() -> RequestLifecycle {
+    REQUEST_LIFECYCLE
+        .try_with(Clone::clone)
+        .unwrap_or_else(|_| RequestLifecycle::start("web_request", &UuidRequestIdGenerator))
+}
 
-    /// Verifies repository failures become stable HTTP 500 payloads.
-    #[tokio::test]
-    async fn maps_repository_errors_to_http_500() {
-        let response = WebApiError::from(ApplicationError::ProjectRepository {
-            message: "write failed".to_string(),
-        })
-        .into_response();
-        let status = response.status();
-        let body = response.into_body();
-        let bytes = match to_bytes(body, usize::MAX).await {
-            Ok(bytes) => bytes,
-            Err(error) => panic!("failed to read response body: {error}"),
-        };
-        let actual = match serde_json::from_slice::<Value>(&bytes) {
-            Ok(actual) => actual,
-            Err(error) => panic!("failed to decode JSON body: {error}"),
-        };
+/// Marks responses whose completion is owned by their full streaming lifetime.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DeferredCompletion;
 
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            actual,
-            json!({
-                "error": {
-                    "code": "project_repository_error",
-                    "message": "write failed",
-                },
-            })
-        );
-    }
-
-    /// Verifies occupied project errors become stable HTTP 409 payloads.
-    #[tokio::test]
-    async fn maps_project_occupied_errors_to_http_409() {
-        let response = WebApiError::from(ApplicationError::ProjectOccupied {
-            project_id: "project-1".to_string(),
-        })
-        .into_response();
-        let status = response.status();
-        let body = response.into_body();
-        let bytes = match to_bytes(body, usize::MAX).await {
-            Ok(bytes) => bytes,
-            Err(error) => panic!("failed to read response body: {error}"),
-        };
-        let actual = match serde_json::from_slice::<Value>(&bytes) {
-            Ok(actual) => actual,
-            Err(error) => panic!("failed to decode JSON body: {error}"),
-        };
-
-        assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(
-            actual,
-            json!({
-                "error": {
-                    "code": "project_occupied",
-                    "message": "project is already occupied: project-1",
-                },
-            })
-        );
-    }
-
-    /// Verifies worktree creation outside Git repositories becomes an actionable HTTP 400.
-    #[tokio::test]
-    async fn maps_non_git_worktree_roots_to_http_400() {
-        let response =
-            WebApiError::from(ApplicationError::TaskWorktreeRequiresGitRepository).into_response();
-        let status = response.status();
-        let body = response.into_body();
-        let bytes = match to_bytes(body, usize::MAX).await {
-            Ok(bytes) => bytes,
-            Err(error) => panic!("failed to read response body: {error}"),
-        };
-        let actual = match serde_json::from_slice::<Value>(&bytes) {
-            Ok(actual) => actual,
-            Err(error) => panic!("failed to decode JSON body: {error}"),
-        };
-
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(
-            actual,
-            json!({
-                "error": {
-                    "code": "worktree_requires_git_repository",
-                    "message": "worktree mode requires a Git repository",
-                },
-            })
-        );
+const fn status_for(classification: ErrorClassification) -> StatusCode {
+    match classification {
+        ErrorClassification::InvalidRequest => StatusCode::BAD_REQUEST,
+        ErrorClassification::NotFound => StatusCode::NOT_FOUND,
+        ErrorClassification::Conflict => StatusCode::CONFLICT,
+        ErrorClassification::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

@@ -3,8 +3,8 @@ use crate::config::{ProjectConfig, RuntimeConfig};
 use crate::error::WebBootstrapError;
 use crate::service::{FileSystemApi, ProjectWorkContextApi};
 use ora_application::{
-    Clock, OpenProjectWorkContextHandler, ProjectIdGenerator, ProjectRepository,
-    ProjectRepositoryError, UuidProjectIdGenerator, UuidProjectWorkContextIdGenerator,
+    Clock, OpenProjectWorkContextHandler, ProjectIdGenerator, ProjectRepository, RepositoryError,
+    UuidProjectIdGenerator, UuidProjectWorkContextIdGenerator,
 };
 use ora_backend::{Backend, BackendBootstrapError, BackendPaths};
 use ora_contracts::{OpenProjectWorkContextRequest, ProjectWorkContextSurface};
@@ -77,10 +77,10 @@ fn reconcile_configured_project(
             Ok(existing_project.id)
         }
         Some(existing_project) => Err(WebBootstrapError::ProjectBootstrap {
-            message: format!(
+            source: Box::new(std::io::Error::other(format!(
                 "configured project root differs from immutable stored root: {}",
                 existing_project.root_path
-            ),
+            ))),
         }),
         None => {
             let now = clock.now_timestamp_millis();
@@ -135,17 +135,15 @@ fn web_backend_bootstrap_error(error: BackendBootstrapError) -> WebBootstrapErro
         }
         BackendBootstrapError::Database(source) => WebBootstrapError::DatabaseBootstrap(source),
         BackendBootstrapError::AgentRuntime(source) => WebBootstrapError::ProjectBootstrap {
-            message: format!("failed to initialize agent runtime: {source}"),
+            source: Box::new(source),
         },
     }
 }
 
 /// Converts repository-owned bootstrap failures into one stable startup error variant.
-fn project_bootstrap_error(error: ProjectRepositoryError) -> WebBootstrapError {
-    match error {
-        ProjectRepositoryError::OperationFailed(message) => {
-            WebBootstrapError::ProjectBootstrap { message }
-        }
+fn project_bootstrap_error(error: RepositoryError) -> WebBootstrapError {
+    WebBootstrapError::ProjectBootstrap {
+        source: Box::new(error),
     }
 }
 
@@ -154,7 +152,7 @@ fn project_work_context_bootstrap_error(
     error: ora_application::ApplicationError,
 ) -> WebBootstrapError {
     WebBootstrapError::ProjectBootstrap {
-        message: error.to_string(),
+        source: Box::new(error),
     }
 }
 
@@ -305,7 +303,16 @@ mod tests {
             Ok(_) => panic!("expected immutable project root mismatch to fail bootstrap"),
             Err(error) => error,
         };
-        assert!(error.to_string().contains("immutable stored root"));
+        let mut current: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+        let mut found_root_mismatch = false;
+        while let Some(source) = current {
+            found_root_mismatch |= source.to_string().contains("immutable stored root");
+            current = source.source();
+        }
+        assert!(
+            found_root_mismatch,
+            "source chain must retain root mismatch"
+        );
         let repository = bootstrapped_project_repository(&database_path);
         let stored_project = repository
             .find_project_by_name("Ora")

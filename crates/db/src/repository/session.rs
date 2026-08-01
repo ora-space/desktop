@@ -1,4 +1,4 @@
-use ora_application::{SessionRepository, SessionRepositoryError};
+use ora_application::{RepositoryError, SessionRepository};
 use ora_domain::{AgentCli, AuditFields, Session, SessionId, SessionStatus, TaskId};
 use rusqlite::{Row, params};
 
@@ -19,7 +19,7 @@ impl SqliteSessionRepository {
 
 impl SessionRepository for SqliteSessionRepository {
     /// Inserts a new session row and returns the stored session snapshot.
-    fn create_session(&self, session: Session) -> Result<Session, SessionRepositoryError> {
+    fn create_session(&self, session: Session) -> Result<Session, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let inserted_rows = connection.execute(
@@ -51,10 +51,7 @@ impl SessionRepository for SqliteSessionRepository {
     }
 
     /// Loads one visible session row by identifier.
-    fn find_session(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<Option<Session>, SessionRepositoryError> {
+    fn find_session(&self, session_id: &SessionId) -> Result<Option<Session>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
@@ -73,7 +70,7 @@ impl SessionRepository for SqliteSessionRepository {
     }
 
     /// Lists every visible session row in stable storage order.
-    fn list_sessions(&self) -> Result<Vec<Session>, SessionRepositoryError> {
+    fn list_sessions(&self) -> Result<Vec<Session>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
@@ -95,7 +92,7 @@ impl SessionRepository for SqliteSessionRepository {
     }
 
     /// Updates lifecycle fields while preserving immutable provider and task routing.
-    fn update_session(&self, session: Session) -> Result<Session, SessionRepositoryError> {
+    fn update_session(&self, session: Session) -> Result<Session, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
@@ -130,7 +127,7 @@ impl SessionRepository for SqliteSessionRepository {
         &self,
         session_id: &SessionId,
         deleted_at: i64,
-    ) -> Result<bool, SessionRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
@@ -163,6 +160,6 @@ fn map_session_row(row: &Row<'_>) -> Result<Session, crate::DatabaseError> {
 }
 
 /// Converts shared database-layer failures into session repository errors.
-fn session_repository_error_from_database(error: crate::DatabaseError) -> SessionRepositoryError {
-    SessionRepositoryError::OperationFailed(error.to_string())
+fn session_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
+    RepositoryError::new(error)
 }

@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createFetchTransport, decodeErrorEnvelope, resolveUrl } from "../src/fetch.js";
-import { ContractTransportError, type ContractTransportRequest } from "../src/transport.js";
+import { createFetchTransport, resolveUrl } from "../src/fetch.js";
+import {
+  LocalTransportError,
+  RemoteContractError,
+  UnknownRemoteError,
+  decodeRemoteError,
+  type ContractTransportRequest,
+} from "../src/transport.js";
 
 test("resolves paths relative to the current origin when baseUrl is empty", () => {
   assert.equal(resolveUrl("", "/api/projects"), "/api/projects");
@@ -15,19 +21,11 @@ test("resolves paths against an absolute server base", () => {
   );
 });
 
-test("decodes the shared HTTP error envelope", () => {
-  assert.deepEqual(
-    decodeErrorEnvelope({
-      error: {
-        code: "project_not_found",
-        message: "project not found: project-1",
-      },
-    }),
-    {
-      code: "project_not_found",
-      message: "project not found: project-1",
-    },
-  );
+test("decodes known, unknown, and malformed remote payloads", () => {
+  const requestId = "550e8400-e29b-41d4-a716-446655440000";
+  assert.ok(decodeRemoteError({ code: "project_not_found", params: {}, requestId }, 404) instanceof RemoteContractError);
+  assert.ok(decodeRemoteError({ code: "future_error", params: {}, requestId }, 500) instanceof UnknownRemoteError);
+  assert.ok(decodeRemoteError({ code: "project_not_found", params: {} }, 404) instanceof LocalTransportError);
 });
 
 test("normalizes structured server errors from fetch responses", async () => {
@@ -45,10 +43,9 @@ test("normalizes structured server errors from fetch responses", async () => {
 
       return new Response(
         JSON.stringify({
-          error: {
-            code: "project_not_found",
-            message: "project not found: project-1",
-          },
+          code: "project_not_found",
+          params: {},
+          requestId: "550e8400-e29b-41d4-a716-446655440000",
         }),
         {
           status: 404,
@@ -71,17 +68,12 @@ test("normalizes structured server errors from fetch responses", async () => {
   await assert.rejects(
     transport.send(request),
     (error: unknown) => {
-      assert.ok(error instanceof ContractTransportError);
-      const transportError = error as ContractTransportError;
+      assert.ok(error instanceof RemoteContractError);
+      const transportError = error as RemoteContractError;
 
       assert.equal(transportError.code, "project_not_found");
       assert.equal(transportError.status, 404);
-      assert.deepEqual(transportError.responseBody, {
-        error: {
-          code: "project_not_found",
-          message: "project not found: project-1",
-        },
-      });
+      assert.equal(transportError.requestId, "550e8400-e29b-41d4-a716-446655440000");
 
       return true;
     },
@@ -130,7 +122,7 @@ test("starts NDJSON streams lazily, decodes split frames, and enforces single co
   assert.equal(fetchCalls, 1);
   assert.throws(
     () => stream[Symbol.asyncIterator](),
-    (error: unknown) => error instanceof ContractTransportError && error.code === "stream_already_consumed",
+    (error: unknown) => error instanceof LocalTransportError && error.kind === "stream_already_consumed",
   );
 });
 
@@ -140,7 +132,7 @@ test("surfaces a typed stream error frame and aborts the underlying fetch lifecy
     fetch: async (_input, init) => {
       observedSignal = init?.signal as AbortSignal;
       return new Response(
-        '{"type":"error","error":{"code":"session_busy","message":"busy"}}\n',
+        '{"type":"error","error":{"code":"session_busy","params":{},"requestId":"550e8400-e29b-41d4-a716-446655440000"}}\n',
         { status: 200 },
       );
     },
@@ -160,7 +152,7 @@ test("surfaces a typed stream error frame and aborts the underlying fetch lifecy
         assert.fail("error-only stream must not yield data");
       }
     },
-    (error: unknown) => error instanceof ContractTransportError && error.code === "session_busy",
+    (error: unknown) => error instanceof RemoteContractError && error.code === "session_busy",
   );
   assert.equal(observedSignal?.aborted, true);
 });

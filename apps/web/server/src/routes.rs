@@ -3,6 +3,7 @@ use crate::handlers::{
     agents, file_system, git, health, project_work_contexts, projects, sessions, skills, tasks,
 };
 use axum::Router;
+use axum::middleware;
 use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
@@ -10,6 +11,8 @@ use ora_contracts::{
     SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
     SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
 };
+use tower_http::cors::CorsLayer;
+use tower_http::request_id::PropagateRequestIdLayer;
 
 /// Builds the top-level router for health checks and the persisted CRUD routes.
 pub fn build_router(app_state: AppState) -> Router {
@@ -110,6 +113,9 @@ pub fn build_router(app_state: AppState) -> Router {
         // =============================================================================
         .route(GIT_IDENTITY_PATH, get(git::get_identity))
         .with_state(app_state)
+        .layer(PropagateRequestIdLayer::new(crate::error::X_REQUEST_ID))
+        .layer(middleware::from_fn(crate::error::request_context))
+        .layer(CorsLayer::new().expose_headers([crate::error::X_REQUEST_ID]))
 }
 
 #[cfg(test)]
@@ -121,6 +127,7 @@ mod tests {
     use ora_application::{ProjectWorkContextRepository, WorktreeRepository};
     use ora_contracts::{
         FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryResponse,
+        RequestId,
     };
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, SqliteProjectWorkContextRepository,
@@ -281,15 +288,7 @@ mod tests {
         let body = response_json(response).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(
-            body,
-            json!({
-                "error": {
-                    "code": "invalid_file_system_path",
-                    "message": "filesystem path must be absolute: \"relative\"",
-                },
-            })
-        );
+        assert_contract_error(&body, "file_system_path_not_absolute");
     }
 
     /// Verifies the router supports the persisted project CRUD slice end to end.
@@ -443,6 +442,10 @@ mod tests {
                 Request::builder()
                     .method(Method::GET)
                     .uri("/api/projects/missing-project")
+                    .header(
+                        crate::error::X_REQUEST_ID,
+                        "550e8400-e29b-41d4-a716-446655440000",
+                    )
                     .body(Body::empty())
                     .unwrap_or_else(|error| panic!("failed to build request: {error}")),
             )
@@ -453,15 +456,16 @@ mod tests {
         };
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert_eq!(
-            response_json(response).await,
-            json!({
-                "error": {
-                    "code": "project_not_found",
-                    "message": "project not found: missing-project",
-                },
-            })
-        );
+        let header_request_id = response
+            .headers()
+            .get(crate::error::X_REQUEST_ID)
+            .and_then(|value| value.to_str().ok())
+            .expect("response must expose X-Request-Id")
+            .to_string();
+        let body = response_json(response).await;
+        assert_contract_error(&body, "project_not_found");
+        assert_eq!(body["requestId"], header_request_id);
+        assert_ne!(header_request_id, "550e8400-e29b-41d4-a716-446655440000");
     }
 
     /// Verifies the router supports open, switch, and renew flows for project work contexts.
@@ -608,15 +612,7 @@ mod tests {
         };
 
         assert_eq!(conflict_response.status(), StatusCode::CONFLICT);
-        assert_eq!(
-            response_json(conflict_response).await,
-            json!({
-                "error": {
-                    "code": "project_occupied",
-                    "message": format!("project is already occupied: {project_id}"),
-                },
-            })
-        );
+        assert_contract_error(&response_json(conflict_response).await, "project_occupied");
     }
 
     /// Verifies expired contexts stop blocking project opens once their lease is stale.
@@ -913,15 +909,7 @@ mod tests {
             json!({ "sessions": [] })
         );
         assert_eq!(get_response.status(), StatusCode::NOT_FOUND);
-        assert_eq!(
-            response_json(get_response).await,
-            json!({
-                "error": {
-                    "code": "session_not_found",
-                    "message": "session not found: missing-session",
-                },
-            })
-        );
+        assert_contract_error(&response_json(get_response).await, "session_not_found");
     }
 
     /// Verifies catalog routes address resources by identifier while names remain editable fields.
@@ -1214,5 +1202,21 @@ mod tests {
             Ok(value) => value,
             Err(error) => panic!("failed to decode JSON body: {error}"),
         }
+    }
+
+    fn assert_contract_error(body: &Value, expected_code: &str) {
+        assert_eq!(
+            body.get("code").and_then(Value::as_str),
+            Some(expected_code)
+        );
+        assert!(body.get("params").is_some_and(Value::is_object));
+        let request_id = body
+            .get("requestId")
+            .cloned()
+            .expect("contract error must include requestId");
+        serde_json::from_value::<RequestId>(request_id)
+            .expect("contract error requestId must be a UUID");
+        assert!(body.get("message").is_none());
+        assert!(body.get("error").is_none());
     }
 }

@@ -2,6 +2,8 @@ export * as acp from "./acp/index.js";
 export * from "./agent.js";
 export * from "./client.js";
 export * from "./endpoints.js";
+export * from "./error.js";
+export * from "./error.schema.js";
 export * from "./file-system.js";
 export * from "./project-work-context.js";
 export * from "./project.js";

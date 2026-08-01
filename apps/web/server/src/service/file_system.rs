@@ -1,7 +1,7 @@
-use axum::http::StatusCode;
+use ora_backend::ErrorClassification;
 use ora_contracts::{
-    FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryRequest,
-    ListDirectoryResponse,
+    EmptyErrorParams, FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind,
+    ListDirectoryRequest, ListDirectoryResponse, PublicError,
 };
 use std::fs;
 use std::io;
@@ -95,39 +95,39 @@ impl From<FileSystemError> for WebApiError {
     /// Maps directory browsing failures into stable HTTP responses for the Web picker.
     fn from(error: FileSystemError) -> Self {
         match error {
-            FileSystemError::PathNotAbsolute { path } => WebApiError::file_system(
-                StatusCode::BAD_REQUEST,
-                "invalid_file_system_path",
-                format!("filesystem path must be absolute: {path:?}"),
+            FileSystemError::PathNotAbsolute { .. } => WebApiError::semantic(
+                ErrorClassification::InvalidRequest,
+                PublicError::FileSystemPathNotAbsolute(EmptyErrorParams {}),
+                "filesystem path must be absolute",
             ),
-            FileSystemError::NotDirectory { path } => WebApiError::file_system(
-                StatusCode::BAD_REQUEST,
-                "file_system_path_not_directory",
-                format!("filesystem path is not a directory: {path:?}"),
+            FileSystemError::NotDirectory { .. } => WebApiError::semantic(
+                ErrorClassification::InvalidRequest,
+                PublicError::FileSystemPathNotDirectory(EmptyErrorParams {}),
+                "filesystem path is not a directory",
             ),
-            FileSystemError::DirectoryRead { path, source }
+            FileSystemError::DirectoryRead { source, .. }
                 if source.kind() == io::ErrorKind::NotFound =>
             {
-                WebApiError::file_system(
-                    StatusCode::NOT_FOUND,
-                    "file_system_path_not_found",
-                    format!("filesystem path was not found: {path:?}"),
+                WebApiError::with_source(
+                    ErrorClassification::NotFound,
+                    PublicError::FileSystemPathNotFound(EmptyErrorParams {}),
+                    "filesystem path was not found",
+                    source,
                 )
             }
-            FileSystemError::DirectoryRead { path, source }
+            FileSystemError::DirectoryRead { source, .. }
                 if source.kind() == io::ErrorKind::PermissionDenied =>
             {
-                WebApiError::file_system(
-                    StatusCode::FORBIDDEN,
-                    "file_system_directory_unreadable",
-                    format!("filesystem directory is not readable: {path:?}"),
+                WebApiError::with_source(
+                    ErrorClassification::InvalidRequest,
+                    PublicError::FileSystemPathPermissionDenied(EmptyErrorParams {}),
+                    "filesystem directory is not readable",
+                    source,
                 )
             }
-            FileSystemError::DirectoryRead { path, .. } => WebApiError::file_system(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "file_system_directory_read_failed",
-                format!("failed to read filesystem directory: {path:?}"),
-            ),
+            FileSystemError::DirectoryRead { source, .. } => {
+                WebApiError::internal("failed to read filesystem directory", source)
+            }
         }
     }
 }

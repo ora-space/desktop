@@ -218,7 +218,7 @@ fn read_data_dir_root(
 
     std::env::current_dir()
         .map(|cwd| cwd.join(path))
-        .map_err(|_| WebBootstrapError::InvalidDatabasePathEmpty)
+        .map_err(WebBootstrapError::CurrentDirectory)
 }
 
 /// Derives the default linked-worktree root from the configured SQLite database location.

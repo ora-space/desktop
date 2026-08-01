@@ -73,7 +73,7 @@ impl DesktopConfigStore {
         self.config
             .read()
             .map(|config| config.clone())
-            .map_err(|_| DesktopConfigError::StateUnavailable)
+            .map_err(|_poisoned| DesktopConfigError::StateUnavailable)
     }
 
     /// Validates, persists, and publishes a new worktree creation root.
@@ -82,7 +82,7 @@ impl DesktopConfigStore {
         let mut config = self
             .config
             .write()
-            .map_err(|_| DesktopConfigError::StateUnavailable)?;
+            .map_err(|_poisoned| DesktopConfigError::StateUnavailable)?;
         let updated = DesktopConfig {
             version: CONFIG_VERSION,
             worktree_root,

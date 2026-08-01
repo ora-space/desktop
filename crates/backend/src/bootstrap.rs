@@ -1,12 +1,13 @@
 use crate::agent::AgentApi;
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
 use crate::clock::SystemClock;
-use crate::error::{BackendError, BackendErrorKind};
+use crate::error::{BackendError, ErrorClassification};
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
 use ora_contracts::*;
+use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -87,10 +88,10 @@ impl Backend {
 
     /// Replaces the root used by task creations that start after this update.
     pub fn set_worktree_root(&self, worktree_root: PathBuf) -> Result<(), BackendError> {
-        let mut configured_root = self.worktree_root.write().map_err(|_| {
+        let mut configured_root = self.worktree_root.write().map_err(|_poisoned| {
             BackendError::new(
-                BackendErrorKind::Internal,
-                "worktree_configuration_error",
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
                 "worktree root configuration is unavailable",
             )
         })?;
@@ -358,7 +359,7 @@ fn ensure_directory(path: &Path) -> Result<(), BackendBootstrapError> {
 #[cfg(test)]
 mod tests {
     use super::{Backend, BackendPaths};
-    use crate::error::BackendErrorKind;
+    use crate::error::ErrorClassification;
     use ora_contracts::CreateTaskRequest;
     use ora_contracts::{
         CreateAgentRequest, CreateProjectRequest, CreateSkillRequest, DeleteAgentRequest,
@@ -477,8 +478,8 @@ mod tests {
                 project_id: project.id,
             })
             .expect_err("deleted project should be hidden");
-        assert_eq!(error.kind(), BackendErrorKind::NotFound);
-        assert_eq!(error.code(), "project_not_found");
+        assert_eq!(error.classification(), ErrorClassification::NotFound);
+        assert_eq!(error.public_error().code(), "project_not_found");
     }
 
     /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.

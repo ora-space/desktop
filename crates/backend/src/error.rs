@@ -1,170 +1,233 @@
 use ora_application::ApplicationError;
-use serde::Serialize;
+use ora_contracts::{ContractError, EmptyErrorParams, PublicError, RequestId};
+use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
-/// Classifies backend failures without coupling the shared layer to HTTP status codes.
+type SharedError = Arc<dyn Error + Send + Sync + 'static>;
+
+/// Classifies public failures without coupling the shared runtime to HTTP status codes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BackendErrorKind {
-    BadRequest,
+pub enum ErrorClassification {
+    InvalidRequest,
     NotFound,
     Conflict,
     Internal,
 }
 
-/// Carries the stable public error code and message shared by every transport adapter.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Preserves internal diagnostics while exposing only a typed public error to adapters.
+#[derive(Clone, Debug)]
 pub struct BackendError {
-    #[serde(skip)]
-    kind: BackendErrorKind,
-    code: &'static str,
-    message: String,
+    classification: ErrorClassification,
+    public_error: PublicError,
+    context: String,
+    source: Option<SharedError>,
 }
 
 impl BackendError {
-    /// Creates a backend error from explicit transport-neutral public fields.
-    pub fn new(kind: BackendErrorKind, code: &'static str, message: impl Into<String>) -> Self {
+    /// Creates a semantic backend failure that has no lower-level source.
+    pub fn new(
+        classification: ErrorClassification,
+        public_error: PublicError,
+        context: impl Into<String>,
+    ) -> Self {
         Self {
-            kind,
-            code,
-            message: message.into(),
+            classification,
+            public_error,
+            context: context.into(),
+            source: None,
         }
     }
 
-    /// Returns the category an adapter can map into its native failure semantics.
-    pub fn kind(&self) -> BackendErrorKind {
-        self.kind
+    /// Creates an internal failure while retaining its concrete source chain.
+    pub fn internal(context: &'static str, source: impl Error + Send + Sync + 'static) -> Self {
+        Self::with_source(
+            ErrorClassification::Internal,
+            PublicError::InternalError(EmptyErrorParams {}),
+            context,
+            source,
+        )
     }
 
-    /// Returns the stable machine-readable public error code.
-    pub fn code(&self) -> &'static str {
-        self.code
+    /// Creates a classified semantic failure while retaining a lower-level source.
+    pub fn with_source(
+        classification: ErrorClassification,
+        public_error: PublicError,
+        context: &'static str,
+        source: impl Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            classification,
+            public_error,
+            context: context.to_string(),
+            source: Some(Arc::new(source)),
+        }
     }
 
-    /// Returns the human-readable public error message.
-    pub fn message(&self) -> &str {
-        &self.message
+    /// Returns the category an adapter maps into native status and logging semantics.
+    pub const fn classification(&self) -> ErrorClassification {
+        self.classification
+    }
+
+    /// Returns the strongly typed public error without exposing internal diagnostics.
+    pub const fn public_error(&self) -> &PublicError {
+        &self.public_error
+    }
+
+    /// Builds the public payload using the adapter-owned request identifier.
+    pub fn contract_error(&self, request_id: RequestId) -> ContractError {
+        ContractError {
+            error: self.public_error.clone(),
+            request_id,
+        }
     }
 }
 
 impl fmt::Display for BackendError {
-    /// Formats the public message without exposing internal source diagnostics.
+    /// Formats only the semantic context added by the backend layer.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
+        formatter.write_str(&self.context)
     }
 }
 
-impl std::error::Error for BackendError {}
+impl Error for BackendError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source.as_deref().map(|source| source as &dyn Error)
+    }
+}
 
 impl From<ApplicationError> for BackendError {
-    /// Normalizes application failures into one stable adapter-independent error contract.
+    /// Projects the highest application semantic variant and retains the complete source chain.
     fn from(error: ApplicationError) -> Self {
-        match error {
-            ApplicationError::SkillNameBlank => Self::new(
-                BackendErrorKind::BadRequest,
-                "skill_name_blank",
+        let (classification, public_error, context) = match &error {
+            ApplicationError::SkillNameBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::SkillNameBlank(EmptyErrorParams {}),
                 "skill name must not be blank",
             ),
-            ApplicationError::SkillNotFound { skill_id } => Self::new(
-                BackendErrorKind::NotFound,
-                "skill_not_found",
-                format!("skill not found: {skill_id}"),
+            ApplicationError::SkillNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::SkillNotFound(EmptyErrorParams {}),
+                "skill not found",
             ),
-            ApplicationError::SkillRepository { .. } => internal(
-                "skill_repository_error",
-                "skill repository operation failed",
-            ),
-            ApplicationError::AgentDefinitionNameBlank => Self::new(
-                BackendErrorKind::BadRequest,
-                "agent_name_blank",
+            ApplicationError::AgentDefinitionNameBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::AgentNameBlank(EmptyErrorParams {}),
                 "agent definition name must not be blank",
             ),
-            ApplicationError::AgentDefinitionNotFound { agent_id } => Self::new(
-                BackendErrorKind::NotFound,
-                "agent_not_found",
-                format!("agent definition not found: {agent_id}"),
+            ApplicationError::AgentDefinitionNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::AgentNotFound(EmptyErrorParams {}),
+                "agent definition not found",
             ),
-            ApplicationError::AgentDefinitionRepository { .. } => internal(
-                "agent_repository_error",
-                "agent repository operation failed",
+            ApplicationError::ProjectNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::ProjectNotFound(EmptyErrorParams {}),
+                "project not found",
             ),
-            ApplicationError::ProjectNotFound { project_id } => Self::new(
-                BackendErrorKind::NotFound,
-                "project_not_found",
-                format!("project not found: {project_id}"),
+            ApplicationError::ProjectOccupied { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::ProjectOccupied(EmptyErrorParams {}),
+                "project is already occupied",
             ),
-            ApplicationError::ProjectRepository { .. } => internal(
-                "project_repository_error",
-                "project repository operation failed",
+            ApplicationError::ProjectWorkContextNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::ProjectWorkContextNotFound(EmptyErrorParams {}),
+                "project work context not found",
             ),
-            ApplicationError::ProjectOccupied { project_id } => Self::new(
-                BackendErrorKind::Conflict,
-                "project_occupied",
-                format!("project is already occupied: {project_id}"),
+            ApplicationError::TaskNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::TaskNotFound(EmptyErrorParams {}),
+                "task not found",
             ),
-            ApplicationError::ProjectWorkContextNotFound { surface, window_id } => Self::new(
-                BackendErrorKind::NotFound,
-                "project_work_context_not_found",
-                format!("project work context not found for {surface}/{window_id}"),
-            ),
-            ApplicationError::ProjectWorkContextRepository { .. } => internal(
-                "project_work_context_repository_error",
-                "project work context repository operation failed",
-            ),
-            ApplicationError::TaskNotFound { task_id } => Self::new(
-                BackendErrorKind::NotFound,
-                "task_not_found",
-                format!("task not found: {task_id}"),
-            ),
-            ApplicationError::TaskRepository { .. } => {
-                internal("task_repository_error", "task repository operation failed")
-            }
-            ApplicationError::TaskWorktreeRequiresGitRepository => Self::new(
-                BackendErrorKind::BadRequest,
-                "worktree_requires_git_repository",
+            ApplicationError::TaskWorktreeRequiresGitRepository => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorktreeRequiresGitRepository(EmptyErrorParams {}),
                 "worktree mode requires a Git repository",
             ),
-            ApplicationError::TaskWorktree { .. } => {
-                internal("task_worktree_error", "task worktree operation failed")
-            }
-            ApplicationError::WorktreeNotFound { worktree_id } => Self::new(
-                BackendErrorKind::NotFound,
-                "worktree_not_found",
-                format!("worktree not found: {worktree_id}"),
+            ApplicationError::WorktreeNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorktreeNotFound(EmptyErrorParams {}),
+                "worktree not found",
             ),
-            ApplicationError::WorktreeRepository { .. } => internal(
-                "worktree_repository_error",
-                "worktree repository operation failed",
+            ApplicationError::SessionNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::SessionNotFound(EmptyErrorParams {}),
+                "session not found",
             ),
-            ApplicationError::SessionNotFound { session_id } => Self::new(
-                BackendErrorKind::NotFound,
-                "session_not_found",
-                format!("session not found: {session_id}"),
+            ApplicationError::SkillRepository { .. }
+            | ApplicationError::AgentDefinitionRepository { .. }
+            | ApplicationError::ProjectRepository { .. }
+            | ApplicationError::ProjectWorkContextRepository { .. }
+            | ApplicationError::TaskRepository { .. }
+            | ApplicationError::TaskWorktreeIdExhausted { .. }
+            | ApplicationError::TaskWorktreeRootUnavailable
+            | ApplicationError::TaskFilesystem { .. }
+            | ApplicationError::TaskWorktreeProvisioner { .. }
+            | ApplicationError::WorktreeRepository { .. }
+            | ApplicationError::SessionRepository { .. } => (
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "application operation failed",
             ),
-            ApplicationError::SessionRepository { .. } => internal(
-                "session_repository_error",
-                "session repository operation failed",
-            ),
+        };
+
+        Self {
+            classification,
+            public_error,
+            context: context.to_string(),
+            source: Some(Arc::new(error)),
         }
     }
 }
 
-/// Builds a sanitized internal failure without leaking repository or filesystem diagnostics.
-fn internal(code: &'static str, message: &'static str) -> BackendError {
-    BackendError::new(BackendErrorKind::Internal, code, message)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{BackendError, BackendErrorKind};
-    use ora_application::ApplicationError;
+    use super::{BackendError, ErrorClassification};
+    use ora_application::{ApplicationError, RepositoryError};
+    use ora_contracts::{EmptyErrorParams, PublicError};
+    use pretty_assertions::assert_eq;
+    use std::error::Error;
 
     #[test]
-    fn exposes_non_git_worktree_roots_as_a_stable_bad_request() {
+    fn maps_semantics_without_inspecting_the_source_chain() {
         let error = BackendError::from(ApplicationError::TaskWorktreeRequiresGitRepository);
 
-        assert_eq!(error.kind(), BackendErrorKind::BadRequest);
-        assert_eq!(error.code(), "worktree_requires_git_repository");
-        assert_eq!(error.message(), "worktree mode requires a Git repository");
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::WorktreeRequiresGitRepository(EmptyErrorParams {})
+        );
+        assert_eq!(
+            error.source().map(ToString::to_string),
+            Some("worktree mode requires a Git repository".to_string())
+        );
+    }
+
+    #[test]
+    fn retains_repository_source_chain_through_the_backend_projection() {
+        let database_error = std::io::Error::other("database connection closed");
+        let repository_error = RepositoryError::new(database_error);
+        let application_error = ApplicationError::ProjectRepository {
+            source: repository_error,
+        };
+        let backend_error = BackendError::from(application_error);
+
+        let mut chain = Vec::new();
+        let mut current: Option<&(dyn Error + 'static)> = Some(&backend_error);
+        while let Some(error) = current {
+            chain.push(error.to_string());
+            current = error.source();
+        }
+
+        assert_eq!(
+            chain,
+            vec![
+                "application operation failed",
+                "project repository operation failed",
+                "repository operation failed",
+                "database connection closed",
+            ]
+        );
     }
 }

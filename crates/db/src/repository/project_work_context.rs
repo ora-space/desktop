@@ -1,4 +1,4 @@
-use ora_application::{ProjectWorkContextRepository, ProjectWorkContextRepositoryError};
+use ora_application::{ProjectWorkContextRepository, RepositoryError};
 use ora_domain::{ProjectId, ProjectWorkContext, ProjectWorkContextId, ProjectWorkContextSurface};
 use rusqlite::{Row, params};
 
@@ -22,7 +22,7 @@ impl ProjectWorkContextRepository for SqliteProjectWorkContextRepository {
     fn create_project_work_context(
         &self,
         context: ProjectWorkContext,
-    ) -> Result<ProjectWorkContext, ProjectWorkContextRepositoryError> {
+    ) -> Result<ProjectWorkContext, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 connection.execute(
@@ -56,7 +56,7 @@ impl ProjectWorkContextRepository for SqliteProjectWorkContextRepository {
         &self,
         surface: ProjectWorkContextSurface,
         window_id: &str,
-    ) -> Result<Option<ProjectWorkContext>, ProjectWorkContextRepositoryError> {
+    ) -> Result<Option<ProjectWorkContext>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
@@ -79,7 +79,7 @@ impl ProjectWorkContextRepository for SqliteProjectWorkContextRepository {
         &self,
         project_id: &ProjectId,
         active_after: i64,
-    ) -> Result<Option<ProjectWorkContext>, ProjectWorkContextRepositoryError> {
+    ) -> Result<Option<ProjectWorkContext>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
@@ -103,7 +103,7 @@ impl ProjectWorkContextRepository for SqliteProjectWorkContextRepository {
     fn update_project_work_context(
         &self,
         context: ProjectWorkContext,
-    ) -> Result<ProjectWorkContext, ProjectWorkContextRepositoryError> {
+    ) -> Result<ProjectWorkContext, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
@@ -142,7 +142,7 @@ impl ProjectWorkContextRepository for SqliteProjectWorkContextRepository {
         &self,
         surface: ProjectWorkContextSurface,
         window_id: &str,
-    ) -> Result<bool, ProjectWorkContextRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let deleted_rows = connection.execute(
@@ -160,7 +160,7 @@ impl ProjectWorkContextRepository for SqliteProjectWorkContextRepository {
     fn delete_expired_project_work_contexts(
         &self,
         expired_before: i64,
-    ) -> Result<usize, ProjectWorkContextRepositoryError> {
+    ) -> Result<usize, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let deleted_rows = connection.execute(
@@ -193,6 +193,6 @@ fn map_project_work_context_row(row: &Row<'_>) -> Result<ProjectWorkContext, cra
 /// Converts shared database-layer failures into project work context repository errors.
 fn project_work_context_repository_error_from_database(
     error: crate::DatabaseError,
-) -> ProjectWorkContextRepositoryError {
-    ProjectWorkContextRepositoryError::OperationFailed(error.to_string())
+) -> RepositoryError {
+    RepositoryError::new(error)
 }

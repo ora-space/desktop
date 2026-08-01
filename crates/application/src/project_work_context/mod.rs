@@ -8,6 +8,4 @@ mod tests;
 
 pub use handlers::{OpenProjectWorkContextHandler, RenewProjectWorkContextHandler};
 pub use id_generator::UuidProjectWorkContextIdGenerator;
-pub use ports::{
-    ProjectWorkContextIdGenerator, ProjectWorkContextRepository, ProjectWorkContextRepositoryError,
-};
+pub use ports::{ProjectWorkContextIdGenerator, ProjectWorkContextRepository};

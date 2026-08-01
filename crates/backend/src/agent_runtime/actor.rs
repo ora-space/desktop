@@ -107,8 +107,8 @@ impl RuntimeActor {
         };
         if !channel.connection.load_session_supported {
             let _ = events.try_send(Err(BackendError::new(
-                BackendErrorKind::Conflict,
-                "session_load_unsupported",
+                ErrorClassification::Conflict,
+                PublicError::SessionLoadUnsupported(EmptyErrorParams {}),
                 "agent CLI does not support session/load",
             )));
             self.mark_stopped();
@@ -484,8 +484,8 @@ impl RuntimeActor {
 /// Reports that the actor cannot accept a second operation while one is in flight.
 fn session_busy() -> BackendError {
     BackendError::new(
-        BackendErrorKind::Conflict,
-        "session_busy",
+        ErrorClassification::Conflict,
+        PublicError::SessionBusy(EmptyErrorParams {}),
         "session already has an active operation",
     )
 }
@@ -493,8 +493,8 @@ fn session_busy() -> BackendError {
 /// Reports that the requested permission no longer belongs to an active prompt.
 fn permission_not_pending() -> BackendError {
     BackendError::new(
-        BackendErrorKind::Conflict,
-        "permission_request_not_pending",
+        ErrorClassification::Conflict,
+        PublicError::PermissionRequestNotPending(EmptyErrorParams {}),
         "permission request is not pending",
     )
 }

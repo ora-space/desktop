@@ -1,4 +1,11 @@
-import { ContractTransportError, type ContractCallOptions, type ContractErrorPayload, type ContractStreamFrame, type ContractTransport, type ContractTransportRequest } from "./transport.js";
+import {
+  LocalTransportError,
+  decodeRemoteError,
+  type ContractCallOptions,
+  type ContractStreamFrame,
+  type ContractTransport,
+  type ContractTransportRequest,
+} from "./transport.js";
 
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
@@ -18,12 +25,21 @@ export function createFetchTransport(
 
   return {
     async send<TResponse>(request: ContractTransportRequest, callOptions?: ContractCallOptions): Promise<TResponse> {
-      const response = await fetchImplementation(resolveUrl(options.baseUrl ?? "", request.path), {
-        method: request.method,
-        headers: request.headers,
-        body: request.body === undefined ? undefined : JSON.stringify(request.body),
-        ...(callOptions?.signal === undefined ? {} : { signal: callOptions.signal }),
-      });
+      let response: Response;
+      try {
+        response = await fetchImplementation(resolveUrl(options.baseUrl ?? "", request.path), {
+          method: request.method,
+          headers: request.headers,
+          body: request.body === undefined ? undefined : JSON.stringify(request.body),
+          ...(callOptions?.signal === undefined ? {} : { signal: callOptions.signal }),
+        });
+      } catch (error) {
+        throw new LocalTransportError(
+          callOptions?.signal?.aborted === true ? "cancelled" : "network_failure",
+          "Web request failed before Ora returned a response",
+          error,
+        );
+      }
       const responseBody = await readResponseBody(response);
 
       if (!response.ok) {
@@ -37,12 +53,7 @@ export function createFetchTransport(
       return {
         [Symbol.asyncIterator](): AsyncIterator<TEvent> {
           if (consumed) {
-            throw new ContractTransportError({
-              code: "stream_already_consumed",
-              message: "contract streams can only be consumed once",
-              status: null,
-              responseBody: null,
-            });
+            throw streamError("stream_already_consumed", "contract streams can only be consumed once");
           }
           consumed = true;
           return readNdjsonStream(fetchImplementation, options.baseUrl ?? "", request, callOptions);
@@ -101,7 +112,7 @@ async function* readNdjsonStream<TEvent>(
             const frame = decodeStreamFrame<TEvent>(line);
             if (frame.type === "data") yield frame.data;
             if (frame.type === "error") {
-              throw new ContractTransportError({ ...frame.error, status: response.status, responseBody: frame });
+              throw decodeRemoteError(frame.error, response.status, frame);
             }
             if (frame.type === "end") ended = true;
           }
@@ -124,10 +135,10 @@ function decodeStreamFrame<TEvent>(line: string): ContractStreamFrame<TEvent> {
   try {
     value = JSON.parse(line) as unknown;
   } catch {
-    throw streamError("invalid_stream_frame", "contract stream emitted invalid JSON");
+    throw streamError("malformed_stream_frame", "contract stream emitted invalid JSON");
   }
   if (!isRecord(value)) {
-    throw streamError("invalid_stream_frame", "contract stream emitted an invalid frame");
+    throw streamError("malformed_stream_frame", "contract stream emitted an invalid frame");
   }
   if (value.type === "data" && "data" in value) {
     return value as ContractStreamFrame<TEvent>;
@@ -135,20 +146,22 @@ function decodeStreamFrame<TEvent>(line: string): ContractStreamFrame<TEvent> {
   if (
     value.type === "error" &&
     isRecord(value.error) &&
-    typeof value.error.code === "string" &&
-    typeof value.error.message === "string"
+    "error" in value
   ) {
     return value as ContractStreamFrame<TEvent>;
   }
   if (value.type === "end") {
     return value as ContractStreamFrame<TEvent>;
   }
-  throw streamError("invalid_stream_frame", "contract stream emitted an invalid frame");
+  throw streamError("malformed_stream_frame", "contract stream emitted an invalid frame");
 }
 
 /** Creates transport failures that are independent of an HTTP status response. */
-function streamError(code: string, message: string): ContractTransportError {
-  return new ContractTransportError({ code, message, status: null, responseBody: null });
+function streamError(
+  kind: ConstructorParameters<typeof LocalTransportError>[0],
+  message: string,
+): LocalTransportError {
+  return new LocalTransportError(kind, message);
 }
 
 export function resolveUrl(baseUrl: string, path: string): string {
@@ -157,23 +170,6 @@ export function resolveUrl(baseUrl: string, path: string): string {
   }
 
   return new URL(path, baseUrl).toString();
-}
-
-export function decodeErrorEnvelope(body: unknown): ContractErrorPayload | null {
-  if (!isRecord(body)) {
-    return null;
-  }
-
-  const error = body.error;
-
-  if (!isRecord(error) || typeof error.code !== "string" || typeof error.message !== "string") {
-    return null;
-  }
-
-  return {
-    code: error.code,
-    message: error.message,
-  };
 }
 
 async function readResponseBody(response: Response): Promise<unknown> {
@@ -190,24 +186,8 @@ async function readResponseBody(response: Response): Promise<unknown> {
   }
 }
 
-function toTransportError(status: number, responseBody: unknown): ContractTransportError {
-  const decodedError = decodeErrorEnvelope(responseBody);
-
-  if (decodedError !== null) {
-    return new ContractTransportError({
-      code: decodedError.code,
-      message: decodedError.message,
-      status,
-      responseBody,
-    });
-  }
-
-  return new ContractTransportError({
-    code: "http_error",
-    message: `HTTP request failed with status ${status}`,
-    status,
-    responseBody,
-  });
+function toTransportError(status: number, responseBody: unknown): Error {
+  return decodeRemoteError(responseBody, status, responseBody);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,52 +1,82 @@
-use crate::{
-    AgentDefinitionRepositoryError, ProjectRepositoryError, ProjectWorkContextRepositoryError,
-    SessionRepositoryError, SkillRepositoryError, TaskRepositoryError,
-    TaskWorktreeProvisionerError, WorktreeRepositoryError,
-};
+use crate::{RepositoryError, TaskWorktreeProvisionerError};
 use ora_domain::DomainModelError;
 use thiserror::Error;
 
 /// Enumerates application-visible failures that adapters must translate for callers.
-#[derive(Debug, Clone, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum ApplicationError {
     #[error("skill name must not be blank")]
     SkillNameBlank,
     #[error("skill not found: {skill_id}")]
     SkillNotFound { skill_id: String },
-    #[error("skill repository operation failed: {message}")]
-    SkillRepository { message: String },
+    #[error("skill repository operation failed")]
+    SkillRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
     #[error("agent definition not found: {agent_id}")]
     AgentDefinitionNotFound { agent_id: String },
-    #[error("agent definition repository operation failed: {message}")]
-    AgentDefinitionRepository { message: String },
+    #[error("agent definition repository operation failed")]
+    AgentDefinitionRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("project not found: {project_id}")]
     ProjectNotFound { project_id: String },
-    #[error("project repository operation failed: {message}")]
-    ProjectRepository { message: String },
+    #[error("project repository operation failed")]
+    ProjectRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("project is already occupied: {project_id}")]
     ProjectOccupied { project_id: String },
     #[error("project work context not found for {surface}/{window_id}")]
     ProjectWorkContextNotFound { surface: String, window_id: String },
-    #[error("project work context repository operation failed: {message}")]
-    ProjectWorkContextRepository { message: String },
+    #[error("project work context repository operation failed")]
+    ProjectWorkContextRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("task not found: {task_id}")]
     TaskNotFound { task_id: String },
-    #[error("task repository operation failed: {message}")]
-    TaskRepository { message: String },
+    #[error("task repository operation failed")]
+    TaskRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("worktree mode requires a Git repository")]
     TaskWorktreeRequiresGitRepository,
-    #[error("task worktree operation failed: {message}")]
-    TaskWorktree { message: String },
+    #[error("failed to generate a unique task worktree id after {attempts} attempts")]
+    TaskWorktreeIdExhausted { attempts: usize },
+    #[error("worktree root configuration is unavailable")]
+    TaskWorktreeRootUnavailable,
+    #[error("{context}")]
+    TaskFilesystem {
+        context: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(transparent)]
+    TaskWorktreeProvisioner {
+        #[from]
+        source: TaskWorktreeProvisionerError,
+    },
     #[error("worktree not found: {worktree_id}")]
     WorktreeNotFound { worktree_id: String },
-    #[error("worktree repository operation failed: {message}")]
-    WorktreeRepository { message: String },
+    #[error("worktree repository operation failed")]
+    WorktreeRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("session not found: {session_id}")]
     SessionNotFound { session_id: String },
-    #[error("session repository operation failed: {message}")]
-    SessionRepository { message: String },
+    #[error("session repository operation failed")]
+    SessionRepository {
+        #[source]
+        source: RepositoryError,
+    },
 }
 
 impl ApplicationError {
@@ -55,7 +85,7 @@ impl ApplicationError {
         match error {
             DomainModelError::EmptySkillName => Self::SkillNameBlank,
             _ => Self::SkillRepository {
-                message: error.to_string(),
+                source: RepositoryError::new(error),
             },
         }
     }
@@ -65,51 +95,33 @@ impl ApplicationError {
         match error {
             DomainModelError::EmptyAgentDefinitionName => Self::AgentDefinitionNameBlank,
             _ => Self::AgentDefinitionRepository {
-                message: error.to_string(),
+                source: RepositoryError::new(error),
             },
         }
     }
 
     /// Maps skill repository failures into stable application errors.
-    pub(crate) fn from_skill_repository_error(error: SkillRepositoryError) -> Self {
-        match error {
-            SkillRepositoryError::OperationFailed(message) => Self::SkillRepository { message },
-        }
+    pub(crate) fn from_skill_repository_error(error: RepositoryError) -> Self {
+        Self::SkillRepository { source: error }
     }
 
     /// Maps configurable-agent repository failures into stable application errors.
-    pub(crate) fn from_agent_definition_repository_error(
-        error: AgentDefinitionRepositoryError,
-    ) -> Self {
-        match error {
-            AgentDefinitionRepositoryError::OperationFailed(message) => {
-                Self::AgentDefinitionRepository { message }
-            }
-        }
+    pub(crate) fn from_agent_definition_repository_error(error: RepositoryError) -> Self {
+        Self::AgentDefinitionRepository { source: error }
     }
     /// Maps infrastructure-facing repository failures into stable application errors.
-    pub(crate) fn from_project_repository_error(error: ProjectRepositoryError) -> Self {
-        match error {
-            ProjectRepositoryError::OperationFailed(message) => Self::ProjectRepository { message },
-        }
+    pub(crate) fn from_project_repository_error(error: RepositoryError) -> Self {
+        Self::ProjectRepository { source: error }
     }
 
     /// Maps project work context repository failures into stable application errors.
-    pub(crate) fn from_project_work_context_repository_error(
-        error: ProjectWorkContextRepositoryError,
-    ) -> Self {
-        match error {
-            ProjectWorkContextRepositoryError::OperationFailed(message) => {
-                Self::ProjectWorkContextRepository { message }
-            }
-        }
+    pub(crate) fn from_project_work_context_repository_error(error: RepositoryError) -> Self {
+        Self::ProjectWorkContextRepository { source: error }
     }
 
     /// Maps task repository failures into stable application errors.
-    pub(crate) fn from_task_repository_error(error: TaskRepositoryError) -> Self {
-        match error {
-            TaskRepositoryError::OperationFailed(message) => Self::TaskRepository { message },
-        }
+    pub(crate) fn from_task_repository_error(error: RepositoryError) -> Self {
+        Self::TaskRepository { source: error }
     }
 
     /// Maps task worktree lifecycle failures into stable application errors.
@@ -118,25 +130,73 @@ impl ApplicationError {
     ) -> Self {
         match error {
             TaskWorktreeProvisionerError::NotARepository => Self::TaskWorktreeRequiresGitRepository,
-            TaskWorktreeProvisionerError::OperationFailed(message) => {
-                Self::TaskWorktree { message }
+            source @ TaskWorktreeProvisionerError::OperationFailed { .. } => {
+                Self::TaskWorktreeProvisioner { source }
             }
         }
     }
 
     /// Maps worktree repository failures into stable application errors.
-    pub(crate) fn from_worktree_repository_error(error: WorktreeRepositoryError) -> Self {
-        match error {
-            WorktreeRepositoryError::OperationFailed(message) => {
-                Self::WorktreeRepository { message }
-            }
-        }
+    pub(crate) fn from_worktree_repository_error(error: RepositoryError) -> Self {
+        Self::WorktreeRepository { source: error }
     }
 
     /// Maps session repository failures into stable application errors.
-    pub(crate) fn from_session_repository_error(error: SessionRepositoryError) -> Self {
-        match error {
-            SessionRepositoryError::OperationFailed(message) => Self::SessionRepository { message },
+    pub(crate) fn from_session_repository_error(error: RepositoryError) -> Self {
+        Self::SessionRepository { source: error }
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for ApplicationError {
+    fn eq(&self, other: &Self) -> bool {
+        use ApplicationError::*;
+
+        match (self, other) {
+            (SkillNameBlank, SkillNameBlank)
+            | (AgentDefinitionNameBlank, AgentDefinitionNameBlank)
+            | (TaskWorktreeRequiresGitRepository, TaskWorktreeRequiresGitRepository)
+            | (SkillRepository { .. }, SkillRepository { .. })
+            | (AgentDefinitionRepository { .. }, AgentDefinitionRepository { .. })
+            | (ProjectRepository { .. }, ProjectRepository { .. })
+            | (ProjectWorkContextRepository { .. }, ProjectWorkContextRepository { .. })
+            | (TaskRepository { .. }, TaskRepository { .. })
+            | (WorktreeRepository { .. }, WorktreeRepository { .. })
+            | (SessionRepository { .. }, SessionRepository { .. }) => true,
+            (SkillNotFound { skill_id: left }, SkillNotFound { skill_id: right }) => left == right,
+            (
+                AgentDefinitionNotFound { agent_id: left },
+                AgentDefinitionNotFound { agent_id: right },
+            ) => left == right,
+            (ProjectNotFound { project_id: left }, ProjectNotFound { project_id: right })
+            | (ProjectOccupied { project_id: left }, ProjectOccupied { project_id: right }) => {
+                left == right
+            }
+            (
+                ProjectWorkContextNotFound {
+                    surface: left_surface,
+                    window_id: left_window,
+                },
+                ProjectWorkContextNotFound {
+                    surface: right_surface,
+                    window_id: right_window,
+                },
+            ) => left_surface == right_surface && left_window == right_window,
+            (TaskNotFound { task_id: left }, TaskNotFound { task_id: right }) => left == right,
+            (
+                TaskWorktreeIdExhausted { attempts: left },
+                TaskWorktreeIdExhausted { attempts: right },
+            ) => left == right,
+            (TaskWorktreeRootUnavailable, TaskWorktreeRootUnavailable) => true,
+            (TaskFilesystem { .. }, TaskFilesystem { .. }) => true,
+            (TaskWorktreeProvisioner { .. }, TaskWorktreeProvisioner { .. }) => true,
+            (WorktreeNotFound { worktree_id: left }, WorktreeNotFound { worktree_id: right }) => {
+                left == right
+            }
+            (SessionNotFound { session_id: left }, SessionNotFound { session_id: right }) => {
+                left == right
+            }
+            _ => false,
         }
     }
 }

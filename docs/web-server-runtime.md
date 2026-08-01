@@ -139,6 +139,8 @@ Each independent supervisor performs `initialize` once per process generation an
 
 Prompt requests carry an ordered ACP content-block list and may combine text, images, audio, and resources. The serialized prompt is limited to 16 MiB. Load and prompt responses use `application/x-ndjson`; each line is one complete frame. Data and control paths are separate, session-update queues are bounded at 256 items, frames are limited to 8 MiB, and overflow terminates the operation rather than dropping updates silently. See [ACP Agent Runtime](agent-runtime.md).
 
+Unary requests and streams receive a server-generated canonical request id before entering business logic. Client-provided `X-Request-Id` values are ignored. Every Web response publishes the canonical id through `X-Request-Id`, CORS exposes that header, and a failure body or error frame carries the same id in its direct `{ code, params, requestId }` payload. A stream keeps one id from creation through normal completion, failure, disconnect, or cancellation.
+
 ### Project work contexts
 
 - `open` creates or switches one `(surface, window_id)` context into a project and refreshes its lease immediately.
@@ -167,7 +169,7 @@ Error mapping is centralized so application outcomes become stable HTTP response
 - Task-create failures caused by linked-worktree provisioning or compensating cleanup return a structured server error identifying task creation as failed, without exposing Git command output or filesystem-specific formatting.
 - An occupied project returns `409`.
 
-Shared backend failures use the same public code and message that Desktop commands return; HTTP alone adds the status code.
+Shared backend failures project to the same typed `{ code, params, requestId }` payload used by Desktop; there is no public message or outer error envelope. HTTP status derives from the backend error classification.
 
 ## Frontend development modes
 
@@ -182,3 +184,4 @@ The runtime uses a file-backed SQLite database bootstrapped through `ora-db`.
 
 - Data persists across process restarts as long as the same `ORA_DATA_DIR` is reused.
 - Readiness depends on successful database bootstrap, repository-pool construction, bootstrap-project reconciliation, and synthetic web work context reconciliation.
+- The request seam emits at most one correlated completion event. Ordinary success is `INFO`, health and readiness success are `DEBUG`, and failure levels derive from the shared backend classification.

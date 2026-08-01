@@ -1,9 +1,8 @@
 use super::{
-    AgentDefinitionIdGenerator, AgentDefinitionRepository, AgentDefinitionRepositoryError,
-    CreateAgentDefinitionHandler, DeleteAgentDefinitionHandler, GetAgentDefinitionHandler,
-    UpdateAgentDefinitionHandler,
+    AgentDefinitionIdGenerator, AgentDefinitionRepository, CreateAgentDefinitionHandler,
+    DeleteAgentDefinitionHandler, GetAgentDefinitionHandler, UpdateAgentDefinitionHandler,
 };
-use crate::{ApplicationError, Clock};
+use crate::{ApplicationError, Clock, RepositoryError};
 use ora_contracts::{CreateAgentRequest, DeleteAgentRequest, GetAgentRequest, UpdateAgentRequest};
 use ora_domain::{AgentDefinition, AgentDefinitionId, AuditFields};
 use pretty_assertions::assert_eq;
@@ -56,9 +55,7 @@ fn reports_blank_name_not_found_repository_errors_and_soft_delete() {
         })
         .unwrap_err();
     let failing = Rc::new(FakeAgentRepository::default());
-    failing.fail_next(AgentDefinitionRepositoryError::OperationFailed(
-        "unavailable".to_string(),
-    ));
+    failing.fail_next(RepositoryError::from_message("unavailable".to_string()));
     let repository_error = GetAgentDefinitionHandler::new(failing)
         .handle(GetAgentRequest {
             agent_id: "agent-1".to_string(),
@@ -83,7 +80,7 @@ fn reports_blank_name_not_found_repository_errors_and_soft_delete() {
     assert_eq!(
         repository_error,
         ApplicationError::AgentDefinitionRepository {
-            message: "unavailable".to_string()
+            source: RepositoryError::from_message("unavailable")
         }
     );
     assert_eq!(
@@ -99,7 +96,7 @@ fn reports_blank_name_not_found_repository_errors_and_soft_delete() {
 #[derive(Default)]
 struct FakeAgentRepository {
     agents: RefCell<Vec<AgentDefinition>>,
-    next_error: RefCell<Option<AgentDefinitionRepositoryError>>,
+    next_error: RefCell<Option<RepositoryError>>,
 }
 impl FakeAgentRepository {
     fn with_agents(agents: Vec<AgentDefinition>) -> Self {
@@ -108,10 +105,10 @@ impl FakeAgentRepository {
             next_error: RefCell::new(None),
         }
     }
-    fn fail_next(&self, error: AgentDefinitionRepositoryError) {
+    fn fail_next(&self, error: RepositoryError) {
         self.next_error.replace(Some(error));
     }
-    fn take_error(&self) -> Result<(), AgentDefinitionRepositoryError> {
+    fn take_error(&self) -> Result<(), RepositoryError> {
         self.next_error.borrow_mut().take().map_or(Ok(()), Err)
     }
 }
@@ -119,7 +116,7 @@ impl AgentDefinitionRepository for Rc<FakeAgentRepository> {
     fn create_agent_definition(
         &self,
         agent: AgentDefinition,
-    ) -> Result<AgentDefinition, AgentDefinitionRepositoryError> {
+    ) -> Result<AgentDefinition, RepositoryError> {
         self.take_error()?;
         self.agents.borrow_mut().push(agent.clone());
         Ok(agent)
@@ -127,7 +124,7 @@ impl AgentDefinitionRepository for Rc<FakeAgentRepository> {
     fn find_agent_definition(
         &self,
         agent_id: &AgentDefinitionId,
-    ) -> Result<Option<AgentDefinition>, AgentDefinitionRepositoryError> {
+    ) -> Result<Option<AgentDefinition>, RepositoryError> {
         self.take_error()?;
         Ok(self
             .agents
@@ -136,9 +133,7 @@ impl AgentDefinitionRepository for Rc<FakeAgentRepository> {
             .find(|agent| agent.id == *agent_id && !agent.audit_fields.is_deleted)
             .cloned())
     }
-    fn list_agent_definitions(
-        &self,
-    ) -> Result<Vec<AgentDefinition>, AgentDefinitionRepositoryError> {
+    fn list_agent_definitions(&self) -> Result<Vec<AgentDefinition>, RepositoryError> {
         self.take_error()?;
         Ok(self
             .agents
@@ -151,7 +146,7 @@ impl AgentDefinitionRepository for Rc<FakeAgentRepository> {
     fn update_agent_definition(
         &self,
         agent: AgentDefinition,
-    ) -> Result<AgentDefinition, AgentDefinitionRepositoryError> {
+    ) -> Result<AgentDefinition, RepositoryError> {
         self.take_error()?;
         if let Some(existing) = self
             .agents
@@ -162,16 +157,14 @@ impl AgentDefinitionRepository for Rc<FakeAgentRepository> {
             *existing = agent.clone();
             Ok(agent)
         } else {
-            Err(AgentDefinitionRepositoryError::OperationFailed(
-                "agent missing".to_string(),
-            ))
+            Err(RepositoryError::from_message("agent missing".to_string()))
         }
     }
     fn soft_delete_agent_definition(
         &self,
         agent_id: &AgentDefinitionId,
         deleted_at: i64,
-    ) -> Result<bool, AgentDefinitionRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.take_error()?;
         if let Some(agent) = self
             .agents

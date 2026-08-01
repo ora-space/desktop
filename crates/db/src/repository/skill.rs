@@ -1,4 +1,4 @@
-use ora_application::{SkillRepository, SkillRepositoryError};
+use ora_application::{RepositoryError, SkillRepository};
 use ora_domain::{AuditFields, Skill, SkillId};
 use rusqlite::{Row, params};
 
@@ -18,7 +18,7 @@ impl SqliteSkillRepository {
 }
 
 impl SkillRepository for SqliteSkillRepository {
-    fn create_skill(&self, skill: Skill) -> Result<Skill, SkillRepositoryError> {
+    fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
         self.pool.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO skills (id, name, description, created_at, updated_at, is_deleted) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -28,7 +28,7 @@ impl SkillRepository for SqliteSkillRepository {
         }).map_err(skill_repository_error_from_database)
     }
 
-    fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, SkillRepositoryError> {
+    fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT id, name, description, created_at, updated_at, is_deleted FROM skills WHERE id = ?1 AND is_deleted = 0",
@@ -38,7 +38,7 @@ impl SkillRepository for SqliteSkillRepository {
         }).map_err(skill_repository_error_from_database)
     }
 
-    fn list_skills(&self) -> Result<Vec<Skill>, SkillRepositoryError> {
+    fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT id, name, description, created_at, updated_at, is_deleted FROM skills WHERE is_deleted = 0 ORDER BY created_at ASC, id ASC",
@@ -50,7 +50,7 @@ impl SkillRepository for SqliteSkillRepository {
         }).map_err(skill_repository_error_from_database)
     }
 
-    fn update_skill(&self, skill: Skill) -> Result<Skill, SkillRepositoryError> {
+    fn update_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
         let updated = self.pool.with_connection(|connection| {
             connection.execute(
                 "UPDATE skills SET name = ?2, description = ?3, updated_at = ?4 WHERE id = ?1 AND is_deleted = 0",
@@ -60,9 +60,9 @@ impl SkillRepository for SqliteSkillRepository {
         if updated {
             Ok(skill)
         } else {
-            Err(SkillRepositoryError::OperationFailed(
-                "skill not found during update".to_string(),
-            ))
+            Err(RepositoryError::new(std::io::Error::other(
+                "skill not found during update",
+            )))
         }
     }
 
@@ -70,7 +70,7 @@ impl SkillRepository for SqliteSkillRepository {
         &self,
         skill_id: &SkillId,
         deleted_at: i64,
-    ) -> Result<bool, SkillRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.pool.with_connection(|connection| {
             connection.execute(
                 "UPDATE skills SET updated_at = ?2, is_deleted = 1 WHERE id = ?1 AND is_deleted = 0",
@@ -96,6 +96,6 @@ fn map_skill_row(row: &Row<'_>) -> Result<Skill, crate::DatabaseError> {
 }
 
 /// Converts database failures into application-port errors.
-fn skill_repository_error_from_database(error: crate::DatabaseError) -> SkillRepositoryError {
-    SkillRepositoryError::OperationFailed(error.to_string())
+fn skill_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
+    RepositoryError::new(error)
 }

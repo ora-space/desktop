@@ -69,7 +69,7 @@ These transactions touch Ora-owned database state only. They never invoke Git, n
 
 ## Error boundary
 
-SQLite execution, query, and row-mapping failures are translated into the application-owned error the caller expects — `ProjectRepositoryError`, `TaskRepositoryError`, `SessionRepositoryError`, `WorktreeRepositoryError`, `SkillRepositoryError`, `AgentDefinitionRepositoryError`, or `ProjectWorkContextRepositoryError`. Raw `rusqlite` errors never cross the boundary. Bootstrap and migration failures surface as `DatabaseError`.
+SQLite execution, query, and row-mapping failures are wrapped in the shared application-owned `RepositoryError`. The wrapper keeps the concrete `DatabaseError` as its `Error::source()` instead of stringifying it, so application and backend layers can add semantic context while diagnostics still reach the original database failure without repeating source text. Database-specific types remain hidden from repository port signatures. Bootstrap and migration failures surface as `DatabaseError`.
 
 Timestamps used by migration bookkeeping come from an injected `TimestampSource` so tests can be deterministic; `SystemTimestampSource` reads Unix epoch milliseconds from the system clock. Entity `created_at`/`updated_at` values are supplied from above through the application `Clock`, not generated inside the repositories.
 

@@ -7,7 +7,7 @@ import { AppI18nProvider } from "../../i18n/i18n";
 import { createHookWrapper, createTestQueryClient } from "../../test/hook-harness";
 import { createStubPlatform } from "../../test/stub-platform";
 import { createChatStore } from "@ora/chat";
-import { ContractTransportError, type ContractsClient, type Session, type TaskWorkspaceMode } from "@ora/contracts";
+import { RemoteContractError, type ContractsClient, type Session, type TaskWorkspaceMode } from "@ora/contracts";
 import { createMockClient, createMockClientState } from "../../test/mock-client";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
@@ -141,12 +141,11 @@ describe("WorkspaceDialogs task creation", () => {
       task: {
         ...baseClient.task,
         create: async () => {
-          throw new ContractTransportError({
+          throw new RemoteContractError({
             code: "worktree_requires_git_repository",
-            message: "worktree mode requires a Git repository",
-            status: 400,
-            responseBody: null,
-          });
+            params: {},
+            requestId: "550e8400-e29b-41d4-a716-446655440000",
+          }, 400, null);
         },
       },
     };
@@ -318,12 +317,11 @@ describe("WorkspaceDialogs task deletion", () => {
       task: {
         ...baseClient.task,
         delete: async () => {
-          throw new ContractTransportError({
+          throw new RemoteContractError({
             code: "resource_in_use",
-            message: "task has a running session and cannot be deleted",
-            status: 409,
-            responseBody: null,
-          });
+            params: {},
+            requestId: "550e8400-e29b-41d4-a716-446655440000",
+          }, 409, null);
         },
       },
     };

@@ -13,7 +13,6 @@ use ora_domain::{
     AuditFields, ProjectId, Task as DomainTask, TaskId, TaskStatus as DomainTaskStatus,
     Worktree as DomainWorktree, WorktreeActivity as DomainWorktreeActivity, WorktreeId,
 };
-use ora_logging::{ora_error, ora_info};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -119,11 +118,8 @@ where
     ) -> Result<CreateTaskResponse, ApplicationError> {
         self.worktree_provisioner
             .validate_repository()
-            .map_err(ApplicationError::from_task_worktree_provisioner_error)
-            .inspect_err(|error| log_task_failure("create_task", None, error))?;
-        let task_id = self
-            .select_available_task_id()
-            .inspect_err(|error| log_task_failure("create_task", None, error))?;
+            .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
+        let task_id = self.select_available_task_id()?;
         let branch_name = branch_name_for_task(&task_id);
         let worktree_path = worktree_path_for_task(&self.work_dir, &task_id);
         self.worktree_provisioner
@@ -131,11 +127,7 @@ where
                 branch_name: branch_name.clone(),
                 worktree_path,
             })
-            .map_err(|error| {
-                let error = ApplicationError::from_task_worktree_provisioner_error(error);
-                log_task_failure("create_task", Some(&task_id), &error);
-                error
-            })?;
+            .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
 
         let now = self.clock.now_timestamp_millis();
         let worktree_id = self.worktree_id_generator.generate_worktree_id();
@@ -150,15 +142,13 @@ where
             Ok(worktree) => worktree,
             Err(error) => {
                 return Err(self.handle_create_failure_after_provisioning(
-                    "create_task",
-                    &task_id,
                     &branch_name,
                     ApplicationError::from_worktree_repository_error(error),
                 ));
             }
         };
         let task = DomainTask::new(
-            task_id.clone(),
+            task_id,
             ProjectId::new(request.project_id),
             request.title,
             map_contract_task_status(request.status),
@@ -169,15 +159,12 @@ where
             Ok(task) => task,
             Err(error) => {
                 return Err(self.handle_task_persistence_failure_after_worktree_create(
-                    &task_id,
                     &worktree.id,
                     &branch_name,
                     ApplicationError::from_task_repository_error(error),
                 ));
             }
         };
-
-        log_task_success("create_task", Some(&task.id));
 
         Ok(CreateTaskResponse {
             task: map_task(task),
@@ -192,20 +179,17 @@ where
         let task_id = self.task_id_generator.generate_task_id();
         let now = self.clock.now_timestamp_millis();
         let task = DomainTask::new(
-            task_id.clone(),
+            task_id,
             ProjectId::new(request.project_id),
             request.title,
             map_contract_task_status(request.status),
             None,
             AuditFields::new(now, now, false),
         );
-        let task = self.task_repository.create_task(task).map_err(|error| {
-            let error = ApplicationError::from_task_repository_error(error);
-            log_task_failure("create_task", Some(&task_id), &error);
-            error
-        })?;
-
-        log_task_success("create_task", Some(&task.id));
+        let task = self
+            .task_repository
+            .create_task(task)
+            .map_err(ApplicationError::from_task_repository_error)?;
 
         Ok(CreateTaskResponse {
             task: map_task(task),
@@ -232,18 +216,14 @@ where
             }
         }
 
-        Err(ApplicationError::TaskWorktree {
-            message: format!(
-                "failed to generate a task branch prefix without collision after {MAX_TASK_ID_GENERATION_ATTEMPTS} attempts"
-            ),
+        Err(ApplicationError::TaskWorktreeIdExhausted {
+            attempts: MAX_TASK_ID_GENERATION_ATTEMPTS,
         })
     }
 
     /// Attempts compensating worktree cleanup after persistence fails and returns the stable application error.
     fn handle_create_failure_after_provisioning(
         &self,
-        operation: &'static str,
-        task_id: &TaskId,
         branch_name: &str,
         original_error: ApplicationError,
     ) -> ApplicationError {
@@ -255,15 +235,9 @@ where
                 });
 
         match cleanup_result {
-            Ok(()) => {
-                log_task_failure(operation, Some(task_id), &original_error);
-                original_error
-            }
+            Ok(()) => original_error,
             Err(cleanup_error) => {
-                let cleanup_error =
-                    ApplicationError::from_task_worktree_provisioner_error(cleanup_error);
-                log_task_failure(operation, Some(task_id), &cleanup_error);
-                cleanup_error
+                ApplicationError::from_task_worktree_provisioner_error(cleanup_error)
             }
         }
     }
@@ -271,7 +245,6 @@ where
     /// Soft-deletes the persisted worktree row, then removes the created checkout, before returning a stable failure.
     fn handle_task_persistence_failure_after_worktree_create(
         &self,
-        task_id: &TaskId,
         worktree_id: &WorktreeId,
         branch_name: &str,
         original_error: ApplicationError,
@@ -280,19 +253,12 @@ where
             .worktree_repository
             .soft_delete_worktree(worktree_id, self.clock.now_timestamp_millis())
             .map_err(ApplicationError::from_worktree_repository_error);
-        let filesystem_cleanup = self.handle_create_failure_after_provisioning(
-            "create_task",
-            task_id,
-            branch_name,
-            original_error,
-        );
+        let filesystem_cleanup =
+            self.handle_create_failure_after_provisioning(branch_name, original_error);
 
         match worktree_cleanup {
             Ok(_) => filesystem_cleanup,
-            Err(error) => {
-                log_task_failure("create_task", Some(task_id), &error);
-                error
-            }
+            Err(error) => error,
         }
     }
 }
@@ -315,25 +281,19 @@ where
     /// Loads one visible task or returns a stable not-found application error.
     pub fn handle(&self, request: GetTaskRequest) -> Result<GetTaskResponse, ApplicationError> {
         let task_id = TaskId::new(request.task_id);
-        let task = self.repository.find_task(&task_id).map_err(|error| {
-            let error = ApplicationError::from_task_repository_error(error);
-            log_task_failure("get_task", Some(&task_id), &error);
-            error
-        })?;
+        let task = self
+            .repository
+            .find_task(&task_id)
+            .map_err(ApplicationError::from_task_repository_error)?;
 
         match task {
-            Some(task) => {
-                log_task_success("get_task", Some(&task_id));
-
-                Ok(GetTaskResponse {
-                    task: map_task(task),
-                })
-            }
+            Some(task) => Ok(GetTaskResponse {
+                task: map_task(task),
+            }),
             None => {
                 let error = ApplicationError::TaskNotFound {
                     task_id: task_id.to_string(),
                 };
-                log_task_failure("get_task", Some(&task_id), &error);
                 Err(error)
             }
         }
@@ -360,17 +320,10 @@ where
         &self,
         _request: ListTasksRequest,
     ) -> Result<ListTasksResponse, ApplicationError> {
-        let tasks = self.repository.list_tasks().map_err(|error| {
-            let error = ApplicationError::from_task_repository_error(error);
-            log_task_failure("list_tasks", None, &error);
-            error
-        })?;
-
-        ora_info!(
-            message = "listed tasks",
-            operation = "list_tasks",
-            task_count = tasks.len()
-        );
+        let tasks = self
+            .repository
+            .list_tasks()
+            .map_err(ApplicationError::from_task_repository_error)?;
 
         Ok(ListTasksResponse {
             tasks: tasks.into_iter().map(map_task).collect(),
@@ -401,11 +354,10 @@ where
         request: UpdateTaskRequest,
     ) -> Result<UpdateTaskResponse, ApplicationError> {
         let task_id = TaskId::new(request.task_id);
-        let existing_task = self.repository.find_task(&task_id).map_err(|error| {
-            let error = ApplicationError::from_task_repository_error(error);
-            log_task_failure("update_task", Some(&task_id), &error);
-            error
-        })?;
+        let existing_task = self
+            .repository
+            .find_task(&task_id)
+            .map_err(ApplicationError::from_task_repository_error)?;
 
         let existing_task = match existing_task {
             Some(existing_task) => existing_task,
@@ -413,13 +365,12 @@ where
                 let error = ApplicationError::TaskNotFound {
                     task_id: task_id.to_string(),
                 };
-                log_task_failure("update_task", Some(&task_id), &error);
                 return Err(error);
             }
         };
 
         let task = DomainTask::new(
-            task_id.clone(),
+            task_id,
             existing_task.project_id,
             request.title,
             map_contract_task_status(request.status),
@@ -430,117 +381,14 @@ where
                 existing_task.audit_fields.is_deleted,
             ),
         );
-        let task = self.repository.update_task(task).map_err(|error| {
-            let error = ApplicationError::from_task_repository_error(error);
-            log_task_failure("update_task", Some(&task_id), &error);
-            error
-        })?;
-
-        log_task_success("update_task", Some(&task_id));
+        let task = self
+            .repository
+            .update_task(task)
+            .map_err(ApplicationError::from_task_repository_error)?;
 
         Ok(UpdateTaskResponse {
             task: map_task(task),
         })
-    }
-}
-
-/// Emits the shared informational event shape for successful task CRUD operations.
-fn log_task_success(operation: &'static str, task_id: Option<&TaskId>) {
-    match task_id {
-        Some(task_id) => {
-            ora_info!(
-                message = "task operation completed",
-                operation,
-                task_id = task_id.to_string()
-            );
-        }
-        None => {
-            ora_info!(message = "task operation completed", operation);
-        }
-    }
-}
-
-/// Emits the shared error event shape for failed task CRUD operations.
-fn log_task_failure(operation: &'static str, task_id: Option<&TaskId>, error: &ApplicationError) {
-    match (task_id, error) {
-        (Some(task_id), ApplicationError::TaskNotFound { .. }) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                task_id = task_id.to_string(),
-                error.kind = "task_not_found",
-                error.message = error.to_string()
-            );
-        }
-        (Some(task_id), ApplicationError::TaskRepository { .. }) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                task_id = task_id.to_string(),
-                error.kind = "task_repository",
-                error.message = error.to_string()
-            );
-        }
-        (Some(task_id), ApplicationError::TaskWorktree { .. }) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                task_id = task_id.to_string(),
-                error.kind = "task_worktree",
-                error.message = error.to_string()
-            );
-        }
-        (Some(task_id), ApplicationError::WorktreeNotFound { .. }) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                task_id = task_id.to_string(),
-                error.kind = "worktree_not_found",
-                error.message = error.to_string()
-            );
-        }
-        (Some(task_id), ApplicationError::WorktreeRepository { .. }) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                task_id = task_id.to_string(),
-                error.kind = "worktree_repository",
-                error.message = error.to_string()
-            );
-        }
-        (None, ApplicationError::TaskRepository { .. }) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                error.kind = "task_repository",
-                error.message = error.to_string()
-            );
-        }
-        (None, ApplicationError::TaskNotFound { .. }) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                error.kind = "task_not_found",
-                error.message = error.to_string()
-            );
-        }
-        (None, ApplicationError::TaskWorktree { .. }) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                error.kind = "task_worktree",
-                error.message = error.to_string()
-            );
-        }
-        (None, ApplicationError::TaskWorktreeRequiresGitRepository) => {
-            ora_error!(
-                message = "task operation failed",
-                operation,
-                error.kind = "worktree_requires_git_repository",
-                error.message = error.to_string()
-            );
-        }
-        _ => {}
     }
 }
 
@@ -580,21 +428,24 @@ fn task_branch_prefix_exists_in_work_dir(
     let entries = match fs::read_dir(work_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(_) => {
-            return Err(ApplicationError::TaskWorktree {
-                message: "failed to inspect task worktree directory".to_string(),
+        Err(source) => {
+            return Err(ApplicationError::TaskFilesystem {
+                context: "failed to inspect task worktree directory",
+                source,
             });
         }
     };
 
     for entry in entries {
-        let entry = entry.map_err(|_| ApplicationError::TaskWorktree {
-            message: "failed to inspect task worktree directory".to_string(),
+        let entry = entry.map_err(|source| ApplicationError::TaskFilesystem {
+            context: "failed to inspect task worktree directory",
+            source,
         })?;
         let file_type = entry
             .file_type()
-            .map_err(|_| ApplicationError::TaskWorktree {
-                message: "failed to inspect task worktree directory".to_string(),
+            .map_err(|source| ApplicationError::TaskFilesystem {
+                context: "failed to inspect task worktree directory",
+                source,
             })?;
 
         if file_type.is_dir()

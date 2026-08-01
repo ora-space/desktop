@@ -1,4 +1,4 @@
-use ora_application::{WorktreeRepository, WorktreeRepositoryError};
+use ora_application::{RepositoryError, WorktreeRepository};
 use ora_domain::{AuditFields, TaskId, Worktree, WorktreeActivity, WorktreeId};
 use rusqlite::{Row, params};
 
@@ -19,7 +19,7 @@ impl SqliteWorktreeRepository {
 
 impl WorktreeRepository for SqliteWorktreeRepository {
     /// Inserts a new worktree row and returns the stored worktree snapshot.
-    fn create_worktree(&self, worktree: Worktree) -> Result<Worktree, WorktreeRepositoryError> {
+    fn create_worktree(&self, worktree: Worktree) -> Result<Worktree, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 connection.execute(
@@ -42,10 +42,7 @@ impl WorktreeRepository for SqliteWorktreeRepository {
     }
 
     /// Loads one visible worktree row by identifier.
-    fn find_worktree(
-        &self,
-        worktree_id: &WorktreeId,
-    ) -> Result<Option<Worktree>, WorktreeRepositoryError> {
+    fn find_worktree(&self, worktree_id: &WorktreeId) -> Result<Option<Worktree>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
@@ -64,7 +61,7 @@ impl WorktreeRepository for SqliteWorktreeRepository {
     }
 
     /// Lists every visible worktree row in stable storage order.
-    fn list_worktrees(&self) -> Result<Vec<Worktree>, WorktreeRepositoryError> {
+    fn list_worktrees(&self) -> Result<Vec<Worktree>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
@@ -86,7 +83,7 @@ impl WorktreeRepository for SqliteWorktreeRepository {
     }
 
     /// Replaces the persisted worktree snapshot identified by the provided id.
-    fn update_worktree(&self, worktree: Worktree) -> Result<Worktree, WorktreeRepositoryError> {
+    fn update_worktree(&self, worktree: Worktree) -> Result<Worktree, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
@@ -118,7 +115,7 @@ impl WorktreeRepository for SqliteWorktreeRepository {
         &self,
         worktree_id: &WorktreeId,
         deleted_at: i64,
-    ) -> Result<bool, WorktreeRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
@@ -149,6 +146,6 @@ fn map_worktree_row(row: &Row<'_>) -> Result<Worktree, crate::DatabaseError> {
 }
 
 /// Converts shared database-layer failures into worktree repository errors.
-fn worktree_repository_error_from_database(error: crate::DatabaseError) -> WorktreeRepositoryError {
-    WorktreeRepositoryError::OperationFailed(error.to_string())
+fn worktree_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
+    RepositoryError::new(error)
 }

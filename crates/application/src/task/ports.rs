@@ -1,5 +1,7 @@
+use crate::{BoxRepositorySource, RepositoryError};
 use ora_domain::{Task, TaskId};
 use std::path::PathBuf;
+use thiserror::Error;
 
 /// Supplies application-owned persistence operations for task CRUD use cases.
 ///
@@ -7,23 +9,19 @@ use std::path::PathBuf;
 /// while preserving the transport-agnostic behavior required by the handlers.
 pub trait TaskRepository {
     /// Persists a newly created task and returns the stored snapshot.
-    fn create_task(&self, task: Task) -> Result<Task, TaskRepositoryError>;
+    fn create_task(&self, task: Task) -> Result<Task, RepositoryError>;
 
     /// Loads one visible task by identifier.
-    fn find_task(&self, task_id: &TaskId) -> Result<Option<Task>, TaskRepositoryError>;
+    fn find_task(&self, task_id: &TaskId) -> Result<Option<Task>, RepositoryError>;
 
     /// Lists every visible task in storage order.
-    fn list_tasks(&self) -> Result<Vec<Task>, TaskRepositoryError>;
+    fn list_tasks(&self) -> Result<Vec<Task>, RepositoryError>;
 
     /// Persists a task replacement produced by the application layer.
-    fn update_task(&self, task: Task) -> Result<Task, TaskRepositoryError>;
+    fn update_task(&self, task: Task) -> Result<Task, RepositoryError>;
 
     /// Marks a task deleted and returns whether a visible task was affected.
-    fn soft_delete_task(
-        &self,
-        task_id: &TaskId,
-        deleted_at: i64,
-    ) -> Result<bool, TaskRepositoryError>;
+    fn soft_delete_task(&self, task_id: &TaskId, deleted_at: i64) -> Result<bool, RepositoryError>;
 }
 
 /// Supplies new task identifiers for create use cases.
@@ -76,15 +74,22 @@ pub struct DeleteTaskWorktreeRequest {
     pub mode: TaskWorktreeDeletionMode,
 }
 
-/// Captures repository failures that handlers convert into stable application errors.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskRepositoryError {
-    OperationFailed(String),
+/// Captures linked-worktree lifecycle failures that handlers convert into stable application errors.
+#[derive(Debug, Error)]
+pub enum TaskWorktreeProvisionerError {
+    #[error("worktree mode requires a Git repository")]
+    NotARepository,
+    #[error("task worktree operation failed")]
+    OperationFailed {
+        #[source]
+        source: BoxRepositorySource,
+    },
 }
 
-/// Captures linked-worktree lifecycle failures that handlers convert into stable application errors.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskWorktreeProvisionerError {
-    NotARepository,
-    OperationFailed(String),
+impl TaskWorktreeProvisionerError {
+    pub fn operation_failed(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::OperationFailed {
+            source: Box::new(error),
+        }
+    }
 }

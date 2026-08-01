@@ -6,7 +6,7 @@ Ora Rust services initialize shared structured logging through `ora-logging`.
 
 - `ora-logging` owns the process-wide subscriber setup, JSON event formatting, sink selection, file rotation, retention cleanup, and the immutable process timezone.
 - Runtime composition roots own reading configuration, calling `ora_logging::init_logging` with an explicit `LoggingConfig`, and retaining the returned `LoggingGuard` for the rest of the process lifetime. The guard keeps the non-blocking file writer alive; dropping it early loses buffered output.
-- Runtime crates such as `ora-application`, `ora-db`, and `ora-backend` emit structured `tracing` events but never configure sinks or read environment variables.
+- Runtime request seams and infrastructure crates emit structured `tracing` events but never configure sinks or read environment variables. Application handlers and repository adapters do not emit generic completion or propagation-only failure events.
 
 Initialization is process-wide and the timezone can be set only once, so it must happen before any `ora_logging::clock` access. If a file sink cannot be created or prepared, initialization fails with a typed `LoggingInitError` instead of silently degrading to another sink.
 
@@ -51,17 +51,31 @@ Business metadata belongs under `context`, and failure details belong under `err
 {
   "timestamp": "2026-05-09T20:00:00+08:00",
   "level": "INFO",
-  "target": "ora_application::project::handlers",
-  "message": "project operation completed",
-  "method": "handle",
+  "target": "ora_backend::request_lifecycle",
+  "message": "request completed",
+  "method": "complete_success",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "context": {
     "operation": "create_project",
-    "project_id": "project-42"
+    "outcome": "success",
+    "duration_ms": 12
   }
 }
 ```
 
 The RFC 3339 timestamp uses the configured process timezone and includes its UTC offset. The `tracing-appender` file writer still names and rotates daily files at UTC boundaries; event timestamps remain authoritative when a local calendar date differs from the file suffix.
+
+## Request completion and errors
+
+Ora frontend requests receive a canonical UUID v4 at the Web, Tauri, or stream entry seam. The same identifier correlates the request span, public error payload or stream error frame, and completion event; Web also returns it through `X-Request-Id`. Client-provided request identifiers are never canonical.
+
+Each request records at most one completion event with `operation`, `request_id`, `outcome`, and `duration_ms`. Failures additionally record the stable public `error.code` plus the bounded `error.message`, single-line `error.chain`, and `error.chain_depth` produced by `ErrorReport::from_error`. Internal errors use `ERROR`, conflicts use `WARN`, validation and not-found outcomes use `INFO`, and cancellation uses `DEBUG`. Successful health and readiness checks also use `DEBUG`.
+
+`ErrorReport` traverses the Rust `Error::source()` chain. It removes control characters, limits individual nodes, total output, and chain depth, marks truncation, and applies precompiled regular expressions to residual secret-like text. Callers must still provide only approved structured fields: absolute paths, full Git arguments or remotes, SQL values, prompts, environment values, credentials, and unbounded stderr are not valid log fields.
+
+If cleanup or rollback also fails, the primary error remains unchanged. The secondary failure is recorded as a separate operation with the same request id and its own bounded error report; it is never attached to the primary source chain. Bootstrap, migration, and state-transition events likewise remain independent lifecycle facts.
+
+These changes do not alter the deployment boundary: local JSONL and Logdy remain local viewing tools, while OTLP, Loki, Tempo, and Grafana retain their existing production responsibilities.
 
 ## Emission helpers
 

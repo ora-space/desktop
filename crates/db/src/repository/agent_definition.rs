@@ -1,4 +1,4 @@
-use ora_application::{AgentDefinitionRepository, AgentDefinitionRepositoryError};
+use ora_application::{AgentDefinitionRepository, RepositoryError};
 use ora_domain::{AgentDefinition, AgentDefinitionId, AuditFields};
 use rusqlite::{Row, params};
 
@@ -21,7 +21,7 @@ impl AgentDefinitionRepository for SqliteAgentDefinitionRepository {
     fn create_agent_definition(
         &self,
         agent: AgentDefinition,
-    ) -> Result<AgentDefinition, AgentDefinitionRepositoryError> {
+    ) -> Result<AgentDefinition, RepositoryError> {
         self.pool.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO agents (id, name, description, created_at, updated_at, is_deleted) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -34,7 +34,7 @@ impl AgentDefinitionRepository for SqliteAgentDefinitionRepository {
     fn find_agent_definition(
         &self,
         agent_id: &AgentDefinitionId,
-    ) -> Result<Option<AgentDefinition>, AgentDefinitionRepositoryError> {
+    ) -> Result<Option<AgentDefinition>, RepositoryError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT id, name, description, created_at, updated_at, is_deleted FROM agents WHERE id = ?1 AND is_deleted = 0",
@@ -44,9 +44,7 @@ impl AgentDefinitionRepository for SqliteAgentDefinitionRepository {
         }).map_err(agent_repository_error_from_database)
     }
 
-    fn list_agent_definitions(
-        &self,
-    ) -> Result<Vec<AgentDefinition>, AgentDefinitionRepositoryError> {
+    fn list_agent_definitions(&self) -> Result<Vec<AgentDefinition>, RepositoryError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT id, name, description, created_at, updated_at, is_deleted FROM agents WHERE is_deleted = 0 ORDER BY created_at ASC, id ASC",
@@ -61,7 +59,7 @@ impl AgentDefinitionRepository for SqliteAgentDefinitionRepository {
     fn update_agent_definition(
         &self,
         agent: AgentDefinition,
-    ) -> Result<AgentDefinition, AgentDefinitionRepositoryError> {
+    ) -> Result<AgentDefinition, RepositoryError> {
         let updated = self.pool.with_connection(|connection| {
             connection.execute(
                 "UPDATE agents SET name = ?2, description = ?3, updated_at = ?4 WHERE id = ?1 AND is_deleted = 0",
@@ -71,9 +69,9 @@ impl AgentDefinitionRepository for SqliteAgentDefinitionRepository {
         if updated {
             Ok(agent)
         } else {
-            Err(AgentDefinitionRepositoryError::OperationFailed(
-                "agent definition not found during update".to_string(),
-            ))
+            Err(RepositoryError::new(std::io::Error::other(
+                "agent definition not found during update",
+            )))
         }
     }
 
@@ -81,7 +79,7 @@ impl AgentDefinitionRepository for SqliteAgentDefinitionRepository {
         &self,
         agent_id: &AgentDefinitionId,
         deleted_at: i64,
-    ) -> Result<bool, AgentDefinitionRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.pool.with_connection(|connection| {
             connection.execute(
                 "UPDATE agents SET updated_at = ?2, is_deleted = 1 WHERE id = ?1 AND is_deleted = 0",
@@ -107,8 +105,6 @@ fn map_agent_definition_row(row: &Row<'_>) -> Result<AgentDefinition, crate::Dat
 }
 
 /// Converts database failures into application-port errors.
-fn agent_repository_error_from_database(
-    error: crate::DatabaseError,
-) -> AgentDefinitionRepositoryError {
-    AgentDefinitionRepositoryError::OperationFailed(error.to_string())
+fn agent_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
+    RepositoryError::new(error)
 }

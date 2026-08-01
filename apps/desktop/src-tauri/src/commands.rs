@@ -1,16 +1,19 @@
 use crate::config::validate_worktree_root;
-use crate::error::CommandError;
+use crate::error::{CommandError, desktop_config_backend_error};
 use crate::state::DesktopState;
-use ora_backend::{Backend, BackendError};
+use ora_backend::{Backend, BackendError, RequestLifecycle, UuidRequestIdGenerator};
 use ora_contracts::*;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::path::PathBuf;
 use tauri::State;
 use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 /// Executes one synchronous backend operation on the runtime's blocking executor.
 async fn run_backend<Request, Response>(
+    operation_name: &'static str,
     backend: Backend,
     request: Request,
     operation: fn(&Backend, Request) -> Result<Response, BackendError>,
@@ -19,10 +22,56 @@ where
     Request: Send + 'static,
     Response: Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(move || operation(&backend, request))
+    let lifecycle = RequestLifecycle::start(operation_name, &UuidRequestIdGenerator);
+    let request_span =
+        ora_logging::span_with_request_id("tauri_command", &lifecycle.request_id().to_string());
+    let blocking_span = request_span.clone();
+    async move {
+        let result = match tauri::async_runtime::spawn_blocking(move || {
+            blocking_span.in_scope(|| operation(&backend, request))
+        })
         .await
-        .map_err(|_| CommandError::execution())?
-        .map_err(CommandError::from)
+        {
+            Ok(result) => result,
+            Err(source) => Err(BackendError::internal(
+                "Desktop command execution failed",
+                source,
+            )),
+        };
+
+        match result {
+            Ok(response) => {
+                lifecycle.complete_success();
+                Ok(response)
+            }
+            Err(error) => Err(CommandError::from_backend_with_lifecycle(error, &lifecycle)),
+        }
+    }
+    .instrument(request_span)
+    .await
+}
+
+async fn run_async_backend<Response, Call>(
+    operation_name: &'static str,
+    call: Call,
+) -> Result<Response, CommandError>
+where
+    Call: Future<Output = Result<Response, BackendError>>,
+{
+    let lifecycle = RequestLifecycle::start(operation_name, &UuidRequestIdGenerator);
+    let request_span =
+        ora_logging::span_with_request_id("tauri_command", &lifecycle.request_id().to_string());
+    async move {
+        match call.await {
+            Ok(response) => {
+                lifecycle.complete_success();
+                Ok(response)
+            }
+            Err(error) => Err(CommandError::from_backend_with_lifecycle(error, &lifecycle)),
+        }
+    }
+    .instrument(request_span)
+    .await
 }
 
 macro_rules! backend_command {
@@ -33,7 +82,13 @@ macro_rules! backend_command {
             state: State<'_, DesktopState>,
             request: $request,
         ) -> Result<$response, CommandError> {
-            run_backend(state.backend.clone(), request, Backend::$operation).await
+            run_backend(
+                stringify!($name),
+                state.backend.clone(),
+                request,
+                Backend::$operation,
+            )
+            .await
         }
     };
 }
@@ -128,11 +183,7 @@ pub async fn create_session(
     state: State<'_, DesktopState>,
     request: CreateSessionRequest,
 ) -> Result<CreateSessionResponse, CommandError> {
-    state
-        .backend
-        .create_session(request)
-        .await
-        .map_err(CommandError::from)
+    run_async_backend("create_session", state.backend.create_session(request)).await
 }
 backend_command!(
     get_session,
@@ -154,11 +205,11 @@ pub async fn respond_to_session_permission(
     state: State<'_, DesktopState>,
     request: RespondToPermissionRequest,
 ) -> Result<RespondToPermissionResponse, CommandError> {
-    state
-        .backend
-        .respond_to_session_permission(request)
-        .await
-        .map_err(CommandError::from)
+    run_async_backend(
+        "respond_to_session_permission",
+        state.backend.respond_to_session_permission(request),
+    )
+    .await
 }
 
 /// Stops one provider process while retaining the Ora session record.
@@ -167,11 +218,7 @@ pub async fn stop_session(
     state: State<'_, DesktopState>,
     request: StopSessionRequest,
 ) -> Result<StopSessionResponse, CommandError> {
-    state
-        .backend
-        .stop_session(request)
-        .await
-        .map_err(CommandError::from)
+    run_async_backend("stop_session", state.backend.stop_session(request)).await
 }
 
 /// Stops the provider process before removing only the Ora-owned session record.
@@ -180,11 +227,7 @@ pub async fn delete_session(
     state: State<'_, DesktopState>,
     request: DeleteSessionRequest,
 ) -> Result<DeleteSessionResponse, CommandError> {
-    state
-        .backend
-        .delete_session(request)
-        .await
-        .map_err(CommandError::from)
+    run_async_backend("delete_session", state.backend.delete_session(request)).await
 }
 
 /// Starts one typed Session stream and forwards private transport frames over a Tauri Channel.
@@ -196,18 +239,27 @@ pub async fn stream_contract(
     stream_call_id: String,
     on_event: Channel<serde_json::Value>,
 ) -> Result<(), CommandError> {
+    let lifecycle = RequestLifecycle::start(
+        format!("stream_contract:{operation_name}"),
+        &UuidRequestIdGenerator,
+    );
     let cancellation = CancellationToken::new();
 
     match operation_name.as_str() {
         "loadSession" => {
-            let request = serde_json::from_value::<LoadSessionRequest>(request)
-                .map_err(|_| CommandError::execution())?;
-            let stream = state
-                .backend
-                .load_session(request)
-                .await
-                .map_err(CommandError::from)?;
-            register_contract_stream(&state, &stream_call_id, &cancellation)?;
+            let request =
+                serde_json::from_value::<LoadSessionRequest>(request).map_err(|source| {
+                    CommandError::from_backend_with_lifecycle(
+                        BackendError::internal("failed to decode stream request", source),
+                        &lifecycle,
+                    )
+                })?;
+            let stream =
+                state.backend.load_session(request).await.map_err(|error| {
+                    CommandError::from_backend_with_lifecycle(error, &lifecycle)
+                })?;
+            register_contract_stream(&state, &stream_call_id, &cancellation)
+                .map_err(|error| CommandError::from_backend_with_lifecycle(error, &lifecycle))?;
             let registry = state.stream_cancellations.clone();
             tauri::async_runtime::spawn(forward_contract_stream(
                 stream,
@@ -215,17 +267,24 @@ pub async fn stream_contract(
                 stream_call_id,
                 registry,
                 on_event,
+                lifecycle,
             ));
         }
         "promptSession" => {
-            let request = serde_json::from_value::<PromptSessionRequest>(request)
-                .map_err(|_| CommandError::execution())?;
+            let request =
+                serde_json::from_value::<PromptSessionRequest>(request).map_err(|source| {
+                    CommandError::from_backend_with_lifecycle(
+                        BackendError::internal("failed to decode stream request", source),
+                        &lifecycle,
+                    )
+                })?;
             let stream = state
                 .backend
                 .prompt_session(request)
                 .await
-                .map_err(CommandError::from)?;
-            register_contract_stream(&state, &stream_call_id, &cancellation)?;
+                .map_err(|error| CommandError::from_backend_with_lifecycle(error, &lifecycle))?;
+            register_contract_stream(&state, &stream_call_id, &cancellation)
+                .map_err(|error| CommandError::from_backend_with_lifecycle(error, &lifecycle))?;
             let registry = state.stream_cancellations.clone();
             tauri::async_runtime::spawn(forward_contract_stream(
                 stream,
@@ -233,9 +292,19 @@ pub async fn stream_contract(
                 stream_call_id,
                 registry,
                 on_event,
+                lifecycle,
             ));
         }
-        _ => return Err(CommandError::execution()),
+        _ => {
+            return Err(CommandError::from_backend_with_lifecycle(
+                BackendError::new(
+                    ora_backend::ErrorClassification::InvalidRequest,
+                    PublicError::InvalidRequest(EmptyErrorParams {}),
+                    "unsupported stream operation",
+                ),
+                &lifecycle,
+            ));
+        }
     }
     Ok(())
 }
@@ -245,13 +314,19 @@ fn register_contract_stream(
     state: &DesktopState,
     stream_call_id: &str,
     cancellation: &CancellationToken,
-) -> Result<(), CommandError> {
-    let mut registrations = state
-        .stream_cancellations
-        .lock()
-        .map_err(|_| CommandError::execution())?;
+) -> Result<(), BackendError> {
+    let mut registrations = state.stream_cancellations.lock().map_err(|_poisoned| {
+        BackendError::internal(
+            "stream registration state is unavailable",
+            std::io::Error::other("stream registration lock poisoned"),
+        )
+    })?;
     if registrations.contains_key(stream_call_id) {
-        return Err(CommandError::execution());
+        return Err(BackendError::new(
+            ora_backend::ErrorClassification::Conflict,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            "stream call id is already registered",
+        ));
     }
     registrations.insert(stream_call_id.to_string(), cancellation.clone());
     Ok(())
@@ -266,7 +341,7 @@ pub async fn cancel_contract_stream(
     if let Some(cancellation) = state
         .stream_cancellations
         .lock()
-        .map_err(|_| CommandError::execution())?
+        .map_err(|_poisoned| CommandError::execution())?
         .remove(&stream_call_id)
     {
         cancellation.cancel();
@@ -283,18 +358,31 @@ async fn forward_contract_stream<Event>(
         std::sync::Mutex<std::collections::HashMap<String, CancellationToken>>,
     >,
     on_event: Channel<serde_json::Value>,
+    lifecycle: RequestLifecycle,
 ) where
     Event: Serialize + Send + 'static,
 {
     loop {
         tokio::select! {
-            () = cancellation.cancelled() => break,
+            () = cancellation.cancelled() => {
+                lifecycle.complete_cancellation();
+                break;
+            },
             event = stream.recv() => {
                 let is_terminal = matches!(&event, Some(Err(_)) | None);
                 let frame = match event {
                     Some(Ok(data)) => serde_json::json!({ "type": "data", "data": data }),
-                    Some(Err(error)) => serde_json::json!({ "type": "error", "error": error }),
-                    None => serde_json::json!({ "type": "end" }),
+                    Some(Err(error)) => {
+                        lifecycle.complete_failure(&error);
+                        serde_json::json!({
+                            "type": "error",
+                            "error": error.contract_error(lifecycle.request_id()),
+                        })
+                    },
+                    None => {
+                        lifecycle.complete_success();
+                        serde_json::json!({ "type": "end" })
+                    },
                 };
                 if on_event.send(frame).is_err() || is_terminal {
                     break;
@@ -317,11 +405,11 @@ pub async fn list_agent_models(
     state: State<'_, DesktopState>,
     request: ListAgentModelsRequest,
 ) -> Result<ListAgentModelsResponse, CommandError> {
-    state
-        .backend
-        .list_agent_models(request)
-        .await
-        .map_err(CommandError::from)
+    run_async_backend(
+        "list_agent_models",
+        state.backend.list_agent_models(request),
+    )
+    .await
 }
 
 // =============================================================================
@@ -478,17 +566,24 @@ pub async fn resolve_task_cwd(
     state: State<'_, DesktopState>,
     request: ResolveTaskCwdRequest,
 ) -> Result<ResolveTaskCwdResponse, CommandError> {
-    let backend = state.backend.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        backend
-            .resolve_task_cwd(&request.task_id)
-            .map(|path| ResolveTaskCwdResponse {
-                path: to_native_path_string(&path),
-            })
-            .map_err(CommandError::from)
-    })
+    run_backend(
+        "resolve_task_cwd",
+        state.backend.clone(),
+        request,
+        resolve_task_cwd_backend,
+    )
     .await
-    .map_err(|_| CommandError::execution())?
+}
+
+fn resolve_task_cwd_backend(
+    backend: &Backend,
+    request: ResolveTaskCwdRequest,
+) -> Result<ResolveTaskCwdResponse, BackendError> {
+    backend
+        .resolve_task_cwd(&request.task_id)
+        .map(|path| ResolveTaskCwdResponse {
+            path: to_native_path_string(&path),
+        })
 }
 
 /// Names the host application a location can be handed off to.
@@ -511,24 +606,56 @@ pub struct OpenLocationRequest {
 /// Opens one absolute path in the file manager, a terminal, or VS Code on the host OS.
 #[tauri::command]
 pub async fn open_location(request: OpenLocationRequest) -> Result<(), CommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        open_location_blocking(request.target, &request.path)
+    let lifecycle = RequestLifecycle::start("open_location", &UuidRequestIdGenerator);
+    let request_span =
+        ora_logging::span_with_request_id("tauri_command", &lifecycle.request_id().to_string());
+    let blocking_span = request_span.clone();
+    let result = match tauri::async_runtime::spawn_blocking(move || {
+        blocking_span.in_scope(|| open_location_blocking(request.target, &request.path))
     })
     .await
-    .map_err(|_| CommandError::execution())?
+    {
+        Ok(result) => result,
+        Err(source) => Err(BackendError::internal(
+            "Desktop command execution failed",
+            source,
+        )),
+    };
+    async move {
+        match result {
+            Ok(()) => {
+                lifecycle.complete_success();
+                Ok(())
+            }
+            Err(error) => Err(CommandError::from_backend_with_lifecycle(error, &lifecycle)),
+        }
+    }
+    .instrument(request_span)
+    .await
 }
 
 /// Reports a location handoff that the host OS refused or could not launch.
-fn open_location_error() -> CommandError {
-    CommandError::new(
-        "open_location_failed",
+fn open_location_error(
+    target: LocationTarget,
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> BackendError {
+    BackendError::with_source(
+        ora_backend::ErrorClassification::Internal,
+        PublicError::OpenLocationFailed(OpenLocationFailedParams {
+            target: match target {
+                LocationTarget::Explorer => OpenLocationTarget::Explorer,
+                LocationTarget::Terminal => OpenLocationTarget::Terminal,
+                LocationTarget::VsCode => OpenLocationTarget::Vscode,
+            },
+        }),
         "failed to open the requested location",
+        source,
     )
 }
 
 /// Launches the host handler for one location, branching per OS since only desktop hosts call this.
 #[cfg(target_os = "windows")]
-fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), CommandError> {
+fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), BackendError> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
     // CREATE_NO_WINDOW: keep the `cmd` shim that resolves `code.cmd` from flashing a console.
@@ -547,7 +674,7 @@ fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), Comm
             .arg(path)
             .spawn()
             .map(|_| ())
-            .map_err(|_| open_location_error()),
+            .map_err(|source| open_location_error(target, source)),
         // `code` ships as `code.cmd`, which CreateProcess will not resolve directly; route it
         // through `cmd` and wait so a missing install surfaces as a failure the UI can report.
         LocationTarget::VsCode => {
@@ -555,11 +682,14 @@ fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), Comm
                 .args(["/C", "code", path])
                 .creation_flags(CREATE_NO_WINDOW)
                 .status()
-                .map_err(|_| open_location_error())?;
+                .map_err(|source| open_location_error(target, source))?;
             if status.success() {
                 Ok(())
             } else {
-                Err(open_location_error())
+                Err(open_location_error(
+                    target,
+                    std::io::Error::other(format!("VS Code exited with {status}")),
+                ))
             }
         }
         // Prefer Windows Terminal; fall back to a PowerShell window opened in the target directory.
@@ -571,14 +701,14 @@ fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), Comm
                 .args(["/C", "start", "", "/D", path, "powershell", "-NoExit"])
                 .spawn()
                 .map(|_| ())
-                .map_err(|_| open_location_error())
+                .map_err(|source| open_location_error(target, source))
         }
     }
 }
 
 /// Launches the host handler for one location through macOS `open`, which fails loudly when absent.
 #[cfg(target_os = "macos")]
-fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), CommandError> {
+fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), BackendError> {
     use std::process::Command;
 
     let mut command = Command::new("open");
@@ -593,18 +723,26 @@ fn open_location_blocking(target: LocationTarget, path: &str) -> Result<(), Comm
             command.args(["-a", "Visual Studio Code", path]);
         }
     }
-    let status = command.status().map_err(|_| open_location_error())?;
+    let status = command
+        .status()
+        .map_err(|source| open_location_error(target, source))?;
     if status.success() {
         Ok(())
     } else {
-        Err(open_location_error())
+        Err(open_location_error(
+            target,
+            std::io::Error::other(format!("open command exited with {status}")),
+        ))
     }
 }
 
 /// Rejects location handoffs on hosts that never run the desktop shell (only Web runs on Linux).
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn open_location_blocking(_target: LocationTarget, _path: &str) -> Result<(), CommandError> {
-    Err(open_location_error())
+fn open_location_blocking(target: LocationTarget, _path: &str) -> Result<(), BackendError> {
+    Err(open_location_error(
+        target,
+        std::io::Error::other("opening locations is unsupported on this platform"),
+    ))
 }
 
 /// Reads the current Desktop worktree configuration without touching the Web API surface.
@@ -614,11 +752,21 @@ pub async fn get_desktop_config(
     request: GetDesktopConfigRequest,
 ) -> Result<GetDesktopConfigResponse, CommandError> {
     let _ = request;
-    let config = state.config.snapshot().map_err(CommandError::from)?;
-
-    Ok(GetDesktopConfigResponse {
-        worktree_root: config.worktree_root().to_string_lossy().into_owned(),
-    })
+    let lifecycle = RequestLifecycle::start("get_desktop_config", &UuidRequestIdGenerator);
+    let result = state
+        .config
+        .snapshot()
+        .map_err(desktop_config_backend_error)
+        .map(|config| GetDesktopConfigResponse {
+            worktree_root: config.worktree_root().to_string_lossy().into_owned(),
+        });
+    match result {
+        Ok(response) => {
+            lifecycle.complete_success();
+            Ok(response)
+        }
+        Err(error) => Err(CommandError::from_backend_with_lifecycle(error, &lifecycle)),
+    }
 }
 
 /// Persists a new creation root and updates Backend configuration without interrupting in-flight work.
@@ -629,24 +777,61 @@ pub async fn set_worktree_root(
 ) -> Result<SetWorktreeRootResponse, CommandError> {
     let backend = state.backend.clone();
     let config_store = state.config.clone();
+    let lifecycle = RequestLifecycle::start("set_worktree_root", &UuidRequestIdGenerator);
+    let request_span =
+        ora_logging::span_with_request_id("tauri_command", &lifecycle.request_id().to_string());
+    let blocking_span = request_span.clone();
+    let secondary_lifecycle = lifecycle.clone();
+    let result = match tauri::async_runtime::spawn_blocking(move || {
+        blocking_span.in_scope(|| {
+            let previous = config_store
+                .snapshot()
+                .map_err(desktop_config_backend_error)?;
+            let worktree_root = PathBuf::from(request.worktree_root);
 
-    tauri::async_runtime::spawn_blocking(move || {
-        let previous = config_store.snapshot().map_err(CommandError::from)?;
-        let worktree_root = PathBuf::from(request.worktree_root);
+            validate_worktree_root(&worktree_root).map_err(desktop_config_backend_error)?;
+            backend.set_worktree_root(worktree_root.clone())?;
+            if let Err(error) = config_store.set_worktree_root(worktree_root.clone()) {
+                if let Err(rollback_error) =
+                    backend.set_worktree_root(previous.worktree_root().to_path_buf())
+                {
+                    let report = ora_logging::ErrorReport::from_error(&rollback_error);
+                    ora_logging::ora_error!(
+                        operation = "set_worktree_root.rollback",
+                        request_id = %secondary_lifecycle.request_id(),
+                        outcome = "secondary_failure",
+                        error.code = rollback_error.public_error().code(),
+                        error.message = report.message(),
+                        error.chain = report.chain(),
+                        error.chain_depth = report.chain_depth(),
+                        "secondary cleanup failed"
+                    );
+                }
+                return Err(desktop_config_backend_error(error));
+            }
 
-        validate_worktree_root(&worktree_root).map_err(CommandError::from)?;
-        backend
-            .set_worktree_root(worktree_root.clone())
-            .map_err(CommandError::from)?;
-        if let Err(error) = config_store.set_worktree_root(worktree_root.clone()) {
-            let _ = backend.set_worktree_root(previous.worktree_root().to_path_buf());
-            return Err(CommandError::from(error));
-        }
-
-        Ok(SetWorktreeRootResponse {
-            worktree_root: worktree_root.to_string_lossy().into_owned(),
+            Ok(SetWorktreeRootResponse {
+                worktree_root: worktree_root.to_string_lossy().into_owned(),
+            })
         })
     })
     .await
-    .map_err(|_| CommandError::execution())?
+    {
+        Ok(result) => result,
+        Err(source) => Err(BackendError::internal(
+            "Desktop command execution failed",
+            source,
+        )),
+    };
+    async move {
+        match result {
+            Ok(response) => {
+                lifecycle.complete_success();
+                Ok(response)
+            }
+            Err(error) => Err(CommandError::from_backend_with_lifecycle(error, &lifecycle)),
+        }
+    }
+    .instrument(request_span)
+    .await
 }

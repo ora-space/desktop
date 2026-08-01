@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ContractTransportError, type TaskStatus } from "@ora/contracts";
+import { RemoteContractError, type TaskStatus } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +25,7 @@ import {
 } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore, type DialogState, type DeleteTarget } from "../../state/stores/ui-store";
 import { useSettingsStore } from "../../state/stores/settings-store";
+import { localizeContractError } from "../../i18n/contract-error";
 
 /** Derives a project name from either a Windows or POSIX directory path. */
 export function projectNameFromPath(rootPath: string): string {
@@ -89,11 +90,11 @@ function DeleteEntityDialog({ target, onOpenChange }: { target: DeleteTarget | n
       if (target.kind === "session") await deleteSession.mutateAsync({ sessionId: target.id });
       onOpenChange(false);
     } catch (error) {
-      setDeleteError(error instanceof ContractTransportError && error.code === "resource_in_use"
+      setDeleteError(error instanceof RemoteContractError && error.code === "resource_in_use"
         ? target.kind === "task" && target.workspaceMode === "project_root"
           ? t("delete.runningSession")
           : t("delete.failed")
-        : error instanceof Error ? error.message : t("delete.failed"));
+        : localizeContractError(error, t));
     } finally {
       setDeleting(false);
     }
@@ -169,22 +170,12 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
       if (dialog.entity) {
         await updateTask.mutateAsync({ task: dialog.entity, title: values.title!, status: values.status as TaskStatus });
       } else {
-        try {
-          await createTask.mutateAsync({
-            projectId: dialog.projectId,
-            title: values.title!,
-            status: "todo",
-            workspaceMode: "worktree",
-          });
-        } catch (error) {
-          if (
-            error instanceof ContractTransportError
-            && error.code === "worktree_requires_git_repository"
-          ) {
-            throw new Error(t("dialog.worktreeRequiresGitRepository"));
-          }
-          throw error;
-        }
+        await createTask.mutateAsync({
+          projectId: dialog.projectId,
+          title: values.title!,
+          status: "todo",
+          workspaceMode: "worktree",
+        });
       }
     };
   } else {

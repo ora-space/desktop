@@ -1,5 +1,5 @@
 use crate::app_state::AppState;
-use crate::error::WebApiError;
+use crate::error::{DeferredCompletion, WebApiError, current_lifecycle};
 use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
@@ -7,11 +7,11 @@ use axum::http::{HeaderValue, Response, header};
 use futures_util::stream;
 use ora_backend::{BackendError, SessionEventStream};
 use ora_contracts::{
-    CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
-    GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse,
-    ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, PromptSessionRequest,
-    RespondToPermissionRequest, RespondToPermissionResponse, StopSessionRequest,
-    StopSessionResponse,
+    ContractError, CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest,
+    DeleteSessionResponse, EmptyErrorParams, GetSessionRequest, GetSessionResponse,
+    ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse,
+    LoadSessionRequest, PromptSessionRequest, PublicError, RespondToPermissionRequest,
+    RespondToPermissionResponse, StopSessionRequest, StopSessionResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -42,7 +42,7 @@ pub struct RespondToPermissionBody {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum StreamFrame<Event> {
     Data { data: Event },
-    Error { error: BackendError },
+    Error { error: ContractError },
     End,
 }
 
@@ -181,25 +181,49 @@ fn stream_response<Event>(events: SessionEventStream<Event>) -> Response<Body>
 where
     Event: Serialize + Send + 'static,
 {
-    let body_stream = stream::unfold((events, false), |(mut events, ended)| async move {
-        if ended {
-            return None;
-        }
-        let (frame, next_ended) = match events.recv().await {
-            Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
-            Some(Err(error)) => (StreamFrame::Error { error }, true),
-            None => (StreamFrame::End, true),
-        };
-        let mut bytes = serde_json::to_vec(&frame).unwrap_or_else(|_| {
-            b"{\"type\":\"error\",\"error\":{\"code\":\"stream_encoding_failed\",\"message\":\"failed to encode stream frame\"}}".to_vec()
-        });
-        bytes.push(b'\n');
-        Some((
-            Ok::<Bytes, Infallible>(Bytes::from(bytes)),
-            (events, next_ended),
-        ))
-    });
+    let lifecycle = current_lifecycle();
+    let body_stream = stream::unfold(
+        (events, false, lifecycle),
+        |(mut events, ended, lifecycle)| async move {
+            if ended {
+                return None;
+            }
+            let (frame, next_ended) = match events.recv().await {
+                Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
+                Some(Err(error)) => {
+                    lifecycle.complete_failure(&error);
+                    (
+                        StreamFrame::Error {
+                            error: error.contract_error(lifecycle.request_id()),
+                        },
+                        true,
+                    )
+                }
+                None => {
+                    lifecycle.complete_success();
+                    (StreamFrame::End, true)
+                }
+            };
+            let mut bytes = serde_json::to_vec(&frame).unwrap_or_else(|source| {
+                let error = BackendError::internal("failed to encode stream frame", source);
+                lifecycle.complete_failure(&error);
+                serde_json::to_vec(&StreamFrame::<Event>::Error {
+                    error: ContractError {
+                        error: PublicError::InternalError(EmptyErrorParams {}),
+                        request_id: lifecycle.request_id(),
+                    },
+                })
+                .unwrap_or_default()
+            });
+            bytes.push(b'\n');
+            Some((
+                Ok::<Bytes, Infallible>(Bytes::from(bytes)),
+                (events, next_ended, lifecycle),
+            ))
+        },
+    );
     let mut response = Response::new(Body::from_stream(body_stream));
+    response.extensions_mut().insert(DeferredCompletion);
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/x-ndjson"),

@@ -33,6 +33,7 @@ import {
 } from "@tabler/icons-react";
 import type { CurrentUser } from "../../lib/types";
 import { UserProfile } from "../sidebar/user-profile";
+import { localizeContractError } from "../../i18n/contract-error";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
@@ -344,7 +345,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
           })}
         </nav>
 
-        {error && <p data-selectable className="border-t border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error.message}</p>}
+        {error && <p data-selectable className="border-t border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">{localizeContractError(error, t)}</p>}
         <div className="p-2">
           <UserProfile user={user} onOpenSettings={() => setSettingsOpen(true)} onSignOut={onSignOut} />
         </div>

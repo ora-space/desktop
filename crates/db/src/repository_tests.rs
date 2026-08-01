@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 
 use ora_application::{
-    AgentDefinitionRepository, ProjectRepository, ProjectRepositoryError,
-    ProjectWorkContextRepository, SessionRepository, SessionRepositoryError, SkillRepository,
-    TaskRepository, TaskRepositoryError, WorktreeRepository, WorktreeRepositoryError,
+    AgentDefinitionRepository, ProjectRepository, ProjectWorkContextRepository, RepositoryError,
+    SessionRepository, SkillRepository, TaskRepository, WorktreeRepository,
 };
 use ora_domain::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, Project, ProjectId,
@@ -774,11 +773,9 @@ fn project_repository_reports_sqlite_failures() {
 
     repository.create_project(project.clone()).unwrap();
 
-    assert_eq!(
-        repository.create_project(project),
-        Err(ProjectRepositoryError::OperationFailed(
-            "sqlite error: UNIQUE constraint failed: projects.id".to_string(),
-        ))
+    assert_repository_source(
+        repository.create_project(project).unwrap_err(),
+        "sqlite error: UNIQUE constraint failed: projects.id",
     );
 }
 
@@ -790,11 +787,11 @@ fn task_repository_reports_row_mapping_failures() {
 
     insert_invalid_task_row(&pool);
 
-    assert_eq!(
-        repository.find_task(&TaskId::new("task-invalid")),
-        Err(TaskRepositoryError::OperationFailed(
-            "domain model error: invalid task status value: 99".to_string(),
-        ))
+    assert_repository_source(
+        repository
+            .find_task(&TaskId::new("task-invalid"))
+            .unwrap_err(),
+        "domain model error: invalid task status value: 99",
     );
 }
 
@@ -806,11 +803,11 @@ fn session_repository_reports_row_mapping_failures() {
 
     insert_invalid_session_row(&pool);
 
-    assert_eq!(
-        repository.find_session(&SessionId::new("session-invalid")),
-        Err(SessionRepositoryError::OperationFailed(
-            "domain model error: invalid session status value: 99".to_string(),
-        ))
+    assert_repository_source(
+        repository
+            .find_session(&SessionId::new("session-invalid"))
+            .unwrap_err(),
+        "domain model error: invalid session status value: 99",
     );
 }
 
@@ -822,12 +819,17 @@ fn worktree_repository_reports_row_mapping_failures() {
 
     insert_invalid_worktree_row(&pool);
 
-    assert_eq!(
-        repository.find_worktree(&WorktreeId::new("worktree-invalid")),
-        Err(WorktreeRepositoryError::OperationFailed(
-            "domain model error: invalid worktree activity value: 99".to_string(),
-        ))
+    assert_repository_source(
+        repository
+            .find_worktree(&WorktreeId::new("worktree-invalid"))
+            .unwrap_err(),
+        "domain model error: invalid worktree activity value: 99",
     );
+}
+
+fn assert_repository_source(error: RepositoryError, expected: &str) {
+    let source = std::error::Error::source(&error).expect("repository source must be retained");
+    assert_eq!(source.to_string(), expected);
 }
 
 /// Bootstraps a file-backed SQLite database and returns the ready repository pool.

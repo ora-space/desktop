@@ -298,7 +298,8 @@ mod tests {
 
         match old_controls_receiver.recv().await {
             Some(SessionControl::ConnectionLost(received)) => {
-                assert_eq!(received, error);
+                assert_eq!(received.classification(), error.classification());
+                assert_eq!(received.public_error(), error.public_error());
             }
             Some(SessionControl::Permission(_)) | Some(SessionControl::UpdateOverflow) | None => {
                 panic!("expected connection loss")

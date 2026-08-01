@@ -10,7 +10,7 @@ use support::*;
 
 use crate::clock::SystemClock;
 use crate::task::resolve_task_cwd;
-use crate::{BackendError, BackendErrorKind};
+use crate::{BackendError, ErrorClassification};
 use connection::{ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
 use ora_contracts::acp::content::ContentBlock;
@@ -21,6 +21,7 @@ use ora_contracts::{
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
     RespondToPermissionResponse, StopSessionRequest, StopSessionResponse,
 };
+use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentCli, AuditFields, Session, SessionId, SessionStatus, TaskId};
 use ora_logging::ora_debug;
@@ -147,12 +148,7 @@ impl AgentRuntimeManager {
             ),
         )
         .await
-        .map_err(|_| {
-            runtime_internal(
-                "agent_start_timeout",
-                "agent CLI session creation timed out",
-            )
-        })?
+        .map_err(|source| BackendError::internal("agent CLI session creation timed out", source))?
         .map_err(map_acp_error)?;
         let mut channel = supervisor.open_session_channel(response.session_id.0.as_ref())?;
         let available_commands = collect_setup_commands(&mut channel).await;
@@ -167,11 +163,8 @@ impl AgentRuntimeManager {
         );
         SqliteSessionRepository::new(self.inner.pool.clone())
             .create_session(session.clone())
-            .map_err(|_| {
-                runtime_internal(
-                    "session_repository_error",
-                    "failed to persist agent CLI session",
-                )
+            .map_err(|source| {
+                BackendError::internal("failed to persist agent CLI session", source)
             })?;
         ora_debug!(
             session_id = %session.id,
@@ -203,8 +196,8 @@ impl AgentRuntimeManager {
                 events: events_sender,
                 accepted: accepted_sender,
             })
-            .map_err(|_| runtime_unavailable())?;
-        accepted.await.map_err(|_| runtime_unavailable())??;
+            .map_err(runtime_unavailable_with)?;
+        accepted.await.map_err(runtime_unavailable_with)??;
         Ok(SessionEventStream::new(
             events,
             handle.commands,
@@ -224,8 +217,8 @@ impl AgentRuntimeManager {
             })
         {
             return Err(BackendError::new(
-                BackendErrorKind::BadRequest,
-                "prompt_empty",
+                ErrorClassification::InvalidRequest,
+                PublicError::PromptEmpty(EmptyErrorParams {}),
                 "prompt must contain text or media",
             ));
         }
@@ -234,8 +227,8 @@ impl AgentRuntimeManager {
             .len();
         if prompt_bytes > MAX_PROMPT_BYTES {
             return Err(BackendError::new(
-                BackendErrorKind::BadRequest,
-                "prompt_too_large",
+                ErrorClassification::InvalidRequest,
+                PublicError::PromptTooLarge(EmptyErrorParams {}),
                 "prompt exceeds 16 MiB",
             ));
         }
@@ -256,8 +249,8 @@ impl AgentRuntimeManager {
                 events: events_sender,
                 accepted: accepted_sender,
             })
-            .map_err(|_| runtime_unavailable())?;
-        accepted.await.map_err(|_| runtime_unavailable())??;
+            .map_err(runtime_unavailable_with)?;
+        accepted.await.map_err(runtime_unavailable_with)??;
         Ok(SessionEventStream::new(
             events,
             handle.commands,
@@ -280,8 +273,8 @@ impl AgentRuntimeManager {
                 request,
                 response: response_sender,
             })
-            .map_err(|_| runtime_unavailable())?;
-        response.await.map_err(|_| runtime_unavailable())?
+            .map_err(runtime_unavailable_with)?;
+        response.await.map_err(runtime_unavailable_with)?
     }
 
     /// Stops one logical session without terminating its shared CLI process.
@@ -311,9 +304,7 @@ impl AgentRuntimeManager {
         }
         let deleted = SqliteSessionRepository::new(self.inner.pool.clone())
             .soft_delete_session(&session.id, self.inner.clock.now_timestamp_millis())
-            .map_err(|_| {
-                runtime_internal("session_repository_error", "failed to delete agent session")
-            })?;
+            .map_err(|source| BackendError::internal("failed to delete agent session", source))?;
         if !deleted {
             return Err(session_not_found(session_id));
         }
@@ -334,15 +325,15 @@ impl AgentRuntimeManager {
             .send(RuntimeCommand::Stop {
                 response: response_sender,
             })
-            .map_err(|_| runtime_unavailable())?;
-        response.await.map_err(|_| runtime_unavailable())?
+            .map_err(runtime_unavailable_with)?;
+        response.await.map_err(runtime_unavailable_with)?
     }
 
     /// Loads one non-deleted Ora session from durable storage.
     fn find_session(&self, session_id: &str) -> Result<Session, BackendError> {
         SqliteSessionRepository::new(self.inner.pool.clone())
             .find_session(&SessionId::new(session_id))
-            .map_err(|_| runtime_internal("session_repository_error", "failed to load session"))?
+            .map_err(|source| BackendError::internal("failed to load session", source))?
             .ok_or_else(|| session_not_found(session_id))
     }
 
@@ -365,7 +356,7 @@ impl AgentRuntimeManager {
             .actors
             .read()
             .map(|actors| actors.get(session_id).cloned())
-            .map_err(|_| runtime_unavailable())
+            .map_err(|_poisoned| runtime_unavailable())
     }
 
     /// Installs exactly one actor for an Ora session under the lifecycle lock.
@@ -403,7 +394,10 @@ impl AgentRuntimeManager {
         &self,
     ) -> Result<std::sync::RwLockWriteGuard<'_, HashMap<SessionId, RuntimeActorHandle>>, BackendError>
     {
-        self.inner.actors.write().map_err(|_| runtime_unavailable())
+        self.inner
+            .actors
+            .write()
+            .map_err(|_poisoned| runtime_unavailable())
     }
 }
 
@@ -415,16 +409,14 @@ fn reconcile_running_sessions(
     let repository = SqliteSessionRepository::new(pool.clone());
     for session in repository
         .list_sessions()
-        .map_err(|_| runtime_internal("session_repository_error", "failed to reconcile sessions"))?
+        .map_err(|source| BackendError::internal("failed to reconcile sessions", source))?
     {
         if session.status == SessionStatus::Running {
             repository
                 .update_session(
                     session.with_status(SessionStatus::Stopped, clock.now_timestamp_millis()),
                 )
-                .map_err(|_| {
-                    runtime_internal("session_repository_error", "failed to reconcile sessions")
-                })?;
+                .map_err(|source| BackendError::internal("failed to reconcile sessions", source))?;
         }
     }
     Ok(())

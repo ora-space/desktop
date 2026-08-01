@@ -2,7 +2,6 @@ use crate::app_state::AppState;
 use crate::error::WebApiError;
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
 use ora_contracts::{ListDirectoryRequest, ListDirectoryResponse};
 use std::sync::Arc;
 
@@ -17,13 +16,7 @@ pub async fn list_directory(
     // async worker threads even though the public handler remains asynchronous.
     tokio::task::spawn_blocking(move || file_system_api.list_directory(request))
         .await
-        .map_err(|_| {
-            WebApiError::file_system(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "file_system_worker_failed",
-                "filesystem directory worker failed",
-            )
-        })?
+        .map_err(|source| WebApiError::internal("filesystem directory worker failed", source))?
         .map(Json::from)
         .map_err(WebApiError::from)
 }

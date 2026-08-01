@@ -6,7 +6,6 @@ use ora_contracts::{
     ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse,
 };
 use ora_domain::{AuditFields, Project as DomainProject, ProjectId};
-use ora_logging::{ora_error, ora_info};
 
 /// Handles project creation without depending on transport-specific concerns.
 pub struct CreateProjectHandler<Repository, IdGenerator, ClockSource> {
@@ -46,13 +45,10 @@ where
             request.root_path,
             AuditFields::new(now, now, false),
         );
-        let project = self.repository.create_project(project).map_err(|error| {
-            let error = ApplicationError::from_project_repository_error(error);
-            log_project_failure("create_project", None, &error);
-            error
-        })?;
-
-        log_project_success("create_project", Some(&project.id));
+        let project = self
+            .repository
+            .create_project(project)
+            .map_err(ApplicationError::from_project_repository_error)?;
 
         Ok(CreateProjectResponse {
             project: map_project(project),
@@ -81,25 +77,19 @@ where
         request: GetProjectRequest,
     ) -> Result<GetProjectResponse, ApplicationError> {
         let project_id = ProjectId::new(request.project_id);
-        let project = self.repository.find_project(&project_id).map_err(|error| {
-            let error = ApplicationError::from_project_repository_error(error);
-            log_project_failure("get_project", Some(&project_id), &error);
-            error
-        })?;
+        let project = self
+            .repository
+            .find_project(&project_id)
+            .map_err(ApplicationError::from_project_repository_error)?;
 
         match project {
-            Some(project) => {
-                log_project_success("get_project", Some(&project_id));
-
-                Ok(GetProjectResponse {
-                    project: map_project(project),
-                })
-            }
+            Some(project) => Ok(GetProjectResponse {
+                project: map_project(project),
+            }),
             None => {
                 let error = ApplicationError::ProjectNotFound {
                     project_id: project_id.to_string(),
                 };
-                log_project_failure("get_project", Some(&project_id), &error);
                 Err(error)
             }
         }
@@ -126,17 +116,10 @@ where
         &self,
         _request: ListProjectsRequest,
     ) -> Result<ListProjectsResponse, ApplicationError> {
-        let projects = self.repository.list_projects().map_err(|error| {
-            let error = ApplicationError::from_project_repository_error(error);
-            log_project_failure("list_projects", None, &error);
-            error
-        })?;
-
-        ora_info!(
-            message = "listed projects",
-            operation = "list_projects",
-            project_count = projects.len()
-        );
+        let projects = self
+            .repository
+            .list_projects()
+            .map_err(ApplicationError::from_project_repository_error)?;
 
         Ok(ListProjectsResponse {
             projects: projects.into_iter().map(map_project).collect(),
@@ -167,11 +150,10 @@ where
         request: UpdateProjectRequest,
     ) -> Result<UpdateProjectResponse, ApplicationError> {
         let project_id = ProjectId::new(request.project_id);
-        let existing_project = self.repository.find_project(&project_id).map_err(|error| {
-            let error = ApplicationError::from_project_repository_error(error);
-            log_project_failure("update_project", Some(&project_id), &error);
-            error
-        })?;
+        let existing_project = self
+            .repository
+            .find_project(&project_id)
+            .map_err(ApplicationError::from_project_repository_error)?;
 
         let existing_project = match existing_project {
             Some(existing_project) => existing_project,
@@ -179,13 +161,12 @@ where
                 let error = ApplicationError::ProjectNotFound {
                     project_id: project_id.to_string(),
                 };
-                log_project_failure("update_project", Some(&project_id), &error);
                 return Err(error);
             }
         };
 
         let project = DomainProject::new(
-            project_id.clone(),
+            project_id,
             request.name,
             existing_project.root_path,
             AuditFields::new(
@@ -194,77 +175,13 @@ where
                 existing_project.audit_fields.is_deleted,
             ),
         );
-        let project = self.repository.update_project(project).map_err(|error| {
-            let error = ApplicationError::from_project_repository_error(error);
-            log_project_failure("update_project", Some(&project_id), &error);
-            error
-        })?;
-
-        log_project_success("update_project", Some(&project_id));
+        let project = self
+            .repository
+            .update_project(project)
+            .map_err(ApplicationError::from_project_repository_error)?;
 
         Ok(UpdateProjectResponse {
             project: map_project(project),
         })
-    }
-}
-
-/// Emits the shared informational event shape for successful project CRUD operations.
-fn log_project_success(operation: &'static str, project_id: Option<&ProjectId>) {
-    match project_id {
-        Some(project_id) => {
-            ora_info!(
-                message = "project operation completed",
-                operation,
-                project_id = project_id.to_string()
-            );
-        }
-        None => {
-            ora_info!(message = "project operation completed", operation);
-        }
-    }
-}
-
-/// Emits the shared error event shape for failed project CRUD operations.
-fn log_project_failure(
-    operation: &'static str,
-    project_id: Option<&ProjectId>,
-    error: &ApplicationError,
-) {
-    match (project_id, error) {
-        (Some(project_id), ApplicationError::ProjectNotFound { .. }) => {
-            ora_error!(
-                message = "project operation failed",
-                operation,
-                project_id = project_id.to_string(),
-                error.kind = "project_not_found",
-                error.message = error.to_string()
-            );
-        }
-        (Some(project_id), ApplicationError::ProjectRepository { .. }) => {
-            ora_error!(
-                message = "project operation failed",
-                operation,
-                project_id = project_id.to_string(),
-                error.kind = "project_repository",
-                error.message = error.to_string()
-            );
-        }
-        (None, ApplicationError::ProjectRepository { .. }) => {
-            ora_error!(
-                message = "project operation failed",
-                operation,
-                error.kind = "project_repository",
-                error.message = error.to_string()
-            );
-        }
-        (None, ApplicationError::ProjectNotFound { .. }) => {
-            ora_error!(
-                message = "project operation failed",
-                operation,
-                error.kind = "project_not_found",
-                error.message = error.to_string()
-            );
-        }
-        _ => {}
     }
 }

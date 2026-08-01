@@ -11,6 +11,4 @@ pub use handlers::{
     ListAgentDefinitionsHandler, UpdateAgentDefinitionHandler,
 };
 pub use id_generator::UuidAgentDefinitionIdGenerator;
-pub use ports::{
-    AgentDefinitionIdGenerator, AgentDefinitionRepository, AgentDefinitionRepositoryError,
-};
+pub use ports::{AgentDefinitionIdGenerator, AgentDefinitionRepository};
