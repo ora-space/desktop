@@ -6,7 +6,7 @@ import {
 } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@ora/ui";
-import { useWorkflowFlowCallbacks } from "./callbacks";
+import { useWorkflowFlowActions } from "./callbacks";
 import { workflowEdgePath } from "./path";
 
 /** Draws a selectable workflow edge with an accessible hit target and optional branch label. */
@@ -23,7 +23,7 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
   data,
 }: EdgeProps) {
   const { t } = useTranslation();
-  const { onDeleteEdge, onSelectEdge } = useWorkflowFlowCallbacks();
+  const { onDeleteEdge, onSelectEdge } = useWorkflowFlowActions();
   const edgePath = workflowEdgePath({
     sourceX,
     sourceY,

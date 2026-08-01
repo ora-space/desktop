@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -159,6 +160,9 @@ function WorkflowCanvasInner({
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLDivElement>(null);
   const connectionDraftRef = useRef<ConnectionDraft | null>(null);
+  const connectionCandidateFrameRef = useRef<number | null>(null);
+  const connectionCandidatePointRef = useRef<ClientPosition | null>(null);
+  const connectionCandidateNodeIdRef = useRef<string | null>(null);
   const [connectionCandidateNodeId, setConnectionCandidateNodeId] =
     useState<string | null>(null);
   const { screenToFlowPosition } = useReactFlow();
@@ -204,29 +208,64 @@ function WorkflowCanvasInner({
     [connectionCandidateNodeId, flowCallbacks],
   );
 
-  /** Clears connection-only state after React Flow has completed or cancelled a gesture. */
-  function finishConnectionGesture(): void {
-    connectionDraftRef.current = null;
-    reconnectingEdgeIdRef.current = null;
-    setConnectionCandidateNodeId(null);
+  useEffect(() => () => {
+    if (connectionCandidateFrameRef.current !== null) {
+      cancelAnimationFrame(connectionCandidateFrameRef.current);
+    }
+  }, []);
+
+  /** Updates candidate state only when the actual card changes. */
+  function commitConnectionCandidate(candidateNodeId: string | null): void {
+    if (connectionCandidateNodeIdRef.current === candidateNodeId) {
+      return;
+    }
+    connectionCandidateNodeIdRef.current = candidateNodeId;
+    setConnectionCandidateNodeId(candidateNodeId);
   }
 
-  /** Updates the whole-card candidate highlight without writing graph state on pointer move. */
+  /** Clears connection-only state after React Flow has completed or cancelled a gesture. */
+  function finishConnectionGesture(): void {
+    if (connectionCandidateFrameRef.current !== null) {
+      cancelAnimationFrame(connectionCandidateFrameRef.current);
+      connectionCandidateFrameRef.current = null;
+    }
+    connectionCandidatePointRef.current = null;
+    connectionDraftRef.current = null;
+    reconnectingEdgeIdRef.current = null;
+    commitConnectionCandidate(null);
+  }
+
+  /**
+   * Coalesces whole-card hit testing to one check per animation frame so React
+   * Flow can update the preview endpoint before candidate detection does DOM work.
+   */
   function updateConnectionCandidate(
     event: ReactPointerEvent<HTMLDivElement>,
   ): void {
-    const draft = connectionDraftRef.current;
-    if (draft === null) {
+    if (connectionDraftRef.current === null) {
       return;
     }
-    const candidate = workflowNodeAtClientPoint(event.clientX, event.clientY);
-    const validCandidate = candidate !== null
-      && isValidConnection(connectionForCandidate(draft, candidate))
-      ? candidate
-      : null;
-    setConnectionCandidateNodeId((current) =>
-      current === validCandidate ? current : validCandidate,
-    );
+    connectionCandidatePointRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    if (connectionCandidateFrameRef.current !== null) {
+      return;
+    }
+    connectionCandidateFrameRef.current = requestAnimationFrame(() => {
+      connectionCandidateFrameRef.current = null;
+      const draft = connectionDraftRef.current;
+      const point = connectionCandidatePointRef.current;
+      if (draft === null || point === null) {
+        return;
+      }
+      const candidate = workflowNodeAtClientPoint(point.clientX, point.clientY);
+      const validCandidate = candidate !== null
+        && isValidConnection(connectionForCandidate(draft, candidate))
+        ? candidate
+        : null;
+      commitConnectionCandidate(validCandidate);
+    });
   }
 
   /** Records a source drag so nearby cards can provide the original forgiving target. */

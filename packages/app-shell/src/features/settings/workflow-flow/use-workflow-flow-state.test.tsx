@@ -121,6 +121,18 @@ describe("useWorkflowFlowState", () => {
       sourceHandle: null,
       targetHandle: null,
     })).toBe(false);
+    act(() => {
+      result.current.reconnectingEdgeIdRef.current = "edge-start-output";
+    });
+    expect(result.current.isValidConnection({
+      source: "start",
+      target: "output",
+      sourceHandle: null,
+      targetHandle: null,
+    })).toBe(true);
+    act(() => {
+      result.current.reconnectingEdgeIdRef.current = null;
+    });
     expect(result.current.isValidConnection({
       source: "start",
       target: "other",

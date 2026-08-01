@@ -68,17 +68,102 @@
   border-radius: 9999px;
 }
 
-.workflow-flow .react-flow__handle.connectingfrom,
-.workflow-flow .react-flow__handle.connectingto {
+.workflow-flow .workflow-port {
   opacity: 1;
-  box-shadow: 0 0 0 5px color-mix(in oklch, var(--ring) 18%, transparent);
 }
 
-.workflow-flow .react-flow__handle.valid {
+/*
+ * The 24px Handle remains a forgiving hit target while pseudo-elements draw
+ * the smaller port independently, so visual animation never moves the anchor.
+ */
+.workflow-flow .workflow-port::before,
+.workflow-flow .workflow-port::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 9999px;
+  content: "";
+  pointer-events: none;
+}
+
+.workflow-flow .workflow-port::before {
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 1px var(--background);
+  transform: translate(-50%, -50%);
+  transition:
+    width 160ms ease-out,
+    height 160ms ease-out,
+    box-shadow 160ms ease-out,
+    background-color 160ms ease-out;
+}
+
+.workflow-flow .workflow-port-input::before {
+  width: 8px;
+  height: 8px;
+  background: var(--muted-foreground);
+}
+
+.workflow-flow .workflow-port-output::before {
+  background: var(--foreground);
+}
+
+.workflow-flow .workflow-port::after {
+  width: 22px;
+  height: 22px;
+  border: 2px solid color-mix(in oklch, var(--ring) 60%, transparent);
+  background: color-mix(in oklch, var(--ring) 12%, var(--background));
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition: opacity 160ms ease-out;
+}
+
+/* The visible dot stays small while the transparent border preserves a forgiving hit area. */
+.workflow-flow .workflow-port:hover::before,
+.workflow-flow .workflow-port:focus-visible::before {
+  width: 12px;
+  height: 12px;
+  box-shadow:
+    0 0 0 1px var(--background),
+    0 0 0 3px color-mix(in oklch, var(--foreground) 10%, transparent);
+}
+
+.workflow-flow .workflow-port-input:hover::before,
+.workflow-flow .workflow-port-input:focus-visible::before {
+  width: 10px;
+  height: 10px;
+}
+
+.workflow-flow .workflow-port:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+/* Keep source feedback restrained; the strong ring belongs to the actual drop target. */
+.workflow-flow .workflow-port.connectingfrom:not(.workflow-port-candidate)::before {
+  box-shadow:
+    0 0 0 1px var(--background),
+    0 0 0 3px color-mix(in oklch, var(--ring) 16%, transparent);
+}
+
+.workflow-flow .workflow-port.valid::after,
+.workflow-flow .workflow-port-candidate::after {
   opacity: 1;
-  background: var(--ring) !important;
-  box-shadow: 0 0 0 5px color-mix(in oklch, var(--ring) 24%, transparent);
-  transform: scale(1.25);
+}
+
+.workflow-flow .workflow-port.valid::before,
+.workflow-flow .workflow-port-candidate::before {
+  width: 10px;
+  height: 10px;
+  background: color-mix(in oklch, var(--foreground) 72%, var(--ring));
+  box-shadow: 0 0 0 1px var(--background);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-flow .workflow-port {
+    transition: none;
+  }
 }
 
 .workflow-flow .workflow-connection-preview {

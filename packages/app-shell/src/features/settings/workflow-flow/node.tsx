@@ -9,7 +9,10 @@ import {
 } from "@ora/workflow-mock";
 import { getNodeMetadata } from "../workflow-node-metadata";
 import { type WorkflowFlowNode } from "./adapters";
-import { useWorkflowFlowCallbacks } from "./callbacks";
+import {
+  useWorkflowFlowActions,
+  useWorkflowFlowConnectionState,
+} from "./callbacks";
 
 /** Renders one workflow card with left/right handles styled for the settings editor. */
 export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
@@ -20,7 +23,11 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   positionAbsoluteY,
 }: NodeProps<WorkflowFlowNode>) {
   const { i18n, t } = useTranslation();
-  const { connectionCandidateNodeId, onDeleteNode } = useWorkflowFlowCallbacks();
+  const { onDeleteNode } = useWorkflowFlowActions();
+  const {
+    connectionCandidateEndpoint,
+    connectionCandidateNodeId,
+  } = useWorkflowFlowConnectionState();
   const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
   const metadata = getNodeMetadata(data.kind);
   const nodeKindLabel = createMockWorkflowNodeType(data.kind, locale).label;
@@ -28,6 +35,11 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   const detail = data.config.model
     ?? data.config.tool
     ?? t("settings.workflow.immediate");
+  const isConnectionCandidate = connectionCandidateNodeId === id;
+  const isInputCandidate = isConnectionCandidate
+    && connectionCandidateEndpoint === "target";
+  const isOutputCandidate = isConnectionCandidate
+    && connectionCandidateEndpoint === "source";
 
   return (
     <article
@@ -40,8 +52,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         selected
           ? "border-foreground/45 shadow-md ring-2 ring-ring/25"
           : "border-border hover:border-foreground/25 hover:shadow-md",
-        connectionCandidateNodeId === id
-          && "border-ring shadow-md ring-4 ring-ring/20",
+        isConnectionCandidate && "border-ring/60 shadow-md ring-2 ring-ring/10",
       )}
       aria-label={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${data.title}`}
     >
@@ -50,7 +61,10 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         position={Position.Left}
         data-workflow-input={id}
         aria-label={t("settings.workflow.connectTo", { name: data.title })}
-        className="!size-6 !border-[6px] !border-transparent !bg-muted-foreground !bg-clip-content !shadow-sm opacity-0 transition-[opacity,transform,box-shadow] group-hover/workflow-node:opacity-100 hover:!scale-110 hover:!shadow-md focus:opacity-100"
+        className={cn(
+          "workflow-port workflow-port-input !size-6 !border-0 !bg-transparent",
+          isInputCandidate && "workflow-port-candidate",
+        )}
         style={{ top: 61 }}
       />
       <div className="flex items-start gap-2.5 border-b border-border px-3 py-3">
@@ -88,7 +102,10 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         position={Position.Right}
         data-workflow-output={id}
         aria-label={t("settings.workflow.connectFrom", { name: data.title })}
-        className="!size-6 !border-[6px] !border-transparent !bg-foreground !bg-clip-content !shadow-sm opacity-0 transition-[opacity,transform,box-shadow] group-hover/workflow-node:opacity-100 hover:!scale-110 hover:!shadow-md focus:opacity-100"
+        className={cn(
+          "workflow-port workflow-port-output !size-6 !border-0 !bg-transparent",
+          isOutputCandidate && "workflow-port-candidate",
+        )}
         style={{ top: 61 }}
       />
     </article>

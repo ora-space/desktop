@@ -106,6 +106,15 @@ export function useWorkflowFlowState({
     useNodesState<WorkflowFlowNode>(toFlowNodes(nodes, selectedNodeId));
   const [flowEdges, setFlowEdges, applyFlowEdgeChanges] =
     useEdgesState(toFlowEdges(edges, nodes, selectedEdgeId));
+  const edgeIdByDirectedPair = useMemo(() => {
+    const bySource = new Map<string, Map<string, string>>();
+    for (const edge of edges) {
+      const byTarget = bySource.get(edge.source) ?? new Map<string, string>();
+      byTarget.set(edge.target, edge.id);
+      bySource.set(edge.source, byTarget);
+    }
+    return bySource;
+  }, [edges]);
 
   useEffect(() => {
     setFlowNodes((current) =>
@@ -177,7 +186,7 @@ export function useWorkflowFlowState({
     [onMoveNode],
   );
 
-  /** Rejects self-loops and duplicate directed pairs, excluding the edge being reconnected. */
+  /** Rejects self-loops and indexed duplicate pairs, excluding the reconnected edge. */
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
       const source = connection.source;
@@ -186,14 +195,10 @@ export function useWorkflowFlowState({
         return false;
       }
       const reconnectingEdgeId = reconnectingEdgeIdRef.current;
-      return !edges.some(
-        (edge) =>
-          edge.id !== reconnectingEdgeId
-          && edge.source === source
-          && edge.target === target,
-      );
+      const existingEdgeId = edgeIdByDirectedPair.get(source)?.get(target);
+      return existingEdgeId === undefined || existingEdgeId === reconnectingEdgeId;
     },
-    [edges],
+    [edgeIdByDirectedPair],
   );
 
   /** Creates a domain edge after React Flow has accepted both connection endpoints. */
