@@ -1,32 +1,34 @@
 import type {
+  Edge,
+  Node,
+  OnConnect,
+  OnEdgesChange,
+  OnNodesChange,
+  OnReconnect,
+  Viewport,
+  XYPosition,
+} from "@xyflow/react";
+import type {
   WorkflowCapabilities,
-  WorkflowEdge,
-  WorkflowNode,
+  WorkflowNodeData,
   WorkflowNodeKind,
-  WorkflowPosition,
 } from "@ora/workflow-mock";
 
-/** Defines the domain boundary consumed by the React Flow workflow editor. */
+/** Defines the React Flow element boundary consumed by the workflow canvas. */
 export interface WorkflowCanvasProps {
   capabilities: WorkflowCapabilities;
-  nodes: WorkflowNode[];
-  edges: WorkflowEdge[];
-  selectedNodeId: string | null;
-  onSelectNode: (nodeId: string | null) => void;
-  onMoveNode: (nodeId: string, position: WorkflowPosition) => void;
-  onAddNode: (kind: WorkflowNodeKind, position: WorkflowPosition) => void;
-  onConnect: (source: string, target: string) => void;
-  onReconnectEdge: (edgeId: string, source: string, target: string) => void;
-  onDeleteNode: (nodeId: string) => void;
-  onDeleteEdge: (edgeId: string) => void;
+  nodes: Node<WorkflowNodeData, "workflow">[];
+  edges: Edge[];
+  initialViewport: Viewport;
+  onNodesChange: OnNodesChange<Node<WorkflowNodeData, "workflow">>;
+  onEdgesChange: OnEdgesChange<Edge>;
+  onViewportChange: (viewport: Viewport) => void;
+  onAddNode: (kind: WorkflowNodeKind, position: XYPosition) => void;
+  onConnect: OnConnect;
+  onReconnect: OnReconnect<Edge>;
   libraryCollapsed: boolean;
   inspectorCollapsed: boolean;
   inspectorAvailable: boolean;
   onExpandLibrary: () => void;
   onExpandInspector: () => void;
-}
-
-export interface ClientPosition {
-  clientX: number;
-  clientY: number;
 }

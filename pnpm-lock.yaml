@@ -359,6 +359,10 @@ importers:
         version: 1.4.0
 
   packages/workflow-mock:
+    dependencies:
+      '@xyflow/react':
+        specifier: ^12.11.2
+        version: 12.11.2(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(immer@11.1.11)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
     devDependencies:
       typescript:
         specifier: ~6.0.2

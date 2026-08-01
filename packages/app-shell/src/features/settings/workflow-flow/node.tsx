@@ -1,39 +1,42 @@
 import { memo } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import {
+  Handle,
+  Position,
+  useReactFlow,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import { IconTrash } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
 import {
   createMockWorkflowNodeType,
-  type WorkflowLocale,
+  type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import { getNodeMetadata } from "../workflow-node-metadata";
-import { type WorkflowFlowNode } from "./adapters";
-import {
-  useWorkflowFlowActions,
-  useWorkflowFlowConnectionState,
-} from "./callbacks";
+import { useWorkflowConnectionState } from "./connection-state";
 
 /** Renders one workflow card with left/right handles styled for the settings editor. */
 export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   id,
   data,
+  deletable,
   selected,
   positionAbsoluteX,
   positionAbsoluteY,
-}: NodeProps<WorkflowFlowNode>) {
+}: NodeProps<Node<WorkflowNodeData, "workflow">>) {
   const { i18n, t } = useTranslation();
-  const { onDeleteNode } = useWorkflowFlowActions();
+  const { deleteElements } = useReactFlow<Node<WorkflowNodeData, "workflow">>();
   const {
     connectionCandidateEndpoint,
     connectionCandidateNodeId,
-  } = useWorkflowFlowConnectionState();
-  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
+  } = useWorkflowConnectionState();
+  const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
   const metadata = getNodeMetadata(data.kind);
   const nodeKindLabel = createMockWorkflowNodeType(data.kind, locale).label;
   const Icon = metadata.icon;
-  const detail = data.config.model
-    ?? data.config.tool
+  const detail = data.model
+    ?? data.tool
     ?? t("settings.workflow.immediate");
   const isConnectionCandidate = connectionCandidateNodeId === id;
   const isInputCandidate = isConnectionCandidate
@@ -82,12 +85,14 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
             {data.description}
           </p>
         </div>
-        {selected && (
+        {selected && deletable && (
           <button
             type="button"
             className="nodrag nopan flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={t("settings.workflow.deleteNamed", { name: data.title })}
-            onClick={() => onDeleteNode(id)}
+            onClick={() => {
+              void deleteElements({ nodes: [{ id }] });
+            }}
           >
             <IconTrash className="size-3.5" />
           </button>

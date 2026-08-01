@@ -1,22 +1,27 @@
 # @ora/workflow-mock
 
-Frontend-only workflow contracts, fixtures, and an in-memory repository for the
-settings workflow builder prototype.
+Native React Flow fixtures, node-data extensions, validation, and deterministic
+demo execution for the settings workflow builder.
 
-`WorkflowRepository` is the replacement boundary for a future backend. UI code
-depends on that async shape instead of reading fixtures directly. Preview runs
-receive the current workflow draft so execution cannot silently fall back to an
-older persisted revision. Repositories also expose their data-source kind for
-environment-specific UI without hardcoded mock labels.
+The package intentionally has no persistence abstraction. The demo owns its graph
+for the lifetime of the mounted UI and resets when it is remounted. A future
+product backend should introduce its own contract when real storage semantics are
+known instead of constraining the prototype around a speculative repository API.
 
-`createMockWorkflowNode` owns prototype-only node configuration defaults so UI
-components only provide interaction-derived positions and localized display text.
+Workflow graph snapshots extend `ReactFlowJsonObject<Node<TData>, Edge>` so
+nodes, connections, and viewport use React Flow's native persistence shape.
+Nodes use `@xyflow/react`'s `Node<TData>` directly and connections use `Edge`.
+Executable fields (`instruction`, `model`, `tool`, and `condition`) live in the
+official `Node.data` extension point. There is no parallel workflow node, edge,
+position, or config DTO and no adapter layer.
+
+`createMockWorkflowNode` owns demo node-data defaults so UI components only
+provide interaction-derived `XYPosition` values and localized display text.
 `createMockWorkflowCapabilities` supplies the model and tool choices rendered by
-the inspector, plus the node-type catalog and configuration-field schema rendered
-by the canvas dock and inspector. Applications may inject repository and
-capability implementations at the `WorkflowSettings` composition boundary.
+the inspector, plus the node-type catalog and configuration-field schema.
 
-Imported and saved definitions are validated before entering repository state.
-Validation enforces unique element IDs, valid edge endpoints, finite positions,
-unique directed connections, exactly one Start node, and node-kind-specific
-configuration.
+Imported definitions are validated before entering session state. React Flow's
+`isNode` and `isEdge` guards validate its element boundaries; business
+validation additionally enforces unique element IDs, valid edge endpoints,
+finite positions and viewport values, unique directed connections, exactly one
+Start node, and the required node-data shape.

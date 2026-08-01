@@ -22,18 +22,19 @@ import {
   Textarea,
 } from "@ora/ui";
 import {
+  type WorkflowNodeData,
   type WorkflowCapabilities,
-  type WorkflowNode,
   type WorkflowRunResult,
 } from "@ora/workflow-mock";
+import type { Node } from "@xyflow/react";
 import { getNodeMetadata } from "./workflow-node-metadata";
 
 interface WorkflowInspectorProps {
-  node: WorkflowNode | null;
+  node: Node<WorkflowNodeData, "workflow"> | null;
   runResult: WorkflowRunResult | null;
   running: boolean;
   capabilities: WorkflowCapabilities;
-  onUpdate: (node: WorkflowNode) => void;
+  onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
   onDelete: (nodeId: string) => void;
   onCloseRun: () => void;
   onCloseNode: () => void;
@@ -93,17 +94,17 @@ function WorkflowNodeInspector({
   onDelete,
   onClose,
 }: {
-  node: WorkflowNode;
+  node: Node<WorkflowNodeData, "workflow">;
   capabilities: WorkflowCapabilities;
-  onUpdate: (node: WorkflowNode) => void;
+  onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
   onDelete: (nodeId: string) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const metadata = getNodeMetadata(node.kind);
-  const nodeType = capabilities.nodeTypes.find((candidate) => candidate.kind === node.kind);
+  const metadata = getNodeMetadata(node.data.kind);
+  const nodeType = capabilities.nodeTypes.find((candidate) => candidate.kind === node.data.kind);
   if (nodeType === undefined) {
-    throw new Error(`Missing workflow capability for node kind "${node.kind}"`);
+    throw new Error(`Missing workflow capability for node kind "${node.data.kind}"`);
   }
   const Icon = metadata.icon;
   return (
@@ -113,7 +114,7 @@ function WorkflowNodeInspector({
           <Icon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="text-xs font-semibold">{node.title}</h3>
+          <h3 className="text-xs font-semibold">{node.data.title}</h3>
           <p className="text-[10px] text-muted-foreground">
             {t("settings.workflow.nodeSuffix", { type: nodeType.label })}
           </p>
@@ -131,24 +132,30 @@ function WorkflowNodeInspector({
         <InspectorField label={t("settings.workflow.field.name")} htmlFor="workflow-node-title">
           <Input
             id="workflow-node-title"
-            value={node.title}
-            onChange={(event) => onUpdate({ ...node, title: event.target.value })}
+            value={node.data.title}
+            onChange={(event) => onUpdate({
+              ...node,
+              data: { ...node.data, title: event.target.value },
+            })}
           />
         </InspectorField>
         <InspectorField label={t("settings.workflow.field.description")} htmlFor="workflow-node-description">
           <Input
             id="workflow-node-description"
-            value={node.description}
-            onChange={(event) => onUpdate({ ...node, description: event.target.value })}
+            value={node.data.description}
+            onChange={(event) => onUpdate({
+              ...node,
+              data: { ...node.data, description: event.target.value },
+            })}
           />
         </InspectorField>
         {nodeType.configFields.includes("model") && (
           <InspectorField label={t("settings.workflow.field.model")} htmlFor="workflow-node-model">
             <Select
-              value={node.config.model ?? capabilities.defaultModel}
+              value={node.data.model ?? capabilities.defaultModel}
               onValueChange={(model) => {
                 if (model !== null) {
-                  onUpdate({ ...node, config: { ...node.config, model } });
+                  onUpdate({ ...node, data: { ...node.data, model } });
                 }
               }}
             >
@@ -168,10 +175,10 @@ function WorkflowNodeInspector({
         {nodeType.configFields.includes("tool") && (
           <InspectorField label={t("settings.workflow.field.tool")} htmlFor="workflow-node-tool">
             <Select
-              value={node.config.tool ?? capabilities.defaultTool}
+              value={node.data.tool ?? capabilities.defaultTool}
               onValueChange={(tool) => {
                 if (tool !== null) {
-                  onUpdate({ ...node, config: { ...node.config, tool } });
+                  onUpdate({ ...node, data: { ...node.data, tool } });
                 }
               }}
             >
@@ -192,11 +199,11 @@ function WorkflowNodeInspector({
           <InspectorField label={t("settings.workflow.field.condition")} htmlFor="workflow-node-condition">
             <Input
               id="workflow-node-condition"
-              value={node.config.condition ?? ""}
+              value={node.data.condition ?? ""}
               onChange={(event) =>
                 onUpdate({
                   ...node,
-                  config: { ...node.config, condition: event.target.value },
+                  data: { ...node.data, condition: event.target.value },
                 })
               }
             />
@@ -207,11 +214,11 @@ function WorkflowNodeInspector({
             <Textarea
               id="workflow-node-instruction"
               className="min-h-32 resize-none text-xs leading-5"
-              value={node.config.instruction}
+              value={node.data.instruction}
               onChange={(event) =>
                 onUpdate({
                   ...node,
-                  config: { ...node.config, instruction: event.target.value },
+                  data: { ...node.data, instruction: event.target.value },
                 })
               }
             />
@@ -223,7 +230,7 @@ function WorkflowNodeInspector({
           variant="ghost"
           className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive"
           onClick={() => onDelete(node.id)}
-          disabled={node.kind === "start"}
+          disabled={node.data.kind === "start"}
         >
           <IconTrash />
           {t("settings.workflow.deleteNode")}

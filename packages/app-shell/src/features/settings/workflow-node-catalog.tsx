@@ -7,6 +7,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import type { XYPosition } from "@xyflow/react";
 import { IconAdjustmentsAlt } from "@tabler/icons-react";
 import {
   type WorkflowCapabilities,
@@ -21,21 +22,16 @@ const ELASTIC_RESISTANCE = 0.14;
 const WHEEL_END_DELAY_MS = 100;
 const NODE_DRAG_THRESHOLD = 4;
 
-interface ClientPosition {
-  clientX: number;
-  clientY: number;
-}
-
 interface NodeDragDraft {
   kind: WorkflowNodeKind;
   pointerId: number;
-  origin: ClientPosition;
+  origin: XYPosition;
   moved: boolean;
 }
 
 interface NodeDragPreview {
   kind: WorkflowNodeKind;
-  position: ClientPosition;
+  position: XYPosition;
 }
 
 /** Presents node types as a compact bottom dock that stays close to the canvas. */
@@ -46,10 +42,12 @@ export function WorkflowNodeCatalog({
 }: {
   capabilities: WorkflowCapabilities;
   onAdd: (kind: WorkflowNodeKind) => void;
-  onDrop: (kind: WorkflowNodeKind, position: ClientPosition) => void;
+  onDrop: (kind: WorkflowNodeKind, position: XYPosition) => void;
 }) {
   const { t } = useTranslation();
-  const nodeTypes = capabilities.nodeTypes;
+  // Every valid workflow is created with its required Start node, so exposing
+  // another Start in the catalog would make an invalid graph selectable.
+  const nodeTypes = capabilities.nodeTypes.filter(({ kind }) => kind !== "start");
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const returnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const elasticOffsetRef = useRef(0);
@@ -129,7 +127,7 @@ export function WorkflowNodeCatalog({
     nodeDragRef.current = {
       kind,
       pointerId: event.pointerId,
-      origin: { clientX: event.clientX, clientY: event.clientY },
+      origin: { x: event.clientX, y: event.clientY },
       moved: false,
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -144,8 +142,8 @@ export function WorkflowNodeCatalog({
     if (
       !draft.moved
       && Math.hypot(
-        event.clientX - draft.origin.clientX,
-        event.clientY - draft.origin.clientY,
+        event.clientX - draft.origin.x,
+        event.clientY - draft.origin.y,
       ) < NODE_DRAG_THRESHOLD
     ) {
       return;
@@ -153,7 +151,7 @@ export function WorkflowNodeCatalog({
     draft.moved = true;
     setNodeDragPreview({
       kind: draft.kind,
-      position: { clientX: event.clientX, clientY: event.clientY },
+      position: { x: event.clientX, y: event.clientY },
     });
   }
 
@@ -166,15 +164,15 @@ export function WorkflowNodeCatalog({
     nodeDragRef.current = null;
     setNodeDragPreview(null);
     const moved = draft.moved || Math.hypot(
-      event.clientX - draft.origin.clientX,
-      event.clientY - draft.origin.clientY,
+      event.clientX - draft.origin.x,
+      event.clientY - draft.origin.y,
     ) >= NODE_DRAG_THRESHOLD;
     if (!moved) {
       return;
     }
     suppressClickRef.current = true;
     event.preventDefault();
-    onDrop(draft.kind, { clientX: event.clientX, clientY: event.clientY });
+    onDrop(draft.kind, { x: event.clientX, y: event.clientY });
   }
 
   /** Clears an interrupted pointer gesture so the next click remains independent. */
@@ -280,8 +278,8 @@ function WorkflowNodeDragPreview({
       aria-hidden="true"
       className="pointer-events-none fixed z-[100] flex h-10 items-center gap-1.5 rounded-full border border-foreground/20 bg-background/95 px-2 shadow-lg backdrop-blur-sm"
       style={{
-        left: position.clientX,
-        top: position.clientY,
+        left: position.x,
+        top: position.y,
         transform: "translate(-50%, -50%)",
       }}
     >

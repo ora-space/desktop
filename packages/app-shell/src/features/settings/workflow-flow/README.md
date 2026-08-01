@@ -1,39 +1,50 @@
 # workflow-flow
 
-React Flow–based canvas for the settings workflow builder.
+React Flow–based canvas for the session-only settings workflow demo.
 
 ## Responsibilities
 
-- Render and edit a workflow graph (`nodes` + `edges`) with pan, zoom, fit-to-view, connect, reconnect, and delete.
-- Keep pointer-frequency node/edge changes inside React Flow and commit stable graph mutations to the domain owner.
-- Reuse unchanged React Flow element objects when domain state changes so edits only rerender affected cards and connections.
-- Provide grid alignment and an interactive minimap when the canvas is wide enough.
-- Host the bottom node catalog overlay and panel expand controls.
-- Map domain workflow types from `@ora/workflow-mock` to React Flow elements without owning persistence.
+- Render and edit a controlled workflow graph with pan, zoom, fit-to-view,
+  connect, reconnect, selection, and delete interactions.
+- Forward React Flow changes directly to the session graph instead of mirroring
+  nodes and edges in a second hook-owned store.
+- Provide grid alignment, an interactive minimap, the node catalog overlay, and
+  panel expand controls.
+- Render native React Flow `Node<TData>` and `Edge` elements without adapters.
+- Use React Flow's `BaseEdge`, path helpers, selection, deletion, and viewport
+  helpers instead of maintaining parallel interaction utilities.
 
 ## Non-responsibilities
 
-- Does not load, save, or version workflows (owned by `WorkflowSettings` + repository).
-- Does not own the left library manager or right inspector.
+- Does not load, save, version, or otherwise persist workflows.
+- Does not own the left library manager, right inspector, or mock run preview.
 - Does not own OpenSpec composer stepper state (`workflow-store`).
 
 ## Public boundary
 
-- `WorkflowCanvas` — drop-in graph editor used by `WorkflowSettings`.
-- Domain positions remain top-left card coordinates; React Flow is an implementation detail of this module.
+- `WorkflowCanvas` is the graph editor used by `WorkflowSettings`.
+- Positions use React Flow's `XYPosition` and remain top-left card coordinates.
 
 ## Key invariants
 
-- Reject self-loops and duplicate directed `(source, target)` edges at connect/reconnect time.
-- Treat the full card as a valid drop zone while retaining directional left/right ports and candidate feedback.
-- Render direction with React Flow's native closed-arrow marker rather than separate edge artwork.
-- Keep selected-edge reconnect hit areas centered on the visible endpoints; unselected edges never intercept them.
-- Node dragging is local and responsive; the final snapped position is committed once when dragging stops.
-- Viewport (pan/zoom) is session-local and not persisted in workflow JSON.
-- Catalog drop only commits when the pointer is released inside the canvas bounds.
+- React Flow nodes and edges are the single source of truth for the graph.
+- Self-loops and duplicate directed `(source, target)` edges are rejected.
+- The required Start node uses React Flow's `deletable: false`, and the catalog
+  does not offer a second Start node.
+- The full card is a forgiving connection drop zone while directional ports and
+  candidate feedback remain visible.
+- Selected-edge reconnect hit areas remain centered on visible endpoints.
+- Each session workflow carries React Flow's `ReactFlowJsonObject` viewport so
+  switching or importing a workflow restores its exact pan and zoom state.
+- Catalog drops only commit inside canvas bounds and snap to the visible grid.
 
 ## Interactions
 
-- Parent supplies graph data, backend-provided capabilities, and mutation callbacks (`onMoveNode`, `onConnect`, `onAddNode`, …).
-- `useWorkflowFlowState` is the synchronization boundary between React Flow's transient state and domain state.
-- `WorkflowNodeCatalog` remains nested here for drop-coordinate conversion via `screenToFlowPosition`.
+- The parent applies React Flow `NodeChange` and `EdgeChange` events directly
+  with `applyNodeChanges` and `applyEdgeChanges`.
+- React Flow owns selection semantics and performs node/edge deletion through
+  `deleteElements`, including removal of incident edges.
+- Executable fields such as instruction, model, tool, and condition use React
+  Flow's supported `node.data` extension point.
+- `WorkflowNodeCatalog` remains nested for drop-coordinate conversion through
+  `screenToFlowPosition`.

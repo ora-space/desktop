@@ -10,8 +10,8 @@ import { useTranslation } from "react-i18next";
 import {
   Background,
   BackgroundVariant,
+  MarkerType,
   ReactFlow,
-  ReactFlowProvider,
   useReactFlow,
   type Connection,
   type DefaultEdgeOptions,
@@ -20,10 +20,9 @@ import {
   type HandleType,
   type OnConnectStartParams,
   type Viewport,
+  type XYPosition,
 } from "@xyflow/react";
-import type {
-  WorkflowNodeKind,
-} from "@ora/workflow-mock";
+import type { WorkflowNodeKind } from "@ora/workflow-mock";
 import { WorkflowNodeCatalog } from "../workflow-node-catalog";
 import {
   DEFAULT_WORKFLOW_PAN,
@@ -37,15 +36,14 @@ import {
   WORKFLOW_SNAP_GRID,
   nodePositionAt,
   snapNodePosition,
-} from "./adapters";
-import { WorkflowFlowCallbacksProvider } from "./callbacks";
+} from "./layout";
+import { WorkflowConnectionStateProvider } from "./connection-state";
 import { WorkflowConnectionLine } from "./connection-line";
 import { WorkflowCanvasControls } from "./controls";
 import { WorkflowFlowEdgeView } from "./edge";
 import { WorkflowFlowNodeView } from "./node";
 import { WorkflowFlowOverview } from "./overview";
-import type { ClientPosition, WorkflowCanvasProps } from "./types";
-import { useWorkflowFlowState } from "./use-workflow-flow-state";
+import type { WorkflowCanvasProps } from "./types";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
 
@@ -64,6 +62,15 @@ const DEFAULT_VIEWPORT: Viewport = {
 };
 const DEFAULT_EDGE_OPTIONS = {
   type: WORKFLOW_FLOW_EDGE_TYPE,
+  reconnectable: true,
+  ariaRole: "button",
+  markerEnd: {
+    type: MarkerType.ArrowClosed,
+    width: 28,
+    height: 28,
+    markerUnits: "userSpaceOnUse",
+    color: "color-mix(in oklch, var(--foreground) 64%, transparent)",
+  },
 } satisfies DefaultEdgeOptions;
 const CONNECTION_LINE_STYLE = {
   stroke: "var(--ring)",
@@ -98,14 +105,14 @@ function workflowNodeAtClientPoint(clientX: number, clientY: number): string | n
 /** Normalizes mouse and touch releases for whole-card connection fallback. */
 function connectionEndClientPoint(
   event: MouseEvent | TouchEvent,
-): { clientX: number; clientY: number } | null {
+): XYPosition | null {
   if ("changedTouches" in event) {
     const touch = event.changedTouches.item(0);
     return touch === null
       ? null
-      : { clientX: touch.clientX, clientY: touch.clientY };
+      : { x: touch.clientX, y: touch.clientY };
   }
-  return { clientX: event.clientX, clientY: event.clientY };
+  return { x: event.clientX, y: event.clientY };
 }
 
 /** Resolves the directed pair represented by a new or reconnect drag. */
@@ -131,11 +138,7 @@ function connectionForCandidate(
 
 /** Wraps the flow in a provider so catalog drop can convert screen coordinates. */
 export function WorkflowCanvas(props: WorkflowCanvasProps) {
-  return (
-    <ReactFlowProvider>
-      <WorkflowCanvasInner {...props} />
-    </ReactFlowProvider>
-  );
+  return <WorkflowCanvasInner {...props} />;
 }
 
 /** Renders and manipulates the node graph without coupling it to persistence or preview behavior. */
@@ -143,14 +146,13 @@ function WorkflowCanvasInner({
   capabilities,
   nodes,
   edges,
-  selectedNodeId,
-  onSelectNode,
-  onMoveNode,
+  initialViewport,
+  onNodesChange,
+  onEdgesChange,
+  onViewportChange,
   onAddNode,
   onConnect,
-  onReconnectEdge,
-  onDeleteNode,
-  onDeleteEdge,
+  onReconnect,
   libraryCollapsed,
   inspectorCollapsed,
   inspectorAvailable,
@@ -161,42 +163,41 @@ function WorkflowCanvasInner({
   const canvasRef = useRef<HTMLDivElement>(null);
   const connectionDraftRef = useRef<ConnectionDraft | null>(null);
   const connectionCandidateFrameRef = useRef<number | null>(null);
-  const connectionCandidatePointRef = useRef<ClientPosition | null>(null);
+  const connectionCandidatePointRef = useRef<XYPosition | null>(null);
   const connectionCandidateNodeIdRef = useRef<string | null>(null);
   const [connectionCandidateNodeId, setConnectionCandidateNodeId] =
     useState<string | null>(null);
-  const { screenToFlowPosition } = useReactFlow();
-  const {
-    clearSelection,
-    deleteEdge,
-    flowCallbacks,
-    flowEdges,
-    flowNodes,
-    handleConnect,
-    handleEdgesChange,
-    handleNodeDragStop,
-    handleNodesChange,
-    handleReconnect,
-    isValidConnection,
-    reconnectingEdgeIdRef,
-    selectEdge,
-    setSelectedEdgeId,
-  } = useWorkflowFlowState({
-    nodes,
-    edges,
-    selectedNodeId,
-    onSelectNode,
-    onMoveNode,
-    onConnect,
-    onReconnectEdge,
-    onDeleteNode,
-    onDeleteEdge,
-  });
-  const rendererCallbacks = useMemo(
+  const { deleteElements, screenToFlowPosition, setViewport } = useReactFlow();
+  const initialViewportRef = useRef(initialViewport);
+  const reconnectingEdgeIdRef = useRef<string | null>(null);
+  const edgeIdByDirectedPair = useMemo(() => {
+    const pairs = new Map<string, string>();
+    for (const edge of edges) {
+      pairs.set(`${edge.source}\u0000${edge.target}`, edge.id);
+    }
+    return pairs;
+  }, [edges]);
+
+  /** Rejects self-loops and duplicate directed edges during connect and reconnect. */
+  function isValidConnection(connection: Connection | Edge): boolean {
+    if (
+      connection.source === null
+      || connection.target === null
+      || connection.source === connection.target
+    ) {
+      return false;
+    }
+    const existingEdgeId = edgeIdByDirectedPair.get(
+      `${connection.source}\u0000${connection.target}`,
+    );
+    return existingEdgeId === undefined
+      || existingEdgeId === reconnectingEdgeIdRef.current;
+  }
+
+  const connectionState = useMemo(
     () => {
       const draft = connectionDraftRef.current;
       return {
-        ...flowCallbacks,
         connectionCandidateEndpoint: connectionCandidateNodeId === null
           ? null
           : draft?.kind === "new"
@@ -205,7 +206,7 @@ function WorkflowCanvasInner({
         connectionCandidateNodeId,
       };
     },
-    [connectionCandidateNodeId, flowCallbacks],
+    [connectionCandidateNodeId],
   );
 
   useEffect(() => () => {
@@ -213,6 +214,12 @@ function WorkflowCanvasInner({
       cancelAnimationFrame(connectionCandidateFrameRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    // The provider spans the inspector and survives graph switches, so each
+    // keyed canvas explicitly restores the imported React Flow snapshot once.
+    void setViewport(initialViewportRef.current);
+  }, [setViewport]);
 
   /** Updates candidate state only when the actual card changes. */
   function commitConnectionCandidate(candidateNodeId: string | null): void {
@@ -246,8 +253,8 @@ function WorkflowCanvasInner({
       return;
     }
     connectionCandidatePointRef.current = {
-      clientX: event.clientX,
-      clientY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
     };
     if (connectionCandidateFrameRef.current !== null) {
       return;
@@ -259,7 +266,7 @@ function WorkflowCanvasInner({
       if (draft === null || point === null) {
         return;
       }
-      const candidate = workflowNodeAtClientPoint(point.clientX, point.clientY);
+      const candidate = workflowNodeAtClientPoint(point.x, point.y);
       const validCandidate = candidate !== null
         && isValidConnection(connectionForCandidate(draft, candidate))
         ? candidate
@@ -301,11 +308,11 @@ function WorkflowCanvasInner({
       connectionState.isValid !== true
       && point !== null
     ) {
-      const candidate = workflowNodeAtClientPoint(point.clientX, point.clientY);
+      const candidate = workflowNodeAtClientPoint(point.x, point.y);
       if (candidate !== null) {
         const connection = connectionForCandidate(draft, candidate);
         if (isValidConnection(connection)) {
-          handleConnect(connection);
+          onConnect(connection);
         }
       }
     }
@@ -326,11 +333,11 @@ function WorkflowCanvasInner({
       && draft?.kind === "reconnect"
       && point !== null
     ) {
-      const candidate = workflowNodeAtClientPoint(point.clientX, point.clientY);
+      const candidate = workflowNodeAtClientPoint(point.x, point.y);
       if (candidate !== null) {
         const connection = connectionForCandidate(draft, candidate);
         if (isValidConnection(connection)) {
-          handleReconnect(edge, connection);
+          onReconnect(edge, connection);
         }
       }
     }
@@ -357,15 +364,15 @@ function WorkflowCanvasInner({
   /** Adds a pointer-dragged catalog node only when it is released over this canvas. */
   function dropNodeAtClientPosition(
     kind: WorkflowNodeKind,
-    position: ClientPosition,
+    position: XYPosition,
   ): void {
     const bounds = canvasRef.current?.getBoundingClientRect();
     if (
       bounds === undefined
-      || position.clientX < bounds.left
-      || position.clientX > bounds.right
-      || position.clientY < bounds.top
-      || position.clientY > bounds.bottom
+      || position.x < bounds.left
+      || position.x > bounds.right
+      || position.y < bounds.top
+      || position.y > bounds.bottom
     ) {
       return;
     }
@@ -375,8 +382,8 @@ function WorkflowCanvasInner({
         nodePositionAt(
           screenToFlowPosition(
             {
-              x: position.clientX,
-              y: position.clientY,
+              x: position.x,
+              y: position.y,
             },
             { snapToGrid: false },
           ),
@@ -406,19 +413,19 @@ function WorkflowCanvasInner({
         ref={canvasRef}
         className="absolute inset-0 touch-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         aria-label={t("settings.workflow.canvas")}
-        data-workflow-edge-count={flowEdges.length}
-        data-workflow-node-count={flowNodes.length}
+        data-workflow-edge-count={edges.length}
+        data-workflow-node-count={nodes.length}
         onPointerDownCapture={guardPanelResizeEdge}
         onPointerMoveCapture={updateConnectionCandidate}
       >
-        <WorkflowFlowCallbacksProvider value={rendererCallbacks}>
+        <WorkflowConnectionStateProvider value={connectionState}>
           <ReactFlow
             className="workflow-flow bg-muted/25"
-            nodes={flowNodes}
-            edges={flowEdges}
+            nodes={nodes}
+            edges={edges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            defaultViewport={DEFAULT_VIEWPORT}
+            defaultViewport={initialViewport}
             minZoom={MIN_WORKFLOW_ZOOM}
             maxZoom={MAX_WORKFLOW_ZOOM}
             proOptions={{ hideAttribution: true }}
@@ -437,13 +444,13 @@ function WorkflowCanvasInner({
             panOnDrag
             selectNodesOnDrag={false}
             isValidConnection={isValidConnection}
-            onNodesChange={handleNodesChange}
-            onNodeDragStop={handleNodeDragStop}
-            onEdgesChange={handleEdgesChange}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onMoveEnd={(_event, viewport) => onViewportChange(viewport)}
             onConnectStart={(_event, params) => {
               startConnection(params);
             }}
-            onConnect={handleConnect}
+            onConnect={onConnect}
             onConnectEnd={finishNewConnection}
             onReconnectStart={(_event, edge, handleType) => {
               reconnectingEdgeIdRef.current = edge.id;
@@ -457,18 +464,10 @@ function WorkflowCanvasInner({
                 target: edge.target,
               };
             }}
-            onReconnect={handleReconnect}
+            onReconnect={onReconnect}
             onReconnectEnd={finishReconnect}
-            onNodeClick={(_event, node) => {
-              setSelectedEdgeId(null);
-              onSelectNode(node.id);
-            }}
-            onEdgeClick={(_event, edge) => {
-              selectEdge(edge.id);
-            }}
-            onPaneClick={clearSelection}
             onEdgeDoubleClick={(_event, edge) => {
-              deleteEdge(edge.id);
+              void deleteElements({ edges: [edge] });
             }}
             connectionLineComponent={WorkflowConnectionLine}
             elevateEdgesOnSelect
@@ -482,9 +481,9 @@ function WorkflowCanvasInner({
               size={1}
               color="color-mix(in oklch, var(--foreground) 18%, transparent)"
             />
-            <WorkflowFlowOverview nodeCount={flowNodes.length} />
+            <WorkflowFlowOverview nodeCount={nodes.length} />
           </ReactFlow>
-        </WorkflowFlowCallbacksProvider>
+        </WorkflowConnectionStateProvider>
 
         <WorkflowCanvasControls
           defaultViewport={DEFAULT_VIEWPORT}

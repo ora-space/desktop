@@ -1,13 +1,11 @@
 import {
+  getBezierPath,
   useReactFlow,
   type ConnectionLineComponentProps,
 } from "@xyflow/react";
-import {
-  workflowConnectionAnchor,
-  workflowEdgePath,
-} from "./path";
-import { NODE_ANCHOR_Y, NODE_WIDTH } from "./adapters";
-import { useWorkflowFlowConnectionState } from "./callbacks";
+import { workflowConnectionAnchor } from "./path";
+import { NODE_ANCHOR_Y, NODE_WIDTH } from "./layout";
+import { useWorkflowConnectionState } from "./connection-state";
 
 /** Uses the same soft curve for a connection preview as for a committed edge. */
 export function WorkflowConnectionLine({
@@ -25,7 +23,7 @@ export function WorkflowConnectionLine({
   const {
     connectionCandidateEndpoint,
     connectionCandidateNodeId,
-  } = useWorkflowFlowConnectionState();
+  } = useWorkflowConnectionState();
   const { getInternalNode } = useReactFlow();
   const source = workflowConnectionAnchor({
     x: fromX,
@@ -55,11 +53,13 @@ export function WorkflowConnectionLine({
         width: toHandle.width,
         height: toHandle.height,
       });
-  const path = workflowEdgePath({
+  const [path] = getBezierPath({
     sourceX: source.x,
     sourceY: source.y,
+    sourcePosition: fromPosition,
     targetX: target.x,
     targetY: target.y,
+    targetPosition: toPosition,
   });
 
   return (

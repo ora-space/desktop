@@ -43,7 +43,6 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
 
-    expect(screen.getByText("正在加载 mock 工作流…")).toBeInTheDocument();
     expect(await screen.findByText("代码审查工作流")).toBeInTheDocument();
     expect(screen.getByLabelText("工作流画布")).toBeInTheDocument();
     expect(screen.getByRole("separator", {
@@ -227,6 +226,7 @@ describe("WorkflowSettings", () => {
 
     expect(screen.getByDisplayValue("发布准备检查")).toBeInTheDocument();
     expect(screen.getByLabelText("添加工作流节点")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始" })).not.toBeInTheDocument();
     const canvas = screen.getByLabelText("工作流画布");
     vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
       ...canvas.getBoundingClientRect(),
@@ -304,23 +304,106 @@ describe("WorkflowSettings", () => {
     render(<WorkflowSettings />);
 
     const connection = await screen.findByRole("button", {
-      name: "选择从开始到理解改动的连线",
+      name: "Edge from start to understand",
     });
     await user.dblClick(connection);
 
-    expect(screen.queryByRole("button", {
-      name: "选择从开始到理解改动的连线",
-    })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", {
+        name: "Edge from start to understand",
+      })).not.toBeInTheDocument();
+    });
 
     const keyboardConnection = screen.getByRole("button", {
-      name: "选择从理解改动到质量门禁的连线",
+      name: "Edge from understand to quality",
     });
     await user.click(keyboardConnection);
-    fireEvent.keyDown(keyboardConnection, { key: "Delete" });
+    await user.keyboard("{Delete}");
 
-    expect(screen.queryByRole("button", {
-      name: "选择从理解改动到质量门禁的连线",
-    })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", {
+        name: "Edge from understand to quality",
+      })).not.toBeInTheDocument();
+    });
+  });
+
+  it("restores each workflow from its React Flow viewport snapshot", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+    await screen.findByLabelText("工作流画布");
+
+    await user.click(screen.getByRole("button", { name: "放大画布" }));
+    await waitFor(() => {
+      expect(screen.queryByText("100%")).not.toBeInTheDocument();
+    });
+    const editedViewport = flowViewport()?.style.transform;
+
+    await user.click(screen.getByText("发布准备检查").closest("button")!);
+    await waitFor(() => {
+      expect(flowViewport()?.style.transform).toContain("translate(32px,32px)");
+    });
+
+    await user.click(screen.getByText("代码审查工作流").closest("button")!);
+    await waitFor(() => {
+      expect(flowViewport()?.style.transform).toBe(editedViewport);
+    });
+  });
+
+  it("uses React Flow deletion to remove a node and its incident edges", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    const node = await screen.findByLabelText("提示词节点: 理解改动");
+    expect(screen.getByRole("button", {
+      name: "Edge from start to understand",
+    })).toBeInTheDocument();
+    expect(screen.getByRole("button", {
+      name: "Edge from understand to quality",
+    })).toBeInTheDocument();
+
+    await user.click(node.closest(".react-flow__node") ?? node);
+    await user.click(screen.getByRole("button", { name: "删除理解改动" }));
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("提示词节点: 理解改动")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", {
+        name: "Edge from start to understand",
+      })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", {
+        name: "Edge from understand to quality",
+      })).not.toBeInTheDocument();
+    });
+  });
+
+  it("uses React Flow deletable state to protect the required start node", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    const startNode = await screen.findByLabelText("开始节点: 开始");
+    await user.click(startNode.closest(".react-flow__node") ?? startNode);
+
+    expect(screen.queryByRole("button", { name: "删除开始" })).not.toBeInTheDocument();
+    await user.keyboard("{Delete}");
+    expect(screen.getByLabelText("开始节点: 开始")).toBeInTheDocument();
+  });
+
+  it("routes inspector deletion through the shared React Flow store", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowSettings />);
+
+    const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
+    await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
+    await user.click(screen.getByRole("button", { name: "删除节点" }));
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Agent节点: 审查 Agent")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", {
+        name: "Edge from quality to review",
+      })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", {
+        name: "Edge from review to output",
+      })).not.toBeInTheDocument();
+    });
   });
 
   it("shows React Flow reconnect controls after selecting an edge", async () => {
@@ -328,7 +411,7 @@ describe("WorkflowSettings", () => {
     render(<WorkflowSettings />);
 
     const connection = await screen.findByRole("button", {
-      name: "选择从开始到理解改动的连线",
+      name: "Edge from start to understand",
     });
     await user.click(connection);
 
@@ -366,24 +449,20 @@ describe("WorkflowSettings", () => {
     });
   });
 
-  it("keeps newer draft edits when an older save finishes", async () => {
-    const user = userEvent.setup();
-    render(<WorkflowSettings />);
+  it("keeps edits only for the mounted demo session", async () => {
+    const view = render(<WorkflowSettings />);
     const nameInput = await screen.findByLabelText("工作流名称");
 
-    fireEvent.change(nameInput, { target: { value: "保存中的版本" } });
-    await user.click(screen.getByRole("button", { name: "保存" }));
-    fireEvent.change(screen.getByLabelText("工作流名称"), {
-      target: { value: "保存后继续编辑" },
-    });
+    fireEvent.change(nameInput, { target: { value: "当前会话草稿" } });
+    expect(screen.getByDisplayValue("当前会话草稿")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存" })).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.getByDisplayValue("保存后继续编辑")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
-    });
+    view.unmount();
+    render(<WorkflowSettings />);
+    expect(await screen.findByDisplayValue("代码审查工作流")).toBeInTheDocument();
   });
 
-  it("runs the unsaved draft visible in the editor", async () => {
+  it("runs the edited session draft visible in the editor", async () => {
     const user = userEvent.setup();
     render(<WorkflowSettings />);
     const nameInput = await screen.findByLabelText("工作流名称");

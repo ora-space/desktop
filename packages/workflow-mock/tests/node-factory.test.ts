@@ -22,19 +22,27 @@ describe("createMockWorkflowNode", () => {
     ]).toEqual([
       {
         id: "agent-2",
-        kind: "agent",
-        title: "Agent 2",
-        description: "交给模型自主执行",
+        type: "workflow",
         position: { x: 120, y: 240 },
-        config: { instruction: "", model: "GPT-5" },
+        data: {
+          kind: "agent",
+          title: "Agent 2",
+          description: "交给模型自主执行",
+          instruction: "",
+          model: "GPT-5",
+        },
       },
       {
         id: "condition-3",
-        kind: "condition",
-        title: "Condition 3",
-        description: "Route execution based on rules",
+        type: "workflow",
         position: { x: 360, y: 240 },
-        config: { instruction: "", condition: "Condition is met" },
+        data: {
+          kind: "condition",
+          title: "Condition 3",
+          description: "Route execution based on rules",
+          instruction: "",
+          condition: "Condition is met",
+        },
       },
     ]);
   });

@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useReactFlow, useStore } from "@xyflow/react";
+import { useReactFlow, useViewport } from "@xyflow/react";
 import {
   IconArrowsMaximize,
   IconFocusCentered,
@@ -12,7 +12,6 @@ import { Button } from "@ora/ui";
 import {
   MAX_WORKFLOW_ZOOM,
   MIN_WORKFLOW_ZOOM,
-  clampWorkflowZoom,
 } from "./viewport";
 
 interface WorkflowCanvasControlsProps {
@@ -34,26 +33,8 @@ export function WorkflowCanvasControls({
   onExpandInspector,
 }: WorkflowCanvasControlsProps) {
   const { t } = useTranslation();
-  const { fitView, getViewport, setViewport } = useReactFlow();
-  const zoom = useStore((state) => state.transform[2]);
-  const viewportWidth = useStore((state) => state.width);
-  const viewportHeight = useStore((state) => state.height);
-
-  /** Zooms around the visible viewport center so toolbar actions do not feel spatially arbitrary. */
-  function zoomFromCenter(nextZoom: number): void {
-    const clamped = clampWorkflowZoom(nextZoom);
-    const viewport = getViewport();
-    const cursor = { x: viewportWidth / 2, y: viewportHeight / 2 };
-    const worldPoint = {
-      x: (cursor.x - viewport.x) / viewport.zoom,
-      y: (cursor.y - viewport.y) / viewport.zoom,
-    };
-    void setViewport({
-      zoom: clamped,
-      x: cursor.x - worldPoint.x * clamped,
-      y: cursor.y - worldPoint.y * clamped,
-    });
-  }
+  const { fitView, setViewport, zoomTo } = useReactFlow();
+  const { zoom } = useViewport();
 
   return (
     <>
@@ -70,7 +51,9 @@ export function WorkflowCanvasControls({
           className="size-7 rounded-md"
           aria-label={t("settings.workflow.zoomOut")}
           disabled={zoom <= MIN_WORKFLOW_ZOOM}
-          onClick={() => zoomFromCenter(zoom - 0.1)}
+          onClick={() => {
+            void zoomTo(zoom - 0.1);
+          }}
         >
           <IconMinus />
         </Button>
@@ -86,7 +69,9 @@ export function WorkflowCanvasControls({
           className="size-7 rounded-md"
           aria-label={t("settings.workflow.zoomIn")}
           disabled={zoom >= MAX_WORKFLOW_ZOOM}
-          onClick={() => zoomFromCenter(zoom + 0.1)}
+          onClick={() => {
+            void zoomTo(zoom + 0.1);
+          }}
         >
           <IconPlus />
         </Button>

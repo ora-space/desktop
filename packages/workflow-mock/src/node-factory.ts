@@ -1,45 +1,42 @@
-import type {
-  WorkflowLocale,
-  WorkflowNode,
-  WorkflowNodeConfig,
-  WorkflowNodeKind,
-  WorkflowPosition,
-} from "./types";
+import type { Node, XYPosition } from "@xyflow/react";
 import {
   createMockWorkflowCapabilities,
   createMockWorkflowNodeType,
 } from "./capabilities";
+import type { WorkflowNodeData, WorkflowNodeKind } from "./node-data";
 
-export interface CreateMockWorkflowNodeOptions {
-  kind: WorkflowNodeKind;
-  sequence: number;
-  position: WorkflowPosition;
-  locale: WorkflowLocale;
-}
-
-/** Creates a catalog node while keeping prototype-only configuration defaults out of the UI. */
+/** Creates a catalog item as a native React Flow node with business data in `data`. */
 export function createMockWorkflowNode({
   kind,
   sequence,
   position,
   locale,
-}: CreateMockWorkflowNodeOptions): WorkflowNode {
+}: {
+  kind: WorkflowNodeKind;
+  sequence: number;
+  position: XYPosition;
+  locale: "zh-CN" | "en-US";
+}): Node<WorkflowNodeData, "workflow"> {
   const nodeType = createMockWorkflowNodeType(kind, locale);
   return {
     id: `${kind}-${sequence}`,
-    kind,
-    title: `${nodeType.label} ${sequence}`,
-    description: nodeType.description,
+    type: "workflow",
+    ...(kind === "start" ? { deletable: false } : {}),
     position: { ...position },
-    config: createMockNodeConfig(kind, locale),
+    data: {
+      kind,
+      title: `${nodeType.label} ${sequence}`,
+      description: nodeType.description,
+      ...createMockNodeExecutionData(kind, locale),
+    },
   };
 }
 
-/** Provides deterministic mock configuration for every supported node kind. */
-function createMockNodeConfig(
+/** Provides deterministic values for React Flow's node-data execution extension. */
+function createMockNodeExecutionData(
   kind: WorkflowNodeKind,
-  locale: WorkflowLocale,
-): WorkflowNodeConfig {
+  locale: "zh-CN" | "en-US",
+): Pick<WorkflowNodeData, "instruction" | "model" | "tool" | "condition"> {
   const capabilities = createMockWorkflowCapabilities(locale);
   switch (kind) {
     case "start":

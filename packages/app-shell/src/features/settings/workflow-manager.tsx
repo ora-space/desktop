@@ -22,12 +22,11 @@ import {
   Input,
   cn,
 } from "@ora/ui";
-import type { WorkflowDefinition } from "@ora/workflow-mock";
+import type { DemoWorkflow } from "@ora/workflow-mock";
 
 interface WorkflowManagerProps {
-  workflows: WorkflowDefinition[];
+  workflows: DemoWorkflow[];
   selectedWorkflowId: string | null;
-  busy: boolean;
   error: string | null;
   onSelect: (workflowId: string) => void;
   onCreate: (name: string) => void;
@@ -41,7 +40,6 @@ interface WorkflowManagerProps {
 export function WorkflowManager({
   workflows,
   selectedWorkflowId,
-  busy,
   error,
   onSelect,
   onCreate,
@@ -55,8 +53,8 @@ export function WorkflowManager({
   const [newWorkflowName, setNewWorkflowName] = useState("");
   const [renameWorkflowName, setRenameWorkflowName] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<WorkflowDefinition | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<WorkflowDefinition | null>(null);
+  const [renameTarget, setRenameTarget] = useState<DemoWorkflow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DemoWorkflow | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const visibleWorkflows = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -94,12 +92,12 @@ export function WorkflowManager({
   }
 
   /** Opens workflow rename with the current name so edits are incremental. */
-  function openRenameDialog(workflow: WorkflowDefinition): void {
+  function openRenameDialog(workflow: DemoWorkflow): void {
     setRenameWorkflowName(workflow.name);
     setRenameTarget(workflow);
   }
 
-  /** Persists workflow rename using the selected entry as the stable identity source. */
+  /** Renames the selected session entry using its stable identity. */
   function submitRenameWorkflow(): void {
     if (renameTarget === null) {
       return;
@@ -134,7 +132,6 @@ export function WorkflowManager({
             <Button
               size="icon-sm"
               aria-label={t("settings.workflow.newWorkflow")}
-              disabled={busy}
               onClick={openCreateDialog}
             >
               <IconPlus />
@@ -191,7 +188,6 @@ export function WorkflowManager({
               <button
                 type="button"
                 aria-label={t("settings.workflow.renameNamed", { name: workflow.name })}
-                disabled={busy}
                 onClick={() => openRenameDialog(workflow)}
                 className={cn(
                   "absolute right-8 top-1.5 flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
@@ -203,7 +199,6 @@ export function WorkflowManager({
               <button
                 type="button"
                 aria-label={t("settings.workflow.deleteNamed", { name: workflow.name })}
-                disabled={busy}
                 onClick={() => setDeleteTarget(workflow)}
                 className={cn(
                   "absolute right-1.5 top-1.5 flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring",
@@ -238,7 +233,6 @@ export function WorkflowManager({
           variant="outline"
           size="sm"
           className="w-full justify-start"
-          disabled={busy}
           onClick={() => importInputRef.current?.click()}
         >
           <IconFileImport />
@@ -251,7 +245,7 @@ export function WorkflowManager({
       <AlertDialog
         open={createDialogOpen}
         onOpenChange={(open) => {
-          if (!open && !busy) {
+          if (!open) {
             setCreateDialogOpen(false);
           }
         }}
@@ -274,9 +268,9 @@ export function WorkflowManager({
             }}
           />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              disabled={busy || newWorkflowName.trim() === ""}
+              disabled={newWorkflowName.trim() === ""}
               onClick={submitCreateWorkflow}
             >
               {t("settings.workflow.newWorkflow")}
@@ -287,7 +281,7 @@ export function WorkflowManager({
       <AlertDialog
         open={renameTarget !== null}
         onOpenChange={(open) => {
-          if (!open && !busy) {
+          if (!open) {
             setRenameTarget(null);
           }
         }}
@@ -312,9 +306,9 @@ export function WorkflowManager({
             }}
           />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              disabled={busy || renameWorkflowName.trim() === ""}
+              disabled={renameWorkflowName.trim() === ""}
               onClick={submitRenameWorkflow}
             >
               {t("settings.workflow.renameWorkflow")}
@@ -325,7 +319,7 @@ export function WorkflowManager({
       <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
-          if (!open && !busy) {
+          if (!open) {
             setDeleteTarget(null);
           }
         }}
@@ -340,10 +334,9 @@ export function WorkflowManager({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={busy}
               onClick={() => {
                 if (deleteTarget !== null) {
                   onDelete(deleteTarget.id);

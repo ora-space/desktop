@@ -1,8 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  IconCheck,
-  IconCloudCheck,
+  addEdge,
+  applyEdgeChanges,
+  applyNodeChanges,
+  ReactFlowProvider,
+  reconnectEdge as reconnectReactFlowEdge,
+  useReactFlow,
+  type Connection,
+  type Edge,
+  type EdgeChange,
+  type Node,
+  type NodeChange,
+  type Viewport,
+  type XYPosition,
+} from "@xyflow/react";
+import {
   IconPlayerPlay,
   IconRoute,
 } from "@tabler/icons-react";
@@ -12,19 +25,19 @@ import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
-  Skeleton,
   type ResizablePanelHandle,
 } from "@ora/ui";
 import {
   createMockWorkflowCapabilities,
+  createDemoWorkflow,
   createMockWorkflowNode,
-  MockWorkflowRepository,
+  createMockWorkflows,
+  parseDemoWorkflow,
+  runDemoWorkflow,
+  type DemoWorkflow,
   type WorkflowCapabilities,
-  type WorkflowDefinition,
-  type WorkflowLocale,
+  type WorkflowNodeData,
   type WorkflowNodeKind,
-  type WorkflowPosition,
-  type WorkflowRepository,
   type WorkflowRunResult,
 } from "@ora/workflow-mock";
 import { WorkflowCanvas } from "./workflow-canvas";
@@ -48,15 +61,12 @@ const WORKFLOW_INSPECTOR_FADE_START = 120;
 const WORKFLOW_PANEL_SETTLE_DURATION = 180;
 const MIN_WORKFLOW_CANVAS_WIDTH = 360;
 const NARROW_WORKFLOW_EDITOR_WIDTH = 1_000;
-const WORKFLOW_LIBRARY_WIDTH_KEY = "ora.workflow.library-width";
-const WORKFLOW_INSPECTOR_WIDTH_KEY = "ora.workflow.inspector-width";
 
 export interface WorkflowSettingsProps {
-  repository?: WorkflowRepository;
   capabilities?: WorkflowCapabilities;
 }
 
-/** Finds the first readable graph ID that does not collide with imported or persisted elements. */
+/** Finds the first readable graph ID that does not collide with session elements. */
 function uniqueGraphId(prefix: string, existingIds: Iterable<string>): {
   id: string;
   sequence: number;
@@ -69,78 +79,41 @@ function uniqueGraphId(prefix: string, existingIds: Iterable<string>): {
   return { id: `${prefix}-${sequence}`, sequence };
 }
 
-/** Restores a valid panel width without letting stale storage break the editor layout. */
-function storedPanelWidth(
-  key: string,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-): number {
-  try {
-    const stored = Number.parseFloat(window.localStorage.getItem(key) ?? "");
-    return Number.isFinite(stored)
-      ? Math.min(maximum, Math.max(minimum, stored))
-      : fallback;
-  } catch {
-    return fallback;
-  }
+/** Provides one React Flow store to the canvas and its sibling inspector. */
+export function WorkflowSettings(props: WorkflowSettingsProps = {}) {
+  return (
+    <ReactFlowProvider>
+      <WorkflowSettingsContent {...props} />
+    </ReactFlowProvider>
+  );
 }
 
-/** Persists only expanded panel sizes so collapsing never overwrites the user's preference. */
-function rememberPanelWidth(key: string, width: number): void {
-  try {
-    window.localStorage.setItem(key, String(Math.round(width)));
-  } catch {
-    // Storage can be unavailable in restricted webviews; resizing should still work in memory.
-  }
-}
-
-/** Owns the frontend-only workflow editor state and coordinates the mock repository boundary. */
-export function WorkflowSettings({
-  repository: repositoryOverride,
+/** Owns the complete workflow demo as disposable, session-only React state. */
+function WorkflowSettingsContent({
   capabilities: capabilitiesOverride,
-}: WorkflowSettingsProps = {}) {
+}: WorkflowSettingsProps) {
   const { i18n, t } = useTranslation();
-  const locale: WorkflowLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
-  const [defaultRepository] = useState(() => new MockWorkflowRepository(locale));
-  const repository = repositoryOverride ?? defaultRepository;
+  const { deleteElements } = useReactFlow();
+  const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
   const capabilities = useMemo(
     () => capabilitiesOverride ?? createMockWorkflowCapabilities(locale),
     [capabilitiesOverride, locale],
   );
-  const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [managing, setManaging] = useState(false);
+  const [workflows, setWorkflows] = useState<DemoWorkflow[]>(() =>
+    createMockWorkflows(locale),
+  );
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>("code-review");
   const [managerError, setManagerError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [dirtyWorkflowIds, setDirtyWorkflowIds] = useState<Set<string>>(() => new Set());
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
-  const workflowRevisionsRef = useRef(new Map<string, number>());
   const runRequestRef = useRef(0);
   const editorLayoutRef = useRef<HTMLDivElement>(null);
   const libraryPanelRef = useRef<ResizablePanelHandle | null>(null);
   const inspectorPanelRef = useRef<ResizablePanelHandle | null>(null);
   const libraryAnimationRef = useRef<number | null>(null);
   const inspectorAnimationRef = useRef<number | null>(null);
-  const [initialLibraryWidth] = useState(() =>
-    storedPanelWidth(
-      WORKFLOW_LIBRARY_WIDTH_KEY,
-      DEFAULT_WORKFLOW_LIBRARY_WIDTH,
-      MIN_WORKFLOW_LIBRARY_WIDTH,
-      MAX_WORKFLOW_LIBRARY_WIDTH,
-    ),
-  );
-  const [initialInspectorWidth] = useState(() =>
-    storedPanelWidth(
-      WORKFLOW_INSPECTOR_WIDTH_KEY,
-      DEFAULT_WORKFLOW_INSPECTOR_WIDTH,
-      MIN_WORKFLOW_INSPECTOR_WIDTH,
-      MAX_WORKFLOW_INSPECTOR_WIDTH,
-    ),
-  );
+  const initialLibraryWidth = DEFAULT_WORKFLOW_LIBRARY_WIDTH;
+  const initialInspectorWidth = DEFAULT_WORKFLOW_INSPECTOR_WIDTH;
   const libraryWidthRef = useRef(initialLibraryWidth);
   const inspectorWidthRef = useRef(initialInspectorWidth);
   const libraryCurrentWidthRef = useRef(initialLibraryWidth);
@@ -153,37 +126,18 @@ export function WorkflowSettings({
     () => workflows.find((candidate) => candidate.id === selectedWorkflowId) ?? null,
     [selectedWorkflowId, workflows],
   );
-  const saved = selectedWorkflowId === null || !dirtyWorkflowIds.has(selectedWorkflowId);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    repository.list().then((loaded) => {
-      if (active) {
-        setWorkflows(loaded);
-        setSelectedWorkflowId(loaded[0]?.id ?? null);
-        setDirtyWorkflowIds(new Set());
-        setLoading(false);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [repository]);
-
   useEffect(() => {
     if (
-      !loading
-      && workflows.length > 0
+      workflows.length > 0
       && !workflows.some((candidate) => candidate.id === selectedWorkflowId)
     ) {
       setSelectedWorkflowId(workflows[0].id);
     }
-  }, [loading, selectedWorkflowId, workflows]);
+  }, [selectedWorkflowId, workflows]);
 
   const selectedNode = useMemo(
-    () => workflow?.nodes.find((node) => node.id === selectedNodeId) ?? null,
-    [selectedNodeId, workflow],
+    () => workflow?.nodes.find((node) => node.selected === true) ?? null,
+    [workflow],
   );
   const inspectorAvailable = selectedNode !== null || running || runResult !== null;
 
@@ -245,20 +199,11 @@ export function WorkflowSettings({
 
   /** Clears node context and collapses the inspector without affecting workflow edits. */
   function closeNodeInspector(): void {
-    setSelectedNodeId(null);
+    updateWorkflow((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) => ({ ...node, selected: false })),
+    }));
     animateInspectorTo(0);
-  }
-
-  /** Synchronizes node selection with the contextual inspector's visibility. */
-  function selectNode(nodeId: string | null): void {
-    setSelectedNodeId(nodeId);
-    if (nodeId === null) {
-      if (!running && runResult === null) {
-        animateInspectorTo(0);
-      }
-      return;
-    }
-    expandInspector();
   }
 
   /** Moves the library to a stable width with the shared panel motion behavior. */
@@ -317,50 +262,36 @@ export function WorkflowSettings({
     );
   }
 
-  /** Applies one graph or metadata mutation while keeping dirty-state behavior consistent. */
+  /** Applies one graph or metadata mutation to the current in-memory demo. */
   function updateWorkflow(
-    updater: (current: WorkflowDefinition) => WorkflowDefinition,
+    updater: (current: DemoWorkflow) => DemoWorkflow,
   ): void {
     setWorkflows((current) =>
       current.map((candidate) =>
         candidate.id === selectedWorkflowId ? updater(candidate) : candidate,
       ),
     );
-    if (selectedWorkflowId !== null) {
-      workflowRevisionsRef.current.set(
-        selectedWorkflowId,
-        (workflowRevisionsRef.current.get(selectedWorkflowId) ?? 0) + 1,
-      );
-      setDirtyWorkflowIds((current) => new Set(current).add(selectedWorkflowId));
-    }
   }
 
-  /** Switches the active graph and clears transient state that belongs to the previous workflow. */
+  /** Switches the active graph while preserving its React Flow snapshot. */
   function selectWorkflow(workflowId: string): void {
     runRequestRef.current += 1;
     setRunning(false);
     setSelectedWorkflowId(workflowId);
-    setSelectedNodeId(null);
     setRunResult(null);
     setManagerError(null);
   }
 
   /** Creates a usable blank workflow and immediately opens it for editing. */
-  async function createWorkflow(name: string): Promise<void> {
-    setManaging(true);
+  function createWorkflow(name: string): void {
     setManagerError(null);
-    try {
-      const created = await repository.create(name);
-      setWorkflows((current) => [...current, created]);
-      selectWorkflow(created.id);
-    } catch {
-      setManagerError(t("settings.workflow.manageError"));
-    } finally {
-      setManaging(false);
-    }
+    const { id } = uniqueGraphId("workflow", workflows.map((item) => item.id));
+    const created = createDemoWorkflow(id, name, locale);
+    setWorkflows((current) => [...current, created]);
+    selectWorkflow(created.id);
   }
 
-  /** Renames one workflow in local state and marks it dirty for explicit save. */
+  /** Renames one workflow for the lifetime of the current demo session. */
   function renameWorkflow(workflowId: string, name: string): void {
     const nextName = name.trim();
     if (nextName === "") {
@@ -371,64 +302,41 @@ export function WorkflowSettings({
         candidate.id === workflowId ? { ...candidate, name: nextName } : candidate,
       ),
     );
-    workflowRevisionsRef.current.set(
-      workflowId,
-      (workflowRevisionsRef.current.get(workflowId) ?? 0) + 1,
-    );
-    setDirtyWorkflowIds((current) => new Set(current).add(workflowId));
   }
 
   /** Deletes a workflow and selects the nearest remaining item to avoid a dead editor state. */
-  async function deleteWorkflow(workflowId: string): Promise<void> {
-    setManaging(true);
+  function deleteWorkflow(workflowId: string): void {
     setManagerError(null);
-    try {
-      await repository.delete(workflowId);
-      setWorkflows((current) =>
-        current.filter((candidate) => candidate.id !== workflowId),
-      );
-      setSelectedWorkflowId((current) => {
-        if (current === workflowId) {
-          runRequestRef.current += 1;
-          return null;
-        }
-        return current;
-      });
-      if (selectedWorkflowId === workflowId) {
-        setSelectedNodeId(null);
-        setRunResult(null);
-      }
-      workflowRevisionsRef.current.delete(workflowId);
-      setDirtyWorkflowIds((current) => {
-        const next = new Set(current);
-        next.delete(workflowId);
-        return next;
-      });
-    } catch {
-      setManagerError(t("settings.workflow.manageError"));
-    } finally {
-      setManaging(false);
+    setWorkflows((current) => current.filter((candidate) => candidate.id !== workflowId));
+    if (selectedWorkflowId === workflowId) {
+      runRequestRef.current += 1;
+      setSelectedWorkflowId(null);
+      setRunResult(null);
     }
   }
 
-  /** Parses and validates an exported workflow through the mock repository before selection. */
+  /** Parses and validates an exported workflow before adding it to session state. */
   async function importWorkflow(file: File): Promise<void> {
-    setManaging(true);
     setManagerError(null);
     try {
-      const imported = await repository.importDefinition(JSON.parse(await file.text()));
+      const imported = parseDemoWorkflow(JSON.parse(await file.text()));
+      const ids = new Set(workflows.map((candidate) => candidate.id));
+      if (ids.has(imported.id)) {
+        imported.id = uniqueGraphId(`${imported.id}-imported`, ids).id;
+      }
       setWorkflows((current) => [...current, imported]);
       selectWorkflow(imported.id);
     } catch {
       setManagerError(t("settings.workflow.importError"));
-    } finally {
-      setManaging(false);
     }
   }
 
   /** Adds a catalog node at a canvas-provided position and selects it for immediate editing. */
-  function addNode(kind: WorkflowNodeKind, position: WorkflowPosition): void {
-    if (workflow === null) {
+  function addNode(kind: WorkflowNodeKind, position: XYPosition): void {
+    if (
+      workflow === null
+      || (kind === "start" && workflow.nodes.some((node) => node.data.kind === "start"))
+    ) {
       return;
     }
     const { sequence } = uniqueGraphId(kind, [
@@ -441,39 +349,20 @@ export function WorkflowSettings({
       position,
       locale,
     });
-    updateWorkflow((current) => ({ ...current, nodes: [...current.nodes, node] }));
-    setSelectedNodeId(node.id);
-  }
-
-  /** Removes a node and all incident edges so dangling graph references are impossible. */
-  function deleteNode(nodeId: string): void {
     updateWorkflow((current) => ({
       ...current,
-      nodes: current.nodes.filter((node) => node.id !== nodeId),
-      edges: current.edges.filter(
-        (edge) => edge.source !== nodeId && edge.target !== nodeId,
-      ),
+      nodes: [
+        ...current.nodes.map((candidate) => ({ ...candidate, selected: false })),
+        { ...node, selected: true },
+      ],
     }));
-    setSelectedNodeId((current) => (current === nodeId ? null : current));
+    expandInspector();
   }
 
-  /** Removes one connection without affecting either endpoint node. */
-  function deleteEdge(edgeId: string): void {
-    updateWorkflow((current) => ({
-      ...current,
-      edges: current.edges.filter((edge) => edge.id !== edgeId),
-    }));
-  }
-
-  /** Creates a unique directed edge and ignores duplicate links. */
-  function connectNodes(source: string, target: string): void {
+  /** Creates a native React Flow edge after canvas validation succeeds. */
+  function connectNodes(connection: Connection): void {
     updateWorkflow((current) => {
-      if (
-        source === target
-        || !current.nodes.some((node) => node.id === source)
-        || !current.nodes.some((node) => node.id === target)
-        || current.edges.some((edge) => edge.source === source && edge.target === target)
-      ) {
+      if (connection.source === null || connection.target === null) {
         return current;
       }
       const { id } = uniqueGraphId("edge", [
@@ -482,65 +371,38 @@ export function WorkflowSettings({
       ]);
       return {
         ...current,
-        edges: [
-          ...current.edges,
-          {
-            id,
-            source,
-            target,
-          },
-        ],
+        edges: addEdge({ ...connection, id, type: "workflow" }, current.edges),
       };
     });
   }
 
-  /** Moves either edge endpoint while rejecting self-links and duplicate connections. */
-  function reconnectEdge(edgeId: string, source: string, target: string): void {
-    updateWorkflow((current) => {
-      if (
-        source === target
-        || current.edges.some(
-          (edge) =>
-            edge.id !== edgeId
-            && edge.source === source
-            && edge.target === target,
-        )
-      ) {
-        return current;
-      }
-      return {
-        ...current,
-        edges: current.edges.map((edge) =>
-          edge.id === edgeId ? { ...edge, source, target } : edge,
-        ),
-      };
-    });
+  /** Uses React Flow's reconnect helper to move an edge endpoint. */
+  function reconnectEdge(edge: Edge, connection: Connection): void {
+    updateWorkflow((current) => ({
+      ...current,
+      edges: reconnectReactFlowEdge(edge, connection, current.edges),
+    }));
   }
 
-  /** Saves through the mock boundary so switching to a backend only replaces the repository. */
-  async function saveWorkflow(): Promise<void> {
-    if (workflow === null) {
-      return;
-    }
-    setSaving(true);
-    const savingRevision = workflowRevisionsRef.current.get(workflow.id) ?? 0;
-    try {
-      const persisted = await repository.save(workflow);
-      if ((workflowRevisionsRef.current.get(persisted.id) ?? 0) === savingRevision) {
-        setWorkflows((current) =>
-          current.map((candidate) => candidate.id === persisted.id ? persisted : candidate),
-        );
-        setDirtyWorkflowIds((current) => {
-          const next = new Set(current);
-          next.delete(persisted.id);
-          return next;
-        });
-      }
-    } catch {
-      setManagerError(t("settings.workflow.manageError"));
-    } finally {
-      setSaving(false);
-    }
+  /** Applies React Flow node changes directly to the active graph. */
+  function changeNodes(changes: NodeChange<Node<WorkflowNodeData, "workflow">>[]): void {
+    updateWorkflow((current) => ({
+      ...current,
+      nodes: applyNodeChanges<Node<WorkflowNodeData, "workflow">>(changes, current.nodes),
+    }));
+  }
+
+  /** Applies React Flow edge changes directly to the active graph. */
+  function changeEdges(changes: EdgeChange[]): void {
+    updateWorkflow((current) => ({
+      ...current,
+      edges: applyEdgeChanges(changes, current.edges),
+    }));
+  }
+
+  /** Stores React Flow's viewport alongside its nodes and edges for exact restoration. */
+  function changeViewport(viewport: Viewport): void {
+    updateWorkflow((current) => ({ ...current, viewport }));
   }
 
   /** Runs the deterministic mock preview and exposes progress before showing its trace. */
@@ -554,7 +416,7 @@ export function WorkflowSettings({
     setRunning(true);
     setRunResult(null);
     try {
-      const result = await repository.run(draft, input);
+      const result = await runDemoWorkflow(draft, input, locale);
       if (runRequestRef.current === request) {
         setRunResult(result);
       }
@@ -574,10 +436,6 @@ export function WorkflowSettings({
     }
   }
 
-  if (loading) {
-    return <WorkflowLoading />;
-  }
-
   return (
     <div
       className="flex h-full min-h-0 flex-col bg-background"
@@ -585,7 +443,7 @@ export function WorkflowSettings({
         if (
           event.key === "Escape"
           && !event.defaultPrevented
-          && selectedNodeId !== null
+          && selectedNode !== null
           && !running
           && runResult === null
         ) {
@@ -613,11 +471,9 @@ export function WorkflowSettings({
                   aria-label={t("settings.workflow.workflowName")}
                   className="h-7 max-w-72 border-transparent bg-transparent px-1 text-sm font-semibold shadow-none hover:border-border focus-visible:border-border"
                 />
-                {repository.dataSourceKind === "mock" && (
-                  <span className="hidden rounded-full border border-border px-2 py-0.5 text-[9px] font-medium text-muted-foreground sm:inline">
-                    MOCK
-                  </span>
-                )}
+                <span className="hidden rounded-full border border-border px-2 py-0.5 text-[9px] font-medium text-muted-foreground sm:inline">
+                  DEMO
+                </span>
               </div>
               <p className="truncate px-1 text-[10px] text-muted-foreground">
                 {workflow.description}
@@ -633,20 +489,6 @@ export function WorkflowSettings({
         >
           <IconPlayerPlay />
           <span className="hidden sm:inline">{t("settings.workflow.testRun")}</span>
-        </Button>
-        <Button
-          size="sm"
-          onClick={() => void saveWorkflow()}
-          disabled={workflow === null || saving || saved}
-        >
-          {saved ? <IconCheck /> : <IconCloudCheck />}
-          <span className="hidden sm:inline">
-            {saving
-              ? t("common.saving")
-              : saved
-                ? t("settings.workflow.saved")
-                : t("common.save")}
-          </span>
         </Button>
       </header>
       <div ref={editorLayoutRef} className="min-h-0 flex-1">
@@ -676,7 +518,6 @@ export function WorkflowSettings({
               setLibraryCollapsed(collapsed);
               if (size.inPixels >= MIN_WORKFLOW_LIBRARY_WIDTH) {
                 libraryWidthRef.current = size.inPixels;
-                rememberPanelWidth(WORKFLOW_LIBRARY_WIDTH_KEY, size.inPixels);
               }
             }}
           >
@@ -697,12 +538,11 @@ export function WorkflowSettings({
               <WorkflowManager
                 workflows={workflows}
                 selectedWorkflowId={selectedWorkflowId}
-                busy={managing}
                 error={managerError}
                 onSelect={selectWorkflow}
-                onCreate={(name) => void createWorkflow(name)}
+                onCreate={createWorkflow}
                 onRename={renameWorkflow}
-                onDelete={(workflowId) => void deleteWorkflow(workflowId)}
+                onDelete={deleteWorkflow}
                 onImport={(file) => void importWorkflow(file)}
                 onCollapse={collapseLibrary}
               />
@@ -716,10 +556,6 @@ export function WorkflowSettings({
             onPointerDown={() => cancelWorkflowPanelAnimation(libraryAnimationRef)}
             onDoubleClick={() => {
               libraryWidthRef.current = DEFAULT_WORKFLOW_LIBRARY_WIDTH;
-              rememberPanelWidth(
-                WORKFLOW_LIBRARY_WIDTH_KEY,
-                DEFAULT_WORKFLOW_LIBRARY_WIDTH,
-              );
               libraryPanelRef.current?.resize(DEFAULT_WORKFLOW_LIBRARY_WIDTH);
             }}
           />
@@ -727,7 +563,7 @@ export function WorkflowSettings({
             {workflow === null ? (
               <WorkflowEmpty
                 onCreate={() =>
-                  void createWorkflow(
+                  createWorkflow(
                     t("settings.workflow.untitledWorkflow", { count: workflows.length + 1 }),
                   )
                 }
@@ -738,21 +574,13 @@ export function WorkflowSettings({
                 capabilities={capabilities}
                 nodes={workflow.nodes}
                 edges={workflow.edges}
-                selectedNodeId={selectedNodeId}
-                onSelectNode={selectNode}
-                onMoveNode={(nodeId, position) =>
-                  updateWorkflow((current) => ({
-                    ...current,
-                    nodes: current.nodes.map((node) =>
-                      node.id === nodeId ? { ...node, position } : node,
-                    ),
-                  }))
-                }
+                initialViewport={workflow.viewport}
+                onNodesChange={changeNodes}
+                onEdgesChange={changeEdges}
+                onViewportChange={changeViewport}
                 onAddNode={addNode}
                 onConnect={connectNodes}
-                onReconnectEdge={reconnectEdge}
-                onDeleteNode={deleteNode}
-                onDeleteEdge={deleteEdge}
+                onReconnect={reconnectEdge}
                 libraryCollapsed={libraryCollapsed}
                 inspectorCollapsed={inspectorCollapsed}
                 inspectorAvailable={inspectorAvailable}
@@ -769,10 +597,6 @@ export function WorkflowSettings({
             onPointerDown={() => cancelWorkflowPanelAnimation(inspectorAnimationRef)}
             onDoubleClick={() => {
               inspectorWidthRef.current = DEFAULT_WORKFLOW_INSPECTOR_WIDTH;
-              rememberPanelWidth(
-                WORKFLOW_INSPECTOR_WIDTH_KEY,
-                DEFAULT_WORKFLOW_INSPECTOR_WIDTH,
-              );
               inspectorPanelRef.current?.resize(DEFAULT_WORKFLOW_INSPECTOR_WIDTH);
             }}
           />
@@ -792,7 +616,6 @@ export function WorkflowSettings({
               setInspectorCollapsed(collapsed);
               if (size.inPixels >= MIN_WORKFLOW_INSPECTOR_WIDTH) {
                 inspectorWidthRef.current = size.inPixels;
-                rememberPanelWidth(WORKFLOW_INSPECTOR_WIDTH_KEY, size.inPixels);
               }
             }}
           >
@@ -823,7 +646,9 @@ export function WorkflowSettings({
                     ),
                   }))
                 }
-                onDelete={deleteNode}
+                onDelete={(nodeId) => {
+                  void deleteElements({ nodes: [{ id: nodeId }] });
+                }}
                 onCloseNode={closeNodeInspector}
                 onCloseRun={() => setRunResult(null)}
                 onRun={(input) => void runWorkflow(input)}
@@ -854,24 +679,5 @@ function WorkflowEmpty({ onCreate }: { onCreate: () => void }) {
         </Button>
       </div>
     </section>
-  );
-}
-
-/** Reserves the final editor layout while mock data loads to prevent a visible layout jump. */
-function WorkflowLoading() {
-  const { t } = useTranslation();
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex h-14 items-center gap-3 border-b border-border px-4">
-        <Skeleton className="size-8 rounded-lg" />
-        <div className="space-y-1.5">
-          <Skeleton className="h-3 w-40" />
-          <Skeleton className="h-2.5 w-72" />
-        </div>
-      </div>
-      <div className="flex flex-1 items-center justify-center">
-        <p className="text-xs text-muted-foreground">{t("settings.workflow.loading")}</p>
-      </div>
-    </div>
   );
 }

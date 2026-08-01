@@ -11,6 +11,9 @@
   "scripts": {
     "test": "vitest run"
   },
+  "dependencies": {
+    "@xyflow/react": "^12.11.2"
+  },
   "devDependencies": {
     "typescript": "~6.0.2",
     "vitest": "^4.1.10"

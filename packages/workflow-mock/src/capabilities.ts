@@ -1,4 +1,4 @@
-import type { WorkflowLocale, WorkflowNodeKind } from "./types";
+import type { WorkflowNodeKind } from "./node-data";
 
 export interface WorkflowChoice {
   value: string;
@@ -24,7 +24,7 @@ export interface WorkflowNodeType {
 
 /** Returns localized prototype capabilities that a real workflow backend can replace later. */
 export function createMockWorkflowCapabilities(
-  locale: WorkflowLocale,
+  locale: "zh-CN" | "en-US",
 ): WorkflowCapabilities {
   const nodeTypes: WorkflowNodeType[] = [
     createMockWorkflowNodeType("start", locale),
@@ -59,7 +59,7 @@ export function createMockWorkflowCapabilities(
 /** Resolves localized mock content for one supported workflow node kind. */
 export function createMockWorkflowNodeType(
   kind: WorkflowNodeKind,
-  locale: WorkflowLocale,
+  locale: "zh-CN" | "en-US",
 ): WorkflowNodeType {
   switch (kind) {
     case "start":
