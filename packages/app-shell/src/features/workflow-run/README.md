@@ -19,8 +19,13 @@ Product UI and mock runtime for **graph workflow runs** attached to projects
     narrow or use the close control to dismiss. Switching acts updates the
     open panel.
   - Status language (keep it harmonious):
-    - **Working** (`running` / `awaiting_input`): spinner + soft breathe on the
-      card badge/frame only (stage focus or Overview node). Same rule both views.
+    - **Working / running**: sky spinner + soft breathe on the card badge/frame
+      only (stage focus or Overview node).
+    - **Waiting (`awaiting_input`)**: amber mark / badge / path chip (same warm
+      “must handle” cue as the HITL prompt). Path progress sheen turns amber while
+      any gate is open. Clicking a waiting path chip focuses that act; HITL then
+      embeds in the act card. Stage content uses safe vertical centering (`my-auto`)
+      so tall HITL stacks scroll from the top and never cover the path rail.
     - **Terminal**: one check / x on the card badge (not on path / header /
       inspector echoes).
     - **Quiet dots**: path chips, run header, inspector, idle/pending — pure
@@ -36,8 +41,10 @@ Product UI and mock runtime for **graph workflow runs** attached to projects
 - Does not own OpenSpec Spec-mode state.
 - Does not call Rust/contracts workflow APIs yet.
 - Does not reuse settings `WorkflowCanvas` (no catalog / reconnect / delete).
-- HITL forms arrive in a later step (events already exist).
-
+- Does not implement HITL timeout (always waits for submit; `HitlTimeoutPolicy`
+  enum reserved for later).
+- Kickoff remains optional free text on create; schema Kickoff UI can reuse
+  `WorkflowFieldForm` later.
 ## Mount vs run (product invariant)
 
 - **Mount**: at most one `(projectId, definitionId)`. Remount refreshes the
@@ -60,7 +67,8 @@ Product UI and mock runtime for **graph workflow runs** attached to projects
   Sidebar supports cancel (keep row) and delete (cancel then remove).
 - View toggle: Theater ↔ Overview. Overview node click returns to Theater
   focused on that node and opens the act inspector. Header Theater toggle
-  does not force the rail open. `awaiting_input` forces Theater.
+  does not force the rail open. `awaiting_input` does **not** force a view
+  change (toast only); warm overview/path chips stay discoverable in place.
 - Theater focus: a live pin (focused while `running` / `awaiting_input`)
   releases back to auto-follow when that same act just finishes. Clicking a
   already-finished or idle node is a history pin and stays until the user
@@ -72,3 +80,18 @@ Product UI and mock runtime for **graph workflow runs** attached to projects
   `artifact_added`. Theater scopes them in the act inspector with the focused
   node; reveal expands the rail and focuses that act when already on stage.
   Overview shows a per-node count affordance only.
+- HITL: mock `prompt` nodes pause with `awaiting_input` and append to
+  `openHitls` (`kind` + optional `prompt` + `blocking` + field schema). Model
+  questions use `kind: "clarify"` with `prompt` shown in the card. On Theater,
+  the waiting act card **embeds** the expandable HITL surface (warm collapsed
+  prompt → sky pulse + question body + tiles / composer) in place of metrics —
+  no absolute bottom overlay covering the card. If focus is on a non-waiting
+  act while other gates are open, a compact prompt sits under the stage column;
+  Parallel waits dock HITL under the carousel (not inside sliding cards) so
+  peer switches stay height-stable. Collapse is respected
+  across run ticks so you can browse other nodes while a gate waits — including
+  completed / pending path chips during parallel waits (stage leaves the
+  parallel carousel when focus is outside the live peer set). Esc
+  collapses HITL first; a second Esc returns Overview. Submit payload keys
+  match `field.name`. Inspector shows per-node runtime `input` / `output`
+  summaries when the mock (or backend) provides them.

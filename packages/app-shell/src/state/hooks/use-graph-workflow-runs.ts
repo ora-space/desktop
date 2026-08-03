@@ -274,6 +274,28 @@ export function useUpdateGraphWorkflowRunSnapshotNode() {
   });
 }
 
+/** Submits an open HITL request and resumes the mock run. */
+export function useSubmitGraphWorkflowHitl() {
+  const runtime = useWorkflowRuntime();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      runId,
+      requestId,
+      payload,
+    }: {
+      runId: string;
+      requestId: string;
+      payload: Record<string, unknown>;
+    }) => runtime.runs.submitHitl(runId, requestId, payload),
+    onSuccess: (_void, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.workflowRun(variables.runId),
+      });
+    },
+  });
+}
+
 /**
  * Lists artifacts for a run and patches the cache on `artifact_added`
  * so Theater act cards update without refetching on every node tick.

@@ -27,6 +27,8 @@ export interface MemoryWorkflowRuntimeOptions {
   autoStart?: boolean;
   /** Injectable condition-branch policy for the mock engine. */
   pathPolicy?: MockPathPolicy;
+  /** Locale for mock HITL schema strings. */
+  locale?: "zh-CN" | "en-US";
 }
 
 /** Local-time ISO timestamp for run metadata (Ora prefers local clocks). */
@@ -63,6 +65,7 @@ export function createMemoryWorkflowRuntime(
   const changeListeners = new Set<ChangeListener>();
   let runSeq = 0;
   let artifactSeq = 0;
+  let hitlSeq = 0;
 
   const emit = (runId: string, event: WorkflowRunEvent) => {
     const set = listeners.get(runId);
@@ -98,8 +101,16 @@ export function createMemoryWorkflowRuntime(
         artifactSeq += 1;
         return `wart-${artifactSeq}`;
       },
+      nextHitlId: () => {
+        hitlSeq += 1;
+        return `hitl-${hitlSeq}`;
+      },
     },
-    { nodeStepMs: options.nodeStepMs, pathPolicy: options.pathPolicy },
+    {
+      nodeStepMs: options.nodeStepMs,
+      pathPolicy: options.pathPolicy,
+      locale: options.locale,
+    },
   );
 
   const host: WorkflowHostRepository = {
@@ -189,6 +200,7 @@ export function createMemoryWorkflowRuntime(
         status: "pending",
         kickoffInput,
         nodeStates: idleNodeStates(snapshot),
+        openHitls: [],
         totals: {},
         createdAt,
         updatedAt: createdAt,
@@ -301,9 +313,12 @@ export function createMemoryWorkflowRuntime(
       return structuredClone(updated);
     },
 
-    async submitHitl(_runId, _requestId, _payload) {
-      // Step 5 wires HITL; keep the port stable for callers.
-      throw new Error("HITL is not implemented yet");
+    async submitHitl(runId, requestId, payload) {
+      const run = runs.get(runId);
+      if (run === undefined) {
+        throw new Error(`Unknown workflow run ${runId}`);
+      }
+      engine.submitHitl(runId, requestId, payload);
     },
 
     async listArtifacts(runId) {

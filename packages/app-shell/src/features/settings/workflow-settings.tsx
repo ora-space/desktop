@@ -561,9 +561,6 @@ function WorkflowSettingsContent({
                   aria-label={t("settings.workflow.workflowName")}
                   className="h-7 max-w-72 border-transparent bg-transparent px-1 text-sm font-semibold shadow-none hover:border-border focus-visible:border-border"
                 />
-                <span className="hidden rounded-full border border-border px-2 py-0.5 text-[9px] font-medium text-muted-foreground sm:inline">
-                  DEMO
-                </span>
               </div>
               <p className="truncate px-1 text-[10px] text-muted-foreground">
                 {workflow.description}

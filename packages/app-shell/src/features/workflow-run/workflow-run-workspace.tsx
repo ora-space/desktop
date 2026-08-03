@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
   Button,
   Spinner,
+  toast,
 } from "@ora/ui";
 import {
   IconLayoutSidebarLeftExpand,
@@ -38,6 +39,7 @@ import { RunOverviewCanvas } from "./run-overview-canvas";
 import { RunTheater } from "./run-theater";
 import { RunStatusBadge } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
+import { useWorkflowRuntime } from "./runtime/workflow-runtime-context";
 import type { GraphWorkflowRunStatus } from "./runtime/types";
 import type { WorkflowRunViewMode } from "./run-view-mode";
 
@@ -60,6 +62,7 @@ function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
  */
 export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const { t } = useTranslation();
+  const runtime = useWorkflowRuntime();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const selectWorkflowRun = useWorkspaceSelectionStore((s) => s.selectWorkflowRun);
@@ -151,12 +154,27 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     }
   }, [run, runId]);
 
-  // HITL always forces Theater (product rule 3.5).
+  // HITL: toast only — never yank Overview / focus away from the user’s view.
   useEffect(() => {
-    if (run?.status === "awaiting_input") {
-      setViewMode("theater");
-    }
-  }, [run?.status]);
+    return runtime.runs.subscribe(runId, (event) => {
+      if (event.type !== "hitl_required") {
+        return;
+      }
+      const clarify = event.request.schema.kind === "clarify";
+      toast.message(t("workflowRun.hitl.toastTitle"), {
+        description: clarify
+          ? t("workflowRun.hitl.toastClarifyDescription")
+          : t("workflowRun.hitl.toastDescription"),
+        action: {
+          label: t("workflowRun.hitl.toastAction"),
+          onClick: () => {
+            setFocusNodeId(event.request.nodeId);
+            enterTheater({ openInspector: false });
+          },
+        },
+      });
+    });
+  }, [runtime, runId, t]);
 
   // Esc from Theater returns to Overview.
   useEffect(() => {
@@ -164,10 +182,11 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       return;
     }
     function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        setOpenInspectorOnTheaterEnter(false);
-        setViewMode("overview");
+      if (event.key !== "Escape" || event.defaultPrevented) {
+        return;
       }
+      setOpenInspectorOnTheaterEnter(false);
+      setViewMode("overview");
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -194,7 +213,10 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
 
   function focusNodeFromOverview(nodeId: string): void {
     setFocusNodeId(nodeId);
-    enterTheater({ openInspector: true });
+    const waiting = run !== null && run.nodeStates[nodeId]?.status === "awaiting_input";
+    enterTheater({
+      openInspector: !waiting,
+    });
   }
 
   function enterTheater(options?: { openInspector?: boolean }): void {

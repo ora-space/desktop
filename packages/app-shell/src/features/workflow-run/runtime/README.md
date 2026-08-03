@@ -16,10 +16,12 @@ Ports and in-memory mock for project workflow mounts and graph runs.
 ## Non-responsibilities
 
 - No HTTP/NDJSON transport (Follow-up F2).
-- No Theater / overview / HITL UI (parent `workflow-run` feature).
+- No Theater / overview UI (parent `workflow-run` feature owns forms/toasts).
 - Not the settings session graph editor.
 - Settings **Test run** still uses `@ora/workflow-mock` `runDemoWorkflow` — a
   separate demo path until an optional later convergence.
+- HITL `fail` / `skip` timeout policies are reserved on the type; MVP uses
+  `wait` and never auto-times out.
 
 ## Invariants
 
@@ -46,12 +48,24 @@ Ports and in-memory mock for project workflow mounts and graph runs.
   workflow **错开并行演示 / Staggered parallel demo** for unequal start/end
   times (`data.mockStepMs`), or **并行审查演示 / Parallel review demo** for a
   synchronized fan-out (Theater shows one card at a time with a parallel switcher).
-- **Start**: only from `pending`. Re-entrant `start` is a no-op (HITL resume will
-  be a separate API).
-- **Tokens**: stubbed only for `prompt` / `agent` / `tool` kinds.
-- **Artifacts**: markdown stubs on `agent` / `output`; consumed by the
-  Artifacts rail (Step 4).
-- **Options**: `nodeStepMs` (default 5000), `autoStart` (default false; workspace
-  Start calls `runs.start`), injectable `pathPolicy`.
+- **Start**: only from `pending`. Re-entrant `start` is a no-op; HITL resume
+  uses `submitHitl`.
+- **HITL**: `prompt` kind nodes append an open request to `openHitls` and set
+  the node to `awaiting_input`, emitting `hitl_required`. Each request carries
+  `schema.kind` (`approval` | `feedback` | `clarify`), optional `schema.prompt`
+  (model/engine question body), `blocking`, `createdAt`, and `fields` (submit
+  payload keys = `field.name`). Schema copy follows engine `locale`. Multiple
+  prompts may wait concurrently; the user can resolve any gate by `requestId`
+  and may browse other acts while collapsed. Submit validates required fields
+  and select membership, emits `hitl_resolved` with `payload` + `nodeId`,
+  succeeds that node (with I/O summaries), and pumps. Cancel clears `openHitls`.
+  Policy is `wait` (no auto-timeout); `timeoutAt` is reserved for UI when
+  policy is not `wait`.
+- **Node I/O**: each node state may carry glanceable `input` / `output`
+  (`summary` + optional `detail`) for the act inspector.
+- **Tokens**: stubbed for `prompt` (on HITL submit) / `agent` / `tool` kinds.
+- **Artifacts**: markdown stubs on `agent` / `output`.
+- **Options**: `nodeStepMs` (default 5000), `autoStart` (default false;
+  workspace Start calls `runs.start`), injectable `pathPolicy`.
 - Kickoff text is stored on the run and fed into path planning when provided.
   Deploy creates a pending run only; the workspace Start control begins execution.

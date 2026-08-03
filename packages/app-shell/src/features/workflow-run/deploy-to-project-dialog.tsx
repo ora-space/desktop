@@ -135,11 +135,17 @@ export function DeployToProjectDialog({
       <AlertDialogContent className="sm:max-w-md">
         <AlertDialogHeader>
           <AlertDialogTitle>{t("workflowRun.deployTitle")}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {workflow
-              ? t("workflowRun.deployDescription", { name: workflow.name })
-              : t("workflowRun.deployPickWorkflow")}
-          </AlertDialogDescription>
+          {workflow === null
+            ? (
+              <AlertDialogDescription>
+                {t("workflowRun.deployPickWorkflow")}
+              </AlertDialogDescription>
+            )
+            : (
+              <AlertDialogDescription className="sr-only">
+                {t("workflowRun.deployDescription", { name: workflow.name })}
+              </AlertDialogDescription>
+            )}
         </AlertDialogHeader>
 
         <div className="mt-2 space-y-2">

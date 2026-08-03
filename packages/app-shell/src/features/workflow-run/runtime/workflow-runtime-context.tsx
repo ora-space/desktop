@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { createMemoryWorkflowRuntime } from "./memory-workflow-runtime";
 import type { WorkflowRuntime } from "./ports";
 
@@ -19,9 +20,11 @@ export function WorkflowRuntimeProvider({
   children,
   runtime: runtimeOverride,
 }: WorkflowRuntimeProviderProps) {
+  const { i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
   const runtime = useMemo(
-    () => runtimeOverride ?? createMemoryWorkflowRuntime(),
-    [runtimeOverride],
+    () => runtimeOverride ?? createMemoryWorkflowRuntime({ locale }),
+    [runtimeOverride, locale],
   );
   return (
     <WorkflowRuntimeContext.Provider value={runtime}>

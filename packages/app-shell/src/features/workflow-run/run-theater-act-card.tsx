@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import type { ReactNode } from "react";
 import { Badge, cn } from "@ora/ui";
 import {
   createMockWorkflowNodeType,
@@ -25,6 +26,11 @@ interface RunTheaterActCardProps {
   onSelect?: () => void;
   /** Stronger stage presence when this card is the focused parallel act. */
   emphasized?: boolean;
+  /**
+   * When set, replaces the metrics footer (HITL lives inside the act card).
+   * Clicks inside must stopPropagation so the inspector does not open.
+   */
+  interaction?: ReactNode;
 }
 
 /**
@@ -41,6 +47,7 @@ export function RunTheaterActCard({
   variant = "stage",
   onSelect,
   emphasized = true,
+  interaction,
 }: RunTheaterActCardProps) {
   const { i18n, t } = useTranslation();
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
@@ -113,7 +120,11 @@ export function RunTheaterActCard({
         compact ? "w-full" : "mx-auto w-full max-w-xl",
         "transition-[border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none",
         interactive
-          && "cursor-pointer hover:border-foreground/25 hover:shadow-sm active:scale-[0.99]",
+          && "cursor-pointer hover:border-foreground/25 hover:shadow-sm",
+        // Scale only when the whole card is the hit target — not when HITL
+        // lives in the footer (CSS :active would otherwise shake the card
+        // while pressing the composer).
+        interactive && interaction === undefined && "active:scale-[0.99]",
         emphasized && live && state.status === "running" && "theater-live-breathe",
         emphasized
           && live
@@ -172,7 +183,18 @@ export function RunTheaterActCard({
             </div>
           </>
         )}
-      footer={metrics}
+      footer={interaction !== undefined
+        ? (
+          <div
+            className="pt-1"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {interaction}
+          </div>
+        )
+        : metrics}
       onClick={onSelect}
       onKeyDown={onSelect
         ? (event) => {

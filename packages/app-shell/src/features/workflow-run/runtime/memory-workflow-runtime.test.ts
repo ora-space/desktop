@@ -5,8 +5,62 @@ import {
   createStaggeredParallelMockWorkflow,
 } from "@ora/workflow-mock";
 import { createMemoryWorkflowRuntime } from "./memory-workflow-runtime";
+import type { WorkflowRuntime } from "./ports";
 import { planMockExecution } from "./mock-execution-plan";
 import { executionOrder } from "./mock-run-engine";
+import type { GraphWorkflowRun } from "./types";
+
+/** Builds a valid payload for whatever fields the open gate requires. */
+function hitlPayloadFor(
+  fields: { name: string; type: string; options?: { value: string }[] }[],
+): Record<string, string> {
+  const payload: Record<string, string> = {};
+  for (const field of fields) {
+    if (field.type === "select") {
+      payload[field.name] = field.options?.[0]?.value ?? "diff";
+    } else {
+      payload[field.name] = "looks good";
+    }
+  }
+  return payload;
+}
+
+/** Default mixed-schema payload (scope + notes). */
+const HITL_PAYLOAD = { notes: "looks good", scope: "diff" };
+
+function isTerminalRun(status: GraphWorkflowRun["status"]): boolean {
+  return (
+    status === "succeeded"
+    || status === "failed"
+    || status === "cancelled"
+    || status === "partial_failed"
+  );
+}
+
+/**
+ * Advances timers and auto-submits open HITL gates until the run ends
+ * or `maxWaves` is exhausted.
+ */
+async function drainRun(
+  runtime: WorkflowRuntime,
+  runId: string,
+  stepMs: number,
+  maxWaves = 40,
+): Promise<GraphWorkflowRun | null> {
+  for (let i = 0; i < maxWaves; i += 1) {
+    const run = await runtime.runs.get(runId);
+    if (run === null || isTerminalRun(run.status)) {
+      return run;
+    }
+    if (run.openHitls.length > 0) {
+      const gate = run.openHitls[0]!;
+      await runtime.runs.submitHitl(run.id, gate.id, hitlPayloadFor(gate.schema.fields));
+      continue;
+    }
+    await vi.advanceTimersByTimeAsync(stepMs);
+  }
+  return runtime.runs.get(runId);
+}
 
 describe("createMemoryWorkflowRuntime", () => {
   it("mounts the same definition on multiple projects by reference", async () => {
@@ -124,11 +178,11 @@ describe("createMemoryWorkflowRuntime", () => {
       projectId: "p1",
       definitionId: definition.id,
     });
-    const renamed = await runtime.runs.rename(run.id, "  审查一轮  ");
+    const renamed = await runtime.runs.rename(run.id, "  ????  ");
     expect(renamed).toEqual(
       expect.objectContaining({
         id: run.id,
-        name: "审查一轮",
+        name: "????",
         definitionSnapshot: run.definitionSnapshot,
       }),
     );
@@ -151,8 +205,8 @@ describe("createMemoryWorkflowRuntime", () => {
       run.id,
       startNode!.id,
       {
-        description: "仅本次说明",
-        instruction: "仅本次指令",
+        description: "?????",
+        instruction: "?????",
       },
     );
     const patchedNode = patched.definitionSnapshot.nodes.find(
@@ -160,8 +214,8 @@ describe("createMemoryWorkflowRuntime", () => {
     );
     expect(patchedNode?.data).toEqual(
       expect.objectContaining({
-        description: "仅本次说明",
-        instruction: "仅本次指令",
+        description: "?????",
+        instruction: "?????",
       }),
     );
 
@@ -245,12 +299,9 @@ describe("mock run engine", () => {
     expect(events[0]).toBe("run_started");
 
     const plan = planMockExecution(definition, {});
-    for (let i = 0; i < plan.order.length; i += 1) {
-      await vi.advanceTimersByTimeAsync(100);
-    }
+    const finished = await drainRun(runtime, run.id, 100);
     unsubscribe();
 
-    const finished = await runtime.runs.get(run.id);
     expect(finished?.status).toBe("succeeded");
     expect(finished?.totals.tokenUsage?.totalTokens).toBeGreaterThan(0);
     expect(events[0]).toBe("run_started");
@@ -259,7 +310,7 @@ describe("mock run engine", () => {
       expect(events).toContain(`node_started:${nodeId}:`);
       expect(events).toContain(`node_finished:${nodeId}:succeeded`);
     }
-    // Default zh path takes「需要检查」so tests stays reachable — nothing skipped.
+    // Default zh path takes??????so tests stays reachable ? nothing skipped.
     expect(plan.skipped).toEqual([]);
     expect(finished?.nodeStates.start?.tokenUsage).toBeUndefined();
     expect(finished?.nodeStates.understand?.tokenUsage?.totalTokens).toBeGreaterThan(0);
@@ -267,6 +318,164 @@ describe("mock run engine", () => {
     expect(artifacts.length).toBeGreaterThan(0);
     expect(artifacts.every((item) => item.nodeId.length > 0)).toBe(true);
     expect(artifacts.some((item) => item.kind === "markdown")).toBe(true);
+  });
+
+  it("pauses on prompt nodes until HITL is submitted", async () => {
+    const runtime = createMemoryWorkflowRuntime({
+      nodeStepMs: 100,
+      autoStart: false,
+    });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    const events: string[] = [];
+    runtime.runs.subscribe(run.id, (event) => {
+      events.push(event.type);
+    });
+
+    await runtime.runs.start(run.id);
+    await vi.advanceTimersByTimeAsync(100);
+
+    const paused = await runtime.runs.get(run.id);
+    expect(paused?.status).toBe("awaiting_input");
+    expect(paused?.nodeStates.understand?.status).toBe("awaiting_input");
+    expect(paused?.openHitls).toEqual([
+      expect.objectContaining({
+        nodeId: "understand",
+        status: "open",
+        policy: "wait",
+        blocking: true,
+        createdAt: expect.any(String),
+        schema: expect.objectContaining({
+          kind: "clarify",
+          prompt: expect.any(String),
+        }),
+      }),
+    ]);
+    expect(events).toContain("hitl_required");
+
+    await runtime.runs.submitHitl(
+      run.id,
+      paused!.openHitls[0]!.id,
+      hitlPayloadFor(paused!.openHitls[0]!.schema.fields),
+    );
+    expect(events).toContain("hitl_resolved");
+    expect(await runtime.runs.get(run.id)).toEqual(
+      expect.objectContaining({
+        status: "running",
+        openHitls: [],
+      }),
+    );
+    expect(
+      (await runtime.runs.get(run.id))?.nodeStates.understand,
+    ).toEqual(
+      expect.objectContaining({
+        status: "succeeded",
+        input: expect.objectContaining({ summary: expect.any(String) }),
+        output: expect.objectContaining({ summary: expect.any(String) }),
+      }),
+    );
+
+    const finished = await drainRun(runtime, run.id, 100);
+    expect(finished?.status).toBe("succeeded");
+  });
+
+  it("rejects submitHitl without an open request or required fields", async () => {
+    const runtime = createMemoryWorkflowRuntime({
+      nodeStepMs: 100,
+      autoStart: false,
+    });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    await expect(
+      runtime.runs.submitHitl(run.id, "missing", HITL_PAYLOAD),
+    ).rejects.toThrow(/no open hitl/i);
+
+    await runtime.runs.start(run.id);
+    await vi.advanceTimersByTimeAsync(100);
+    const paused = await runtime.runs.get(run.id);
+    await expect(
+      runtime.runs.submitHitl(run.id, "wrong-id", HITL_PAYLOAD),
+    ).rejects.toThrow(/no open hitl request/i);
+    await expect(
+      runtime.runs.submitHitl(run.id, paused!.openHitls[0]!.id, { scope: "diff" }),
+    ).rejects.toThrow(/missing required field answer/i);
+  });
+
+  it("rejects invalid select options on HITL submit", async () => {
+    const runtime = createMemoryWorkflowRuntime({
+      nodeStepMs: 100,
+      autoStart: false,
+    });
+    const definition = createParallelMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    await runtime.runs.start(run.id);
+    await vi.advanceTimersByTimeAsync(100);
+    const paused = await runtime.runs.get(run.id);
+    const gate = paused!.openHitls[0]!;
+    await expect(
+      runtime.runs.submitHitl(run.id, gate.id, { scope: "not-a-real-option" }),
+    ).rejects.toThrow(/invalid option/i);
+  });
+
+  it("keeps waiting for HITL without timing out", async () => {
+    const runtime = createMemoryWorkflowRuntime({
+      nodeStepMs: 100,
+      autoStart: false,
+    });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    await runtime.runs.start(run.id);
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await runtime.runs.get(run.id))?.status).toBe("awaiting_input");
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    const stillWaiting = await runtime.runs.get(run.id);
+    expect(stillWaiting?.status).toBe("awaiting_input");
+    expect(stillWaiting?.openHitls).toEqual([
+      expect.objectContaining({ status: "open" }),
+    ]);
+  });
+
+  it("clears HITL when the run is cancelled", async () => {
+    const runtime = createMemoryWorkflowRuntime({
+      nodeStepMs: 100,
+      autoStart: false,
+    });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    await runtime.runs.start(run.id);
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await runtime.runs.get(run.id))?.openHitls).toEqual([
+      expect.objectContaining({ status: "open" }),
+    ]);
+
+    await runtime.runs.cancel(run.id);
+    expect(await runtime.runs.get(run.id)).toEqual(
+      expect.objectContaining({
+        status: "cancelled",
+        openHitls: [],
+      }),
+    );
   });
 
   it("skips the validation branch when kickoff prefers documentation", async () => {
@@ -279,19 +488,16 @@ describe("mock run engine", () => {
     const run = await runtime.runs.create({
       projectId: "p1",
       definitionId: definition.id,
-      kickoffInput: "只更新 README 文档说明",
+      kickoffInput: "update README docs only",
     });
     await runtime.runs.start(run.id);
     const plan = planMockExecution(definition, {
-      kickoffInput: "只更新 README 文档说明",
+      kickoffInput: "update README docs only",
     });
     expect(plan.skipped).toContain("tests");
     expect((await runtime.runs.get(run.id))?.nodeStates.tests?.status).toBe("skipped");
 
-    for (let i = 0; i < plan.order.length; i += 1) {
-      await vi.advanceTimersByTimeAsync(50);
-    }
-    const finished = await runtime.runs.get(run.id);
+    const finished = await drainRun(runtime, run.id, 50);
     expect(finished?.status).toBe("succeeded");
     expect(finished?.nodeStates.tests?.status).toBe("skipped");
     expect(finished?.nodeStates.output?.status).toBe("succeeded");
@@ -310,27 +516,34 @@ describe("mock run engine", () => {
     });
     await runtime.runs.start(run.id);
 
-    // start → gather (two sequential waves)
+    // start completes ? gather HITL
     await vi.advanceTimersByTimeAsync(100);
-    await vi.advanceTimersByTimeAsync(100);
+    const paused = await runtime.runs.get(run.id);
+    expect(paused?.status).toBe("awaiting_input");
+    expect(paused?.nodeStates.gather?.status).toBe("awaiting_input");
+    await runtime.runs.submitHitl(
+      run.id,
+      paused!.openHitls[0]!.id,
+      hitlPayloadFor(paused!.openHitls[0]!.schema.fields),
+    );
 
     const mid = await runtime.runs.get(run.id);
     expect(mid?.nodeStates.security?.status).toBe("running");
     expect(mid?.nodeStates.quality?.status).toBe("running");
-    expect(mid?.nodeStates.docs?.status).toBe("running");
+    // docs is also a prompt node ? second concurrent HITL gate in the wave
+    expect(mid?.nodeStates.docs?.status).toBe("awaiting_input");
+    expect(mid?.openHitls.map((item) => item.nodeId)).toEqual(["docs"]);
+    expect(mid?.status).toBe("awaiting_input");
 
-    // Drain remaining waves (parallel trio + synthesize + output)
-    for (let i = 0; i < 4; i += 1) {
-      await vi.advanceTimersByTimeAsync(100);
-    }
-    expect(await runtime.runs.get(run.id)).toEqual(
+    const finished = await drainRun(runtime, run.id, 100);
+    expect(finished).toEqual(
       expect.objectContaining({ status: "succeeded" }),
     );
   });
 
   it("staggers parallel starts and ends via per-node mockStepMs", async () => {
     const runtime = createMemoryWorkflowRuntime({
-      // Default would not apply — every fixture node sets mockStepMs.
+      // Default would not apply ? every fixture node sets mockStepMs.
       nodeStepMs: 50_000,
       autoStart: false,
     });
@@ -344,53 +557,70 @@ describe("mock run engine", () => {
 
     await vi.advanceTimersByTimeAsync(800);
     let snap = await runtime.runs.get(run.id);
+    // quick_scan is prompt ? HITL; lint/index start on timers.
     expect(snap?.nodeStates).toEqual(
       expect.objectContaining({
         start: expect.objectContaining({ status: "succeeded", durationMs: 800 }),
-        quick_scan: expect.objectContaining({ status: "running" }),
+        quick_scan: expect.objectContaining({ status: "awaiting_input" }),
         lint: expect.objectContaining({ status: "running" }),
         slow_index: expect.objectContaining({ status: "running" }),
         deep_security: expect.objectContaining({ status: "idle" }),
         docs_pass: expect.objectContaining({ status: "idle" }),
       }),
     );
+    expect(snap?.openHitls.map((item) => item.nodeId)).toEqual(["quick_scan"]);
 
-    // quick_scan finishes first → deep_security starts while lint/index still run
-    await vi.advanceTimersByTimeAsync(1_500);
-    snap = await runtime.runs.get(run.id);
-    expect(snap?.nodeStates.quick_scan).toEqual(
-      expect.objectContaining({ status: "succeeded", durationMs: 1_500 }),
-    );
-    expect(snap?.nodeStates.deep_security?.status).toBe("running");
-    expect(snap?.nodeStates.lint?.status).toBe("running");
-    expect(snap?.nodeStates.slow_index?.status).toBe("running");
-    expect(snap?.nodeStates.docs_pass?.status).toBe("idle");
-
-    // lint ends; deep_security + slow_index still overlap
-    await vi.advanceTimersByTimeAsync(2_000);
+    // Hold the open HITL while timers advance ? mirrors a slow human response.
+    // lint ends at 3500 from its start (after the 800ms start wave)
+    await vi.advanceTimersByTimeAsync(3_500);
     snap = await runtime.runs.get(run.id);
     expect(snap?.nodeStates.lint).toEqual(
       expect.objectContaining({ status: "succeeded", durationMs: 3_500 }),
     );
-    expect(snap?.nodeStates.deep_security?.status).toBe("running");
     expect(snap?.nodeStates.slow_index?.status).toBe("running");
-    expect(snap?.nodeStates.docs_pass?.status).toBe("idle");
+    expect(snap?.nodeStates.deep_security?.status).toBe("idle");
+    expect(snap?.openHitls.map((item) => item.nodeId)).toEqual(["quick_scan"]);
 
-    // slow_index ends → docs_pass starts late while deep_security still running
+    // slow_index ends at 5500; docs_pass opens its own concurrent HITL gate.
     await vi.advanceTimersByTimeAsync(2_000);
     snap = await runtime.runs.get(run.id);
     expect(snap?.nodeStates.slow_index).toEqual(
       expect.objectContaining({ status: "succeeded", durationMs: 5_500 }),
     );
-    expect(snap?.nodeStates.docs_pass?.status).toBe("running");
-    expect(snap?.nodeStates.deep_security?.status).toBe("running");
+    expect(snap?.nodeStates.docs_pass?.status).toBe("awaiting_input");
+    expect(snap?.openHitls.map((item) => item.nodeId).sort()).toEqual([
+      "docs_pass",
+      "quick_scan",
+    ]);
+    expect(snap?.nodeStates.deep_security?.status).toBe("idle");
     expect(snap?.nodeStates.join?.status).toBe("idle");
 
-    // Drain deep_security (2s left), docs_pass (2s), join, output
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(await runtime.runs.get(run.id)).toEqual(
+    // User can resolve docs_pass first while quick_scan is still open.
+    const docsGate = snap!.openHitls.find((item) => item.nodeId === "docs_pass");
+    expect(docsGate).toBeDefined();
+    await runtime.runs.submitHitl(
+      run.id,
+      docsGate!.id,
+      hitlPayloadFor(docsGate!.schema.fields),
+    );
+    snap = await runtime.runs.get(run.id);
+    expect(snap?.nodeStates.docs_pass?.status).toBe("succeeded");
+    expect(snap?.openHitls.map((item) => item.nodeId)).toEqual(["quick_scan"]);
+    expect(snap?.status).toBe("awaiting_input");
+
+    await runtime.runs.submitHitl(
+      run.id,
+      snap!.openHitls[0]!.id,
+      hitlPayloadFor(snap!.openHitls[0]!.schema.fields),
+    );
+    snap = await runtime.runs.get(run.id);
+    expect(snap?.nodeStates.quick_scan?.status).toBe("succeeded");
+    expect(snap?.nodeStates.deep_security?.status).toBe("running");
+    expect(snap?.openHitls).toEqual([]);
+
+    // Drain deep_security remainder + join + output
+    const finished = await drainRun(runtime, run.id, 1_000);
+    expect(finished).toEqual(
       expect.objectContaining({ status: "succeeded" }),
     );
   });
@@ -460,14 +690,11 @@ describe("mock run engine", () => {
       definitionId: definition.id,
     });
     await runtime.runs.cancel(first.id);
-    const plan = planMockExecution(definition, {});
-    for (let i = 0; i < plan.order.length; i += 1) {
-      await vi.advanceTimersByTimeAsync(100);
-    }
+    const finished = await drainRun(runtime, second.id, 100);
     expect(await runtime.runs.get(first.id)).toEqual(
       expect.objectContaining({ status: "cancelled" }),
     );
-    expect(await runtime.runs.get(second.id)).toEqual(
+    expect(finished).toEqual(
       expect.objectContaining({ status: "succeeded" }),
     );
   });
@@ -485,7 +712,7 @@ describe("planMockExecution", () => {
 
   it("marks the unused exclusive branch as skipped for doc kickoff", () => {
     const workflow = createMockWorkflow("zh-CN");
-    const plan = planMockExecution(workflow, { kickoffInput: "文档说明更新" });
+    const plan = planMockExecution(workflow, { kickoffInput: "update README docs only" });
     expect(plan.skipped).toEqual(["tests"]);
     expect(plan.order).not.toContain("tests");
     expect(plan.order).toContain("review");

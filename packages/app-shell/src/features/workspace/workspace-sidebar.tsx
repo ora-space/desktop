@@ -460,7 +460,13 @@ function TreeRow({ depth, active, icon, label, meta, expanded, onClick, action, 
             : <IconChevronRight className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />)}
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-        {meta && <span className="truncate text-[11px] text-muted-foreground">{meta}</span>}
+        {meta && (
+          <span
+            className={`truncate text-[11px] ${active ? "text-sidebar-accent-foreground/80" : "text-amber-700 dark:text-amber-300"}`}
+          >
+            {meta}
+          </span>
+        )}
       </button>
       <div className="mr-1 flex items-center opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">
         {menu}
@@ -500,8 +506,9 @@ function NewSessionButton({ onClick }: { onClick: () => void }) {
 function runStatusClass(status: GraphWorkflowRunStatus): string {
   switch (status) {
     case "running":
-    case "awaiting_input":
       return "bg-sky-500";
+    case "awaiting_input":
+      return "bg-amber-500";
     case "succeeded":
       return "bg-emerald-500";
     case "failed":
@@ -554,6 +561,9 @@ function ProjectWorkflowRunRows({
               </span>
             )}
             label={run.name}
+            meta={run.status === "awaiting_input"
+              ? t("workflowRun.hitl.sidebarBadge")
+              : undefined}
             onClick={() => onSelectRun(run.id)}
             menu={(
               <EntityMenu

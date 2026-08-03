@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -16,6 +17,7 @@ import "./theater-motion.css";
 
 const DRAG_THRESHOLD_PX = 64;
 const CLICK_SLOP_PX = 8;
+const SLIDE_MS = 480;
 const SNAP_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 interface ParallelAct {
@@ -34,8 +36,8 @@ interface RunTheaterParallelStageProps {
 
 /**
  * Horizontal drag carousel for parallel acts.
- * Drag past a threshold to switch; a tap still opens the inspector.
- * Motion emphasizes neighbor peek, tilt, and chip feedback.
+ * Chevron / chip / keyboard switches use the same slide tween as drag settle
+ * so focus changes don’t hard-cut the track.
  */
 export function RunTheaterParallelStage({
   acts,
@@ -48,20 +50,70 @@ export function RunTheaterParallelStage({
   const pointerIdRef = useRef<number | null>(null);
   const startXRef = useRef(0);
   const draggingRef = useRef(false);
+  const slideTimerRef = useRef<number | null>(null);
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
+  /** Visual index while a programmed slide is in flight (chevron / chip). */
+  const [slideIndex, setSlideIndex] = useState<number | null>(null);
 
-  const index = Math.max(0, acts.findIndex((act) => act.nodeId === primaryId));
-  const primary = acts[index];
-  const canGoPrev = index > 0;
-  const canGoNext = index < acts.length - 1;
+  const committedIndex = Math.max(0, acts.findIndex((act) => act.nodeId === primaryId));
+  const index = slideIndex ?? committedIndex;
+  const primary = acts[committedIndex];
+  const canGoPrev = committedIndex > 0 && slideIndex === null;
+  const canGoNext = committedIndex < acts.length - 1 && slideIndex === null;
   const dragProgress = Math.max(-1, Math.min(1, dragX / 140));
+
+  useEffect(() => {
+    // External focus (path rail) caught up — drop any stale local slide index.
+    if (slideIndex !== null && committedIndex === slideIndex) {
+      setSlideIndex(null);
+      setDragX(0);
+    }
+  }, [committedIndex, slideIndex]);
+
+  useEffect(() => () => {
+    if (slideTimerRef.current !== null) {
+      window.clearTimeout(slideTimerRef.current);
+    }
+  }, []);
 
   function focusAt(nextIndex: number): void {
     const next = acts[nextIndex];
     if (next !== undefined) {
       onFocusNode(next.nodeId);
     }
+  }
+
+  /**
+   * Programmed peer switch: nudge the track, then commit focus after the tween
+   * so chevron clicks feel like the drag settle path — not an instant cut.
+   */
+  function slideTo(nextIndex: number): void {
+    if (
+      nextIndex === committedIndex
+      || nextIndex < 0
+      || nextIndex >= acts.length
+      || slideIndex !== null
+    ) {
+      return;
+    }
+    const width = trackRef.current?.clientWidth ?? 360;
+    const direction = nextIndex > committedIndex ? -1 : 1;
+    if (slideTimerRef.current !== null) {
+      window.clearTimeout(slideTimerRef.current);
+    }
+    setDragging(false);
+    setSlideIndex(committedIndex);
+    setDragX(direction * Math.min(width * 0.55, width * 0.5));
+    requestAnimationFrame(() => {
+      setSlideIndex(nextIndex);
+      setDragX(0);
+      focusAt(nextIndex);
+      slideTimerRef.current = window.setTimeout(() => {
+        slideTimerRef.current = null;
+        setSlideIndex(null);
+      }, SLIDE_MS);
+    });
   }
 
   function rubberBand(dx: number): number {
@@ -75,7 +127,7 @@ export function RunTheaterParallelStage({
   }
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (event.button !== 0 || acts.length <= 1) {
+    if (event.button !== 0 || acts.length <= 1 || slideIndex !== null) {
       return;
     }
     pointerIdRef.current = event.pointerId;
@@ -121,14 +173,13 @@ export function RunTheaterParallelStage({
     const nextIndex = resolveParallelDragSwitch(
       dx,
       DRAG_THRESHOLD_PX,
-      index,
+      committedIndex,
       acts.length,
     );
     const width = trackRef.current?.clientWidth ?? 360;
 
     if (nextIndex !== null) {
-      // Carry momentum toward the next slide, then settle on the new index.
-      const direction = nextIndex > index ? -1 : 1;
+      const direction = nextIndex > committedIndex ? -1 : 1;
       setDragging(false);
       setDragX(direction * Math.min(width * 0.42, Math.abs(dx) + width * 0.18));
       requestAnimationFrame(() => {
@@ -145,12 +196,12 @@ export function RunTheaterParallelStage({
   function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
     if (event.key === "ArrowLeft" && canGoPrev) {
       event.preventDefault();
-      focusAt(index - 1);
+      slideTo(committedIndex - 1);
       return;
     }
     if (event.key === "ArrowRight" && canGoNext) {
       event.preventDefault();
-      focusAt(index + 1);
+      slideTo(committedIndex + 1);
       return;
     }
     if (event.key === "Enter" || event.key === " ") {
@@ -162,6 +213,10 @@ export function RunTheaterParallelStage({
   if (primary === undefined) {
     return null;
   }
+
+  const trackTransition = dragging
+    ? "none"
+    : `transform ${SLIDE_MS}ms ${SNAP_EASE}`;
 
   return (
     <div className="w-full">
@@ -178,7 +233,7 @@ export function RunTheaterParallelStage({
               : "pointer-events-none opacity-0",
             dragging && dragProgress > 0.15 && "scale-110 opacity-100",
           )}
-          onClick={() => focusAt(index - 1)}
+          onClick={() => slideTo(committedIndex - 1)}
         >
           <IconChevronLeft className="size-4" />
         </button>
@@ -194,7 +249,7 @@ export function RunTheaterParallelStage({
               : "pointer-events-none opacity-0",
             dragging && dragProgress < -0.15 && "scale-110 opacity-100",
           )}
-          onClick={() => focusAt(index + 1)}
+          onClick={() => slideTo(committedIndex + 1)}
         >
           <IconChevronRight className="size-4" />
         </button>
@@ -231,22 +286,21 @@ export function RunTheaterParallelStage({
             )}
             style={{
               transform: `translateX(calc(${-index * 100}% + ${dragX}px))`,
-              transition: dragging
-                ? "none"
-                : `transform 420ms ${SNAP_EASE}`,
+              transition: trackTransition,
             }}
           >
             {acts.map((act, actIndex) => {
               const live = isNodeWorking(act.state.status);
               const distance = Math.abs(actIndex - index - dragProgress);
               const inactive = distance > 0.08;
+              // Soft neighbor peek — avoid harsh scale jumps on programmed slides.
               const scale = inactive
-                ? Math.max(0.88, 1 - distance * 0.08)
-                : 1 - Math.min(0.04, Math.abs(dragProgress) * 0.04);
+                ? Math.max(0.94, 1 - distance * 0.04)
+                : 1 - Math.min(0.02, Math.abs(dragProgress) * 0.02);
               const opacity = inactive
-                ? Math.max(0.35, 1 - distance * 0.4)
+                ? Math.max(0.55, 1 - distance * 0.28)
                 : 1;
-              const tilt = actIndex === index ? dragProgress * -4.5 : 0;
+              const tilt = actIndex === index ? dragProgress * -3 : 0;
 
               return (
                 <div
@@ -261,7 +315,7 @@ export function RunTheaterParallelStage({
                       opacity,
                       transition: dragging
                         ? "none"
-                        : `transform 420ms ${SNAP_EASE}, opacity 320ms ease-out`,
+                        : `transform ${SLIDE_MS}ms ${SNAP_EASE}, opacity 360ms ease-out`,
                     }}
                   >
                     <RunTheaterActCard
@@ -285,7 +339,7 @@ export function RunTheaterParallelStage({
         <p className="text-center text-[11px] text-muted-foreground">
           {t("workflowRun.theater.parallelHint", {
             count: acts.length,
-            index: index + 1,
+            index: committedIndex + 1,
           })}
         </p>
 
@@ -298,7 +352,7 @@ export function RunTheaterParallelStage({
               key={act.nodeId}
               className={cn(
                 "h-1.5 rounded-full transition-[width,background-color,transform] duration-300 ease-out",
-                actIndex === index
+                actIndex === committedIndex
                   ? "w-5 scale-100 bg-foreground"
                   : "w-1.5 bg-muted-foreground/35",
               )}
@@ -307,17 +361,22 @@ export function RunTheaterParallelStage({
         </div>
 
         <div className="flex min-w-0 flex-wrap justify-center gap-1.5">
-          {acts.map((act) => {
+          {acts.map((act, actIndex) => {
             const selected = act.nodeId === primaryId;
+            const waiting = act.state.status === "awaiting_input";
             return (
               <button
                 key={act.nodeId}
                 type="button"
-                onClick={() => onFocusNode(act.nodeId)}
+                onClick={() => slideTo(actIndex)}
                 className={cn(
-                  "max-w-[9rem] cursor-pointer truncate rounded-full border px-2.5 py-1 text-[11px] font-medium transition-[transform,colors,box-shadow] duration-200",
-                  selected
-                    ? "theater-chip-pop border-foreground/35 bg-background shadow-sm"
+                  "max-w-[9rem] cursor-pointer truncate rounded-full border px-2.5 py-1 text-[11px] font-medium transition-[colors,box-shadow] duration-200",
+                  selected && waiting
+                    ? "border-amber-500/55 bg-amber-500/15 text-amber-950 shadow-sm dark:text-amber-50"
+                    : selected
+                    ? "border-foreground/35 bg-background shadow-sm"
+                    : waiting
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100"
                     : "border-border/70 bg-muted/40 text-muted-foreground hover:border-border hover:bg-background hover:text-foreground",
                 )}
                 aria-pressed={selected}
@@ -330,9 +389,6 @@ export function RunTheaterParallelStage({
             );
           })}
         </div>
-        <p className="text-center text-[10px] text-muted-foreground/70">
-          {t("workflowRun.theater.parallelDragHint")}
-        </p>
       </div>
     </div>
   );

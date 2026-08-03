@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
@@ -6,6 +7,8 @@ import {
   cn,
 } from "@ora/ui";
 import {
+  IconChevronDown,
+  IconChevronRight,
   IconLayoutSidebarRightCollapse,
   IconSparkles,
 } from "@tabler/icons-react";
@@ -258,6 +261,32 @@ function RunActInspectorPanel({
                 : "—"}
             />
           </div>
+          {(state.input !== undefined || state.output !== undefined)
+            ? (
+              <div className="space-y-2">
+                {state.input !== undefined && (
+                  <IoBlock
+                    resetKey={nodeId}
+                    label={t("workflowRun.inspector.input")}
+                    summary={state.input.summary}
+                    detail={state.input.detail}
+                  />
+                )}
+                {state.output !== undefined && (
+                  <IoBlock
+                    resetKey={nodeId}
+                    label={t("workflowRun.inspector.output")}
+                    summary={state.output.summary}
+                    detail={state.output.detail}
+                  />
+                )}
+              </div>
+            )
+            : (
+              <p className="text-[11px] leading-5 text-muted-foreground">
+                {t("workflowRun.inspector.ioEmpty")}
+              </p>
+            )}
           {state.errorMessage !== undefined && state.errorMessage !== "" && (
             <p
               role="alert"
@@ -332,6 +361,90 @@ function InspectorSection({
       </h4>
       <div className="space-y-2.5">{children}</div>
     </section>
+  );
+}
+
+/**
+ * Collapsed by default: one-line summary. Expand for full body when detail is long.
+ * Matches artifact progressive disclosure in the same inspector.
+ */
+function IoBlock({
+  resetKey,
+  label,
+  summary,
+  detail,
+}: {
+  resetKey: string;
+  label: string;
+  summary: string;
+  detail?: string;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const body = detail !== undefined && detail !== "" ? detail : summary;
+  const hasExtra = body !== summary || summary.length > 72;
+
+  useEffect(() => {
+    setOpen(false);
+  }, [resetKey, summary, detail]);
+
+  if (!hasExtra) {
+    return (
+      <div className="space-y-1 rounded-lg border border-border/70 bg-muted/20 px-3 py-2">
+        <p className="text-[10px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
+          {label}
+        </p>
+        <p className="text-xs leading-5 text-foreground/90">{summary}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-lg border border-border/70",
+        open ? "bg-muted/25" : "bg-muted/15",
+      )}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        className="h-auto w-full cursor-pointer justify-start gap-2 rounded-none px-3 py-2 text-left hover:bg-muted/40"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open
+          ? <IconChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          : <IconChevronRight className="size-3.5 shrink-0 text-muted-foreground" />}
+        <span className="min-w-0 flex-1 space-y-0.5">
+          <span className="block text-[10px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
+            {label}
+          </span>
+          <span className={cn(
+            "block text-xs leading-5 text-foreground/90",
+            !open && "line-clamp-2",
+          )}
+          >
+            {summary}
+          </span>
+        </span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {open
+            ? t("workflowRun.inspector.ioCollapse")
+            : t("workflowRun.inspector.ioExpand")}
+        </span>
+      </Button>
+      {open && (
+        <div
+          data-selectable
+          className="max-h-48 overflow-y-auto border-t border-border/50 px-3 py-2"
+        >
+          <p className="whitespace-pre-wrap text-[11px] leading-5 text-muted-foreground">
+            {body}
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

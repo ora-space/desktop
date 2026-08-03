@@ -9,14 +9,19 @@ export function runStatusTone(status: GraphWorkflowRunStatus | GraphWorkflowNode
 } {
   switch (status) {
     case "running":
-    case "awaiting_input":
       return {
         dot: "bg-sky-500",
         ring: "border-sky-500/50 ring-sky-500/20",
         badge: "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-300",
-        labelKey: status === "awaiting_input"
-          ? "workflowRun.status.awaiting_input"
-          : "workflowRun.status.running",
+        labelKey: "workflowRun.status.running",
+      };
+    case "awaiting_input":
+      // Amber matches HITL “must handle” chrome on the dock and stage card.
+      return {
+        dot: "bg-amber-500",
+        ring: "border-amber-500/50 ring-amber-500/20",
+        badge: "border-amber-500/35 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+        labelKey: "workflowRun.status.awaiting_input",
       };
     case "succeeded":
       return {

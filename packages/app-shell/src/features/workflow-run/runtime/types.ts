@@ -20,13 +20,21 @@ export type GraphWorkflowNodeStatus =
   | "cancelled"
   | "awaiting_input";
 
-/** HITL timeout policy; MVP mock implements `fail` only. */
+/** HITL timeout policy; MVP mock always waits (`wait`) until submit. */
 export type HitlTimeoutPolicy = "fail" | "skip" | "wait";
 
 export interface GraphWorkflowTokenUsage {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+}
+
+/** Glanceable runtime I/O for Theater inspector (not raw wire frames). */
+export interface GraphWorkflowNodeIo {
+  /** One-line summary shown by default. */
+  summary: string;
+  /** Optional longer body (prompt, tool args, model reply, HITL answer…). */
+  detail?: string;
 }
 
 export interface GraphWorkflowNodeState {
@@ -36,6 +44,10 @@ export interface GraphWorkflowNodeState {
   durationMs?: number;
   tokenUsage?: GraphWorkflowTokenUsage;
   errorMessage?: string;
+  /** What this step received when it started (kickoff, upstream, schema…). */
+  input?: GraphWorkflowNodeIo;
+  /** What this step produced when it finished (or HITL answer summary). */
+  output?: GraphWorkflowNodeIo;
 }
 
 /**
@@ -51,6 +63,8 @@ export interface GraphWorkflowRun {
   status: GraphWorkflowRunStatus;
   kickoffInput?: string;
   nodeStates: Record<string, GraphWorkflowNodeState>;
+  /** Open HITL gates (parallel prompts may all wait at once). Cleared on resolve / cancel. */
+  openHitls: HitlRequest[];
   totals: {
     durationMs?: number;
     tokenUsage?: GraphWorkflowTokenUsage;
@@ -94,7 +108,14 @@ export type WorkflowRunEvent =
       artifact: WorkflowArtifact;
     }
   | { type: "hitl_required"; runId: string; request: HitlRequest }
-  | { type: "hitl_resolved"; runId: string; requestId: string }
+  | {
+      type: "hitl_resolved";
+      runId: string;
+      requestId: string;
+      nodeId: string;
+      /** Submitted field values (keys = field.name). */
+      payload: Record<string, unknown>;
+    }
   | {
       type: "run_finished";
       runId: string;
@@ -114,15 +135,75 @@ export interface WorkflowArtifact {
   createdAt: string;
 }
 
+/** Field types shared by HITL (and future Kickoff schema) forms. */
+export type HitlFieldType = "text" | "textarea" | "select";
+
+/**
+ * Why the engine paused for a human.
+ * - `approval` — permission / scope choice
+ * - `feedback` — free-form notes to continue
+ * - `clarify` — model/engine question the user must answer
+ */
+export type HitlGateKind = "approval" | "feedback" | "clarify";
+
+export interface HitlFieldOption {
+  value: string;
+  label: string;
+}
+
+export interface HitlField {
+  name: string;
+  type: HitlFieldType;
+  label: string;
+  required?: boolean;
+  placeholder?: string;
+  options?: HitlFieldOption[];
+}
+
+export interface HitlSchema {
+  kind: HitlGateKind;
+  title?: string;
+  /** Model/engine question or instruction body (plain text). */
+  prompt?: string;
+  fields: HitlField[];
+}
+
 export interface HitlRequest {
   id: string;
   runId: string;
   nodeId: string;
-  /** JSON-schema-like field list; renderer arrives in Step 5. */
-  schema: Record<string, unknown>;
+  schema: HitlSchema;
+  /**
+   * When false, UI should not treat the run as modal-locked (browse OK).
+   * Mock engine still pauses scheduling for MVP when any blocking gate is open.
+   */
+  blocking: boolean;
   timeoutAt?: string;
   policy: HitlTimeoutPolicy;
   status: "open" | "resolved" | "timed_out";
+  /** Local-time ISO when the gate opened (reconnect / ordering). */
+  createdAt: string;
+}
+
+/** Open gates still waiting for the user. */
+export function listOpenHitls(run: GraphWorkflowRun): HitlRequest[] {
+  return run.openHitls.filter((request) => request.status === "open");
+}
+
+/** Finds an open gate by id, or undefined when missing / already resolved. */
+export function findOpenHitl(
+  run: GraphWorkflowRun,
+  requestId: string,
+): HitlRequest | undefined {
+  return listOpenHitls(run).find((request) => request.id === requestId);
+}
+
+/** Finds an open gate for a node, if any. */
+export function findOpenHitlForNode(
+  run: GraphWorkflowRun,
+  nodeId: string,
+): HitlRequest | undefined {
+  return listOpenHitls(run).find((request) => request.nodeId === nodeId);
 }
 
 export type Unsubscribe = () => void;
