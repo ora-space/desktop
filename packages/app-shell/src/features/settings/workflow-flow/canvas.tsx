@@ -44,6 +44,7 @@ import { WorkflowFlowEdgeView } from "./edge";
 import { WorkflowFlowNodeView } from "./node";
 import { WorkflowFlowOverview } from "./overview";
 import type { WorkflowCanvasProps } from "./types";
+import { WorkflowVersionHistory } from "./version-history";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
 
@@ -157,6 +158,11 @@ function WorkflowCanvasInner({
   inspectorAvailable,
   onExpandLibrary,
   onExpandInspector,
+  versionHistory,
+  previewedVersion,
+  onPreviewVersion,
+  onRestoreVersion,
+  readOnly,
 }: WorkflowCanvasProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -167,7 +173,6 @@ function WorkflowCanvasInner({
   const [connectionCandidateNodeId, setConnectionCandidateNodeId] =
     useState<string | null>(null);
   const { deleteElements, screenToFlowPosition, setViewport } = useReactFlow();
-  const initialViewportRef = useRef(initialViewport);
   const reconnectingEdgeIdRef = useRef<string | null>(null);
   const edgeIdByDirectedPair = useMemo(() => {
     const pairs = new Map<string, string>();
@@ -215,10 +220,10 @@ function WorkflowCanvasInner({
   }, []);
 
   useEffect(() => {
-    // The provider spans the inspector and survives graph switches, so each
-    // keyed canvas explicitly restores the imported React Flow snapshot once.
-    void setViewport(initialViewportRef.current);
-  }, [setViewport]);
+    // Version preview replaces the displayed graph without remounting the
+    // history popover, so the viewport follows the selected graph directly.
+    void setViewport(initialViewport);
+  }, [initialViewport, setViewport]);
 
   /** Updates candidate state only when the actual card changes. */
   function commitConnectionCandidate(candidateNodeId: string | null): void {
@@ -430,10 +435,13 @@ function WorkflowCanvasInner({
             proOptions={{ hideAttribution: true }}
             nodesFocusable
             edgesFocusable
-            edgesReconnectable
+            nodesDraggable={!readOnly}
+            nodesConnectable={!readOnly}
+            elementsSelectable={!readOnly}
+            edgesReconnectable={!readOnly}
             reconnectRadius={28}
             connectionRadius={24}
-            deleteKeyCode={["Backspace", "Delete"]}
+            deleteKeyCode={readOnly ? [] : ["Backspace", "Delete"]}
             multiSelectionKeyCode={null}
             snapGrid={WORKFLOW_SNAP_GRID}
             snapToGrid
@@ -491,18 +499,26 @@ function WorkflowCanvasInner({
           onExpandLibrary={onExpandLibrary}
           onExpandInspector={onExpandInspector}
         />
-      </div>
-
-      <div
-        data-workflow-controls
-        className="absolute bottom-3 left-1/2 z-30 w-fit max-w-[calc(100%_-_12rem)] -translate-x-1/2"
-      >
-        <WorkflowNodeCatalog
-          capabilities={capabilities}
-          onAdd={addNodeAtViewportCenter}
-          onDrop={dropNodeAtClientPosition}
+        <WorkflowVersionHistory
+          versions={versionHistory}
+          previewedVersion={previewedVersion}
+          onPreviewVersion={onPreviewVersion}
+          onRestoreVersion={onRestoreVersion}
         />
       </div>
+
+      {!readOnly && (
+        <div
+          data-workflow-controls
+          className="absolute bottom-3 left-1/2 z-30 w-fit max-w-[calc(100%_-_12rem)] -translate-x-1/2"
+        >
+          <WorkflowNodeCatalog
+            capabilities={capabilities}
+            onAdd={addNodeAtViewportCenter}
+            onDrop={dropNodeAtClientPosition}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import type {
   XYPosition,
 } from "@xyflow/react";
 import type {
+  MockWorkflowVersion,
   WorkflowCapabilities,
   WorkflowNodeData,
   WorkflowNodeKind,
@@ -30,4 +31,9 @@ export interface WorkflowCanvasProps {
   inspectorAvailable: boolean;
   onExpandLibrary: () => void;
   onExpandInspector: () => void;
+  versionHistory: MockWorkflowVersion[];
+  previewedVersion: MockWorkflowVersion | null;
+  onPreviewVersion: (version: MockWorkflowVersion | null) => void;
+  onRestoreVersion: (version: MockWorkflowVersion) => void;
+  readOnly: boolean;
 }

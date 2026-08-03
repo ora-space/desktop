@@ -25,6 +25,10 @@ The UI captures graphs with React Flow's `toObject()` at commit boundaries.
 Workflow metadata is added beside that native snapshot without translating its
 nodes, edges, or viewport.
 
+`createMockWorkflowVersions` provides immutable published graph snapshots for
+the frontend-only version-history UI. Previewing one never mutates the draft;
+the UI copies its graph into the in-memory draft only when the user restores it.
+
 `createMockWorkflowNode` owns demo node-data defaults so UI components only
 provide interaction-derived `XYPosition` values and localized display text.
 `createMockWorkflowCapabilities` supplies the model, Role, Skill, and tool

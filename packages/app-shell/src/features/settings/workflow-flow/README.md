@@ -40,6 +40,8 @@ React Flow–based canvas for the session-only settings workflow demo.
 - Workflow export captures that same live `toObject()` snapshot before handing
   the pretty-printed JSON to the host save flow.
 - Catalog drops only commit inside canvas bounds and snap to the visible grid.
+- Published mock versions open in a read-only canvas preview; restoring is the
+  only interaction that copies a selected graph back into the active draft.
 
 ## Interactions
 

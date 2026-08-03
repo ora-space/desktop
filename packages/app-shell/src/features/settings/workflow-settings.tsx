@@ -30,9 +30,11 @@ import {
   createMockWorkflowCapabilities,
   createDemoWorkflow,
   createMockWorkflowNode,
+  createMockWorkflowVersions,
   createMockWorkflows,
   parseDemoWorkflow,
   type DemoWorkflow,
+  type MockWorkflowVersion,
   type WorkflowCapabilities,
   type WorkflowAgentModel,
   type WorkflowNodeData,
@@ -136,7 +138,9 @@ function WorkflowSettingsContent({
   const [workflows, setWorkflows] = useState<DemoWorkflow[]>(() =>
     createMockWorkflows(locale),
   );
+  const [versionHistory] = useState(() => createMockWorkflowVersions(createMockWorkflows(locale)));
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>("code-review");
+  const [previewedVersion, setPreviewedVersion] = useState<MockWorkflowVersion | null>(null);
   const [managerError, setManagerError] = useState<string | null>(null);
   const editorLayoutRef = useRef<HTMLDivElement>(null);
   const libraryPanelRef = useRef<ResizablePanelHandle | null>(null);
@@ -193,6 +197,12 @@ function WorkflowSettingsContent({
     () => workflows.find((candidate) => candidate.id === selectedWorkflowId) ?? null,
     [selectedWorkflowId, workflows],
   );
+  const displayedWorkflow = useMemo(
+    () => previewedVersion === null || workflow === null
+      ? workflow
+      : { ...workflow, ...previewedVersion.graph },
+    [previewedVersion, workflow],
+  );
   useEffect(() => {
     if (
       workflows.length > 0
@@ -203,8 +213,10 @@ function WorkflowSettingsContent({
   }, [selectedWorkflowId, workflows]);
 
   const selectedNode = useMemo(
-    () => workflow?.nodes.find((node) => node.selected === true) ?? null,
-    [workflow],
+    () => previewedVersion === null
+      ? workflow?.nodes.find((node) => node.selected === true) ?? null
+      : null,
+    [previewedVersion, workflow],
   );
   const inspectorAvailable = selectedNode !== null;
 
@@ -342,7 +354,7 @@ function WorkflowSettingsContent({
 
   /** Commits the mounted graph through React Flow's database-ready snapshot boundary. */
   function commitCurrentWorkflowSnapshot(): DemoWorkflow | null {
-    if (workflow === null) {
+    if (workflow === null || previewedVersion !== null) {
       return null;
     }
     const snapshot = { ...workflow, ...toObject() };
@@ -355,6 +367,7 @@ function WorkflowSettingsContent({
   /** Switches the active graph while preserving its React Flow snapshot. */
   function selectWorkflow(workflowId: string): void {
     commitCurrentWorkflowSnapshot();
+    setPreviewedVersion(null);
     setSelectedWorkflowId(workflowId);
     setManagerError(null);
   }
@@ -421,6 +434,27 @@ function WorkflowSettingsContent({
     } catch {
       setManagerError(t("settings.workflow.exportError"));
     }
+  }
+
+  /** Opens a published graph in a read-only preview without mutating the editable draft. */
+  function previewWorkflowVersion(version: MockWorkflowVersion | null): void {
+    commitCurrentWorkflowSnapshot();
+    setPreviewedVersion(version);
+  }
+
+  /** Restores the selected immutable graph by copying it into the current in-memory draft. */
+  function restoreWorkflowVersion(version: MockWorkflowVersion): void {
+    if (workflow === null) {
+      return;
+    }
+    const restoredGraph = structuredClone(version.graph);
+    updateWorkflow((current) => ({
+      ...current,
+      ...restoredGraph,
+      nodes: restoredGraph.nodes.map((node) => ({ ...node, selected: false })),
+    }));
+    setPreviewedVersion(null);
+    animateInspectorTo(0);
   }
 
   /** Adds a catalog node at a canvas-provided position and selects it for immediate editing. */
@@ -520,6 +554,7 @@ function WorkflowSettingsContent({
               <div className="flex items-center gap-2">
                 <Input
                   value={workflow.name}
+                  disabled={previewedVersion !== null}
                   onChange={(event) =>
                     updateWorkflow((current) => ({ ...current, name: event.target.value }))
                   }
@@ -618,7 +653,7 @@ function WorkflowSettingsContent({
             }}
           />
           <ResizablePanel id="workflow-canvas" minSize={MIN_WORKFLOW_CANVAS_WIDTH}>
-            {workflow === null ? (
+            {displayedWorkflow === null ? (
               <WorkflowEmpty
                 onCreate={() =>
                   createWorkflow(
@@ -628,11 +663,11 @@ function WorkflowSettingsContent({
               />
             ) : (
               <WorkflowCanvas
-                key={workflow.id}
+                key={displayedWorkflow.id}
                 capabilities={capabilities}
-                nodes={workflow.nodes}
-                edges={workflow.edges}
-                initialViewport={workflow.viewport}
+                nodes={displayedWorkflow.nodes}
+                edges={displayedWorkflow.edges}
+                initialViewport={displayedWorkflow.viewport}
                 onNodesChange={changeNodes}
                 onEdgesChange={changeEdges}
                 onAddNode={addNode}
@@ -643,6 +678,11 @@ function WorkflowSettingsContent({
                 inspectorAvailable={inspectorAvailable}
                 onExpandLibrary={expandLibrary}
                 onExpandInspector={expandInspector}
+                versionHistory={versionHistory[displayedWorkflow.id] ?? []}
+                previewedVersion={previewedVersion}
+                onPreviewVersion={previewWorkflowVersion}
+                onRestoreVersion={restoreWorkflowVersion}
+                readOnly={previewedVersion !== null}
               />
             )}
           </ResizablePanel>

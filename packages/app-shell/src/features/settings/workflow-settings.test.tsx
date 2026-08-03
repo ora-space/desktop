@@ -79,6 +79,28 @@ describe("WorkflowSettings", () => {
     expect(screen.queryByRole("button", { name: "测试运行" })).not.toBeInTheDocument();
   });
 
+  it("previews and restores a mock published workflow version", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    await screen.findByLabelText("工作流画布");
+    await user.click(screen.getByLabelText("版本历史"));
+    expect(screen.getByText("当前草稿")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", {
+      name: "2026-08-01 09:30 已发布版本",
+    }));
+    expect(screen.getByRole("button", { name: "恢复到此版本" })).toBeInTheDocument();
+    expect(screen.getByLabelText("工作流名称")).toBeDisabled();
+    expect(screen.queryByLabelText("输出节点: 输出报告")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "恢复到此版本" }));
+    await waitFor(() => {
+      expect(screen.queryByLabelText("输出节点: 输出报告")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("工作流名称")).toBeEnabled();
+    });
+  });
+
   it("zooms around the pointer with the mouse wheel", async () => {
     renderSettings();
     await screen.findByLabelText("工作流画布");
