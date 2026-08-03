@@ -67,7 +67,7 @@ fn preserves_the_public_logging_api_surface() {
 #[test]
 fn filters_events_at_warn_level() {
     let stdout = SharedBuffer::default();
-    let (dispatch, _guard) = build_dispatch(
+    let (dispatch, guard) = build_dispatch(
         &LoggingConfig::new(LogLevel::Warn, LogOutput::Stdout, chrono_tz::UTC),
         stdout.make_writer(),
     )
@@ -78,6 +78,8 @@ fn filters_events_at_warn_level() {
         tracing::warn!(message = "kept warn");
         tracing::error!(message = "kept error");
     });
+    drop(dispatch);
+    drop(guard);
 
     let events = stdout.json_lines();
 
@@ -101,7 +103,7 @@ fn formats_json_events_with_context_and_error_objects() {
         RotationPolicy::Daily,
         NonZeroUsize::new(3).unwrap(),
     );
-    let (dispatch, _guard) = build_dispatch(
+    let (dispatch, guard) = build_dispatch(
         &LoggingConfig::new(
             LogLevel::Info,
             LogOutput::StdoutAndFile(file_config),
@@ -122,6 +124,8 @@ fn formats_json_events_with_context_and_error_objects() {
         );
         drop(entered);
     });
+    drop(dispatch);
+    drop(guard);
 
     let stdout_events = stdout.json_lines();
     let stdout_event = &stdout_events[0];
@@ -173,7 +177,7 @@ fn formats_json_events_with_context_and_error_objects() {
 #[test]
 fn emits_method_field_from_wrapper_macros() {
     let stdout = SharedBuffer::default();
-    let (dispatch, _guard) = build_dispatch(
+    let (dispatch, guard) = build_dispatch(
         &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
         stdout.make_writer(),
     )
@@ -182,6 +186,8 @@ fn emits_method_field_from_wrapper_macros() {
     with_default(&dispatch, || {
         crate::ora_info!(message = "macro event");
     });
+    drop(dispatch);
+    drop(guard);
 
     let event = &stdout.json_lines()[0];
 
@@ -196,7 +202,7 @@ fn emits_method_field_from_wrapper_macros() {
 #[test]
 fn emits_helper_api_correlation_fields_consistently() {
     let stdout = SharedBuffer::default();
-    let (dispatch, _guard) = build_dispatch(
+    let (dispatch, guard) = build_dispatch(
         &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
         stdout.make_writer(),
     )
@@ -208,6 +214,8 @@ fn emits_helper_api_correlation_fields_consistently() {
         tracing::info!(message = "bootstrapped");
         drop(entered);
     });
+    drop(dispatch);
+    drop(guard);
 
     let event = &stdout.json_lines()[0];
     assert_eq!(event["span"], Value::String("bootstrap".to_string()));
@@ -229,7 +237,9 @@ fn selects_stdout_only_sink_behavior() {
         tracing::info!(message = "stdout only");
     });
 
-    assert_eq!(guard.has_file_writer(), false);
+    drop(dispatch);
+    assert_eq!(guard.has_worker_guard(), true);
+    drop(guard);
     assert_eq!(stdout.json_lines().len(), 1);
 }
 
@@ -469,6 +479,20 @@ impl std::io::Write for SharedBufferHandle {
     }
 
     /// Satisfies the writer contract without extra work because the buffer is purely in memory.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Appends formatted log bytes directly into the shared buffer for non-blocking sink tests.
+impl std::io::Write for SharedBufferWriter {
+    /// Appends one formatted chunk to the shared in-memory capture buffer.
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.bytes.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    /// Completes the in-memory write contract without additional synchronization.
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
