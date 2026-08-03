@@ -38,3 +38,4 @@ tracing = "0.1"
 
 [dev-dependencies]
 pretty_assertions = "1"
+tauri = { version = "2.10.3", features = ["test"] }

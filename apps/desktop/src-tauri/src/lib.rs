@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod error;
 mod spec_commands;
+mod skill_marketplace;
 mod state;
 mod workspace_files;
 
@@ -92,6 +93,7 @@ pub fn run() {
             commands::list_skills,
             commands::update_skill,
             commands::delete_skill,
+            skill_marketplace::open_skill_marketplace,
             // =============================================================================
             // agent
             // =============================================================================
