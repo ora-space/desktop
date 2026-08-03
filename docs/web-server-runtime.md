@@ -22,6 +22,7 @@ Every other runtime path is derived from it — there is no separate variable fo
 
 - SQLite database: `<ORA_DATA_DIR>/ora.sqlite3`
 - Worktree creation root: `<ORA_DATA_DIR>/worktrees`
+- Imported skill folders: `<ORA_DATA_DIR>/atoms/skills`
 - Log file: `<ORA_DATA_DIR>/logs/ora.log`
 
 Startup asks `ora-backend` to create the required directories, bootstrap the database, apply the active migration catalog, and construct the shared composition before the runtime is marked ready. A SQLite database that cannot be opened, migrated, or pooled fails startup with a typed bootstrap error rather than serving requests from a partially initialized runtime. The server retains direct composition only for the Web-only project work context and filesystem services.
@@ -108,6 +109,7 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 - `GET /api/skills/{skillId}`
 - `PUT /api/skills/{skillId}`
 - `DELETE /api/skills/{skillId}`
+- `POST /api/skills/import`
 
 ### agent
 
@@ -141,6 +143,18 @@ Prompt requests carry an ordered ACP content-block list and may combine text, im
 
 Unary requests and streams receive a server-generated canonical request id before entering business logic. Client-provided `X-Request-Id` values are ignored. Every Web response publishes the canonical id through `X-Request-Id`, CORS exposes that header, and a failure body or error frame carries the same id in its direct `{ code, params, requestId }` payload. A stream keeps one id from creation through normal completion, failure, disconnect, or cancellation.
 
+### Skill folder import
+
+`POST /api/skills/import` uploads a local skill folder as one `multipart/form-data` request. Each file part carries its skill-root-relative path as the part file name. The request body is capped at 50 MB: oversized uploads return the typed `413` `skill_upload_too_large` error, while uploads over 1000 files return `422`.
+
+The import is atomic across the filesystem and the database:
+
+- Files stream into `<ORA_DATA_DIR>/atoms/skills/<uuid>.tmp`, where `<uuid>` is the skill's future identifier.
+- Root `SKILL.md` front matter supplies the persisted `name` and `description`; the committed directory uses the validated name.
+- The SQLite row insert, staging-directory promotion, and transaction commit execute as one unit of work. A primary failure keeps its full Rust source chain for the correlated completion log, while any compensating cleanup failure is logged separately without replacing that primary error.
+- Empty uploads, excessive file counts, unsafe or duplicate relative paths, and invalid manifests return typed `422` contract errors. An existing committed directory returns the typed `409` `skill_folder_conflict` error.
+- Deleting a skill also removes its committed directory. Startup reconciliation removes leftover staging directories and committed directories with no visible database row before the backend becomes ready.
+
 ### Project work contexts
 
 - `open` creates or switches one `(surface, window_id)` context into a project and refreshes its lease immediately.
@@ -168,6 +182,7 @@ Error mapping is centralized so application outcomes become stable HTTP response
 - A repository or bootstrap failure returns an HTTP server-error status with a structured error payload rather than raw infrastructure error text.
 - Task-create failures caused by linked-worktree provisioning or compensating cleanup return a structured server error identifying task creation as failed, without exposing Git command output or filesystem-specific formatting.
 - An occupied project returns `409`.
+- Skill upload body limits return `413`; file-set and manifest validation return `422`; an existing committed skill directory returns `409`. All use the same typed contract body and canonical request id as other failures.
 
 Shared backend failures project to the same typed `{ code, params, requestId }` payload used by Desktop; there is no public message or outer error envelope. HTTP status derives from the backend error classification.
 

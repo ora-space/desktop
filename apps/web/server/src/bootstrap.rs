@@ -134,6 +134,9 @@ fn web_backend_bootstrap_error(error: BackendBootstrapError) -> WebBootstrapErro
             WebBootstrapError::DataDirectoryCreate(source)
         }
         BackendBootstrapError::Database(source) => WebBootstrapError::DatabaseBootstrap(source),
+        BackendBootstrapError::SkillStorage(source) => {
+            WebBootstrapError::SkillStorageReconcile { source }
+        }
         BackendBootstrapError::AgentRuntime(source) => WebBootstrapError::ProjectBootstrap {
             source: Box::new(source),
         },
