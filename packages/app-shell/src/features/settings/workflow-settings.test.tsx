@@ -425,6 +425,30 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("searches Agent models and roles before updating their selections", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
+    await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
+
+    await user.click(screen.getByLabelText("Agent 模型"));
+    const modelSearch = screen.getByLabelText("搜索可用 Agent 模型");
+    await user.type(modelSearch, "big-pickle");
+    await user.click(await screen.findByRole("option", {
+      name: "OpenCode · opencode/big-pickle",
+    }));
+    expect(screen.getByLabelText("Agent 模型")).toHaveTextContent(
+      "OpenCode · opencode/big-pickle",
+    );
+
+    await user.click(screen.getByLabelText("角色"));
+    const roleSearch = screen.getByLabelText("搜索可用角色");
+    await user.type(roleSearch, "测试");
+    await user.click(screen.getByRole("option", { name: "测试员" }));
+    expect(screen.getByLabelText("角色")).toHaveTextContent("测试员");
+  });
+
   it("uses the backend catalog for a newly added Agent model", async () => {
     const user = userEvent.setup();
     renderSettings();

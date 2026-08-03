@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconLayoutSidebarRightCollapse,
+  IconChevronDown,
   IconPlus,
   IconSettings,
   IconTrash,
@@ -264,6 +265,8 @@ function AgentConfigurationFields({
   onChange: (config: WorkflowAgentConfig) => void;
 }) {
   const { t } = useTranslation();
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const configuredModel = capabilities.agentModels.find(
     (model) => model.agentCli === config.executor.agentCli
@@ -287,21 +290,6 @@ function AgentConfigurationFields({
   const selectableRoles = configuredRole === undefined
     ? [selectedRole, ...capabilities.roles]
     : capabilities.roles;
-
-  /** Replaces the selected model only after resolving a structured capability reference. */
-  function selectModel(value: string | null): void {
-    if (value === null) {
-      return;
-    }
-    const model = selectableModels.find((candidate) => candidate.label === value);
-    if (model === undefined) {
-      return;
-    }
-    onChange({
-      ...config,
-      executor: { agentCli: model.agentCli, modelId: model.modelId },
-    });
-  }
 
   /** Adds a new Skill in its enabled state, preserving configuration order. */
   function addSkill(skillId: string): void {
@@ -332,50 +320,100 @@ function AgentConfigurationFields({
   return (
     <>
       <InspectorField label={t("settings.workflow.field.agentModel")} htmlFor="workflow-agent-model">
-        <Select value={selectedModel.label} onValueChange={selectModel}>
-          <SelectTrigger
-            id="workflow-agent-model"
-            className="w-full"
-            disabled={modelsLoading || capabilities.agentModels.length === 0}
+        <Popover open={modelPickerOpen} onOpenChange={setModelPickerOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                id="workflow-agent-model"
+                type="button"
+                variant="outline"
+                className="h-9 w-full justify-between px-3 font-normal"
+                disabled={modelsLoading || capabilities.agentModels.length === 0}
+                aria-label={t("settings.workflow.field.agentModel")}
+              />
+            }
           >
-            <SelectValue placeholder={modelsLoading
-              ? t("chat.modelSelector.loading")
-              : t("chat.modelSelector.empty")}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {selectableModels.map((model) => (
-              <SelectItem
-                key={model.label}
-                value={model.label}
-              >
-                {model.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <span className="min-w-0 truncate">{selectedModel.label}</span>
+            <IconChevronDown className="size-3.5 shrink-0 opacity-50" />
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-80 p-0">
+            <Command>
+              <CommandInput
+                aria-label={t("settings.workflow.searchAvailableAgentModels")}
+                placeholder={t("settings.workflow.searchAvailableAgentModels")}
+                className="text-sm"
+              />
+              <CommandList className="max-h-60">
+                <CommandEmpty className="py-6 text-center text-xs">
+                  {t("settings.workflow.noAvailableAgentModels")}
+                </CommandEmpty>
+                <CommandGroup>
+                  {selectableModels.map((model) => (
+                    <CommandItem
+                      key={`${model.agentCli}:${model.modelId}`}
+                      value={model.label}
+                      onSelect={() => {
+                        onChange({
+                          ...config,
+                          executor: { agentCli: model.agentCli, modelId: model.modelId },
+                        });
+                        setModelPickerOpen(false);
+                      }}
+                    >
+                      {model.label}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       </InspectorField>
       <InspectorField label={t("settings.workflow.field.role")} htmlFor="workflow-agent-role">
-        <Select
-          value={selectedRole.label}
-          onValueChange={(label) => {
-            if (label !== null) {
-              const role = selectableRoles.find((candidate) => candidate.label === label);
-              if (role !== undefined) {
-                onChange({ ...config, roleId: role.value });
-              }
+        <Popover open={rolePickerOpen} onOpenChange={setRolePickerOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                id="workflow-agent-role"
+                type="button"
+                variant="outline"
+                className="h-9 w-full justify-between px-3 font-normal"
+                aria-label={t("settings.workflow.field.role")}
+              />
             }
-          }}
-        >
-          <SelectTrigger id="workflow-agent-role" className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {selectableRoles.map((role) => (
-              <SelectItem key={role.value} value={role.label}>{role.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          >
+            <span className="min-w-0 truncate">{selectedRole.label}</span>
+            <IconChevronDown className="size-3.5 shrink-0 opacity-50" />
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-80 p-0">
+            <Command>
+              <CommandInput
+                aria-label={t("settings.workflow.searchAvailableRoles")}
+                placeholder={t("settings.workflow.searchAvailableRoles")}
+                className="text-sm"
+              />
+              <CommandList className="max-h-60">
+                <CommandEmpty className="py-6 text-center text-xs">
+                  {t("settings.workflow.noAvailableRoles")}
+                </CommandEmpty>
+                <CommandGroup>
+                  {selectableRoles.map((role) => (
+                    <CommandItem
+                      key={role.value}
+                      value={role.label}
+                      onSelect={() => {
+                        onChange({ ...config, roleId: role.value });
+                        setRolePickerOpen(false);
+                      }}
+                    >
+                      {role.label}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       </InspectorField>
       <fieldset className="space-y-2">
         <div className="flex items-center justify-between">
