@@ -5,7 +5,7 @@ Ora Rust services initialize shared structured logging through `ora-logging`.
 ## Ownership boundary
 
 - `ora-logging` owns the process-wide subscriber setup, JSON event formatting, sink selection, file rotation, retention cleanup, and the immutable process timezone.
-- Runtime composition roots own reading configuration, calling `ora_logging::init_logging` with an explicit `LoggingConfig`, and retaining the returned `LoggingGuard` for the rest of the process lifetime. The guard keeps the non-blocking file writer alive; dropping it early loses buffered output.
+- Runtime composition roots own reading configuration, calling `ora_logging::init_logging` with an explicit `LoggingConfig`, and retaining the returned `LoggingGuard` for the rest of the process lifetime. The guard keeps the non-blocking file writer alive; dropping it early loses buffered output. File sinks intentionally stay lossy so a full writer channel drops lines instead of blocking request or UI threads; `LoggingGuard::dropped_lines` exposes the discarded count, and dropping the guard prints a one-line stderr summary when any lines were lost.
 - Runtime request seams and infrastructure crates emit structured `tracing` events but never configure sinks or read environment variables. Application handlers and repository adapters do not emit generic completion or propagation-only failure events.
 
 Initialization is process-wide and the timezone can be set only once, so it must happen before any `ora_logging::clock` access. If a file sink cannot be created or prepared, initialization fails with a typed `LoggingInitError` instead of silently degrading to another sink.

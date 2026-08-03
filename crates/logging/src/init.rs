@@ -58,7 +58,10 @@ where
 
             Ok((
                 Dispatch::new(subscriber),
-                LoggingGuard::new(vec![prepared_output.guard]),
+                LoggingGuard::new(
+                    vec![prepared_output.guard],
+                    vec![prepared_output.drop_counter],
+                ),
             ))
         }
         LogOutput::StdoutAndFile(file_config) => {
@@ -81,7 +84,10 @@ where
 
             Ok((
                 Dispatch::new(subscriber),
-                LoggingGuard::new(vec![prepared_output.guard]),
+                LoggingGuard::new(
+                    vec![prepared_output.guard],
+                    vec![prepared_output.drop_counter],
+                ),
             ))
         }
     }
