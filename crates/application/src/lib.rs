@@ -36,8 +36,8 @@ pub use skill::{
 pub use task::{
     CreateTaskHandler, CreateTaskWorktreeRequest, CreateTaskWorktreeResponse,
     DeleteTaskWorktreeRequest, GetTaskHandler, GitTaskWorktreeProvisioner, ListTasksHandler,
-    TaskIdGenerator, TaskRepository, TaskWorktreeDeletionMode,
-    TaskWorktreeProvisioner, TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator,
+    TaskIdGenerator, TaskRepository, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
+    TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator,
 };
 pub use task_diff::{
     CommitTaskChangesHandler, CommitTaskGitRequest, CreateTaskDiffCommentHandler,

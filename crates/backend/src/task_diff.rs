@@ -1,5 +1,5 @@
 use crate::clock::SystemClock;
-use crate::error::{BackendError, BackendErrorKind};
+use crate::error::{BackendError, ErrorClassification};
 use crate::task::resolve_task_cwd;
 use ora_application::{
     CommitTaskChangesHandler, CreateTaskDiffCommentHandler, GitTaskDiffReader, GitTaskGitWriter,
@@ -15,6 +15,7 @@ use ora_contracts::{
     PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse,
     SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse, TaskDiffScope,
 };
+use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{
     RepositoryPool, SqliteProjectRepository, SqliteTaskDiffCommentRepository, SqliteTaskRepository,
     SqliteWorktreeRepository,
@@ -172,12 +173,12 @@ impl TaskDiffApi {
     fn load_task(&self, task_id: &TaskId) -> Result<Task, BackendError> {
         SqliteTaskRepository::new(self.pool.clone())
             .find_task(task_id)
-            .map_err(|_| task_diff_internal())?
+            .map_err(task_diff_internal)?
             .ok_or_else(|| {
                 BackendError::new(
-                    BackendErrorKind::NotFound,
-                    "task_not_found",
-                    format!("task not found: {task_id}"),
+                    ErrorClassification::NotFound,
+                    PublicError::TaskNotFound(EmptyErrorParams {}),
+                    "task not found",
                 )
             })
     }
@@ -186,12 +187,12 @@ impl TaskDiffApi {
     fn load_project(&self, task: &Task) -> Result<Project, BackendError> {
         SqliteProjectRepository::new(self.pool.clone())
             .find_project(&task.project_id)
-            .map_err(|_| task_diff_internal())?
+            .map_err(task_diff_internal)?
             .ok_or_else(|| {
                 BackendError::new(
-                    BackendErrorKind::NotFound,
-                    "project_not_found",
-                    format!("project not found: {}", task.project_id),
+                    ErrorClassification::NotFound,
+                    PublicError::ProjectNotFound(EmptyErrorParams {}),
+                    "project not found",
                 )
             })
     }
@@ -203,18 +204,18 @@ impl TaskDiffApi {
         };
         let worktree = SqliteWorktreeRepository::new(self.pool.clone())
             .find_worktree(worktree_id)
-            .map_err(|_| task_diff_internal())?
+            .map_err(task_diff_internal)?
             .ok_or_else(|| {
                 BackendError::new(
-                    BackendErrorKind::NotFound,
-                    "worktree_not_found",
-                    format!("worktree not found: {worktree_id}"),
+                    ErrorClassification::NotFound,
+                    PublicError::WorktreeNotFound(EmptyErrorParams {}),
+                    "worktree not found",
                 )
             })?;
         if worktree.task_id != task.id || worktree.activity != WorktreeActivity::Active {
             return Err(BackendError::new(
-                BackendErrorKind::Conflict,
-                "task_worktree_unavailable",
+                ErrorClassification::Conflict,
+                PublicError::TaskWorktreeUnavailable(EmptyErrorParams {}),
                 "task worktree is unavailable",
             ));
         }
@@ -225,8 +226,8 @@ impl TaskDiffApi {
             .map(Some)
             .ok_or_else(|| {
                 BackendError::new(
-                    BackendErrorKind::Conflict,
-                    "task_diff_baseline_unavailable",
+                    ErrorClassification::Conflict,
+                    PublicError::TaskDiffBaselineUnavailable(EmptyErrorParams {}),
                     "task diff baseline is unavailable",
                 )
             })
@@ -238,17 +239,20 @@ impl TaskDiffApi {
         let task = self.load_task(&task_id)?;
         if task.worktree_id.is_none() {
             return Err(BackendError::new(
-                BackendErrorKind::Conflict,
-                "task_worktree_required",
+                ErrorClassification::Conflict,
+                PublicError::TaskWorktreeUnavailable(EmptyErrorParams {}),
                 "this operation requires an isolated task worktree",
             ));
         }
         let project = self.load_project(&task)?;
         let cwd = resolve_task_cwd(&self.pool, &task_id)?;
-        let work_dir = cwd
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(task_diff_internal)?;
+        let work_dir = cwd.parent().map(Path::to_path_buf).ok_or_else(|| {
+            BackendError::new(
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "task worktree parent directory is unavailable",
+            )
+        })?;
         Ok((task, project, work_dir))
     }
 }
@@ -267,21 +271,19 @@ fn map_diff_scope(scope: TaskDiffScope) -> ReadTaskDiffScope {
 fn map_diff_reader_error(error: TaskDiffReaderError) -> BackendError {
     match error {
         TaskDiffReaderError::TooLarge { .. } => BackendError::new(
-            BackendErrorKind::Internal,
-            "task_diff_too_large",
+            ErrorClassification::PayloadTooLarge,
+            PublicError::TaskDiffTooLarge(EmptyErrorParams {}),
             "task diff exceeds the response limit",
         ),
-        TaskDiffReaderError::OperationFailed(_) => task_diff_internal(),
+        TaskDiffReaderError::OperationFailed(message) => {
+            BackendError::internal("task diff operation failed", std::io::Error::other(message))
+        }
     }
 }
 
-/// Builds the sanitized failure shared by repository and Git implementation errors.
-fn task_diff_internal() -> BackendError {
-    BackendError::new(
-        BackendErrorKind::Internal,
-        "task_diff_error",
-        "task diff operation failed",
-    )
+/// Retains repository diagnostics while exposing only the transport-neutral internal error.
+fn task_diff_internal(source: impl std::error::Error + Send + Sync + 'static) -> BackendError {
+    BackendError::internal("task diff operation failed", source)
 }
 
 #[cfg(test)]

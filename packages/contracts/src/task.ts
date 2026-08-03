@@ -72,14 +72,14 @@ export type Task = {
 export type TaskStatus = "todo" | "doing" | "done";
 
 /**
- * Selects the filesystem context used when a task starts an agent session.
- */
-export type TaskWorkspaceMode = "worktree" | "project_root";
-
-/**
  * Describes the absolute checkout root and branch the backend resolved for one task.
  */
 export type TaskWorkspace = { rootPath: string; branchName: string };
+
+/**
+ * Selects the filesystem context used when a task starts an agent session.
+ */
+export type TaskWorkspaceMode = "worktree" | "project_root";
 
 /**
  * Carries the full replacement payload for task updates in the first slice.

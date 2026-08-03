@@ -19,6 +19,11 @@ export type ContractError =
     | { "code": "resource_in_use"; "params": EmptyErrorParams }
     | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
     | { "code": "worktree_not_found"; "params": EmptyErrorParams }
+    | { "code": "task_diff_baseline_unavailable"; "params": EmptyErrorParams }
+    | { "code": "task_diff_too_large"; "params": EmptyErrorParams }
+    | { "code": "task_diff_stale"; "params": EmptyErrorParams }
+    | { "code": "task_diff_comment_not_found"; "params": EmptyErrorParams }
+    | { "code": "task_diff_comment_invalid"; "params": EmptyErrorParams }
     | { "code": "session_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_cli_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
@@ -88,6 +93,11 @@ export type PublicError =
   | { "code": "resource_in_use"; "params": EmptyErrorParams }
   | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
   | { "code": "worktree_not_found"; "params": EmptyErrorParams }
+  | { "code": "task_diff_baseline_unavailable"; "params": EmptyErrorParams }
+  | { "code": "task_diff_too_large"; "params": EmptyErrorParams }
+  | { "code": "task_diff_stale"; "params": EmptyErrorParams }
+  | { "code": "task_diff_comment_not_found"; "params": EmptyErrorParams }
+  | { "code": "task_diff_comment_invalid"; "params": EmptyErrorParams }
   | { "code": "session_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_cli_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
