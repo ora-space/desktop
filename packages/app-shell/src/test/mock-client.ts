@@ -53,10 +53,6 @@ export function createMockClient(state: MockClientState): ContractsClient {
         return { projectId: req.projectId };
       },
     },
-    projectWorkContext: {
-      open: async () => { throw new Error("projectWorkContext not implemented in mock"); },
-      renew: async () => { throw new Error("projectWorkContext not implemented in mock"); },
-    },
     task: {
       list: async () => ({ tasks: [...state.tasks] }),
       get: async (req) => ({ task: state.tasks.find((t) => t.id === req.taskId)! }),
@@ -99,7 +95,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           status: "running",
         };
         state.sessions.push(session);
-        return { session };
+        return { session, availableCommands: [] };
       },
       load: async function* () { yield { type: "completed" as const }; },
       prompt: async function* () { yield { type: "completed" as const, stopReason: "end_turn" as const }; },

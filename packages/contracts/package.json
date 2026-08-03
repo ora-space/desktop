@@ -4,7 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "generate:error-schema": "ts-to-zod src/error.ts src/error.schema.ts",
     "test": "tsc -p tsconfig.json && node --test .test-dist/tests/*.test.js"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "ts-to-zod": "^5.1.0"
   },
   "exports": {
     ".": "./src/index.ts",

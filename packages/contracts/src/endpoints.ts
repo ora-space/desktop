@@ -44,7 +44,6 @@ export type RequestByOperation = {
   updateTask: UpdateTaskRequest;
   deleteTask: DeleteTaskRequest;
   createSession: CreateSessionRequest;
-  listAgentModels: ListAgentModelsRequest;
   getSession: GetSessionRequest;
   listSessions: ListSessionsRequest;
   loadSession: LoadSessionRequest;
@@ -52,6 +51,7 @@ export type RequestByOperation = {
   respondToSessionPermission: RespondToPermissionRequest;
   stopSession: StopSessionRequest;
   deleteSession: DeleteSessionRequest;
+  listAgentModels: ListAgentModelsRequest;
   createSkill: CreateSkillRequest;
   getSkill: GetSkillRequest;
   listSkills: ListSkillsRequest;
@@ -78,7 +78,6 @@ export type ResponseByOperation = {
   updateTask: UpdateTaskResponse;
   deleteTask: DeleteTaskResponse;
   createSession: CreateSessionResponse;
-  listAgentModels: ListAgentModelsResponse;
   getSession: GetSessionResponse;
   listSessions: ListSessionsResponse;
   loadSession: LoadSessionEvent;
@@ -86,6 +85,7 @@ export type ResponseByOperation = {
   respondToSessionPermission: RespondToPermissionResponse;
   stopSession: StopSessionResponse;
   deleteSession: DeleteSessionResponse;
+  listAgentModels: ListAgentModelsResponse;
   createSkill: CreateSkillResponse;
   getSkill: GetSkillResponse;
   listSkills: ListSkillsResponse;
@@ -246,19 +246,6 @@ export const endpoints = {
     queryParams: [],
     hasJsonBody: true,
   },
-  listAgentModels: {
-    operationName: "listAgentModels",
-    namespace: "agentRuntime",
-    memberName: "listModels",
-    method: "GET",
-    pathTemplate: "/api/agent-models",
-    requestType: "ListAgentModelsRequest",
-    responseType: "ListAgentModelsResponse",
-    responseMode: "unary",
-    pathParams: [],
-    queryParams: [],
-    hasJsonBody: false,
-  },
   getSession: {
     operationName: "getSession",
     namespace: "session",
@@ -347,6 +334,19 @@ export const endpoints = {
     responseType: "DeleteSessionResponse",
     responseMode: "unary",
     pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  listAgentModels: {
+    operationName: "listAgentModels",
+    namespace: "agentRuntime",
+    memberName: "listModels",
+    method: "GET",
+    pathTemplate: "/api/agent-models",
+    requestType: "ListAgentModelsRequest",
+    responseType: "ListAgentModelsResponse",
+    responseMode: "unary",
+    pathParams: [],
     queryParams: [],
     hasJsonBody: false,
   },

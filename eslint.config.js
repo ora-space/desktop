@@ -19,4 +19,18 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    files: ['packages/app-shell/src/**/*.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "JSXExpressionContainer MemberExpression:not([computed=true])[property.name='message']",
+          message:
+            'Do not render Error.message in the UI; use localizeContractError or an approved localized validation message.',
+        },
+      ],
+    },
+  },
 ])

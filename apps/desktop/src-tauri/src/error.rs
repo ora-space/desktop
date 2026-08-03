@@ -1,5 +1,9 @@
 use crate::config::DesktopConfigError;
-use ora_backend::{BackendBootstrapError, BackendError};
+use ora_backend::{
+    BackendBootstrapError, BackendError, ErrorClassification, RequestLifecycle,
+    UuidRequestIdGenerator,
+};
+use ora_contracts::{ContractError, EmptyErrorParams, PublicError};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -16,66 +20,68 @@ pub enum DesktopBootstrapError {
     Backend(#[from] BackendBootstrapError),
 }
 
-/// Carries the stable structured error payload returned by Tauri commands.
+/// Serializes the transport-neutral contract directly across the Tauri command seam.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CommandError {
-    code: &'static str,
-    message: String,
-}
+#[serde(transparent)]
+pub struct CommandError(ContractError);
 
 impl CommandError {
-    /// Creates a command failure from stable public fields.
-    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
-        }
+    /// Reports an adapter execution failure without exposing join or runtime internals.
+    pub fn execution() -> Self {
+        Self::from_backend(BackendError::new(
+            ErrorClassification::Internal,
+            PublicError::InternalError(EmptyErrorParams {}),
+            "Desktop command execution failed",
+        ))
     }
 
-    /// Reports a blocking task join failure without exposing runtime internals.
-    pub fn execution() -> Self {
-        Self::new(
-            "command_execution_error",
-            "Desktop command execution failed",
-        )
+    /// Completes one Tauri request and projects its typed public payload.
+    pub fn from_backend(error: BackendError) -> Self {
+        let lifecycle = RequestLifecycle::start("tauri_command", &UuidRequestIdGenerator);
+        Self::from_backend_with_lifecycle(error, &lifecycle)
+    }
+
+    /// Projects a failure through a lifecycle created at the command entry seam.
+    pub fn from_backend_with_lifecycle(error: BackendError, lifecycle: &RequestLifecycle) -> Self {
+        lifecycle.complete_failure(&error);
+        Self(error.contract_error(lifecycle.request_id()))
     }
 }
 
 impl From<BackendError> for CommandError {
-    /// Preserves the shared backend error contract across the Tauri IPC boundary.
     fn from(error: BackendError) -> Self {
-        Self::new(error.code(), error.message())
+        Self::from_backend(error)
     }
 }
 
 impl From<DesktopConfigError> for CommandError {
-    /// Maps Desktop-only configuration failures into stable frontend-visible codes.
     fn from(error: DesktopConfigError) -> Self {
-        match error {
-            DesktopConfigError::WorktreeRootNotAbsolute { .. } => Self::new(
-                "worktree_root_not_absolute",
-                "worktree root must be an absolute path",
-            ),
-            DesktopConfigError::WorktreeRootNotDirectory { .. } => Self::new(
-                "worktree_root_not_directory",
-                "worktree root must be an existing directory",
-            ),
-            DesktopConfigError::Persist { .. } => Self::new(
-                "desktop_config_persist_error",
-                "failed to save Desktop configuration",
-            ),
-            DesktopConfigError::StateUnavailable => Self::new(
-                "desktop_config_state_error",
-                "Desktop configuration is unavailable",
-            ),
-            DesktopConfigError::DirectoryCreate { .. }
-            | DesktopConfigError::Read { .. }
-            | DesktopConfigError::Decode { .. }
-            | DesktopConfigError::UnsupportedVersion { .. } => Self::new(
-                "desktop_config_error",
-                "Desktop configuration is unavailable",
-            ),
-        }
+        Self::from_backend(desktop_config_backend_error(error))
     }
+}
+
+pub(crate) fn desktop_config_backend_error(error: DesktopConfigError) -> BackendError {
+    let (classification, public_error, context) = match &error {
+        DesktopConfigError::WorktreeRootNotAbsolute { .. } => (
+            ErrorClassification::InvalidRequest,
+            PublicError::WorktreeRootNotAbsolute(EmptyErrorParams {}),
+            "worktree root must be an absolute path",
+        ),
+        DesktopConfigError::WorktreeRootNotDirectory { .. } => (
+            ErrorClassification::InvalidRequest,
+            PublicError::WorktreeRootNotDirectory(EmptyErrorParams {}),
+            "worktree root must be an existing directory",
+        ),
+        DesktopConfigError::Persist { .. }
+        | DesktopConfigError::StateUnavailable
+        | DesktopConfigError::DirectoryCreate { .. }
+        | DesktopConfigError::Read { .. }
+        | DesktopConfigError::Decode { .. }
+        | DesktopConfigError::UnsupportedVersion { .. } => (
+            ErrorClassification::Internal,
+            PublicError::InternalError(EmptyErrorParams {}),
+            "Desktop configuration is unavailable",
+        ),
+    };
+    BackendError::with_source(classification, public_error, context, error)
 }

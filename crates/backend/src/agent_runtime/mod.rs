@@ -10,14 +10,18 @@ use support::*;
 
 use crate::clock::SystemClock;
 use crate::task::resolve_task_cwd;
-use crate::{BackendError, BackendErrorKind};
+use crate::{BackendError, ErrorClassification};
 use connection::{ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
+use ora_contracts::acp::content::ContentBlock;
+use ora_contracts::acp::session::SessionUpdate;
+use ora_contracts::acp::slash_command::AvailableCommand;
 use ora_contracts::{
     CreateSessionRequest, CreateSessionResponse, DeleteSessionResponse, LoadSessionEvent,
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
     RespondToPermissionResponse, StopSessionRequest, StopSessionResponse,
 };
+use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentCli, AuditFields, Session, SessionId, SessionStatus, TaskId};
 use ora_logging::ora_debug;
@@ -33,7 +37,7 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 const CANCELLATION_GRACE: Duration = Duration::from_secs(5);
 const CONTRACT_QUEUE_CAPACITY: usize = 256;
-const MAX_PROMPT_BYTES: usize = 1024 * 1024;
+const MAX_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Coordinates one serialized actor per Ora session on its selected supervised CLI connection.
 #[derive(Clone)]
@@ -64,7 +68,7 @@ pub(super) enum RuntimeCommand {
     },
     Prompt {
         operation_id: u64,
-        text: String,
+        prompt: Vec<ContentBlock>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
         accepted: oneshot::Sender<Result<(), BackendError>>,
     },
@@ -135,6 +139,7 @@ impl AgentRuntimeManager {
         let cwd = resolve_task_cwd(&self.inner.pool, &TaskId::new(request.task_id.clone()))?;
         let supervisor = self.inner.connections.for_agent(agent_cli);
         let connection = supervisor.current()?;
+        let _setup = supervisor.begin_session_setup();
         let response = timeout(
             SESSION_SETUP_TIMEOUT,
             connection.client.request::<_, NewSessionResponse>(
@@ -143,14 +148,10 @@ impl AgentRuntimeManager {
             ),
         )
         .await
-        .map_err(|_| {
-            runtime_internal(
-                "agent_start_timeout",
-                "agent CLI session creation timed out",
-            )
-        })?
+        .map_err(|source| BackendError::internal("agent CLI session creation timed out", source))?
         .map_err(map_acp_error)?;
-        let channel = supervisor.open_session_channel(response.session_id.0.as_ref())?;
+        let mut channel = supervisor.open_session_channel(response.session_id.0.as_ref())?;
+        let available_commands = collect_setup_commands(&mut channel).await;
         let now = self.inner.clock.now_timestamp_millis();
         let session = Session::new(
             UuidSessionIdGenerator::new().generate_session_id(),
@@ -162,11 +163,8 @@ impl AgentRuntimeManager {
         );
         SqliteSessionRepository::new(self.inner.pool.clone())
             .create_session(session.clone())
-            .map_err(|_| {
-                runtime_internal(
-                    "session_repository_error",
-                    "failed to persist agent CLI session",
-                )
+            .map_err(|source| {
+                BackendError::internal("failed to persist agent CLI session", source)
             })?;
         ora_debug!(
             session_id = %session.id,
@@ -176,6 +174,7 @@ impl AgentRuntimeManager {
         self.insert_actor(session.clone(), cwd, supervisor, Some(channel))?;
         Ok(CreateSessionResponse {
             session: contract_session(session),
+            available_commands,
         })
     }
 
@@ -197,8 +196,8 @@ impl AgentRuntimeManager {
                 events: events_sender,
                 accepted: accepted_sender,
             })
-            .map_err(|_| runtime_unavailable())?;
-        accepted.await.map_err(|_| runtime_unavailable())??;
+            .map_err(runtime_unavailable_with)?;
+        accepted.await.map_err(runtime_unavailable_with)??;
         Ok(SessionEventStream::new(
             events,
             handle.commands,
@@ -206,24 +205,31 @@ impl AgentRuntimeManager {
         ))
     }
 
-    /// Starts one text-only prompt while preserving cross-session concurrency.
+    /// Starts one structured ACP prompt stream after validating the public payload limit.
     pub(crate) async fn prompt_session(
         &self,
         request: PromptSessionRequest,
     ) -> Result<SessionEventStream<PromptSessionEvent>, BackendError> {
-        let text = request.text.trim().to_string();
-        if text.is_empty() {
+        let prompt = request.prompt;
+        if prompt.is_empty()
+            || prompt.iter().all(|content| {
+                matches!(content, ContentBlock::Text(text) if text.text.trim().is_empty())
+            })
+        {
             return Err(BackendError::new(
-                BackendErrorKind::BadRequest,
-                "prompt_empty",
-                "prompt text must not be empty",
+                ErrorClassification::InvalidRequest,
+                PublicError::PromptEmpty(EmptyErrorParams {}),
+                "prompt must contain text or media",
             ));
         }
-        if text.len() > MAX_PROMPT_BYTES {
+        let prompt_bytes = serde_json::to_vec(&prompt)
+            .map_err(|_| runtime_internal("prompt_encoding_failed", "failed to encode prompt"))?
+            .len();
+        if prompt_bytes > MAX_PROMPT_BYTES {
             return Err(BackendError::new(
-                BackendErrorKind::BadRequest,
-                "prompt_too_large",
-                "prompt text exceeds 1 MiB",
+                ErrorClassification::InvalidRequest,
+                PublicError::PromptTooLarge(EmptyErrorParams {}),
+                "prompt exceeds 16 MiB",
             ));
         }
         let _lifecycle = self.inner.lifecycle.lock().await;
@@ -239,12 +245,12 @@ impl AgentRuntimeManager {
             .commands
             .send(RuntimeCommand::Prompt {
                 operation_id,
-                text,
+                prompt,
                 events: events_sender,
                 accepted: accepted_sender,
             })
-            .map_err(|_| runtime_unavailable())?;
-        accepted.await.map_err(|_| runtime_unavailable())??;
+            .map_err(runtime_unavailable_with)?;
+        accepted.await.map_err(runtime_unavailable_with)??;
         Ok(SessionEventStream::new(
             events,
             handle.commands,
@@ -252,7 +258,7 @@ impl AgentRuntimeManager {
         ))
     }
 
-    /// Routes one opaque permission response to the actor that owns the logical session.
+    /// Routes one opaque permission response to the actor that registered the request.
     pub(crate) async fn respond_to_permission(
         &self,
         request: RespondToPermissionRequest,
@@ -267,8 +273,8 @@ impl AgentRuntimeManager {
                 request,
                 response: response_sender,
             })
-            .map_err(|_| runtime_unavailable())?;
-        response.await.map_err(|_| runtime_unavailable())?
+            .map_err(runtime_unavailable_with)?;
+        response.await.map_err(runtime_unavailable_with)?
     }
 
     /// Stops one logical session without terminating its shared CLI process.
@@ -298,9 +304,7 @@ impl AgentRuntimeManager {
         }
         let deleted = SqliteSessionRepository::new(self.inner.pool.clone())
             .soft_delete_session(&session.id, self.inner.clock.now_timestamp_millis())
-            .map_err(|_| {
-                runtime_internal("session_repository_error", "failed to delete agent session")
-            })?;
+            .map_err(|source| BackendError::internal("failed to delete agent session", source))?;
         if !deleted {
             return Err(session_not_found(session_id));
         }
@@ -321,15 +325,15 @@ impl AgentRuntimeManager {
             .send(RuntimeCommand::Stop {
                 response: response_sender,
             })
-            .map_err(|_| runtime_unavailable())?;
-        response.await.map_err(|_| runtime_unavailable())?
+            .map_err(runtime_unavailable_with)?;
+        response.await.map_err(runtime_unavailable_with)?
     }
 
     /// Loads one non-deleted Ora session from durable storage.
     fn find_session(&self, session_id: &str) -> Result<Session, BackendError> {
         SqliteSessionRepository::new(self.inner.pool.clone())
             .find_session(&SessionId::new(session_id))
-            .map_err(|_| runtime_internal("session_repository_error", "failed to load session"))?
+            .map_err(|source| BackendError::internal("failed to load session", source))?
             .ok_or_else(|| session_not_found(session_id))
     }
 
@@ -352,7 +356,7 @@ impl AgentRuntimeManager {
             .actors
             .read()
             .map(|actors| actors.get(session_id).cloned())
-            .map_err(|_| runtime_unavailable())
+            .map_err(|_poisoned| runtime_unavailable())
     }
 
     /// Installs exactly one actor for an Ora session under the lifecycle lock.
@@ -390,7 +394,10 @@ impl AgentRuntimeManager {
         &self,
     ) -> Result<std::sync::RwLockWriteGuard<'_, HashMap<SessionId, RuntimeActorHandle>>, BackendError>
     {
-        self.inner.actors.write().map_err(|_| runtime_unavailable())
+        self.inner
+            .actors
+            .write()
+            .map_err(|_poisoned| runtime_unavailable())
     }
 }
 
@@ -402,17 +409,36 @@ fn reconcile_running_sessions(
     let repository = SqliteSessionRepository::new(pool.clone());
     for session in repository
         .list_sessions()
-        .map_err(|_| runtime_internal("session_repository_error", "failed to reconcile sessions"))?
+        .map_err(|source| BackendError::internal("failed to reconcile sessions", source))?
     {
         if session.status == SessionStatus::Running {
             repository
                 .update_session(
                     session.with_status(SessionStatus::Stopped, clock.now_timestamp_millis()),
                 )
-                .map_err(|_| {
-                    runtime_internal("session_repository_error", "failed to reconcile sessions")
-                })?;
+                .map_err(|source| BackendError::internal("failed to reconcile sessions", source))?;
         }
     }
     Ok(())
+}
+
+/// Extracts the latest setup command catalog while preserving other updates for the first prompt.
+async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<AvailableCommand> {
+    let mut available_commands = Vec::new();
+    loop {
+        // ACP sends setup updates before the response, but the shared router runs
+        // independently and may need one short scheduling window to deliver them.
+        let Ok(Some(notification)) =
+            tokio::time::timeout(Duration::from_millis(10), channel.updates.recv()).await
+        else {
+            break;
+        };
+        if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
+            // Command updates replace the full catalog, so the last setup value wins.
+            available_commands = update.available_commands.clone();
+        } else {
+            channel.pending_updates.push_back(notification);
+        }
+    }
+    available_commands
 }

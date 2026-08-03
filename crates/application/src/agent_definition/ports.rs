@@ -1,3 +1,4 @@
+use crate::RepositoryError;
 use ora_domain::{AgentDefinition, AgentDefinitionId};
 
 /// Defines persistence operations required by configurable-agent CRUD use cases.
@@ -6,41 +7,33 @@ pub trait AgentDefinitionRepository {
     fn create_agent_definition(
         &self,
         agent_definition: AgentDefinition,
-    ) -> Result<AgentDefinition, AgentDefinitionRepositoryError>;
+    ) -> Result<AgentDefinition, RepositoryError>;
 
     /// Loads one visible configurable agent type by identifier.
     fn find_agent_definition(
         &self,
         agent_id: &AgentDefinitionId,
-    ) -> Result<Option<AgentDefinition>, AgentDefinitionRepositoryError>;
+    ) -> Result<Option<AgentDefinition>, RepositoryError>;
 
     /// Lists visible configurable agent types in deterministic storage order.
-    fn list_agent_definitions(
-        &self,
-    ) -> Result<Vec<AgentDefinition>, AgentDefinitionRepositoryError>;
+    fn list_agent_definitions(&self) -> Result<Vec<AgentDefinition>, RepositoryError>;
 
     /// Replaces a visible configurable agent type identified by its stable identifier.
     fn update_agent_definition(
         &self,
         agent_definition: AgentDefinition,
-    ) -> Result<AgentDefinition, AgentDefinitionRepositoryError>;
+    ) -> Result<AgentDefinition, RepositoryError>;
 
     /// Marks a visible configurable agent type deleted at the supplied timestamp.
     fn soft_delete_agent_definition(
         &self,
         agent_id: &AgentDefinitionId,
         deleted_at: i64,
-    ) -> Result<bool, AgentDefinitionRepositoryError>;
+    ) -> Result<bool, RepositoryError>;
 }
 
 /// Supplies new configurable-agent identifiers for create use cases.
 pub trait AgentDefinitionIdGenerator {
     /// Produces the identifier for a newly created configurable agent type.
     fn generate_agent_definition_id(&self) -> AgentDefinitionId;
-}
-
-/// Represents storage failures exposed as stable application outcomes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentDefinitionRepositoryError {
-    OperationFailed(String),
 }

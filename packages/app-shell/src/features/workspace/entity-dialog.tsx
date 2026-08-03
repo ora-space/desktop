@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@ora/ui";
 import { useTranslation } from "react-i18next";
+import { localizeContractError } from "../../i18n/contract-error";
 
 interface EntityFieldBase {
   name: string;
@@ -107,7 +108,7 @@ export function EntityDialog({
       await onSubmit(values);
       onOpenChange(false);
     } catch (error) {
-      setSubmissionError(error instanceof Error ? error.message : t("dialog.submitError"));
+      setSubmissionError(localizeContractError(error, t));
     } finally {
       setSubmitting(false);
     }

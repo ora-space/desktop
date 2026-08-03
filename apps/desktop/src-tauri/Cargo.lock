@@ -2491,10 +2491,8 @@ dependencies = [
  "gitlancer",
  "ora-contracts",
  "ora-domain",
- "ora-logging",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
  "uuid",
 ]
 
@@ -2527,6 +2525,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "ts-rs",
+ "uuid",
 ]
 
 [[package]]
@@ -2579,6 +2578,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "gitlancer",
+ "regex",
  "serde_json",
  "thiserror 2.0.18",
  "time",

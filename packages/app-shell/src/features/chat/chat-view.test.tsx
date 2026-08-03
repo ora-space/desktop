@@ -1,9 +1,9 @@
 import { createElement, type ReactNode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
-import type { ChatMessage, ChatThought, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ChatContent, ChatMessage, ChatThought, ChatToolCall, ChatTurn, ChatTurnItem } from "@ora/chat";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -13,6 +13,11 @@ import { ChatView } from "./chat-view";
 import { Composer } from "./composer";
 import { ConversationNavigator } from "./conversation-navigator";
 import { MessageList } from "./message-list";
+import { ToolCallBlock } from "./tool-call-block";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 /** Stale-time-zero QueryClient so tests don't need to wait for refetch intervals. */
 function createTestQueryClient() {
@@ -143,6 +148,22 @@ function thoughtItem(id: string, content: string, createdAt: number): ChatThough
   return { kind: "thought", id, content, createdAt };
 }
 
+describe("Tool calls", () => {
+  it("renders a cancelled tool as settled instead of running", () => {
+    renderWithI18n(
+      <ToolCallBlock
+        tool={{
+          ...toolCallItem("tool-1", 100),
+          status: "cancelled",
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/已取消|Cancelled/)).toBeVisible();
+    expect(screen.queryByText(/执行中|Running/)).toBeNull();
+  });
+});
+
 describe("Composer", () => {
   it("sends trimmed text with Enter and clears the textarea", async () => {
     const user = userEvent.setup();
@@ -166,6 +187,171 @@ describe("Composer", () => {
 
     expect(onSend).not.toHaveBeenCalled();
     expect(textarea).toHaveValue("first\nsecond");
+  });
+
+  it("filters available commands and inserts the keyboard selection without executing it", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderWithI18n(
+      <Composer
+        onSend={onSend}
+        isResponding={false}
+        availableCommands={[
+          { name: "review", description: "Review current changes" },
+          { name: "test", description: "Run the test suite", input: { hint: "package" } },
+        ]}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "/");
+    expect(screen.getByRole("listbox", { name: "快捷操作" })).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    expect(textarea).toHaveValue("/test ");
+    await waitFor(() => expect(textarea).toHaveFocus());
+    expect(textarea).toHaveProperty("selectionStart", 6);
+    expect(textarea).toHaveProperty("selectionEnd", 6);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps the keyboard-selected command inside the visible list", async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    renderWithI18n(
+      <Composer
+        onSend={() => {}}
+        isResponding={false}
+        availableCommands={Array.from({ length: 12 }, (_, index) => ({
+          name: `command-${index}`,
+          description: `Command ${index}`,
+        }))}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox"), "/");
+    await user.click(screen.getByRole("button", { name: "显示另外 7 项" }));
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
+
+    expect(screen.getAllByRole("option")[8]).toHaveAttribute("aria-selected", "true");
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+
+    await user.click(screen.getByRole("button", { name: "收起" }));
+
+    expect(screen.getAllByRole("option")).toHaveLength(6);
+    expect(screen.getByRole("button", { name: "显示另外 7 项" })).toBeVisible();
+  });
+
+  it("opens the same grouped palette from plus and inserts a selected skill", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <Composer
+        onSend={() => {}}
+        isResponding={false}
+        skills={[{ id: "skill-1", name: "code-review", description: "Review the current diff" }]}
+        availableCommands={[{ name: "test", description: "Run tests" }]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
+
+    expect(screen.getByText("Skills")).toBeVisible();
+    expect(screen.getByText("Commands")).toBeVisible();
+    await user.click(screen.getByRole("option", { name: "code-review" }));
+
+    expect(screen.getByRole("textbox")).toHaveValue("$code-review ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("previews a selected image and sends it as ACP image content", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    const view = renderWithI18n(<Composer onSend={onSend} isResponding={false} />);
+    const fileInput = view.container.querySelector('input[type="file"]') as HTMLInputElement;
+
+    await user.upload(fileInput, new File(["hello"], "diagram.png", { type: "image/png" }));
+    expect(await screen.findByRole("img", { name: "diagram.png" })).toBeVisible();
+
+    await user.type(screen.getByRole("textbox"), "inspect this{Enter}");
+
+    expect(onSend).toHaveBeenCalledWith("inspect this", [{
+      data: "aGVsbG8=",
+      mimeType: "image/png",
+      uri: "diagram.png",
+    }]);
+  });
+
+  it("pastes a clipboard image into the attachment list", async () => {
+    const onSend = vi.fn();
+    renderWithI18n(<Composer onSend={onSend} isResponding={false} />);
+    const textarea = screen.getByRole("textbox");
+    const image = new File(["clipboard"], "clipboard.png", { type: "image/png" });
+
+    fireEvent.paste(textarea, { clipboardData: { files: [image] } });
+
+    expect(await screen.findByRole("img", { name: "clipboard.png" })).toBeVisible();
+    expect(textarea).toHaveValue("");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+});
+
+describe("Structured ACP content", () => {
+  it("renders structured resources and previews images with wheel zoom", async () => {
+    const user = userEvent.setup();
+    const image = { type: "image" as const, data: "aGVsbG8=", mimeType: "image/png", uri: "file:///preview.png" };
+    const items: ChatContent[] = [
+      { kind: "content", id: "audio", source: "message", content: { type: "audio", data: "aGVsbG8=", mimeType: "audio/mpeg" }, createdAt: 2 },
+      { kind: "content", id: "link", source: "message", content: { type: "resource_link", name: "docs", title: "ACP docs", description: "Protocol reference", uri: "https://example.com/acp", size: 2048n }, createdAt: 3 },
+      { kind: "content", id: "resource", source: "message", content: { type: "resource", resource: { uri: "file:///notes.txt", mimeType: "text/plain", text: "embedded notes" } }, createdAt: 4 },
+    ];
+    const mediaTurn = turn("media", "show files", 1, items);
+    mediaTurn.userMessage.structuredContent = [image];
+    const view = renderWithI18n(<MessageList turns={[mediaTurn]} userName="Eric" isResponding={false} />);
+
+    const inlineImage = screen.getByRole("img", { name: "preview.png" });
+    expect(inlineImage).toHaveAttribute("loading", "lazy");
+    expect(inlineImage.closest("a")).toBeNull();
+    expect(inlineImage.closest("button")).toBeNull();
+    const expandButton = screen.getByRole("button", { name: "展开图片 preview.png" });
+    expect(expandButton).toHaveClass("cursor-pointer");
+    expect(view.container.querySelector("audio[controls]")).toHaveAttribute("src", "data:audio/mpeg;base64,aGVsbG8=");
+    expect(screen.getByRole("link", { name: /ACP docs/ })).toHaveAttribute("href", "https://example.com/acp");
+    expect(screen.getByText("embedded notes")).toBeVisible();
+
+    await user.click(expandButton);
+    expect(screen.getByRole("dialog")).toHaveStyle({
+      width: "calc(100vw - 3rem)",
+      maxWidth: "88rem",
+      height: "calc(100dvh - 3rem)",
+    });
+    const canvas = screen.getByLabelText("preview.png，缩放 100%");
+    const previewImage = document.querySelector('[data-slot="preview-image"]');
+    expect(previewImage).not.toBeNull();
+    canvas.scrollLeft = 12;
+    canvas.scrollTop = 18;
+    const wheel = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
+    act(() => expect(canvas.dispatchEvent(wheel)).toBe(false));
+    expect(screen.getByLabelText("preview.png，缩放 110%")).toBeVisible();
+    expect(previewImage).toHaveStyle({ transform: "translate(-50%, -50%) translate(0px, 0px) scale(1.1)" });
+    expect(canvas).toHaveProperty("scrollLeft", 12);
+    expect(canvas).toHaveProperty("scrollTop", 18);
+    canvas.scrollLeft = 0;
+    canvas.scrollTop = 0;
+    fireEvent.pointerDown(canvas, { button: 0, pointerId: 7, clientX: 100, clientY: 100 });
+    expect(canvas).toHaveClass("cursor-grabbing");
+    fireEvent.pointerMove(canvas, { pointerId: 7, clientX: 60, clientY: 70 });
+    expect(previewImage).toHaveStyle({ transform: "translate(-50%, -50%) translate(-40px, -30px) scale(1.1)" });
+    fireEvent.pointerUp(canvas, { pointerId: 7, clientX: 60, clientY: 70 });
+    expect(canvas).toHaveClass("cursor-grab");
+    expect(screen.getByRole("button", { name: "关闭图片预览" })).toBeVisible();
   });
 });
 
@@ -399,6 +585,51 @@ describe("MessageList", () => {
     expect(activity).toHaveTextContent(/1 个文件 · 1 次分析|1 file · 1 analysis step/);
   });
 
+  it("reveals only the live thought suffix and settles it before the next activity", () => {
+    const view = renderWithI18n(
+      <MessageList
+        turns={[turn("turn-1", "Inspect", 100, [
+          thoughtItem("thought-1", "Checking", 200),
+        ], "streaming")]}
+        userName="Eric"
+        isResponding
+      />,
+    );
+
+    expect(
+      Array.from(view.container.querySelectorAll("[data-stream-thought-reveal]"))
+        .map((node) => node.textContent),
+    ).toEqual(["Checking"]);
+
+    view.rerender(
+      <MessageList
+        turns={[turn("turn-1", "Inspect", 100, [
+          thoughtItem("thought-1", "Checking files", 200),
+        ], "streaming")]}
+        userName="Eric"
+        isResponding
+      />,
+    );
+
+    expect(
+      Array.from(view.container.querySelectorAll("[data-stream-thought-reveal]"))
+        .map((node) => node.textContent),
+    ).toEqual([" files"]);
+
+    view.rerender(
+      <MessageList
+        turns={[turn("turn-1", "Inspect", 100, [
+          thoughtItem("thought-1", "Checking files", 200),
+          toolCallItem("tool-1", 300),
+        ], "streaming")]}
+        userName="Eric"
+        isResponding
+      />,
+    );
+
+    expect(view.container.querySelector("[data-stream-thought-reveal]")).toBeNull();
+  });
+
   it("condenses interleaved analysis and file reads into one expandable activity timeline", async () => {
     const user = userEvent.setup();
     renderWithI18n(
@@ -472,7 +703,61 @@ describe("MessageList", () => {
     expect(screen.queryByLabelText(/正在运行|is working/)).not.toBeInTheDocument();
   });
 
-  it("keeps scrolling as streamed content grows within the same message", () => {
+  it("renders streamed assistant text as markdown while keeping the thread responsive", () => {
+    renderWithI18n(
+      <MessageList
+        turns={[
+          turn("turn-1", "hello", 100, [assistantItem("assistant-1", "# Live heading\n\nStill streaming.", 200)], "streaming"),
+        ]}
+        userName="Eric"
+        isResponding
+      />,
+    );
+
+      expect(screen.getByRole("heading", { level: 1, name: "Live heading" })).toBeInTheDocument();
+      expect(screen.getByText("Still streaming.")).toBeInTheDocument();
+  });
+
+  it("flushes a previous text item's literal marker while the turn continues with a tool", () => {
+    renderWithI18n(
+      <MessageList
+        turns={[
+          turn("turn-1", "hello", 100, [
+            assistantItem("assistant-1", "Use literal *", 200),
+            toolCallItem("tool-1", 300),
+          ], "streaming"),
+        ]}
+        userName="Eric"
+        isResponding
+      />,
+    );
+
+    expect(screen.getByText("Use literal *")).toBeInTheDocument();
+  });
+
+  it("keeps following when deferred content changes the rendered height", () => {
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class TestResizeObserver implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+
+      /** The observed target is irrelevant to this layout-focused regression test. */
+      observe() {}
+
+      /** The component only observes one content root for its full lifetime. */
+      unobserve() {}
+
+      /** Testing Library owns unmount cleanup after the assertion. */
+      disconnect() {}
+
+      /** This test drives the callback directly, so no queued records exist. */
+      takeRecords() {
+        return [];
+      }
+    }
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+
     const view = renderWithI18n(
       <MessageList
         turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock", 200)], "streaming")]}
@@ -481,18 +766,43 @@ describe("MessageList", () => {
       />,
     );
     const list = screen.getByTestId("message-list");
-    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 240 });
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 480 });
     list.scrollTop = 0;
 
-    view.rerender(
-        <MessageList
-          turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock response", 200)], "streaming")]}
-          userName="Eric"
-          isResponding
-        />
-    );
+    act(() => resizeCallback?.([], {} as ResizeObserver));
 
-    expect(list.scrollTop).toBe(240);
+    expect(list.scrollTop).toBe(480);
+
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 560 });
+    view.rerender(
+      <MessageList
+        turns={[turn("turn-1", "hello", 100, [assistantItem("assistant-1", "Mock final code", 200)], "completed")]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+    act(() => resizeCallback?.([], {} as ResizeObserver));
+
+    expect(list.style.scrollBehavior).toBe("auto");
+    expect(list.scrollTop).toBe(560);
+
+    // A programmatic scroll event can arrive after another fast content growth.
+    // It must not look like a reader abandoning the live tail.
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 720 });
+    list.scrollTop = 460;
+    fireEvent.scroll(list);
+    act(() => resizeCallback?.([], {} as ResizeObserver));
+
+    expect(list.scrollTop).toBe(720);
+
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 800 });
+    list.scrollTop = 0;
+    fireEvent.wheel(list, { deltaY: -120 });
+    fireEvent.scroll(list);
+    act(() => resizeCallback?.([], {} as ResizeObserver));
+
+    expect(list.scrollTop).toBe(0);
   });
 
   it("stops chasing the tail once the reader scrolls up mid-stream", () => {
@@ -507,8 +817,9 @@ describe("MessageList", () => {
     Object.defineProperty(list, "scrollHeight", { configurable: true, value: 240 });
     Object.defineProperty(list, "clientHeight", { configurable: true, value: 100 });
 
-    // Scrolling far from the bottom is the signal that the reader is reading
-    // history rather than following the stream.
+    // An upward wheel gesture is the user intent; scroll events alone can also
+    // come from the component's own tail correction.
+    fireEvent.wheel(list, { deltaY: -120 });
     list.scrollTop = 0;
     fireEvent.scroll(list);
 
@@ -531,6 +842,7 @@ describe("MessageList", () => {
     const list = screen.getByTestId("message-list");
     Object.defineProperty(list, "scrollHeight", { configurable: true, value: 240 });
     Object.defineProperty(list, "clientHeight", { configurable: true, value: 100 });
+    fireEvent.wheel(list, { deltaY: -120 });
     list.scrollTop = 0;
     fireEvent.scroll(list);
 
@@ -556,7 +868,15 @@ describe("ConversationNavigator", () => {
   /** Keeps navigation state local so repeated clicks exercise the real hover-to-boundary transition. */
   function StatefulNavigator() {
     const [activeAnchorId, setActiveAnchorId] = useState("turn-2:user");
-    return <ConversationNavigator turns={turns} activeAnchorId={activeAnchorId} onNavigate={setActiveAnchorId} />;
+    return (
+      <ConversationNavigator
+        turns={turns}
+        activeAnchorId={activeAnchorId}
+        isAtTail
+        onNavigate={setActiveAnchorId}
+        onNavigateToTail={() => {}}
+      />
+    );
   }
 
   it("moves one anchor at a time and keeps disabled boundary controls visible", async () => {
@@ -564,7 +884,13 @@ describe("ConversationNavigator", () => {
     const onNavigate = vi.fn();
     const view = renderWithI18n(
       <TooltipProvider>
-        <ConversationNavigator turns={turns} activeAnchorId="turn-2:user" onNavigate={onNavigate} />
+        <ConversationNavigator
+          turns={turns}
+          activeAnchorId="turn-2:user"
+          isAtTail
+          onNavigate={onNavigate}
+          onNavigateToTail={() => {}}
+        />
       </TooltipProvider>,
     );
 
@@ -577,7 +903,13 @@ describe("ConversationNavigator", () => {
 
     view.rerender(
         <TooltipProvider>
-          <ConversationNavigator turns={turns} activeAnchorId="turn-1:user" onNavigate={onNavigate} />
+          <ConversationNavigator
+            turns={turns}
+            activeAnchorId="turn-1:user"
+            isAtTail
+            onNavigate={onNavigate}
+            onNavigateToTail={() => {}}
+          />
         </TooltipProvider>
     );
     expect(previousButton).toBeDisabled();
@@ -589,15 +921,23 @@ describe("ConversationNavigator", () => {
 
     view.rerender(
         <TooltipProvider>
-          <ConversationNavigator turns={turns} activeAnchorId="turn-3:response" onNavigate={onNavigate} />
+          <ConversationNavigator
+            turns={turns}
+            activeAnchorId="turn-3:response"
+            isAtTail
+            onNavigate={onNavigate}
+            onNavigateToTail={() => {}}
+          />
         </TooltipProvider>
     );
     expect(previousButton).toBeEnabled();
     expect(nextButton).toBeDisabled();
     expect(nextButton).toBeVisible();
-    expect(nextButton).toHaveAccessibleName(/这是最后一条消息|This is the last message/);
+    expect(nextButton).toHaveAccessibleName(/已到达对话底部|You're at the bottom of the conversation/);
     await user.hover(nextButton.parentElement!);
-    expect(await screen.findByText(/这是最后一条消息|This is the last message/)).toBeVisible();
+    expect(await screen.findByTestId("conversation-navigation-end-hint")).toHaveTextContent(
+      /已到达对话底部|You're at the bottom of the conversation/,
+    );
   });
 
   it("opens the boundary hint when repeated clicks disable the button under the pointer", async () => {
@@ -617,12 +957,72 @@ describe("ConversationNavigator", () => {
     const nextButton = screen.getByRole("button", { name: /下一条消息|Next message/ });
     for (let index = 0; index < 5; index += 1) await user.click(nextButton);
     expect(nextButton).toBeDisabled();
-    expect(await screen.findByText(/这是最后一条消息|This is the last message/)).toBeVisible();
+    expect(await screen.findByTestId("conversation-navigation-end-hint")).toHaveTextContent(
+      /已到达对话底部|You're at the bottom of the conversation/,
+    );
+  });
+
+  it("uses the final downward action to reach the thread tail", async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    const onNavigateToTail = vi.fn();
+    const view = renderWithI18n(
+      <TooltipProvider>
+        <ConversationNavigator
+          turns={turns}
+          activeAnchorId="turn-3:response"
+          isAtTail={false}
+          onNavigate={onNavigate}
+          onNavigateToTail={onNavigateToTail}
+        />
+      </TooltipProvider>,
+    );
+
+    const nextButton = screen.getByRole("button", { name: /滚动到底部|Scroll to bottom/ });
+    expect(nextButton).toBeEnabled();
+    await user.hover(nextButton.parentElement!);
+    expect(await screen.findByTestId("conversation-navigation-end-hint")).toHaveTextContent(
+      /滚动到底部|Scroll to bottom/,
+    );
+    await user.click(nextButton);
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(onNavigateToTail).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("conversation-navigation-end-hint")).toHaveTextContent(
+      /滚动到底部|Scroll to bottom/,
+    );
+
+    view.rerender(
+      <TooltipProvider>
+        <ConversationNavigator
+          turns={turns}
+          activeAnchorId="turn-3:response"
+          isAtTail
+          onNavigate={onNavigate}
+          onNavigateToTail={onNavigateToTail}
+        />
+      </TooltipProvider>,
+    );
+    expect(nextButton).toBeDisabled();
+    expect(nextButton).toHaveAccessibleName(/已到达对话底部|You're at the bottom of the conversation/);
+    expect(screen.getByTestId("conversation-navigation-end-hint")).toHaveTextContent(
+      /已到达对话底部|You're at the bottom of the conversation/,
+    );
+    expect(screen.getByTestId("conversation-navigation-end-hint")).toHaveClass(
+      "animate-in",
+      "fade-in-0",
+      "duration-300",
+    );
   });
 
   it("shows no question heading in previews and labels responses as Ora", () => {
     renderWithI18n(
-      <ConversationNavigator turns={turns} activeAnchorId="turn-2:user" onNavigate={() => {}} />,
+      <ConversationNavigator
+        turns={turns}
+        activeAnchorId="turn-2:user"
+        isAtTail
+        onNavigate={() => {}}
+        onNavigateToTail={() => {}}
+      />,
     );
 
     fireEvent.mouseEnter(screen.getByRole("button", { name: /问题 1|Question 1/ }), { clientY: 10 });
@@ -649,7 +1049,13 @@ describe("ConversationNavigator", () => {
       turns[2],
     ];
     renderWithI18n(
-      <ConversationNavigator turns={longTurns} activeAnchorId="long-1:response" onNavigate={() => {}} />,
+      <ConversationNavigator
+        turns={longTurns}
+        activeAnchorId="long-1:response"
+        isAtTail
+        onNavigate={() => {}}
+        onNavigateToTail={() => {}}
+      />,
     );
 
     fireEvent.mouseEnter(screen.getByRole("button", { name: /回复 1|Response 1/ }), { clientY: 10 });
@@ -663,7 +1069,13 @@ describe("ConversationNavigator", () => {
       turns[2],
     ];
     renderWithI18n(
-      <ConversationNavigator turns={codeTurns} activeAnchorId="code-1:response" onNavigate={() => {}} />,
+      <ConversationNavigator
+        turns={codeTurns}
+        activeAnchorId="code-1:response"
+        isAtTail
+        onNavigate={() => {}}
+        onNavigateToTail={() => {}}
+      />,
     );
 
     fireEvent.mouseEnter(screen.getByRole("button", { name: /回复 1|Response 1/ }), { clientY: 10 });

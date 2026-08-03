@@ -1,6 +1,9 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
-  ContractTransportError,
+  LocalTransportError,
+  RemoteContractError,
+  UnknownRemoteError,
+  decodeRemoteError,
   type ContractCallOptions,
   type ContractStreamFrame,
   type ContractTransport,
@@ -28,33 +31,60 @@ type SupportedTauriOperation = Exclude<
 >;
 
 const tauriCommands = {
+  // =============================================================================
+  // project
+  // =============================================================================
   createProject: "create_project",
   getProject: "get_project",
   listProjects: "list_projects",
   updateProject: "update_project",
   deleteProject: "delete_project",
+
+  // =============================================================================
+  // task
+  // =============================================================================
   createTask: "create_task",
   getTask: "get_task",
   listTasks: "list_tasks",
   updateTask: "update_task",
   deleteTask: "delete_task",
+
+  // =============================================================================
+  // session
+  // =============================================================================
   createSession: "create_session",
-  listAgentModels: "list_agent_models",
   getSession: "get_session",
   listSessions: "list_sessions",
   respondToSessionPermission: "respond_to_session_permission",
   stopSession: "stop_session",
   deleteSession: "delete_session",
+
+  // =============================================================================
+  // agentRuntime
+  // =============================================================================
+  listAgentModels: "list_agent_models",
+
+  // =============================================================================
+  // skill
+  // =============================================================================
   createSkill: "create_skill",
   getSkill: "get_skill",
   listSkills: "list_skills",
   updateSkill: "update_skill",
   deleteSkill: "delete_skill",
+
+  // =============================================================================
+  // agent
+  // =============================================================================
   createAgent: "create_agent",
   getAgent: "get_agent",
   listAgents: "list_agents",
   updateAgent: "update_agent",
   deleteAgent: "delete_agent",
+
+  // =============================================================================
+  // gitIdentity
+  // =============================================================================
   getGitIdentity: "get_git_identity",
 } as const satisfies Record<SupportedTauriOperation, string>;
 
@@ -78,7 +108,8 @@ export function createTauriTransport(
           options?.signal,
         );
       } catch (error) {
-        if (isAbortError(error) || error instanceof ContractTransportError) throw error;
+        if (error instanceof RemoteContractError || error instanceof UnknownRemoteError || error instanceof LocalTransportError) throw error;
+        if (isAbortError(error)) throw transportError("cancelled", "Desktop command was cancelled");
         throw normalizeInvokeError(error);
       }
     },
@@ -147,12 +178,13 @@ async function* streamFromChannel<TEvent>(
       }
       if (frame.type === "data") yield frame.data;
       if (frame.type === "error") {
-        throw new ContractTransportError({ ...frame.error, status: null, responseBody: frame });
+        throw decodeRemoteError(frame.error, null, frame);
       }
       if (frame.type === "end") return;
     }
   } catch (error) {
-    if (isAbortError(error) || error instanceof ContractTransportError) throw error;
+    if (error instanceof RemoteContractError || error instanceof UnknownRemoteError || error instanceof LocalTransportError) throw error;
+    if (isAbortError(error)) throw transportError("cancelled", "Desktop stream was cancelled");
     throw normalizeInvokeError(error);
   } finally {
     options?.signal?.removeEventListener("abort", abort);
@@ -183,25 +215,23 @@ function isSignalAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
-function transportError(code: string, message: string): ContractTransportError {
-  return new ContractTransportError({ code, message, status: null, responseBody: null });
+function transportError(
+  kind: ConstructorParameters<typeof LocalTransportError>[0],
+  message: string,
+): LocalTransportError {
+  return new LocalTransportError(kind, message);
 }
 
 /** Builds the stable failure used for intentionally excluded Desktop operations. */
-function unsupportedOperation(operationName: string): ContractTransportError {
+function unsupportedOperation(operationName: string): LocalTransportError {
   return transportError("unsupported_operation", `Desktop does not support operation ${operationName}`);
 }
 
 /** Normalizes serialized Rust command errors and opaque Tauri invocation failures. */
-function normalizeInvokeError(error: unknown): ContractTransportError {
-  if (isCommandError(error)) {
-    return new ContractTransportError({ code: error.code, message: error.message, status: null, responseBody: error });
+function normalizeInvokeError(error: unknown): Error {
+  const decoded = decodeRemoteError(error, null, error);
+  if (!(decoded instanceof LocalTransportError) || decoded.kind !== "malformed_response") {
+    return decoded;
   }
-  return new ContractTransportError({ code: "tauri_invoke_error", message: "Desktop command invocation failed", status: null, responseBody: error });
-}
-
-function isCommandError(error: unknown): error is { code: string; message: string } {
-  if (typeof error !== "object" || error === null) return false;
-  const record = error as Record<string, unknown>;
-  return typeof record.code === "string" && typeof record.message === "string";
+  return new LocalTransportError("tauri_invoke_failure", "Desktop command invocation failed", error);
 }

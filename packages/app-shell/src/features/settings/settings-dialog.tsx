@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { localizeContractError } from "../../i18n/contract-error";
 import { usePlatform } from "@ora/platform";
 import {
   AlertDialog,
@@ -242,7 +243,7 @@ function PrivacySettings({ settings, onUpdate, onClearHistory }: { settings: Set
       },
       (error: unknown) => {
         if (active) {
-          setWorktreeError(describeError(error));
+          setWorktreeError(localizeContractError(error, t));
         }
       },
     );
@@ -270,7 +271,7 @@ function PrivacySettings({ settings, onUpdate, onClearHistory }: { settings: Set
       await worktreeStorage.setRoot(selected);
       setWorktreeRoot(selected);
     } catch (error: unknown) {
-      setWorktreeError(describeError(error));
+      setWorktreeError(localizeContractError(error, t));
     } finally {
       setWorktreeSaving(false);
     }
@@ -314,17 +315,6 @@ function PrivacySettings({ settings, onUpdate, onClearHistory }: { settings: Set
       </AlertDialog>
     </div>
   );
-}
-
-/** Extracts a useful message from Error values and serialized Tauri command errors. */
-function describeError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
-    return error.message;
-  }
-  return String(error);
 }
 
 /** Labels a grouped control without introducing nested decorative cards. */

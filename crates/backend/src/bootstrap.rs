@@ -1,12 +1,13 @@
 use crate::agent::AgentApi;
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
 use crate::clock::SystemClock;
-use crate::error::{BackendError, BackendErrorKind};
+use crate::error::{BackendError, ErrorClassification};
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
 use ora_contracts::*;
+use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -87,10 +88,10 @@ impl Backend {
 
     /// Replaces the root used by task creations that start after this update.
     pub fn set_worktree_root(&self, worktree_root: PathBuf) -> Result<(), BackendError> {
-        let mut configured_root = self.worktree_root.write().map_err(|_| {
+        let mut configured_root = self.worktree_root.write().map_err(|_poisoned| {
             BackendError::new(
-                BackendErrorKind::Internal,
-                "worktree_configuration_error",
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
                 "worktree root configuration is unavailable",
             )
         })?;
@@ -107,14 +108,9 @@ impl Backend {
         crate::task::resolve_task_cwd(&self.pool, &ora_domain::TaskId::new(task_id))
     }
 
-    /// Reads the host identity for the sidebar profile: global git config first,
-    /// falling back to the authenticated GitHub CLI account when git has no name set.
-    pub fn read_git_identity(
-        &self,
-        _request: GetGitIdentityRequest,
-    ) -> Result<GitIdentityResponse, BackendError> {
-        Ok(crate::identity::resolve_git_identity())
-    }
+    // =============================================================================
+    // project
+    // =============================================================================
 
     /// Creates one project through the shared application composition.
     pub fn create_project(
@@ -152,6 +148,10 @@ impl Backend {
         self.project.delete(request)
     }
 
+    // =============================================================================
+    // task
+    // =============================================================================
+
     /// Creates one task through the shared application composition.
     pub fn create_task(
         &self,
@@ -182,6 +182,10 @@ impl Backend {
         self.task.delete(request)
     }
 
+    // =============================================================================
+    // session
+    // =============================================================================
+
     /// Creates one session through the shared application composition.
     pub async fn create_session(
         &self,
@@ -190,13 +194,6 @@ impl Backend {
         self.agent_runtime.create_session(request).await
     }
 
-    /// Lists model identifiers grouped by each CLI that answers discovery successfully.
-    pub async fn list_agent_models(
-        &self,
-        _request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, BackendError> {
-        Ok(self.agent_runtime.list_agent_models().await)
-    }
     /// Gets one session through the shared application composition.
     pub fn get_session(
         &self,
@@ -219,7 +216,7 @@ impl Backend {
         self.agent_runtime.load_session(request).await
     }
 
-    /// Streams one text-only prompt turn for a running session.
+    /// Streams one structured ACP prompt turn for a running session.
     pub async fn prompt_session(
         &self,
         request: PromptSessionRequest,
@@ -250,6 +247,22 @@ impl Backend {
     ) -> Result<DeleteSessionResponse, BackendError> {
         self.agent_runtime.delete_session(&request.session_id).await
     }
+
+    // =============================================================================
+    // agentRuntime
+    // =============================================================================
+
+    /// Lists model identifiers grouped by each CLI that answers discovery successfully.
+    pub async fn list_agent_models(
+        &self,
+        _request: ListAgentModelsRequest,
+    ) -> Result<ListAgentModelsResponse, BackendError> {
+        Ok(self.agent_runtime.list_agent_models().await)
+    }
+
+    // =============================================================================
+    // skill
+    // =============================================================================
 
     /// Creates one skill through the shared application composition.
     pub fn create_skill(
@@ -284,6 +297,10 @@ impl Backend {
         self.skill.delete(request).map_err(BackendError::from)
     }
 
+    // =============================================================================
+    // agent
+    // =============================================================================
+
     /// Creates one configurable agent through the shared application composition.
     pub fn create_agent(
         &self,
@@ -316,6 +333,19 @@ impl Backend {
     ) -> Result<DeleteAgentResponse, BackendError> {
         self.agent.delete(request).map_err(BackendError::from)
     }
+
+    // =============================================================================
+    // gitIdentity
+    // =============================================================================
+
+    /// Reads the host identity for the sidebar profile: global git config first,
+    /// falling back to the authenticated GitHub CLI account when git has no name set.
+    pub fn read_git_identity(
+        &self,
+        _request: GetGitIdentityRequest,
+    ) -> Result<GitIdentityResponse, BackendError> {
+        Ok(crate::identity::resolve_git_identity())
+    }
 }
 
 /// Creates one required runtime directory and preserves its exact failing path.
@@ -329,7 +359,7 @@ fn ensure_directory(path: &Path) -> Result<(), BackendBootstrapError> {
 #[cfg(test)]
 mod tests {
     use super::{Backend, BackendPaths};
-    use crate::error::BackendErrorKind;
+    use crate::error::ErrorClassification;
     use ora_contracts::CreateTaskRequest;
     use ora_contracts::{
         CreateAgentRequest, CreateProjectRequest, CreateSkillRequest, DeleteAgentRequest,
@@ -448,8 +478,8 @@ mod tests {
                 project_id: project.id,
             })
             .expect_err("deleted project should be hidden");
-        assert_eq!(error.kind(), BackendErrorKind::NotFound);
-        assert_eq!(error.code(), "project_not_found");
+        assert_eq!(error.classification(), ErrorClassification::NotFound);
+        assert_eq!(error.public_error().code(), "project_not_found");
     }
 
     /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.

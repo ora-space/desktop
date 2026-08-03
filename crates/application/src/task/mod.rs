@@ -11,7 +11,6 @@ pub use handlers::{CreateTaskHandler, GetTaskHandler, ListTasksHandler, UpdateTa
 pub use id_generator::UuidTaskIdGenerator;
 pub use ports::{
     CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskIdGenerator, TaskRepository,
-    TaskRepositoryError, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError,
+    TaskWorktreeDeletionMode, TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
 };
 pub use worktree_provisioner::GitTaskWorktreeProvisioner;

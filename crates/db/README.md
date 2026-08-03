@@ -13,6 +13,9 @@
 
 The crate stores domain values and implements application ports; it does not own use-case policy, contract mapping, transport errors, Git cleanup, or provider history. Timestamps are supplied through `TimestampSource`, with production time coming from Ora's local logging clock.
 
-SQLite failures, invalid migration history, and bootstrap errors are normalized as `DatabaseError`. Repositories hide SQL rows and soft-delete columns from callers.
+SQLite failures, invalid migration history, and bootstrap errors are normalized as `DatabaseError`.
+Repository adapters preserve those concrete failures as the source of `ora-application`'s shared
+`RepositoryError`; they do not stringify or log failures that an outer request seam will complete.
+Repositories hide SQL rows and soft-delete columns from callers.
 
 See [Database Migrations](../../docs/database-migrations.md) and [Application and Contracts Boundary](../../docs/application-contracts.md).

@@ -10,6 +10,9 @@ import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store"
 function conversation(overrides: Partial<SessionConversation> = {}): SessionConversation {
   return {
     turns: [],
+    availableCommands: [],
+    sessionTitle: null,
+    sessionUpdatedAt: null,
     isLoaded: false,
     isLoading: false,
     isResponding: false,

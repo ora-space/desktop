@@ -2,6 +2,7 @@ pub mod clock;
 mod config;
 mod correlation;
 mod error;
+mod error_report;
 mod file_output;
 mod formatter;
 mod gitlancer_bridge;
@@ -19,6 +20,7 @@ pub use correlation::{
     runtime_span, span_with_correlation, span_with_request_id, span_with_trace_id,
 };
 pub use error::{FileSystemAction, LoggingInitError};
+pub use error_report::ErrorReport;
 pub use gitlancer_bridge::{OraGitlancerLogger, register_gitlancer_logger};
 pub use guard::LoggingGuard;
 pub use init::init_logging;

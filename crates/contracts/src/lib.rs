@@ -1,6 +1,7 @@
 pub mod acp;
 
 mod agent;
+mod error;
 mod file_system;
 mod frontend;
 mod git;
@@ -13,6 +14,10 @@ pub use agent::{
     Agent, CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
     GetAgentRequest, GetAgentResponse, ListAgentsRequest, ListAgentsResponse, UpdateAgentRequest,
     UpdateAgentResponse,
+};
+pub use error::{
+    ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget, PublicError,
+    RequestId, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
 };
 pub use file_system::{
     FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryRequest,
@@ -63,6 +68,7 @@ pub fn export_typescript_bindings_to(
 
     acp::export(&config)?;
     agent::export(&config)?;
+    error::export(&config)?;
     file_system::export(&config)?;
     git::export(&config)?;
     project::export(&config)?;

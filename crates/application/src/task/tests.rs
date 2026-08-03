@@ -1,9 +1,8 @@
 use crate::{
     ApplicationError, Clock, CreateTaskHandler, CreateTaskWorktreeRequest,
-    DeleteTaskWorktreeRequest, GetTaskHandler, ListTasksHandler, TaskIdGenerator, TaskRepository,
-    TaskRepositoryError, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
+    DeleteTaskWorktreeRequest, GetTaskHandler, ListTasksHandler, RepositoryError, TaskIdGenerator,
+    TaskRepository, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
     TaskWorktreeProvisionerError, UpdateTaskHandler, WorktreeIdGenerator, WorktreeRepository,
-    WorktreeRepositoryError,
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest,
@@ -14,16 +13,12 @@ use ora_domain::{
     AuditFields, ProjectId, Task, TaskId, TaskStatus as DomainTaskStatus, Worktree,
     WorktreeActivity as DomainWorktreeActivity, WorktreeId,
 };
-use ora_logging::{with_recorded_trace_logging, with_trace_logging};
+use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-use tracing_subscriber::layer::{Context, Layer};
-use tracing_subscriber::registry::LookupSpan;
 
 const TASK_ID: &str = "12345678-1234-5678-90ab-1234567890ab";
 const WORK_DIR: &str = "/tmp/ora-worktrees";
@@ -339,59 +334,32 @@ fn creates_task_when_work_dir_does_not_exist() {
     });
 }
 
-/// Verifies repeated branch-prefix collisions return a stable error and emit the shared failure event.
+/// Verifies repeated branch-prefix collisions return a stable application error.
 #[test]
 fn reports_task_worktree_error_when_task_id_retries_are_exhausted() {
     let work_dir = unique_test_work_dir("task-prefix-exhaustion");
     fs::create_dir_all(work_dir.join("12345678-existing-worktree"))
         .unwrap_or_else(|error| panic!("failed to create prefix collision fixture: {error}"));
-    let recorder = EventRecorder::default();
-
-    with_recorded_trace_logging(recorder.layer(), || {
-        let handler = CreateTaskHandler::new(
-            Rc::new(FakeTaskRepository::default()),
-            Rc::new(FakeWorktreeRepository::default()),
-            FixedTaskIdGenerator::new(TASK_ID),
-            FixedWorktreeIdGenerator::new("worktree-1"),
-            Rc::new(FakeTaskWorktreeProvisioner::default()),
-            work_dir.clone(),
-            FixedClock::new(1_700_000_000_000),
-        );
-
-        assert_eq!(
-            handler
-                .handle(CreateTaskRequest {
-                    project_id: "project-1".to_string(),
-                    title: "Ship handlers".to_string(),
-                    status: ContractTaskStatus::Doing,
-                    workspace_mode: None,
-                })
-                .unwrap_err(),
-            ApplicationError::TaskWorktree {
-                message:
-                    "failed to generate a task branch prefix without collision after 3 attempts"
-                        .to_string(),
-            }
-        );
-    });
+    let handler = CreateTaskHandler::new(
+        Rc::new(FakeTaskRepository::default()),
+        Rc::new(FakeWorktreeRepository::default()),
+        FixedTaskIdGenerator::new(TASK_ID),
+        FixedWorktreeIdGenerator::new("worktree-1"),
+        Rc::new(FakeTaskWorktreeProvisioner::default()),
+        work_dir.clone(),
+        FixedClock::new(1_700_000_000_000),
+    );
 
     assert_eq!(
-        recorder.events(),
-        vec![LoggedEvent {
-            level: "ERROR".to_string(),
-            target: "ora_application::task::handlers".to_string(),
-            fields: BTreeMap::from([
-                ("error.kind".to_string(), "task_worktree".to_string()),
-                (
-                    "error.message".to_string(),
-                    "task worktree operation failed: failed to generate a task branch prefix without collision after 3 attempts"
-                        .to_string(),
-                ),
-                ("message".to_string(), "task operation failed".to_string()),
-                ("method".to_string(), "log_task_failure".to_string()),
-                ("operation".to_string(), "create_task".to_string()),
-            ]),
-        }]
+        handler
+            .handle(CreateTaskRequest {
+                project_id: "project-1".to_string(),
+                title: "Ship handlers".to_string(),
+                status: ContractTaskStatus::Doing,
+                workspace_mode: None,
+            })
+            .unwrap_err(),
+        ApplicationError::TaskWorktreeIdExhausted { attempts: 3 }
     );
 
     fs::remove_dir_all(&work_dir)
@@ -540,7 +508,7 @@ fn cleans_up_created_worktree_when_task_persistence_fails() {
         let task_repository = Rc::new(FakeTaskRepository::default());
         let worktree_repository = Rc::new(FakeWorktreeRepository::default());
         let provisioner = Rc::new(FakeTaskWorktreeProvisioner::default());
-        task_repository.fail_next(TaskRepositoryError::OperationFailed(
+        task_repository.fail_next(RepositoryError::from_message(
             "task write failed".to_string(),
         ));
         let handler = CreateTaskHandler::new(
@@ -565,7 +533,7 @@ fn cleans_up_created_worktree_when_task_persistence_fails() {
         assert_eq!(
             error,
             ApplicationError::TaskRepository {
-                message: "task write failed".to_string(),
+                source: RepositoryError::from_message("task write failed"),
             }
         );
         assert_eq!(
@@ -587,8 +555,8 @@ fn reports_application_errors() {
         let task_repository = Rc::new(FakeTaskRepository::default());
         let worktree_repository = Rc::new(FakeWorktreeRepository::default());
         let provisioner = Rc::new(FakeTaskWorktreeProvisioner::default());
-        provisioner.fail_next_create(TaskWorktreeProvisionerError::OperationFailed(
-            "failed to create linked worktree".to_string(),
+        provisioner.fail_next_create(TaskWorktreeProvisionerError::operation_failed(
+            std::io::Error::other("failed to create linked worktree"),
         ));
         let create_handler = CreateTaskHandler::new(
             task_repository,
@@ -620,114 +588,17 @@ fn reports_application_errors() {
                 task_id: "missing".to_string(),
             }
         );
-        assert_eq!(
+        assert!(matches!(
             provisioning_error,
-            ApplicationError::TaskWorktree {
-                message: "failed to create linked worktree".to_string(),
-            }
-        );
-    });
-}
-
-/// Verifies task handlers emit structured success and provisioning-failure events under a scoped subscriber.
-#[test]
-fn emits_structured_operational_events() {
-    let recorder = EventRecorder::default();
-    with_recorded_trace_logging(recorder.layer(), || {
-        let create_task_repository = Rc::new(FakeTaskRepository::default());
-        let create_worktree_repository = Rc::new(FakeWorktreeRepository::default());
-        let create_provisioner = Rc::new(FakeTaskWorktreeProvisioner::default());
-        let create_handler = CreateTaskHandler::new(
-            create_task_repository,
-            create_worktree_repository,
-            FixedTaskIdGenerator::new(TASK_ID),
-            FixedWorktreeIdGenerator::new("worktree-1"),
-            create_provisioner,
-            PathBuf::from(WORK_DIR),
-            FixedClock::new(5),
-        );
-        let failing_task_repository = Rc::new(FakeTaskRepository::default());
-        let failing_worktree_repository = Rc::new(FakeWorktreeRepository::default());
-        let failing_provisioner = Rc::new(FakeTaskWorktreeProvisioner::default());
-        failing_provisioner.fail_next_create(TaskWorktreeProvisionerError::OperationFailed(
-            "failed to create linked worktree".to_string(),
+            ApplicationError::TaskWorktreeProvisioner { .. }
         ));
-        let failing_handler = CreateTaskHandler::new(
-            failing_task_repository,
-            failing_worktree_repository,
-            FixedTaskIdGenerator::new("87654321-1234-5678-90ab-1234567890ab"),
-            FixedWorktreeIdGenerator::new("worktree-2"),
-            failing_provisioner,
-            PathBuf::from(WORK_DIR),
-            FixedClock::new(6),
-        );
-
-        create_handler
-            .handle(CreateTaskRequest {
-                project_id: "project-1".to_string(),
-                title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Todo,
-                workspace_mode: None,
-            })
-            .unwrap();
-        assert_eq!(
-            failing_handler
-                .handle(CreateTaskRequest {
-                    project_id: "project-1".to_string(),
-                    title: "Ship handlers".to_string(),
-                    status: ContractTaskStatus::Todo,
-                    workspace_mode: None,
-                })
-                .unwrap_err(),
-            ApplicationError::TaskWorktree {
-                message: "failed to create linked worktree".to_string(),
-            }
-        );
     });
-
-    assert_eq!(
-        recorder.events(),
-        vec![
-            LoggedEvent {
-                level: "INFO".to_string(),
-                target: "ora_application::task::handlers".to_string(),
-                fields: BTreeMap::from([
-                    (
-                        "message".to_string(),
-                        "task operation completed".to_string()
-                    ),
-                    ("method".to_string(), "log_task_success".to_string()),
-                    ("operation".to_string(), "create_task".to_string()),
-                    ("task_id".to_string(), TASK_ID.to_string()),
-                ]),
-            },
-            LoggedEvent {
-                level: "ERROR".to_string(),
-                target: "ora_application::task::handlers".to_string(),
-                fields: BTreeMap::from([
-                    ("error.kind".to_string(), "task_worktree".to_string()),
-                    (
-                        "error.message".to_string(),
-                        "task worktree operation failed: failed to create linked worktree"
-                            .to_string(),
-                    ),
-                    ("message".to_string(), "task operation failed".to_string()),
-                    ("method".to_string(), "log_task_failure".to_string()),
-                    ("operation".to_string(), "create_task".to_string()),
-                    (
-                        "task_id".to_string(),
-                        "87654321-1234-5678-90ab-1234567890ab".to_string(),
-                    ),
-                ]),
-            },
-        ]
-    );
 }
 
 #[derive(Debug, Default)]
 struct FakeTaskRepository {
     tasks: RefCell<Vec<Task>>,
-    next_error: RefCell<Option<TaskRepositoryError>>,
+    next_error: RefCell<Option<RepositoryError>>,
 }
 
 impl FakeTaskRepository {
@@ -740,7 +611,7 @@ impl FakeTaskRepository {
     }
 
     /// Configures the next repository call to fail with a deterministic error.
-    fn fail_next(&self, error: TaskRepositoryError) {
+    fn fail_next(&self, error: RepositoryError) {
         self.next_error.replace(Some(error));
     }
 
@@ -755,7 +626,7 @@ impl FakeTaskRepository {
     }
 
     /// Returns a queued error when a test wants to simulate repository failure.
-    fn take_error(&self) -> Result<(), TaskRepositoryError> {
+    fn take_error(&self) -> Result<(), RepositoryError> {
         match self.next_error.borrow_mut().take() {
             Some(error) => Err(error),
             None => Ok(()),
@@ -764,13 +635,13 @@ impl FakeTaskRepository {
 }
 
 impl TaskRepository for Rc<FakeTaskRepository> {
-    fn create_task(&self, task: Task) -> Result<Task, TaskRepositoryError> {
+    fn create_task(&self, task: Task) -> Result<Task, RepositoryError> {
         self.take_error()?;
         self.tasks.borrow_mut().push(task.clone());
         Ok(task)
     }
 
-    fn find_task(&self, task_id: &TaskId) -> Result<Option<Task>, TaskRepositoryError> {
+    fn find_task(&self, task_id: &TaskId) -> Result<Option<Task>, RepositoryError> {
         self.take_error()?;
 
         Ok(self
@@ -781,12 +652,12 @@ impl TaskRepository for Rc<FakeTaskRepository> {
             .cloned())
     }
 
-    fn list_tasks(&self) -> Result<Vec<Task>, TaskRepositoryError> {
+    fn list_tasks(&self) -> Result<Vec<Task>, RepositoryError> {
         self.take_error()?;
         Ok(self.visible_tasks())
     }
 
-    fn update_task(&self, task: Task) -> Result<Task, TaskRepositoryError> {
+    fn update_task(&self, task: Task) -> Result<Task, RepositoryError> {
         self.take_error()?;
 
         let mut tasks = self.tasks.borrow_mut();
@@ -796,18 +667,14 @@ impl TaskRepository for Rc<FakeTaskRepository> {
             *existing_task = task.clone();
             Ok(task)
         } else {
-            Err(TaskRepositoryError::OperationFailed(format!(
+            Err(RepositoryError::from_message(format!(
                 "missing task during update: {}",
                 task.id
             )))
         }
     }
 
-    fn soft_delete_task(
-        &self,
-        task_id: &TaskId,
-        deleted_at: i64,
-    ) -> Result<bool, TaskRepositoryError> {
+    fn soft_delete_task(&self, task_id: &TaskId, deleted_at: i64) -> Result<bool, RepositoryError> {
         self.take_error()?;
 
         let mut tasks = self.tasks.borrow_mut();
@@ -827,7 +694,7 @@ impl TaskRepository for Rc<FakeTaskRepository> {
 #[derive(Debug, Default)]
 struct FakeWorktreeRepository {
     worktrees: RefCell<Vec<Worktree>>,
-    next_error: RefCell<Option<WorktreeRepositoryError>>,
+    next_error: RefCell<Option<RepositoryError>>,
 }
 
 impl FakeWorktreeRepository {
@@ -842,7 +709,7 @@ impl FakeWorktreeRepository {
     }
 
     /// Returns a queued error when a test wants to simulate repository failure.
-    fn take_error(&self) -> Result<(), WorktreeRepositoryError> {
+    fn take_error(&self) -> Result<(), RepositoryError> {
         match self.next_error.borrow_mut().take() {
             Some(error) => Err(error),
             None => Ok(()),
@@ -851,16 +718,13 @@ impl FakeWorktreeRepository {
 }
 
 impl WorktreeRepository for Rc<FakeWorktreeRepository> {
-    fn create_worktree(&self, worktree: Worktree) -> Result<Worktree, WorktreeRepositoryError> {
+    fn create_worktree(&self, worktree: Worktree) -> Result<Worktree, RepositoryError> {
         self.take_error()?;
         self.worktrees.borrow_mut().push(worktree.clone());
         Ok(worktree)
     }
 
-    fn find_worktree(
-        &self,
-        worktree_id: &WorktreeId,
-    ) -> Result<Option<Worktree>, WorktreeRepositoryError> {
+    fn find_worktree(&self, worktree_id: &WorktreeId) -> Result<Option<Worktree>, RepositoryError> {
         self.take_error()?;
 
         Ok(self
@@ -871,12 +735,12 @@ impl WorktreeRepository for Rc<FakeWorktreeRepository> {
             .cloned())
     }
 
-    fn list_worktrees(&self) -> Result<Vec<Worktree>, WorktreeRepositoryError> {
+    fn list_worktrees(&self) -> Result<Vec<Worktree>, RepositoryError> {
         self.take_error()?;
         Ok(self.visible_worktrees())
     }
 
-    fn update_worktree(&self, worktree: Worktree) -> Result<Worktree, WorktreeRepositoryError> {
+    fn update_worktree(&self, worktree: Worktree) -> Result<Worktree, RepositoryError> {
         self.take_error()?;
 
         let mut worktrees = self.worktrees.borrow_mut();
@@ -886,7 +750,7 @@ impl WorktreeRepository for Rc<FakeWorktreeRepository> {
             *existing_worktree = worktree.clone();
             Ok(worktree)
         } else {
-            Err(WorktreeRepositoryError::OperationFailed(format!(
+            Err(RepositoryError::from_message(format!(
                 "missing worktree during update: {}",
                 worktree.id
             )))
@@ -897,7 +761,7 @@ impl WorktreeRepository for Rc<FakeWorktreeRepository> {
         &self,
         worktree_id: &WorktreeId,
         deleted_at: i64,
-    ) -> Result<bool, WorktreeRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.take_error()?;
 
         let mut worktrees = self.worktrees.borrow_mut();
@@ -1092,88 +956,4 @@ fn unique_test_work_dir(name: &str) -> PathBuf {
     }
 
     work_dir
-}
-
-/// Captures one emitted event in a comparison-friendly structure for logging assertions.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LoggedEvent {
-    level: String,
-    target: String,
-    fields: BTreeMap<String, String>,
-}
-
-/// Records tracing events into shared memory so tests can assert full structured outcomes.
-#[derive(Clone, Debug, Default)]
-struct EventRecorder {
-    events: Arc<Mutex<Vec<LoggedEvent>>>,
-}
-
-impl EventRecorder {
-    /// Builds the recording layer attached to one scoped test subscriber.
-    fn layer(&self) -> RecordingLayer {
-        RecordingLayer {
-            events: self.events.clone(),
-        }
-    }
-
-    /// Returns every captured event in emission order.
-    fn events(&self) -> Vec<LoggedEvent> {
-        self.events.lock().unwrap().clone()
-    }
-}
-
-/// Pushes each tracing event into the shared recorder without relying on global subscriber state.
-#[derive(Clone, Debug)]
-struct RecordingLayer {
-    events: Arc<Mutex<Vec<LoggedEvent>>>,
-}
-
-impl<S> Layer<S> for RecordingLayer
-where
-    S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
-{
-    /// Converts each event into a stable, fully comparable structure for test assertions.
-    fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
-        let mut visitor = EventFieldVisitor::default();
-        event.record(&mut visitor);
-        self.events.lock().unwrap().push(LoggedEvent {
-            level: event.metadata().level().to_string(),
-            target: event.metadata().target().to_string(),
-            fields: visitor.fields,
-        });
-    }
-}
-
-/// Records tracing fields as strings because these tests care about semantic content, not JSON formatting.
-#[derive(Debug, Default)]
-struct EventFieldVisitor {
-    fields: BTreeMap<String, String>,
-}
-
-impl tracing::field::Visit for EventFieldVisitor {
-    /// Preserves string fields exactly as handler logs emitted them.
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
-    }
-
-    /// Preserves signed integers in decimal form for stable assertions.
-    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
-    }
-
-    /// Preserves unsigned integers in decimal form for stable assertions.
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
-    }
-
-    /// Falls back to debug formatting for field types without a more specific visitor hook.
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        self.fields.insert(
-            field.name().to_string(),
-            format!("{value:?}").trim_matches('"').to_string(),
-        );
-    }
 }

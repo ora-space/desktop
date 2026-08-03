@@ -1,6 +1,7 @@
 mod agent_definition;
 mod error;
 mod project;
+mod repository_error;
 mod session;
 mod task;
 mod worktree;
@@ -8,29 +9,28 @@ mod worktree;
 mod skill;
 
 pub use agent_definition::{
-    AgentDefinitionIdGenerator, AgentDefinitionRepository, AgentDefinitionRepositoryError,
-    CreateAgentDefinitionHandler, DeleteAgentDefinitionHandler, GetAgentDefinitionHandler,
-    ListAgentDefinitionsHandler, UpdateAgentDefinitionHandler, UuidAgentDefinitionIdGenerator,
+    AgentDefinitionIdGenerator, AgentDefinitionRepository, CreateAgentDefinitionHandler,
+    DeleteAgentDefinitionHandler, GetAgentDefinitionHandler, ListAgentDefinitionsHandler,
+    UpdateAgentDefinitionHandler, UuidAgentDefinitionIdGenerator,
 };
 pub use error::ApplicationError;
 pub use project::{
     Clock, CreateProjectHandler, GetProjectHandler, ListProjectsHandler, ProjectIdGenerator,
-    ProjectRepository, ProjectRepositoryError, UpdateProjectHandler, UuidProjectIdGenerator,
+    ProjectRepository, UpdateProjectHandler, UuidProjectIdGenerator,
 };
+pub use repository_error::{BoxRepositorySource, RepositoryError};
 pub use session::{
     DeleteSessionHandler, GetSessionHandler, ListSessionsHandler, SessionIdGenerator,
-    SessionRepository, SessionRepositoryError, UuidSessionIdGenerator,
+    SessionRepository, UuidSessionIdGenerator,
 };
 pub use skill::{
     CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ListSkillsHandler, SkillIdGenerator,
-    SkillRepository, SkillRepositoryError, UpdateSkillHandler, UuidSkillIdGenerator,
+    SkillRepository, UpdateSkillHandler, UuidSkillIdGenerator,
 };
 pub use task::{
     CreateTaskHandler, CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, GetTaskHandler,
     GitTaskWorktreeProvisioner, ListTasksHandler, TaskIdGenerator, TaskRepository,
-    TaskRepositoryError, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator,
+    TaskWorktreeDeletionMode, TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
+    UpdateTaskHandler, UuidTaskIdGenerator,
 };
-pub use worktree::{
-    UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository, WorktreeRepositoryError,
-};
+pub use worktree::{UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository};

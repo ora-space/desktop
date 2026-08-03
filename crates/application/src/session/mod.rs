@@ -5,4 +5,4 @@ mod ports;
 
 pub use handlers::{DeleteSessionHandler, GetSessionHandler, ListSessionsHandler};
 pub use id_generator::UuidSessionIdGenerator;
-pub use ports::{SessionIdGenerator, SessionRepository, SessionRepositoryError};
+pub use ports::{SessionIdGenerator, SessionRepository};

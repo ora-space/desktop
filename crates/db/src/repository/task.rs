@@ -1,4 +1,4 @@
-use ora_application::{TaskRepository, TaskRepositoryError};
+use ora_application::{RepositoryError, TaskRepository};
 use ora_domain::{AuditFields, ProjectId, Task, TaskId, TaskStatus, WorktreeId};
 use rusqlite::{Row, params};
 
@@ -19,7 +19,7 @@ impl SqliteTaskRepository {
 
 impl TaskRepository for SqliteTaskRepository {
     /// Inserts a new task row and returns the stored task snapshot.
-    fn create_task(&self, task: Task) -> Result<Task, TaskRepositoryError> {
+    fn create_task(&self, task: Task) -> Result<Task, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 connection.execute(
@@ -43,7 +43,7 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     /// Loads one visible task row by identifier.
-    fn find_task(&self, task_id: &TaskId) -> Result<Option<Task>, TaskRepositoryError> {
+    fn find_task(&self, task_id: &TaskId) -> Result<Option<Task>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
@@ -62,7 +62,7 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     /// Lists every visible task row in stable storage order.
-    fn list_tasks(&self) -> Result<Vec<Task>, TaskRepositoryError> {
+    fn list_tasks(&self) -> Result<Vec<Task>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
@@ -84,7 +84,7 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     /// Replaces the persisted task snapshot identified by the provided id.
-    fn update_task(&self, task: Task) -> Result<Task, TaskRepositoryError> {
+    fn update_task(&self, task: Task) -> Result<Task, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
@@ -113,11 +113,7 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     /// Soft-deletes one visible task row and reports whether it existed.
-    fn soft_delete_task(
-        &self,
-        task_id: &TaskId,
-        deleted_at: i64,
-    ) -> Result<bool, TaskRepositoryError> {
+    fn soft_delete_task(&self, task_id: &TaskId, deleted_at: i64) -> Result<bool, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
@@ -152,6 +148,6 @@ fn map_task_row(row: &Row<'_>) -> Result<Task, crate::DatabaseError> {
 }
 
 /// Converts shared database-layer failures into task repository errors.
-fn task_repository_error_from_database(error: crate::DatabaseError) -> TaskRepositoryError {
-    TaskRepositoryError::OperationFailed(error.to_string())
+fn task_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
+    RepositoryError::new(error)
 }

@@ -8,8 +8,7 @@ import {
 } from "@tabler/icons-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@ora/ui";
 import { useTranslation } from "react-i18next";
-import type { ChatToolCall } from "@ora/chat";
-import type { acp } from "@ora/contracts";
+import type { ChatToolCall, ChatToolCallStatus } from "@ora/chat";
 import { ToolCallBlock, ToolStatus } from "./tool-call-block";
 import type { ToolCallGroupKind } from "./tool-call-group-kind";
 
@@ -32,7 +31,13 @@ export function ToolCallGroup({ kind, tools }: ToolCallGroupProps) {
   const visibleItems = previewItems.slice(0, 3);
   const summaryCount = kind === "commands" || paths.length === 0 ? tools.length : paths.length;
   const diffTotals = kind === "changes" ? countChanges(tools) : null;
-  const phase = status === "completed" ? "completed" : status === "failed" ? "failed" : "active";
+  const phase = status === "completed"
+    ? "completed"
+    : status === "failed"
+      ? "failed"
+      : status === "cancelled"
+        ? "cancelled"
+        : "active";
 
   return (
     <Collapsible
@@ -74,10 +79,11 @@ export function ToolCallGroup({ kind, tools }: ToolCallGroupProps) {
 }
 
 /** Derives one status without allowing completed calls to mask active or failed work. */
-function groupStatus(tools: ChatToolCall[]): acp.ToolCallStatus | undefined {
+function groupStatus(tools: ChatToolCall[]): ChatToolCallStatus | undefined {
   if (tools.some((tool) => tool.status === "failed")) return "failed";
   if (tools.some((tool) => tool.status === "in_progress")) return "in_progress";
   if (tools.some((tool) => tool.status === "pending")) return "pending";
+  if (tools.some((tool) => tool.status === "cancelled")) return "cancelled";
   if (tools.every((tool) => tool.status === "completed")) return "completed";
   return undefined;
 }

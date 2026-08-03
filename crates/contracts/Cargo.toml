@@ -16,6 +16,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
 ts-rs = { workspace = true, features = ["format", "no-serde-warnings"] }
+uuid = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

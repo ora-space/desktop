@@ -23,7 +23,7 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
 - Never hardcode path separators or concatenate path strings manually. Always use `Path`, `PathBuf`, and `.join()` to construct and manipulate filesystem paths.
 - Newly added traits should include doc comments that explain their role and how implementations are expected to use them.
 - When writing tests, prefer comparing the equality of entire objects over fields one by one.
-- When making a change that adds or changes an API, ensure that the documentation in the `docs/` folder is up to date if applicable.
+- When making a change that adds or changes behavior, ensure that the documentation in the `docs/` folder is up to date if applicable.
 - Prefer private modules and explicitly exported public crate API.
 - Do not create small helper methods that are referenced only once.
 - Avoid large modules:
@@ -47,8 +47,18 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
 
 ## Tests
 
-- run format: `cargo fmt --all`
-- run full tests: `task test`
+`task test` runs all frontend, backend, and Desktop lint and test tasks. It can take a
+long time, so prefer the smallest relevant task while iterating and run the full task
+before considering a repository-wide change complete.
+
+- Frontend lint: `task lint:frontend`
+- Frontend tests: `task test:frontend`
+- Backend lint and formatting: `task lint:backend`
+- Backend tests: `task test:backend`
+- Desktop lint: `task lint:desktop`
+- Desktop tests: `task test:desktop`
+- All lint tasks: `task lint`
+- Full lint and test suite (long-running): `task test`
 
 ### Test assertions
 

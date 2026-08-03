@@ -53,7 +53,7 @@ impl RuntimeActor {
                 }
                 RuntimeCommand::Prompt {
                     operation_id,
-                    text,
+                    prompt,
                     events,
                     accepted,
                 } => {
@@ -61,7 +61,7 @@ impl RuntimeActor {
                         let _ = accepted.send(Err(session_stopped()));
                     } else {
                         let _ = accepted.send(Ok(()));
-                        self.run_prompt(operation_id, text, events).await;
+                        self.run_prompt(operation_id, prompt, events).await;
                     }
                 }
                 RuntimeCommand::RespondToPermission { response, .. } => {
@@ -107,8 +107,8 @@ impl RuntimeActor {
         };
         if !channel.connection.load_session_supported {
             let _ = events.try_send(Err(BackendError::new(
-                BackendErrorKind::Conflict,
-                "session_load_unsupported",
+                ErrorClassification::Conflict,
+                PublicError::SessionLoadUnsupported(EmptyErrorParams {}),
                 "agent CLI does not support session/load",
             )));
             self.mark_stopped();
@@ -242,16 +242,27 @@ impl RuntimeActor {
     async fn run_prompt(
         &mut self,
         operation_id: u64,
-        text: String,
+        prompt: Vec<ContentBlock>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
     ) {
         let Some(mut channel) = self.channel.take() else {
             return;
         };
+        while let Some(notification) = channel.pending_updates.pop_front() {
+            if events
+                .try_send(Ok(PromptSessionEvent::SessionUpdate {
+                    update: notification.update,
+                }))
+                .is_err()
+            {
+                self.isolate_channel(channel).await;
+                return;
+            }
+        }
         let client = channel.connection.client.clone();
-        let text_len = text.len();
-        let request = PromptRequest::new(self.session.agent_session_id.clone(), vec![text.into()]);
-        ora_debug!(session_id = %self.session.id, text_len = text_len, "session/prompt sent");
+        let content_count = prompt.len();
+        let request = PromptRequest::new(self.session.agent_session_id.clone(), prompt);
+        ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
         let future =
             client.request::<_, PromptResponse>(AGENT_METHOD_NAMES.session_prompt, &request);
         tokio::pin!(future);
@@ -473,8 +484,8 @@ impl RuntimeActor {
 /// Reports that the actor cannot accept a second operation while one is in flight.
 fn session_busy() -> BackendError {
     BackendError::new(
-        BackendErrorKind::Conflict,
-        "session_busy",
+        ErrorClassification::Conflict,
+        PublicError::SessionBusy(EmptyErrorParams {}),
         "session already has an active operation",
     )
 }
@@ -482,8 +493,8 @@ fn session_busy() -> BackendError {
 /// Reports that the requested permission no longer belongs to an active prompt.
 fn permission_not_pending() -> BackendError {
     BackendError::new(
-        BackendErrorKind::Conflict,
-        "permission_request_not_pending",
+        ErrorClassification::Conflict,
+        PublicError::PermissionRequestNotPending(EmptyErrorParams {}),
         "permission request is not pending",
     )
 }

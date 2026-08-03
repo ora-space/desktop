@@ -13,7 +13,8 @@ use ora_db::{
 };
 use ora_domain::ProjectId;
 
-use crate::{BackendError, BackendErrorKind};
+use crate::{BackendError, ErrorClassification};
+use ora_contracts::{EmptyErrorParams, PublicError};
 
 /// Groups the concrete project handlers shared by runtime adapters.
 pub(crate) struct ProjectApi {
@@ -84,12 +85,8 @@ impl ProjectApi {
         let project_id = ProjectId::new(request.project_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
             .delete_project(&project_id, self.clock.now_timestamp_millis())
-            .map_err(|_| {
-                BackendError::new(
-                    BackendErrorKind::Internal,
-                    "project_repository_error",
-                    "project repository operation failed",
-                )
+            .map_err(|source| {
+                BackendError::internal("project repository operation failed", source)
             })?;
 
         match outcome {
@@ -97,13 +94,13 @@ impl ProjectApi {
                 project_id: project_id.to_string(),
             }),
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
-                BackendErrorKind::NotFound,
-                "project_not_found",
+                ErrorClassification::NotFound,
+                PublicError::ProjectNotFound(EmptyErrorParams {}),
                 format!("project not found: {project_id}"),
             )),
             CascadeDeleteOutcome::ActiveSession => Err(BackendError::new(
-                BackendErrorKind::Conflict,
-                "resource_in_use",
+                ErrorClassification::Conflict,
+                PublicError::ResourceInUse(EmptyErrorParams {}),
                 "project has a running session and cannot be deleted",
             )),
         }
