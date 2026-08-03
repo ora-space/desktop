@@ -21,7 +21,7 @@ Contracts are the app-facing protocol, not a projection of the domain. Each enti
 
 - `Project`: `id`, `name`, `rootPath`
 - `Task`: `id`, `projectId`, `title`, `status`, `workspaceMode`
-- `Session`: `id`, `taskId`, `agentCli`, `status`
+- `Session`: `id`, `taskId`, `agentCli`, `status`, `historyState`
 - `Skill` and `Agent`: `id`, `name`, `description`
 - `ProjectWorkContext`: `id`, `surface`, `windowId`, `projectId`, `leaseExpiresAt`
 
@@ -59,7 +59,7 @@ The handler set is intentionally narrower than full CRUD per entity, because som
 Notable consequences:
 
 - There is no delete handler for `project` or `task`. Aggregate deletion is a transactional cascade owned by `ora-backend` and `ora-db`, because it has to reject running descendants and update several tables atomically.
-- Session creation, load, prompt, permission response, cancellation, and stop belong to the backend agent runtime, not to `ora-application`. The session module supplies only the persistence-facing reads and soft deletion.
+- Session creation, load, prompt, permission response, cancellation, stop, agent switching, and history recording belong to the backend agent runtime, not to `ora-application`. The session module supplies only the persistence-facing reads and soft deletion.
 - `worktree` has no handlers or transport contracts at all. Worktree records are internal metadata coordinated by the task module.
 
 `project_id`, `task_id`, and `worktree_id` are treated as pass-through business identifiers. Create and update handlers do not perform extra cross-entity existence checks before delegating to their repositories; `OpenProjectWorkContextHandler` verifying the requested project is the one deliberate exception, because occupancy has to be evaluated against a real project.
@@ -75,8 +75,8 @@ Bootstrap, migration, state-transition, and secondary-cleanup events remain inde
 ## Slice invariants
 
 - Project roots are immutable after creation; `UpdateProjectHandler` renames only.
-- Session routing — task, provider CLI, and provider session id — is immutable. Lifecycle operations change only `status` and `updated_at`.
+- A session's task is immutable, because it decides the working directory the conversation lives in. Its provider CLI and provider session id are the current binding rather than its identity: `switchSessionAgent` replaces both while the identifier and the recorded history continue. Ordinary lifecycle operations still change only `status` and `updated_at`.
 - `UpdateTaskRequest` cannot change project ownership, and task updates preserve the existing worktree association.
-- Project and Task deletion soft-delete the complete Ora-owned aggregate in one SQLite transaction. A running Session rejects the operation with `resource_in_use`; stopped children are cascaded. These paths never call Git and never delete provider-owned ACP history.
+- Project and Task deletion soft-delete the complete Ora-owned aggregate in one SQLite transaction. A running Session rejects the operation with `resource_in_use`; stopped children are cascaded. These paths never call Git and never delete provider-owned ACP history, but they do remove the session history Ora itself recorded — see [ACP Agent Runtime](agent-runtime.md).
 - Task creation resolves the requested project's Git root at creation time. Deletion changes Ora database records only and deliberately leaves the linked Git worktree and its branch untouched.
 - Worktree paths are composed only when creating a new worktree. Existing paths are resolved from the persisted branch name and Git's authoritative metadata, never reconstructed from the configured creation root.

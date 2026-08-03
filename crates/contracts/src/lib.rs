@@ -29,8 +29,9 @@ pub use frontend::{
     FrontendHttpMethod, FrontendPathParam, FrontendQueryParam, FrontendResponseMode,
     GIT_IDENTITY_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
     PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
-    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH,
-    SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
+    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_RESUME_HISTORY_PATH,
+    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH,
+    TASK_PATH, TASKS_PATH, frontend_endpoints,
 };
 pub use git::{GetGitIdentityRequest, GitIdentityResponse};
 pub use project::{
@@ -47,8 +48,9 @@ pub use session::{
     DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest,
     ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent,
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
-    RespondToPermissionResponse, Session, SessionPermissionRequest, SessionStatus,
-    StopSessionRequest, StopSessionResponse,
+    RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse,
+    Session, SessionHistoryState, SessionPermissionRequest, SessionStatus, StopSessionRequest,
+    StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
 };
 pub use skill::{
     CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,

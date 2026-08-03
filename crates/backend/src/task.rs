@@ -24,6 +24,8 @@ use std::sync::{Arc, RwLock};
 pub(crate) struct TaskApi {
     pool: RepositoryPool,
     worktree_root: Arc<RwLock<PathBuf>>,
+    /// Where cascaded sessions' recorded conversations are removed from.
+    sessions_root: PathBuf,
     get: GetTaskHandler<SqliteTaskRepository>,
     list: ListTasksHandler<SqliteTaskRepository>,
     update: UpdateTaskHandler<SqliteTaskRepository, SystemClock>,
@@ -35,6 +37,7 @@ impl TaskApi {
     pub(crate) fn new(
         pool: RepositoryPool,
         worktree_root: Arc<RwLock<PathBuf>>,
+        sessions_root: PathBuf,
         clock: SystemClock,
     ) -> Self {
         let repository = SqliteTaskRepository::new(pool.clone());
@@ -42,6 +45,7 @@ impl TaskApi {
         Self {
             pool,
             worktree_root,
+            sessions_root,
             get: GetTaskHandler::new(repository.clone()),
             list: ListTasksHandler::new(repository.clone()),
             update: UpdateTaskHandler::new(repository, clock),
@@ -97,14 +101,20 @@ impl TaskApi {
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
         let task_id = TaskId::new(request.task_id);
+        // Collected before the cascade: once the rows are soft-deleted nothing
+        // links their history files back to the task that owned them.
+        let session_ids = crate::session_history::session_ids_for_task(&self.pool, &task_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
             .delete_task(&task_id, self.clock.now_timestamp_millis())
             .map_err(|source| BackendError::internal("task repository operation failed", source))?;
 
         match outcome {
-            CascadeDeleteOutcome::Deleted => Ok(DeleteTaskResponse {
-                task_id: task_id.to_string(),
-            }),
+            CascadeDeleteOutcome::Deleted => {
+                crate::session_history::remove_session_histories(&self.sessions_root, session_ids);
+                Ok(DeleteTaskResponse {
+                    task_id: task_id.to_string(),
+                })
+            }
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
                 ErrorClassification::NotFound,
                 PublicError::TaskNotFound(EmptyErrorParams {}),

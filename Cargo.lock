@@ -1400,6 +1400,7 @@ dependencies = [
  "ora-contracts",
  "ora-db",
  "ora-domain",
+ "ora-history",
  "ora-logging",
  "ora-process",
  "pretty_assertions",
@@ -1407,6 +1408,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1449,6 +1451,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ora-history"
+version = "0.0.0"
+dependencies = [
+ "ora-contracts",
+ "ora-domain",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]
