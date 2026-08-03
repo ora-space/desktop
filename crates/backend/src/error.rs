@@ -54,6 +54,19 @@ impl BackendError {
         )
     }
 
+    /// Creates an internal failure from an already boxed source-chain boundary.
+    pub fn internal_boxed(
+        context: &'static str,
+        source: Box<dyn Error + Send + Sync + 'static>,
+    ) -> Self {
+        Self {
+            classification: ErrorClassification::Internal,
+            public_error: PublicError::InternalError(EmptyErrorParams {}),
+            context: context.to_string(),
+            source: Some(Arc::from(source)),
+        }
+    }
+
     /// Creates a classified semantic failure while retaining a lower-level source.
     pub fn with_source(
         classification: ErrorClassification,
@@ -192,6 +205,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::ProjectWorkContextNotFound(EmptyErrorParams {}),
                 "project work context not found",
             ),
+            ApplicationError::ProjectBranchListing { .. } => (
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "project branch listing operation failed",
+            ),
             ApplicationError::TaskNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::TaskNotFound(EmptyErrorParams {}),
@@ -202,10 +220,52 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorktreeRequiresGitRepository(EmptyErrorParams {}),
                 "worktree mode requires a Git repository",
             ),
+            ApplicationError::TaskBaseBranchRequired => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskBaseBranchRequired(EmptyErrorParams {}),
+                "worktree mode requires a base branch",
+            ),
+            ApplicationError::TaskBaseBranchNotFound { branch_name } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskBaseBranchNotFound(ora_contracts::TaskBaseBranchNotFoundParams {
+                    branch_name: branch_name.clone(),
+                }),
+                "base branch was not found",
+            ),
             ApplicationError::WorktreeNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::WorktreeNotFound(EmptyErrorParams {}),
                 "worktree not found",
+            ),
+            ApplicationError::TaskDiffBaselineUnavailable => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffBaselineUnavailable(EmptyErrorParams {}),
+                "task diff baseline is unavailable",
+            ),
+            ApplicationError::TaskDiffCommitMessageBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommitMessageBlank(EmptyErrorParams {}),
+                "task diff commit message must not be blank",
+            ),
+            ApplicationError::TaskDiffTooLarge { .. } => (
+                ErrorClassification::PayloadTooLarge,
+                PublicError::TaskDiffTooLarge(EmptyErrorParams {}),
+                "task diff exceeds the response limit",
+            ),
+            ApplicationError::TaskDiffStale => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffStale(EmptyErrorParams {}),
+                "task diff changed before the comment was created",
+            ),
+            ApplicationError::TaskDiffCommentNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::TaskDiffCommentNotFound(EmptyErrorParams {}),
+                "task diff comment not found",
+            ),
+            ApplicationError::TaskDiffCommentInvalid { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommentInvalid(EmptyErrorParams {}),
+                "task diff comment is invalid",
             ),
             ApplicationError::SessionNotFound { .. } => (
                 ErrorClassification::NotFound,
@@ -222,6 +282,8 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::TaskWorktreeRootUnavailable
             | ApplicationError::TaskFilesystem { .. }
             | ApplicationError::TaskWorktreeProvisioner { .. }
+            | ApplicationError::TaskDiff { .. }
+            | ApplicationError::TaskDiffCommentRepository { .. }
             | ApplicationError::WorktreeRepository { .. }
             | ApplicationError::SessionRepository { .. } => (
                 ErrorClassification::Internal,
@@ -249,6 +311,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::error::Error;
 
+    /// Verifies non-Git roots retain the stable bad-request contract used by runtime adapters.
     #[test]
     fn maps_semantics_without_inspecting_the_source_chain() {
         let error = BackendError::from(ApplicationError::TaskWorktreeRequiresGitRepository);
@@ -293,6 +356,41 @@ mod tests {
         );
     }
 
+    /// Verifies a blank task commit message is reported as a client-correctable request error.
+    #[test]
+    fn maps_blank_task_commit_messages_to_invalid_request() {
+        let error = BackendError::from(ApplicationError::TaskDiffCommitMessageBlank);
+
+        assert_eq!(
+            (error.classification(), error.public_error().clone()),
+            (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommitMessageBlank(EmptyErrorParams {})
+            )
+        );
+    }
+
+    /// Verifies task-diff infrastructure failures retain their concrete source chain.
+    #[test]
+    fn retains_task_diff_source_chain_through_the_backend_projection() {
+        let application_error = ApplicationError::TaskDiff {
+            source: Box::new(std::io::Error::other("git process failed")),
+        };
+        let backend_error = BackendError::from(application_error);
+
+        assert_eq!(
+            backend_error.source().map(ToString::to_string),
+            Some("task diff operation failed".to_string())
+        );
+        assert_eq!(
+            backend_error
+                .source()
+                .and_then(Error::source)
+                .map(ToString::to_string),
+            Some("git process failed".to_string())
+        );
+    }
+
     #[test]
     fn retains_repository_source_chain_through_the_backend_projection() {
         let database_error = std::io::Error::other("database connection closed");
@@ -317,6 +415,22 @@ mod tests {
                 "repository operation failed",
                 "database connection closed",
             ]
+        );
+    }
+
+    /// Verifies missing base branches remain actionable and retain their selected ref name.
+    #[test]
+    fn exposes_missing_base_branches_as_a_stable_bad_request() {
+        let error = BackendError::from(ApplicationError::TaskBaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        });
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::TaskBaseBranchNotFound(ora_contracts::TaskBaseBranchNotFoundParams {
+                branch_name: "ghost-branch".to_string(),
+            })
         );
     }
 }

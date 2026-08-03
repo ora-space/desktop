@@ -11,6 +11,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "react-diff-view": "^3.3.3",
     "ts-to-zod": "^5.1.0"
   },
   "exports": {

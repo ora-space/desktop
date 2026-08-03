@@ -1,6 +1,7 @@
 use crate::app_state::AppState;
 use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skills, tasks,
+    agents, file_system, git, health, project_work_contexts, projects, sessions, skills,
+    task_diffs, tasks,
 };
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -8,10 +9,12 @@ use axum::middleware;
 use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
-    PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
-    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH,
-    TASKS_PATH,
+    PROJECT_BRANCHES_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
+    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH,
+    SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH,
+    TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH,
+    TASK_PUSH_PATH, TASKS_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -37,6 +40,7 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(projects::update_project)
                 .delete(projects::delete_project),
         )
+        .route(PROJECT_BRANCHES_PATH, get(projects::list_project_branches))
         // =============================================================================
         // projectWorkContext
         // =============================================================================
@@ -57,6 +61,24 @@ pub fn build_router(app_state: AppState) -> Router {
             get(tasks::get_task)
                 .put(tasks::update_task)
                 .delete(tasks::delete_task),
+        )
+        // =============================================================================
+        // taskDiff
+        // =============================================================================
+        .route(TASK_DIFF_PATH, get(task_diffs::get_task_diff))
+        .route(TASK_COMMIT_PATH, post(task_diffs::commit_task_changes))
+        .route(TASK_PUSH_PATH, post(task_diffs::push_task_branch))
+        .route(
+            TASK_DIFF_COMMENTS_PATH,
+            post(task_diffs::create_task_diff_comment).get(task_diffs::list_task_diff_comments),
+        )
+        .route(
+            TASK_DIFF_COMMENT_REPLIES_PATH,
+            post(task_diffs::reply_task_diff_comment),
+        )
+        .route(
+            TASK_DIFF_COMMENT_STATUS_PATH,
+            axum::routing::put(task_diffs::set_task_diff_comment_status),
         )
         // =============================================================================
         // session
@@ -721,6 +743,7 @@ mod tests {
                             "projectId": project_id,
                             "title": "Ship handlers",
                             "status": "todo",
+                            "baseBranch": "main",
                         })
                         .to_string(),
                     ))
@@ -736,6 +759,17 @@ mod tests {
             Some(task_id) => task_id.to_string(),
             None => panic!("response did not include a task id"),
         };
+        let branch_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/projects/{project_id}/branches"))
+                    .body(Body::empty())
+                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
         let list_response = match app
             .clone()
             .oneshot(
@@ -813,6 +847,23 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "todo",
                 "workspaceMode": "worktree",
+            })
+        );
+        assert_eq!(
+            response_json(branch_response).await,
+            json!({
+                "branches": [
+                    {
+                        "name": "main",
+                        "refName": "main",
+                        "displayName": "main",
+                    },
+                    {
+                        "name": format!("ora/{}", &task_id[..8]),
+                        "refName": format!("ora/{}", &task_id[..8]),
+                        "displayName": "Ship handlers",
+                    },
+                ],
             })
         );
         assert_eq!(

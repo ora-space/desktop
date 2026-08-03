@@ -86,14 +86,16 @@ export function useCreateTask() {
       title,
       status,
       workspaceMode,
+      baseBranch,
     }: {
       projectId: string;
       title: string;
       status: TaskStatus;
       workspaceMode?: TaskWorkspaceMode;
+      baseBranch?: string;
     }) =>
       client.task
-        .create({ projectId, title, status, workspaceMode })
+        .create({ projectId, title, status, workspaceMode, baseBranch })
         .then((response) => response.task),
     onSuccess: (task) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks });
@@ -101,6 +103,11 @@ export function useCreateTask() {
       // waits until its provider session is ready before changing selection,
       // avoiding an intermediate task-only state in the composer.
       if (task.workspaceMode === "worktree") {
+        // The backend created a new Ora branch, so the next worktree dialog
+        // must refetch before offering base branches.
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.projectBranches(task.projectId),
+        });
         useWorkspaceSelectionStore
           .getState()
           .selectTask(task.id, task.projectId);

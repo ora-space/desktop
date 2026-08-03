@@ -113,8 +113,8 @@ impl RequestLifecycle {
                 "request completed"
             ),
             ErrorClassification::InvalidRequest
-            | ErrorClassification::PayloadTooLarge
             | ErrorClassification::NotFound
+            | ErrorClassification::PayloadTooLarge
             | ErrorClassification::Unprocessable => ora_info!(
                 operation = self.inner.operation.as_ref(),
                 request_id = %self.inner.request_id,

@@ -5,6 +5,7 @@ mod project_work_context;
 mod repository_error;
 mod session;
 mod task;
+mod task_diff;
 mod worktree;
 
 mod skill;
@@ -16,7 +17,8 @@ pub use agent_definition::{
 };
 pub use error::ApplicationError;
 pub use project::{
-    Clock, CreateProjectHandler, GetProjectHandler, ListProjectsHandler, ProjectIdGenerator,
+    BranchLister, BranchListingError, BranchReference, Clock, CreateProjectHandler,
+    GetProjectHandler, ListProjectBranchesHandler, ListProjectsHandler, ProjectIdGenerator,
     ProjectRepository, UpdateProjectHandler, UuidProjectIdGenerator,
 };
 pub use project_work_context::{
@@ -35,9 +37,18 @@ pub use skill::{
     UpdateSkillHandler, UploadedSkillFile, UuidSkillIdGenerator,
 };
 pub use task::{
-    CreateTaskHandler, CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, GetTaskHandler,
-    GitTaskWorktreeProvisioner, ListTasksHandler, TaskIdGenerator, TaskRepository,
-    TaskWorktreeDeletionMode, TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
-    UpdateTaskHandler, UuidTaskIdGenerator,
+    CreateTaskHandler, CreateTaskWorktreeRequest, CreateTaskWorktreeResponse,
+    DeleteTaskWorktreeRequest, GetTaskHandler, GitTaskWorktreeProvisioner, ListTasksHandler,
+    TaskIdGenerator, TaskRepository, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
+    TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator,
+};
+pub use task_diff::{
+    CommitTaskChangesHandler, CommitTaskGitRequest, CreateTaskDiffCommentHandler,
+    GetTaskDiffHandler, GitTaskDiffReader, GitTaskGitWriter, ListTaskDiffCommentsHandler,
+    PushTaskBranchHandler, PushTaskGitRequest, ReadTaskDiffRequest, ReadTaskDiffScope,
+    ReplyTaskDiffCommentHandler, SetTaskDiffCommentStatusHandler, TaskDiffCommentIdGenerator,
+    TaskDiffCommentRepository, TaskDiffCommentRepositoryError, TaskDiffReader, TaskDiffReaderError,
+    TaskDiffSnapshot, TaskGitCommit, TaskGitPush, TaskGitWriter, TaskGitWriterError,
+    UuidTaskDiffCommentIdGenerator, task_diff_id,
 };
 pub use worktree::{UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository};

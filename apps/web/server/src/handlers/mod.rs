@@ -6,4 +6,5 @@ pub mod project_work_contexts;
 pub mod projects;
 pub mod sessions;
 pub mod skills;
+pub mod task_diffs;
 pub mod tasks;

@@ -34,6 +34,10 @@ define_id!(
 );
 define_id!(TaskId, "Identifies a persisted task.");
 define_id!(WorktreeId, "Identifies a persisted worktree.");
+define_id!(
+    TaskDiffCommentId,
+    "Identifies a persisted task diff comment."
+);
 define_id!(VirtualFolderId, "Identifies a persisted virtual folder.");
 define_id!(VirtualEntryId, "Identifies a persisted virtual entry.");
 define_id!(SessionId, "Identifies a persisted session.");

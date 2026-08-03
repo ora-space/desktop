@@ -17,6 +17,6 @@ Trailing applied migrations are rolled back in reverse order. Pending migrations
 
 An applied version absent from the catalog is an error. Reconciliation is otherwise idempotent when the database already matches the target.
 
-Schema contents stay in version-specific modules; repository query behavior belongs to the repository module.
+Schema contents stay in version-specific modules; repository query behavior belongs to the repository module. Migration `0004` adds the nullable worktree baseline plus the constrained task-diff comment table, indexes, and root-only parent trigger. Its down statements deliberately remove all task-diff comment data, so rollback is an operationally destructive action even though reconciliation remains transactional.
 
 See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/database-migrations.md).

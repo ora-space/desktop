@@ -232,4 +232,34 @@ mod tests {
             StatusCode::PAYLOAD_TOO_LARGE
         );
     }
+
+    /// Verifies missing base branches become HTTP 400 payloads that retain the selected ref name.
+    #[tokio::test]
+    async fn maps_missing_base_branches_to_http_400() {
+        let response = WebApiError::from(ApplicationError::TaskBaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        })
+        .into_response();
+        let status = response.status();
+        let body = response.into_body();
+        let bytes = match to_bytes(body, usize::MAX).await {
+            Ok(bytes) => bytes,
+            Err(error) => panic!("failed to read response body: {error}"),
+        };
+        let actual = match serde_json::from_slice::<Value>(&bytes) {
+            Ok(actual) => actual,
+            Err(error) => panic!("failed to decode JSON body: {error}"),
+        };
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            actual,
+            json!({
+                "error": {
+                    "code": "base_branch_not_found",
+                    "message": "base branch not found: ghost-branch",
+                },
+            })
+        );
+    }
 }

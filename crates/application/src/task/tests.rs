@@ -1,8 +1,9 @@
 use crate::{
     ApplicationError, Clock, CreateTaskHandler, CreateTaskWorktreeRequest,
-    DeleteTaskWorktreeRequest, GetTaskHandler, ListTasksHandler, RepositoryError, TaskIdGenerator,
-    TaskRepository, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError, UpdateTaskHandler, WorktreeIdGenerator, WorktreeRepository,
+    CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest, GetTaskHandler, ListTasksHandler,
+    RepositoryError, TaskIdGenerator, TaskRepository, TaskWorktreeDeletionMode,
+    TaskWorktreeProvisioner, TaskWorktreeProvisionerError, UpdateTaskHandler, WorktreeIdGenerator,
+    WorktreeRepository,
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest,
@@ -46,6 +47,7 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -65,6 +67,7 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/12345678".to_string(),
+                base_reference_name: "main".to_string(),
                 worktree_path: Path::new(WORK_DIR).join(TASK_ID),
             }]
         );
@@ -74,6 +77,7 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
                 WorktreeId::new("worktree-1"),
                 TaskId::new(TASK_ID),
                 Some("ora/12345678".to_string()),
+                ora_domain::WorktreeBaseline::recorded("base-commit").unwrap(),
                 DomainWorktreeActivity::Active,
                 AuditFields::new(1_700_000_000_000, 1_700_000_000_000, false),
             )]
@@ -115,6 +119,7 @@ fn creates_project_root_tasks_without_worktrees() {
                 title: "Chat in project root".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: Some(TaskWorkspaceMode::ProjectRoot),
+                base_branch: None,
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -160,10 +165,87 @@ fn rejects_worktree_tasks_outside_git_repositories() {
                 title: "Cannot create worktree here".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: Some(TaskWorkspaceMode::Worktree),
+                base_branch: Some("main".to_string()),
             })
             .expect_err("non-Git project root should be rejected");
 
         assert_eq!(error, ApplicationError::TaskWorktreeRequiresGitRepository);
+        assert!(provisioner.created_requests().is_empty());
+        assert!(worktree_repository.visible_worktrees().is_empty());
+        assert!(task_repository.visible_tasks().is_empty());
+    });
+}
+
+/// Verifies missing base branches retain their name and do not persist task or worktree records.
+#[test]
+fn rejects_missing_base_branches_without_persisting_ora_records() {
+    with_trace_logging(|| {
+        let task_repository = Rc::new(FakeTaskRepository::default());
+        let worktree_repository = Rc::new(FakeWorktreeRepository::default());
+        let provisioner = Rc::new(FakeTaskWorktreeProvisioner::default());
+        provisioner.fail_next_create(TaskWorktreeProvisionerError::BaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        });
+        let handler = CreateTaskHandler::new(
+            task_repository.clone(),
+            worktree_repository.clone(),
+            FixedTaskIdGenerator::new(TASK_ID),
+            FixedWorktreeIdGenerator::new("worktree-1"),
+            provisioner.clone(),
+            PathBuf::from(WORK_DIR),
+            FixedClock::new(1_700_000_000_000),
+        );
+
+        let error = handler
+            .handle(CreateTaskRequest {
+                project_id: "project-1".to_string(),
+                title: "Cannot find base branch".to_string(),
+                status: ContractTaskStatus::Doing,
+                workspace_mode: Some(TaskWorkspaceMode::Worktree),
+                base_branch: Some("ghost-branch".to_string()),
+            })
+            .expect_err("missing base branch should be rejected");
+
+        assert_eq!(
+            error,
+            ApplicationError::TaskBaseBranchNotFound {
+                branch_name: "ghost-branch".to_string(),
+            }
+        );
+        assert!(provisioner.created_requests().is_empty());
+        assert!(worktree_repository.visible_worktrees().is_empty());
+        assert!(task_repository.visible_tasks().is_empty());
+    });
+}
+
+/// Verifies worktree mode rejects an omitted base before touching Git or persistence.
+#[test]
+fn rejects_worktree_tasks_without_a_base_branch() {
+    with_trace_logging(|| {
+        let task_repository = Rc::new(FakeTaskRepository::default());
+        let worktree_repository = Rc::new(FakeWorktreeRepository::default());
+        let provisioner = Rc::new(FakeTaskWorktreeProvisioner::default());
+        let handler = CreateTaskHandler::new(
+            task_repository.clone(),
+            worktree_repository.clone(),
+            FixedTaskIdGenerator::new(TASK_ID),
+            FixedWorktreeIdGenerator::new("worktree-1"),
+            provisioner.clone(),
+            PathBuf::from(WORK_DIR),
+            FixedClock::new(1_700_000_000_000),
+        );
+
+        let error = handler
+            .handle(CreateTaskRequest {
+                project_id: "project-1".to_string(),
+                title: "Missing base branch".to_string(),
+                status: ContractTaskStatus::Todo,
+                workspace_mode: Some(TaskWorkspaceMode::Worktree),
+                base_branch: None,
+            })
+            .expect_err("worktree tasks should require a base branch");
+
+        assert_eq!(error, ApplicationError::TaskBaseBranchRequired);
         assert!(provisioner.created_requests().is_empty());
         assert!(worktree_repository.visible_worktrees().is_empty());
         assert!(task_repository.visible_tasks().is_empty());
@@ -199,6 +281,7 @@ fn regenerates_task_ids_when_branch_prefix_folder_exists() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -218,6 +301,7 @@ fn regenerates_task_ids_when_branch_prefix_folder_exists() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/87654321".to_string(),
+                base_reference_name: "main".to_string(),
                 worktree_path: work_dir.join("87654321-1234-5678-90ab-1234567890ab"),
             }]
         );
@@ -262,6 +346,7 @@ fn regenerates_task_ids_when_orphaned_branch_exists() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -281,6 +366,7 @@ fn regenerates_task_ids_when_orphaned_branch_exists() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/87654321".to_string(),
+                base_reference_name: "main".to_string(),
                 worktree_path: work_dir.join("87654321-1234-5678-90ab-1234567890ab"),
             }]
         );
@@ -309,6 +395,7 @@ fn creates_task_when_work_dir_does_not_exist() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_or_else(|error| panic!("create handler failed: {error}"));
 
@@ -328,6 +415,7 @@ fn creates_task_when_work_dir_does_not_exist() {
             provisioner.created_requests(),
             vec![CreateTaskWorktreeRequest {
                 branch_name: "ora/12345678".to_string(),
+                base_reference_name: "main".to_string(),
                 worktree_path: work_dir.join(TASK_ID),
             }]
         );
@@ -357,6 +445,7 @@ fn reports_task_worktree_error_when_task_id_retries_are_exhausted() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Doing,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_err(),
         ApplicationError::TaskWorktreeIdExhausted { attempts: 3 }
@@ -527,6 +616,7 @@ fn cleans_up_created_worktree_when_task_persistence_fails() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_err();
 
@@ -579,6 +669,7 @@ fn reports_application_errors() {
                 title: "Ship handlers".to_string(),
                 status: ContractTaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .unwrap_err();
 
@@ -853,10 +944,12 @@ impl TaskWorktreeProvisioner for Rc<FakeTaskWorktreeProvisioner> {
     fn create_task_worktree(
         &self,
         request: CreateTaskWorktreeRequest,
-    ) -> Result<(), TaskWorktreeProvisionerError> {
+    ) -> Result<CreateTaskWorktreeResponse, TaskWorktreeProvisionerError> {
         self.take_create_error()?;
         self.created_requests.borrow_mut().push(request);
-        Ok(())
+        Ok(CreateTaskWorktreeResponse {
+            base_commit_id: "base-commit".to_string(),
+        })
     }
 
     fn delete_task_worktree(

@@ -7,6 +7,7 @@ mod session;
 mod skill;
 mod skill_import;
 mod task;
+mod task_diff_comment;
 mod worktree;
 
 pub use agent_definition::SqliteAgentDefinitionRepository;
@@ -18,4 +19,5 @@ pub use session::SqliteSessionRepository;
 pub use skill::SqliteSkillRepository;
 pub use skill_import::SqliteSkillImportUnitOfWork;
 pub use task::SqliteTaskRepository;
+pub use task_diff_comment::SqliteTaskDiffCommentRepository;
 pub use worktree::SqliteWorktreeRepository;

@@ -122,6 +122,7 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 ### fileSystem
 
 - `GET /api/file-system/directory?path={absolute_path}`
+- `GET /api/projects/{projectId}/branches`
 
 ### gitIdentity
 
@@ -130,6 +131,8 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 Each route translates transport input into the matching `ora-contracts` request DTO, delegates to the shared backend, and serializes the returned contract response without adding adapter-local response shapes.
 
 Task payloads do not expose backend-owned worktree identifiers, and the runtime exposes no standalone public worktree endpoints — `/api/worktrees` and `/api/worktrees/{worktreeId}` are not part of the API.
+
+Project branch responses separate the logical branch name, exact resolvable ref, and display label. Ora-managed branches use their task titles as labels while preserving the Git ref used to create a new worktree.
 
 `GET /api/git/identity` returns the host's Git identity for the sidebar profile: the global Git config first, falling back to the authenticated GitHub CLI account when Git has no name configured.
 

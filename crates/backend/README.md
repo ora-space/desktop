@@ -6,6 +6,8 @@
 
 - `Backend::open` creates required directories, bootstraps and migrates SQLite, reconciles imported skill packages, constructs APIs, and starts the [agent runtime](src/agent_runtime/README.md).
 - Project, task, skill CRUD, atomic skill-folder import, and agent operations delegate to `ora-application`; aggregate deletion uses transactional database cascades.
+- `TaskDiffApi` composes the task-diff handlers with SQLite and Gitlancer. It resolves the agent's live task cwd, uses `HEAD` as the moving baseline for project-root tasks, and uses the persisted creation commit for isolated worktrees.
+- Task diff reads, commits, pushes, and comments preserve the same public error projection as the rest of the backend. Git and SQLite sources remain internal diagnostics and are rendered once by the adapter-owned request lifecycle.
 - Session creation, loading, structured ACP prompting, permissions, stopping, deletion, and model discovery delegate to the agent runtime. Creation also returns the provider's setup-time available-command catalog.
 - `BackendError` retains the internal source chain while exhaustively projecting semantic failures into a typed `PublicError` and one transport-neutral `ErrorClassification`. HTTP derives status from the classification; all adapters serialize the same direct `ContractError`.
 - `RequestLifecycle` gives Web, Tauri, and stream seams one generated request id and an exactly-once success, failure, or cancellation completion event. Failure log levels derive from `ErrorClassification`.

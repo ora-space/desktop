@@ -46,6 +46,9 @@ pub struct CreateTaskRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub workspace_mode: Option<TaskWorkspaceMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub base_branch: Option<String>,
 }
 
 /// Returns the created task after a successful create request.
@@ -70,6 +73,31 @@ pub struct GetTaskRequest {
 #[ts(export_to = "task.ts")]
 pub struct GetTaskResponse {
     pub task: Task,
+}
+
+/// Requests the active workspace for one task without exposing checkout paths to callers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "task.ts")]
+pub struct GetTaskWorkspaceRequest {
+    pub task_id: String,
+}
+
+/// Describes the absolute checkout root and branch the backend resolved for one task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "task.ts")]
+pub struct TaskWorkspace {
+    pub root_path: String,
+    pub branch_name: String,
+}
+
+/// Returns one task-owned workspace without exposing repository internals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "task.ts")]
+pub struct GetTaskWorkspaceResponse {
+    pub workspace: TaskWorkspace,
 }
 
 /// Requests the full visible task list.
@@ -129,6 +157,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CreateTaskResponse::export(config)?;
     GetTaskRequest::export(config)?;
     GetTaskResponse::export(config)?;
+    GetTaskWorkspaceRequest::export(config)?;
+    GetTaskWorkspaceResponse::export(config)?;
+    TaskWorkspace::export(config)?;
     ListTasksRequest::export(config)?;
     ListTasksResponse::export(config)?;
     UpdateTaskRequest::export(config)?;
@@ -164,6 +195,7 @@ mod tests {
             title: "Ship handlers".to_string(),
             status: TaskStatus::Todo,
             workspace_mode: None,
+            base_branch: Some("main".to_string()),
         };
         let get_request = GetTaskRequest {
             task_id: "task-1".to_string(),
@@ -194,6 +226,7 @@ mod tests {
                 "projectId": "project-1",
                 "title": "Ship handlers",
                 "status": "todo",
+                "baseBranch": "main",
             }),
         );
         assert_serialized_json(

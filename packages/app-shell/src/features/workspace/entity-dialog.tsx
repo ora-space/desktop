@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { IconFolderOpen } from "@tabler/icons-react";
 import { usePlatform, type PathSelectionKind } from "@ora/platform";
 import {
@@ -75,6 +75,21 @@ export function EntityDialog({
   const [selectingField, setSelectingField] = useState<string | null>(null);
   const [pathSelectionError, setPathSelectionError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Select options arrive asynchronously for repository-backed forms. Fill only
+    // untouched values so a late query cannot overwrite input the user changed.
+    setValues((current) => {
+      let next = current;
+      for (const field of fields) {
+        if ((current[field.name] ?? "") === "" && field.value !== "") {
+          next = next === current ? { ...current } : next;
+          next[field.name] = field.value;
+        }
+      }
+      return next;
+    });
+  }, [fields]);
 
   const handlePathSelection = async (field: PathEntityField) => {
     setSelectingField(field.name);

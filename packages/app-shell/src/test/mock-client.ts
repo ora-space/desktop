@@ -34,6 +34,9 @@ export function createMockClient(state: MockClientState): ContractsClient {
   return {
     project: {
       list: async () => ({ projects: [...state.projects] }),
+      listBranches: async () => ({
+        branches: [{ name: "main", refName: "origin/main", displayName: "main" }],
+      }),
       get: async (req) => ({ project: state.projects.find((p) => p.id === req.projectId)! }),
       create: async (req) => {
         const project: Project = { id: nextId("p", state.projects.length), name: req.name, rootPath: req.rootPath };
@@ -86,6 +89,34 @@ export function createMockClient(state: MockClientState): ContractsClient {
         const idx = state.tasks.findIndex((t) => t.id === req.taskId);
         if (idx >= 0) state.tasks.splice(idx, 1);
         return { taskId: req.taskId };
+      },
+      getWorkspace: async (req) => ({
+        workspace: {
+          rootPath: `/worktrees/${req.taskId}`,
+          branchName: `task/${req.taskId}`,
+        },
+      }),
+      getDiff: async () => ({
+        baseCommitId: "base",
+        headCommitId: "head",
+        diffId: "diff",
+        patch: "",
+      }),
+      commitChanges: async () => {
+        throw new Error("commitChanges not implemented in mock");
+      },
+      pushBranch: async () => {
+        throw new Error("pushBranch not implemented in mock");
+      },
+      listDiffComments: async () => ({ comments: [] }),
+      createDiffComment: async () => {
+        throw new Error("createDiffComment not implemented in mock");
+      },
+      replyDiffComment: async () => {
+        throw new Error("replyDiffComment not implemented in mock");
+      },
+      setDiffCommentStatus: async () => {
+        throw new Error("setDiffCommentStatus not implemented in mock");
       },
     },
     session: {

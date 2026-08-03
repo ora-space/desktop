@@ -116,15 +116,24 @@ where
         &self,
         request: CreateTaskRequest,
     ) -> Result<CreateTaskResponse, ApplicationError> {
+        let base_reference_name = request
+            .base_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+            .ok_or(ApplicationError::TaskBaseBranchRequired)?
+            .to_string();
         self.worktree_provisioner
             .validate_repository()
             .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
         let task_id = self.select_available_task_id()?;
         let branch_name = branch_name_for_task(&task_id);
         let worktree_path = worktree_path_for_task(&self.work_dir, &task_id);
-        self.worktree_provisioner
+        let provisioned_worktree = self
+            .worktree_provisioner
             .create_task_worktree(CreateTaskWorktreeRequest {
                 branch_name: branch_name.clone(),
+                base_reference_name,
                 worktree_path,
             })
             .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
@@ -135,6 +144,11 @@ where
             worktree_id,
             task_id.clone(),
             Some(branch_name.clone()),
+            ora_domain::WorktreeBaseline::recorded(provisioned_worktree.base_commit_id).map_err(
+                |error| ApplicationError::TaskWorktreeProvisioner {
+                    source: crate::TaskWorktreeProvisionerError::operation_failed(error),
+                },
+            )?,
             DomainWorktreeActivity::Active,
             AuditFields::new(now, now, false),
         );

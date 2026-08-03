@@ -581,6 +581,7 @@ fn worktree_repository_supports_crud_and_soft_delete() {
         WorktreeId::new("worktree-1"),
         TaskId::new("task-1"),
         Some("feature/db-pool".to_string()),
+        ora_domain::WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Inactive,
         AuditFields::new(13, 13, false),
     );
@@ -604,6 +605,7 @@ fn worktree_repository_supports_crud_and_soft_delete() {
         created_worktree.id.clone(),
         created_worktree.task_id.clone(),
         None,
+        ora_domain::WorktreeBaseline::recorded("updated-base-commit").unwrap(),
         WorktreeActivity::Active,
         AuditFields::new(13, 23, false),
     );
@@ -665,6 +667,7 @@ fn repository_pool_composes_all_repository_adapters() {
         WorktreeId::new("worktree-1"),
         task.id.clone(),
         Some("feature/composition".to_string()),
+        ora_domain::WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Active,
         AuditFields::new(43, 43, false),
     );
@@ -752,7 +755,9 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
         connection.execute_batch(
             "INSERT INTO projects VALUES ('project-1', 'Ora', '/not/a/repository', 1, 1, 0);
              INSERT INTO tasks VALUES ('task-1', 'project-1', 'Task', 0, 'worktree-1', 1, 1, 0);
-             INSERT INTO worktrees VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0);
+             INSERT INTO worktrees (
+                 id, task_id, branch_name, is_active, created_at, updated_at, is_deleted, base_commit_id
+             ) VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0, 'base-commit');
              INSERT INTO project_work_contexts VALUES ('context-1', 'web', 'main', 'project-1', 100, 1, 1);",
         )?;
         connection.execute(

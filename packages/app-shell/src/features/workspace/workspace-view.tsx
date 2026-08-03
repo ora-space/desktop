@@ -39,6 +39,8 @@ import { useWorkflowDetection } from "../workflow/use-workflow-detection";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
 import { agentCliLabel } from "./agent-cli";
+import { TaskChangesLayout } from "../diff/task-changes-layout";
+import { useTaskDiffLiveSync } from "../../state/hooks/use-task-diff-live-sync";
 
 interface WorkspaceViewProps {
   userName: string;
@@ -76,6 +78,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const settingsAgentCli = useSettingsStore((s) => s.settings.agentCli);
 
   const chatStore = useChatStore();
+  useTaskDiffLiveSync(chatStore, sessions);
   const client = useContractsClient();
   const queryClient = useQueryClient();
 
@@ -157,7 +160,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       } finally {
         // Connection failures can stop the provider process, so refresh the persisted
         // lifecycle snapshot after every finite prompt without polling idle sessions.
-        await sessionsQuery.refetch();
+        await Promise.all([
+          sessionsQuery.refetch(),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.taskDiffs(session.taskId),
+          }),
+        ]);
       }
       return;
     }
@@ -236,7 +244,14 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         },
       });
     } finally {
-      await sessionsQuery.refetch();
+      await Promise.all([
+        sessionsQuery.refetch(),
+        taskId === null
+          ? Promise.resolve()
+          : queryClient.invalidateQueries({
+              queryKey: queryKeys.taskDiffs(taskId),
+            }),
+      ]);
     }
   };
 
@@ -325,7 +340,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           />
           <WindowControls />
         </div>
-        <div className="flex min-h-0 flex-1 flex-col">
+        <TaskChangesLayout taskId={task?.id}>
           <ChatView
             turns={conversation?.turns ?? []}
             userName={userName}
@@ -373,7 +388,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               }
             }}
           />
-        </div>
+        </TaskChangesLayout>
       </main>
     );
   }
@@ -405,59 +420,61 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         />
         <WindowControls />
       </header>
-      <div className="flex flex-1 items-center justify-center p-6">
-        <section className="w-full max-w-xl">
-          <div className="mb-6 flex size-11 items-center justify-center rounded-lg border border-border bg-muted">
-            {task ? (
-              <IconGitBranch className="size-5 text-sky-600" />
-            ) : (
-              <IconFolder className="size-5 text-amber-600" />
-            )}
-          </div>
-          <h1 className="text-xl font-semibold">
-            {task?.title ?? project?.name ?? t("workspace.defaultTitle")}
-          </h1>
-          <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-            {task
-              ? t("workspace.taskHint")
-              : project
-                ? t("workspace.projectHint")
-                : t("workspace.emptyHint")}
-          </p>
-          {(project || task) && (
-            <div className="mt-6 grid gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-2">
-              <div className="bg-background p-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <IconBrandGit className="size-4" />
-                  {t("workspace.repository")}
-                </div>
-                <p className="mt-2 truncate text-sm font-medium">
-                  {project?.rootPath}
-                </p>
-              </div>
-              <div className="bg-background p-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <IconPlayerPlay className="size-4" />
-                  {t("workspace.agentSessions")}
-                </div>
-                <p className="mt-2 text-sm font-medium">
-                  {task
-                    ? t("workspace.sessionCount", {
-                        count: sessions.filter(
-                          (item) => item.taskId === task.id,
-                        ).length,
-                      })
-                    : t("workspace.worktreeCount", {
-                        count: tasks.filter(
-                          (item) => item.projectId === project?.id,
-                        ).length,
-                      })}
-                </p>
-              </div>
+      <TaskChangesLayout taskId={task?.id}>
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <section className="w-full max-w-xl">
+            <div className="mb-6 flex size-11 items-center justify-center rounded-lg border border-border bg-muted">
+              {task ? (
+                <IconGitBranch className="size-5 text-sky-600" />
+              ) : (
+                <IconFolder className="size-5 text-amber-600" />
+              )}
             </div>
-          )}
-        </section>
-      </div>
+            <h1 className="text-xl font-semibold">
+              {task?.title ?? project?.name ?? t("workspace.defaultTitle")}
+            </h1>
+            <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+              {task
+                ? t("workspace.taskHint")
+                : project
+                  ? t("workspace.projectHint")
+                  : t("workspace.emptyHint")}
+            </p>
+            {(project || task) && (
+              <div className="mt-6 grid gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-2">
+                <div className="bg-background p-4">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <IconBrandGit className="size-4" />
+                    {t("workspace.repository")}
+                  </div>
+                  <p className="mt-2 truncate text-sm font-medium">
+                    {project?.rootPath}
+                  </p>
+                </div>
+                <div className="bg-background p-4">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <IconPlayerPlay className="size-4" />
+                    {t("workspace.agentSessions")}
+                  </div>
+                  <p className="mt-2 text-sm font-medium">
+                    {task
+                      ? t("workspace.sessionCount", {
+                          count: sessions.filter(
+                            (item) => item.taskId === task.id,
+                          ).length,
+                        })
+                      : t("workspace.worktreeCount", {
+                          count: tasks.filter(
+                            (item) => item.projectId === project?.id,
+                          ).length,
+                        })}
+                  </p>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </TaskChangesLayout>
     </main>
   );
 }

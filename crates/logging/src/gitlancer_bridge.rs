@@ -6,12 +6,8 @@ use gitlancer::logging::GitlancerLogger;
 pub struct OraGitlancerLogger;
 
 impl GitlancerLogger for OraGitlancerLogger {
-    fn log_command(&self, cwd: &Path, command: &str) {
-        crate::ora_info!(
-            message = "git command",
-            cwd = %cwd.display(),
-            command,
-        );
+    fn log_command(&self, _cwd: &Path, command: &str) {
+        crate::ora_info!(message = "git command", operation = git_operation(command),);
     }
 
     fn log_result(&self, duration_ms: u64, success: bool, exit_code: Option<i32>) {
@@ -29,6 +25,19 @@ impl GitlancerLogger for OraGitlancerLogger {
             );
         }
     }
+}
+
+/// Extracts the stable Git subcommand without logging user-controlled arguments or paths.
+fn git_operation(command: &str) -> &str {
+    command
+        .split_whitespace()
+        .nth(1)
+        .filter(|operation| {
+            operation
+                .chars()
+                .all(|character| character.is_ascii_alphabetic())
+        })
+        .unwrap_or("unknown")
 }
 
 /// Registers `OraGitlancerLogger` as the process-wide gitlancer logger.
@@ -54,7 +63,7 @@ mod tests {
     use super::OraGitlancerLogger;
 
     #[test]
-    fn log_command_emits_info_event_with_cwd_and_command() {
+    fn log_command_emits_only_the_safe_git_operation() {
         let buffer = SharedBuffer::default();
         let (dispatch, _guard) = build_dispatch(
             &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
@@ -65,7 +74,7 @@ mod tests {
         with_default(&dispatch, || {
             OraGitlancerLogger.log_command(
                 std::path::Path::new("/repo/project"),
-                "git status --porcelain=v2",
+                "git commit -m \"token=secret\"",
             );
         });
 
@@ -77,12 +86,8 @@ mod tests {
             Value::String("git command".to_string())
         );
         assert_eq!(
-            events[0]["context"]["cwd"],
-            Value::String("/repo/project".to_string())
-        );
-        assert_eq!(
-            events[0]["context"]["command"],
-            Value::String("git status --porcelain=v2".to_string())
+            events[0]["context"]["operation"],
+            Value::String("commit".to_string())
         );
     }
 

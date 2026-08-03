@@ -21,6 +21,7 @@ type ChannelFactory = <TEvent>() => ChannelLike<TEvent>;
 const MAX_QUEUED_FRAMES = 256;
 
 const unsupportedOperations = {
+  getTaskWorkspace: true,
   openProjectWorkContext: true,
   renewProjectWorkContext: true,
   listDirectory: true,
@@ -39,6 +40,7 @@ const tauriCommands = {
   createProject: "create_project",
   getProject: "get_project",
   listProjects: "list_projects",
+  listProjectBranches: "list_project_branches",
   updateProject: "update_project",
   deleteProject: "delete_project",
 
@@ -50,6 +52,13 @@ const tauriCommands = {
   listTasks: "list_tasks",
   updateTask: "update_task",
   deleteTask: "delete_task",
+  getTaskDiff: "get_task_diff",
+  commitTaskChanges: "commit_task_changes",
+  pushTaskBranch: "push_task_branch",
+  listTaskDiffComments: "list_task_diff_comments",
+  createTaskDiffComment: "create_task_diff_comment",
+  replyTaskDiffComment: "reply_task_diff_comment",
+  setTaskDiffCommentStatus: "set_task_diff_comment_status",
 
   // =============================================================================
   // session

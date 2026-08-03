@@ -4,11 +4,12 @@ This module implements `ora-application` persistence ports on SQLite and exposes
 
 ## Responsibilities
 
-- Concrete repositories map projects, tasks, sessions, skills, configurable agents, worktrees, and project work contexts between SQL rows and domain values.
+- Concrete repositories map projects, tasks, sessions, skills, configurable agents, worktrees, project work contexts, and task diff comments between SQL rows and domain values.
 - Normal reads exclude soft-deleted rows. Soft deletion records timestamps rather than removing individual domain records physically.
 - `RepositoryPool` serializes access to its connection and gives repository operations a consistent error boundary.
 - `SqliteSkillImportUnitOfWork` holds a transaction open across the injected package-promotion callback, so the skill row commits only after the filesystem rename succeeds.
 - Project work context queries preserve surface/window identity, lease expiry, and active-project lookup semantics.
+- `SqliteTaskDiffCommentRepository` stores root threads and replies in one table while preserving the domain enum's mutually exclusive anchor shape. It never returns soft-deleted comments and orders visible messages by creation time and id.
 
 ## Aggregate deletion
 

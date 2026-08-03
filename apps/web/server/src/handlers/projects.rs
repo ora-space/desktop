@@ -4,8 +4,8 @@ use axum::Json;
 use axum::extract::{Path, State};
 use ora_contracts::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
-    GetProjectRequest, GetProjectResponse, ListProjectsRequest, ListProjectsResponse,
-    UpdateProjectRequest, UpdateProjectResponse,
+    GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse,
+    ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse,
 };
 use serde::Deserialize;
 
@@ -56,6 +56,20 @@ pub async fn list_projects(
     app_state
         .backend()
         .list_projects(ListProjectsRequest {})
+        .map(Json)
+        .map_err(WebApiError::from)
+}
+
+/// Lists refreshed local and remote refs available as bases for task worktree creation.
+pub async fn list_project_branches(
+    State(app_state): State<AppState>,
+    Path(path): Path<ProjectPath>,
+) -> Result<Json<ListProjectBranchesResponse>, WebApiError> {
+    app_state
+        .backend()
+        .list_project_branches(ListProjectBranchesRequest {
+            project_id: path.project_id,
+        })
         .map(Json)
         .map_err(WebApiError::from)
 }

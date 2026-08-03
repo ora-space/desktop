@@ -34,6 +34,7 @@ pub fn run() {
             commands::create_project,
             commands::get_project,
             commands::list_projects,
+            commands::list_project_branches,
             commands::update_project,
             commands::delete_project,
             // =============================================================================
@@ -44,6 +45,13 @@ pub fn run() {
             commands::list_tasks,
             commands::update_task,
             commands::delete_task,
+            commands::get_task_diff,
+            commands::commit_task_changes,
+            commands::push_task_branch,
+            commands::list_task_diff_comments,
+            commands::create_task_diff_comment,
+            commands::reply_task_diff_comment,
+            commands::set_task_diff_comment_status,
             // =============================================================================
             // session
             // =============================================================================

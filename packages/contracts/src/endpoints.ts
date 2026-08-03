@@ -2,11 +2,12 @@
 import type { CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse, GetAgentRequest, GetAgentResponse, ListAgentsRequest, ListAgentsResponse, UpdateAgentRequest, UpdateAgentResponse } from "./agent.js";
 import type { ListDirectoryRequest, ListDirectoryResponse } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
-import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
+import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse } from "./project-work-context.js";
 import type { CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, StopSessionRequest, StopSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
-import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
+import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
+import type { CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest, CreateTaskDiffCommentResponse, GetTaskDiffRequest, GetTaskDiffResponse, ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse, PushTaskBranchRequest, PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse, SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse } from "./task_diff.js";
 import type { HttpMethod } from "./transport.js";
 
 export type EndpointPathParam = {
@@ -37,6 +38,7 @@ export type RequestByOperation = {
   createProject: CreateProjectRequest;
   getProject: GetProjectRequest;
   listProjects: ListProjectsRequest;
+  listProjectBranches: ListProjectBranchesRequest;
   updateProject: UpdateProjectRequest;
   deleteProject: DeleteProjectRequest;
   openProjectWorkContext: OpenProjectWorkContextRequest;
@@ -46,6 +48,14 @@ export type RequestByOperation = {
   listTasks: ListTasksRequest;
   updateTask: UpdateTaskRequest;
   deleteTask: DeleteTaskRequest;
+  getTaskWorkspace: GetTaskWorkspaceRequest;
+  getTaskDiff: GetTaskDiffRequest;
+  commitTaskChanges: CommitTaskChangesRequest;
+  pushTaskBranch: PushTaskBranchRequest;
+  listTaskDiffComments: ListTaskDiffCommentsRequest;
+  createTaskDiffComment: CreateTaskDiffCommentRequest;
+  replyTaskDiffComment: ReplyTaskDiffCommentRequest;
+  setTaskDiffCommentStatus: SetTaskDiffCommentStatusRequest;
   createSession: CreateSessionRequest;
   getSession: GetSessionRequest;
   listSessions: ListSessionsRequest;
@@ -73,6 +83,7 @@ export type ResponseByOperation = {
   createProject: CreateProjectResponse;
   getProject: GetProjectResponse;
   listProjects: ListProjectsResponse;
+  listProjectBranches: ListProjectBranchesResponse;
   updateProject: UpdateProjectResponse;
   deleteProject: DeleteProjectResponse;
   openProjectWorkContext: OpenProjectWorkContextResponse;
@@ -82,6 +93,14 @@ export type ResponseByOperation = {
   listTasks: ListTasksResponse;
   updateTask: UpdateTaskResponse;
   deleteTask: DeleteTaskResponse;
+  getTaskWorkspace: GetTaskWorkspaceResponse;
+  getTaskDiff: GetTaskDiffResponse;
+  commitTaskChanges: CommitTaskChangesResponse;
+  pushTaskBranch: PushTaskBranchResponse;
+  listTaskDiffComments: ListTaskDiffCommentsResponse;
+  createTaskDiffComment: CreateTaskDiffCommentResponse;
+  replyTaskDiffComment: ReplyTaskDiffCommentResponse;
+  setTaskDiffCommentStatus: SetTaskDiffCommentStatusResponse;
   createSession: CreateSessionResponse;
   getSession: GetSessionResponse;
   listSessions: ListSessionsResponse;
@@ -144,6 +163,19 @@ export const endpoints = {
     responseType: "ListProjectsResponse",
     responseMode: "unary",
     pathParams: [],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  listProjectBranches: {
+    operationName: "listProjectBranches",
+    namespace: "project",
+    memberName: "listBranches",
+    method: "GET",
+    pathTemplate: "/api/projects/{projectId}/branches",
+    requestType: "ListProjectBranchesRequest",
+    responseType: "ListProjectBranchesResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "project_id", wireName: "projectId" }],
     queryParams: [],
     hasJsonBody: false,
   },
@@ -263,6 +295,110 @@ export const endpoints = {
     pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }],
     queryParams: [],
     hasJsonBody: false,
+  },
+  getTaskWorkspace: {
+    operationName: "getTaskWorkspace",
+    namespace: "task",
+    memberName: "getWorkspace",
+    method: "GET",
+    pathTemplate: "/api/tasks/{taskId}/workspace",
+    requestType: "GetTaskWorkspaceRequest",
+    responseType: "GetTaskWorkspaceResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  getTaskDiff: {
+    operationName: "getTaskDiff",
+    namespace: "task",
+    memberName: "getDiff",
+    method: "GET",
+    pathTemplate: "/api/tasks/{taskId}/diff",
+    requestType: "GetTaskDiffRequest",
+    responseType: "GetTaskDiffResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }],
+    queryParams: [{ rustFieldName: "scope", wireName: "scope" }],
+    hasJsonBody: false,
+  },
+  commitTaskChanges: {
+    operationName: "commitTaskChanges",
+    namespace: "task",
+    memberName: "commitChanges",
+    method: "POST",
+    pathTemplate: "/api/tasks/{taskId}/git/commit",
+    requestType: "CommitTaskChangesRequest",
+    responseType: "CommitTaskChangesResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  pushTaskBranch: {
+    operationName: "pushTaskBranch",
+    namespace: "task",
+    memberName: "pushBranch",
+    method: "POST",
+    pathTemplate: "/api/tasks/{taskId}/git/push",
+    requestType: "PushTaskBranchRequest",
+    responseType: "PushTaskBranchResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  listTaskDiffComments: {
+    operationName: "listTaskDiffComments",
+    namespace: "task",
+    memberName: "listDiffComments",
+    method: "GET",
+    pathTemplate: "/api/tasks/{taskId}/diff/comments",
+    requestType: "ListTaskDiffCommentsRequest",
+    responseType: "ListTaskDiffCommentsResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  createTaskDiffComment: {
+    operationName: "createTaskDiffComment",
+    namespace: "task",
+    memberName: "createDiffComment",
+    method: "POST",
+    pathTemplate: "/api/tasks/{taskId}/diff/comments",
+    requestType: "CreateTaskDiffCommentRequest",
+    responseType: "CreateTaskDiffCommentResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  replyTaskDiffComment: {
+    operationName: "replyTaskDiffComment",
+    namespace: "task",
+    memberName: "replyDiffComment",
+    method: "POST",
+    pathTemplate: "/api/tasks/{taskId}/diff/comments/{commentId}/replies",
+    requestType: "ReplyTaskDiffCommentRequest",
+    responseType: "ReplyTaskDiffCommentResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }, { rustFieldName: "comment_id", wireName: "commentId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  setTaskDiffCommentStatus: {
+    operationName: "setTaskDiffCommentStatus",
+    namespace: "task",
+    memberName: "setDiffCommentStatus",
+    method: "PUT",
+    pathTemplate: "/api/tasks/{taskId}/diff/comments/{commentId}/status",
+    requestType: "SetTaskDiffCommentStatusRequest",
+    responseType: "SetTaskDiffCommentStatusResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "task_id", wireName: "taskId" }, { rustFieldName: "comment_id", wireName: "commentId" }],
+    queryParams: [],
+    hasJsonBody: true,
   },
   createSession: {
     operationName: "createSession",

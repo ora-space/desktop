@@ -81,6 +81,14 @@ pub struct SkillFolderConflictParams {
     pub name: String,
 }
 
+/// Carries the user-selected base branch name when Git cannot resolve it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct TaskBaseBranchNotFoundParams {
+    pub branch_name: String,
+}
+
 /// Enumerates every user-visible Ora failure and its exact interpolation parameters.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(tag = "code", content = "params", rename_all = "snake_case")]
@@ -98,7 +106,15 @@ pub enum PublicError {
     TaskNotFound(EmptyErrorParams),
     ResourceInUse(EmptyErrorParams),
     WorktreeRequiresGitRepository(EmptyErrorParams),
+    TaskBaseBranchRequired(EmptyErrorParams),
+    TaskBaseBranchNotFound(TaskBaseBranchNotFoundParams),
     WorktreeNotFound(EmptyErrorParams),
+    TaskDiffBaselineUnavailable(EmptyErrorParams),
+    TaskDiffCommitMessageBlank(EmptyErrorParams),
+    TaskDiffTooLarge(EmptyErrorParams),
+    TaskDiffStale(EmptyErrorParams),
+    TaskDiffCommentNotFound(EmptyErrorParams),
+    TaskDiffCommentInvalid(EmptyErrorParams),
     SessionNotFound(EmptyErrorParams),
     AgentCliNotFound(EmptyErrorParams),
     AgentRuntimeUnavailable(EmptyErrorParams),
@@ -147,7 +163,15 @@ impl PublicError {
             Self::TaskNotFound(_) => "task_not_found",
             Self::ResourceInUse(_) => "resource_in_use",
             Self::WorktreeRequiresGitRepository(_) => "worktree_requires_git_repository",
+            Self::TaskBaseBranchRequired(_) => "task_base_branch_required",
+            Self::TaskBaseBranchNotFound(_) => "task_base_branch_not_found",
             Self::WorktreeNotFound(_) => "worktree_not_found",
+            Self::TaskDiffBaselineUnavailable(_) => "task_diff_baseline_unavailable",
+            Self::TaskDiffCommitMessageBlank(_) => "task_diff_commit_message_blank",
+            Self::TaskDiffTooLarge(_) => "task_diff_too_large",
+            Self::TaskDiffStale(_) => "task_diff_stale",
+            Self::TaskDiffCommentNotFound(_) => "task_diff_comment_not_found",
+            Self::TaskDiffCommentInvalid(_) => "task_diff_comment_invalid",
             Self::SessionNotFound(_) => "session_not_found",
             Self::AgentCliNotFound(_) => "agent_cli_not_found",
             Self::AgentRuntimeUnavailable(_) => "agent_runtime_unavailable",
@@ -201,6 +225,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     SkillUploadTooManyFilesParams::export_all(config)?;
     SkillUploadTooLargeParams::export_all(config)?;
     SkillFolderConflictParams::export_all(config)?;
+    TaskBaseBranchNotFoundParams::export_all(config)?;
     PublicError::export_all(config)?;
     ContractError::export_all(config)?;
     Ok(())

@@ -5,6 +5,10 @@ export const requestIdSchema = z.string();
 
 export const emptyErrorParamsSchema = z.record(z.string(), z.never());
 
+export const taskBaseBranchNotFoundParamsSchema = z.object({
+    branchName: z.string()
+});
+
 export const skillUploadTooLargeParamsSchema = z.object({
     maxBytes: z.number()
 });
@@ -62,7 +66,31 @@ export const contractErrorSchema = z.object({
         "code": z.literal("worktree_requires_git_repository"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("task_base_branch_required"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_base_branch_not_found"),
+        "params": taskBaseBranchNotFoundParamsSchema
+    }), z.object({
         "code": z.literal("worktree_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_baseline_unavailable"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_commit_message_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_stale"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_comment_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_comment_invalid"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("session_not_found"),
@@ -193,7 +221,31 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("worktree_requires_git_repository"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("task_base_branch_required"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_base_branch_not_found"),
+        "params": taskBaseBranchNotFoundParamsSchema
+    }), z.object({
         "code": z.literal("worktree_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_baseline_unavailable"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_commit_message_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_stale"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_comment_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("task_diff_comment_invalid"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("session_not_found"),

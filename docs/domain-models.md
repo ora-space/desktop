@@ -15,6 +15,7 @@ Every table owned by the migration catalog in `ora-db` has a first-class domain 
 | `Skill` | `skills` |
 | `AgentDefinition` | `agents` |
 | `ProjectWorkContext` | `project_work_contexts` |
+| `TaskDiffComment` | `task_diff_comments` |
 | `VirtualFolder` | `virtual_folders` |
 | `VirtualEntry` | `virtual_entries` |
 | `Artifact` | `artifacts` |
@@ -43,6 +44,8 @@ Encoding and decoding live at the boundary, not inside the models. Each enum exp
 `AgentCli` is persisted as namespaced text (`ora-space.opencode`, `ora-space.nga`, `ora-space.codeagentcli`) so the stored value does not depend on enum declaration order. It also exposes `executable_name()` for the process lookup performed by the backend agent runtime. `AgentCli::ALL` gives the runtime a stable iteration order over supported CLIs.
 
 `ProjectWorkContextSurface` is persisted as `web` or `tauri`.
+
+`TaskDiffCommentKind` is an enum with associated data: `Thread` owns a `TaskDiffAnchor` and `TaskDiffThreadStatus`, while `Reply` owns a `parent_comment_id`. This keeps reply rows from carrying partial or misleading anchor fields. `TaskDiffSide` and `TaskDiffThreadStatus` use explicit database codes and reject unknown values at the SQLite boundary.
 
 ## Optionality and audit metadata
 
