@@ -20,6 +20,8 @@ export const queryKeys = {
   /** Project → GraphWorkflowRun list (mock run repo). */
   workflowRuns: (projectId: string) => ["workflowRuns", projectId] as const,
   workflowRun: (runId: string) => ["workflowRun", runId] as const,
+  /** Artifacts produced by one graph workflow run. */
+  workflowArtifacts: (runId: string) => ["workflowArtifacts", runId] as const,
 };
 
 export type WorkspaceQueryKey = readonly ["projects"] | readonly ["tasks"] | readonly ["sessions"];

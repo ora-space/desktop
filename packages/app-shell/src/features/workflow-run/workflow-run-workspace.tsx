@@ -9,10 +9,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  Badge,
   Button,
   Spinner,
-  cn,
 } from "@ora/ui";
 import {
   IconLayoutSidebarLeftExpand,
@@ -27,12 +25,18 @@ import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import {
   useCancelGraphWorkflowRun,
+  useGraphWorkflowArtifacts,
   useGraphWorkflowRun,
   useRerunGraphWorkflowRun,
   useStartGraphWorkflowRun,
 } from "../../state/hooks/use-graph-workflow-runs";
+import {
+  shouldReleaseFocusToFollow,
+  type TheaterFocusStatusSample,
+} from "./run-focus";
 import { RunOverviewCanvas } from "./run-overview-canvas";
 import { RunTheater } from "./run-theater";
+import { RunStatusBadge } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import type { GraphWorkflowRunStatus } from "./runtime/types";
 import type { WorkflowRunViewMode } from "./run-view-mode";
@@ -51,8 +55,8 @@ function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
 }
 
 /**
- * Graph workflow run workspace: Overview after mount (pending) + Theater when live.
- * Header mirrors Settings Test Run: Start → Stop → Run again on a new sibling run.
+ * Graph workflow run workspace: Theater / Overview.
+ * Artifacts live on the focused Theater act card (no separate rail).
  */
 export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const { t } = useTranslation();
@@ -61,6 +65,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const selectWorkflowRun = useWorkspaceSelectionStore((s) => s.selectWorkflowRun);
   const runQuery = useGraphWorkflowRun(runId);
   const run = runQuery.data ?? null;
+  const artifactsQuery = useGraphWorkflowArtifacts(runId);
   const startRun = useStartGraphWorkflowRun();
   const cancelRun = useCancelGraphWorkflowRun();
   const rerun = useRerunGraphWorkflowRun();
@@ -68,12 +73,65 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const [viewMode, setViewMode] = useState<WorkflowRunViewMode>("overview");
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
+  /** One-shot: Overview node click should open Theater's act inspector. */
+  const [openInspectorOnTheaterEnter, setOpenInspectorOnTheaterEnter] = useState(
+    false,
+  );
+
+  /** Same-node status edge: live pin just finished → resume auto-follow. */
+  const focusStatusSampleRef = useRef<TheaterFocusStatusSample | null>(null);
 
   // Reset local chrome when switching runs; mode is primed once below.
   useEffect(() => {
     setFocusNodeId(null);
     setStopOpen(false);
+    setOpenInspectorOnTheaterEnter(false);
+    focusStatusSampleRef.current = null;
   }, [runId]);
+
+  // Live pin release: only when the focused act itself just left live → terminal.
+  // History pins (clicked while already non-live) stay until the user picks again.
+  useEffect(() => {
+    if (run === null || focusNodeId === null) {
+      focusStatusSampleRef.current = null;
+      return;
+    }
+    const currentStatus = run.nodeStates[focusNodeId]?.status;
+    if (
+      shouldReleaseFocusToFollow(
+        focusStatusSampleRef.current,
+        focusNodeId,
+        currentStatus,
+      )
+    ) {
+      focusStatusSampleRef.current = null;
+      setFocusNodeId(null);
+      return;
+    }
+    if (currentStatus !== undefined) {
+      focusStatusSampleRef.current = {
+        nodeId: focusNodeId,
+        status: currentStatus,
+      };
+    }
+  }, [run, focusNodeId]);
+
+  // New artifact on the stage: keep Theater focus on the producing act.
+  useEffect(() => {
+    if (artifactsQuery.revealedId === null || viewMode !== "theater") {
+      return;
+    }
+    const artifact = artifactsQuery.artifacts.find(
+      (item) => item.id === artifactsQuery.revealedId,
+    );
+    if (artifact !== undefined) {
+      setFocusNodeId(artifact.nodeId);
+    }
+  }, [
+    artifactsQuery.revealedId,
+    artifactsQuery.artifacts,
+    viewMode,
+  ]);
 
   // Prime view once per selected run: pending/terminal → Overview, live → Theater.
   // Later status ticks must not steal Overview if the user chose it mid-run.
@@ -107,6 +165,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     }
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
+        setOpenInspectorOnTheaterEnter(false);
         setViewMode("overview");
       }
     }
@@ -121,12 +180,25 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const runTone = run !== null ? runStatusTone(run.status) : null;
   const actionBusy = startRun.isPending || cancelRun.isPending || rerun.isPending;
 
+  // If the run finishes while the stop dialog is open, dismiss it so Confirm
+  // (which preventDefault + early-returns when !canStop) cannot leave a stuck modal.
+  useEffect(() => {
+    if (stopOpen && !canStop && !cancelRun.isPending) {
+      setStopOpen(false);
+    }
+  }, [stopOpen, canStop, cancelRun.isPending]);
+
   function focusNode(nodeId: string): void {
     setFocusNodeId(nodeId);
   }
 
   function focusNodeFromOverview(nodeId: string): void {
     setFocusNodeId(nodeId);
+    enterTheater({ openInspector: true });
+  }
+
+  function enterTheater(options?: { openInspector?: boolean }): void {
+    setOpenInspectorOnTheaterEnter(options?.openInspector === true);
     setViewMode("theater");
   }
 
@@ -138,7 +210,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       runId: run.id,
       projectId: run.projectId,
     });
-    setViewMode("theater");
+    enterTheater();
   }
 
   async function handleRunAgain(): Promise<void> {
@@ -150,14 +222,19 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   }
 
   async function handleConfirmStop(): Promise<void> {
+    // Race: run may have reached a terminal status between open and confirm.
     if (run === null || !canStop) {
+      setStopOpen(false);
       return;
     }
-    await cancelRun.mutateAsync({
-      runId: run.id,
-      projectId: run.projectId,
-    });
-    setStopOpen(false);
+    try {
+      await cancelRun.mutateAsync({
+        runId: run.id,
+        projectId: run.projectId,
+      });
+    } finally {
+      setStopOpen(false);
+    }
   }
 
   return (
@@ -178,25 +255,22 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
         )}
         <DragRegion className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium tracking-[-0.01em]">
-                {run?.name ?? t("workflowRun.loading")}
-              </p>
-              <p className="truncate text-[11px] text-muted-foreground">
-                {runTone
-                  ? t(runTone.labelKey)
-                  : t("workflowRun.placeholderSubtitle")}
-              </p>
-            </div>
-            {runTone && (
-              <Badge
-                variant="outline"
-                className={cn("hidden border sm:inline-flex", runTone.badge)}
-              >
-                <span className={cn("size-1.5 rounded-full", runTone.dot)} aria-hidden />
-                {t(runTone.labelKey)}
-              </Badge>
-            )}
+            <p className="min-w-0 truncate text-sm font-medium tracking-[-0.01em]">
+              {run?.name ?? t("workflowRun.loading")}
+            </p>
+            {runTone
+              ? (
+                <RunStatusBadge
+                  status={run!.status}
+                  quiet
+                  className="hidden shrink-0 sm:inline-flex"
+                />
+              )
+              : (
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {t("workflowRun.placeholderSubtitle")}
+                </p>
+              )}
           </div>
         </DragRegion>
 
@@ -212,7 +286,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               variant={viewMode === "theater" ? "secondary" : "ghost"}
               className="h-7 gap-1.5 px-2.5 text-xs"
               aria-pressed={viewMode === "theater"}
-              onClick={() => setViewMode("theater")}
+              onClick={() => enterTheater()}
             >
               <IconTheater className="size-3.5" />
               {t("workflowRun.viewMode.theater")}
@@ -223,7 +297,10 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               variant={viewMode === "overview" ? "secondary" : "ghost"}
               className="h-7 gap-1.5 px-2.5 text-xs"
               aria-pressed={viewMode === "overview"}
-              onClick={() => setViewMode("overview")}
+              onClick={() => {
+                setOpenInspectorOnTheaterEnter(false);
+                setViewMode("overview");
+              }}
             >
               <IconMap className="size-3.5" />
               {t("workflowRun.viewMode.overview")}
@@ -297,6 +374,9 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             run={run}
             focusNodeId={focusNodeId}
             onFocusNode={focusNode}
+            artifacts={artifactsQuery.artifacts}
+            revealedArtifactId={artifactsQuery.revealedId}
+            openInspectorOnMount={openInspectorOnTheaterEnter}
           />
         )
         : (
@@ -304,6 +384,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             run={run}
             focusedNodeId={focusNodeId}
             onFocusNode={focusNodeFromOverview}
+            artifacts={artifactsQuery.artifacts}
           />
         )}
 
@@ -323,7 +404,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={cancelRun.isPending}
+              disabled={cancelRun.isPending || !canStop}
               onClick={(event) => {
                 event.preventDefault();
                 void handleConfirmStop();

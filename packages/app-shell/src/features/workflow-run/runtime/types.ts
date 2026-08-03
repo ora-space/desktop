@@ -60,6 +60,15 @@ export interface GraphWorkflowRun {
   finishedAt?: string;
 }
 
+/**
+ * Pending-only overrides on a run's frozen node copy.
+ * Never written back to the mounted library definition.
+ */
+export interface GraphWorkflowSnapshotNodePatch {
+  instruction?: string;
+  description?: string;
+}
+
 /** Reference mount: many projects may point at the same definition id. */
 export interface ProjectWorkflowMount {
   projectId: string;

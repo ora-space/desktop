@@ -1,6 +1,6 @@
 import type { GraphWorkflowNodeStatus, GraphWorkflowRunStatus } from "./runtime/types";
 
-/** Shared run/node status chrome — color is never the only signal (icon + label + tone). */
+/** Shared run/node status chrome — color is never the only signal (dot + label + tone). */
 export function runStatusTone(status: GraphWorkflowRunStatus | GraphWorkflowNodeStatus): {
   dot: string;
   ring: string;

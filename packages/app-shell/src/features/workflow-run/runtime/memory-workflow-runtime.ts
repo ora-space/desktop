@@ -258,6 +258,49 @@ export function createMemoryWorkflowRuntime(
       return structuredClone(updated);
     },
 
+    async updateSnapshotNode(runId, nodeId, patch) {
+      const run = runs.get(runId);
+      if (run === undefined) {
+        throw new Error(`Unknown workflow run ${runId}`);
+      }
+      if (run.status !== "pending") {
+        throw new Error(
+          `Snapshot node edits require pending status (got ${run.status})`,
+        );
+      }
+      const nodeIndex = run.definitionSnapshot.nodes.findIndex(
+        (node) => node.id === nodeId,
+      );
+      if (nodeIndex < 0) {
+        throw new Error(`Unknown snapshot node ${nodeId}`);
+      }
+      const node = run.definitionSnapshot.nodes[nodeIndex]!;
+      const nextData = { ...node.data };
+      if (patch.description !== undefined) {
+        nextData.description = patch.description;
+      }
+      if (patch.instruction !== undefined) {
+        nextData.instruction = patch.instruction;
+      }
+      const nextNodes = run.definitionSnapshot.nodes.slice();
+      nextNodes[nodeIndex] = {
+        ...node,
+        data: nextData,
+      };
+      const updated: GraphWorkflowRun = {
+        ...run,
+        definitionSnapshot: {
+          ...run.definitionSnapshot,
+          nodes: nextNodes,
+          updatedAt: nowIso(),
+        },
+        updatedAt: nowIso(),
+      };
+      runs.set(runId, updated);
+      notifyChanged(updated);
+      return structuredClone(updated);
+    },
+
     async submitHitl(_runId, _requestId, _payload) {
       // Step 5 wires HITL; keep the port stable for callers.
       throw new Error("HITL is not implemented yet");

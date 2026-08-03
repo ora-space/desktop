@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createMockWorkflow } from "@ora/workflow-mock";
-import { resolveFocusNodeId, resolveTheaterFocus } from "./run-focus";
+import {
+  resolveFocusNodeId,
+  resolveTheaterFocus,
+  shouldReleaseFocusToFollow,
+} from "./run-focus";
 import type { GraphWorkflowRun } from "./runtime/types";
 
 function baseRun(
@@ -23,6 +27,93 @@ function baseRun(
     ...overrides,
   };
 }
+
+describe("shouldReleaseFocusToFollow", () => {
+  it("releases when the same live focus just became terminal", () => {
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "understand", status: "running" },
+        "understand",
+        "succeeded",
+      ),
+    ).toBe(true);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "understand", status: "awaiting_input" },
+        "understand",
+        "succeeded",
+      ),
+    ).toBe(true);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "understand", status: "running" },
+        "understand",
+        "failed",
+      ),
+    ).toBe(true);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "understand", status: "running" },
+        "understand",
+        "skipped",
+      ),
+    ).toBe(true);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "understand", status: "running" },
+        "understand",
+        "cancelled",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not release when switching to another already-finished node", () => {
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "understand", status: "running" },
+        "quality",
+        "succeeded",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not release a history pin while something else is live", () => {
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "start", status: "succeeded" },
+        "start",
+        "succeeded",
+      ),
+    ).toBe(false);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "output", status: "idle" },
+        "output",
+        "idle",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not release without a previous sample or focus", () => {
+    expect(
+      shouldReleaseFocusToFollow(null, "understand", "succeeded"),
+    ).toBe(false);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "understand", status: "running" },
+        null,
+        "succeeded",
+      ),
+    ).toBe(false);
+    expect(
+      shouldReleaseFocusToFollow(
+        { nodeId: "understand", status: "running" },
+        "understand",
+        undefined,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("resolveTheaterFocus", () => {
   it("keeps an explicit focus when the node exists", () => {

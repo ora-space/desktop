@@ -1,6 +1,7 @@
 import type { DemoWorkflow } from "@ora/workflow-mock";
 import type {
   GraphWorkflowRun,
+  GraphWorkflowSnapshotNodePatch,
   ProjectWorkflowMount,
   Unsubscribe,
   WorkflowArtifact,
@@ -40,7 +41,7 @@ export interface WorkflowRunRepository {
   }) => Promise<GraphWorkflowRun>;
   /**
    * Starts a pending run (mock engine). No-op when already running or terminal.
-   * Create() auto-starts by default; this supports deferred kickoff and tests.
+   * Create() does not auto-start by default; workspace Start calls this.
    */
   start: (runId: string) => Promise<void>;
   cancel: (runId: string) => Promise<void>;
@@ -51,6 +52,16 @@ export interface WorkflowRunRepository {
   delete: (runId: string) => Promise<void>;
   /** Updates the display name shown in the sidebar and run workspace header. */
   rename: (runId: string, name: string) => Promise<GraphWorkflowRun>;
+  /**
+   * Patches copy fields on a node inside this run's frozen snapshot.
+   * Only allowed while `pending` — never writes back to the mounted library
+   * definition. Rejects once the run has started or finished.
+   */
+  updateSnapshotNode: (
+    runId: string,
+    nodeId: string,
+    patch: GraphWorkflowSnapshotNodePatch,
+  ) => Promise<GraphWorkflowRun>;
   submitHitl: (
     runId: string,
     requestId: string,

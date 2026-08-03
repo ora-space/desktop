@@ -22,7 +22,7 @@ import {
   type RunOverviewNodeData,
 } from "./run-overview-node";
 import { RunOverviewEdge } from "./run-overview-edge";
-import type { GraphWorkflowRun } from "./runtime/types";
+import type { GraphWorkflowRun, WorkflowArtifact } from "./runtime/types";
 import "@xyflow/react/dist/style.css";
 
 const NODE_TYPE = "workflow" as const;
@@ -48,6 +48,8 @@ interface RunOverviewCanvasProps {
   run: GraphWorkflowRun;
   focusedNodeId: string | null;
   onFocusNode: (nodeId: string) => void;
+  /** Used for a soft per-node artifact affordance (count only). */
+  artifacts?: WorkflowArtifact[];
 }
 
 /** Fits the read-only graph once after mount / snapshot identity change. */
@@ -70,6 +72,7 @@ export function RunOverviewCanvas({
   run,
   focusedNodeId,
   onFocusNode,
+  artifacts = [],
 }: RunOverviewCanvasProps) {
   const { t } = useTranslation();
   const snapshot = run.definitionSnapshot;
@@ -78,6 +81,13 @@ export function RunOverviewCanvas({
     () => resolveTheaterFocus(run, focusedNodeId),
     [run, focusedNodeId],
   );
+  const artifactCountByNode = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const artifact of artifacts) {
+      counts[artifact.nodeId] = (counts[artifact.nodeId] ?? 0) + 1;
+    }
+    return counts;
+  }, [artifacts]);
 
   const nodes = useMemo((): Node<RunOverviewNodeData, "workflow">[] => {
     return snapshot.nodes.map((node) => ({
@@ -123,6 +133,7 @@ export function RunOverviewCanvas({
           states={nodeStates}
           focusedNodeId={focus.primaryId}
           activeNodeIds={focus.activeIds}
+          artifactCountByNode={artifactCountByNode}
         >
           <ReactFlow
             nodes={nodes}

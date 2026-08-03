@@ -6,8 +6,10 @@ import {
 } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { WorkflowNodeCardShell } from "../workflow-node-chrome";
+import { RunStatusBadge, isNodeWorking } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import type { GraphWorkflowNodeState } from "./runtime/types";
+import "./theater-motion.css";
 
 interface RunTheaterActCardProps {
   nodeId: string;
@@ -15,23 +17,30 @@ interface RunTheaterActCardProps {
   state: GraphWorkflowNodeState;
   /** Soft emphasis when this act is live (running / awaiting). */
   live: boolean;
+  /** Glanceable outcome count; detail lives in the act inspector. */
+  artifactCount?: number;
   /** Large primary stage vs secondary parallel card. */
   variant?: "stage" | "compact";
-  /** Promote this parallel act to primary focus. */
+  /** Opens the act inspector (stage) or promotes a parallel act. */
   onSelect?: () => void;
+  /** Stronger stage presence when this card is the focused parallel act. */
+  emphasized?: boolean;
 }
 
 /**
- * Theater act card built on shared workflow-node chrome.
- * Stage = primary spotlight; compact kept for denser secondary surfaces.
+ * Theater act card: instruction + metrics on the stage surface.
+ * Clicking the primary card opens the companion inspector for full config
+ * and outcomes.
  */
 export function RunTheaterActCard({
   nodeId,
   data,
   state,
   live,
+  artifactCount = 0,
   variant = "stage",
   onSelect,
+  emphasized = true,
 }: RunTheaterActCardProps) {
   const { i18n, t } = useTranslation();
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
@@ -39,6 +48,7 @@ export function RunTheaterActCard({
   const tone = runStatusTone(state.status);
   const detail = data.model ?? data.tool ?? data.condition;
   const compact = variant === "compact";
+  const interactive = onSelect !== undefined;
   const timingRange = state.startedAt !== undefined || state.finishedAt !== undefined
     ? [
       state.startedAt !== undefined
@@ -101,30 +111,40 @@ export function RunTheaterActCard({
       density={compact ? "compact" : "stage"}
       className={cn(
         compact ? "w-full" : "mx-auto w-full max-w-xl",
-        onSelect && "cursor-pointer hover:border-foreground/30",
+        "transition-[border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none",
+        interactive
+          && "cursor-pointer hover:border-foreground/25 hover:shadow-sm active:scale-[0.99]",
+        emphasized && live && state.status === "running" && "theater-live-breathe",
+        emphasized
+          && live
+          && state.status === "awaiting_input"
+          && "theater-live-breathe-amber",
       )}
-      ariaLabel={`${data.title}: ${t(tone.labelKey)}`}
+      ariaLabel={onSelect
+        ? `${data.title}: ${t(tone.labelKey)}. ${t("workflowRun.theater.inspectorHint")}`
+        : `${data.title}: ${t(tone.labelKey)}`}
       aria-live={compact ? undefined : "polite"}
       frameClassName={cn(
         tone.ring,
-        "ring-2",
-        live && state.status === "running" && "motion-safe:shadow-md",
-      )}
-      iconAccessory={(
-        <span
-          className={cn(
-            "absolute -right-0.5 -top-0.5 rounded-full ring-2 ring-card",
-            compact ? "size-2" : "size-2.5",
-            tone.dot,
-            live && state.status === "running" && "motion-safe:animate-pulse",
-          )}
-          aria-hidden
-        />
+        "ring-1 transition-[box-shadow,ring-color] duration-300",
+        live && state.status === "running" && "ring-sky-500/35",
+        live && state.status === "awaiting_input" && "ring-amber-500/35",
       )}
       headerAccessory={(
-        <Badge variant="outline" className={cn("border", tone.badge)}>
-          {t(tone.labelKey)}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          {artifactCount > 0 && (
+            <Badge
+              variant="secondary"
+              className="tabular-nums text-[10px]"
+            >
+              {t("workflowRun.artifacts.countBadge", { count: artifactCount })}
+            </Badge>
+          )}
+          <RunStatusBadge
+            status={state.status}
+            live={emphasized && isNodeWorking(state.status)}
+          />
+        </div>
       )}
       body={compact
         ? (

@@ -6,6 +6,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
+import { IconSparkles } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
 import {
   createMockWorkflowNodeType,
@@ -15,8 +16,10 @@ import {
 } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { WorkflowNodeCardShell } from "../workflow-node-chrome";
+import { RunStatusBadge, isNodeWorking } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import type { GraphWorkflowNodeState } from "./runtime/types";
+import "./theater-motion.css";
 
 export type RunOverviewNodeData = WorkflowNodeData & {
   runStatus: GraphWorkflowNodeState["status"];
@@ -26,12 +29,15 @@ interface RunOverviewStatusMap {
   states: Record<string, GraphWorkflowNodeState>;
   focusedNodeId: string | null;
   activeNodeIds: string[];
+  /** Soft affordance: artifact count per node id. */
+  artifactCountByNode: Record<string, number>;
 }
 
 const RunOverviewStatusContext = createContext<RunOverviewStatusMap>({
   states: {},
   focusedNodeId: null,
   activeNodeIds: [],
+  artifactCountByNode: {},
 });
 
 /** Provides live nodeStates to overview node renderers. */
@@ -39,11 +45,12 @@ export function RunOverviewStatusProvider({
   states,
   focusedNodeId,
   activeNodeIds,
+  artifactCountByNode,
   children,
 }: RunOverviewStatusMap & { children: ReactNode }) {
   return (
     <RunOverviewStatusContext.Provider
-      value={{ states, focusedNodeId, activeNodeIds }}
+      value={{ states, focusedNodeId, activeNodeIds, artifactCountByNode }}
     >
       {children}
     </RunOverviewStatusContext.Provider>
@@ -59,7 +66,7 @@ export const RunOverviewNode = memo(function RunOverviewNode({
   selected,
 }: NodeProps<Node<RunOverviewNodeData, "workflow">>) {
   const { i18n, t } = useTranslation();
-  const { states, focusedNodeId, activeNodeIds } = useContext(
+  const { states, focusedNodeId, artifactCountByNode } = useContext(
     RunOverviewStatusContext,
   );
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
@@ -67,7 +74,7 @@ export const RunOverviewNode = memo(function RunOverviewNode({
   const tone = runStatusTone(state.status);
   const kindLabel = createMockWorkflowNodeType(data.kind, locale).label;
   const focused = focusedNodeId === id || selected;
-  const active = activeNodeIds.includes(id);
+  const artifactCount = artifactCountByNode[id] ?? 0;
   const startedLabel = state.startedAt !== undefined
     ? formatRunClock(state.startedAt, locale)
     : null;
@@ -92,29 +99,31 @@ export const RunOverviewNode = memo(function RunOverviewNode({
       ariaLabel={`${data.title}: ${t(tone.labelKey)}`}
       frameClassName={cn(
         tone.ring,
-        "ring-2",
+        "ring-1 transition-[box-shadow,ring-color] duration-300",
         state.status === "skipped" && "opacity-55",
-        active && state.status === "running" && "motion-safe:shadow-md",
-      )}
-      iconAccessory={(
-        <span
-          className={cn(
-            "absolute -right-0.5 -top-0.5 size-2 rounded-full ring-2 ring-card",
-            tone.dot,
-            state.status === "running" && "motion-safe:animate-pulse",
-          )}
-          aria-hidden
-        />
+        state.status === "running" && "ring-sky-500/35 theater-live-breathe",
+        state.status === "awaiting_input"
+          && "ring-amber-500/35 theater-live-breathe-amber",
       )}
       headerAccessory={(
-        <span
-          className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium",
-            tone.badge,
+        <div className="flex shrink-0 items-center gap-1">
+          {artifactCount > 0 && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium text-muted-foreground"
+              title={t("workflowRun.artifacts.countBadge", {
+                count: artifactCount,
+              })}
+            >
+              <IconSparkles className="size-3" aria-hidden />
+              <span className="tabular-nums">{artifactCount}</span>
+            </span>
           )}
-        >
-          {t(tone.labelKey)}
-        </span>
+          <RunStatusBadge
+            status={state.status}
+            live={isNodeWorking(state.status)}
+            className="px-1.5 py-0 text-[9px]"
+          />
+        </div>
       )}
       footer={hasMetrics
         ? (

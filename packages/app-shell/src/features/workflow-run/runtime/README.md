@@ -16,7 +16,7 @@ Ports and in-memory mock for project workflow mounts and graph runs.
 ## Non-responsibilities
 
 - No HTTP/NDJSON transport (Follow-up F2).
-- No Theater / overview / HITL UI (parent `workflow-run` feature, Steps 3–5).
+- No Theater / overview / HITL UI (parent `workflow-run` feature).
 - Not the settings session graph editor.
 - Settings **Test run** still uses `@ora/workflow-mock` `runDemoWorkflow` — a
   separate demo path until an optional later convergence.
@@ -25,6 +25,9 @@ Ports and in-memory mock for project workflow mounts and graph runs.
 
 - Creating a run freezes `definitionSnapshot` so later library edits cannot
   mutate an in-flight or historical run.
+- While `pending`, `updateSnapshotNode` may patch `description` /
+  `instruction` on that run's snapshot node copy only. Never writes back to
+  the mounted library definition; rejects once the run has started.
 - Mount is unique per `(projectId, definitionId)`; remount upserts. Multiple
   executions are separate `GraphWorkflowRun` rows.
 - Concurrent runs are independent; cancelling one does not stop siblings.
@@ -46,7 +49,8 @@ Ports and in-memory mock for project workflow mounts and graph runs.
 - **Start**: only from `pending`. Re-entrant `start` is a no-op (HITL resume will
   be a separate API).
 - **Tokens**: stubbed only for `prompt` / `agent` / `tool` kinds.
-- **Artifacts**: markdown stubs on `agent` / `output` for Step 4.
+- **Artifacts**: markdown stubs on `agent` / `output`; consumed by the
+  Artifacts rail (Step 4).
 - **Options**: `nodeStepMs` (default 5000), `autoStart` (default false; workspace
   Start calls `runs.start`), injectable `pathPolicy`.
 - Kickoff text is stored on the run and fed into path planning when provided.

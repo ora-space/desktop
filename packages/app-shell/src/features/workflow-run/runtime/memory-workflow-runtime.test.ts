@@ -133,6 +133,78 @@ describe("createMemoryWorkflowRuntime", () => {
       }),
     );
   });
+
+  it("patches pending snapshot node copy without touching the library definition", async () => {
+    const runtime = createMemoryWorkflowRuntime({ autoStart: false });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    const startNode = run.definitionSnapshot.nodes.find(
+      (node) => node.data.kind === "start",
+    );
+    expect(startNode).toBeDefined();
+
+    const patched = await runtime.runs.updateSnapshotNode(
+      run.id,
+      startNode!.id,
+      {
+        description: "仅本次说明",
+        instruction: "仅本次指令",
+      },
+    );
+    const patchedNode = patched.definitionSnapshot.nodes.find(
+      (node) => node.id === startNode!.id,
+    );
+    expect(patchedNode?.data).toEqual(
+      expect.objectContaining({
+        description: "仅本次说明",
+        instruction: "仅本次指令",
+      }),
+    );
+
+    const library = await runtime.host.getDefinition(definition.id);
+    const libraryNode = library?.nodes.find((node) => node.id === startNode!.id);
+    expect(libraryNode?.data.description).toBe(startNode!.data.description);
+    expect(libraryNode?.data.instruction).toBe(startNode!.data.instruction);
+  });
+
+  it("rejects snapshot node edits once the run is no longer pending", async () => {
+    const runtime = createMemoryWorkflowRuntime({
+      autoStart: false,
+      nodeStepMs: 100,
+    });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    const nodeId = run.definitionSnapshot.nodes[0]!.id;
+    await runtime.runs.start(run.id);
+    await expect(
+      runtime.runs.updateSnapshotNode(run.id, nodeId, {
+        description: "too late",
+      }),
+    ).rejects.toThrow(/pending/i);
+  });
+
+  it("rejects snapshot edits for unknown nodes", async () => {
+    const runtime = createMemoryWorkflowRuntime({ autoStart: false });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    await expect(
+      runtime.runs.updateSnapshotNode(run.id, "missing-node", {
+        instruction: "x",
+      }),
+    ).rejects.toThrow(/unknown snapshot node/i);
+  });
 });
 
 describe("mock run engine", () => {
@@ -193,6 +265,8 @@ describe("mock run engine", () => {
     expect(finished?.nodeStates.understand?.tokenUsage?.totalTokens).toBeGreaterThan(0);
     const artifacts = await runtime.runs.listArtifacts(run.id);
     expect(artifacts.length).toBeGreaterThan(0);
+    expect(artifacts.every((item) => item.nodeId.length > 0)).toBe(true);
+    expect(artifacts.some((item) => item.kind === "markdown")).toBe(true);
   });
 
   it("skips the validation branch when kickoff prefers documentation", async () => {

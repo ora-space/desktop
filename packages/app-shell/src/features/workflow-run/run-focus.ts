@@ -5,6 +5,13 @@ const ACTIVE_STATUSES: ReadonlySet<GraphWorkflowNodeStatus> = new Set([
   "awaiting_input",
 ]);
 
+const TERMINAL_NODE_STATUSES: ReadonlySet<GraphWorkflowNodeStatus> = new Set([
+  "succeeded",
+  "failed",
+  "skipped",
+  "cancelled",
+]);
+
 export interface TheaterFocus {
   /** Primary act shown large on stage. */
   primaryId: string | null;
@@ -15,8 +22,39 @@ export interface TheaterFocus {
   activeIds: string[];
 }
 
+/** Last observed status for the Theater preferred focus (edge detection). */
+export interface TheaterFocusStatusSample {
+  nodeId: string;
+  status: GraphWorkflowNodeStatus;
+}
+
 function isActiveStatus(status: GraphWorkflowNodeStatus): boolean {
   return ACTIVE_STATUSES.has(status);
+}
+
+function isTerminalNodeStatus(status: GraphWorkflowNodeStatus): boolean {
+  return TERMINAL_NODE_STATUSES.has(status);
+}
+
+/**
+ * True when the same focused act just left live → terminal.
+ * Clears a live pin so Theater can resume auto-follow; history pins
+ * (clicked while already non-live) must not release.
+ */
+export function shouldReleaseFocusToFollow(
+  prev: TheaterFocusStatusSample | null,
+  focusNodeId: string | null,
+  currentStatus: GraphWorkflowNodeStatus | undefined,
+): boolean {
+  if (
+    prev === null
+    || focusNodeId === null
+    || currentStatus === undefined
+    || prev.nodeId !== focusNodeId
+  ) {
+    return false;
+  }
+  return isActiveStatus(prev.status) && isTerminalNodeStatus(currentStatus);
 }
 
 /** Snapshot order keeps parallel chips stable across engine patches. */
@@ -82,6 +120,8 @@ function pickFallbackPrimary(run: GraphWorkflowRun): string | null {
  * - `activeIds`: every running / awaiting_input node (may be many).
  * - `primaryId`: user preference if still valid; else policy among actives;
  *   else last succeeded / first node.
+ * Live pins are released by the workspace when the focused act just finishes
+ * (`shouldReleaseFocusToFollow`); history pins stay sticky here.
  */
 export function resolveTheaterFocus(
   run: GraphWorkflowRun,
@@ -93,7 +133,8 @@ export function resolveTheaterFocus(
     preferredNodeId !== null
     && run.nodeStates[preferredNodeId] !== undefined
   ) {
-    // Keep user focus even after the act leaves "active", until they pick another.
+    // Keep user focus even after the act leaves "active", until they pick another
+    // or the workspace releases a live pin that just finished.
     return { primaryId: preferredNodeId, activeIds };
   }
 
