@@ -52,20 +52,6 @@ where
     A: Write,
     B: Write,
 {
-    /// Writes to both sinks independently so one sink's failure cannot starve the other.
-    ///
-    /// The tracing fmt layer drives the writer through `write_all` with the complete
-    /// serialized event, so overriding it here keeps the two-sink fanout as independent as
-    /// the original two-layer topology: stdout trouble never drops a file event, and a file
-    /// failure never suppresses the observable stdout stream. The primary's result wins when
-    /// both fail because it is the user-visible sink.
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        let primary = self.primary.write_all(buf);
-        let secondary = self.secondary.write_all(buf);
-        primary?;
-        secondary
-    }
-
     /// Mirrors only the bytes the primary accepted, for callers that chunk through `write`.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let written = self.primary.write(buf)?;
@@ -82,6 +68,20 @@ where
         let secondary_result = self.secondary.flush();
         primary_result?;
         secondary_result
+    }
+
+    /// Writes to both sinks independently so one sink's failure cannot starve the other.
+    ///
+    /// The tracing fmt layer drives the writer through `write_all` with the complete
+    /// serialized event, so overriding it here keeps the two-sink fanout as independent as
+    /// the original two-layer topology: stdout trouble never drops a file event, and a file
+    /// failure never suppresses the observable stdout stream. The primary's result wins when
+    /// both fail because it is the user-visible sink.
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        let primary = self.primary.write_all(buf);
+        let secondary = self.secondary.write_all(buf);
+        primary?;
+        secondary
     }
 }
 
