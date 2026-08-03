@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod error;
+mod skill_marketplace;
 mod state;
 
 use crate::config::DesktopConfigStore;
@@ -67,6 +68,7 @@ pub fn run() {
             commands::list_skills,
             commands::update_skill,
             commands::delete_skill,
+            skill_marketplace::open_skill_marketplace,
             // =============================================================================
             // agent
             // =============================================================================
