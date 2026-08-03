@@ -278,11 +278,6 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListProjectsResponse"
         | "UpdateProjectRequest"
         | "UpdateProjectResponse" => "project",
-        "OpenProjectWorkContextRequest"
-        | "OpenProjectWorkContextResponse"
-        | "ProjectWorkContext"
-        | "RenewProjectWorkContextRequest"
-        | "RenewProjectWorkContextResponse" => "project-work-context",
         "CreateTaskRequest" | "CreateTaskResponse" | "DeleteTaskRequest" | "DeleteTaskResponse"
         | "GetTaskRequest" | "GetTaskResponse" | "ListTasksRequest" | "ListTasksResponse"
         | "UpdateTaskRequest" | "UpdateTaskResponse" => "task",
@@ -468,7 +463,6 @@ mod tests {
             "endpoints.ts",
             "file-system.ts",
             "project.ts",
-            "project-work-context.ts",
             "session.ts",
             "skill.ts",
             "task.ts",

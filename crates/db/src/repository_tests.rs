@@ -1,14 +1,13 @@
 use std::path::PathBuf;
 
 use ora_application::{
-    AgentDefinitionRepository, ProjectRepository, ProjectRepositoryError,
-    ProjectWorkContextRepository, SessionRepository, SessionRepositoryError, SkillRepository,
-    TaskRepository, TaskRepositoryError, WorktreeRepository, WorktreeRepositoryError,
+    AgentDefinitionRepository, ProjectRepository, ProjectRepositoryError, SessionRepository,
+    SessionRepositoryError, SkillRepository, TaskRepository, TaskRepositoryError,
+    WorktreeRepository, WorktreeRepositoryError,
 };
 use ora_domain::{
-    AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, Project, ProjectId,
-    ProjectWorkContext, ProjectWorkContextId, ProjectWorkContextSurface, Session, SessionId,
-    SessionStatus, Skill, SkillId, Task, TaskId, TaskStatus, Worktree, WorktreeActivity,
+    AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, Project, ProjectId, Session,
+    SessionId, SessionStatus, Skill, SkillId, Task, TaskId, TaskStatus, Worktree, WorktreeActivity,
     WorktreeId,
 };
 use ora_logging::with_trace_logging;
@@ -18,8 +17,8 @@ use tempfile::TempDir;
 use crate::{
     CascadeDeleteOutcome, DatabaseBootstrapper, DatabaseLocation, RepositoryPool,
     SqliteAgentDefinitionRepository, SqliteCascadeRepository, SqliteProjectRepository,
-    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillRepository,
-    SqliteTaskRepository, SqliteWorktreeRepository, TimestampSource, default_migration_catalog,
+    SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository, SqliteWorktreeRepository,
+    TimestampSource, default_migration_catalog,
 };
 
 /// Verifies catalog repositories use stable identifiers and hide soft-deleted rows.
@@ -288,88 +287,6 @@ fn project_repository_ignores_soft_deleted_projects_during_name_lookup() {
         .unwrap();
 
     assert_eq!(repository.find_project_by_name("Ora").unwrap(), None);
-}
-
-/// Verifies the SQLite-backed project work context repository preserves lease-aware rows and cleanup.
-#[test]
-fn project_work_context_repository_supports_active_lookup_and_cleanup() {
-    let (_temp_dir, pool) = bootstrapped_repository_pool();
-    let repository = SqliteProjectWorkContextRepository::new(pool);
-    let created_context = ProjectWorkContext::new(
-        ProjectWorkContextId::new("context-1"),
-        ProjectWorkContextSurface::Tauri,
-        "window-1",
-        ProjectId::new("project-1"),
-        120,
-        10,
-        10,
-    );
-
-    assert_eq!(
-        repository
-            .create_project_work_context(created_context.clone())
-            .unwrap(),
-        created_context.clone()
-    );
-    assert_eq!(
-        repository
-            .find_project_work_context(ProjectWorkContextSurface::Tauri, "window-1")
-            .unwrap(),
-        Some(created_context.clone())
-    );
-    assert_eq!(
-        repository
-            .find_active_project_work_context_for_project(&created_context.project_id, 100)
-            .unwrap(),
-        Some(created_context.clone())
-    );
-    assert_eq!(
-        repository
-            .find_active_project_work_context_for_project(&created_context.project_id, 120)
-            .unwrap(),
-        None
-    );
-
-    let updated_context = ProjectWorkContext::new(
-        created_context.id.clone(),
-        created_context.surface,
-        created_context.window_id.clone(),
-        ProjectId::new("project-2"),
-        240,
-        created_context.created_at,
-        40,
-    );
-
-    assert_eq!(
-        repository
-            .update_project_work_context(updated_context.clone())
-            .unwrap(),
-        updated_context.clone()
-    );
-    assert_eq!(
-        repository
-            .find_active_project_work_context_for_project(&ProjectId::new("project-2"), 200)
-            .unwrap(),
-        Some(updated_context.clone())
-    );
-    assert_eq!(
-        repository
-            .delete_expired_project_work_contexts(200)
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        repository
-            .delete_project_work_context(ProjectWorkContextSurface::Tauri, "window-1")
-            .unwrap(),
-        true
-    );
-    assert_eq!(
-        repository
-            .find_project_work_context(ProjectWorkContextSurface::Tauri, "window-1")
-            .unwrap(),
-        None
-    );
 }
 
 /// Verifies the SQLite-backed task repository preserves CRUD snapshots and hides soft-deleted rows.
@@ -677,7 +594,7 @@ fn task_cascade_delete_is_atomic_and_does_not_require_git() {
         repository.delete_task(&TaskId::new("task-1"), 20).unwrap(),
         CascadeDeleteOutcome::ActiveSession
     );
-    assert_eq!(cascade_flags(&pool), (0, 0, 0, 0, 1));
+    assert_eq!(cascade_flags(&pool), (0, 0, 0, 0));
     pool.with_connection(|connection| {
         connection.execute(
             "UPDATE sessions SET status = ?1 WHERE id = 'session-1'",
@@ -691,12 +608,12 @@ fn task_cascade_delete_is_atomic_and_does_not_require_git() {
         repository.delete_task(&TaskId::new("task-1"), 30).unwrap(),
         CascadeDeleteOutcome::Deleted
     );
-    assert_eq!(cascade_flags(&pool), (0, 1, 1, 1, 1));
+    assert_eq!(cascade_flags(&pool), (0, 1, 1, 1));
 }
 
-/// Verifies project deletion removes its transient lease and soft-deletes the full Ora aggregate.
+/// Verifies project deletion soft-deletes the full Ora aggregate without touching external state.
 #[test]
-fn project_cascade_delete_removes_work_context_without_touching_external_state() {
+fn project_cascade_delete_soft_deletes_aggregate_without_touching_external_state() {
     let (_temp_dir, pool) = bootstrapped_repository_pool();
     insert_cascade_fixture(&pool, SessionStatus::Stopped);
     let repository = SqliteCascadeRepository::new(pool.clone());
@@ -707,7 +624,7 @@ fn project_cascade_delete_removes_work_context_without_touching_external_state()
             .unwrap(),
         CascadeDeleteOutcome::Deleted
     );
-    assert_eq!(cascade_flags(&pool), (1, 1, 1, 1, 0));
+    assert_eq!(cascade_flags(&pool), (1, 1, 1, 1));
 }
 
 /// Inserts one complete aggregate using only Ora-owned rows, deliberately without Git fixtures.
@@ -716,8 +633,7 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
         connection.execute_batch(
             "INSERT INTO projects VALUES ('project-1', 'Ora', '/not/a/repository', 1, 1, 0);
              INSERT INTO tasks VALUES ('task-1', 'project-1', 'Task', 0, 'worktree-1', 1, 1, 0);
-             INSERT INTO worktrees VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0);
-             INSERT INTO project_work_contexts VALUES ('context-1', 'web', 'main', 'project-1', 100, 1, 1);",
+             INSERT INTO worktrees VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0);",
         )?;
         connection.execute(
             "INSERT INTO sessions VALUES ('session-1', 'task-1', 'ora-space.opencode', 'provider-1', ?1, 1, 1, 0)",
@@ -728,8 +644,8 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
     .unwrap();
 }
 
-/// Reads all aggregate deletion markers plus the remaining transient work-context count.
-fn cascade_flags(pool: &RepositoryPool) -> (i64, i64, i64, i64, i64) {
+/// Reads all aggregate deletion markers for cascade assertions.
+fn cascade_flags(pool: &RepositoryPool) -> (i64, i64, i64, i64) {
     pool.with_connection(|connection| {
         Ok((
             connection.query_row(
@@ -752,9 +668,6 @@ fn cascade_flags(pool: &RepositoryPool) -> (i64, i64, i64, i64, i64) {
                 [],
                 |row| row.get(0),
             )?,
-            connection.query_row("SELECT COUNT(*) FROM project_work_contexts", [], |row| {
-                row.get(0)
-            })?,
         ))
     })
     .unwrap()

@@ -3,7 +3,6 @@ import type { CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, Delet
 import type { ListDirectoryRequest, ListDirectoryResponse } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
-import type { OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse } from "./project-work-context.js";
 import type { CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, StopSessionRequest, StopSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
@@ -39,8 +38,6 @@ export type RequestByOperation = {
   listProjects: ListProjectsRequest;
   updateProject: UpdateProjectRequest;
   deleteProject: DeleteProjectRequest;
-  openProjectWorkContext: OpenProjectWorkContextRequest;
-  renewProjectWorkContext: RenewProjectWorkContextRequest;
   createTask: CreateTaskRequest;
   getTask: GetTaskRequest;
   listTasks: ListTasksRequest;
@@ -75,8 +72,6 @@ export type ResponseByOperation = {
   listProjects: ListProjectsResponse;
   updateProject: UpdateProjectResponse;
   deleteProject: DeleteProjectResponse;
-  openProjectWorkContext: OpenProjectWorkContextResponse;
-  renewProjectWorkContext: RenewProjectWorkContextResponse;
   createTask: CreateTaskResponse;
   getTask: GetTaskResponse;
   listTasks: ListTasksResponse;
@@ -172,32 +167,6 @@ export const endpoints = {
     pathParams: [{ rustFieldName: "project_id", wireName: "projectId" }],
     queryParams: [],
     hasJsonBody: false,
-  },
-  openProjectWorkContext: {
-    operationName: "openProjectWorkContext",
-    namespace: "projectWorkContext",
-    memberName: "open",
-    method: "POST",
-    pathTemplate: "/api/project-work-contexts/open",
-    requestType: "OpenProjectWorkContextRequest",
-    responseType: "OpenProjectWorkContextResponse",
-    responseMode: "unary",
-    pathParams: [],
-    queryParams: [],
-    hasJsonBody: true,
-  },
-  renewProjectWorkContext: {
-    operationName: "renewProjectWorkContext",
-    namespace: "projectWorkContext",
-    memberName: "renew",
-    method: "POST",
-    pathTemplate: "/api/project-work-contexts/renew",
-    requestType: "RenewProjectWorkContextRequest",
-    responseType: "RenewProjectWorkContextResponse",
-    responseMode: "unary",
-    pathParams: [],
-    queryParams: [],
-    hasJsonBody: true,
   },
   createTask: {
     operationName: "createTask",

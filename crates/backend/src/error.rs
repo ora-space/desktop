@@ -97,20 +97,6 @@ impl From<ApplicationError> for BackendError {
                 "project_repository_error",
                 "project repository operation failed",
             ),
-            ApplicationError::ProjectOccupied { project_id } => Self::new(
-                BackendErrorKind::Conflict,
-                "project_occupied",
-                format!("project is already occupied: {project_id}"),
-            ),
-            ApplicationError::ProjectWorkContextNotFound { surface, window_id } => Self::new(
-                BackendErrorKind::NotFound,
-                "project_work_context_not_found",
-                format!("project work context not found for {surface}/{window_id}"),
-            ),
-            ApplicationError::ProjectWorkContextRepository { .. } => internal(
-                "project_work_context_repository_error",
-                "project work context repository operation failed",
-            ),
             ApplicationError::TaskNotFound { task_id } => Self::new(
                 BackendErrorKind::NotFound,
                 "task_not_found",

@@ -61,4 +61,4 @@ The generated frontend SDK SHALL only expose supported public operations. Becaus
 
 #### Scenario: Frontend code imports the generated client
 - **WHEN** frontend code consumes `@ora/contracts`
-- **THEN** it can call supported project, project-work-context, task, and session operations, and it cannot call generated standalone worktree client methods
+- **THEN** it can call supported project, task, and session operations, and it cannot call generated standalone worktree client methods

@@ -12,11 +12,7 @@ Backend construction immediately attempts supervised `opencode acp`, `nga acp`, 
 
 The current Desktop slice explicitly returns `unsupported_operation` for:
 
-- opening a project work context;
-- renewing a project work context;
 - listing a server filesystem directory.
-
-`ProjectWorkContext` remains outside this extraction.
 
 ## Persistent Paths
 

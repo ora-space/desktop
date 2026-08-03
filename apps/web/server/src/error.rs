@@ -144,21 +144,6 @@ impl From<ApplicationError> for WebApiError {
                 code: "project_repository_error",
                 message,
             },
-            ApplicationError::ProjectOccupied { project_id } => Self {
-                status: StatusCode::CONFLICT,
-                code: "project_occupied",
-                message: format!("project is already occupied: {project_id}"),
-            },
-            ApplicationError::ProjectWorkContextNotFound { surface, window_id } => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "project_work_context_not_found",
-                message: format!("project work context not found for {surface}/{window_id}"),
-            },
-            ApplicationError::ProjectWorkContextRepository { message } => Self {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "project_work_context_repository_error",
-                message,
-            },
             ApplicationError::TaskNotFound { task_id } => Self {
                 status: StatusCode::NOT_FOUND,
                 code: "task_not_found",
@@ -316,36 +301,6 @@ mod tests {
                 "error": {
                     "code": "project_repository_error",
                     "message": "write failed",
-                },
-            })
-        );
-    }
-
-    /// Verifies occupied project errors become stable HTTP 409 payloads.
-    #[tokio::test]
-    async fn maps_project_occupied_errors_to_http_409() {
-        let response = WebApiError::from(ApplicationError::ProjectOccupied {
-            project_id: "project-1".to_string(),
-        })
-        .into_response();
-        let status = response.status();
-        let body = response.into_body();
-        let bytes = match to_bytes(body, usize::MAX).await {
-            Ok(bytes) => bytes,
-            Err(error) => panic!("failed to read response body: {error}"),
-        };
-        let actual = match serde_json::from_slice::<Value>(&bytes) {
-            Ok(actual) => actual,
-            Err(error) => panic!("failed to decode JSON body: {error}"),
-        };
-
-        assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(
-            actual,
-            json!({
-                "error": {
-                    "code": "project_occupied",
-                    "message": "project is already occupied: project-1",
                 },
             })
         );

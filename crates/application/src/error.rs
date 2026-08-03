@@ -1,7 +1,7 @@
 use crate::{
-    AgentDefinitionRepositoryError, ProjectRepositoryError, ProjectWorkContextRepositoryError,
-    SessionRepositoryError, SkillRepositoryError, TaskRepositoryError,
-    TaskWorktreeProvisionerError, WorktreeRepositoryError,
+    AgentDefinitionRepositoryError, ProjectRepositoryError, SessionRepositoryError,
+    SkillRepositoryError, TaskRepositoryError, TaskWorktreeProvisionerError,
+    WorktreeRepositoryError,
 };
 use ora_domain::DomainModelError;
 use thiserror::Error;
@@ -25,12 +25,6 @@ pub enum ApplicationError {
     ProjectNotFound { project_id: String },
     #[error("project repository operation failed: {message}")]
     ProjectRepository { message: String },
-    #[error("project is already occupied: {project_id}")]
-    ProjectOccupied { project_id: String },
-    #[error("project work context not found for {surface}/{window_id}")]
-    ProjectWorkContextNotFound { surface: String, window_id: String },
-    #[error("project work context repository operation failed: {message}")]
-    ProjectWorkContextRepository { message: String },
     #[error("task not found: {task_id}")]
     TaskNotFound { task_id: String },
     #[error("task repository operation failed: {message}")]
@@ -91,17 +85,6 @@ impl ApplicationError {
     pub(crate) fn from_project_repository_error(error: ProjectRepositoryError) -> Self {
         match error {
             ProjectRepositoryError::OperationFailed(message) => Self::ProjectRepository { message },
-        }
-    }
-
-    /// Maps project work context repository failures into stable application errors.
-    pub(crate) fn from_project_work_context_repository_error(
-        error: ProjectWorkContextRepositoryError,
-    ) -> Self {
-        match error {
-            ProjectWorkContextRepositoryError::OperationFailed(message) => {
-                Self::ProjectWorkContextRepository { message }
-            }
         }
     }
 

@@ -17,7 +17,7 @@ The web server reads its runtime data root from:
 
 - `ORA_DATA_DIR`: root directory for runtime state. Default: `.`
 
-Startup asks `ora-backend` to bootstrap the database, apply the active migration catalog, and construct the shared CRUD composition before the runtime is marked ready. The server retains direct composition only for the Web-only project work context and filesystem services.
+Startup asks `ora-backend` to bootstrap the database, apply the active migration catalog, and construct the shared CRUD composition before the runtime is marked ready. The server retains direct composition only for the Web-only filesystem service.
 
 - SQLite database path: `<ORA_DATA_DIR>/ora.sqlite3`
 - Worktree root: `<ORA_DATA_DIR>/worktrees`
@@ -38,7 +38,6 @@ Startup reconciles this configured project into the `projects` table before the 
 - If `ORA_WORK_DIR` is unset, startup uses a `worktrees/` directory next to the configured SQLite database file.
 - Task creation resolves the project named by the request and provisions linked worktrees under `ORA_WORK_DIR/<full-task-id>`.
 - Agent Session startup resolves Task → Worktree → branch and then asks Git for the authoritative linked-worktree path supplied as the ACP session `cwd`.
-- After project reconciliation, startup also opens the synthetic web work context `surface = web`, `window_id = main` for that project and refreshes its lease immediately.
 
 ## Bind Configuration
 
@@ -67,8 +66,6 @@ The persisted runtime exposes CRUD routes for the supported public models:
 - `GET /api/projects/{project_id}`
 - `PUT /api/projects/{project_id}`
 - `DELETE /api/projects/{project_id}`
-- `POST /api/project-work-contexts/open`
-- `POST /api/project-work-contexts/renew`
 - `POST /api/tasks`
 - `GET /api/tasks`
 - `GET /api/tasks/{task_id}`
@@ -102,12 +99,6 @@ Backend construction immediately attempts `<home>/.opencode/bin/opencode acp`, `
 
 Load and prompt responses use `application/x-ndjson`. Each line is one complete frame. Data and control paths are separate, session-update queues are bounded at 256 items, frames are limited to 8 MiB, and overflow terminates the operation rather than dropping updates silently.
 
-The project work context routes provide the current backend-managed project selection surface.
-
-- `open` creates or switches one `(surface, window_id)` context into a project and refreshes its lease immediately.
-- `renew` extends an existing context lease using backend time.
-- Occupied-project conflicts return a stable HTTP `409` error without exposing the owning surface or window id in the response.
-
 ### Filesystem browsing
 
 The filesystem directory route supports the custom Web path picker.
@@ -131,5 +122,5 @@ The Web frontend always uses the fetch contracts transport and talks to the Rust
 The current runtime uses a file-backed SQLite database bootstrapped through `ora-db`.
 
 - Data persists across process restarts as long as the same `ORA_DATA_DIR` is reused.
-- Readiness depends on successful database bootstrap, repository-pool construction, bootstrap-project reconciliation, and synthetic web work context reconciliation.
+- Readiness depends on successful database bootstrap, repository-pool construction, and bootstrap-project reconciliation.
 - Shared backend failures map into the structured HTTP error envelope using the same public code and message returned by Desktop commands. HTTP alone adds the status code.

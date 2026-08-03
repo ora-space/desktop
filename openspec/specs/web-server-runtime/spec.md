@@ -26,7 +26,7 @@ The system SHALL make `apps/web/server` construct its shared runtime state from 
 - **THEN** startup fails with a typed bootstrap error instead of serving requests with a partially initialized runtime
 
 ### Requirement: Web server runtime SHALL expose HTTP CRUD routes for supported persisted models
-The system SHALL expose create, get, list, update, and delete HTTP routes for `project`, `task`, and `session`, and it SHALL expose the backend-managed project-work-context routes required for web runtime ownership. The runtime SHALL NOT expose standalone public worktree CRUD routes. Each supported route SHALL translate transport input into the matching `ora-contracts` request DTO, SHALL delegate to the corresponding `ora-application` handler, and SHALL serialize the returned `ora-contracts` response DTO without adding adapter-local response shapes. Task-create runtime wiring SHALL provide the configured project repository and worktree root needed for backend-owned linked-worktree provisioning.
+The system SHALL expose create, get, list, update, and delete HTTP routes for `project`, `task`, and `session`. The runtime SHALL NOT expose standalone public worktree CRUD routes. Each supported route SHALL translate transport input into the matching `ora-contracts` request DTO, SHALL delegate to the corresponding `ora-application` handler, and SHALL serialize the returned `ora-contracts` response DTO without adding adapter-local response shapes. Task-create runtime wiring SHALL provide the configured project repository and worktree root needed for backend-owned linked-worktree provisioning.
 
 #### Scenario: Client performs task CRUD over HTTP
 - **WHEN** a caller creates, fetches, lists, updates, or deletes a task through the web server

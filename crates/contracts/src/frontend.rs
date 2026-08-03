@@ -72,8 +72,6 @@ impl FrontendEndpoint {
 
 pub const PROJECTS_PATH: &str = "/api/projects";
 pub const PROJECT_PATH: &str = "/api/projects/{projectId}";
-pub const PROJECT_WORK_CONTEXT_OPEN_PATH: &str = "/api/project-work-contexts/open";
-pub const PROJECT_WORK_CONTEXT_RENEW_PATH: &str = "/api/project-work-contexts/renew";
 pub const TASKS_PATH: &str = "/api/tasks";
 pub const TASK_PATH: &str = "/api/tasks/{taskId}";
 pub const SESSIONS_PATH: &str = "/api/sessions";
@@ -116,7 +114,6 @@ const FILE_SYSTEM_DIRECTORY_PATH_QUERY_PARAM: FrontendQueryParam = FrontendQuery
 };
 
 const PROJECT_NAMESPACE: &str = "project";
-const PROJECT_WORK_CONTEXT_NAMESPACE: &str = "projectWorkContext";
 const TASK_NAMESPACE: &str = "task";
 const SESSION_NAMESPACE: &str = "session";
 const AGENT_RUNTIME_NAMESPACE: &str = "agentRuntime";
@@ -190,28 +187,6 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "DeleteProjectResponse",
         path_params: PROJECT_PATH_PARAMS,
         has_json_body: false,
-    },
-    FrontendEndpoint {
-        operation_name: "openProjectWorkContext",
-        namespace: PROJECT_WORK_CONTEXT_NAMESPACE,
-        member_name: "open",
-        method: FrontendHttpMethod::Post,
-        path_template: PROJECT_WORK_CONTEXT_OPEN_PATH,
-        request_type: "OpenProjectWorkContextRequest",
-        response_type: "OpenProjectWorkContextResponse",
-        path_params: NO_PATH_PARAMS,
-        has_json_body: true,
-    },
-    FrontendEndpoint {
-        operation_name: "renewProjectWorkContext",
-        namespace: PROJECT_WORK_CONTEXT_NAMESPACE,
-        member_name: "renew",
-        method: FrontendHttpMethod::Post,
-        path_template: PROJECT_WORK_CONTEXT_RENEW_PATH,
-        request_type: "RenewProjectWorkContextRequest",
-        response_type: "RenewProjectWorkContextResponse",
-        path_params: NO_PATH_PARAMS,
-        has_json_body: true,
     },
     FrontendEndpoint {
         operation_name: "createTask",
@@ -583,6 +558,18 @@ mod tests {
             frontend_endpoints()
                 .iter()
                 .all(|endpoint| !endpoint.operation_name.contains("Worktree")),
+            true
+        );
+    }
+
+    /// Verifies the removed multi-client project ownership API is absent from generated clients.
+    #[test]
+    fn omits_project_work_context_endpoints_from_frontend_manifest() {
+        assert_eq!(
+            frontend_endpoints().iter().all(|endpoint| {
+                !endpoint.operation_name.contains("ProjectWorkContext")
+                    && !endpoint.path_template.contains("project-work-contexts")
+            }),
             true
         );
     }
