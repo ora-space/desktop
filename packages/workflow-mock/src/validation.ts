@@ -1,5 +1,8 @@
 import { isEdge, isNode } from "@xyflow/react";
-import { WORKFLOW_NODE_KINDS } from "./node-data";
+import {
+  WORKFLOW_NODE_KINDS,
+  type WorkflowAgentConfig,
+} from "./node-data";
 import type { DemoWorkflow } from "./fixtures";
 
 /** Validates imported React Flow elements before they enter the canvas. */
@@ -35,7 +38,9 @@ export function isDemoWorkflow(value: unknown): value is DemoWorkflow {
       && (node.data.kind !== "start" || node.deletable === false)
       && typeof node.data.title === "string"
       && typeof node.data.description === "string"
-      && typeof node.data.instruction === "string"
+      && (node.data.kind === "agent"
+        ? isWorkflowAgentConfig(node.data.agentConfig)
+        : typeof node.data.instruction === "string")
     )
     && candidate.edges.every((edge) =>
       isEdge(edge)
@@ -63,4 +68,29 @@ export function isDemoWorkflow(value: unknown): value is DemoWorkflow {
     )
     && new Set(candidate.edges.map((edge) => `${edge.source}\u0000${edge.target}`)).size
       === candidate.edges.length;
+}
+
+/** Validates the serialized Agent contract before a definition can be edited or run. */
+function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const config = value as Partial<WorkflowAgentConfig>;
+  return config.schemaVersion === 3
+    && typeof config.executor === "object"
+    && config.executor !== null
+    && typeof config.executor.agentCli === "string"
+    && config.executor.agentCli.trim() !== ""
+    && typeof config.executor.modelId === "string"
+    && config.executor.modelId.trim() !== ""
+    && typeof config.roleId === "string"
+    && config.roleId.trim() !== ""
+    && Array.isArray(config.skills)
+    && config.skills.every((skill) => typeof skill === "object"
+      && skill !== null
+      && typeof skill.skillId === "string"
+      && skill.skillId.trim() !== ""
+      && typeof skill.enabled === "boolean")
+    && new Set(config.skills.map((skill) => skill.skillId)).size === config.skills.length
+    && typeof config.prompt === "string";
 }

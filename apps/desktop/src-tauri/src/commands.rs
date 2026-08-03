@@ -93,6 +93,23 @@ macro_rules! backend_command {
     };
 }
 
+/// Carries a user-selected destination and serialized workflow definition for export.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteWorkflowExportRequest {
+    path: PathBuf,
+    content: String,
+}
+
+/// Writes a workflow export after the desktop save dialog has selected its exact destination.
+#[tauri::command]
+pub async fn write_workflow_export(request: WriteWorkflowExportRequest) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(request.path, request.content))
+        .await
+        .map_err(|error| format!("workflow export task failed: {error}"))?
+        .map_err(|error| format!("workflow export write failed: {error}"))
+}
+
 // =============================================================================
 // project
 // =============================================================================

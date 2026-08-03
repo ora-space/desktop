@@ -1,17 +1,30 @@
-import type { WorkflowNodeKind } from "./node-data";
+import type {
+  WorkflowAgentConfig,
+  WorkflowNodeKind,
+} from "./node-data";
 
 export interface WorkflowChoice {
   value: string;
   label: string;
 }
 
-export type WorkflowConfigField = "model" | "tool" | "condition" | "instruction";
+export type WorkflowConfigField = "agent" | "model" | "tool" | "condition" | "instruction";
+
+export interface WorkflowAgentModel {
+  agentCli: string;
+  modelId: string;
+  label: string;
+}
 
 export interface WorkflowCapabilities {
   nodeTypes: WorkflowNodeType[];
   models: WorkflowChoice[];
+  agentModels: WorkflowAgentModel[];
+  roles: WorkflowChoice[];
+  skills: WorkflowChoice[];
   tools: WorkflowChoice[];
   defaultModel: string;
+  defaultAgentConfig: WorkflowAgentConfig;
   defaultTool: string;
 }
 
@@ -22,9 +35,51 @@ export interface WorkflowNodeType {
   configFields: WorkflowConfigField[];
 }
 
-/** Returns localized prototype capabilities that a real workflow backend can replace later. */
+const DEFAULT_AGENT_MODEL: WorkflowAgentModel = {
+  agentCli: "code_agent_cli",
+  modelId: "gpt-5",
+  label: "CodeAgentCLI · GPT-5",
+};
+
+const MOCK_AGENT_MODELS: WorkflowAgentModel[] = [
+  DEFAULT_AGENT_MODEL,
+  { agentCli: "open_code", modelId: "opencode/sonnet", label: "OpenCode · Sonnet" },
+  { agentCli: "nga", modelId: "nga/default", label: "NGA · Default" },
+];
+
+const MOCK_AGENT_ROLES: WorkflowChoice[] = [
+  { value: "Architect", label: "架构师" },
+  { value: "Planner", label: "规划师" },
+  { value: "Researcher", label: "研究员" },
+  { value: "Implementer", label: "实施者" },
+  { value: "Reviewer", label: "审查员" },
+  { value: "Tester", label: "测试员" },
+  { value: "Debugger", label: "调试员" },
+  { value: "Documentation Agent", label: "文档专员" },
+];
+
+const MOCK_AGENT_SKILLS: WorkflowChoice[] = [
+  "openspec-apply-change",
+  "openspec-archive-change",
+  "openspec-bulk-archive-change",
+  "openspec-continue-change",
+  "openspec-explore",
+  "openspec-ff-change",
+  "openspec-new-change",
+  "openspec-onboard",
+  "openspec-propose",
+  "openspec-sync-specs",
+  "openspec-verify-change",
+].map((value) => ({ value, label: value }));
+
+/**
+ * Returns prototype workflow capabilities, optionally using models discovered
+ * by the backend while retaining local Role and Skill catalogs until their
+ * backend APIs are available.
+ */
 export function createMockWorkflowCapabilities(
   locale: "zh-CN" | "en-US",
+  agentModels: WorkflowAgentModel[] = MOCK_AGENT_MODELS,
 ): WorkflowCapabilities {
   const nodeTypes: WorkflowNodeType[] = [
     createMockWorkflowNodeType("start", locale),
@@ -47,11 +102,25 @@ export function createMockWorkflowCapabilities(
     { value: "File system", label: "File system" },
     { value: "GitHub", label: "GitHub" },
   ];
+  const defaultAgentModel = agentModels[0] ?? DEFAULT_AGENT_MODEL;
   return {
     nodeTypes,
     models,
+    agentModels,
+    roles: MOCK_AGENT_ROLES,
+    skills: MOCK_AGENT_SKILLS,
     tools,
     defaultModel: models[0].value,
+    defaultAgentConfig: {
+      schemaVersion: 3,
+      executor: {
+        agentCli: defaultAgentModel.agentCli,
+        modelId: defaultAgentModel.modelId,
+      },
+      roleId: MOCK_AGENT_ROLES[0]!.value,
+      skills: [],
+      prompt: "",
+    },
     defaultTool: tools[0].value,
   };
 }
@@ -83,7 +152,7 @@ export function createMockWorkflowNodeType(
         description: locale === "zh-CN"
           ? "交给模型自主执行"
           : "Delegate autonomous work to a model",
-        configFields: ["model", "instruction"],
+        configFields: ["agent"],
       };
     case "condition":
       return {

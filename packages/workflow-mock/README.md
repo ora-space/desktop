@@ -13,7 +13,13 @@ nodes, connections, and viewport use React Flow's native persistence shape.
 Nodes use `@xyflow/react`'s `Node<TData>` directly and connections use `Edge`.
 Executable fields (`instruction`, `model`, `tool`, and `condition`) live in the
 official `Node.data` extension point. There is no parallel workflow node, edge,
-position, or config DTO and no adapter layer.
+or position DTO and no adapter layer.
+
+Agent nodes use a versioned `agentConfig` object rather than an unstructured
+model label. It records the CLI/model pair, Role ID, configured Skills with an
+explicit enabled state, and custom prompt. The app supplies the
+model catalog from the backend's agent-model endpoint; Role and Skill choices
+remain a stable local mock catalog until their backend APIs are available.
 
 The UI captures graphs with React Flow's `toObject()` at commit boundaries.
 Workflow metadata is added beside that native snapshot without translating its
@@ -21,8 +27,8 @@ nodes, edges, or viewport.
 
 `createMockWorkflowNode` owns demo node-data defaults so UI components only
 provide interaction-derived `XYPosition` values and localized display text.
-`createMockWorkflowCapabilities` supplies the model and tool choices rendered by
-the inspector, plus the node-type catalog and configuration-field schema.
+`createMockWorkflowCapabilities` supplies the model, Role, Skill, and tool
+choices rendered by the inspector, plus the node-type catalog and configuration-field schema.
 
 Imported definitions are validated before entering session state. React Flow's
 `isNode` and `isEdge` guards validate its element boundaries; business

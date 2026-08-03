@@ -37,6 +37,8 @@ React Flow–based canvas for the session-only settings workflow demo.
 - Each session workflow carries a `ReactFlowJsonObject`; graph transitions
   capture it with `toObject()` so nodes, edges, selection, and viewport restore
   from the same React Flow snapshot.
+- Workflow export captures that same live `toObject()` snapshot before handing
+  the pretty-printed JSON to the host save flow.
 - Catalog drops only commit inside canvas bounds and snap to the visible grid.
 
 ## Interactions
@@ -45,7 +47,8 @@ React Flow–based canvas for the session-only settings workflow demo.
   with `applyNodeChanges` and `applyEdgeChanges`.
 - React Flow owns selection semantics and performs node/edge deletion through
   `deleteElements`, including removal of incident edges.
-- Executable fields such as instruction, model, tool, and condition use React
-  Flow's supported `node.data` extension point.
+- Executable fields use React Flow's supported `node.data` extension point.
+  Agent nodes store their versioned executor, Role, Skill, and prompt
+  configuration in `agentConfig` rather than in card UI state.
 - `WorkflowNodeCatalog` remains nested for drop-coordinate conversion through
   `screenToFlowPosition`.

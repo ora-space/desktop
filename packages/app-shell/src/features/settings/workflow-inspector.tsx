@@ -1,21 +1,34 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconLayoutSidebarRightCollapse,
+  IconPlus,
   IconSettings,
   IconTrash,
 } from "@tabler/icons-react";
 import {
   Button,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
   Input,
   Label,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Switch,
   Textarea,
 } from "@ora/ui";
 import {
+  type WorkflowAgentConfig,
   type WorkflowNodeData,
   type WorkflowCapabilities,
 } from "@ora/workflow-mock";
@@ -25,6 +38,7 @@ import { getNodeMetadata } from "./workflow-node-metadata";
 interface WorkflowInspectorProps {
   node: Node<WorkflowNodeData, "workflow"> | null;
   capabilities: WorkflowCapabilities;
+  agentModelsLoading?: boolean;
   onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
   onDelete: (nodeId: string) => void;
   onCloseNode: () => void;
@@ -39,6 +53,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
     <WorkflowNodeInspector
       node={props.node}
       capabilities={props.capabilities}
+      agentModelsLoading={props.agentModelsLoading ?? false}
       onUpdate={props.onUpdate}
       onDelete={props.onDelete}
       onClose={props.onCloseNode}
@@ -72,12 +87,14 @@ function WorkflowInspectorEmpty() {
 function WorkflowNodeInspector({
   node,
   capabilities,
+  agentModelsLoading,
   onUpdate,
   onDelete,
   onClose,
 }: {
   node: Node<WorkflowNodeData, "workflow">;
   capabilities: WorkflowCapabilities;
+  agentModelsLoading: boolean;
   onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
   onDelete: (nodeId: string) => void;
   onClose: () => void;
@@ -89,6 +106,7 @@ function WorkflowNodeInspector({
     throw new Error(`Missing workflow capability for node kind "${node.data.kind}"`);
   }
   const Icon = metadata.icon;
+  const agentConfig = node.data.agentConfig;
   return (
     <aside className="flex min-h-0 flex-1 flex-col border-l border-border bg-background">
       <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
@@ -191,12 +209,23 @@ function WorkflowNodeInspector({
             />
           </InspectorField>
         )}
+        {nodeType.configFields.includes("agent") && agentConfig !== undefined && (
+          <AgentConfigurationFields
+            config={agentConfig}
+            capabilities={capabilities}
+            modelsLoading={agentModelsLoading}
+            onChange={(config) => onUpdate({
+              ...node,
+              data: { ...node.data, agentConfig: config },
+            })}
+          />
+        )}
         {nodeType.configFields.includes("instruction") && (
           <InspectorField label={t("settings.workflow.field.instruction")} htmlFor="workflow-node-instruction">
             <Textarea
               id="workflow-node-instruction"
               className="min-h-32 resize-none text-xs leading-5"
-              value={node.data.instruction}
+              value={node.data.instruction ?? ""}
               onChange={(event) =>
                 onUpdate({
                   ...node,
@@ -219,6 +248,232 @@ function WorkflowNodeInspector({
         </Button>
       </div>
     </aside>
+  );
+}
+
+/** Edits the structured Agent contract without conflating it with a free-form prompt field. */
+function AgentConfigurationFields({
+  config,
+  capabilities,
+  modelsLoading,
+  onChange,
+}: {
+  config: WorkflowAgentConfig;
+  capabilities: WorkflowCapabilities;
+  modelsLoading: boolean;
+  onChange: (config: WorkflowAgentConfig) => void;
+}) {
+  const { t } = useTranslation();
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const configuredModel = capabilities.agentModels.find(
+    (model) => model.agentCli === config.executor.agentCli
+      && model.modelId === config.executor.modelId,
+  );
+  const selectedModel = configuredModel ?? {
+    agentCli: config.executor.agentCli,
+    modelId: config.executor.modelId,
+    label: `${config.executor.agentCli} · ${config.executor.modelId}`,
+  };
+  const selectableModels = configuredModel === undefined
+    ? [selectedModel, ...capabilities.agentModels]
+    : capabilities.agentModels;
+  const configuredSkillIds = new Set(config.skills.map((skill) => skill.skillId));
+  const availableSkills = capabilities.skills.filter((skill) =>
+    !configuredSkillIds.has(skill.value),
+  );
+  const enabledSkillCount = config.skills.filter((skill) => skill.enabled).length;
+  const configuredRole = capabilities.roles.find((role) => role.value === config.roleId);
+  const selectedRole = configuredRole ?? { value: config.roleId, label: config.roleId };
+  const selectableRoles = configuredRole === undefined
+    ? [selectedRole, ...capabilities.roles]
+    : capabilities.roles;
+
+  /** Replaces the selected model only after resolving a structured capability reference. */
+  function selectModel(value: string | null): void {
+    if (value === null) {
+      return;
+    }
+    const model = selectableModels.find((candidate) => candidate.label === value);
+    if (model === undefined) {
+      return;
+    }
+    onChange({
+      ...config,
+      executor: { agentCli: model.agentCli, modelId: model.modelId },
+    });
+  }
+
+  /** Adds a new Skill in its enabled state, preserving configuration order. */
+  function addSkill(skillId: string): void {
+    onChange({
+      ...config,
+      skills: [...config.skills, { skillId, enabled: true }],
+    });
+    setSkillPickerOpen(false);
+  }
+
+  /** Updates only the enabled state of a configured Skill. */
+  function setSkillEnabled(skillId: string, enabled: boolean): void {
+    onChange({
+      ...config,
+      skills: config.skills.map((skill) =>
+        skill.skillId === skillId ? { ...skill, enabled } : skill),
+    });
+  }
+
+  /** Removes a configured Skill without affecting the remaining selection order. */
+  function removeSkill(skillId: string): void {
+    onChange({
+      ...config,
+      skills: config.skills.filter((skill) => skill.skillId !== skillId),
+    });
+  }
+
+  return (
+    <>
+      <InspectorField label={t("settings.workflow.field.agentModel")} htmlFor="workflow-agent-model">
+        <Select value={selectedModel.label} onValueChange={selectModel}>
+          <SelectTrigger
+            id="workflow-agent-model"
+            className="w-full"
+            disabled={modelsLoading || capabilities.agentModels.length === 0}
+          >
+            <SelectValue placeholder={modelsLoading
+              ? t("chat.modelSelector.loading")
+              : t("chat.modelSelector.empty")}
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {selectableModels.map((model) => (
+              <SelectItem
+                key={model.label}
+                value={model.label}
+              >
+                {model.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </InspectorField>
+      <InspectorField label={t("settings.workflow.field.role")} htmlFor="workflow-agent-role">
+        <Select
+          value={selectedRole.label}
+          onValueChange={(label) => {
+            if (label !== null) {
+              const role = selectableRoles.find((candidate) => candidate.label === label);
+              if (role !== undefined) {
+                onChange({ ...config, roleId: role.value });
+              }
+            }
+          }}
+        >
+          <SelectTrigger id="workflow-agent-role" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {selectableRoles.map((role) => (
+              <SelectItem key={role.value} value={role.label}>{role.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </InspectorField>
+      <fieldset className="space-y-2">
+        <div className="flex items-center justify-between">
+          <legend className="text-[11px] font-medium">
+            {t("settings.workflow.field.skills")}
+          </legend>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-muted-foreground">
+              {t("settings.workflow.enabledSkillCount", {
+                enabled: enabledSkillCount,
+                total: config.skills.length,
+              })}
+            </span>
+            <Popover open={skillPickerOpen} onOpenChange={setSkillPickerOpen}>
+              <PopoverTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t("settings.workflow.addSkill")}
+                  />
+                }
+              >
+                <IconPlus />
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 p-0">
+                <Command>
+                  <CommandInput
+                    aria-label={t("settings.workflow.searchAvailableSkills")}
+                    placeholder={t("settings.workflow.searchAvailableSkills")}
+                    className="text-sm"
+                  />
+                  <CommandList className="max-h-60">
+                    <CommandEmpty className="py-6 text-center text-xs">
+                      {t("settings.workflow.noAvailableSkills")}
+                    </CommandEmpty>
+                    <CommandGroup>
+                      {availableSkills.map((skill) => (
+                        <CommandItem
+                          key={skill.value}
+                          value={skill.label}
+                          onSelect={() => addSkill(skill.value)}
+                        >
+                          {skill.label}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+        <div className="divide-y overflow-hidden rounded-md border border-border">
+          {config.skills.map((configuredSkill) => {
+            const skill = capabilities.skills.find(
+              (candidate) => candidate.value === configuredSkill.skillId,
+            ) ?? { value: configuredSkill.skillId, label: configuredSkill.skillId };
+            return (
+              <div key={configuredSkill.skillId} className="flex items-center gap-2 px-2.5 py-2">
+                <span className="min-w-0 flex-1 truncate text-xs">{skill.label}</span>
+                <Switch
+                  size="sm"
+                  className="data-checked:bg-blue-600 hover:data-checked:bg-blue-700"
+                  checked={configuredSkill.enabled}
+                  aria-label={t("settings.workflow.toggleSkill", { name: skill.label })}
+                  onCheckedChange={(enabled) => setSkillEnabled(configuredSkill.skillId, enabled)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={t("settings.workflow.removeSkill", { name: skill.label })}
+                  onClick={() => removeSkill(configuredSkill.skillId)}
+                >
+                  <IconTrash />
+                </Button>
+              </div>
+            );
+          })}
+          {config.skills.length === 0 && (
+            <p className="px-2.5 py-3 text-xs text-muted-foreground">
+              {t("settings.workflow.noConfiguredSkills")}
+            </p>
+          )}
+        </div>
+      </fieldset>
+      <InspectorField label={t("settings.workflow.field.prompt")} htmlFor="workflow-agent-prompt">
+        <Textarea
+          id="workflow-agent-prompt"
+          className="min-h-32 resize-none text-xs leading-5"
+          value={config.prompt}
+          onChange={(event) => onChange({ ...config, prompt: event.target.value })}
+        />
+      </InspectorField>
+    </>
   );
 }
 

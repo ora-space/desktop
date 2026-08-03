@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { createChatStore } from "@ora/chat";
+import { PlatformProvider } from "@ora/platform";
 import { appI18n } from "../../i18n/i18n-instance";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createHookWrapper, createTestQueryClient } from "../../test/hook-harness";
 import { createMockClient, createMockClientState } from "../../test/mock-client";
+import { createStubPlatform } from "../../test/stub-platform";
 import { WorkflowSettings } from "./workflow-settings";
 
 /** Shell providers required by Deploy-to-project (runtime + react-query). */
@@ -19,7 +21,9 @@ function renderSettings(ui: ReactElement = <WorkflowSettings />): RenderResult {
   );
   return render(
     <Wrapper>
-      <AppI18nProvider>{ui}</AppI18nProvider>
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>{ui}</AppI18nProvider>
+      </PlatformProvider>
     </Wrapper>,
   );
 }
@@ -71,6 +75,7 @@ describe("WorkflowSettings", () => {
       name: "调整节点配置宽度；双击恢复默认宽度",
     })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "部署到项目" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "导出工作流" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "测试运行" })).not.toBeInTheDocument();
   });
 
@@ -397,6 +402,73 @@ describe("WorkflowSettings", () => {
     expect(screen.getByLabelText("开始节点: 开始")).toBeInTheDocument();
   });
 
+  it("edits the existing Agent node through its structured execution contract", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
+    await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
+
+    expect(screen.getByLabelText("Agent 模型")).toBeInTheDocument();
+    expect(screen.getByLabelText("角色")).toHaveTextContent("审查员");
+    expect(screen.getByText("Skills")).toBeInTheDocument();
+    expect(screen.getByLabelText("自定义 Prompt")).toHaveValue(
+      "按严重程度整理问题，并给出定位与修复建议。",
+    );
+    expect(screen.queryByText("输入上下文")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("项目权限")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("输出契约")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Agent 模型")).toHaveTextContent(
+        "OpenCode · opencode/big-pickle",
+      );
+    });
+  });
+
+  it("uses the backend catalog for a newly added Agent model", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
+    await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
+    const modelSelect = screen.getByLabelText("Agent 模型");
+    await waitFor(() => expect(modelSelect).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+
+    expect(await screen.findByLabelText("Agent节点: Agent 1")).toBeInTheDocument();
+    expect(screen.getAllByText("open_code · opencode/big-pickle").length).toBeGreaterThan(0);
+  });
+
+  it("adds, disables, and removes configured Agent Skills", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
+    await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
+    const existingSkillSwitch = screen.getByRole("switch", {
+      name: "启用或禁用 openspec-verify-change",
+    });
+    expect(existingSkillSwitch).toBeChecked();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "添加 Skill" }));
+    const skillSearch = screen.getByLabelText("搜索可添加的 Skill");
+    await user.type(skillSearch, "archive");
+    await user.click(screen.getByText("openspec-archive-change"));
+
+    const archiveSwitch = screen.getByRole("switch", {
+      name: "启用或禁用 openspec-archive-change",
+    });
+    expect(archiveSwitch).toBeChecked();
+    await user.click(archiveSwitch);
+    expect(archiveSwitch).not.toBeChecked();
+
+    await user.click(screen.getByRole("button", {
+      name: "移除 openspec-archive-change",
+    }));
+    expect(screen.queryByText("openspec-archive-change")).not.toBeInTheDocument();
+  });
+
   it("routes inspector deletion through the shared React Flow store", async () => {
     const user = userEvent.setup();
     renderSettings();
@@ -444,7 +516,7 @@ describe("WorkflowSettings", () => {
 
     await waitFor(() => {
       expect(screen.getByDisplayValue("发布复盘")).toBeInTheDocument();
-      expect(screen.getByText("6 个工作流")).toBeInTheDocument();
+      expect(screen.getByText("7 个工作流")).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole("button", { name: "重命名发布复盘" }));

@@ -3,7 +3,11 @@ import {
   createMockWorkflowCapabilities,
   createMockWorkflowNodeType,
 } from "./capabilities";
-import type { WorkflowNodeData, WorkflowNodeKind } from "./node-data";
+import type {
+  WorkflowAgentConfig,
+  WorkflowNodeData,
+  WorkflowNodeKind,
+} from "./node-data";
 
 /** Creates a catalog item as a native React Flow node with business data in `data`. */
 export function createMockWorkflowNode({
@@ -11,11 +15,13 @@ export function createMockWorkflowNode({
   sequence,
   position,
   locale,
+  agentConfig,
 }: {
   kind: WorkflowNodeKind;
   sequence: number;
   position: XYPosition;
   locale: "zh-CN" | "en-US";
+  agentConfig?: WorkflowAgentConfig;
 }): Node<WorkflowNodeData, "workflow"> {
   const nodeType = createMockWorkflowNodeType(kind, locale);
   return {
@@ -27,7 +33,7 @@ export function createMockWorkflowNode({
       kind,
       title: `${nodeType.label} ${sequence}`,
       description: nodeType.description,
-      ...createMockNodeExecutionData(kind, locale),
+      ...createMockNodeExecutionData(kind, locale, agentConfig),
     },
   };
 }
@@ -36,15 +42,17 @@ export function createMockWorkflowNode({
 function createMockNodeExecutionData(
   kind: WorkflowNodeKind,
   locale: "zh-CN" | "en-US",
-): Pick<WorkflowNodeData, "instruction" | "model" | "tool" | "condition"> {
+  agentConfig: WorkflowAgentConfig | undefined,
+): Pick<WorkflowNodeData, "agentConfig" | "instruction" | "model" | "tool" | "condition"> {
   const capabilities = createMockWorkflowCapabilities(locale);
   switch (kind) {
     case "start":
     case "output":
       return { instruction: "" };
     case "prompt":
-    case "agent":
       return { instruction: "", model: capabilities.defaultModel };
+    case "agent":
+      return { agentConfig: structuredClone(agentConfig ?? capabilities.defaultAgentConfig) };
     case "condition":
       return {
         instruction: "",

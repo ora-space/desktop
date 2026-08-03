@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   PathSelectionInProgressError,
   type LocationActionsCapability,
   type LocationTarget,
   type PlatformAdapter,
   type SelectPathOptions,
+  type SaveTextFileOptions,
   type WindowControlsCapability,
   type WindowManagerOs,
 } from "../types";
@@ -133,6 +134,28 @@ export class TauriPlatformAdapter implements PlatformAdapter {
         multiple: false,
         defaultPath: options.initialPath,
       });
+    } finally {
+      this.selectionInProgress = false;
+    }
+  }
+
+  /** Opens the native save dialog, then writes the user-selected workflow export. */
+  async saveTextFile(options: SaveTextFileOptions): Promise<boolean> {
+    if (this.selectionInProgress) {
+      throw new PathSelectionInProgressError();
+    }
+
+    this.selectionInProgress = true;
+    try {
+      const path = await save({
+        defaultPath: options.defaultFileName,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (path === null) {
+        return false;
+      }
+      await invoke("write_workflow_export", { request: { path, content: options.content } });
+      return true;
     } finally {
       this.selectionInProgress = false;
     }

@@ -35,9 +35,13 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   } = useWorkflowConnectionState();
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
   const nodeKindLabel = createMockWorkflowNodeType(data.kind, locale).label;
-  const detail = data.model
-    ?? data.tool
-    ?? t("settings.workflow.immediate");
+  const detail = data.kind === "agent"
+    ? data.agentConfig === undefined
+      ? t("settings.workflow.immediate")
+      : `${data.agentConfig.executor.agentCli} · ${data.agentConfig.executor.modelId}`
+    : data.model
+      ?? data.tool
+      ?? t("settings.workflow.immediate");
   const isConnectionCandidate = connectionCandidateNodeId === id;
   const isInputCandidate = isConnectionCandidate
     && connectionCandidateEndpoint === "target";

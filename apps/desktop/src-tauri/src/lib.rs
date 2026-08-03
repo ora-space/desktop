@@ -86,6 +86,7 @@ pub fn run() {
             commands::set_worktree_root,
             commands::resolve_task_cwd,
             commands::open_location,
+            commands::write_workflow_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

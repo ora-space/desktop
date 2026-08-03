@@ -1,5 +1,5 @@
 import type { Edge, Node, ReactFlowJsonObject } from "@xyflow/react";
-import type { WorkflowNodeData } from "./node-data";
+import type { WorkflowAgentConfig, WorkflowNodeData } from "./node-data";
 import {
   WORKFLOW_NODE_INITIAL_HANDLES,
   WORKFLOW_NODE_INITIAL_HEIGHT,
@@ -12,6 +12,21 @@ export interface DemoWorkflow
   name: string;
   description: string;
   updatedAt: string;
+}
+
+/** Builds a stable Agent execution contract for fixtures and future persisted definitions. */
+function createAgentConfig(
+  roleId: string,
+  prompt: string,
+  options: { skillIds?: string[] } = {},
+): WorkflowAgentConfig {
+  return {
+    schemaVersion: 3,
+    executor: { agentCli: "code_agent_cli", modelId: "gpt-5" },
+    roleId,
+    skills: (options.skillIds ?? []).map((skillId) => ({ skillId, enabled: true })),
+    prompt,
+  };
 }
 
 export const MOCK_WORKFLOW: DemoWorkflow = {
@@ -77,8 +92,11 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
         kind: "agent",
         title: "审查 Agent",
         description: "综合代码与验证结果",
-        instruction: "按严重程度整理问题，并给出定位与修复建议。",
-        model: "GPT-5",
+        agentConfig: createAgentConfig(
+          "Reviewer",
+          "按严重程度整理问题，并给出定位与修复建议。",
+          { skillIds: ["openspec-verify-change"] },
+        ),
       },
     },
     {
@@ -133,8 +151,6 @@ const ENGLISH_NODE_CONTENT: Record<
   review: {
     title: "Review agent",
     description: "Evaluate code and validation results",
-    instruction: "Organize findings by severity and provide locations and remediation advice.",
-    model: "GPT-5",
   },
   output: {
     title: "Output report",
@@ -161,7 +177,16 @@ export function createMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkflow {
   workflow.description = "Read changes, run quality checks, and produce an actionable review summary.";
   workflow.nodes = workflow.nodes.map((node) => ({
     ...node,
-    data: { ...node.data, ...ENGLISH_NODE_CONTENT[node.id] },
+    data: node.data.kind === "agent"
+      ? {
+          ...node.data,
+          ...ENGLISH_NODE_CONTENT[node.id],
+          agentConfig: {
+            ...node.data.agentConfig!,
+            prompt: "Organize findings by severity and provide locations and remediation advice.",
+          },
+        }
+      : { ...node.data, ...ENGLISH_NODE_CONTENT[node.id] },
   }));
   workflow.edges = workflow.edges.map((edge) => ({
     ...edge,
@@ -178,6 +203,7 @@ export function createMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkflow {
 export function createMockWorkflows(locale: "zh-CN" | "en-US"): DemoWorkflow[] {
   const staggered = createStaggeredParallelMockWorkflow(locale);
   const parallel = createParallelMockWorkflow(locale);
+  const openSpec = createOpenSpecMockWorkflow(locale);
   const review = createMockWorkflow(locale);
   const release = structuredClone(review);
   release.id = "release-readiness";
@@ -195,7 +221,132 @@ export function createMockWorkflows(locale: "zh-CN" | "en-US"): DemoWorkflow[] {
     : "Analyze issue reports and assign priority and ownership.";
   triage.updatedAt = "2026-07-25T09:20:00+08:00";
 
-  return [staggered, parallel, review, release, triage];
+  return [staggered, parallel, review, release, triage, openSpec];
+}
+
+/**
+ * Creates a four-stage Agent workflow that demonstrates reusable OpenSpec-like
+ * behavior without treating any particular methodology as a node type.
+ */
+export function createOpenSpecMockWorkflow(
+  locale: "zh-CN" | "en-US",
+): DemoWorkflow {
+  const zh = locale === "zh-CN";
+  const workflow: DemoWorkflow = {
+    id: "spec-change-lifecycle",
+    name: zh ? "OpenSpec工作流演示" : "OpenSpec workflow demo",
+    description: zh
+      ? "依次探索、提案、实施和归档变更；四步均使用可配置的 Agent 执行契约。"
+      : "Explore, propose, apply, and archive a change with four configurable Agent execution contracts.",
+    updatedAt: "2026-08-03T10:00:00+08:00",
+    viewport: { x: 28, y: 110, zoom: 0.82 },
+    nodes: [
+      {
+        id: "start",
+        type: "workflow",
+        deletable: false,
+        position: { x: 40, y: 280 },
+        data: {
+          kind: "start",
+          title: zh ? "开始" : "Start",
+          description: zh ? "接收变更目标和项目上下文" : "Receive the change goal and project context",
+          instruction: zh
+            ? "提取要解决的问题、约束和验收目标。"
+            : "Extract the problem, constraints, and acceptance goals.",
+        },
+      },
+      {
+        id: "explore",
+        type: "workflow",
+        position: { x: 320, y: 280 },
+        data: {
+          kind: "agent",
+          title: zh ? "探索" : "Explore",
+          description: zh ? "只读探索项目现状和影响范围" : "Read-only exploration of the current project and impact",
+          agentConfig: createAgentConfig(
+            "Researcher",
+            zh
+              ? "阅读相关代码、文档和现有规范，归纳现状、约束、风险与可选路径。不要修改项目文件。"
+              : "Read relevant code, docs, and current specifications. Summarize the state, constraints, risks, and options without modifying project files.",
+            {
+              skillIds: ["openspec-explore"],
+            },
+          ),
+        },
+      },
+      {
+        id: "propose",
+        type: "workflow",
+        position: { x: 600, y: 280 },
+        data: {
+          kind: "agent",
+          title: zh ? "提案" : "Propose",
+          description: zh ? "将探索结论组织为可评审方案" : "Turn exploration into a reviewable proposal",
+          agentConfig: createAgentConfig(
+            "Planner",
+            zh
+              ? "基于上游探索结论，提出范围明确的变更方案、任务拆分、风险和验收标准。不要修改项目文件。"
+              : "Use the upstream exploration to propose a scoped change plan, task breakdown, risks, and acceptance criteria without modifying project files.",
+            {
+              skillIds: ["openspec-propose"],
+            },
+          ),
+        },
+      },
+      {
+        id: "apply",
+        type: "workflow",
+        position: { x: 880, y: 280 },
+        data: {
+          kind: "agent",
+          title: zh ? "实施" : "Apply",
+          description: zh ? "按批准方案实现并验证变更" : "Implement and verify the approved change",
+          agentConfig: createAgentConfig(
+            "Implementer",
+            zh
+              ? "按照上游方案修改项目文件，运行与改动匹配的验证，并记录实际偏差。"
+              : "Modify project files according to the upstream plan, run proportionate validation, and record any implementation deviations.",
+            {
+              skillIds: ["openspec-apply-change"],
+            },
+          ),
+        },
+      },
+      {
+        id: "archive",
+        type: "workflow",
+        position: { x: 1160, y: 280 },
+        data: {
+          kind: "agent",
+          title: zh ? "归档" : "Archive",
+          description: zh ? "沉淀变更决策、验证结果和后续事项" : "Record the decision, validation, and follow-ups",
+          agentConfig: createAgentConfig(
+            "Documentation Agent",
+            zh
+              ? "更新规范和变更记录，归档验证结果，并明确未完成的后续事项。"
+              : "Update specifications and change records, archive validation results, and record any remaining follow-ups.",
+            {
+              skillIds: ["openspec-archive-change"],
+            },
+          ),
+        },
+      },
+    ],
+    edges: [
+      { id: "e-start-explore", source: "start", target: "explore", type: "workflow" },
+      { id: "e-explore-propose", source: "explore", target: "propose", type: "workflow" },
+      { id: "e-propose-apply", source: "propose", target: "apply", type: "workflow" },
+      { id: "e-apply-archive", source: "apply", target: "archive", type: "workflow" },
+    ],
+  };
+
+  workflow.nodes = workflow.nodes.map((node) => ({
+    ...node,
+    initialWidth: WORKFLOW_NODE_WIDTH,
+    initialHeight: WORKFLOW_NODE_INITIAL_HEIGHT,
+    handles: WORKFLOW_NODE_INITIAL_HANDLES.map((handle) => ({ ...handle })),
+  }));
+  return workflow;
 }
 
 /**
@@ -244,13 +395,16 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
         type: "workflow",
         position: { x: 620, y: 80 },
         data: {
-          kind: "agent",
-          title: zh ? "安全审查" : "Security review",
-          description: zh ? "并行分支 · 安全" : "Parallel branch · security",
-          instruction: zh
+        kind: "agent",
+        title: zh ? "安全审查" : "Security review",
+        description: zh ? "并行分支 · 安全" : "Parallel branch · security",
+        agentConfig: createAgentConfig(
+          "Reviewer",
+          zh
             ? "检查注入、权限与密钥泄露风险。"
             : "Check for injection, auth, and secret-leak risks.",
-          model: "GPT-5",
+          { skillIds: ["openspec-verify-change"] },
+        ),
         },
       },
       {
@@ -286,13 +440,16 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
         type: "workflow",
         position: { x: 920, y: 280 },
         data: {
-          kind: "agent",
-          title: zh ? "汇总结论" : "Synthesize",
-          description: zh ? "合并三条并行分支" : "Merge the three parallel branches",
-          instruction: zh
+        kind: "agent",
+        title: zh ? "汇总结论" : "Synthesize",
+        description: zh ? "合并三条并行分支" : "Merge the three parallel branches",
+        agentConfig: createAgentConfig(
+          "Architect",
+          zh
             ? "按严重程度合并安全、质量与文档发现。"
             : "Merge security, quality, and docs findings by severity.",
-          model: "GPT-5",
+          { skillIds: ["openspec-verify-change"] },
+        ),
         },
       },
       {
@@ -387,13 +544,16 @@ export function createStaggeredParallelMockWorkflow(
         type: "workflow",
         position: { x: 560, y: 80 },
         data: {
-          kind: "agent",
-          title: zh ? "深度安全" : "Deep security",
-          description: zh ? "晚启动 · 长耗时" : "Starts later · long-running",
-          instruction: zh
+        kind: "agent",
+        title: zh ? "深度安全" : "Deep security",
+        description: zh ? "晚启动 · 长耗时" : "Starts later · long-running",
+        agentConfig: createAgentConfig(
+          "Reviewer",
+          zh
             ? "在快速扫描之后做深度安全分析。"
             : "Follow the quick scan with a deep security analysis.",
-          model: "GPT-5",
+          { skillIds: ["openspec-verify-change"] },
+        ),
           mockStepMs: 6_000,
         },
       },
@@ -447,13 +607,16 @@ export function createStaggeredParallelMockWorkflow(
         type: "workflow",
         position: { x: 840, y: 300 },
         data: {
-          kind: "agent",
-          title: zh ? "汇合" : "Join",
-          description: zh ? "等待全部交错分支" : "Wait for all staggered branches",
-          instruction: zh
+        kind: "agent",
+        title: zh ? "汇合" : "Join",
+        description: zh ? "等待全部交错分支" : "Wait for all staggered branches",
+        agentConfig: createAgentConfig(
+          "Architect",
+          zh
             ? "合并安全、lint 与文档结果。"
             : "Merge security, lint, and docs results.",
-          model: "GPT-5",
+          { skillIds: ["openspec-verify-change"] },
+        ),
           mockStepMs: 2_000,
         },
       },
