@@ -4,6 +4,7 @@ use tracing_subscriber::fmt::layer;
 use tracing_subscriber::prelude::*;
 
 use crate::correlation::CorrelationLayer;
+use crate::fanout::FanoutMakeWriter;
 use crate::file_output::prepare_file_output;
 use crate::formatter::JsonEventFormatter;
 use crate::{LogLevel, LogOutput, LoggingConfig, LoggingGuard, LoggingInitError};
@@ -62,20 +63,17 @@ where
             ))
         }
         LogOutput::StdoutAndFile(file_config) => {
+            // Serialize each event once and fan the formatted bytes out to stdout and the file
+            // sink, instead of stacking two fmt layers that each run a full serialization pass.
             let prepared_output = prepare_file_output(file_config)?;
+            let fanout = FanoutMakeWriter::new(stdout_writer, prepared_output.writer.clone());
             let subscriber = tracing_subscriber::registry()
                 .with(CorrelationLayer)
                 .with(level_filter)
                 .with(
                     layer()
                         .event_format(JsonEventFormatter::new(config.timezone))
-                        .with_writer(stdout_writer)
-                        .with_ansi(false),
-                )
-                .with(
-                    layer()
-                        .event_format(JsonEventFormatter::new(config.timezone))
-                        .with_writer(prepared_output.writer.clone())
+                        .with_writer(fanout)
                         .with_ansi(false),
                 );
 

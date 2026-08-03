@@ -259,7 +259,7 @@ fn selects_file_only_sink_behavior() {
     assert_eq!(read_rotated_log_lines(temp_dir.path(), "ora.log").len(), 1);
 }
 
-/// Verifies combined logging duplicates each event across stdout and the rotating file sink.
+/// Verifies combined logging emits each event to stdout and the rotating file sink with the same envelope.
 #[test]
 fn selects_stdout_and_file_sink_behavior() {
     let temp_dir = TempDir::new().unwrap();
@@ -285,8 +285,14 @@ fn selects_stdout_and_file_sink_behavior() {
     drop(dispatch);
     drop(guard);
 
-    assert_eq!(stdout.json_lines().len(), 1);
-    assert_eq!(read_rotated_log_lines(temp_dir.path(), "ora.log").len(), 1);
+    let stdout_events = stdout.json_lines();
+    let file_events = read_rotated_log_lines(temp_dir.path(), "ora.log");
+
+    // A single formatting pass fans the same bytes to both sinks, so each side receives
+    // exactly one event with an identical envelope rather than two serialized copies.
+    assert_eq!(stdout_events.len(), 1);
+    assert_eq!(file_events.len(), 1);
+    assert_eq!(stdout_events, file_events);
 }
 
 /// Verifies invalid file output configuration fails with a typed initialization error.
