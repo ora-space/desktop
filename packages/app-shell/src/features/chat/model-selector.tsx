@@ -11,6 +11,8 @@ import {
 import { IconCheck, IconChevronDown, IconLoader2 } from "@tabler/icons-react";
 import type { AgentCli } from "@ora/contracts";
 import { useSettingsStore } from "../../state/stores/settings-store";
+import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useSwitchSessionAgent } from "../../state/hooks/use-workspace-mutations";
 import { AGENT_CLI_LABELS, orderedGroups, useAvailableModels } from "./model-catalog";
 import { ProviderLogo } from "./provider-logos";
 
@@ -19,16 +21,27 @@ import { ProviderLogo } from "./provider-logos";
  * backend and groups them by CLI. The active selection is persisted in the
  * settings store so the composer, settings dialog, and session creation all
  * stay in sync.
+ *
+ * With a session selected, choosing a different CLI moves that conversation onto
+ * it rather than only changing the default for the next one. Ora owns the
+ * transcript, so the thread survives the move: the backend hands it to the new
+ * agent with the user's next message.
  */
 export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
   const { t } = useTranslation();
   const agentCli = useSettingsStore((state) => state.settings.agentCli);
   const model = useSettingsStore((state) => state.settings.model);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
+  const sessionId = useWorkspaceSelectionStore((state) => state.selection.sessionId);
+  const switchAgent = useSwitchSessionAgent();
   const { data: groups, isLoading } = useAvailableModels();
 
-  const selectModel = (nextCli: AgentCli, nextModel: string) =>
+  const selectModel = (nextCli: AgentCli, nextModel: string) => {
     updateSettings({ agentCli: nextCli, model: nextModel });
+    if (sessionId !== null && nextCli !== agentCli) {
+      switchAgent.mutate({ sessionId, agentCli: nextCli });
+    }
+  };
 
   // Pick a representative label for the collapsed trigger.
   const activeLabel = model || (isLoading ? t("chat.modelSelector.loading") : t("chat.modelSelector.placeholder"));
@@ -60,7 +73,7 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
           </span>
         </span>
         <span className="whitespace-nowrap">{activeLabel}</span>
-        {isLoading
+        {isLoading || switchAgent.isPending
           ? <IconLoader2 className="size-3 shrink-0 animate-spin opacity-50" aria-hidden="true" />
           : <IconChevronDown className="size-3 shrink-0 opacity-50" aria-hidden="true" />}
       </DropdownMenuTrigger>

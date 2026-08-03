@@ -199,6 +199,26 @@ export function useCreateSession() {
   });
 }
 
+/**
+ * Moves a live conversation onto a different agent CLI.
+ *
+ * The session keeps its identity and its recorded history; only the agent behind
+ * it changes. The new agent starts with no context, so the backend prepends the
+ * recorded transcript to the next prompt rather than replaying anything now —
+ * which is why this leaves the local conversation untouched.
+ */
+export function useSwitchSessionAgent() {
+  const client = useContractsClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, agentCli }: { sessionId: string; agentCli: AgentCli }) =>
+      client.session.switchAgent({ sessionId, agentCli }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+}
+
 /** Deletes a session and clears the session leg of the selection. */
 export function useDeleteSession() {
   const client = useContractsClient();

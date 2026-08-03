@@ -6,10 +6,11 @@ use ora_contracts::acp::permission::{
 };
 use ora_contracts::{
     AgentCli as ContractAgentCli, RespondToPermissionRequest, RespondToPermissionResponse,
-    Session as ContractSession, SessionStatus as ContractSessionStatus,
+    Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
+    SessionStatus as ContractSessionStatus,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_domain::{AgentCli, Session, SessionStatus};
+use ora_domain::{AgentCli, HistoryState, Session, SessionStatus};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::process::ChildStdin;
@@ -54,6 +55,10 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
         status: match session.status {
             SessionStatus::Running => ContractSessionStatus::Running,
             SessionStatus::Stopped => ContractSessionStatus::Stopped,
+        },
+        history_state: match session.history_state {
+            HistoryState::Writable => ContractSessionHistoryState::Writable,
+            HistoryState::Degraded { reason } => ContractSessionHistoryState::Degraded { reason },
         },
     }
 }

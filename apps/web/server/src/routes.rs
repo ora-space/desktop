@@ -11,10 +11,10 @@ use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
     PROJECT_BRANCHES_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
     PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
-    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH,
-    SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH,
-    TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH,
-    TASK_PUSH_PATH, TASKS_PATH,
+    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_RESUME_HISTORY_PATH,
+    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH, SKILL_IMPORT_PATH, SKILL_PATH,
+    SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH,
+    TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASKS_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -98,6 +98,14 @@ pub fn build_router(app_state: AppState) -> Router {
             post(sessions::respond_to_permission),
         )
         .route(SESSION_STOP_PATH, post(sessions::stop_session))
+        .route(
+            SESSION_SWITCH_AGENT_PATH,
+            post(sessions::switch_session_agent),
+        )
+        .route(
+            SESSION_RESUME_HISTORY_PATH,
+            post(sessions::resume_session_history),
+        )
         // =============================================================================
         // agentRuntime
         // =============================================================================

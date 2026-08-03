@@ -60,6 +60,8 @@ pub fn run() {
             commands::list_sessions,
             commands::respond_to_session_permission,
             commands::stop_session,
+            commands::switch_session_agent,
+            commands::resume_session_history,
             commands::delete_session,
             commands::stream_contract,
             commands::cancel_contract_stream,
@@ -146,6 +148,7 @@ fn bootstrap_desktop(
             .path()
             .home_dir()
             .map_err(DesktopBootstrapError::AppDataDirectory)?,
+        sessions_root: app_data_directory.join("sessions"),
     })?;
 
     Ok((

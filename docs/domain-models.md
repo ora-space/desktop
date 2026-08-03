@@ -60,7 +60,9 @@ Most models are plain snapshots whose constructors cannot fail. Two normalize an
 - `Skill::new` trims the name and rejects a blank one with `DomainModelError::EmptySkillName`.
 - `AgentDefinition::new` trims the name and rejects a blank one with `DomainModelError::EmptyAgentDefinitionName`.
 
-`Session` models a provider-backed conversation whose routing is immutable: `task_id`, `agent_cli`, and `agent_session_id` are fixed at construction, and `with_status` changes only `status` and `updated_at`. A `Session` cannot be constructed before the provider returns its session identifier, because `agent_session_id` is required rather than optional.
+`Session` models one conversation and the provider session it currently runs on. `task_id` is fixed at construction because it decides the working directory the conversation lives in, but `agent_cli` and `agent_session_id` are the *current binding* rather than the session's identity: `with_binding` replaces both when a conversation moves to another CLI, while its identifier and its recorded history continue unchanged. `with_status` still changes only `status` and `updated_at`. A `Session` cannot be constructed before the provider returns its session identifier, because `agent_session_id` is required rather than optional.
+
+`HistoryState` sits beside `SessionStatus` as an independent axis. `SessionStatus` says whether the conversation is registered on a CLI connection; `HistoryState` says whether Ora can still extend the durable record of it, which a full disk can break while the session stays perfectly registered. It persists as one nullable reason column — absent means `Writable`, present means `Degraded` with the explanation the user has to act on — so "degraded for no stated reason" cannot be stored at all.
 
 ## Boundaries
 

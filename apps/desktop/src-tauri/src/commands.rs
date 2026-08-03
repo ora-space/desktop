@@ -277,7 +277,33 @@ pub async fn stop_session(
     run_async_backend("stop_session", state.backend.stop_session(request)).await
 }
 
-/// Stops the provider process before removing only the Ora-owned session record.
+/// Moves one conversation onto a different agent CLI without changing its identity.
+#[tauri::command]
+pub async fn switch_session_agent(
+    state: State<'_, DesktopState>,
+    request: SwitchSessionAgentRequest,
+) -> Result<SwitchSessionAgentResponse, CommandError> {
+    run_async_backend(
+        "switch_session_agent",
+        state.backend.switch_session_agent(request),
+    )
+    .await
+}
+
+/// Returns a session whose history writes failed to a writable state.
+#[tauri::command]
+pub async fn resume_session_history(
+    state: State<'_, DesktopState>,
+    request: ResumeSessionHistoryRequest,
+) -> Result<ResumeSessionHistoryResponse, CommandError> {
+    run_async_backend(
+        "resume_session_history",
+        state.backend.resume_session_history(request),
+    )
+    .await
+}
+
+/// Stops the provider process before removing the Ora session record and its history.
 #[tauri::command]
 pub async fn delete_session(
     state: State<'_, DesktopState>,

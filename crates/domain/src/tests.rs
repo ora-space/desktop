@@ -1,6 +1,6 @@
 use crate::{
     AgentCli, AgentDefinition, AgentDefinitionId, Artifact, ArtifactId, AuditFields,
-    DomainModelError, Project, ProjectId, ProjectWorkContext, ProjectWorkContextId,
+    DomainModelError, HistoryState, Project, ProjectId, ProjectWorkContext, ProjectWorkContextId,
     ProjectWorkContextSurface, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId,
     TaskStatus, VirtualEntry, VirtualEntryId, VirtualEntryKind, VirtualFolder, VirtualFolderId,
     Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
@@ -169,6 +169,7 @@ fn constructs_schema_backed_entities() {
             agent_cli: AgentCli::OpenCode,
             agent_session_id: "agent-session-1".to_string(),
             status: SessionStatus::Running,
+            history_state: HistoryState::Writable,
             audit_fields: audit_fields.clone(),
         }
     );

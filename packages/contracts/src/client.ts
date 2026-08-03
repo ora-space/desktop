@@ -100,6 +100,10 @@ export function createContractsClient(
       prompt: (request, options) => executeStreamOperation("promptSession", request, transport, options),
       respondToPermission: (request, options) => executeOperation("respondToSessionPermission", request, transport, options),
       stop: (request, options) => executeOperation("stopSession", request, transport, options),
+      switchAgent: (request, options) =>
+        executeOperation("switchSessionAgent", request, transport, options),
+      resumeHistory: (request, options) =>
+        executeOperation("resumeSessionHistory", request, transport, options),
       delete: (request, options) =>
         executeOperation("deleteSession", request, transport, options),
     },

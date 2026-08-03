@@ -2536,11 +2536,13 @@ dependencies = [
  "ora-contracts",
  "ora-db",
  "ora-domain",
+ "ora-history",
  "ora-logging",
  "ora-process",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2599,6 +2601,18 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ora-history"
+version = "0.0.0"
+dependencies = [
+ "ora-contracts",
+ "ora-domain",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]

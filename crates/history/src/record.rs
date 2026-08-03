@@ -1,0 +1,108 @@
+use ora_contracts::acp::prompt::StopReason;
+use ora_contracts::acp::session::SessionUpdate;
+use ora_domain::AgentCli;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// Identifies the on-disk record schema so a later format change stays detectable.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// One complete line of a session history file.
+///
+/// `seq` is assigned when an item first appears in the conversation, not when it
+/// is written. Items are appended as soon as they settle, and a tool call that
+/// started early can settle after a message that started later, so write order
+/// alone does not reproduce the timeline. Readers restore it by sorting on `seq`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoryLine {
+    /// Local wall-clock time this line was appended, RFC 3339 with UTC offset.
+    pub at: String,
+    pub seq: u32,
+    #[serde(flatten)]
+    pub record: HistoryRecord,
+}
+
+impl HistoryLine {
+    /// Pairs one record with the position and time it should be replayed at.
+    pub fn new(at: impl Into<String>, seq: u32, record: HistoryRecord) -> Self {
+        Self {
+            at: at.into(),
+            seq,
+            record,
+        }
+    }
+}
+
+/// Names everything a session history file can hold.
+///
+/// `Update` carries assembled ACP updates rather than the raw streamed chunks:
+/// one update per settled message, thought, tool call, or plan. Replaying them
+/// therefore reproduces the conversation without any chunk merging on the read
+/// side. The remaining variants cover state ACP has no vocabulary for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum HistoryRecord {
+    /// Opens the file and pins the schema and provider binding it started with.
+    Meta(SessionMeta),
+    /// One settled conversation item.
+    Update { update: SessionUpdate },
+    /// Closes one prompt turn with the provider's typed stop reason.
+    ///
+    /// Without this a replayed turn cannot be told apart from a completed one,
+    /// which is exactly the information provider replay never carried.
+    TurnEnded { stop_reason: StopReason },
+    /// Records that the conversation moved to a different agent CLI.
+    AgentSwitched(AgentSwitch),
+    /// Marks a discontinuity left by a failed write, so a hole is never silent.
+    Gap { reason: String },
+}
+
+/// Opens a history file with the identity and binding the session started with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMeta {
+    pub schema_version: u32,
+    pub session_id: String,
+    pub task_id: String,
+    #[serde(with = "agent_cli_text")]
+    pub agent_cli: AgentCli,
+    pub agent_session_id: String,
+    pub cwd: PathBuf,
+}
+
+/// Rebinds the conversation onto a new provider session on a different CLI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSwitch {
+    #[serde(with = "agent_cli_text")]
+    pub from: AgentCli,
+    #[serde(with = "agent_cli_text")]
+    pub to: AgentCli,
+    /// The provider session the conversation continues on after the switch.
+    pub agent_session_id: String,
+}
+
+/// Serializes a CLI identity through its stable namespaced persistence value.
+///
+/// The derived representation would encode the Rust variant name, which makes an
+/// archived file depend on how the enum happens to be spelled today. History
+/// files outlive that, so they reuse the same stable text the database stores.
+mod agent_cli_text {
+    use ora_domain::AgentCli;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    #[expect(clippy::trivially_copy_pass_by_ref, reason = "Required by serde")]
+    pub(super) fn serialize<S: Serializer>(
+        agent_cli: &AgentCli,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(agent_cli.database_value())
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<AgentCli, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        AgentCli::from_database_value(&value).map_err(D::Error::custom)
+    }
+}

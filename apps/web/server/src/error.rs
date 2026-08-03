@@ -219,10 +219,15 @@ const fn status_for(classification: ErrorClassification) -> StatusCode {
 
 #[cfg(test)]
 mod tests {
-    use super::status_for;
+    use super::{WebApiError, status_for};
+    use axum::body::to_bytes;
     use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use ora_application::ApplicationError;
     use ora_backend::ErrorClassification;
+    use ora_contracts::RequestId;
     use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
 
     /// Verifies transport-only upload limits retain their native HTTP status.
     #[test]
@@ -246,19 +251,25 @@ mod tests {
             Ok(bytes) => bytes,
             Err(error) => panic!("failed to read response body: {error}"),
         };
-        let actual = match serde_json::from_slice::<Value>(&bytes) {
+        let mut actual = match serde_json::from_slice::<Value>(&bytes) {
             Ok(actual) => actual,
             Err(error) => panic!("failed to decode JSON body: {error}"),
         };
+        // The request id is generated per response, so it is validated for shape and
+        // then removed to keep the remaining envelope comparable as a whole object.
+        let request_id = actual
+            .as_object_mut()
+            .and_then(|envelope| envelope.remove("requestId"))
+            .expect("contract error must include requestId");
+        serde_json::from_value::<RequestId>(request_id)
+            .expect("contract error requestId must be a UUID");
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             actual,
             json!({
-                "error": {
-                    "code": "base_branch_not_found",
-                    "message": "base branch not found: ghost-branch",
-                },
+                "code": "task_base_branch_not_found",
+                "params": { "branchName": "ghost-branch" },
             })
         );
     }

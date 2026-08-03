@@ -7,11 +7,12 @@ use axum::http::{HeaderValue, Response, header};
 use futures_util::stream;
 use ora_backend::{BackendError, SessionEventStream};
 use ora_contracts::{
-    ContractError, CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest,
+    AgentCli, ContractError, CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest,
     DeleteSessionResponse, EmptyErrorParams, GetSessionRequest, GetSessionResponse,
     ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse,
     LoadSessionRequest, PromptSessionRequest, PublicError, RespondToPermissionRequest,
-    RespondToPermissionResponse, StopSessionRequest, StopSessionResponse,
+    RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse,
+    StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -36,6 +37,13 @@ pub struct PromptSessionBody {
 pub struct RespondToPermissionBody {
     permission_request_id: String,
     option_id: String,
+}
+
+/// Carries the target CLI while the path owns the Ora session identifier.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchSessionAgentBody {
+    agent_cli: AgentCli,
 }
 
 #[derive(Serialize)]
@@ -161,7 +169,39 @@ pub async fn stop_session(
         .map_err(WebApiError::from)
 }
 
-/// Stops the runtime and removes only the Ora-owned session record.
+/// Moves one conversation onto a different agent CLI without changing its identity.
+pub async fn switch_session_agent(
+    State(app_state): State<AppState>,
+    Path(path): Path<SessionPath>,
+    Json(body): Json<SwitchSessionAgentBody>,
+) -> Result<Json<SwitchSessionAgentResponse>, WebApiError> {
+    app_state
+        .backend()
+        .switch_session_agent(SwitchSessionAgentRequest {
+            session_id: path.session_id,
+            agent_cli: body.agent_cli,
+        })
+        .await
+        .map(Json)
+        .map_err(WebApiError::from)
+}
+
+/// Returns a session whose history writes failed to a writable state.
+pub async fn resume_session_history(
+    State(app_state): State<AppState>,
+    Path(path): Path<SessionPath>,
+) -> Result<Json<ResumeSessionHistoryResponse>, WebApiError> {
+    app_state
+        .backend()
+        .resume_session_history(ResumeSessionHistoryRequest {
+            session_id: path.session_id,
+        })
+        .await
+        .map(Json)
+        .map_err(WebApiError::from)
+}
+
+/// Stops the runtime and removes the Ora-owned session record and its history.
 pub async fn delete_session(
     State(app_state): State<AppState>,
     Path(path): Path<SessionPath>,

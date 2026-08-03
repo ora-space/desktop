@@ -4,7 +4,7 @@ import type { ListDirectoryRequest, ListDirectoryResponse } from "./file-system.
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse } from "./project-work-context.js";
-import type { CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, StopSessionRequest, StopSessionResponse } from "./session.js";
+import type { CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
 import type { CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest, CreateTaskDiffCommentResponse, GetTaskDiffRequest, GetTaskDiffResponse, ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse, PushTaskBranchRequest, PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse, SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse } from "./task_diff.js";
@@ -63,6 +63,8 @@ export type RequestByOperation = {
   promptSession: PromptSessionRequest;
   respondToSessionPermission: RespondToPermissionRequest;
   stopSession: StopSessionRequest;
+  switchSessionAgent: SwitchSessionAgentRequest;
+  resumeSessionHistory: ResumeSessionHistoryRequest;
   deleteSession: DeleteSessionRequest;
   listAgentModels: ListAgentModelsRequest;
   createSkill: CreateSkillRequest;
@@ -108,6 +110,8 @@ export type ResponseByOperation = {
   promptSession: PromptSessionEvent;
   respondToSessionPermission: RespondToPermissionResponse;
   stopSession: StopSessionResponse;
+  switchSessionAgent: SwitchSessionAgentResponse;
+  resumeSessionHistory: ResumeSessionHistoryResponse;
   deleteSession: DeleteSessionResponse;
   listAgentModels: ListAgentModelsResponse;
   createSkill: CreateSkillResponse;
@@ -486,6 +490,32 @@ export const endpoints = {
     pathTemplate: "/api/sessions/{sessionId}/stop",
     requestType: "StopSessionRequest",
     responseType: "StopSessionResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  switchSessionAgent: {
+    operationName: "switchSessionAgent",
+    namespace: "session",
+    memberName: "switchAgent",
+    method: "POST",
+    pathTemplate: "/api/sessions/{sessionId}/agent",
+    requestType: "SwitchSessionAgentRequest",
+    responseType: "SwitchSessionAgentResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  resumeSessionHistory: {
+    operationName: "resumeSessionHistory",
+    namespace: "session",
+    memberName: "resumeHistory",
+    method: "POST",
+    pathTemplate: "/api/sessions/{sessionId}/history/resume",
+    requestType: "ResumeSessionHistoryRequest",
+    responseType: "ResumeSessionHistoryResponse",
     responseMode: "unary",
     pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
     queryParams: [],

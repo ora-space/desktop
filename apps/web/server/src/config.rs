@@ -30,6 +30,7 @@ pub(crate) const DEFAULT_TIMEZONE: &str = "Asia/Shanghai";
 /// Groups the runtime configuration required to bootstrap the web server process.
 pub struct RuntimeConfig {
     database: DatabaseConfig,
+    history: HistoryConfig,
     file_system: FileSystemConfig,
     project: ProjectConfig,
     server: ServerConfig,
@@ -47,6 +48,11 @@ impl RuntimeConfig {
     /// Returns the database configuration used by the runtime bootstrap.
     pub fn database(&self) -> &DatabaseConfig {
         &self.database
+    }
+
+    /// Returns where Ora-owned session history is stored.
+    pub fn history(&self) -> &HistoryConfig {
+        &self.history
     }
 
     /// Returns the configured bootstrap project identity used during startup reconciliation.
@@ -88,6 +94,7 @@ impl RuntimeConfig {
 
         Ok(Self {
             project: ProjectConfig::from_reader(&mut read_variable, &database)?,
+            history: HistoryConfig::from_reader(&mut read_variable)?,
             file_system: FileSystemConfig::from_reader(&mut read_variable)?,
             database,
             server: ServerConfig::from_reader(&mut read_variable)?,
@@ -148,6 +155,29 @@ impl DatabaseConfig {
 
         Ok(Self {
             path: data_dir.join("ora.sqlite3"),
+        })
+    }
+}
+
+/// Describes where the web runtime keeps Ora-owned session history.
+pub struct HistoryConfig {
+    sessions_root: PathBuf,
+}
+
+impl HistoryConfig {
+    /// Returns the root of the session history tree.
+    pub fn sessions_root(&self) -> &Path {
+        self.sessions_root.as_path()
+    }
+
+    /// Derives the history root from the same data directory every other path uses.
+    fn from_reader(
+        mut read_variable: impl FnMut(&str) -> Option<String>,
+    ) -> Result<Self, WebBootstrapError> {
+        let data_dir = read_data_dir_root(&mut read_variable)?;
+
+        Ok(Self {
+            sessions_root: data_dir.join("sessions"),
         })
     }
 }

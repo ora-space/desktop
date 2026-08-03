@@ -26,7 +26,7 @@ pub use ids::{
 };
 pub use project::Project;
 pub use project_work_context::{ProjectWorkContext, ProjectWorkContextSurface};
-pub use session::{AgentCli, Session, SessionStatus};
+pub use session::{AgentCli, HistoryState, Session, SessionStatus};
 pub use skill::Skill;
 pub use task::{Task, TaskStatus};
 pub use task_diff_comment::{

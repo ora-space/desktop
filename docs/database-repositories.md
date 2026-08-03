@@ -52,7 +52,7 @@ File-backed parent directories are not created here. The composition root prepar
 Repositories map SQLite columns onto the current `ora-domain` shapes, including audit fields and enum-backed columns:
 
 - `tasks.status` becomes `TaskStatus`; `tasks.worktree_id` becomes `Option<WorktreeId>`.
-- `sessions.status` becomes `SessionStatus`; `sessions.agent_cli` text becomes `AgentCli` through the namespaced persisted value.
+- `sessions.status` becomes `SessionStatus`; `sessions.agent_cli` text becomes `AgentCli` through the namespaced persisted value; the nullable `sessions.history_degraded_reason` becomes `HistoryState`, where absence means writable.
 - `worktrees.is_active` becomes `WorktreeActivity`; `worktrees.branch_name` stays optional.
 - `project_work_contexts.surface` text becomes `ProjectWorkContextSurface`.
 - `task_diff_comments` maps root-thread columns and reply columns into the mutually exclusive `TaskDiffCommentKind` enum. Visible comments are returned in `(created_at, id)` order; malformed rows fail rather than being coerced.

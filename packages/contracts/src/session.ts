@@ -70,11 +70,17 @@ export type ListSessionsRequest = Record<symbol, never>;
 export type ListSessionsResponse = { sessions: Array<Session> };
 
 /**
- * Streams provider history while keeping JSON-RPC framing private to the backend.
+ * Replays Ora's recorded history while keeping JSON-RPC framing private to the backend.
+ *
+ * The stream carries assembled updates read back from Ora's own record, not the
+ * provider's replay. `TurnEnded` has no ACP equivalent and exists because a
+ * cancelled turn would otherwise be indistinguishable from a completed one —
+ * information provider replay never carried.
  */
 export type LoadSessionEvent =
   | { "type": "session_update"; update: SessionUpdate }
   | { "type": "permission_request" } & SessionPermissionRequest
+  | { "type": "turn_ended"; stopReason: StopReason }
   | { "type": "completed" };
 
 /**
@@ -113,13 +119,43 @@ export type RespondToPermissionRequest = {
 export type RespondToPermissionResponse = Record<symbol, never>;
 
 /**
+ * Returns a session whose history writes failed to a writable state.
+ *
+ * Resuming appends a record of what went missing before accepting new content,
+ * so the conversation never contains a gap that cannot be seen.
+ */
+export type ResumeSessionHistoryRequest = { sessionId: string };
+
+/**
+ * Returns the session after its history became writable again.
+ */
+export type ResumeSessionHistoryResponse = { session: Session };
+
+/**
  * Describes the public session payload without exposing the provider session identifier.
  */
 export type Session = {
   id: string;
   taskId: string;
+  /**
+   * The CLI this conversation currently runs on, which switching replaces.
+   */
   agentCli: AgentCli;
   status: SessionStatus;
+  historyState: SessionHistoryState;
+};
+
+/**
+ * Reports whether Ora can still extend this session's recorded history.
+ *
+ * Separate from [`SessionStatus`] on purpose: that says whether the conversation
+ * is registered on a CLI connection, this says whether the record of it can
+ * still grow. A running session whose disk filled is both at once, and the user
+ * has to be told which one broke.
+ */
+export type SessionHistoryState = { "type": "writable" } | {
+  "type": "degraded";
+  reason: string;
 };
 
 /**
@@ -145,3 +181,23 @@ export type StopSessionRequest = { sessionId: string };
  * Returns the stopped public session snapshot.
  */
 export type StopSessionResponse = { session: Session };
+
+/**
+ * Moves one existing conversation onto a different agent CLI.
+ *
+ * Only the binding changes: the session keeps its identifier, its task, and the
+ * history it has accumulated. The new CLI starts with no context, so Ora's
+ * recorded transcript is prepended to the next prompt sent into it.
+ */
+export type SwitchSessionAgentRequest = {
+  sessionId: string;
+  agentCli: AgentCli;
+};
+
+/**
+ * Returns the session rebound to its new CLI.
+ */
+export type SwitchSessionAgentResponse = {
+  session: Session;
+  availableCommands: Array<AvailableCommand>;
+};

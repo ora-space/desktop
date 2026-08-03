@@ -13,7 +13,8 @@ Ora is an IDE for AI agents. The Rust backend lives in `crates/`, the two runtim
 
 - [Web Server Runtime](docs/web-server-runtime.md) — configuration, HTTP API, and error semantics
 - [Desktop Runtime](docs/desktop-runtime.md) — Tauri commands, persistent paths, and configuration
-- [ACP Agent Runtime](docs/agent-runtime.md) — provider supervision, session lifecycle, and flow control
+- [ACP Agent Runtime](docs/agent-runtime.md) — provider supervision, session lifecycle, agent switching, and flow control
+- [Session History](crates/history/README.md) — Ora's own conversation record and the handoff between agents
 - [Runtime Logging](docs/runtime-logging.md) — configuration, JSON event contract, and Git command logging
 
 ## Persistence Docs
