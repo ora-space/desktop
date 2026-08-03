@@ -15,7 +15,7 @@
 
 Project and task deletion soft-delete Ora-owned database records in one transaction and reject aggregates with running sessions. These paths do not call Git and do not delete provider-owned ACP history.
 
-`ProjectWorkContext` and filesystem browsing remain outside this crate. Logging initialization and environment parsing belong to runtime composition roots. This crate provides the transport-neutral request lifecycle, while adapters decide where a request begins and completes.
+Filesystem browsing remains outside this crate. Logging initialization and environment parsing belong to runtime composition roots. This crate provides the transport-neutral request lifecycle, while adapters decide where a request begins and completes.
 
 Dropping the last backend owner shuts down provider supervisors and initiates bounded process-tree cleanup.
 

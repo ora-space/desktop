@@ -28,10 +28,6 @@ macro_rules! define_id {
 }
 
 define_id!(ProjectId, "Identifies a persisted project.");
-define_id!(
-    ProjectWorkContextId,
-    "Identifies a persisted project work context."
-);
 define_id!(TaskId, "Identifies a persisted task.");
 define_id!(WorktreeId, "Identifies a persisted worktree.");
 define_id!(VirtualFolderId, "Identifies a persisted virtual folder.");

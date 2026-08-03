@@ -10,7 +10,6 @@
 - It provisions task-owned linked worktrees during creation and leaves Git untouched during deletion.
 - It streams ACP load replay and prompt updates as bounded NDJSON responses.
 - It provides read-only server filesystem listings for the Web platform path picker.
-- It owns the project work context routes, which are outside `ora-backend`.
 
 ## Data root configuration
 
@@ -24,7 +23,7 @@ Every other runtime path is derived from it — there is no separate variable fo
 - Worktree creation root: `<ORA_DATA_DIR>/worktrees`
 - Log file: `<ORA_DATA_DIR>/logs/ora.log`
 
-Startup asks `ora-backend` to create the required directories, bootstrap the database, apply the active migration catalog, and construct the shared composition before the runtime is marked ready. A SQLite database that cannot be opened, migrated, or pooled fails startup with a typed bootstrap error rather than serving requests from a partially initialized runtime. The server retains direct composition only for the Web-only project work context and filesystem services.
+Startup asks `ora-backend` to create the required directories, bootstrap the database, apply the active migration catalog, and construct the shared composition before the runtime is marked ready. A SQLite database that cannot be opened, migrated, or pooled fails startup with a typed bootstrap error rather than serving requests from a partially initialized runtime. The server retains direct composition only for the Web-only filesystem service.
 
 ## Project configuration
 
@@ -75,8 +74,6 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 
 ### projectWorkContext
 
-- `POST /api/project-work-contexts/open`
-- `POST /api/project-work-contexts/renew`
 
 ### task
 
@@ -147,7 +144,6 @@ Unary requests and streams receive a server-generated canonical request id befor
 - `renew` extends an existing context lease using backend time.
 - Occupied-project conflicts return a stable HTTP `409` without exposing the owning surface or window id in the response.
 
-See [Project Work Contexts](project-work-contexts.md) for lease timing and current wiring.
 
 ### Filesystem browsing
 

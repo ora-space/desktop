@@ -21,8 +21,6 @@ type ChannelFactory = <TEvent>() => ChannelLike<TEvent>;
 const MAX_QUEUED_FRAMES = 256;
 
 const unsupportedOperations = {
-  openProjectWorkContext: true,
-  renewProjectWorkContext: true,
   listDirectory: true,
 } as const satisfies Partial<Record<EndpointOperation, true>>;
 

@@ -12,7 +12,6 @@
 | `SqliteWorktreeRepository` | `WorktreeRepository` |
 | `SqliteSkillRepository` | `SkillRepository` |
 | `SqliteAgentDefinitionRepository` | `AgentDefinitionRepository` |
-| `SqliteProjectWorkContextRepository` | `ProjectWorkContextRepository` |
 | `SqliteCascadeRepository` | aggregate deletion used by `ora-backend` |
 
 Adding an adapter never changes a port signature. Handlers keep depending on the traits they own, so a composition root can swap in fakes without touching use-case code.
@@ -39,7 +38,6 @@ File-backed parent directories are not created here. The composition root prepar
 
 `create_*` and `update_*` are full-snapshot replacement operations: the repository stores the domain value it was given and returns what is now persisted, without adding transport data or re-deriving fields.
 
-`project_work_contexts` is the exception. It has no `is_deleted` column; expired rows are removed by an explicit delete, and active-ownership queries filter on `lease_expires_at` instead. See [Project Work Contexts](project-work-contexts.md).
 
 ## Name-based project lookup
 
@@ -52,7 +50,6 @@ Repositories map SQLite columns onto the current `ora-domain` shapes, including 
 - `tasks.status` becomes `TaskStatus`; `tasks.worktree_id` becomes `Option<WorktreeId>`.
 - `sessions.status` becomes `SessionStatus`; `sessions.agent_cli` text becomes `AgentCli` through the namespaced persisted value.
 - `worktrees.is_active` becomes `WorktreeActivity`; `worktrees.branch_name` stays optional.
-- `project_work_contexts.surface` text becomes `ProjectWorkContextSurface`.
 
 An unrecognized persisted category value is a mapping failure, not a silently coerced default.
 
@@ -61,7 +58,7 @@ An unrecognized persisted category value is a mapping failure, not a silently co
 `SqliteCascadeRepository` soft-deletes a whole task or project aggregate inside one immediate transaction. It rechecks existence and running descendants under the write lock, so a session cannot transition to `Running` between validation and the update.
 
 - Task deletion cascades through its sessions and its owned worktree record.
-- Project deletion cascades through project work contexts, tasks, sessions, and worktree records.
+- Project deletion cascades through tasks, sessions, and worktree records.
 
 The result is a `CascadeDeleteOutcome` — `Deleted`, `NotFound`, or `ActiveSession` — rather than an error, so the caller decides the public meaning. `ora-backend` maps `ActiveSession` to the stable public code `resource_in_use`, and no partial cascade is committed in that case.
 

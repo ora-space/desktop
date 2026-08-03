@@ -15,6 +15,7 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 | --- | --- |
 | `0001` | `projects`, `tasks`, `worktrees`, `virtual_folders`, `virtual_entries`, `sessions`, `artifacts`, `migrations` |
 | `0002` | `project_work_contexts` plus its unique `(surface, window_id)` index and lease/expiry indexes |
+| `0004` | Removes the retired `project_work_contexts` table |
 | `0003` | `skills`, `agents` |
 
 `default_migration_catalog()` returns all three with every version as the active target.

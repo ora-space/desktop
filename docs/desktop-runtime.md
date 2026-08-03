@@ -16,13 +16,11 @@ Backend construction immediately attempts supervised `opencode acp`, `nga acp`, 
 
 Beyond the shared contract surface, Desktop registers four platform-only commands with no HTTP counterpart: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`.
 
-Three contract operations are not implemented on Desktop:
+One contract operation is not implemented on Desktop:
 
-- opening a project work context;
-- renewing a project work context;
 - listing a server filesystem directory.
 
-No Tauri command exists for them. The contracts transport rejects them with `unsupported_operation` before any IPC call is made, so the exclusion is enforced client-side rather than by a stub command. `ProjectWorkContext` remains outside this extraction; see [Project Work Contexts](project-work-contexts.md).
+No Tauri command exists for it. The contracts transport rejects it with `unsupported_operation` before any IPC call is made, so the exclusion is enforced client-side rather than by a stub command.
 
 ## Persistent Paths
 

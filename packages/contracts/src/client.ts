@@ -61,12 +61,6 @@ export function createContractsClient(
       delete: (request, options) =>
         executeOperation("deleteProject", request, transport, options),
     },
-    projectWorkContext: {
-      open: (request, options) =>
-        executeOperation("openProjectWorkContext", request, transport, options),
-      renew: (request, options) =>
-        executeOperation("renewProjectWorkContext", request, transport, options),
-    },
     task: {
       create: (request, options) => executeOperation("createTask", request, transport, options),
       get: (request, options) => executeOperation("getTask", request, transport, options),

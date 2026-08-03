@@ -13,8 +13,6 @@ export type ContractError =
     | { "code": "agent_name_blank"; "params": EmptyErrorParams }
     | { "code": "agent_not_found"; "params": EmptyErrorParams }
     | { "code": "project_not_found"; "params": EmptyErrorParams }
-    | { "code": "project_occupied"; "params": EmptyErrorParams }
-    | { "code": "project_work_context_not_found"; "params": EmptyErrorParams }
     | { "code": "task_not_found"; "params": EmptyErrorParams }
     | { "code": "resource_in_use"; "params": EmptyErrorParams }
     | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
@@ -82,8 +80,6 @@ export type PublicError =
   | { "code": "agent_name_blank"; "params": EmptyErrorParams }
   | { "code": "agent_not_found"; "params": EmptyErrorParams }
   | { "code": "project_not_found"; "params": EmptyErrorParams }
-  | { "code": "project_occupied"; "params": EmptyErrorParams }
-  | { "code": "project_work_context_not_found"; "params": EmptyErrorParams }
   | { "code": "task_not_found"; "params": EmptyErrorParams }
   | { "code": "resource_in_use"; "params": EmptyErrorParams }
   | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }

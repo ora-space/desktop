@@ -1,7 +1,6 @@
 mod agent_definition;
 mod error;
 mod project;
-mod project_work_context;
 mod repository_error;
 mod session;
 mod task;
@@ -18,10 +17,6 @@ pub use error::ApplicationError;
 pub use project::{
     Clock, CreateProjectHandler, GetProjectHandler, ListProjectsHandler, ProjectIdGenerator,
     ProjectRepository, UpdateProjectHandler, UuidProjectIdGenerator,
-};
-pub use project_work_context::{
-    OpenProjectWorkContextHandler, ProjectWorkContextIdGenerator, ProjectWorkContextRepository,
-    RenewProjectWorkContextHandler, UuidProjectWorkContextIdGenerator,
 };
 pub use repository_error::{BoxRepositorySource, RepositoryError};
 pub use session::{

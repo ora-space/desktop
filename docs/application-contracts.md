@@ -5,15 +5,15 @@ The public application surface is split across `ora-domain`, `ora-contracts`, `o
 ## Ownership
 
 - `ora-domain` owns schema-backed entities, identifier newtypes, and categorical enums. See [Domain Models](domain-models.md).
-- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Session, Skill, Agent, and Git identity operations, plus the Web-only project work context and filesystem operations.
+- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Session, Skill, Agent, and Git identity operations, plus Web-only filesystem operations.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
 - `ora-contracts` also owns the frontend endpoint manifest for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode.
 - `ora-contracts` exports TypeScript DTOs into `packages/contracts/src` so frontend packages consume the contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`. See [Frontend Contract SDK](frontend-contract-sdk.md).
-- `ora-application` owns use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports those handlers depend on, and domain-to-contract mapping. It also owns project work context lease timing and occupancy conflicts.
+- `ora-application` owns use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports those handlers depend on, and domain-to-contract mapping.
 - `ora-db` implements those ports on SQLite and owns schema reconciliation. See [Database Repositories](database-repositories.md).
 - `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
 - Transport adapters stay thin: Web handlers and Tauri commands accept contract requests, delegate to the same `Backend`, then map its stable public errors into HTTP or IPC semantics.
-- `ProjectWorkContext` and filesystem browsing are deliberately outside `ora-backend`. The Web server keeps those services composed directly from the repository pool; Desktop's transport reports `unsupported_operation` for those three contract operations.
+- Filesystem browsing is deliberately outside `ora-backend`. The Web server keeps that service composed directly, while Desktop's transport reports `unsupported_operation` for the contract operation.
 
 ## Contract shapes
 
@@ -23,7 +23,6 @@ Contracts are the app-facing protocol, not a projection of the domain. Each enti
 - `Task`: `id`, `projectId`, `title`, `status`, `workspaceMode`
 - `Session`: `id`, `taskId`, `agentCli`, `status`
 - `Skill` and `Agent`: `id`, `name`, `description`
-- `ProjectWorkContext`: `id`, `surface`, `windowId`, `projectId`, `leaseExpiresAt`
 
 Public payloads expose documented business fields only. `createdAt`, `updatedAt`, `isDeleted`, and other internal audit fields never appear. Two exclusions are deliberate:
 
@@ -53,7 +52,6 @@ The handler set is intentionally narrower than full CRUD per entity, because som
 | `session` | get, list, delete |
 | `skill` | create, get, list, update, delete |
 | `agent_definition` | create, get, list, update, delete |
-| `project_work_context` | open, renew |
 | `worktree` | none — ports only |
 
 Notable consequences:
@@ -62,7 +60,7 @@ Notable consequences:
 - Session creation, load, prompt, permission response, cancellation, and stop belong to the backend agent runtime, not to `ora-application`. The session module supplies only the persistence-facing reads and soft deletion.
 - `worktree` has no handlers or transport contracts at all. Worktree records are internal metadata coordinated by the task module.
 
-`project_id`, `task_id`, and `worktree_id` are treated as pass-through business identifiers. Create and update handlers do not perform extra cross-entity existence checks before delegating to their repositories; `OpenProjectWorkContextHandler` verifying the requested project is the one deliberate exception, because occupancy has to be evaluated against a real project.
+`project_id`, `task_id`, and `worktree_id` are treated as pass-through business identifiers. Create and update handlers do not perform extra cross-entity existence checks before delegating to their repositories.
 
 Deletion stays a normal delete use case at the boundary even though the repository implements it as a soft delete. Callers interact with delete-oriented request and response contracts and never see soft-delete or archive semantics.
 

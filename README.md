@@ -21,7 +21,6 @@ Ora is an IDE for AI agents. The Rust backend lives in `crates/`, the two runtim
 - [Database Migrations](docs/database-migrations.md) — migration catalog and reconciliation model
 - [Database Repositories](docs/database-repositories.md) — SQLite adapters, pooling, and soft deletion
 - [Task Worktrees](docs/task-worktrees.md) — workspace modes and backend-owned worktree lifecycle
-- [Project Work Contexts](docs/project-work-contexts.md) — window-to-project leases and occupancy rules
 
 ## Development
 

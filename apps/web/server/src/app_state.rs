@@ -1,4 +1,4 @@
-use crate::service::{FileSystemApi, ProjectWorkContextApi};
+use crate::service::FileSystemApi;
 use ora_backend::Backend;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,21 +8,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub struct AppState {
     backend: Backend,
     file_system_api: Arc<FileSystemApi>,
-    project_work_context_api: Arc<ProjectWorkContextApi>,
     ready: Arc<AtomicBool>,
 }
 
 impl AppState {
     /// Creates one shared application state value with readiness disabled until bootstrap completes.
-    pub fn new(
-        backend: Backend,
-        file_system_api: Arc<FileSystemApi>,
-        project_work_context_api: Arc<ProjectWorkContextApi>,
-    ) -> Self {
+    pub fn new(backend: Backend, file_system_api: Arc<FileSystemApi>) -> Self {
         Self {
             backend,
             file_system_api,
-            project_work_context_api,
             ready: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -35,11 +29,6 @@ impl AppState {
     /// Returns the shared read-only filesystem API used by the web path picker.
     pub fn file_system_api(&self) -> &Arc<FileSystemApi> {
         &self.file_system_api
-    }
-
-    /// Returns the shared project work context API that routes delegate into.
-    pub fn project_work_context_api(&self) -> &Arc<ProjectWorkContextApi> {
-        &self.project_work_context_api
     }
 
     /// Marks the runtime as ready after bootstrap finishes successfully.

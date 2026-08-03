@@ -125,16 +125,6 @@ impl From<ApplicationError> for BackendError {
                 PublicError::ProjectNotFound(EmptyErrorParams {}),
                 "project not found",
             ),
-            ApplicationError::ProjectOccupied { .. } => (
-                ErrorClassification::Conflict,
-                PublicError::ProjectOccupied(EmptyErrorParams {}),
-                "project is already occupied",
-            ),
-            ApplicationError::ProjectWorkContextNotFound { .. } => (
-                ErrorClassification::NotFound,
-                PublicError::ProjectWorkContextNotFound(EmptyErrorParams {}),
-                "project work context not found",
-            ),
             ApplicationError::TaskNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::TaskNotFound(EmptyErrorParams {}),
@@ -158,7 +148,6 @@ impl From<ApplicationError> for BackendError {
             ApplicationError::SkillRepository { .. }
             | ApplicationError::AgentDefinitionRepository { .. }
             | ApplicationError::ProjectRepository { .. }
-            | ApplicationError::ProjectWorkContextRepository { .. }
             | ApplicationError::TaskRepository { .. }
             | ApplicationError::TaskWorktreeIdExhausted { .. }
             | ApplicationError::TaskWorktreeRootUnavailable

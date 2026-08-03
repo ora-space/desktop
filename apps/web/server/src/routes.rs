@@ -1,15 +1,13 @@
 use crate::app_state::AppState;
-use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skills, tasks,
-};
+use crate::handlers::{agents, file_system, git, health, projects, sessions, skills, tasks};
 use axum::Router;
 use axum::middleware;
 use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
-    PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
-    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    PROJECT_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH,
+    SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH,
+    TASKS_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -34,17 +32,6 @@ pub fn build_router(app_state: AppState) -> Router {
             get(projects::get_project)
                 .put(projects::update_project)
                 .delete(projects::delete_project),
-        )
-        // =============================================================================
-        // projectWorkContext
-        // =============================================================================
-        .route(
-            PROJECT_WORK_CONTEXT_OPEN_PATH,
-            post(project_work_contexts::open_project_work_context),
-        )
-        .route(
-            PROJECT_WORK_CONTEXT_RENEW_PATH,
-            post(project_work_contexts::renew_project_work_context),
         )
         // =============================================================================
         // task
@@ -124,16 +111,13 @@ mod tests {
     use crate::bootstrap::build_app_state_for_database;
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode};
-    use ora_application::{ProjectWorkContextRepository, WorktreeRepository};
+    use ora_application::WorktreeRepository;
     use ora_contracts::{
         FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryResponse,
         RequestId,
     };
-    use ora_db::{
-        DatabaseBootstrapper, DatabaseLocation, SqliteProjectWorkContextRepository,
-        SqliteWorktreeRepository,
-    };
-    use ora_domain::{ProjectWorkContextSurface, WorktreeId};
+    use ora_db::{DatabaseBootstrapper, DatabaseLocation, SqliteWorktreeRepository};
+    use ora_domain::WorktreeId;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::fs;
@@ -468,231 +452,6 @@ mod tests {
         assert_ne!(header_request_id, "550e8400-e29b-41d4-a716-446655440000");
     }
 
-    /// Verifies the router supports open, switch, and renew flows for project work contexts.
-    #[tokio::test]
-    async fn serves_project_work_context_routes() {
-        let (temp_dir, database_path, app) = test_router();
-        let first_project_root = workspace_project_root(&temp_dir, "ora");
-        let second_project_root = workspace_project_root(&temp_dir, "ora-docs");
-        let first_project_id = create_project(&app, "Ora", &first_project_root).await;
-        let second_project_id = create_project(&app, "Ora Docs", &second_project_root).await;
-        let open_response = match app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/project-work-contexts/open")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "surface": "tauri",
-                            "windowId": "window-1",
-                            "projectId": first_project_id,
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => panic!("request failed: {error}"),
-        };
-        let opened_context = response_json(open_response).await["context"].clone();
-        let renew_response = match app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/project-work-contexts/renew")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "surface": "tauri",
-                            "windowId": "window-1",
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => panic!("request failed: {error}"),
-        };
-        let renewed_context = response_json(renew_response).await["context"].clone();
-        let switch_response = match app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/project-work-contexts/open")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "surface": "tauri",
-                            "windowId": "window-1",
-                            "projectId": second_project_id,
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => panic!("request failed: {error}"),
-        };
-        let switched_context = response_json(switch_response).await["context"].clone();
-
-        assert_eq!(opened_context["windowId"], json!("window-1"));
-        assert_eq!(opened_context["surface"], json!("tauri"));
-        assert_eq!(opened_context["projectId"], json!(first_project_id));
-        assert_eq!(renewed_context["id"], opened_context["id"]);
-        assert_eq!(renewed_context["projectId"], json!(first_project_id));
-        assert_eq!(switched_context["id"], opened_context["id"]);
-        assert_eq!(switched_context["projectId"], json!(second_project_id));
-
-        let repository = bootstrapped_project_work_context_repository(&database_path);
-        assert_eq!(
-            repository
-                .find_project_work_context(ProjectWorkContextSurface::Tauri, "window-1")
-                .unwrap()
-                .map(|context| context.project_id.to_string()),
-            Some(second_project_id)
-        );
-    }
-
-    /// Verifies occupied projects surface the stable conflict payload for different Tauri windows.
-    #[tokio::test]
-    async fn serves_project_work_context_conflicts() {
-        let (temp_dir, _database_path, app) = test_router();
-        let project_root = workspace_project_root(&temp_dir, "ora");
-        let project_id = create_project(&app, "Ora", &project_root).await;
-
-        let _ = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/project-work-contexts/open")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "surface": "tauri",
-                            "windowId": "window-a",
-                            "projectId": project_id,
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
-            )
-            .await
-            .unwrap_or_else(|error| panic!("request failed: {error}"));
-
-        let conflict_response = match app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/project-work-contexts/open")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "surface": "tauri",
-                            "windowId": "window-b",
-                            "projectId": project_id,
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => panic!("request failed: {error}"),
-        };
-
-        assert_eq!(conflict_response.status(), StatusCode::CONFLICT);
-        assert_contract_error(&response_json(conflict_response).await, "project_occupied");
-    }
-
-    /// Verifies expired contexts stop blocking project opens once their lease is stale.
-    #[tokio::test]
-    async fn serves_project_work_context_recovery_after_expiry() {
-        let (temp_dir, database_path, app) = test_router();
-        let project_root = workspace_project_root(&temp_dir, "ora");
-        let project_id = create_project(&app, "Ora", &project_root).await;
-
-        let open_response = match app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/project-work-contexts/open")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "surface": "tauri",
-                            "windowId": "window-a",
-                            "projectId": project_id,
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => panic!("request failed: {error}"),
-        };
-        let opened_context = response_json(open_response).await["context"].clone();
-        let repository = bootstrapped_project_work_context_repository(&database_path);
-        let expired_context = repository
-            .find_project_work_context(ProjectWorkContextSurface::Tauri, "window-a")
-            .unwrap()
-            .unwrap_or_else(|| panic!("expected context to exist after open"));
-
-        repository
-            .update_project_work_context(ora_domain::ProjectWorkContext::new(
-                expired_context.id,
-                expired_context.surface,
-                expired_context.window_id,
-                expired_context.project_id,
-                0,
-                expired_context.created_at,
-                expired_context.updated_at,
-            ))
-            .unwrap();
-
-        let recovery_response = match app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/project-work-contexts/open")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "surface": "tauri",
-                            "windowId": "window-b",
-                            "projectId": project_id,
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => panic!("request failed: {error}"),
-        };
-
-        assert_eq!(recovery_response.status(), StatusCode::OK);
-        assert_eq!(
-            response_json(recovery_response).await["context"]["windowId"],
-            json!("window-b")
-        );
-        assert_eq!(opened_context["windowId"], json!("window-a"));
-    }
-
     /// Verifies the router supports task CRUD routes end to end.
     #[tokio::test]
     async fn serves_task_crud_routes() {
@@ -895,6 +654,21 @@ mod tests {
 
         assert_eq!(collection_response.status(), StatusCode::NOT_FOUND);
         assert_eq!(item_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Verifies removed multi-client project ownership routes are no longer addressable.
+    #[tokio::test]
+    async fn rejects_project_work_context_routes() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let open_response =
+            request_empty(&app, Method::POST, "/api/project-work-contexts/open").await;
+        let renew_response =
+            request_empty(&app, Method::POST, "/api/project-work-contexts/renew").await;
+
+        assert_eq!(
+            [open_response.status(), renew_response.status()],
+            [StatusCode::NOT_FOUND, StatusCode::NOT_FOUND]
+        );
     }
 
     /// Verifies session query routes expose stable empty and not-found responses.
@@ -1116,22 +890,6 @@ mod tests {
             Some(project_id) => project_id.to_string(),
             None => panic!("response did not include a project id"),
         }
-    }
-
-    /// Opens the test database so route assertions can inspect persisted work context state.
-    fn bootstrapped_project_work_context_repository(
-        database_path: &Path,
-    ) -> SqliteProjectWorkContextRepository {
-        let pool = DatabaseBootstrapper::system()
-            .bootstrap_repository_pool(
-                &DatabaseLocation::path(database_path),
-                &ora_db::default_migration_catalog().unwrap(),
-            )
-            .unwrap_or_else(|error| {
-                panic!("expected repository pool bootstrap to succeed: {error}")
-            });
-
-        SqliteProjectWorkContextRepository::new(pool)
     }
 
     /// Opens the test database so route assertions can inspect persisted worktree state.

@@ -46,7 +46,7 @@ Every `ContractTransportRequest` also carries the original complete request DTO 
 
 **Browser** — `@ora/contracts/fetch` exports `createFetchTransport`. `baseUrl` is the server base, not a pre-expanded API prefix. Non-success unary responses and stream error frames are decoded through the shared `decodeRemoteError` boundary. Remote Web errors may retain the HTTP status; local failures do not fabricate remote metadata. Streaming reads newline-delimited `data`, `error`, and `end` frames with an 8 MiB frame limit.
 
-**Desktop** — `apps/desktop/web` exports `createTauriTransport`, injected as `createContractsClient(createTauriTransport())`. It maps operation names to snake-case Tauri commands and drives streams over a Tauri Channel using the same private frame shape. Unary failures and stream error frames use the same decoder as Web. Desktop rejects `openProjectWorkContext`, `renewProjectWorkContext`, and `listDirectory` with the local `unsupported_operation` kind before invoking a command.
+**Desktop** — `apps/desktop/web` exports `createTauriTransport`, injected as `createContractsClient(createTauriTransport())`. It maps operation names to snake-case Tauri commands and drives streams over a Tauri Channel using the same private frame shape. Unary failures and stream error frames use the same decoder as Web. Desktop rejects `listDirectory` with the local `unsupported_operation` kind before invoking a command.
 
 ## Public errors and localization
 

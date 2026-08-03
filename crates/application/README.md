@@ -6,7 +6,6 @@
 
 - [agent_definition](src/agent_definition/README.md) manages configurable agent definitions.
 - [project](src/project/README.md) manages project creation, reads, and rename operations.
-- [project_work_context](src/project_work_context/README.md) owns window-to-project leases and occupancy rules.
 - [session](src/session/README.md) provides persisted session reads and soft deletion.
 - [skill](src/skill/README.md) manages reusable skill records.
 - [task](src/task/README.md) coordinates task persistence and optional Git worktree creation.
