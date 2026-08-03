@@ -1,7 +1,13 @@
+mod downloads;
+
 use crate::error::CommandError;
+use downloads::{DownloadAcceptance, DownloadStatus, SkillDownloadCoordinator};
 use ora_backend::{BackendError, ErrorClassification};
 use ora_contracts::{EmptyErrorParams, PublicError};
-use tauri::{AppHandle, Manager, Runtime, Url, WebviewUrl, WebviewWindowBuilder};
+use ora_logging::{ora_info, ora_warn};
+use tauri::{
+    AppHandle, Manager, Runtime, Url, WebviewUrl, WebviewWindowBuilder, webview::DownloadEvent,
+};
 
 const SKILLHUB_URL: &str = "https://www.skillhub.cn";
 const SKILLHUB_WINDOW_LABEL: &str = "skillhub-marketplace";
@@ -24,16 +30,75 @@ fn open_or_focus_skill_marketplace<R: Runtime>(app: &AppHandle<R>) -> Result<(),
     }
 
     let url = Url::parse(SKILLHUB_URL).map_err(|_| marketplace_window_error())?;
+    let app_data_directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| download_directory_error())?;
+    let downloads = SkillDownloadCoordinator::new(&app_data_directory)
+        .map_err(|_| download_directory_error())?;
     WebviewWindowBuilder::new(app, SKILLHUB_WINDOW_LABEL, WebviewUrl::External(url))
         .title("SkillHub")
         .inner_size(1100.0, 760.0)
         .min_inner_size(720.0, 520.0)
         .center()
         .on_navigation(is_skillhub_navigation_allowed)
+        .on_download(move |_webview, event| handle_download_event(&downloads, event))
         .build()
         .map_err(|_| marketplace_window_error())?;
 
     Ok(())
+}
+
+/// Routes the marketplace WebView download lifecycle through Ora-owned ZIP storage.
+fn handle_download_event(downloads: &SkillDownloadCoordinator, event: DownloadEvent<'_>) -> bool {
+    match event {
+        DownloadEvent::Requested { url, destination } => match downloads.request(&url, destination)
+        {
+            Ok(DownloadAcceptance::Accepted) => {
+                ora_info!(
+                    message = "SkillHub ZIP download started",
+                    url = %url,
+                    destination = %destination.display(),
+                );
+                true
+            }
+            Ok(DownloadAcceptance::Rejected) => false,
+            Err(error) => {
+                ora_warn!(
+                    message = "failed to reserve SkillHub ZIP download",
+                    url = %url,
+                    error = %error,
+                );
+                false
+            }
+        },
+        DownloadEvent::Finished { url, success, .. } => {
+            let status = if success {
+                DownloadStatus::Succeeded
+            } else {
+                DownloadStatus::Failed
+            };
+            match downloads.finish(&url, status) {
+                Ok(result) => {
+                    ora_info!(
+                        message = "SkillHub ZIP download finished",
+                        url = %url,
+                        result = ?result,
+                    );
+                    true
+                }
+                Err(error) => {
+                    ora_warn!(
+                        message = "failed to finalize SkillHub ZIP download",
+                        url = %url,
+                        error = %error,
+                    );
+                    false
+                }
+            }
+        }
+        _ => true,
+    }
 }
 
 /// Allows top-level navigation only to canonical SkillHub hosts over standard HTTPS.
@@ -47,10 +112,20 @@ fn is_skillhub_navigation_allowed(url: &Url) -> bool {
 
 /// Hides platform-specific window failures behind the Desktop command error contract.
 fn marketplace_window_error() -> CommandError {
+    internal_command_error("failed to open the SkillHub marketplace")
+}
+
+/// Reports that Ora could not prepare its persistent SkillHub download directory.
+fn download_directory_error() -> CommandError {
+    internal_command_error("failed to prepare the SkillHub download directory")
+}
+
+/// Projects an internal marketplace failure through the shared Desktop error contract.
+fn internal_command_error(context: &'static str) -> CommandError {
     CommandError::from_backend(BackendError::new(
         ErrorClassification::Internal,
         PublicError::InternalError(EmptyErrorParams {}),
-        "failed to open the SkillHub marketplace",
+        context,
     ))
 }
 
