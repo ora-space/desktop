@@ -52,13 +52,12 @@ where
     A: Write,
     B: Write,
 {
-    /// Mirrors only the bytes the primary accepted, for callers that chunk through `write`.
+    /// Delegates to `write_all` so the trait-required `write` shares one sink-driving path
+    /// and the same error semantics, instead of mirroring partial primary progress that no
+    /// caller exercises. Returning the full buffer length is within the `Write` contract
+    /// because `write_all` drives both sinks to completion before returning.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let written = self.primary.write(buf)?;
-        // A secondary failure is suppressed here so partial primary progress still reports
-        // the primary's accepted count to the caller without an unrelated secondary error.
-        let _ = self.secondary.write_all(&buf[..written]);
-        Ok(written)
+        self.write_all(buf).map(|()| buf.len())
     }
 
     /// Flushes both sinks, surfacing the primary's error first because it is observable.
