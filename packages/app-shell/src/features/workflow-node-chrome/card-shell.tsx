@@ -29,6 +29,8 @@ export interface WorkflowNodeCardShellProps
   footer?: ReactNode;
   /** Replaces the default description block when set. */
   body?: ReactNode;
+  /** Read-only details rendered at the full card width beneath the header. */
+  details?: ReactNode;
   targetHandle?: ReactNode;
   sourceHandle?: ReactNode;
 }
@@ -51,7 +53,7 @@ const DENSITY: Record<
     iconSize: "size-4",
     title: "text-xs font-semibold",
     description: "mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground",
-    headerPad: "border-b border-border px-3 py-3",
+    headerPad: "px-3 py-3",
     gap: "gap-2.5",
   },
   run: {
@@ -104,6 +106,7 @@ export function WorkflowNodeCardShell({
   headerEnd,
   footer,
   body,
+  details,
   targetHandle,
   sourceHandle,
   ...articleProps
@@ -158,6 +161,14 @@ export function WorkflowNodeCardShell({
         </div>
         {headerEnd}
       </div>
+      {details !== undefined && details !== null && (
+        <>
+          {density === "editor" && <div className="mx-auto w-4/5 border-t border-border" />}
+          <div className="px-3 pb-3 pt-2">
+            {details}
+          </div>
+        </>
+      )}
       {footer !== undefined && footer !== null && (
         <div
           className={cn(

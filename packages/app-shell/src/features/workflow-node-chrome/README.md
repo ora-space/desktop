@@ -9,6 +9,8 @@ and **run** cards (overview / theater).
 - Provide `WorkflowNodeCardShell` so editor and run UIs share layout rhythm
   (icon, title, kind chip, description, footer) without sharing React Flow
   interaction (delete, reconnect, catalog).
+- Support full-width read-only detail content below the header so definition
+  cards can surface configuration without inheriting the icon-column indent.
 
 ## Non-responsibilities
 

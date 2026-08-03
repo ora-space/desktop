@@ -411,7 +411,7 @@ describe("WorkflowSettings", () => {
 
     expect(screen.getByLabelText("Agent 模型")).toBeInTheDocument();
     expect(screen.getByLabelText("角色")).toHaveTextContent("审查员");
-    expect(screen.getByText("Skills")).toBeInTheDocument();
+    expect(screen.getAllByText("Skills")).toHaveLength(2);
     expect(screen.getByLabelText("自定义 Prompt")).toHaveValue(
       "按严重程度整理问题，并给出定位与修复建议。",
     );
@@ -423,6 +423,29 @@ describe("WorkflowSettings", () => {
         "OpenCode · opencode/big-pickle",
       );
     });
+    const configuredParameters = within(reviewNode).getByLabelText("配置参数");
+    expect(configuredParameters).toHaveTextContent("角色Reviewer");
+    expect(configuredParameters).toHaveTextContent("open_code · opencode/big-pickle");
+    expect(configuredParameters).toHaveTextContent("Skillsopenspec-verify-change");
+    expect(configuredParameters).not.toHaveTextContent("按严重程度整理问题，并给出定位与修复建议。");
+  });
+
+  it("limits node descriptions to 20 characters and shows their count", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
+    await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
+    const description = screen.getByLabelText("说明");
+
+    expect(description).toHaveAttribute("maxlength", "20");
+    expect(screen.getByText("9/20")).toBeInTheDocument();
+    fireEvent.change(description, {
+      target: { value: "123456789012345678901" },
+    });
+
+    expect(screen.getByLabelText("说明")).toHaveValue("12345678901234567890");
+    expect(screen.getByText("20/20")).toBeInTheDocument();
   });
 
   it("searches Agent models and roles before updating their selections", async () => {

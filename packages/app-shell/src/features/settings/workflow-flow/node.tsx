@@ -17,6 +17,7 @@ import {
 } from "@ora/workflow-mock";
 import { WorkflowNodeCardShell } from "../../workflow-node-chrome";
 import { useWorkflowConnectionState } from "./connection-state";
+import { WorkflowNodeParameterSummary } from "./node-parameter-summary";
 
 /** Renders one workflow card with left/right handles styled for the settings editor. */
 export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
@@ -35,13 +36,6 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   } = useWorkflowConnectionState();
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
   const nodeKindLabel = createMockWorkflowNodeType(data.kind, locale).label;
-  const detail = data.kind === "agent"
-    ? data.agentConfig === undefined
-      ? t("settings.workflow.immediate")
-      : `${data.agentConfig.executor.agentCli} · ${data.agentConfig.executor.modelId}`
-    : data.model
-      ?? data.tool
-      ?? t("settings.workflow.immediate");
   const isConnectionCandidate = connectionCandidateNodeId === id;
   const isInputCandidate = isConnectionCandidate
     && connectionCandidateEndpoint === "target";
@@ -65,6 +59,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
       frameClassName={cn(
         isConnectionCandidate && "border-ring/60 shadow-md ring-2 ring-ring/10",
       )}
+      details={<WorkflowNodeParameterSummary data={data} />}
       headerEnd={selected && deletable
         ? (
           <button
@@ -79,12 +74,6 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
           </button>
         )
         : undefined}
-      footer={(
-        <>
-          <span className="truncate">{detail}</span>
-          <span className="font-mono text-[9px]">{id}</span>
-        </>
-      )}
       targetHandle={(
         <Handle
           type="target"

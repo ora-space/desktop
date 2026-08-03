@@ -141,14 +141,23 @@ function WorkflowNodeInspector({
           />
         </InspectorField>
         <InspectorField label={t("settings.workflow.field.description")} htmlFor="workflow-node-description">
-          <Input
-            id="workflow-node-description"
-            value={node.data.description}
-            onChange={(event) => onUpdate({
-              ...node,
-              data: { ...node.data, description: event.target.value },
-            })}
-          />
+          <>
+            <Input
+              id="workflow-node-description"
+              value={node.data.description}
+              maxLength={20}
+              onChange={(event) => onUpdate({
+                ...node,
+                data: { ...node.data, description: event.target.value.slice(0, 20) },
+              })}
+            />
+            <p className="text-right text-[10px] text-muted-foreground" aria-live="polite">
+              {t("settings.workflow.characterCount", {
+                count: node.data.description.length,
+                max: 20,
+              })}
+            </p>
+          </>
         </InspectorField>
         {nodeType.configFields.includes("model") && (
           <InspectorField label={t("settings.workflow.field.model")} htmlFor="workflow-node-model">

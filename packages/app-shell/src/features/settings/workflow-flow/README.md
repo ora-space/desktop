@@ -50,5 +50,7 @@ React Flow–based canvas for the session-only settings workflow demo.
 - Executable fields use React Flow's supported `node.data` extension point.
   Agent nodes store their versioned executor, Role, Skill, and prompt
   configuration in `agentConfig` rather than in card UI state.
+- Editor cards render populated execution fields as read-only parameter summaries;
+  the right inspector remains the single surface for changing those fields.
 - `WorkflowNodeCatalog` remains nested for drop-coordinate conversion through
   `screenToFlowPosition`.
