@@ -156,7 +156,13 @@ impl RequestLifecycle {
 #[cfg(test)]
 mod tests {
     use super::{RequestIdGenerator, RequestLifecycle};
-    use ora_contracts::RequestId;
+    use crate::{BackendError, ErrorClassification};
+    use ora_contracts::{EmptyErrorParams, PublicError, RequestId};
+    use ora_logging::with_recorded_trace_logging;
+    use pretty_assertions::assert_eq;
+    use std::sync::{Arc, Mutex};
+    use tracing::Level;
+    use tracing_subscriber::layer::{Context, Layer};
 
     struct FixedRequestIdGenerator(RequestId);
 
@@ -178,5 +184,89 @@ mod tests {
         assert_eq!(cloned.request_id(), request_id);
         assert!(lifecycle.claim_completion());
         assert!(!cloned.claim_completion());
+    }
+
+    /// Verifies every backend classification emits its documented completion level.
+    #[test]
+    fn failure_classifications_map_to_expected_log_levels() {
+        let recorder = LevelRecorder::default();
+        with_recorded_trace_logging(recorder.layer(), || {
+            let cases = [
+                (
+                    ErrorClassification::Internal,
+                    PublicError::InternalError(EmptyErrorParams {}),
+                ),
+                (
+                    ErrorClassification::Conflict,
+                    PublicError::ResourceInUse(EmptyErrorParams {}),
+                ),
+                (
+                    ErrorClassification::InvalidRequest,
+                    PublicError::InvalidRequest(EmptyErrorParams {}),
+                ),
+                (
+                    ErrorClassification::NotFound,
+                    PublicError::TaskNotFound(EmptyErrorParams {}),
+                ),
+            ];
+
+            for (classification, public_error) in cases {
+                let lifecycle = RequestLifecycle::start(
+                    "test_operation",
+                    &FixedRequestIdGenerator(test_request_id()),
+                );
+                lifecycle.complete_failure(&BackendError::new(
+                    classification,
+                    public_error,
+                    "test failure",
+                ));
+            }
+        });
+
+        assert_eq!(
+            recorder.levels(),
+            vec![Level::ERROR, Level::WARN, Level::INFO, Level::INFO]
+        );
+    }
+
+    /// Returns the deterministic request identifier shared by lifecycle logging tests.
+    fn test_request_id() -> RequestId {
+        serde_json::from_str("\"550e8400-e29b-41d4-a716-446655440000\"").unwrap()
+    }
+
+    /// Records emitted levels without depending on process-global subscriber state.
+    #[derive(Clone, Debug, Default)]
+    struct LevelRecorder {
+        levels: Arc<Mutex<Vec<Level>>>,
+    }
+
+    impl LevelRecorder {
+        /// Builds the scoped subscriber layer used by one test.
+        fn layer(&self) -> LevelRecordingLayer {
+            LevelRecordingLayer {
+                levels: self.levels.clone(),
+            }
+        }
+
+        /// Returns captured event levels in emission order.
+        fn levels(&self) -> Vec<Level> {
+            self.levels.lock().unwrap().clone()
+        }
+    }
+
+    /// Captures event metadata for assertions while leaving production formatting untouched.
+    #[derive(Clone, Debug)]
+    struct LevelRecordingLayer {
+        levels: Arc<Mutex<Vec<Level>>>,
+    }
+
+    impl<S> Layer<S> for LevelRecordingLayer
+    where
+        S: tracing::Subscriber,
+    {
+        /// Records each emitted event's level under the test-scoped TRACE subscriber.
+        fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
+            self.levels.lock().unwrap().push(*event.metadata().level());
+        }
     }
 }

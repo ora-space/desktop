@@ -2,7 +2,8 @@ use regex::Regex;
 use std::error::Error;
 use std::sync::LazyLock;
 
-const MAX_CHAIN_DEPTH: usize = 16;
+const MAX_RENDERED_CHAIN_DEPTH: usize = 16;
+const MAX_CHAIN_TRAVERSAL_DEPTH: usize = 1_024;
 const MAX_NODE_CHARS: usize = 512;
 const MAX_CHAIN_CHARS: usize = 4_096;
 const TRUNCATED: &str = "[truncated]";
@@ -34,7 +35,7 @@ static QUOTED_VALUE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap_or_else(|error| panic!("invalid built-in quoted value pattern: {error}"))
 });
 
-/// Contains the bounded and sanitized representation of a complete in-memory error chain.
+/// Contains the bounded and sanitized representation of an in-memory error chain.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ErrorReport {
     message: String,
@@ -50,14 +51,20 @@ impl ErrorReport {
         let mut chain_depth = 0;
 
         while let Some(node) = current {
+            // A custom Error implementation can form a source cycle, so traversal needs a
+            // separate hard limit even though only a small prefix is retained for rendering.
+            if chain_depth == MAX_CHAIN_TRAVERSAL_DEPTH {
+                break;
+            }
+
             chain_depth += 1;
-            if nodes.len() < MAX_CHAIN_DEPTH {
+            if nodes.len() < MAX_RENDERED_CHAIN_DEPTH {
                 nodes.push(sanitize_node(&node.to_string()));
             }
             current = node.source();
         }
 
-        if chain_depth > MAX_CHAIN_DEPTH {
+        if current.is_some() || chain_depth > MAX_RENDERED_CHAIN_DEPTH {
             nodes.push(TRUNCATED.to_string());
         }
 
@@ -84,7 +91,7 @@ impl ErrorReport {
         &self.chain
     }
 
-    /// Returns the complete in-memory depth even when the rendered chain is truncated.
+    /// Returns the traversed depth, saturated at the absolute source-chain safety limit.
     pub const fn chain_depth(&self) -> usize {
         self.chain_depth
     }
@@ -125,8 +132,9 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::ErrorReport;
+    use super::{ErrorReport, MAX_CHAIN_TRAVERSAL_DEPTH};
     use pretty_assertions::assert_eq;
+    use std::fmt;
     use thiserror::Error;
 
     #[derive(Debug, Error)]
@@ -180,5 +188,31 @@ mod tests {
 
         assert!(report.chain().ends_with("[truncated]"));
         assert!(report.chain().chars().count() <= 512);
+    }
+
+    #[derive(Debug)]
+    struct CyclicError;
+
+    impl fmt::Display for CyclicError {
+        /// Formats the stable node text used to verify bounded cyclic traversal.
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("cyclic error")
+        }
+    }
+
+    impl std::error::Error for CyclicError {
+        /// Deliberately forms an invalid source cycle to exercise the absolute traversal guard.
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(self)
+        }
+    }
+
+    /// Verifies a malformed cyclic source chain cannot hang completion logging.
+    #[test]
+    fn stops_traversing_at_the_absolute_source_chain_limit() {
+        let report = ErrorReport::from_error(&CyclicError);
+
+        assert_eq!(report.chain_depth(), MAX_CHAIN_TRAVERSAL_DEPTH);
+        assert!(report.chain().ends_with("[truncated]"));
     }
 }

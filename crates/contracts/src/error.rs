@@ -197,7 +197,10 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContractError, EmptyErrorParams, PublicError, RequestId};
+    use super::{
+        ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget, PublicError,
+        RequestId, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
+    };
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use uuid::uuid;
@@ -217,5 +220,75 @@ mod tests {
                 "requestId": "550e8400-e29b-41d4-a716-446655440000",
             })
         );
+    }
+
+    /// Builds one representative value for every public error variant.
+    fn public_error_samples() -> Vec<PublicError> {
+        let empty = || EmptyErrorParams {};
+
+        vec![
+            PublicError::InternalError(empty()),
+            PublicError::InvalidRequest(empty()),
+            PublicError::SkillNameBlank(empty()),
+            PublicError::SkillNotFound(empty()),
+            PublicError::AgentNameBlank(empty()),
+            PublicError::AgentNotFound(empty()),
+            PublicError::ProjectNotFound(empty()),
+            PublicError::ProjectOccupied(empty()),
+            PublicError::ProjectWorkContextNotFound(empty()),
+            PublicError::TaskNotFound(empty()),
+            PublicError::ResourceInUse(empty()),
+            PublicError::WorktreeRequiresGitRepository(empty()),
+            PublicError::WorktreeNotFound(empty()),
+            PublicError::SessionNotFound(empty()),
+            PublicError::AgentCliNotFound(empty()),
+            PublicError::AgentRuntimeUnavailable(empty()),
+            PublicError::SessionBusy(empty()),
+            PublicError::SessionStopped(empty()),
+            PublicError::SessionLoadUnsupported(empty()),
+            PublicError::PermissionRequestNotPending(empty()),
+            PublicError::PermissionOptionInvalid(empty()),
+            PublicError::PromptEmpty(empty()),
+            PublicError::PromptTooLarge(empty()),
+            PublicError::TaskWorktreeUnavailable(empty()),
+            PublicError::TaskProjectRootUnavailable(empty()),
+            PublicError::FileSystemPathNotAbsolute(empty()),
+            PublicError::FileSystemPathNotDirectory(empty()),
+            PublicError::FileSystemPathNotFound(empty()),
+            PublicError::FileSystemPathPermissionDenied(empty()),
+            PublicError::WorktreeRootNotAbsolute(empty()),
+            PublicError::WorktreeRootNotDirectory(empty()),
+            PublicError::OpenLocationFailed(OpenLocationFailedParams {
+                target: OpenLocationTarget::Explorer,
+            }),
+            PublicError::SkillUploadEmpty(empty()),
+            PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
+                max_files: 1_000,
+            }),
+            PublicError::SkillUploadPathInvalid(empty()),
+            PublicError::SkillUploadPathDuplicate(empty()),
+            PublicError::SkillManifestMissing(empty()),
+            PublicError::SkillManifestInvalid(empty()),
+            PublicError::SkillManifestNameBlank(empty()),
+            PublicError::SkillManifestDescriptionBlank(empty()),
+            PublicError::SkillManifestNameInvalid(empty()),
+            PublicError::SkillFolderConflict(SkillFolderConflictParams {
+                name: "review".to_string(),
+            }),
+        ]
+    }
+
+    /// Verifies the manually exposed code cannot drift from Serde's tagged representation.
+    #[test]
+    fn public_error_codes_match_serde_tags_for_every_variant() {
+        for error in public_error_samples() {
+            let serialized = serde_json::to_value(&error).unwrap();
+
+            assert_eq!(
+                serialized.get("code").and_then(serde_json::Value::as_str),
+                Some(error.code()),
+                "code mismatch for {error:?}"
+            );
+        }
     }
 }
