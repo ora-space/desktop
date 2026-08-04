@@ -294,9 +294,24 @@ impl RuntimeActor {
         let content_count = prompt.len();
         // Built before the prompt is recorded, so the transcript handed to a new
         // agent describes the conversation up to this turn rather than including it.
+        let handoff_carried = self.handoff_pending;
         let sent = self.prompt_for_agent(&prompt);
         let outcome = self.recorder.record_prompt(&prompt);
+        let stopped_recording = matches!(outcome, RecordOutcome::JustFailed { .. });
         self.settle_record(outcome);
+        if stopped_recording {
+            // A turn already streaming is allowed to finish, because the agent's
+            // work is real whether or not the file kept it. This one has not
+            // started: nothing is lost by refusing it, and running it would put
+            // the conversation somewhere the record cannot follow.
+            //
+            // The transcript this prompt would have carried was never delivered
+            // either, so the binding still owes it.
+            self.handoff_pending = handoff_carried;
+            let _ = events.try_send(Err(history_degraded()));
+            self.channel = Some(channel);
+            return;
+        }
         let request = PromptRequest::new(self.session.agent_session_id.clone(), sent);
         ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
         let future =

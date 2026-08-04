@@ -40,7 +40,8 @@ Ora records every conversation itself, in one append-only JSONL file per Session
 
 A history that skips records is more dangerous than one that stops, because the gap is invisible to whoever replays it — including the next agent. So a failed write stops recording that session for good rather than continuing past the hole.
 
-- The turn in flight finishes streaming: the agent's work is already done, and failing it would tell the user nothing happened when something did.
+- A turn already streaming finishes: the agent's work is real whether or not the file kept it, and failing it would tell the user nothing happened when something did.
+- A turn whose own prompt could not be recorded is refused before the agent is called. Nothing has happened yet, so nothing is lost by refusing it, and sending it would move the conversation somewhere the record cannot follow. If that prompt was the one carrying a handoff transcript, the binding still owes it and the next prompt carries it instead.
 - The session moves to `historyState: degraded` carrying the operating-system reason, and further prompts are refused with `session_history_degraded` until it is resumed.
 - `resumeSessionHistory` appends a `Gap` record naming what interrupted the file *before* accepting new content, then returns the session to writable. Resuming does not restore what was lost; it records that something was.
 - A history file Ora cannot read degrades the session the same way. Appending without knowing which positions are already used would overwrite them.
