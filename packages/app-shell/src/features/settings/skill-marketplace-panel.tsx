@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, toast } from "@ora/ui";
-import { IconExternalLink, IconShoppingBag } from "@tabler/icons-react";
+import { IconExternalLink, IconFolderOpen, IconShoppingBag } from "@tabler/icons-react";
 import { usePlatform, type SkillMarketplaceStatus } from "@ora/platform";
 
 /** Opens SkillHub and keeps the latest native download status visible in the Skills pane. */
 export function SkillMarketplacePanel() {
   const { t } = useTranslation();
-  const { skillMarketplace } = usePlatform();
+  const { locationActions, skillMarketplace } = usePlatform();
   const [status, setStatus] = useState<SkillMarketplaceStatus | null>(null);
   const [opening, setOpening] = useState(false);
   const [connectionFailed, setConnectionFailed] = useState(false);
@@ -60,6 +60,18 @@ export function SkillMarketplacePanel() {
     }
   };
 
+  /** Opens the directory containing a completed archive without launching the ZIP itself. */
+  const openDownloadDirectory = async (archivePath: string) => {
+    if (locationActions.kind !== "supported") return;
+    const lastSeparator = Math.max(archivePath.lastIndexOf("/"), archivePath.lastIndexOf("\\"));
+    const directoryPath = lastSeparator > 0 ? archivePath.slice(0, lastSeparator) : archivePath;
+    try {
+      await locationActions.open("explorer", directoryPath);
+    } catch {
+      toast.error(t("settings.skills.marketplaceOpenFolderFailed"));
+    }
+  };
+
   const unsupported = skillMarketplace.kind === "unsupported";
 
   return (
@@ -97,6 +109,8 @@ export function SkillMarketplacePanel() {
         status={status}
         unsupported={unsupported}
         connectionFailed={connectionFailed}
+        canOpenDownloadDirectory={locationActions.kind === "supported"}
+        onOpenDownloadDirectory={openDownloadDirectory}
       />
     </section>
   );
@@ -107,10 +121,14 @@ function MarketplaceStatus({
   status,
   unsupported,
   connectionFailed,
+  canOpenDownloadDirectory,
+  onOpenDownloadDirectory,
 }: {
   status: SkillMarketplaceStatus | null;
   unsupported: boolean;
   connectionFailed: boolean;
+  canOpenDownloadDirectory: boolean;
+  onOpenDownloadDirectory: (archivePath: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
 
@@ -150,10 +168,18 @@ function MarketplaceStatus({
       <p className="font-medium text-foreground">
         {t("settings.skills.marketplaceDownloaded", { fileName: status.fileName })}
       </p>
-      <p className="text-muted-foreground">{t("settings.skills.marketplaceSavedTo")}</p>
-      <code className="block break-all rounded bg-background px-2 py-1.5 text-[11px] text-foreground">
-        {status.archivePath}
-      </code>
+      <Button
+        type="button"
+        variant="link"
+        size="sm"
+        className="h-auto gap-1 p-0 text-xs"
+        disabled={!canOpenDownloadDirectory}
+        title={status.archivePath}
+        onClick={() => void onOpenDownloadDirectory(status.archivePath)}
+      >
+        <IconFolderOpen className="size-3.5" aria-hidden="true" />
+        {t("settings.skills.marketplaceSavedTo")}
+      </Button>
     </div>
   );
 }
