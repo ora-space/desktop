@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Agent, Skill, SkillImportConflictDecision, SkillImportDecision, SkillImportSession } from "@ora/contracts";
+import { decodeRemoteError, type Agent, type PrepareSkillImportResponse, type Skill, type SkillImportConflictDecision, type SkillImportDecision, type SkillImportSession } from "@ora/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePlatform } from "@ora/platform";
 import {
@@ -310,6 +310,9 @@ function SkillImportDialog({ open, onOpenChange, onCompleted }: {
   const [decisions, setDecisions] = useState<Record<string, SkillImportDecision>>({});
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  const archiveInput = useRef<HTMLInputElement>(null);
+  const usesBrowserUploads = platform.worktreeStorage.kind === "unsupported";
 
   const conflictCandidates = session?.candidates.filter((candidate) => candidate.status === "conflict") ?? [];
   const needsDecisions = conflictCandidates.some((candidate) => decisions[candidate.candidateId] === undefined);
@@ -357,6 +360,27 @@ function SkillImportDialog({ open, onOpenChange, onCompleted }: {
     }
   };
 
+  const prepareBrowserUpload = async (kind: "folder" | "archive", files: FileList | null) => {
+    if (files === null || files.length === 0) return;
+    setPreparing(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      for (const file of Array.from(files)) {
+        const sourcePath = kind === "folder" && file.webkitRelativePath ? file.webkitRelativePath : file.name;
+        form.append("source", file, sourcePath);
+      }
+      const response = await fetch(`/api/skill-imports?mode=${kind}`, { method: "POST", body: form });
+      const body: unknown = await response.json();
+      if (!response.ok) throw decodeRemoteError(body, response.status);
+      setSession((body as PrepareSkillImportResponse).session);
+    } catch (cause) {
+      setError(localizeContractError(cause, t));
+    } finally {
+      setPreparing(false);
+    }
+  };
+
   const commit = async () => {
     if (session === null || needsDecisions) return;
     const frozenDecisions: Array<SkillImportConflictDecision> = conflictCandidates.map((candidate) => ({
@@ -385,8 +409,10 @@ function SkillImportDialog({ open, onOpenChange, onCompleted }: {
         <DialogDescription>{t("settings.skills.importDescription")}</DialogDescription>
       </DialogHeader>
       {session === null && <div className="grid gap-3 sm:grid-cols-2">
-        <Button variant="secondary" disabled={preparing} onClick={() => void chooseSource("folder")}>{t("settings.skills.importFolder")}</Button>
-        <Button variant="secondary" disabled={preparing} onClick={() => void chooseSource("archive")}>{t("settings.skills.importArchive")}</Button>
+        <input ref={folderInput} className="hidden" type="file" multiple webkitdirectory="" onChange={(event) => { void prepareBrowserUpload("folder", event.currentTarget.files); event.currentTarget.value = ""; }} />
+        <input ref={archiveInput} className="hidden" type="file" accept=".zip,.skill,.tar.gz,.tgz" onChange={(event) => { void prepareBrowserUpload("archive", event.currentTarget.files); event.currentTarget.value = ""; }} />
+        <Button variant="secondary" disabled={preparing} onClick={() => usesBrowserUploads ? folderInput.current?.click() : void chooseSource("folder")}>{t("settings.skills.importFolder")}</Button>
+        <Button variant="secondary" disabled={preparing} onClick={() => usesBrowserUploads ? archiveInput.current?.click() : void chooseSource("archive")}>{t("settings.skills.importArchive")}</Button>
       </div>}
       {session !== null && <div className="space-y-3">
         <p className="text-sm text-muted-foreground">{t("settings.skills.importProgress", { processed: session.progress.processed, total: session.progress.total })}</p>
