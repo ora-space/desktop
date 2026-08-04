@@ -104,10 +104,10 @@ impl From<ApplicationError> for BackendError {
                 "skill_storage_inconsistent",
                 format!("skill storage is inconsistent for: {name}"),
             ),
-            ApplicationError::SkillStorage { .. } => internal(
-                "skill_storage_error",
-                "skill storage operation failed",
-            ),
+            ApplicationError::SkillStorage { .. } => {
+                internal("skill_storage_error", "skill storage operation failed")
+            }
+            ApplicationError::SkillImport(error) => import_error(error),
             ApplicationError::AgentDefinitionNameBlank => Self::new(
                 BackendErrorKind::BadRequest,
                 "agent_name_blank",
@@ -186,6 +186,138 @@ impl From<ApplicationError> for BackendError {
 /// Builds a sanitized internal failure without leaking repository or filesystem diagnostics.
 fn internal(code: &'static str, message: &'static str) -> BackendError {
     BackendError::new(BackendErrorKind::Internal, code, message)
+}
+
+/// Maps one import-session failure onto its stable public error code and message.
+fn import_error(error: ora_application::SkillImportError) -> BackendError {
+    use ora_application::SkillImportError;
+    match error {
+        SkillImportError::SkillManifestNotFound => bad_request(
+            "skill_manifest_not_found",
+            "no SKILL.md manifest was found in the source",
+        ),
+        SkillImportError::TooManySkills { max_skills } => bad_request(
+            "too_many_skills",
+            format!("source contains more than {max_skills} skills"),
+        ),
+        SkillImportError::TooManyFiles { max_files } => bad_request(
+            "too_many_files",
+            format!("one skill contains more than {max_files} files"),
+        ),
+        SkillImportError::DuplicateSkillNames { .. } => bad_request(
+            "duplicate_skill_names",
+            "multiple valid skills in one source declare the same name",
+        ),
+        SkillImportError::ArchiveFormatUnsupported => bad_request(
+            "archive_format_unsupported",
+            "unsupported archive format; allowed extensions: zip, skill, tar.gz, tgz",
+        ),
+        SkillImportError::ArchiveFormatMismatch => bad_request(
+            "archive_format_mismatch",
+            "archive contents do not match the requested format",
+        ),
+        SkillImportError::ArchiveCorrupt => {
+            bad_request("archive_corrupt", "archive is corrupt or unreadable")
+        }
+        SkillImportError::ArchiveTooLarge => bad_request(
+            "archive_too_large",
+            "archive exceeds the maximum upload size",
+        ),
+        SkillImportError::ArchiveEncryptedUnsupported => bad_request(
+            "archive_encrypted_unsupported",
+            "encrypted archives are not supported",
+        ),
+        SkillImportError::ArchiveSpecialEntryUnsupported => bad_request(
+            "archive_special_entry_unsupported",
+            "archive contains a special entry that cannot be stored safely",
+        ),
+        SkillImportError::ArchivePathEncodingInvalid => bad_request(
+            "archive_path_encoding_invalid",
+            "archive entry path is not valid UTF-8",
+        ),
+        SkillImportError::ArchivePathCaseConflict => bad_request(
+            "archive_path_case_conflict",
+            "source paths conflict after portable case normalization",
+        ),
+        SkillImportError::PathSegmentTooLong => bad_request(
+            "path_segment_too_long",
+            "a source path segment exceeds 255 bytes or 255 UTF-16 code units",
+        ),
+        SkillImportError::PathTooLong => {
+            bad_request("path_too_long", "a source path exceeds 1024 bytes")
+        }
+        SkillImportError::PathTooDeep => {
+            bad_request("path_too_deep", "a source path exceeds 32 directory levels")
+        }
+        SkillImportError::UnsafePath => {
+            bad_request("path_unsafe", "a source path is unsafe and was rejected")
+        }
+        SkillImportError::ArchiveExpansionRatioExceeded => bad_request(
+            "archive_expansion_ratio_exceeded",
+            "archive expands beyond the allowed ratio",
+        ),
+        SkillImportError::TotalBytesExceeded => bad_request(
+            "archive_total_bytes_exceeded",
+            "source exceeds the allowed cumulative byte budget",
+        ),
+        SkillImportError::TooManyEntries { max_entries } => bad_request(
+            "too_many_entries",
+            format!("source contains more than {max_entries} entries"),
+        ),
+        SkillImportError::PreparationTimeout => bad_request(
+            "import_preparation_timeout",
+            "import preparation exceeded the allowed time limit",
+        ),
+        SkillImportError::SessionNotFound { .. } => BackendError::new(
+            BackendErrorKind::NotFound,
+            "import_session_not_found",
+            "import session not found",
+        ),
+        SkillImportError::SessionExpired => BackendError::new(
+            BackendErrorKind::NotFound,
+            "import_session_expired",
+            "import session has expired",
+        ),
+        SkillImportError::SessionCancelled => BackendError::new(
+            BackendErrorKind::Conflict,
+            "import_session_cancelled",
+            "import session was cancelled",
+        ),
+        SkillImportError::CommitInProgress => BackendError::new(
+            BackendErrorKind::Conflict,
+            "import_session_commit_in_progress",
+            "import session commit is already in progress",
+        ),
+        SkillImportError::AlreadyCommitted => BackendError::new(
+            BackendErrorKind::Conflict,
+            "import_session_already_committed",
+            "import session was already committed with different decisions",
+        ),
+        SkillImportError::DecisionMissing { .. } => bad_request(
+            "import_decision_missing",
+            "decisions are missing for some conflict candidates",
+        ),
+        SkillImportError::SourceUnavailable { .. } => internal(
+            "import_source_unavailable",
+            "the import source could not be read",
+        ),
+        SkillImportError::Storage { .. } => internal(
+            "skill_storage_error",
+            "skill storage operation failed during import",
+        ),
+        SkillImportError::Repository { .. } => internal(
+            "skill_repository_error",
+            "skill repository operation failed during import",
+        ),
+        SkillImportError::Internal { .. } => {
+            internal("skill_import_error", "internal import failure")
+        }
+    }
+}
+
+/// Builds a sanitized client-failure for import validation errors.
+fn bad_request(code: &'static str, message: impl Into<String>) -> BackendError {
+    BackendError::new(BackendErrorKind::BadRequest, code, message)
 }
 
 #[cfg(test)]

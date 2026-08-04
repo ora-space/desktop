@@ -1,4 +1,5 @@
 use crate::skill::SkillStorageError;
+use crate::skill_import::SkillImportError;
 use crate::{
     AgentDefinitionRepositoryError, ProjectRepositoryError, ProjectWorkContextRepositoryError,
     SessionRepositoryError, SkillRepositoryError, TaskRepositoryError,
@@ -30,6 +31,8 @@ pub enum ApplicationError {
     SkillStorageInconsistent { name: String },
     #[error("skill storage operation failed: {message}")]
     SkillStorage { message: String },
+    #[error("skill import failed: {0}")]
+    SkillImport(SkillImportError),
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
     #[error("agent definition not found: {agent_id}")]
@@ -85,9 +88,9 @@ impl ApplicationError {
             SkillStorageError::FormalDirectoryMissing { name } => {
                 Self::SkillStorageInconsistent { name }
             }
-            SkillStorageError::FormalDirectoryExists { name } => Self::SkillStorageInconsistent {
-                name,
-            },
+            SkillStorageError::FormalDirectoryExists { name } => {
+                Self::SkillStorageInconsistent { name }
+            }
             SkillStorageError::OperationFailed { message } => Self::SkillStorage { message },
         }
     }

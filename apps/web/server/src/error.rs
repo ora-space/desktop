@@ -154,6 +154,9 @@ impl From<ApplicationError> for WebApiError {
                 code: "skill_storage_error",
                 message,
             },
+            ApplicationError::SkillImport(error) => {
+                BackendError::from(ApplicationError::SkillImport(error)).into()
+            }
             ApplicationError::AgentDefinitionNameBlank => Self {
                 status: StatusCode::BAD_REQUEST,
                 code: "agent_name_blank",

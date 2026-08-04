@@ -5,12 +5,15 @@ The public application surface is split across `ora-application`, `ora-contracts
 ## Ownership
 
 - `ora-contracts` owns serialization-friendly request, response, and stream-event DTOs for Project, Task, Session, Skill, and Agent operations, plus the Web-only project work context and filesystem operations.
+- `ora-contracts` owns the skill-import session DTOs (`skill_import.rs`): sources, prepared sessions, candidates, conflict decisions, results, and progress. These are exported into `packages/contracts/src/skill-import.ts` and registered as the `skillImport` frontend namespace.
 - `ora-contracts::Project` is the single shared app-facing project payload for the first slice. It exposes `id`, `name`, and `root_path` only.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
 - `ora-contracts` also owns the frontend endpoint manifest for the exported HTTP CRUD surface, including operation names, HTTP methods, path templates, path parameters, request types, response types, and JSON body behavior.
 - `ora-contracts` exports TypeScript DTOs plus the generated frontend SDK into `packages/contracts/src` so frontend packages can consume the generated contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`.
 - Backend-owned task worktrees stay internal; `ora-contracts` does not export standalone public worktree CRUD DTOs, SDK operations, or task payload linkage fields for them.
 - `ora-application` owns CRUD handlers, application errors, repository ports, and domain-to-contract mapping.
+- `ora-application` owns the skill storage port, journaled atomic filesystem transactions, the import session service, and the `skill_import` use cases that materialize and validate sources before commit.
+- `ora-skill-package` owns archive reading (`.zip`, `.skill`, `.tar.gz`, `.tgz`), path security and resource limits, `SKILL.md` boundary scanning, and manifest parsing. `ora-application` consumes it through its snapshot API.
 - `ora-application` also owns the project work context handlers, lease timing rules, occupancy conflicts, and the mapping from `ora-domain::ProjectWorkContext` into the shared contract payload.
 - `ora-backend` owns SQLite bootstrap, the system clock, concrete repository/handler composition, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, and transport-neutral public error normalization.
 - Transport adapters stay thin: Web handlers and Tauri commands accept contract requests, delegate to the same `Backend`, then map its stable errors into HTTP or IPC semantics.
