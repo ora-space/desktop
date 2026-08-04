@@ -153,6 +153,17 @@ impl SkillRepository for Rc<FakeSkillRepository> {
             .find(|skill| skill.id == *skill_id && !skill.audit_fields.is_deleted)
             .cloned())
     }
+    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, RepositoryError> {
+        self.take_error()?;
+        Ok(self
+            .skills
+            .borrow()
+            .iter()
+            .find(|skill| {
+                !skill.audit_fields.is_deleted && skill.name.eq_ignore_ascii_case(name)
+            })
+            .cloned())
+    }
     fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError> {
         self.take_error()?;
         Ok(self

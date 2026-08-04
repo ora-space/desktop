@@ -11,6 +11,9 @@ pub trait SkillRepository {
     /// Loads one visible skill by identifier.
     fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError>;
 
+    /// Loads one visible skill by name using ASCII case-insensitive comparison.
+    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, RepositoryError>;
+
     /// Lists visible skills in deterministic storage order.
     fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError>;
 
