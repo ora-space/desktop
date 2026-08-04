@@ -67,6 +67,8 @@ The RFC 3339 timestamp uses the configured process timezone and includes its UTC
 
 ## Request completion and errors
 
+Long-lived streams, including task workspace watching, mark the response as deferred and emit completion only when the stream ends or reports its typed contract error.
+
 Ora frontend requests receive a canonical UUID v4 at the Web, Tauri, or stream entry seam. The same identifier correlates the request span, public error payload or stream error frame, and completion event; Web also returns it through `X-Request-Id`. Client-provided request identifiers are never canonical.
 
 Each request records at most one completion event with `operation`, `request_id`, `outcome`, and `duration_ms`. Failures additionally record the stable public `error.code` plus the bounded `error.message`, single-line `error.chain`, and `error.chain_depth` produced by `ErrorReport::from_error`. Internal errors use `ERROR`, conflicts use `WARN`, validation and not-found outcomes use `INFO`, and cancellation uses `DEBUG`. Successful health and readiness checks also use `DEBUG`.

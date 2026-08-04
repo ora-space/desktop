@@ -1579,15 +1579,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ora-history"
-version = "0.0.0"
-dependencies = [
- "ora-contracts",
- "ora-domain",
- "time",
-]
-
-[[package]]
 name = "ora-fs"
 version = "0.0.0"
 dependencies = [
@@ -1599,6 +1590,20 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "ora-history"
+version = "0.0.0"
+dependencies = [
+ "ora-contracts",
+ "ora-domain",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]

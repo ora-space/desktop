@@ -10,6 +10,7 @@
 - It provisions task-owned linked worktrees during creation and leaves Git untouched during deletion.
 - It streams ACP load replay and prompt updates as bounded NDJSON responses.
 - It provides read-only server filesystem listings for the Web platform path picker.
+- It provides a task-scoped, read-only workspace explorer with bounded file reads, ripgrep search, and native refresh events.
 - It owns the project work context routes, which are outside `ora-backend`.
 
 ## Data root configuration
@@ -129,6 +130,15 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 - `GET /api/file-system/directory?path={absolute_path}`
 - `GET /api/projects/{projectId}/branches`
 
+### task workspace files
+
+- `POST /api/tasks/{taskId}/files/list` with `{ "path": "src" }` to list one workspace-relative directory
+- `POST /api/tasks/{taskId}/files/read` with `{ "path": "src/main.rs" }` to read one bounded UTF-8 file
+- `POST /api/tasks/{taskId}/files/search` with `{ "query": "needle", "kind": "files" | "content" }` to search filenames or text
+- `GET /api/tasks/{taskId}/files/watch` to stream debounced `WorkspaceFileEventBatch` NDJSON frames
+
+Every task workspace route resolves the active task workspace through `ora-backend`; the client cannot select a root directory. The filesystem service rejects absolute paths, parent traversal, and symlink escapes. File reads are capped at 10 MiB and reject binary or invalid UTF-8 content. Search uses fixed-string matching for content, a 15-second timeout, an 8 MiB output bound, and at most 10,000 results. Watch events are coalesced for 100 ms before a batch is emitted. See [Task Workspace Files](task-workspace-files.md).
+
 ### gitIdentity
 
 - `GET /api/git/identity`
@@ -194,12 +204,16 @@ Error mapping is centralized so application outcomes become stable HTTP response
 
 Shared backend failures project to the same typed `{ code, params, requestId }` payload used by Desktop; there is no public message or outer error envelope. HTTP status derives from the backend error classification.
 
+Task workspace failures use the same mapping: missing task or workspace path returns a typed not-found response, invalid relative paths and unreadable text return a typed bad request, and bounded-output failures retain their native `413`/`422` classification. Watch failures are emitted as `{ "type": "error", "error": { "code", "params", "requestId" } }` frames rather than raw filesystem messages.
+
 ## Frontend development modes
 
 - `task run:web-backend` starts the Rust HTTP backend on its default port.
 - `task run:web-frontend` starts Vite with the fetch contracts transport and expects the backend to run separately.
 
 The Web frontend always uses the fetch contracts transport and talks to the Rust HTTP backend, in both development and production builds.
+
+Long-lived task workspace watch responses defer completion until an end or error frame so the request id, error payload, and log event remain correlated. This keeps the watcher aligned with the ACP stream lifecycle and prevents an early success event followed by a duplicate failure event.
 
 ## Storage behavior
 

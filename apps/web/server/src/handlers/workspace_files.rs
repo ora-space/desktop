@@ -1,13 +1,15 @@
 use crate::app_state::AppState;
-use crate::error::WebApiError;
+use crate::error::{DeferredCompletion, WebApiError, current_lifecycle};
 use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, Response, header};
 use futures_util::stream;
+use ora_backend::BackendError;
 use ora_contracts::{
-    ListWorkspaceDirectoryResponse, ReadWorkspaceFileResponse, SearchWorkspaceResponse,
-    WorkspaceFileChange, WorkspaceFileEventBatch, WorkspaceSearchKind,
+    ContractError, EmptyErrorParams, ListWorkspaceDirectoryResponse, PublicError,
+    ReadWorkspaceFileResponse, SearchWorkspaceResponse, WorkspaceFileChange,
+    WorkspaceFileEventBatch, WorkspaceSearchKind,
 };
 use ora_fs::{WorkspaceChange, WorkspaceChangeKind};
 use serde::{Deserialize, Serialize};
@@ -51,15 +53,8 @@ pub struct SearchBody {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum StreamFrame<Event> {
     Data { data: Event },
-    Error { error: StreamError },
+    Error { error: ContractError },
     End,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StreamError {
-    code: &'static str,
-    message: String,
 }
 
 /// Lists one immediate directory in the task's active managed worktree.
@@ -136,10 +131,8 @@ pub async fn watch(
                 }
                 Ok(Some(_)) | Ok(None) => {}
                 Err(error) => {
-                    let _ = sender.blocking_send(Err(StreamError {
-                        code: "workspace_watch_failed",
-                        message: error.to_string(),
-                    }));
+                    let error = WebApiError::from(error).into_backend_error();
+                    let _ = sender.blocking_send(Err(error));
                     break;
                 }
             }
@@ -179,27 +172,51 @@ fn to_contract_change(change: WorkspaceChange) -> WorkspaceFileChange {
 
 /// Converts watcher batches into the same private NDJSON framing used by session streams.
 fn stream_response(
-    receiver: tokio::sync::mpsc::Receiver<Result<WorkspaceFileEventBatch, StreamError>>,
+    receiver: tokio::sync::mpsc::Receiver<Result<WorkspaceFileEventBatch, BackendError>>,
 ) -> Response<Body> {
-    let body_stream = stream::unfold((receiver, false), |(mut receiver, ended)| async move {
-        if ended {
-            return None;
-        }
-        let (frame, next_ended) = match receiver.recv().await {
-            Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
-            Some(Err(error)) => (StreamFrame::Error { error }, true),
-            None => (StreamFrame::End, true),
-        };
-        let mut bytes = serde_json::to_vec(&frame).unwrap_or_else(|_| {
-            b"{\"type\":\"error\",\"error\":{\"code\":\"stream_encoding_failed\",\"message\":\"failed to encode stream frame\"}}".to_vec()
-        });
-        bytes.push(b'\n');
-        Some((
-            Ok::<Bytes, Infallible>(Bytes::from(bytes)),
-            (receiver, next_ended),
-        ))
-    });
+    let lifecycle = current_lifecycle();
+    let body_stream = stream::unfold(
+        (receiver, false, lifecycle),
+        |(mut receiver, ended, lifecycle)| async move {
+            if ended {
+                return None;
+            }
+            let (frame, next_ended) = match receiver.recv().await {
+                Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
+                Some(Err(error)) => {
+                    lifecycle.complete_failure(&error);
+                    (
+                        StreamFrame::Error {
+                            error: error.contract_error(lifecycle.request_id()),
+                        },
+                        true,
+                    )
+                }
+                None => {
+                    lifecycle.complete_success();
+                    (StreamFrame::End, true)
+                }
+            };
+            let mut bytes = serde_json::to_vec(&frame).unwrap_or_else(|source| {
+                let error = BackendError::internal("failed to encode stream frame", source);
+                lifecycle.complete_failure(&error);
+                serde_json::to_vec(&StreamFrame::<WorkspaceFileEventBatch>::Error {
+                    error: ContractError {
+                        error: PublicError::InternalError(EmptyErrorParams {}),
+                        request_id: lifecycle.request_id(),
+                    },
+                })
+                .unwrap_or_default()
+            });
+            bytes.push(b'\n');
+            Some((
+                Ok::<Bytes, Infallible>(Bytes::from(bytes)),
+                (receiver, next_ended, lifecycle),
+            ))
+        },
+    );
     let mut response = Response::new(Body::from_stream(body_stream));
+    response.extensions_mut().insert(DeferredCompletion);
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/x-ndjson"),

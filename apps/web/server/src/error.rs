@@ -124,6 +124,11 @@ impl WebApiError {
             error: BackendError::internal(context, source),
         }
     }
+
+    /// Transfers the classified failure to a stream that owns its completion lifecycle.
+    pub(crate) fn into_backend_error(self) -> BackendError {
+        self.error
+    }
 }
 
 impl From<ora_fs::WorkspaceFileSystemError> for WebApiError {

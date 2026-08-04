@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { appI18n } from "../../i18n/i18n-instance";
 import { WorkspaceFileViewer } from "./workspace-file-viewer";
 import { utf8ByteColumnToStringIndex } from "./workspace-file-viewer-utils";
 
@@ -39,7 +40,7 @@ describe("WorkspaceFileViewer", () => {
     );
 
     expect(container.querySelector(
-      '[data-slot="scroll-area"][data-scrollbars="both"]',
+      '[data-slot="scroll-area"][scrollbars="both"]',
     )).not.toBeNull();
   });
 
@@ -64,8 +65,8 @@ describe("WorkspaceFileViewer", () => {
       />,
     );
 
-    const start = screen.getByRole("button", { name: "Select line 2" });
-    const end = screen.getByRole("button", { name: "Select line 4" });
+    const start = screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 2 }) });
+    const end = screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 4 }) });
     fireEvent.click(start);
     fireEvent.click(end, { shiftKey: true });
 
@@ -85,8 +86,8 @@ describe("WorkspaceFileViewer", () => {
       />,
     );
 
-    const start = screen.getByRole("button", { name: "Select line 2" });
-    const end = screen.getByRole("button", { name: "Select line 4" });
+    const start = screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 2 }) });
+    const end = screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 4 }) });
     fireEvent.mouseDown(start, { button: 0 });
     fireEvent.mouseEnter(end, { buttons: 1 });
     fireEvent.mouseUp(end, { button: 0 });
