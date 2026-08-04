@@ -322,12 +322,18 @@ pub struct SwitchSessionAgentRequest {
 }
 
 /// Returns the session rebound to its new CLI.
+///
+/// The new CLI reports its own commands and configuration during the handshake
+/// that the switch performs, so both travel back with the rebound session. A
+/// client that only heard about the session would otherwise keep offering the
+/// previous CLI's models, which the new one cannot honour.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct SwitchSessionAgentResponse {
     pub session: Session,
     pub available_commands: Vec<AvailableCommand>,
+    pub config_options: Vec<SessionConfigOption>,
 }
 
 /// Returns a session whose history writes failed to a writable state.

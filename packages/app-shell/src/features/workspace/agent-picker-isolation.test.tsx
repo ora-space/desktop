@@ -53,11 +53,23 @@ async function clickTask(user: ReturnType<typeof userEvent.setup>, title: string
   await user.click(await screen.findByText(title));
 }
 
-/** Opens the composer's picker dropdown and clicks the named agent's entry. */
+/** The collapsed picker, which names the agent the selected surface is on. */
+function picker() {
+  return screen.getByRole("button", { name: /选择模型|Select model/ });
+}
+
+/**
+ * Opens the composer's picker, clicks the named agent, then closes the menu.
+ *
+ * Choosing an agent deliberately leaves the menu open, so the same label is on
+ * screen twice until it is dismissed. Closing here keeps each assertion about
+ * what the picker settled on rather than what the open list still offers.
+ */
 async function pickAgent(user: ReturnType<typeof userEvent.setup>, agentLabel: RegExp) {
-  await user.click(screen.getByRole("button", { name: /选择模型|Select model/ }));
+  await user.click(picker());
   const menu = await screen.findByRole("menu");
   await user.click(within(menu).getByText(agentLabel));
+  await user.keyboard("{Escape}");
 }
 
 describe("agent picker isolation across real sidebar navigation", () => {
@@ -67,19 +79,19 @@ describe("agent picker isolation across real sidebar navigation", () => {
 
     await clickTask(user, "Task One");
     await pickAgent(user, /Claude Code/);
-    expect(screen.getByText("Claude Code")).not.toBeNull();
+    expect(within(picker()).getByText("Claude Code")).not.toBeNull();
 
     await clickTask(user, "Task Two");
     await pickAgent(user, /OpenCode/);
-    expect(screen.getByText("OpenCode")).not.toBeNull();
+    expect(within(picker()).getByText("OpenCode")).not.toBeNull();
 
     await clickTask(user, "Task One");
-    expect(screen.getByText("Claude Code")).not.toBeNull();
+    expect(within(picker()).getByText("Claude Code")).not.toBeNull();
 
     await clickTask(user, "Task Two");
-    expect(screen.getByText("OpenCode")).not.toBeNull();
+    expect(within(picker()).getByText("OpenCode")).not.toBeNull();
 
     await clickTask(user, "Task One");
-    expect(screen.getByText("Claude Code")).not.toBeNull();
+    expect(within(picker()).getByText("Claude Code")).not.toBeNull();
   });
 });

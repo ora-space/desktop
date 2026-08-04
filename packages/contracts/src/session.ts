@@ -232,10 +232,16 @@ export type SwitchSessionAgentRequest = {
 
 /**
  * Returns the session rebound to its new CLI.
+ *
+ * The new CLI reports its own commands and configuration during the handshake
+ * that the switch performs, so both travel back with the rebound session. A
+ * client that only heard about the session would otherwise keep offering the
+ * previous CLI's models, which the new one cannot honour.
  */
 export type SwitchSessionAgentResponse = {
   session: Session;
   availableCommands: Array<AvailableCommand>;
+  configOptions: Array<SessionConfigOption>;
 };
 
 /**

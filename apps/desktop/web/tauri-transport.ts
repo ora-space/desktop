@@ -68,6 +68,8 @@ const tauriCommands = {
   attachSession: "attach_session",
   getSession: "get_session",
   listSessions: "list_sessions",
+  switchSessionAgent: "switch_session_agent",
+  resumeSessionHistory: "resume_session_history",
   respondToSessionPermission: "respond_to_session_permission",
   stopSession: "stop_session",
   deleteSession: "delete_session",

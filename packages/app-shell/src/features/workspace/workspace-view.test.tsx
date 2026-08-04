@@ -36,7 +36,13 @@ describe("WorkspaceView", () => {
       },
     ];
     state.sessions = [
-      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running" },
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        historyState: { type: "writable" },
+      },
     ];
     const client = createMockClient(state);
     const load = vi.fn(async function* () {
@@ -82,7 +88,13 @@ describe("WorkspaceView", () => {
       },
     ];
     state.sessions = [
-      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running" },
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        historyState: { type: "writable" },
+      },
     ];
     const client = createMockClient(state);
     const load = vi.fn(async function* () {
@@ -721,7 +733,13 @@ describe("WorkspaceView", () => {
       },
     ];
     state.sessions = [
-      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running" },
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        historyState: { type: "writable" },
+      },
     ];
     const client = createMockClient(state);
     let finishReplay: () => void = () => {};
@@ -816,6 +834,142 @@ describe("WorkspaceView", () => {
       ).toBeInTheDocument(),
     );
     expect(within(menu).queryByText(/加载中|Loading/)).toBeNull();
+  });
+
+  it("replaces the model list with the new agent's, leaving the picker open", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Switch agent",
+        status: "todo",
+        workspaceMode: "worktree",
+      },
+    ];
+    state.sessions = [
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        historyState: { type: "writable" },
+      },
+    ];
+    const baseClient = createMockClient(state);
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        // Every CLI reports its own models, which is the whole reason a switch
+        // has to hand them back rather than let the picker keep the old ones.
+        switchAgent: async (request, options) => {
+          const response = await baseClient.session.switchAgent(request, options);
+          return {
+            ...response,
+            configOptions: [
+              {
+                id: "model",
+                name: "Model",
+                category: "model",
+                type: "select",
+                currentValue: "claude/sonnet",
+                options: [
+                  { value: "claude/sonnet", name: "Sonnet" },
+                  { value: "claude/haiku", name: "Haiku" },
+                ],
+              },
+            ],
+          };
+        },
+      },
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /选择模型|Select model/ }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Claude Code" }));
+
+    // Picking a CLI is only half the decision, so the menu is still open on the
+    // models that CLI actually offers rather than the ones it replaced.
+    const menu = await screen.findByRole("menu");
+    expect(
+      await within(menu).findByRole("menuitem", { name: "Haiku" }),
+    ).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Small Pickle" })).toBeNull();
+    expect(state.sessions[0]?.agentCli).toBe("claude");
+  });
+
+  it("resumes a session whose history stopped recording", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Broken history",
+        status: "todo",
+        workspaceMode: "worktree",
+      },
+    ];
+    state.sessions = [
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        historyState: { type: "degraded", reason: "no space left on device" },
+      },
+    ];
+    const client = createMockClient(state);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("no space left on device");
+    await user.click(
+      within(banner).getByRole("button", { name: /恢复记录|Resume history/ }),
+    );
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(state.sessions[0]?.historyState).toEqual({ type: "writable" });
   });
 });
 

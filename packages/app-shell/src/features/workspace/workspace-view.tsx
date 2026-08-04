@@ -35,6 +35,7 @@ import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
+import { SessionHistoryBanner } from "../chat/session-history-banner";
 import { WorkflowStepper } from "../workflow/workflow-stepper";
 import { useWorkflowDetection } from "../workflow/use-workflow-detection";
 import type { ChatTurn } from "@ora/chat";
@@ -349,6 +350,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           />
           <WindowControls />
         </div>
+        <SessionHistoryBanner session={session} />
         <TaskChangesLayout taskId={task?.id}>
           <ChatView
             taskId={task?.id}

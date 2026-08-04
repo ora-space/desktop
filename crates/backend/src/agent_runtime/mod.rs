@@ -18,7 +18,9 @@ use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionRepository};
 use ora_contracts::acp::content::ContentBlock;
 use ora_contracts::acp::session::SessionUpdate;
-use ora_contracts::acp::session_config_options::{SessionConfigId, SessionConfigOptionValue};
+use ora_contracts::acp::session_config_options::{
+    SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
+};
 use ora_contracts::acp::slash_command::AvailableCommand;
 use ora_contracts::{
     AttachSessionRequest, AttachSessionResponse, DeleteSessionResponse, LoadSessionEvent,
@@ -120,6 +122,12 @@ struct ProviderSession {
     agent_session_id: String,
     channel: SessionChannel,
     available_commands: Vec<AvailableCommand>,
+    /// What the new CLI offers to configure, the model list among it.
+    ///
+    /// ACP reports this only while creating or loading a session, so the
+    /// handshake is the single chance to learn it. Dropping it here would leave
+    /// a rebound session describable only by whatever its previous CLI said.
+    config_options: Vec<SessionConfigOption>,
     supervisor: ConnectionSupervisor,
 }
 
@@ -370,6 +378,7 @@ impl AgentRuntimeManager {
         Ok(SwitchSessionAgentResponse {
             session: contract_session(session),
             available_commands: provider.available_commands,
+            config_options: provider.config_options,
         })
     }
 
@@ -497,6 +506,9 @@ impl AgentRuntimeManager {
             agent_session_id: response.session_id.to_string(),
             channel,
             available_commands,
+            // An agent that configures nothing omits the field rather than
+            // sending an empty list, and both mean the same thing here.
+            config_options: response.config_options.unwrap_or_default(),
             supervisor,
         })
     }
