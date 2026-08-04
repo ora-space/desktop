@@ -67,6 +67,7 @@ describe("SkillMarketplacePanel", () => {
         duration: 5_000,
       },
     );
+    expect(screen.getByRole("status")).not.toHaveTextContent(/已下载 skill.zip|Downloaded skill.zip/);
     expect(screen.queryByText("/app-data/skill-downloads/skill.zip")).not.toBeInTheDocument();
     const savedLocation = screen.getByRole("button", { name: /保存位置|Saved to/ });
     expect(savedLocation).toHaveAttribute("title", "/app-data/skill-downloads/skill.zip");

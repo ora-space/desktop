@@ -165,9 +165,6 @@ function MarketplaceStatus({
 
   return (
     <div className="mt-3 space-y-1 text-xs" role="status">
-      <p className="font-medium text-foreground">
-        {t("settings.skills.marketplaceDownloaded", { fileName: status.fileName })}
-      </p>
       <Button
         type="button"
         variant="link"
