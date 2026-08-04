@@ -36,6 +36,10 @@ pub enum BackendBootstrapError {
     Database(#[source] ora_db::DatabaseError),
     #[error("failed to initialize agent runtime")]
     AgentRuntime(#[source] BackendError),
+    #[error("failed to reconcile skill storage")]
+    SkillStorageReconciliation(
+        #[source] crate::skill_reconciliation::SkillStorageReconciliationError,
+    ),
 }
 
 /// Owns the concrete persisted use-case composition shared by Web and Tauri adapters.
@@ -66,6 +70,10 @@ impl Backend {
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(&DatabaseLocation::path(&paths.database_path), &catalog)
             .map_err(BackendBootstrapError::Database)?;
+        crate::skill_reconciliation::reconcile_skill_storage(&pool, &paths.skills_root)
+            .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
+        crate::skill_reconciliation::cleanup_import_temp_sessions()
+            .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let agent_runtime = AgentRuntimeManager::new(pool.clone(), paths.home_directory, clock)
@@ -287,6 +295,41 @@ impl Backend {
         self.skill.delete(request).map_err(BackendError::from)
     }
 
+    /// Prepares one skill import source into a previewed session.
+    pub fn prepare_skill_import(
+        &self,
+        request: PrepareSkillImportRequest,
+    ) -> Result<PrepareSkillImportResponse, BackendError> {
+        self.skill
+            .prepare_import(request)
+            .map_err(BackendError::from)
+    }
+    /// Returns one skill import session with its current progress.
+    pub fn get_skill_import(
+        &self,
+        request: GetSkillImportSessionRequest,
+    ) -> Result<GetSkillImportSessionResponse, BackendError> {
+        self.skill.get_import(request).map_err(BackendError::from)
+    }
+    /// Accepts and freezes one skill import commit, starting the background task.
+    pub fn commit_skill_import(
+        &self,
+        request: CommitSkillImportRequest,
+    ) -> Result<CommitSkillImportResponse, BackendError> {
+        self.skill
+            .commit_import(request)
+            .map_err(BackendError::from)
+    }
+    /// Cancels a prepared skill import session.
+    pub fn cancel_skill_import(
+        &self,
+        request: CancelSkillImportRequest,
+    ) -> Result<CancelSkillImportResponse, BackendError> {
+        self.skill
+            .cancel_import(request)
+            .map_err(BackendError::from)
+    }
+
     /// Creates one configurable agent through the shared application composition.
     pub fn create_agent(
         &self,
@@ -454,6 +497,46 @@ mod tests {
             .expect_err("deleted project should be hidden");
         assert_eq!(error.kind(), BackendErrorKind::NotFound);
         assert_eq!(error.code(), "project_not_found");
+    }
+
+    /// Verifies an update rewrites only the manifest and preserves other package files.
+    #[test]
+    fn update_preserves_other_package_files() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let skills_root = temporary.path().join("atoms").join("skills");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+            skills_root: skills_root.clone(),
+        })
+        .expect("open shared backend");
+
+        let skill = backend
+            .create_skill(CreateSkillRequest {
+                name: "review".to_string(),
+                description: "Reviews changes".to_string(),
+            })
+            .expect("create skill")
+            .skill;
+        // A user-added package file must survive an ordinary update.
+        fs::create_dir_all(skills_root.join("review")).expect("create package directory");
+        fs::write(skills_root.join("review").join("helper.sh"), "echo hi")
+            .expect("write helper file");
+
+        let updated = backend
+            .update_skill(UpdateSkillRequest {
+                skill_id: skill.id,
+                name: "review".to_string(),
+                description: "Reviews pull requests".to_string(),
+            })
+            .expect("update skill")
+            .skill;
+        assert_eq!(updated.description, "Reviews pull requests");
+        assert!(skills_root.join("review").join("helper.sh").is_file());
+        let manifest =
+            fs::read_to_string(skills_root.join("review").join("SKILL.md")).expect("read manifest");
+        assert!(manifest.contains("description: Reviews pull requests"));
     }
 
     /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.

@@ -141,6 +141,11 @@ fn web_backend_bootstrap_error(error: BackendBootstrapError) -> WebBootstrapErro
         BackendBootstrapError::AgentRuntime(source) => WebBootstrapError::ProjectBootstrap {
             message: format!("failed to initialize agent runtime: {source}"),
         },
+        BackendBootstrapError::SkillStorageReconciliation(source) => {
+            WebBootstrapError::ProjectBootstrap {
+                message: format!("failed to reconcile skill storage: {source}"),
+            }
+        }
     }
 }
 
