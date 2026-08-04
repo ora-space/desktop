@@ -52,6 +52,10 @@ pub fn run() {
             commands::list_skills,
             commands::update_skill,
             commands::delete_skill,
+            commands::prepare_skill_import,
+            commands::get_skill_import,
+            commands::commit_skill_import,
+            commands::cancel_skill_import,
             commands::create_agent,
             commands::get_agent,
             commands::list_agents,
@@ -114,6 +118,7 @@ fn bootstrap_desktop(
             .path()
             .home_dir()
             .map_err(DesktopBootstrapError::AppDataDirectory)?,
+        skills_root: app_data_directory.join("atoms").join("skills"),
     })?;
 
     Ok((
