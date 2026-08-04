@@ -109,6 +109,31 @@ impl From<ApplicationError> for WebApiError {
                 code: "skill_name_blank",
                 message: "skill name must not be blank".to_string(),
             },
+            ApplicationError::SkillNameInvalid { name } => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "skill_name_invalid",
+                message: format!("invalid skill name: {name}"),
+            },
+            ApplicationError::SkillNameTooLong => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "skill_name_too_long",
+                message: "skill name exceeds the single path segment limit".to_string(),
+            },
+            ApplicationError::SkillDescriptionBlank => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "skill_description_blank",
+                message: "skill description must not be blank".to_string(),
+            },
+            ApplicationError::SkillDescriptionTooLarge => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: "skill_description_too_large",
+                message: "skill description exceeds 4096 bytes".to_string(),
+            },
+            ApplicationError::SkillNameConflict { name } => Self {
+                status: StatusCode::CONFLICT,
+                code: "skill_name_conflict",
+                message: format!("skill name already exists: {name}"),
+            },
             ApplicationError::SkillNotFound { skill_id } => Self {
                 status: StatusCode::NOT_FOUND,
                 code: "skill_not_found",
@@ -117,6 +142,16 @@ impl From<ApplicationError> for WebApiError {
             ApplicationError::SkillRepository { message } => Self {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "skill_repository_error",
+                message,
+            },
+            ApplicationError::SkillStorageInconsistent { name } => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "skill_storage_inconsistent",
+                message: format!("skill storage is inconsistent for: {name}"),
+            },
+            ApplicationError::SkillStorage { message } => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "skill_storage_error",
                 message,
             },
             ApplicationError::AgentDefinitionNameBlank => Self {

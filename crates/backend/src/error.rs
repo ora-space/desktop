@@ -65,6 +65,31 @@ impl From<ApplicationError> for BackendError {
                 "skill_name_blank",
                 "skill name must not be blank",
             ),
+            ApplicationError::SkillNameInvalid { name } => Self::new(
+                BackendErrorKind::BadRequest,
+                "skill_name_invalid",
+                format!("invalid skill name: {name}"),
+            ),
+            ApplicationError::SkillNameTooLong => Self::new(
+                BackendErrorKind::BadRequest,
+                "skill_name_too_long",
+                "skill name exceeds the single path segment limit",
+            ),
+            ApplicationError::SkillDescriptionBlank => Self::new(
+                BackendErrorKind::BadRequest,
+                "skill_description_blank",
+                "skill description must not be blank",
+            ),
+            ApplicationError::SkillDescriptionTooLarge => Self::new(
+                BackendErrorKind::BadRequest,
+                "skill_description_too_large",
+                "skill description exceeds 4096 bytes",
+            ),
+            ApplicationError::SkillNameConflict { name } => Self::new(
+                BackendErrorKind::Conflict,
+                "skill_name_conflict",
+                format!("skill name already exists: {name}"),
+            ),
             ApplicationError::SkillNotFound { skill_id } => Self::new(
                 BackendErrorKind::NotFound,
                 "skill_not_found",
@@ -73,6 +98,15 @@ impl From<ApplicationError> for BackendError {
             ApplicationError::SkillRepository { .. } => internal(
                 "skill_repository_error",
                 "skill repository operation failed",
+            ),
+            ApplicationError::SkillStorageInconsistent { name } => Self::new(
+                BackendErrorKind::Internal,
+                "skill_storage_inconsistent",
+                format!("skill storage is inconsistent for: {name}"),
+            ),
+            ApplicationError::SkillStorage { .. } => internal(
+                "skill_storage_error",
+                "skill storage operation failed",
             ),
             ApplicationError::AgentDefinitionNameBlank => Self::new(
                 BackendErrorKind::BadRequest,

@@ -19,6 +19,8 @@ pub struct BackendPaths {
     pub database_path: PathBuf,
     pub worktree_root: PathBuf,
     pub home_directory: PathBuf,
+    /// Root of the formal skill package tree (`<data>/atoms/skills`).
+    pub skills_root: PathBuf,
 }
 
 /// Reports failures that prevent the shared backend from opening persistent state.
@@ -59,6 +61,7 @@ impl Backend {
                 .unwrap_or_else(|| Path::new(".")),
         )?;
         ensure_directory(&paths.worktree_root)?;
+        ensure_directory(&paths.skills_root)?;
         let catalog = default_migration_catalog().map_err(BackendBootstrapError::Database)?;
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(&DatabaseLocation::path(&paths.database_path), &catalog)
@@ -73,7 +76,7 @@ impl Backend {
             task: Arc::new(TaskApi::new(pool.clone(), worktree_root.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime: Arc::new(agent_runtime),
-            skill: Arc::new(SkillApi::new(pool.clone(), clock)),
+            skill: Arc::new(SkillApi::new(pool.clone(), paths.skills_root, clock)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             pool,
             worktree_root,
@@ -352,6 +355,7 @@ mod tests {
             database_path: database_path.clone(),
             worktree_root: worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
+            skills_root: temporary.path().join("atoms").join("skills"),
         })
         .expect("open shared backend");
 
@@ -463,6 +467,7 @@ mod tests {
             database_path: temporary.path().join("ora.sqlite3"),
             worktree_root: original_worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
+            skills_root: temporary.path().join("atoms").join("skills"),
         })
         .expect("open shared backend");
         let project = backend

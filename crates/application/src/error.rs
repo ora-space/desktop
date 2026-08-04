@@ -1,3 +1,4 @@
+use crate::skill::SkillStorageError;
 use crate::{
     AgentDefinitionRepositoryError, ProjectRepositoryError, ProjectWorkContextRepositoryError,
     SessionRepositoryError, SkillRepositoryError, TaskRepositoryError,
@@ -11,10 +12,24 @@ use thiserror::Error;
 pub enum ApplicationError {
     #[error("skill name must not be blank")]
     SkillNameBlank,
+    #[error("invalid skill name: {name}")]
+    SkillNameInvalid { name: String },
+    #[error("skill name exceeds the single path segment limit")]
+    SkillNameTooLong,
+    #[error("skill description must not be blank")]
+    SkillDescriptionBlank,
+    #[error("skill description exceeds 4096 bytes")]
+    SkillDescriptionTooLarge,
+    #[error("skill name already exists: {name}")]
+    SkillNameConflict { name: String },
     #[error("skill not found: {skill_id}")]
     SkillNotFound { skill_id: String },
     #[error("skill repository operation failed: {message}")]
     SkillRepository { message: String },
+    #[error("skill storage is inconsistent for: {name}")]
+    SkillStorageInconsistent { name: String },
+    #[error("skill storage operation failed: {message}")]
+    SkillStorage { message: String },
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
     #[error("agent definition not found: {agent_id}")]
@@ -54,9 +69,33 @@ impl ApplicationError {
     pub(crate) fn from_skill_domain_error(error: DomainModelError) -> Self {
         match error {
             DomainModelError::EmptySkillName => Self::SkillNameBlank,
+            DomainModelError::InvalidSkillName { name } => Self::SkillNameInvalid { name },
+            DomainModelError::SkillNameTooLong => Self::SkillNameTooLong,
+            DomainModelError::EmptySkillDescription => Self::SkillDescriptionBlank,
+            DomainModelError::SkillDescriptionTooLarge => Self::SkillDescriptionTooLarge,
             _ => Self::SkillRepository {
                 message: error.to_string(),
             },
+        }
+    }
+
+    /// Converts skill storage failures into stable application errors.
+    pub(crate) fn from_skill_storage_error(error: SkillStorageError) -> Self {
+        match error {
+            SkillStorageError::FormalDirectoryMissing { name } => {
+                Self::SkillStorageInconsistent { name }
+            }
+            SkillStorageError::FormalDirectoryExists { name } => Self::SkillStorageInconsistent {
+                name,
+            },
+            SkillStorageError::OperationFailed { message } => Self::SkillStorage { message },
+        }
+    }
+
+    /// Converts a manifest rewrite failure into a stable storage-adjacent error.
+    pub(crate) fn from_manifest_error(error: ora_skill_package::ManifestError) -> Self {
+        Self::SkillStorage {
+            message: format!("failed to rewrite the skill manifest: {error}"),
         }
     }
 

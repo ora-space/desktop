@@ -123,6 +123,10 @@ fn build_backend(
         database_path: database_path.to_path_buf(),
         worktree_root: worktree_root.to_path_buf(),
         home_directory: home_directory.to_path_buf(),
+        skills_root: database_path
+            .parent()
+            .map(|parent| parent.join("atoms").join("skills"))
+            .unwrap_or_else(|| Path::new("atoms").join("skills")),
     })
     .map_err(web_backend_bootstrap_error)
 }

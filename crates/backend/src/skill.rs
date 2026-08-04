@@ -1,7 +1,7 @@
 use crate::clock::SystemClock;
 use ora_application::{
-    ApplicationError, CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ListSkillsHandler,
-    UpdateSkillHandler, UuidSkillIdGenerator,
+    ApplicationError, CreateSkillHandler, DeleteSkillHandler, FilesystemSkillStorage,
+    GetSkillHandler, ListSkillsHandler, UpdateSkillHandler, UuidSkillIdGenerator,
 };
 use ora_contracts::{
     CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,
@@ -9,27 +9,39 @@ use ora_contracts::{
     UpdateSkillResponse,
 };
 use ora_db::{RepositoryPool, SqliteSkillRepository};
+use std::path::PathBuf;
 
 /// Groups the concrete skill handlers shared by runtime adapters.
 pub(crate) struct SkillApi {
-    create: CreateSkillHandler<SqliteSkillRepository, UuidSkillIdGenerator, SystemClock>,
+    create: CreateSkillHandler<
+        SqliteSkillRepository,
+        FilesystemSkillStorage,
+        UuidSkillIdGenerator,
+        SystemClock,
+    >,
     get: GetSkillHandler<SqliteSkillRepository>,
     list: ListSkillsHandler<SqliteSkillRepository>,
-    update: UpdateSkillHandler<SqliteSkillRepository, SystemClock>,
-    delete: DeleteSkillHandler<SqliteSkillRepository, SystemClock>,
+    update: UpdateSkillHandler<SqliteSkillRepository, FilesystemSkillStorage, SystemClock>,
+    delete: DeleteSkillHandler<SqliteSkillRepository, FilesystemSkillStorage, SystemClock>,
 }
 
 impl SkillApi {
-    /// Builds skill handlers from the shared repository pool.
-    pub(crate) fn new(pool: RepositoryPool, clock: SystemClock) -> Self {
+    /// Builds skill handlers from the shared repository pool and formal skills root.
+    pub(crate) fn new(pool: RepositoryPool, skills_root: PathBuf, clock: SystemClock) -> Self {
         let repository = SqliteSkillRepository::new(pool);
+        let storage = FilesystemSkillStorage::new(skills_root);
 
         Self {
-            create: CreateSkillHandler::new(repository.clone(), UuidSkillIdGenerator::new(), clock),
+            create: CreateSkillHandler::new(
+                repository.clone(),
+                storage.clone(),
+                UuidSkillIdGenerator::new(),
+                clock,
+            ),
             get: GetSkillHandler::new(repository.clone()),
             list: ListSkillsHandler::new(repository.clone()),
-            update: UpdateSkillHandler::new(repository.clone(), clock),
-            delete: DeleteSkillHandler::new(repository, clock),
+            update: UpdateSkillHandler::new(repository.clone(), storage.clone(), clock),
+            delete: DeleteSkillHandler::new(repository, storage, clock),
         }
     }
 
