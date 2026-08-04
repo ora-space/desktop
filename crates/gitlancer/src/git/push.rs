@@ -1,5 +1,5 @@
 use crate::domain::worktree::WorktreeHandle;
-use crate::error::{DomainError, GitlancerError};
+use crate::error::{DomainError, GitExecError, GitlancerError};
 use crate::exec::command::{GitCommand, GitIntent};
 use crate::exec::env::GitEnv;
 use crate::exec::runner::GitRunner;
@@ -28,7 +28,7 @@ impl<R: GitRunner> Git<R> {
                 ))
             })?
             .as_str();
-        self.runner().run(&GitCommand::new(
+        let command = GitCommand::new(
             worktree.worktree_root().as_path().to_path_buf(),
             vec![
                 "push".to_string(),
@@ -38,7 +38,26 @@ impl<R: GitRunner> Git<R> {
             ],
             GitEnv::default().with_variable("GIT_TERMINAL_PROMPT", "0"),
             GitIntent::Network,
-        ))?;
+        );
+        match self.runner().run(&command) {
+            Ok(_) => {}
+            Err(GitExecError::NonZeroExit {
+                code,
+                args,
+                stdout,
+                stderr,
+            }) => {
+                return Err(GitlancerError::Exec(GitExecError::NonZeroExit {
+                    code,
+                    args,
+                    stdout,
+                    stderr: format!(
+                        "{stderr}\npush authentication may be unavailable; configure a Git credential helper or HTTPS token"
+                    ),
+                }));
+            }
+            Err(error) => return Err(GitlancerError::Exec(error)),
+        }
 
         Ok(PushBranchResponse {
             branch_name: branch_name.to_string(),

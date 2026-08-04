@@ -202,3 +202,7 @@ PUT  /api/tasks/{taskId}/diff/comments/{commentId}/status
 - 用户身份、多人权限和远端 Review 同步。
 
 这些能力如果后续需要，应作为独立 Application 用例扩展，而不是放入 Web service 中实现 Git 业务逻辑。
+
+Task branch push is intentionally fixed to the `origin` remote. In a fork workflow, configure
+`origin` as the writable fork and keep `upstream` as the review source; HTTPS pushes also require
+a Git credential helper or token because interactive prompts are disabled.

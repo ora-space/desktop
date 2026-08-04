@@ -148,16 +148,15 @@ impl<R: GitRunner> Git<R> {
 
         worktrees
             .into_iter()
-            .filter(|worktree| {
-                candidate.starts_with(normalize_path_for_worktree_match(
-                    worktree.worktree_root().as_path(),
-                ))
+            .filter_map(|worktree| {
+                let normalized_root =
+                    normalize_path_for_worktree_match(worktree.worktree_root().as_path());
+                candidate
+                    .starts_with(&normalized_root)
+                    .then_some((worktree, normalized_root))
             })
-            .max_by_key(|worktree| {
-                normalize_path_for_worktree_match(worktree.worktree_root().as_path())
-                    .components()
-                    .count()
-            })
+            .max_by_key(|(_, normalized_root)| normalized_root.components().count())
+            .map(|(worktree, _)| worktree)
             .ok_or(GitlancerError::Domain(DomainError::NotAWorktree(candidate)))
     }
 
