@@ -13,6 +13,7 @@ use tauri::{
 
 const SKILLHUB_URL: &str = "https://www.skillhub.cn";
 const SKILLHUB_WINDOW_LABEL: &str = "skillhub-marketplace";
+const MAIN_WINDOW_LABEL: &str = "main";
 const SKILL_MARKETPLACE_STATUS_EVENT: &str = "skill-marketplace://status";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -123,6 +124,7 @@ fn handle_download_event<R: Runtime>(
             };
             match downloads.finish(&url, status) {
                 Ok(DownloadFinish::Completed { file_name, path }) => {
+                    bring_main_window_forward(app);
                     emit_marketplace_status(
                         app,
                         SkillMarketplaceStatus::Downloaded {
@@ -165,9 +167,30 @@ fn handle_download_event<R: Runtime>(
     }
 }
 
+/// Brings Ora forward before the transient success toast is emitted behind SkillHub.
+fn bring_main_window_forward<R: Runtime>(app: &AppHandle<R>) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        ora_warn!(message = "main window unavailable after SkillHub download");
+        return;
+    };
+
+    if let Err(error) = window
+        .show()
+        .and_then(|_| window.unminimize())
+        .and_then(|_| window.set_focus())
+    {
+        // The archive is already durable, so presentation failures must never turn a completed
+        // download into a failure or remove the file that the user requested.
+        ora_warn!(
+            message = "failed to bring Ora forward after SkillHub download",
+            error = %error,
+        );
+    }
+}
+
 /// Sends one typed marketplace status to the main window without disrupting the download itself.
 fn emit_marketplace_status<R: Runtime>(app: &AppHandle<R>, status: SkillMarketplaceStatus) {
-    if let Err(error) = app.emit_to("main", SKILL_MARKETPLACE_STATUS_EVENT, status) {
+    if let Err(error) = app.emit_to(MAIN_WINDOW_LABEL, SKILL_MARKETPLACE_STATUS_EVENT, status) {
         // Download persistence is the source of truth; a temporarily unavailable UI must not
         // cancel or discard a file that the WebView is already transferring.
         ora_warn!(
@@ -221,11 +244,12 @@ fn internal_command_error(context: &'static str) -> CommandError {
 mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
-    use tauri::{Manager, Url};
+    use tauri::{Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
     use super::{
-        SKILLHUB_WINDOW_LABEL, SkillMarketplaceFailureStage, SkillMarketplaceStatus,
-        is_skillhub_navigation_allowed, open_or_focus_skill_marketplace,
+        MAIN_WINDOW_LABEL, SKILLHUB_WINDOW_LABEL, SkillMarketplaceFailureStage,
+        SkillMarketplaceStatus, bring_main_window_forward, is_skillhub_navigation_allowed,
+        open_or_focus_skill_marketplace,
     };
 
     /// Verifies both canonical SkillHub hosts remain available over standard HTTPS.
@@ -277,6 +301,25 @@ mod tests {
                 .count(),
             1,
         );
+    }
+
+    /// Verifies a completed download can reveal a hidden main window before status delivery.
+    #[test]
+    fn brings_the_main_window_forward_for_completed_downloads() {
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+        let main_window = WebviewWindowBuilder::new(
+            &handle,
+            MAIN_WINDOW_LABEL,
+            WebviewUrl::App("index.html".into()),
+        )
+        .visible(false)
+        .build()
+        .expect("create hidden main window");
+
+        bring_main_window_forward(&handle);
+
+        assert_eq!(main_window.is_visible().expect("read visibility"), true);
     }
 
     /// Verifies Rust emits the exact tagged payload shape consumed by the platform adapter.
