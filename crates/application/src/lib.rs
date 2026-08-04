@@ -28,8 +28,11 @@ pub use session::{
     SessionRepository, SessionRepositoryError, UuidSessionIdGenerator,
 };
 pub use skill::{
-    CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ListSkillsHandler, SkillIdGenerator,
-    SkillRepository, SkillRepositoryError, UpdateSkillHandler, UuidSkillIdGenerator,
+    BACKUP_DIR_NAME, CreateHandle, CreateSkillHandler, DeleteHandle, DeleteSkillHandler,
+    FilesystemSkillStorage, GetSkillHandler, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
+    ListSkillsHandler, SkillIdGenerator, SkillRepository, SkillRepositoryError, SkillStorage,
+    SkillStorageError, STAGING_DIR_NAME, SwapHandle, TransactionJournal, UpdateSkillHandler,
+    UuidSkillIdGenerator,
 };
 pub use task::{
     CreateTaskHandler, CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, GetTaskHandler,
