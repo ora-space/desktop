@@ -13,7 +13,7 @@ use ora_contracts::acp::session::{
     LoadSessionResponse,
 };
 use ora_history::{HistoryRecord, render_handoff};
-use ora_logging::ora_debug;
+use ora_logging::{ora_debug, ora_warn};
 use tokio::process::ChildStdin;
 use tokio::time::{Instant, timeout};
 
@@ -425,15 +425,28 @@ impl RuntimeActor {
         if !self.handoff_pending {
             return prompt.to_vec();
         }
-        self.handoff_pending = false;
-        let transcript = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
-            Ok(history) => render_handoff(&history),
+        let history = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
+            Ok(history) => history,
             Err(error) => {
-                ora_debug!(session_id = %self.session.id, error = %error, "handoff transcript unavailable");
-                None
+                // The flag is held rather than cleared, because nothing would ask
+                // again. It is derived from the record — a trailing `AgentSwitched`
+                // with no user message after it — and recording this prompt is
+                // exactly what stops that from being true. A transient read would
+                // otherwise cost the new agent the whole conversation, silently and
+                // for good, while the turn it answered without any of it becomes
+                // history the agent after that one inherits as fact.
+                ora_warn!(
+                    session_id = %self.session.id,
+                    error = %error,
+                    "handoff transcript unreadable; retrying on the next prompt",
+                );
+                return prompt.to_vec();
             }
         };
-        let Some(transcript) = transcript else {
+        self.handoff_pending = false;
+        // Nothing recorded to hand over, which is a session switched before it was
+        // ever prompted. The binding has now been spoken to either way.
+        let Some(transcript) = render_handoff(&history) else {
             return prompt.to_vec();
         };
         ora_debug!(
