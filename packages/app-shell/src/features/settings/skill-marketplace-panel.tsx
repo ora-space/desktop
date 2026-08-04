@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@ora/ui";
+import { Button, toast } from "@ora/ui";
 import { IconExternalLink, IconShoppingBag } from "@tabler/icons-react";
 import { usePlatform, type SkillMarketplaceStatus } from "@ora/platform";
 
@@ -19,7 +19,18 @@ export function SkillMarketplacePanel() {
     let unsubscribe: (() => void) | undefined;
     void skillMarketplace
       .onStatus((nextStatus) => {
-        if (!disposed) setStatus(nextStatus);
+        if (disposed) return;
+
+        setStatus(nextStatus);
+        if (nextStatus.status === "downloaded") {
+          toast.success(
+            t("settings.skills.marketplaceDownloaded", { fileName: nextStatus.fileName }),
+            {
+              description: nextStatus.archivePath,
+              duration: 5_000,
+            },
+          );
+        }
       })
       .then((stop) => {
         if (disposed) stop();
@@ -33,7 +44,7 @@ export function SkillMarketplacePanel() {
       disposed = true;
       unsubscribe?.();
     };
-  }, [skillMarketplace]);
+  }, [skillMarketplace, t]);
 
   /** Opens or focuses the native SkillHub window while preventing duplicate button actions. */
   const openMarketplace = async () => {
