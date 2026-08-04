@@ -5,6 +5,7 @@ use crate::DatabaseError;
 use super::schema_v0001;
 use super::schema_v0002;
 use super::schema_v0003;
+use super::schema_v0004;
 
 /// Captures one versioned migration and the SQL needed to move schema state up or down.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,6 +101,7 @@ pub fn default_migration_catalog() -> Result<MigrationCatalog, DatabaseError> {
         schema_v0001::migration(),
         schema_v0002::migration(),
         schema_v0003::migration(),
+        schema_v0004::migration(),
     ])
 }
 

@@ -51,6 +51,9 @@ export function createMemoryContractsClient(
   return {
     project: {
       list: async () => ({ projects: structuredClone(state.projects) }),
+      listBranches: async () => ({
+        branches: [{ name: "main", refName: "origin/main", displayName: "main" }],
+      }),
       get: async (request) => ({
         project: structuredClone(requireRecord(state.projects, request.projectId, "project")),
       }),
@@ -129,6 +132,34 @@ export function createMemoryContractsClient(
       delete: async (request) => {
         removeRecord(state.tasks, request.taskId);
         return { taskId: request.taskId };
+      },
+      getWorkspace: async (request) => ({
+        workspace: {
+          rootPath: `/worktrees/${request.taskId}`,
+          branchName: `task/${request.taskId}`,
+        },
+      }),
+      getDiff: async () => ({
+        baseCommitId: "base",
+        headCommitId: "head",
+        diffId: "diff",
+        patch: "",
+      }),
+      commitChanges: async () => {
+        throw new Error("commitChanges not implemented in memory client");
+      },
+      pushBranch: async () => {
+        throw new Error("pushBranch not implemented in memory client");
+      },
+      listDiffComments: async () => ({ comments: [] }),
+      createDiffComment: async () => {
+        throw new Error("createDiffComment not implemented in memory client");
+      },
+      replyDiffComment: async () => {
+        throw new Error("replyDiffComment not implemented in memory client");
+      },
+      setDiffCommentStatus: async () => {
+        throw new Error("setDiffCommentStatus not implemented in memory client");
       },
     },
     session: {

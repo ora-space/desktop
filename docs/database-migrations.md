@@ -16,8 +16,9 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 | `0001` | `projects`, `tasks`, `worktrees`, `virtual_folders`, `virtual_entries`, `sessions`, `artifacts`, `migrations` |
 | `0002` | `project_work_contexts` plus its unique `(surface, window_id)` index and lease/expiry indexes |
 | `0003` | `skills`, `agents` |
+| `0004` | `worktrees.base_commit_id`, `task_diff_comments`, comment indexes, and the root-parent trigger |
 
-`default_migration_catalog()` returns all three with every version as the active target.
+`default_migration_catalog()` returns all four with every version as the active target.
 
 ## Reconciliation model
 
@@ -32,6 +33,8 @@ A catalog carries the full migration list plus an **active target prefix**, whic
 Each migration's statements and its bookkeeping update run inside **one SQLite transaction**, so a failing statement can never leave the schema and the `migrations` table out of sync, and a failed version is never recorded as applied. Statements execute one at a time so the failing version and direction can be reported precisely.
 
 Because rollback needs `down` statements, retired tail migrations must stay defined in Rust until every managed database has been reconciled to the shorter target prefix.
+
+Migration `0004` is additive for existing databases: it adds the nullable worktree baseline and the new comment table. Its rollback removes only the task-diff indexes, trigger, table, and baseline column; it does not rewrite existing tasks or worktrees. A production rollback must still be treated as destructive for task-diff comments because the down migration drops that table.
 
 ## Operational logging
 

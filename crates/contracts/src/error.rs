@@ -65,12 +65,28 @@ pub struct SkillUploadTooManyFilesParams {
     pub max_files: usize,
 }
 
+/// Carries the configured request-body limit without exposing uploaded file contents.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct SkillUploadTooLargeParams {
+    pub max_bytes: usize,
+}
+
 /// Carries a validated skill name when its destination folder already exists.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "error.ts")]
 pub struct SkillFolderConflictParams {
     pub name: String,
+}
+
+/// Carries the user-selected base branch name when Git cannot resolve it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct TaskBaseBranchNotFoundParams {
+    pub branch_name: String,
 }
 
 /// Enumerates every user-visible Ora failure and its exact interpolation parameters.
@@ -90,7 +106,15 @@ pub enum PublicError {
     TaskNotFound(EmptyErrorParams),
     ResourceInUse(EmptyErrorParams),
     WorktreeRequiresGitRepository(EmptyErrorParams),
+    TaskBaseBranchRequired(EmptyErrorParams),
+    TaskBaseBranchNotFound(TaskBaseBranchNotFoundParams),
     WorktreeNotFound(EmptyErrorParams),
+    TaskDiffBaselineUnavailable(EmptyErrorParams),
+    TaskDiffCommitMessageBlank(EmptyErrorParams),
+    TaskDiffTooLarge(EmptyErrorParams),
+    TaskDiffStale(EmptyErrorParams),
+    TaskDiffCommentNotFound(EmptyErrorParams),
+    TaskDiffCommentInvalid(EmptyErrorParams),
     SessionNotFound(EmptyErrorParams),
     AgentCliNotFound(EmptyErrorParams),
     AgentRuntimeUnavailable(EmptyErrorParams),
@@ -111,6 +135,7 @@ pub enum PublicError {
     WorktreeRootNotDirectory(EmptyErrorParams),
     OpenLocationFailed(OpenLocationFailedParams),
     SkillUploadEmpty(EmptyErrorParams),
+    SkillUploadTooLarge(SkillUploadTooLargeParams),
     SkillUploadTooManyFiles(SkillUploadTooManyFilesParams),
     SkillUploadPathInvalid(EmptyErrorParams),
     SkillUploadPathDuplicate(EmptyErrorParams),
@@ -138,7 +163,15 @@ impl PublicError {
             Self::TaskNotFound(_) => "task_not_found",
             Self::ResourceInUse(_) => "resource_in_use",
             Self::WorktreeRequiresGitRepository(_) => "worktree_requires_git_repository",
+            Self::TaskBaseBranchRequired(_) => "task_base_branch_required",
+            Self::TaskBaseBranchNotFound(_) => "task_base_branch_not_found",
             Self::WorktreeNotFound(_) => "worktree_not_found",
+            Self::TaskDiffBaselineUnavailable(_) => "task_diff_baseline_unavailable",
+            Self::TaskDiffCommitMessageBlank(_) => "task_diff_commit_message_blank",
+            Self::TaskDiffTooLarge(_) => "task_diff_too_large",
+            Self::TaskDiffStale(_) => "task_diff_stale",
+            Self::TaskDiffCommentNotFound(_) => "task_diff_comment_not_found",
+            Self::TaskDiffCommentInvalid(_) => "task_diff_comment_invalid",
             Self::SessionNotFound(_) => "session_not_found",
             Self::AgentCliNotFound(_) => "agent_cli_not_found",
             Self::AgentRuntimeUnavailable(_) => "agent_runtime_unavailable",
@@ -159,6 +192,7 @@ impl PublicError {
             Self::WorktreeRootNotDirectory(_) => "worktree_root_not_directory",
             Self::OpenLocationFailed(_) => "open_location_failed",
             Self::SkillUploadEmpty(_) => "skill_upload_empty",
+            Self::SkillUploadTooLarge(_) => "skill_upload_too_large",
             Self::SkillUploadTooManyFiles(_) => "skill_upload_too_many_files",
             Self::SkillUploadPathInvalid(_) => "skill_upload_path_invalid",
             Self::SkillUploadPathDuplicate(_) => "skill_upload_path_duplicate",
@@ -189,7 +223,9 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     OpenLocationTarget::export_all(config)?;
     OpenLocationFailedParams::export_all(config)?;
     SkillUploadTooManyFilesParams::export_all(config)?;
+    SkillUploadTooLargeParams::export_all(config)?;
     SkillFolderConflictParams::export_all(config)?;
+    TaskBaseBranchNotFoundParams::export_all(config)?;
     PublicError::export_all(config)?;
     ContractError::export_all(config)?;
     Ok(())
@@ -197,7 +233,9 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContractError, EmptyErrorParams, PublicError, RequestId};
+    use super::{
+        ContractError, EmptyErrorParams, PublicError, RequestId, SkillUploadTooLargeParams,
+    };
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use uuid::uuid;
@@ -214,6 +252,26 @@ mod tests {
             json!({
                 "code": "project_not_found",
                 "params": {},
+                "requestId": "550e8400-e29b-41d4-a716-446655440000",
+            })
+        );
+    }
+
+    /// Verifies upload limits expose only the bounded configuration value.
+    #[test]
+    fn serializes_skill_upload_body_limit() {
+        let error = ContractError {
+            error: PublicError::SkillUploadTooLarge(SkillUploadTooLargeParams {
+                max_bytes: 52_428_800,
+            }),
+            request_id: RequestId::from_uuid(uuid!("550e8400-e29b-41d4-a716-446655440000")),
+        };
+
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            json!({
+                "code": "skill_upload_too_large",
+                "params": { "maxBytes": 52_428_800 },
                 "requestId": "550e8400-e29b-41d4-a716-446655440000",
             })
         );

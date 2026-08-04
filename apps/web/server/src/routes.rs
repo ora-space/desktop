@@ -1,15 +1,20 @@
 use crate::app_state::AppState;
 use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skills, tasks,
+    agents, file_system, git, health, project_work_contexts, projects, sessions, skills,
+    task_diffs, tasks,
 };
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
-    PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
-    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    PROJECT_BRANCHES_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
+    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH,
+    SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH,
+    TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH,
+    TASK_PUSH_PATH, TASKS_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -35,6 +40,7 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(projects::update_project)
                 .delete(projects::delete_project),
         )
+        .route(PROJECT_BRANCHES_PATH, get(projects::list_project_branches))
         // =============================================================================
         // projectWorkContext
         // =============================================================================
@@ -55,6 +61,24 @@ pub fn build_router(app_state: AppState) -> Router {
             get(tasks::get_task)
                 .put(tasks::update_task)
                 .delete(tasks::delete_task),
+        )
+        // =============================================================================
+        // taskDiff
+        // =============================================================================
+        .route(TASK_DIFF_PATH, get(task_diffs::get_task_diff))
+        .route(TASK_COMMIT_PATH, post(task_diffs::commit_task_changes))
+        .route(TASK_PUSH_PATH, post(task_diffs::push_task_branch))
+        .route(
+            TASK_DIFF_COMMENTS_PATH,
+            post(task_diffs::create_task_diff_comment).get(task_diffs::list_task_diff_comments),
+        )
+        .route(
+            TASK_DIFF_COMMENT_REPLIES_PATH,
+            post(task_diffs::reply_task_diff_comment),
+        )
+        .route(
+            TASK_DIFF_COMMENT_STATUS_PATH,
+            axum::routing::put(task_diffs::set_task_diff_comment_status),
         )
         // =============================================================================
         // session
@@ -84,6 +108,10 @@ pub fn build_router(app_state: AppState) -> Router {
         .route(
             SKILLS_PATH,
             post(skills::create_skill).get(skills::list_skills),
+        )
+        .route(
+            SKILL_IMPORT_PATH,
+            post(skills::import_skill).layer(DefaultBodyLimit::max(skills::MAX_SKILL_UPLOAD_BYTES)),
         )
         .route(
             SKILL_PATH,
@@ -715,6 +743,7 @@ mod tests {
                             "projectId": project_id,
                             "title": "Ship handlers",
                             "status": "todo",
+                            "baseBranch": "main",
                         })
                         .to_string(),
                     ))
@@ -730,6 +759,17 @@ mod tests {
             Some(task_id) => task_id.to_string(),
             None => panic!("response did not include a task id"),
         };
+        let branch_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/projects/{project_id}/branches"))
+                    .body(Body::empty())
+                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
         let list_response = match app
             .clone()
             .oneshot(
@@ -807,6 +847,23 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "todo",
                 "workspaceMode": "worktree",
+            })
+        );
+        assert_eq!(
+            response_json(branch_response).await,
+            json!({
+                "branches": [
+                    {
+                        "name": "main",
+                        "refName": "main",
+                        "displayName": "main",
+                    },
+                    {
+                        "name": format!("ora/{}", &task_id[..8]),
+                        "refName": format!("ora/{}", &task_id[..8]),
+                        "displayName": "Ship handlers",
+                    },
+                ],
             })
         );
         assert_eq!(
@@ -1026,6 +1083,86 @@ mod tests {
             .status(),
             StatusCode::BAD_REQUEST
         );
+    }
+
+    /// Verifies the router imports a skill folder atomically and rejects conflicts and bad uploads.
+    #[tokio::test]
+    async fn serves_skill_folder_import_route() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let manifest: &[u8] = b"---\nname: grilling\ndescription: Grill the user\n---\n";
+
+        let import = app
+            .clone()
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("SKILL.md", manifest), ("refs/util.py", b"noop".as_slice())],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(import.status(), StatusCode::OK);
+        let created = response_json(import).await;
+        let skill_id = created["skill"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("response did not include a skill id"))
+            .to_string();
+        assert_eq!(
+            created,
+            json!({
+                "skill": { "id": skill_id, "name": "grilling", "description": "Grill the user" },
+            })
+        );
+
+        // A second import that resolves to the same committed directory name conflicts.
+        let conflict = app
+            .clone()
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("SKILL.md", manifest)],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        assert_contract_error(&response_json(conflict).await, "skill_folder_conflict");
+
+        // An upload without a manifest is unprocessable.
+        let invalid = app
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("refs/util.py", b"noop".as_slice())],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_contract_error(&response_json(invalid).await, "skill_manifest_missing");
+    }
+
+    /// Builds one multipart upload request whose file parts carry their relative path as the filename.
+    fn multipart_request(uri: &str, parts: &[(&str, &[u8])]) -> Request<Body> {
+        let boundary = "ORASKILLBOUNDARY";
+        let mut body = Vec::new();
+        for (filename, bytes) in parts {
+            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            body.extend_from_slice(
+                format!(
+                    "Content-Disposition: form-data; name=\"files\"; filename=\"{filename}\"\r\n"
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+            body.extend_from_slice(bytes);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+        Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap_or_else(|error| panic!("failed to build request: {error}"))
     }
 
     /// Sends one JSON request to the router under test.

@@ -5,7 +5,7 @@ This module coordinates task CRUD with optional backend-owned Git worktree provi
 ## Creation modes
 
 - Root-mode tasks use the project checkout directly and persist no worktree id.
-- Worktree-mode tasks require a valid Git repository, reserve a non-colliding task id/branch prefix, create a linked worktree, persist its `Worktree` record, and then persist the `Task` that owns it.
+- Worktree-mode tasks require a valid Git repository and a selected base ref, reserve a non-colliding task id/branch prefix, resolve the selected local or refreshed remote ref to an immutable commit id, create a linked worktree from that commit, persist only that commit id in the `Worktree` record, and then persist the `Task` that owns it.
 - Worktree paths are composed only during creation from the configured worktree root and full task id. Existing paths are resolved from persisted branch identity and Git metadata elsewhere.
 - If persistence fails after Git resources are created, the handler attempts compensating soft deletion and forced worktree cleanup while preserving the original stable application error.
 
@@ -16,5 +16,7 @@ This module coordinates task CRUD with optional backend-owned Git worktree provi
 Task updates preserve project ownership and the existing worktree association. Aggregate deletion is handled by backend/database cascade logic and deliberately does not remove Git branches or worktrees.
 
 Branch creation uses a short task-id prefix, so creation checks both existing task worktree directories and repository branches before accepting an id. Worktree mode fails explicitly when the project root is not a Git repository.
+
+The frontend lists refreshed remote and local project refs before creation. Ora-managed `ora/<prefix>` branches retain their Git identity in requests but use the owning task title as their display label; local Ora refs remain selectable so an existing worktree can seed another one.
 
 See the [ora-application overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts.md).

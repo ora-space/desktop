@@ -36,7 +36,9 @@ It exists so upper layers can inject a fake runner in tests, record commands for
 
 ### `git`
 
-Exposes the typed use cases Ora calls directly — repository discovery, worktree discovery and lifecycle, branch read and lifecycle, add/commit, status, and global identity. Each takes a typed request and returns a typed response, which keeps option growth manageable and produces better call boundaries for agent orchestration.
+Exposes the typed use cases Ora calls directly — repository discovery, worktree discovery and lifecycle, branch read and lifecycle, add/commit, diff, push, status, and global identity. Each takes a typed request and returns a typed response, which keeps option growth manageable and produces better call boundaries for agent orchestration.
+
+Worktree-base discovery is a separate branch read path because it has network semantics: it fetches `upstream`, or falls back to `origin`, then combines remote-tracking refs with local-only branches while preferring the refreshed remote ref for duplicate logical names.
 
 ### `parse`
 
@@ -92,17 +94,21 @@ Three resolution paths exist:
 ### Inspection
 
 - `list_branches` returns each local branch as a `BranchName`.
+- `diff` returns a full-context unified patch for branch, unstaged, staged, or committed scopes. Untracked files are rendered without changing the caller's index, and output is bounded before it enters application memory.
+- `list_worktree_bases` fetches the preferred remote and returns remote-only plus local-only bases as `WorktreeBase` values. `resolve_worktree_base_commit` refreshes again, validates the selected ref, and resolves it to an immutable `CommitId`.
 - `status` returns one `StatusEntry` per porcelain-v2 record, from `git status --porcelain=v2 -z`.
 - `commit` returns the resulting `HEAD` commit id and the latest commit summary.
+- `push_branch` publishes the checked-out branch to `origin` with `GitIntent::Network` and prompts disabled.
 - `read_global_identity` returns `GlobalIdentity { name, email }`, treating an unset Git config key as `None` rather than an execution failure.
 
 ### Lifecycle
 
 Branch and worktree lifecycle commands are typed APIs, so callers never assemble raw Git arguments:
 
-- `create_branch` / `delete_branch`, with `BranchDeletionMode` selecting checked or forced deletion. A deleted branch no longer appears in `list_branches`.
-- `create_worktree` / `delete_worktree`, with `WorktreeDeletionMode` selecting checked or forced removal. A created linked worktree appears in `list_worktrees` as `WorktreeKind::Linked`; a removed one disappears.
+- `create_branch` creates a branch at the caller-supplied `CommitId`; `delete_branch` uses `BranchDeletionMode` to select checked or forced deletion. A deleted branch no longer appears in `list_branches`.
+- `create_worktree` creates its branch and linked checkout at the caller-supplied `CommitId`; `delete_worktree` uses `WorktreeDeletionMode` to select checked or forced removal. A created linked worktree appears in `list_worktrees` as `WorktreeKind::Linked`; a removed one disappears.
 - `add` stages `RepoRelativePath` values; `commit` creates commits without GPG signing.
+- `push_branch` is the only networked use case in this module. It derives the branch from `WorktreeHandle` rather than accepting a free-form ref from an upper layer.
 
 Mutating operations perform domain validation *before* invoking Git whenever the invalid state is determinable from repository and worktree metadata, and no Git command is issued when validation fails:
 
@@ -126,10 +132,17 @@ pub struct CommitRequest<'a> {
     pub allow_empty: bool,
 }
 
+pub struct CreateBranchRequest<'a> {
+    pub repository: &'a Repository,
+    pub branch_name: BranchName,
+    pub commit_id: CommitId,
+}
+
 pub struct CreateWorktreeRequest<'a> {
     pub repository: &'a Repository,
     pub worktree_root: WorktreeRoot,
     pub branch_name: BranchName,
+    pub base_commit_id: CommitId,
 }
 
 pub struct DeleteWorktreeRequest<'a> {
@@ -156,7 +169,7 @@ pub struct GitCommand {
 
 `GitEnv::automation_defaults` disables terminal prompts, fixes `LANG` to `C`, and disables paging, so an agent-driven command cannot block on interactive UI or return localized output.
 
-`CliGitRunner` invokes the system `git` binary, measures duration, emits optional command telemetry through the logger registry, and returns a normalized `GitOutput { code, stdout, stderr, duration_ms }`. A non-zero exit retains the exit code, arguments, stdout, and stderr for upper-layer diagnostics. `RecordingGitRunner` executes nothing and exists for command-construction tests.
+`CliGitRunner` invokes the system `git` binary, measures duration, emits optional command telemetry through the logger registry, and returns a normalized `GitOutput { code, stdout, stderr, duration_ms }`. `run_bounded` drains stdout and stderr concurrently, kills Git after a stream exceeds its budget, and reports `GitExecError::OutputTooLarge`; the diff use case maps that to `GitlancerError::DiffTooLarge`. A non-zero exit retains the exit code, arguments, stdout, and stderr for upper-layer diagnostics. `RecordingGitRunner` executes nothing and exists for command-construction tests.
 
 Command telemetry is opt-in through `gitlancer::logging::register`; `ora-logging` supplies the bridge Ora installs at startup. See [Runtime Logging](runtime-logging.md#git-command-logging).
 
@@ -165,6 +178,8 @@ Command telemetry is opt-in through `gitlancer::logging::register`; `ora-logging
 gitlancer relies on stable machine-readable outputs:
 
 - `git worktree list --porcelain` — repository discovery, worktree listing, and worktree resolution
+- `git for-each-ref` plus `git remote` and `git fetch` — refreshed worktree-base discovery across local and preferred-remote refs
+- `git rev-parse <ref>^{commit}` — immutable worktree-base resolution
 - `git status --porcelain=v2 -z` — status entries
 - `git rev-parse HEAD` and `git log -1 --pretty=%s` — commit id and summary after a commit
 
@@ -187,6 +202,7 @@ Key variants:
 
 - `DomainError::NotARepository`, `NotAWorktreeRoot`, `PathOutsideWorktree`, `WorktreeMismatch`, `CannotDeleteMainWorktree`, `BranchNotFound`, `BranchAlreadyExists`
 - `GitExecError::GitNotFound`, `SpawnFailed`, `NonZeroExit`
+- `GitExecError::OutputTooLarge`, `OutputReadFailed`, and `GitlancerError::DiffTooLarge`
 - `ParseError::MissingLine`, `InvalidWorktreeList`, `InvalidStatus`
 
 ## Boundaries
@@ -201,4 +217,4 @@ gitlancer is tested at three levels:
 2. Fake-runner tests for command assembly and option handling.
 3. Real Git integration tests for multi-worktree scenarios.
 
-Priority integration scenarios: open repository from a nested directory, list main and linked worktrees, add and commit from a linked worktree, detect worktree mismatch, parse `status --porcelain=v2 -z`, and handle linked-worktree `.git` indirection correctly.
+Priority integration scenarios: open a repository from a nested directory, list main and linked worktrees, discover and resolve refreshed remote worktree bases, create branches and worktrees at explicit commits, add and commit from a linked worktree, detect worktree mismatch, parse `status --porcelain=v2 -z`, and handle linked-worktree `.git` indirection correctly.

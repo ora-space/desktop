@@ -16,6 +16,17 @@ pub enum GitlancerError {
     /// Wraps failures produced while decoding machine-readable Git output.
     #[error("git output parsing failed: {0}")]
     Parse(#[from] ParseError),
+
+    /// Wraps filesystem failures encountered while reading untracked worktree files.
+    #[error("filesystem operation failed: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Returned when a generated patch exceeds the API's bounded response budget.
+    #[error("task diff is too large: {byte_count} bytes exceeds {max_byte_count} bytes")]
+    DiffTooLarge {
+        byte_count: usize,
+        max_byte_count: usize,
+    },
 }
 
 /// Represents invalid repository and worktree states detected before execution.
@@ -72,6 +83,18 @@ pub enum GitExecError {
         args: Vec<String>,
         stdout: String,
         stderr: String,
+    },
+
+    /// Returned when a bounded command stream exceeds its configured byte budget.
+    #[error("git {stream} exceeded the {limit}-byte output limit")]
+    OutputTooLarge { stream: &'static str, limit: usize },
+
+    /// Returned when a spawned Git process stream cannot be read to completion.
+    #[error("failed to read git {stream}: {source}")]
+    OutputReadFailed {
+        stream: &'static str,
+        #[source]
+        source: std::io::Error,
     },
 }
 

@@ -6,9 +6,16 @@ use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
+use crate::task_diff::TaskDiffApi;
+use ora_application::{
+    ApplicationError, LocalSkillPackageStore, ReconcileSkillStorageHandler, UploadedSkillFile,
+};
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
+use ora_db::{
+    DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteSkillRepository,
+    default_migration_catalog,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -33,6 +40,8 @@ pub enum BackendBootstrapError {
     },
     #[error("failed to bootstrap backend database")]
     Database(#[source] ora_db::DatabaseError),
+    #[error("failed to reconcile skill storage")]
+    SkillStorage(#[source] ApplicationError),
     #[error("failed to initialize agent runtime")]
     AgentRuntime(#[source] BackendError),
 }
@@ -44,6 +53,7 @@ pub struct Backend {
     worktree_root: Arc<RwLock<PathBuf>>,
     project: Arc<ProjectApi>,
     task: Arc<TaskApi>,
+    task_diff: Arc<TaskDiffApi>,
     session: Arc<SessionApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     skill: Arc<SkillApi>,
@@ -68,13 +78,15 @@ impl Backend {
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let agent_runtime = AgentRuntimeManager::new(pool.clone(), paths.home_directory, clock)
             .map_err(BackendBootstrapError::AgentRuntime)?;
+        let skill_store = prepare_skill_storage(&paths.database_path, &pool)?;
 
         Ok(Self {
             project: Arc::new(ProjectApi::new(pool.clone(), clock)),
             task: Arc::new(TaskApi::new(pool.clone(), worktree_root.clone(), clock)),
+            task_diff: Arc::new(TaskDiffApi::new(pool.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime: Arc::new(agent_runtime),
-            skill: Arc::new(SkillApi::new(pool.clone(), clock)),
+            skill: Arc::new(SkillApi::new(pool.clone(), clock, skill_store)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             pool,
             worktree_root,
@@ -133,6 +145,15 @@ impl Backend {
     ) -> Result<ListProjectsResponse, BackendError> {
         self.project.list(request).map_err(BackendError::from)
     }
+    /// Lists selectable branches for one project repository.
+    pub fn list_project_branches(
+        &self,
+        request: ListProjectBranchesRequest,
+    ) -> Result<ListProjectBranchesResponse, BackendError> {
+        self.project
+            .list_branches(request)
+            .map_err(BackendError::from)
+    }
     /// Updates one project through the shared application composition.
     pub fn update_project(
         &self,
@@ -180,6 +201,65 @@ impl Backend {
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
         self.task.delete(request)
+    }
+
+    // =============================================================================
+    // taskDiff
+    // =============================================================================
+    /// Returns the current Git snapshot for the task directory used by its agent session.
+    pub fn get_task_diff(
+        &self,
+        request: GetTaskDiffRequest,
+    ) -> Result<GetTaskDiffResponse, BackendError> {
+        self.task_diff.get_diff(request)
+    }
+
+    /// Commits every current change in one isolated task worktree.
+    pub fn commit_task_changes(
+        &self,
+        request: CommitTaskChangesRequest,
+    ) -> Result<CommitTaskChangesResponse, BackendError> {
+        self.task_diff.commit_changes(request)
+    }
+
+    /// Pushes the verified branch owned by one isolated task worktree.
+    pub fn push_task_branch(
+        &self,
+        request: PushTaskBranchRequest,
+    ) -> Result<PushTaskBranchResponse, BackendError> {
+        self.task_diff.push_branch(request)
+    }
+
+    /// Lists every persisted review discussion for one task.
+    pub fn list_task_diff_comments(
+        &self,
+        request: ListTaskDiffCommentsRequest,
+    ) -> Result<ListTaskDiffCommentsResponse, BackendError> {
+        self.task_diff.list_comments(request)
+    }
+
+    /// Creates one line-anchored task diff discussion.
+    pub fn create_task_diff_comment(
+        &self,
+        request: CreateTaskDiffCommentRequest,
+    ) -> Result<CreateTaskDiffCommentResponse, BackendError> {
+        self.task_diff.create_comment(request)
+    }
+
+    /// Adds one reply under an existing task diff discussion.
+    pub fn reply_task_diff_comment(
+        &self,
+        request: ReplyTaskDiffCommentRequest,
+    ) -> Result<ReplyTaskDiffCommentResponse, BackendError> {
+        self.task_diff.reply_comment(request)
+    }
+
+    /// Resolves or reopens one root task diff discussion.
+    pub fn set_task_diff_comment_status(
+        &self,
+        request: SetTaskDiffCommentStatusRequest,
+    ) -> Result<SetTaskDiffCommentStatusResponse, BackendError> {
+        self.task_diff.set_comment_status(request)
     }
 
     // =============================================================================
@@ -296,6 +376,13 @@ impl Backend {
     ) -> Result<DeleteSkillResponse, BackendError> {
         self.skill.delete(request).map_err(BackendError::from)
     }
+    /// Imports one uploaded skill folder atomically through the shared application composition.
+    pub fn import_skill(
+        &self,
+        files: Vec<UploadedSkillFile>,
+    ) -> Result<CreateSkillResponse, BackendError> {
+        self.skill.import(files).map_err(BackendError::from)
+    }
 
     // =============================================================================
     // agent
@@ -346,6 +433,37 @@ impl Backend {
     ) -> Result<GitIdentityResponse, BackendError> {
         Ok(crate::identity::resolve_git_identity())
     }
+}
+
+/// Creates the skill storage root, then reconciles it so startup begins from a clean layout.
+///
+/// Reconciliation runs while the backend is still opening so any crash-orphaned staging or
+/// promoted-but-uncommitted directory is gone before the first import can observe the filesystem.
+fn prepare_skill_storage(
+    database_path: &Path,
+    pool: &RepositoryPool,
+) -> Result<LocalSkillPackageStore, BackendBootstrapError> {
+    let skills_directory = skills_storage_dir(database_path);
+    ensure_directory(&skills_directory)?;
+    let store = LocalSkillPackageStore::new(skills_directory);
+
+    ReconcileSkillStorageHandler::new(store.clone(), SqliteSkillRepository::new(pool.clone()))
+        .handle()
+        .map_err(BackendBootstrapError::SkillStorage)?;
+
+    Ok(store)
+}
+
+/// Derives the `atoms/skills` root from the configured SQLite database location.
+///
+/// The database sits directly under the runtime data directory, so its parent is the data root
+/// that every derived path (worktrees, skills) hangs off of.
+fn skills_storage_dir(database_path: &Path) -> PathBuf {
+    database_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("atoms")
+        .join("skills")
 }
 
 /// Creates one required runtime directory and preserves its exact failing path.
@@ -508,6 +626,7 @@ mod tests {
                 title: "Move configuration".to_string(),
                 status: TaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .expect("create task")
             .task;

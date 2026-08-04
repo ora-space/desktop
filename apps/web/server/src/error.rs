@@ -64,6 +64,11 @@ pub enum WebBootstrapError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+    #[error("failed to reconcile skill storage")]
+    SkillStorageReconcile {
+        #[source]
+        source: ora_application::ApplicationError,
+    },
     #[error(transparent)]
     LoggingInit(#[from] ora_logging::LoggingInitError),
     #[error("failed to bind HTTP listener")]
@@ -204,8 +209,64 @@ pub(crate) struct DeferredCompletion;
 const fn status_for(classification: ErrorClassification) -> StatusCode {
     match classification {
         ErrorClassification::InvalidRequest => StatusCode::BAD_REQUEST,
+        ErrorClassification::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         ErrorClassification::NotFound => StatusCode::NOT_FOUND,
         ErrorClassification::Conflict => StatusCode::CONFLICT,
+        ErrorClassification::Unprocessable => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorClassification::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WebApiError, status_for};
+    use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
+    use ora_application::ApplicationError;
+    use ora_backend::ErrorClassification;
+    use ora_contracts::RequestId;
+    use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
+
+    /// Verifies transport-only upload limits retain their native HTTP status.
+    #[test]
+    fn maps_payload_too_large_classification_to_http_413() {
+        assert_eq!(
+            status_for(ErrorClassification::PayloadTooLarge),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
+
+    /// Verifies missing base branches become HTTP 400 payloads that retain the selected ref name.
+    #[tokio::test]
+    async fn maps_missing_base_branches_to_http_400() {
+        let response = WebApiError::from(ApplicationError::TaskBaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        })
+        .into_response();
+        let status = response.status();
+        let body = response.into_body();
+        let bytes = match to_bytes(body, usize::MAX).await {
+            Ok(bytes) => bytes,
+            Err(error) => panic!("failed to read response body: {error}"),
+        };
+        let mut actual = match serde_json::from_slice::<Value>(&bytes) {
+            Ok(actual) => actual,
+            Err(error) => panic!("failed to decode JSON body: {error}"),
+        };
+        let request_id = actual
+            .as_object_mut()
+            .and_then(|body| body.remove("requestId"))
+            .expect("contract error must include requestId");
+        serde_json::from_value::<RequestId>(request_id)
+            .expect("contract error requestId must be a UUID");
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            actual,
+            json!({
+                "code": "task_base_branch_not_found",
+                "params": { "branchName": "ghost-branch" },
+            })
+        );
     }
 }

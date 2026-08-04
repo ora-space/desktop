@@ -3,6 +3,8 @@ use thiserror::Error;
 /// Enumerates domain-model conversion failures that adapters must handle explicitly.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DomainModelError {
+    #[error("worktree baseline commit must not be empty")]
+    EmptyWorktreeBaseline,
     #[error("invalid project work context surface value: {0}")]
     InvalidProjectWorkContextSurface(String),
     #[error("invalid task status value: {0}")]
