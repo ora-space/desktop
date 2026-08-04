@@ -40,7 +40,7 @@ describe("WorkspaceFileViewer", () => {
     );
 
     expect(container.querySelector(
-      '[data-slot="scroll-area"][scrollbars="both"]',
+      '[data-slot="scroll-area"][data-scrollbars="both"]',
     )).not.toBeNull();
   });
 

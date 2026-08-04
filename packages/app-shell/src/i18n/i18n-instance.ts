@@ -1261,7 +1261,7 @@ export const translationResources = {
   },
 } as const;
 
-export type TranslationKey = keyof (typeof translations)["zh-CN"];
+export type TranslationKey = keyof (typeof translationResources)["zh-CN"];
 const LOCALE_STORAGE_KEY = "ora.locale";
 
 /** Reads the persisted locale without making application startup depend on browser storage availability. */
