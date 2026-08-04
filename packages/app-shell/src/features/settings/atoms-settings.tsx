@@ -132,6 +132,7 @@ function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, 
           key={editing.item?.id ?? "new"}
           tPrefix={tPrefix}
           hasBody={hasBody}
+          validatesSkill={tPrefix === "settings.skills"}
           item={editing.item}
           onCancel={() => setEditing(null)}
           onSave={save}
@@ -197,9 +198,10 @@ const INLINE_FIELD = "border-transparent bg-transparent px-0 shadow-none focus-v
  * layout; roles add a large borderless body editor below. The body and the "improve" button
  * are prototype-only affordances that are intentionally not wired to the backend yet.
  */
-function AtomEditor({ tPrefix, hasBody, item, onCancel, onSave }: {
+function AtomEditor({ tPrefix, hasBody, validatesSkill, item, onCancel, onSave }: {
   tPrefix: string;
   hasBody: boolean;
+  validatesSkill: boolean;
   item: AtomRecord | null;
   onCancel: () => void;
   onSave: (name: string, description: string) => Promise<void>;
@@ -210,14 +212,19 @@ function AtomEditor({ tPrefix, hasBody, item, onCancel, onSave }: {
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const normalizedName = name.trim();
+  const normalizedDescription = description.trim();
+  const nameIsValid = !validatesSkill || SKILL_NAME.test(normalizedName);
+  const descriptionIsValid = !validatesSkill
+    || (normalizedDescription.length > 0 && new TextEncoder().encode(normalizedDescription).length <= 4096);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!name.trim() || !description.trim() || saving) return;
+    if (!normalizedName || !normalizedDescription || !nameIsValid || !descriptionIsValid || saving) return;
     setSaving(true);
     setError(null);
     try {
-      await onSave(name.trim(), description.trim());
+      await onSave(normalizedName, normalizedDescription);
     } catch {
       setError(t(`${tPrefix}.saveError`));
       setSaving(false);
@@ -230,7 +237,7 @@ function AtomEditor({ tPrefix, hasBody, item, onCancel, onSave }: {
         <h3 className="text-sm font-medium">{item ? t(`${tPrefix}.editTitle`) : t(`${tPrefix}.createTitle`)}</h3>
         <div className="flex items-center gap-2">
           <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onCancel}>{t("common.cancel")}</Button>
-          <Button type="submit" variant="secondary" size="sm" disabled={saving || !name.trim() || !description.trim()}>{saving ? t("common.saving") : t("common.save")}</Button>
+          <Button type="submit" variant="secondary" size="sm" disabled={saving || !normalizedName || !normalizedDescription || !nameIsValid || !descriptionIsValid}>{saving ? t("common.saving") : t("common.save")}</Button>
         </div>
       </div>
 
@@ -240,10 +247,12 @@ function AtomEditor({ tPrefix, hasBody, item, onCancel, onSave }: {
             <Label htmlFor="atom-name" className="text-muted-foreground">{t(`${tPrefix}.nameLabel`)}</Label>
             <Input id="atom-name" value={name} onChange={(event) => setName(event.target.value)} placeholder={t(`${tPrefix}.namePlaceholder`)} autoFocus className={INLINE_FIELD} />
           </div>
+          {validatesSkill && !nameIsValid && <p className="pb-3 text-xs text-destructive">{t("settings.skills.nameInvalid")}</p>}
           <div className="grid grid-cols-[72px_minmax(0,1fr)] items-start gap-4 pt-3">
             <Label htmlFor="atom-description" className="pt-1.5 text-muted-foreground">{t(`${tPrefix}.descriptionLabel`)}</Label>
             <Textarea id="atom-description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder={t(`${tPrefix}.descriptionPlaceholder`)} className={cn(INLINE_FIELD, "min-h-9 resize-none py-1.5")} />
           </div>
+          {validatesSkill && !descriptionIsValid && <p className="pt-2 text-xs text-destructive">{t("settings.skills.descriptionInvalid")}</p>}
         </div>
       </div>
 
@@ -260,6 +269,8 @@ function AtomEditor({ tPrefix, hasBody, item, onCancel, onSave }: {
     </form>
   );
 }
+
+const SKILL_NAME = /^[A-Za-z0-9._-]+$/;
 
 /** Confirms destructive removal before it touches shared state. */
 function DeleteAtomDialog({ tPrefix, target, onOpenChange, onDelete }: {
