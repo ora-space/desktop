@@ -533,6 +533,34 @@ backend_command!(
     delete_skill,
     "Deletes one skill through the shared Backend."
 );
+backend_command!(
+    prepare_skill_import,
+    PrepareSkillImportRequest,
+    PrepareSkillImportResponse,
+    prepare_skill_import,
+    "Prepares one skill import source into a previewed session."
+);
+backend_command!(
+    get_skill_import,
+    GetSkillImportSessionRequest,
+    GetSkillImportSessionResponse,
+    get_skill_import,
+    "Gets one skill import session with its current progress."
+);
+backend_command!(
+    commit_skill_import,
+    CommitSkillImportRequest,
+    CommitSkillImportResponse,
+    commit_skill_import,
+    "Accepts and freezes one skill import commit."
+);
+backend_command!(
+    cancel_skill_import,
+    CancelSkillImportRequest,
+    CancelSkillImportResponse,
+    cancel_skill_import,
+    "Cancels one prepared skill import session."
+);
 
 // =============================================================================
 // agent
