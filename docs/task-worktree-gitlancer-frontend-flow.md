@@ -40,7 +40,8 @@ flowchart LR
 | Desktop IPC 注册 | `apps/desktop/src-tauri/src/commands.rs` |
 | Tauri transport 映射 | `apps/desktop/web/tauri-transport.ts` |
 | Web/Desktop 共用装配 | `crates/backend/src/task_diff.rs` |
-| Application 用例 | `crates/application/src/task_diff/handlers.rs` |
+| Backend TaskDiffApi | `crates/backend/src/task_diff.rs` |
+| Application 用例（评论与 Git 写操作） | `crates/application/src/task_diff/handlers.rs` |
 | Application ports | `crates/application/src/task_diff/ports.rs` |
 | Gitlancer adapter | `crates/application/src/task_diff/git_reader.rs` |
 | Unified Diff 实现 | `crates/gitlancer/src/git/diff.rs` |
