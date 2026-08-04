@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -10,7 +11,11 @@ import {
   type SaveTextFileOptions,
   type WindowControlsCapability,
   type WindowManagerOs,
+  type SkillMarketplaceCapability,
+  type SkillMarketplaceStatus,
 } from "../types";
+
+const SKILL_MARKETPLACE_STATUS_EVENT = "skill-marketplace://status";
 
 /**
  * Reads the host OS from the webview user agent.
@@ -105,6 +110,15 @@ export class TauriPlatformAdapter implements PlatformAdapter {
   readonly windowControls: WindowControlsCapability = createTauriWindowControls();
 
   readonly locationActions: LocationActionsCapability = createTauriLocationActions();
+
+  readonly skillMarketplace: SkillMarketplaceCapability = {
+    kind: "supported",
+    open: () => invoke("open_skill_marketplace"),
+    onStatus: (listener) =>
+      listen<SkillMarketplaceStatus>(SKILL_MARKETPLACE_STATUS_EVENT, (event) => {
+        listener(event.payload);
+      }),
+  };
 
   readonly worktreeStorage = {
     kind: "configurable" as const,

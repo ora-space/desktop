@@ -28,6 +28,8 @@ export class WebPlatformAdapter implements PlatformAdapter, PlatformHostRenderer
   readonly windowControls = { kind: "none" as const };
   // The browser cannot launch native file managers, terminals, or editors.
   readonly locationActions = { kind: "unsupported" as const };
+  // The SkillHub window and its application-owned download directory require Tauri.
+  readonly skillMarketplace = { kind: "unsupported" as const };
   private activeSelection: ActivePathSelection | null = null;
   private listeners = new Set<() => void>();
   private nextRequestId = 1;

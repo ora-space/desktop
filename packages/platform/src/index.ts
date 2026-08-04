@@ -10,6 +10,8 @@ export {
   type PlatformLocale,
   type SaveTextFileOptions,
   type SelectPathOptions,
+  type SkillMarketplaceCapability,
+  type SkillMarketplaceStatus,
   type WindowControlsCapability,
   type WindowManagerOs,
   type WorktreeStorageCapability,
