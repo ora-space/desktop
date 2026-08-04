@@ -125,7 +125,7 @@ describe("workflow demo", () => {
     });
   });
 
-  it("includes a four-stage Agent lifecycle demo with explicit execution contracts", () => {
+  it("includes a six-stage Agent lifecycle demo with explicit execution contracts", () => {
     const workflow = createMockWorkflows("en-US").find(
       (candidate) => candidate.id === "spec-change-lifecycle",
     );
@@ -142,6 +142,17 @@ describe("workflow demo", () => {
             title: "Explore",
             agentConfig: expect.objectContaining({
               roleId: "Researcher",
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          id: "sfmea-review",
+          data: expect.objectContaining({
+            kind: "agent",
+            title: "SFMEA review",
+            agentConfig: expect.objectContaining({
+              roleId: "Reviewer",
+              skills: [expect.objectContaining({ skillId: "cdase:sfmea_review" })],
             }),
           }),
         }),
@@ -164,6 +175,17 @@ describe("workflow demo", () => {
           }),
         }),
         expect.objectContaining({
+          id: "code-defect-scan",
+          data: expect.objectContaining({
+            kind: "agent",
+            title: "Code defect scan",
+            agentConfig: expect.objectContaining({
+              roleId: "Reviewer",
+              skills: [expect.objectContaining({ skillId: "code-defect-scan" })],
+            }),
+          }),
+        }),
+        expect.objectContaining({
           id: "archive",
           data: expect.objectContaining({
             kind: "agent",
@@ -176,12 +198,26 @@ describe("workflow demo", () => {
       ],
       edges: [
         expect.objectContaining({ source: "start", target: "explore" }),
-        expect.objectContaining({ source: "explore", target: "propose" }),
+        expect.objectContaining({ source: "explore", target: "sfmea-review" }),
+        expect.objectContaining({ source: "sfmea-review", target: "propose" }),
         expect.objectContaining({ source: "propose", target: "apply" }),
-        expect.objectContaining({ source: "apply", target: "archive" }),
+        expect.objectContaining({ source: "apply", target: "code-defect-scan" }),
+        expect.objectContaining({ source: "code-defect-scan", target: "archive" }),
       ],
     });
     expect(parseDemoWorkflow(workflow)).toEqual(workflow);
+    expect(
+      workflow.nodes
+        .filter((node) => node.data.kind === "agent")
+        .map((node) => node.data.agentConfig?.executor),
+    ).toEqual([
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
+    ]);
   });
 
   it("localizes the OpenSpec Agent node titles in Chinese", () => {
@@ -192,8 +228,10 @@ describe("workflow demo", () => {
     expect(workflow?.nodes.map((node) => node.data.title)).toEqual([
       "开始",
       "探索",
+      "SFMEA检查",
       "提案",
       "实施",
+      "代码缺陷扫描",
       "归档",
     ]);
   });

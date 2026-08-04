@@ -100,6 +100,11 @@ describe("createMockWorkflowNode", () => {
       agentModels: [
         { agentCli: "code_agent_cli", modelId: "gpt-5", label: "CodeAgentCLI · GPT-5" },
         { agentCli: "open_code", modelId: "opencode/sonnet", label: "OpenCode · Sonnet" },
+        {
+          agentCli: "open_code",
+          modelId: "deepseek/deepseek-v4-flash",
+          label: "OpenCode · deepseek/deepseek-v4-flash",
+        },
         { agentCli: "nga", modelId: "nga/default", label: "NGA · Default" },
       ],
       roles: [
@@ -124,6 +129,8 @@ describe("createMockWorkflowNode", () => {
         { value: "openspec-propose", label: "openspec-propose" },
         { value: "openspec-sync-specs", label: "openspec-sync-specs" },
         { value: "openspec-verify-change", label: "openspec-verify-change" },
+        { value: "cdase:sfmea_review", label: "cdase:sfmea_review" },
+        { value: "code-defect-scan", label: "code-defect-scan" },
       ],
       tools: [
         { value: "Terminal", label: "Terminal" },

@@ -44,6 +44,11 @@ const DEFAULT_AGENT_MODEL: WorkflowAgentModel = {
 const MOCK_AGENT_MODELS: WorkflowAgentModel[] = [
   DEFAULT_AGENT_MODEL,
   { agentCli: "open_code", modelId: "opencode/sonnet", label: "OpenCode · Sonnet" },
+  {
+    agentCli: "open_code",
+    modelId: "deepseek/deepseek-v4-flash",
+    label: "OpenCode · deepseek/deepseek-v4-flash",
+  },
   { agentCli: "nga", modelId: "nga/default", label: "NGA · Default" },
 ];
 
@@ -70,6 +75,8 @@ const MOCK_AGENT_SKILLS: WorkflowChoice[] = [
   "openspec-propose",
   "openspec-sync-specs",
   "openspec-verify-change",
+  "cdase:sfmea_review",
+  "code-defect-scan",
 ].map((value) => ({ value, label: value }));
 
 /**
