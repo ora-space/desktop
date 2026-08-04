@@ -74,6 +74,10 @@ export interface WorkflowRunRepository {
   getLiveSnapshot: (runId: string) => Promise<WorkflowRunLiveSnapshot | null>;
   /**
    * Subscribes to run events (node progress, artifacts, finish).
+   *
+   * Ordering contract: adapters must emit a single run's stream in strictly
+   * increasing `sequence` order. Frontend projections rely on this (same as the
+   * chat session stream) and only perform id-based upserts, not global re-sorts.
    * Callers must unregister on unmount.
    */
   subscribe: (

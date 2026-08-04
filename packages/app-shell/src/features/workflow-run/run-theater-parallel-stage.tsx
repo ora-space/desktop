@@ -14,6 +14,7 @@ import { isNodeWorking } from "./run-status-mark";
 import type {
   GraphWorkflowNodeState,
   WorkflowNodeData,
+  WorkflowNodeConversationItem,
 } from "@ora/workflow-runtime";
 import "./theater-motion.css";
 
@@ -27,6 +28,7 @@ interface ParallelAct {
   data: WorkflowNodeData;
   state: GraphWorkflowNodeState;
   artifactCount: number;
+  conversation: WorkflowNodeConversationItem[];
 }
 
 interface RunTheaterParallelStageProps {
@@ -326,6 +328,8 @@ export function RunTheaterParallelStage({
                       state={act.state}
                       live={live}
                       artifactCount={act.artifactCount}
+                      conversation={act.conversation}
+                      conversationEnabled={act.nodeId === primaryId}
                       variant="stage"
                       emphasized={act.nodeId === primaryId}
                     />

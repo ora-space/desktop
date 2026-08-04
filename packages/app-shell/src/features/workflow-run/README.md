@@ -37,6 +37,15 @@ Keep these stacks separate — shared chrome only where noted.
     The rail stays resizable/collapsible — drag the handle to resize, drag
     narrow or use the close control to dismiss. Switching acts updates the
     open panel.
+    The focused stage card owns a **session dock**. Without HITL it sits
+    lower-right beside metrics. With embedded HITL it joins the gate chrome so
+    permission / clarify and conversation share one action cluster. Activating it
+    keeps the card shell/header stable and morphs the body into a compact node
+    conversation that reuses the full chat bubble and Markdown renderer.
+    User input and formal Agent messages stay visible; thoughts and tool calls
+    remain available behind one collapsed activity disclosure. The inspector
+    therefore does not duplicate runtime input/output; it remains the
+    configuration, metrics, error, and artifact surface.
   - **Result act**: when the run is terminal and Theater focus is not pinned
     to a path node (`focusNodeId === null`), the stage shows an end-of-run
     result surface (status, totals, artifact count, Overview CTA). Finishing
@@ -106,8 +115,10 @@ Keep these stacks separate — shared chrome only where noted.
   Sidebar supports cancel (keep row) and delete (cancel then remove).
 - View toggle: Theater ↔ Overview. Overview node click returns to Theater
   focused on that node and opens the act inspector. Header Theater toggle
-  does not force the rail open. `awaiting_input` does **not** force a view
-  change (toast only); warm overview/path chips stay discoverable in place.
+  does not force the rail open. Clicking Overview again while already there
+  re-runs `fitView` so a resized pane refits without leaving the mode.
+  `awaiting_input` does **not** force a view change (toast only); warm
+  overview/path chips stay discoverable in place.
 - Theater focus: a live pin (focused while `running` / `awaiting_input`)
   releases back to auto-follow when that same act just finishes. Clicking a
   already-finished or idle node is a history pin and stays until the user
@@ -128,15 +139,42 @@ Keep these stacks separate — shared chrome only where noted.
   the waiting act card can **embed** the expandable HITL surface (warm collapsed
   prompt → sky pulse + question body + tiles / composer) in place of metrics —
   no absolute bottom overlay covering the card. If focus is on a non-waiting
-  act while other gates are open, a compact prompt sits under the stage column.
-  Parallel waits dock HITL **under** the carousel (not inside sliding cards) so
+  act while other gates are open, a compact prompt sits under the stage column
+  (expanded HITL collapses when focus leaves the waiting act so path chips stay
+  usable). Parallel waits dock HITL **under** the carousel (not inside sliding cards) so
   peer switches stay height-stable. Collapse is respected
   across run ticks so you can browse other nodes while a gate waits — including
   completed / pending path chips during parallel waits (stage leaves the
   parallel carousel when focus is outside the live peer set). Esc
   collapses HITL first; a second Esc returns Overview. Submit payload keys
-  match `field.name`. Inspector shows per-node runtime `input` / `output`
-  summaries when the mock (or backend) provides them.
+  match `field.name`. The focused card conversation shows node input, Agent
+  messages, and submitted HITL answers (mock approval gates also append a short
+  assistant ack so the session visibly updates after submit); inspector metrics
+  remain available without duplicating that transcript.
+
+## Node conversation integration
+
+- `WorkflowRunLiveSnapshot.conversation` is a filtered presentation projection,
+  not raw session history. `node_conversation_item_upserted` supports visible
+  user/Agent messages plus secondary activity items while preserving cursor
+  replay semantics.
+- The projection follows the formal chat stream contract: backend adapters must
+  deliver one run's events in cursor/sequence order and keep item IDs stable.
+  The frontend applies incremental id-based upserts and does not globally re-sort
+  conversation items.
+- Each node state exposes an opaque `sessionId`; conversation items repeat that
+  identity so a future HTTP/NDJSON adapter can map the run node to its real
+  session.
+- The memory engine creates deterministic node session IDs, mock user/Agent
+  messages, and collapsed thought/tool activity. Production adapters can feed
+  raw activity into the projection without exposing it by default.
+- Only the focused stage card can enter conversation mode. Parallel peers keep
+  stable carousel geometry. The session dock stays available while embedded HITL
+  is open: it sits inside the HITL action cluster (collapsed: beside the warm
+  prompt; expanded: next to collapse) with matching amber chrome so gate and
+  conversation read as one footer composition. Wheel scrolling past the
+  conversation edge chains into the Theater stage scroll so HITL below can be
+  reached without moving the cursor.
 
 ## Demo path checklist
 

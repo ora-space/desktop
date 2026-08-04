@@ -50,17 +50,28 @@ interface RunOverviewCanvasProps {
   onFocusNode: (nodeId: string) => void;
   /** Used for a soft per-node artifact affordance (count only). */
   artifacts?: WorkflowArtifact[];
+  /**
+   * Bump to re-run fitView while the canvas stays mounted (e.g. user clicks
+   * Overview again after resizing the pane).
+   */
+  fitRequestKey?: number;
 }
 
-/** Fits the read-only graph once after mount / snapshot identity change. */
-function FitViewOnMount({ snapshotId }: { snapshotId: string }) {
+/** Fits the read-only graph after mount, snapshot change, or an explicit refit. */
+function FitViewOnRequest({
+  snapshotId,
+  fitRequestKey,
+}: {
+  snapshotId: string;
+  fitRequestKey: number;
+}) {
   const { fitView } = useReactFlow();
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       void fitView({ padding: 0.18, duration: 200 });
     });
     return () => cancelAnimationFrame(frame);
-  }, [fitView, snapshotId]);
+  }, [fitView, snapshotId, fitRequestKey]);
   return null;
 }
 
@@ -73,6 +84,7 @@ export function RunOverviewCanvas({
   focusedNodeId,
   onFocusNode,
   artifacts = [],
+  fitRequestKey = 0,
 }: RunOverviewCanvasProps) {
   const { t } = useTranslation();
   const snapshot = run.definitionSnapshot;
@@ -156,7 +168,10 @@ export function RunOverviewCanvas({
             }}
             className="h-full w-full"
           >
-            <FitViewOnMount snapshotId={snapshot.id} />
+            <FitViewOnRequest
+              snapshotId={snapshot.id}
+              fitRequestKey={fitRequestKey}
+            />
             <Background
               id="run-overview-dots"
               variant={BackgroundVariant.Dots}

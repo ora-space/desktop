@@ -14,6 +14,10 @@ interface MessageBubbleProps {
   userName: string;
   embeddedAssistant?: boolean;
   streaming?: boolean;
+  /** Tighter rhythm for read-only embedded conversations such as workflow cards. */
+  compact?: boolean;
+  /** Lets an embedding surface own the highlight geometry for the whole message row. */
+  showAnchorHighlight?: boolean;
 }
 
 /** Copies message content to the clipboard and briefly confirms with a check. */
@@ -31,13 +35,20 @@ function useCopyMessage(content: string) {
 }
 
 /** A single chat message: avatar + content, with hover actions on replies. */
-export function MessageBubble({ message, userName, embeddedAssistant = false, streaming = false }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  userName,
+  embeddedAssistant = false,
+  streaming = false,
+  compact = false,
+  showAnchorHighlight = true,
+}: MessageBubbleProps) {
   const { t } = useTranslation();
   const { copied, copy } = useCopyMessage(message.content);
   const isUser = message.role === "user";
 
   return (
-    <div className={`group/message flex gap-3 ${embeddedAssistant ? "py-1" : "py-5"} ${isUser ? "justify-end" : "justify-start"}`}>
+    <div className={`group/message flex gap-3 ${compact || embeddedAssistant ? "py-1.5" : "py-5"} ${isUser ? "justify-end" : "justify-start"}`}>
       {!isUser && !embeddedAssistant && <OraMark size="sm" />}
 
       <div className={`flex min-w-0 flex-col gap-1.5 ${isUser ? "max-w-[85%] items-end" : "flex-1"}`}>
@@ -47,36 +58,41 @@ export function MessageBubble({ message, userName, embeddedAssistant = false, st
               <ContentBlock key={`${message.id}-content-${index}`} content={content} />
             ))}
             {message.content && (
-              <div className="relative w-fit max-w-full rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
-                <AnchorHighlight />
+              <div className="relative w-fit max-w-full overflow-visible rounded-2xl rounded-br-md bg-secondary px-4 py-2.5">
+                {showAnchorHighlight && <AnchorHighlight />}
                 <p data-selectable className="relative whitespace-pre-wrap break-words text-[14px] leading-6 text-foreground">{message.content}</p>
               </div>
             )}
           </>
         ) : (
-          <MarkdownMessage content={message.content} streaming={streaming} />
+          <div className="relative">
+            {showAnchorHighlight && <AnchorHighlight />}
+            <MarkdownMessage content={message.content} streaming={streaming} />
+          </div>
         )}
 
-        <div className={`flex min-h-6 items-center gap-2 ${isUser ? "pr-1" : ""}`}>
-          <span className="text-xs text-muted-foreground">{formatClock(message.createdAt)}</span>
-          {!isUser && (
-            <div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100">
-              <Button variant="ghost" size="icon-xs" aria-label={t("chat.copy")} onClick={copy}>
-                {copied ? (
-                  <IconCheck className="size-3.5 text-emerald-600" />
-                ) : (
-                  <IconCopy className="size-3.5 text-muted-foreground" />
-                )}
-              </Button>
-              <Button variant="ghost" size="icon-xs" aria-label={t("chat.goodResponse")}>
-                <IconThumbUp className="size-3.5 text-muted-foreground" />
-              </Button>
-              <Button variant="ghost" size="icon-xs" aria-label={t("chat.badResponse")}>
-                <IconThumbDown className="size-3.5 text-muted-foreground" />
-              </Button>
-            </div>
-          )}
-        </div>
+        {!compact && (
+          <div className={`flex min-h-6 items-center gap-2 ${isUser ? "pr-1" : ""}`}>
+            <span className="text-xs text-muted-foreground">{formatClock(message.createdAt)}</span>
+            {!isUser && (
+              <div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                <Button variant="ghost" size="icon-xs" aria-label={t("chat.copy")} onClick={copy}>
+                  {copied ? (
+                    <IconCheck className="size-3.5 text-emerald-600" />
+                  ) : (
+                    <IconCopy className="size-3.5 text-muted-foreground" />
+                  )}
+                </Button>
+                <Button variant="ghost" size="icon-xs" aria-label={t("chat.goodResponse")}>
+                  <IconThumbUp className="size-3.5 text-muted-foreground" />
+                </Button>
+                <Button variant="ghost" size="icon-xs" aria-label={t("chat.badResponse")}>
+                  <IconThumbDown className="size-3.5 text-muted-foreground" />
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <span className="sr-only">{isUser ? `${userName}: ${t("chat.youSaid")}` : t("chat.assistantReplied")}</span>

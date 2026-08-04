@@ -15,6 +15,7 @@ import type {
   HitlRequest,
   HitlSchema,
   WorkflowArtifact,
+  WorkflowNodeConversationItem,
   WorkflowDefinition,
   WorkflowRunEvent,
 } from "./types";
@@ -34,11 +35,13 @@ export interface MockRunEngineHost {
   getRun: (runId: string) => GraphWorkflowRun | undefined;
   setRun: (run: GraphWorkflowRun) => void;
   appendArtifact: (artifact: WorkflowArtifact) => void;
+  upsertConversationItem: (item: WorkflowNodeConversationItem) => void;
   emit: (runId: string, event: WorkflowRunEvent) => void;
   notifyChanged: (run: GraphWorkflowRun) => void;
   nowIso: () => string;
   nextArtifactId: () => string;
   nextHitlId: () => string;
+  nextConversationItemId: () => string;
 }
 
 /** Truncates text for glanceable I/O summaries. */
@@ -135,16 +138,17 @@ function stubNodeInput(
 ): GraphWorkflowNodeIo {
   const node = run.definitionSnapshot.nodes.find((item) => item.id === nodeId);
   const title = node?.data.title ?? nodeId;
+  const instruction = node?.data.instruction ?? node?.data.agentConfig?.prompt;
   const kickoff = run.kickoffInput?.trim() ?? "";
   if (kickoff !== "") {
     return {
       summary: ioPreview(kickoff),
-      detail: node?.data.instruction,
+      detail: instruction,
     };
   }
   return {
     summary: title,
-    detail: node?.data.instruction,
+    detail: instruction,
   };
 }
 
@@ -179,6 +183,8 @@ function hitlAnswerOutput(
   schema: HitlSchema,
   payload: Record<string, unknown>,
 ): GraphWorkflowNodeIo {
+  const isSingleAnswerField = schema.fields.length === 1
+    && schema.fields[0]?.name === "answer";
   const parts: string[] = [];
   for (const field of schema.fields) {
     const raw = payload[field.name];
@@ -194,7 +200,9 @@ function hitlAnswerOutput(
         ?? text;
       parts.push(`${field.label}: ${label}`);
     } else {
-      parts.push(`${field.label}: ${text}`);
+      // Keep single-answer clarify responses chat-like ("xxx") while preserving
+      // key/value readability for multi-field approvals and feedback forms.
+      parts.push(isSingleAnswerField ? text : `${field.label}: ${text}`);
     }
   }
   const joined = parts.join(" · ");
@@ -222,6 +230,42 @@ export function createMockRunEngine(
   /** Per-run map of nodeId → in-flight step timer. */
   const timers = new Map<string, Map<string, ReturnType<typeof setTimeout>>>();
   const plans = new Map<string, MockExecutionPlan>();
+
+  /** Stores one conversation item and emits its upsert event. */
+  function publishConversationItem(
+    runId: string,
+    item: WorkflowNodeConversationItem,
+  ): void {
+    host.upsertConversationItem(item);
+    host.emit(runId, {
+      type: "node_conversation_item_upserted",
+      runId,
+      item,
+    });
+  }
+
+  /** Appends one visible message line to a node-bound conversation. */
+  function publishConversationMessage(
+    runId: string,
+    nodeId: string,
+    sessionId: string,
+    role: "user" | "assistant",
+    markdown: string,
+    timestamp: string,
+  ): void {
+    publishConversationItem(runId, {
+      kind: "message",
+      id: host.nextConversationItemId(),
+      runId,
+      nodeId,
+      sessionId,
+      role,
+      markdown,
+      status: "complete",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
 
   /** Resolves step length: node mockStepMs when positive, else engine default. */
   function stepMsFor(run: GraphWorkflowRun, nodeId: string): number {
@@ -320,12 +364,79 @@ export function createMockRunEngine(
     const startedAt = host.nowIso();
     const stepMs = stepMsFor(run, nodeId);
     const input = stubNodeInput(run, nodeId);
+    const sessionId = `workflow-node:${runId}:${nodeId}`;
     patchNode(runId, nodeId, {
       status: "running",
+      sessionId,
       startedAt,
       input,
     });
     host.emit(runId, { type: "node_started", runId, nodeId });
+
+    const inputText = input.detail?.trim() || input.summary.trim();
+    if (inputText !== "") {
+      const inputMessage: WorkflowNodeConversationItem = {
+        kind: "message",
+        id: host.nextConversationItemId(),
+        runId,
+        nodeId,
+        sessionId,
+        role: "user",
+        markdown: inputText,
+        status: "complete",
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      };
+      host.upsertConversationItem(inputMessage);
+      host.emit(runId, {
+        type: "node_conversation_item_upserted",
+        runId,
+        item: inputMessage,
+      });
+    }
+
+    // The mock keeps a little realistic activity in the projection so the UI
+    // can demonstrate its collapsed disclosure without exposing it by default.
+    if (node?.data.kind === "agent") {
+      const thought: WorkflowNodeConversationItem = {
+        kind: "activity",
+        id: host.nextConversationItemId(),
+        runId,
+        nodeId,
+        sessionId,
+        activityKind: "thought",
+        summary: "分析节点上下文",
+        detail: "Mock thought: compare the instruction with the current workflow context.",
+        status: "complete",
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      };
+      host.upsertConversationItem(thought);
+      host.emit(runId, {
+        type: "node_conversation_item_upserted",
+        runId,
+        item: thought,
+      });
+      const tool: WorkflowNodeConversationItem = {
+        kind: "activity",
+        id: host.nextConversationItemId(),
+        runId,
+        nodeId,
+        sessionId,
+        activityKind: "tool",
+        summary: "读取工作流上下文",
+        detail: "Mock tool call: inspect upstream node outputs.",
+        status: "complete",
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      };
+      host.upsertConversationItem(tool);
+      host.emit(runId, {
+        type: "node_conversation_item_upserted",
+        runId,
+        item: tool,
+      });
+    }
 
     const timer = setTimeout(() => {
       timersFor(runId).delete(nodeId);
@@ -380,6 +491,7 @@ export function createMockRunEngine(
         [nodeId]: {
           ...run.nodeStates[nodeId],
           status: "awaiting_input",
+          sessionId: `workflow-node:${runId}:${nodeId}`,
           startedAt,
           input,
         },
@@ -389,6 +501,25 @@ export function createMockRunEngine(
     host.setRun(withNode);
     host.notifyChanged(withNode);
     host.emit(runId, { type: "node_started", runId, nodeId });
+    const sessionId = `workflow-node:${runId}:${nodeId}`;
+    for (const markdown of promptNodeContextMessages(nodeId, locale)) {
+      publishConversationMessage(
+        runId,
+        nodeId,
+        sessionId,
+        "assistant",
+        markdown,
+        startedAt,
+      );
+    }
+    publishConversationMessage(
+      runId,
+      nodeId,
+      sessionId,
+      "assistant",
+      hitlQuestionMarkdown(schema, locale),
+      startedAt,
+    );
     host.emit(runId, { type: "hitl_required", runId, request });
   }
 
@@ -437,6 +568,8 @@ export function createMockRunEngine(
     const tokenUsage = stubTokenUsage(nodeId);
     const remaining = run.openHitls.filter((item) => item.id !== requestId);
     const prev = run.nodeStates[nodeId];
+    const answer = hitlAnswerOutput(request.schema, payload);
+    const sessionId = prev?.sessionId ?? `workflow-node:${runId}:${nodeId}`;
     const resolved: GraphWorkflowRun = {
       ...run,
       status: remaining.length > 0 ? "awaiting_input" : "running",
@@ -445,18 +578,56 @@ export function createMockRunEngine(
         ...run.nodeStates,
         [nodeId]: {
           status: "succeeded",
+          sessionId,
           startedAt,
           finishedAt,
           durationMs,
           tokenUsage,
           input: prev?.input,
-          output: hitlAnswerOutput(request.schema, payload),
+          output: answer,
         },
       },
       updatedAt: finishedAt,
     };
     host.setRun(resolved);
     host.notifyChanged(resolved);
+    const userMessage: WorkflowNodeConversationItem = {
+      kind: "message",
+      id: host.nextConversationItemId(),
+      runId,
+      nodeId,
+      sessionId,
+      role: "user",
+      markdown: answer.detail ?? answer.summary,
+      status: "complete",
+      createdAt: finishedAt,
+      updatedAt: finishedAt,
+    };
+    publishConversationItem(runId, userMessage);
+    const followUps = promptNodeFollowUpMessages(nodeId, locale);
+    if (followUps.length > 0) {
+      for (const markdown of followUps) {
+        publishConversationMessage(
+          runId,
+          nodeId,
+          sessionId,
+          "assistant",
+          markdown,
+          finishedAt,
+        );
+      }
+    } else {
+      // Approval / generic prompt nodes need a visible ack so the session
+      // projection changes after submit (not only the user's own bubble).
+      publishConversationMessage(
+        runId,
+        nodeId,
+        sessionId,
+        "assistant",
+        hitlAckMarkdown(answer, locale),
+        finishedAt,
+      );
+    }
     host.emit(runId, {
       type: "hitl_resolved",
       runId,
@@ -510,16 +681,30 @@ export function createMockRunEngine(
     });
 
     if (node?.data.kind === "agent" || node?.data.kind === "output") {
+      const instruction = node.data.instruction
+        ?? node.data.agentConfig?.prompt
+        ?? node.data.description
+        ?? "节点已完成。";
+      const markdown = node.data.kind === "output"
+        ? markdownDemoOutput(node.data.title, run.name, locale)
+        : markdownDemoAgentReply(node.data.title, instruction, runId, nodeId, locale);
+      const sessionId = run.nodeStates[nodeId]?.sessionId
+        ?? `workflow-node:${runId}:${nodeId}`;
+      publishConversationMessage(
+        runId,
+        nodeId,
+        sessionId,
+        "assistant",
+        markdown,
+        finishedAt,
+      );
       const artifact: WorkflowArtifact = {
         id: host.nextArtifactId(),
         runId,
         nodeId,
         kind: "markdown",
         title: node.data.title,
-        body:
-          node.data.kind === "output"
-            ? `## ${node.data.title}\n\nMock run completed for **${run.name}**.`
-            : `### ${node.data.title}\n\n${node.data.instruction}`,
+        body: markdown,
         createdAt: finishedAt,
       };
       host.appendArtifact(artifact);
@@ -654,6 +839,297 @@ export function createMockRunEngine(
   }
 
   return { start, stop, cancel, submitHitl, dispose };
+}
+
+/** Context messages shown before a HITL question so readers can decide with history. */
+function promptNodeContextMessages(
+  nodeId: string,
+  locale: "zh-CN" | "en-US",
+): string[] {
+  const zh = locale === "zh-CN";
+  if (nodeId === "understand") {
+    return zh
+      ? [
+          `## 改动摘要
+
+这次提交同时触及：
+
+1. **鉴权中间件**（入口守卫 / 会话恢复）
+2. **路由表**（动态参数与重定向）
+
+> 在请你选择优先级前，先把已知事实对齐。`,
+          `### 已观察到的信号
+
+| 区域 | 风险 | 说明 |
+| --- | --- | --- |
+| Auth | 高 | \`requireAuth\` 分支条件有改动 |
+| Router | 中 | 新增 \`:orgId\` 动态段 |
+| Docs | 低 | README 尚未同步 |
+
+\`\`\`ts
+if (!session?.active) {
+  return redirect("/login");
+}
+\`\`\``,
+        ]
+      : [
+          `## Change summary
+
+This commit touches both:
+
+1. **Auth middleware** (entry guard / session restore)
+2. **Route table** (dynamic params and redirects)
+
+> Aligning known facts before asking you to prioritize.`,
+          `### Signals so far
+
+| Area | Risk | Note |
+| --- | --- | --- |
+| Auth | High | \`requireAuth\` branch conditions changed |
+| Router | Medium | New \`:orgId\` dynamic segment |
+| Docs | Low | README not updated yet |
+
+\`\`\`ts
+if (!session?.active) {
+  return redirect("/login");
+}
+\`\`\``,
+        ];
+  }
+  if (nodeId === "docs_pass") {
+    return zh
+      ? [
+          `## 文档校对前置
+
+索引已完成。接下来会核对：
+
+- README 行为描述是否与实现一致
+- 模块注释是否仍指向旧路径
+- 示例代码是否可复制运行
+
+\`\`\`bash
+rg -n "legacy auth" docs README.md
+\`\`\``,
+        ]
+      : [
+          `## Docs pass preamble
+
+Index is ready. Next checks:
+
+- README behavior vs implementation
+- module comments still pointing at old paths
+- examples still copy-pasteable
+
+\`\`\`bash
+rg -n "legacy auth" docs README.md
+\`\`\``,
+        ];
+  }
+  return [];
+}
+
+/** Formats the HITL prompt as Markdown so the node conversation showcases rendering. */
+function hitlQuestionMarkdown(
+  schema: HitlSchema,
+  locale: "zh-CN" | "en-US",
+): string {
+  const zh = locale === "zh-CN";
+  const prompt = schema.prompt?.trim();
+  const title = schema.title?.trim();
+  if (prompt !== undefined && prompt !== "") {
+    return zh
+      ? `### 需要你确认\n\n${prompt}\n\n请在下方提交后继续。`
+      : `### Input needed\n\n${prompt}\n\nSubmit below to continue.`;
+  }
+  if (title !== undefined && title !== "") {
+    return `### ${title}`;
+  }
+  return zh ? "### 需要你确认" : "### Input needed";
+}
+
+/** Short assistant ack so approval gates visibly update the node session. */
+function hitlAckMarkdown(
+  answer: GraphWorkflowNodeIo,
+  locale: "zh-CN" | "en-US",
+): string {
+  const body = (answer.detail ?? answer.summary).trim();
+  if (locale === "zh-CN") {
+    return `已收到你的确认：\n\n> ${body}\n\n我会按这个选择继续后续步骤。`;
+  }
+  return `Got your confirmation:\n\n> ${body}\n\nContinuing with the next steps.`;
+}
+
+/** Adds richer multi-message prompt follow-ups for anchor-navigation demos. */
+function promptNodeFollowUpMessages(
+  nodeId: string,
+  locale: "zh-CN" | "en-US",
+): string[] {
+  const zh = locale === "zh-CN";
+  if (nodeId === "understand") {
+    return zh
+      ? [
+          "我先按你的选择把核查顺序固定为：**权限边界 -> 路由回归面**。这样可以先锁住高风险区域，再扩散到影响路径。",
+          `### 权限边界快照
+
+- 鉴权中间件入口与退出条件
+- 匿名与登录态分叉
+- 管理权限提升链路
+
+\`\`\`ts
+export function requireRole(role: Role) {
+  return (ctx) => ctx.user.roles.includes(role);
+}
+\`\`\``,
+          `### 路由回归面快照
+
+| 检查项 | 状态 |
+| --- | --- |
+| 新增/删除路由映射 | 待核 |
+| 动态参数与守卫组合 | 待核 |
+| 旧链接兼容与重定向 | 待核 |
+
+> 建议优先补一条 \`/settings/:orgId\` 的登录态回归。`,
+          "下一步我会先输出边界风险点，再附路由覆盖建议，方便你快速判定是否需要加回归测试。",
+        ]
+      : [
+          "I will lock the review order to **permission boundaries -> route regression surface** so high-risk checks land first.",
+          `### Permission boundary snapshot
+
+- auth middleware entry and exit gates
+- anonymous vs signed-in branch split
+- privilege escalation chain
+
+\`\`\`ts
+export function requireRole(role: Role) {
+  return (ctx) => ctx.user.roles.includes(role);
+}
+\`\`\``,
+          `### Route regression snapshot
+
+| Check | Status |
+| --- | --- |
+| added/removed route mappings | pending |
+| dynamic params with guards | pending |
+| legacy link redirects | pending |
+
+> Prefer a signed-in regression for \`/settings/:orgId\` first.`,
+          "Next I will report boundary risks first, then attach route coverage suggestions for quick test planning.",
+        ];
+  }
+  if (nodeId === "docs_pass") {
+    return zh
+      ? [
+          "已收到你的反馈，我会按“实现变化 -> 文档变化 -> 示例变化”的顺序过一遍，确保阅读路径一致。",
+          `### 文档核对清单
+
+1. README 的行为描述
+2. 模块注释与边界说明
+3. 示例与截图的时效性
+
+\`\`\`diff
+- 旧鉴权入口：middleware/auth.ts
++ 新鉴权入口：middleware/session-guard.ts
+\`\`\``,
+          "若发现术语不一致，我会优先给出替换建议，并标注是否影响外部使用者理解。",
+          "完成后会附一个最小更新补丁建议，避免文档改动过大影响评审效率。",
+        ]
+      : [
+          "Got it. I will review docs in order: implementation changes -> docs changes -> examples.",
+          `### Docs review checklist
+
+1. README behavior descriptions
+2. module comments and boundaries
+3. examples and screenshots freshness
+
+\`\`\`diff
+- old auth entry: middleware/auth.ts
++ new auth entry: middleware/session-guard.ts
+\`\`\``,
+          "If terminology drifts, I will propose direct replacements and note user-facing impact.",
+          "I will end with a minimal patch proposal to keep review focused.",
+        ];
+  }
+  return [];
+}
+
+/** Rich Markdown agent reply used by mock completion artifacts and conversation. */
+function markdownDemoAgentReply(
+  title: string,
+  instruction: string,
+  runId: string,
+  nodeId: string,
+  locale: "zh-CN" | "en-US",
+): string {
+  const zh = locale === "zh-CN";
+  return zh
+    ? `### ${title}
+
+${instruction}
+
+#### Mock 结论
+
+- 已完成上下文检查，并保留一条可追溯的正式结论。
+- 结果支持 **粗体**、列表、表格和代码块，长内容会在卡片内滚动。
+
+#### 检查记录
+
+| 项目 | 状态 |
+| --- | --- |
+| 节点输入 | 已接收 |
+| Agent 正式回复 | 已生成 |
+| 工具与思考 | 已折叠 |
+
+\`\`\`text
+session: workflow-node:${runId}:${nodeId}
+projection: visible-messages + collapsed-activity
+\`\`\`
+
+> 如果接入真实 session，前端会继续只展示这类正式消息。`
+    : `### ${title}
+
+${instruction}
+
+#### Mock conclusion
+
+- Context checks completed with a traceable formal reply.
+- Rendering covers **bold**, lists, tables, and fenced code; long bodies scroll in-card.
+
+#### Checklist
+
+| Item | Status |
+| --- | --- |
+| Node input | received |
+| Agent reply | generated |
+| Tools / thoughts | collapsed |
+
+\`\`\`text
+session: workflow-node:${runId}:${nodeId}
+projection: visible-messages + collapsed-activity
+\`\`\`
+
+> A real session adapter can keep feeding the same visible-message projection.`;
+}
+
+/** Short Markdown completion body for output nodes. */
+function markdownDemoOutput(
+  title: string,
+  runName: string,
+  locale: "zh-CN" | "en-US",
+): string {
+  const zh = locale === "zh-CN";
+  return zh
+    ? `## ${title}
+
+Mock run **${runName}** 已完成。
+
+- 摘要已生成
+- 产物可在检查器中打开`
+    : `## ${title}
+
+Mock run **${runName}** completed.
+
+- Summary generated
+- Artifacts available in the inspector`;
 }
 
 function isTerminal(status: GraphWorkflowRun["status"]): boolean {

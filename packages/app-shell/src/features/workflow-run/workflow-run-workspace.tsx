@@ -67,6 +67,8 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const [openInspectorOnTheaterEnter, setOpenInspectorOnTheaterEnter] = useState(
     false,
   );
+  /** Re-fit Overview when the header control is activated (including while already there). */
+  const [overviewFitRequestKey, setOverviewFitRequestKey] = useState(0);
 
   /** Same-node status edge: live pin just finished -> resume auto-follow. */
   const focusStatusSampleRef = useRef<TheaterFocusStatusSample | null>(null);
@@ -337,6 +339,9 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               onClick={() => {
                 setOpenInspectorOnTheaterEnter(false);
                 setViewMode("overview");
+                // Remount already fits when leaving Theater; bumping also
+                // refits after pane resize while Overview stays mounted.
+                setOverviewFitRequestKey((key) => key + 1);
               }}
             >
               <IconMap className="size-3.5" />
@@ -412,6 +417,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             focusNodeId={focusNodeId}
             onFocusNode={focusNode}
             artifacts={artifactsQuery.artifacts}
+            conversationByNodeId={artifactsQuery.conversationByNodeId}
             revealedArtifactId={artifactsQuery.revealedId}
             openInspectorOnMount={openInspectorOnTheaterEnter}
             onShowOverview={() => {
@@ -426,6 +432,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             focusedNodeId={focusNodeId}
             onFocusNode={focusNodeFromOverview}
             artifacts={artifactsQuery.artifacts}
+            fitRequestKey={overviewFitRequestKey}
           />
         )}
 

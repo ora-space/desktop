@@ -89,4 +89,44 @@ describe("useTheaterHitl", () => {
     unmount();
     runtime.dispose();
   });
+
+  it("collapses HITL when browsing away from the waiting act", async () => {
+    const client = createMockClient(createMockClientState());
+    const runtime = createMemoryWorkflowRuntime();
+    const wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const run = waitingRun("run-1", "hitl-1");
+    const onFocusNode = vi.fn();
+    const { result, rerender, unmount } = renderHook(
+      ({
+        focusNodeId,
+        primaryId,
+      }: {
+        focusNodeId: string | null;
+        primaryId: string | null;
+      }) =>
+        useTheaterHitl({
+          run,
+          focusNodeId,
+          primaryId,
+          parallelCarouselFocus: false,
+          onFocusNode,
+        }),
+      {
+        initialProps: { focusNodeId: "understand", primaryId: "understand" },
+        wrapper,
+      },
+    );
+    await waitFor(() => expect(result.current.hitlExpanded).toBe(true));
+
+    rerender({ focusNodeId: "start", primaryId: "start" });
+
+    await waitFor(() => expect(result.current.hitlExpanded).toBe(false));
+    unmount();
+    runtime.dispose();
+  });
 });

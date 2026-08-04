@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Textarea, cn } from "@ora/ui";
@@ -65,6 +65,11 @@ interface RunHitlComposerProps {
   /** Lifted drafts keyed by request id (survives overlay↔embedded remount). */
   drafts?: Record<string, Record<string, string>>;
   onDraftsChange?: (next: Record<string, Record<string, string>>) => void;
+  /**
+   * Companion control rendered inside HITL chrome (e.g. session dock) so the
+   * gate and conversation entry read as one action cluster.
+   */
+  accessory?: ReactNode;
 }
 
 /**
@@ -87,6 +92,7 @@ export function RunHitlComposer({
   onEngage,
   drafts: draftsProp,
   onDraftsChange,
+  accessory,
 }: RunHitlComposerProps) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
@@ -165,7 +171,9 @@ export function RunHitlComposer({
     if (el === null) {
       return;
     }
-    el.focus();
+    // preventScroll avoids Theater jump-scrolling the stage onto the composer
+    // when a gate opens or the active request changes.
+    el.focus({ preventScroll: true });
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [expanded, request?.id, primaryTextField?.name]);
@@ -253,14 +261,14 @@ export function RunHitlComposer({
     ? formatRunClock(request.timeoutAt, locale)
     : "";
 
-  /** Ask Theater to spotlight this gate when the under-stage dock is used. */
+  /** Spotlight this gate when the user pointer-engages the under-stage dock. */
   function engageOverlay(event?: { target: EventTarget | null }): void {
     if (embedded) {
       return;
     }
     if (
       event?.target instanceof Element
-      && event.target.closest("[data-hitl-collapse]") !== null
+      && event.target.closest("[data-hitl-collapse], [data-hitl-accessory]") !== null
     ) {
       return;
     }
@@ -269,11 +277,16 @@ export function RunHitlComposer({
 
   if (!expanded) {
     return (
-      <div className={cn(!embedded && "mx-auto w-full max-w-xl")}>
+      <div
+        className={cn(
+          "flex items-center gap-2",
+          !embedded && "mx-auto w-full max-w-xl",
+        )}
+      >
         <button
           type="button"
           className={cn(
-            "group flex w-full cursor-pointer items-center gap-3 text-left",
+            "group flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left",
             "transition-[background-color,border-color,box-shadow] duration-200",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/25",
             embedded
@@ -301,6 +314,11 @@ export function RunHitlComposer({
             <IconChevronDown className="size-3.5 rotate-180 opacity-70" aria-hidden />
           </span>
         </button>
+        {accessory !== undefined && accessory !== null && (
+          <div data-hitl-accessory="" className="shrink-0">
+            {accessory}
+          </div>
+        )}
       </div>
     );
   }
@@ -312,7 +330,6 @@ export function RunHitlComposer({
         !embedded && "mx-auto w-full max-w-xl",
       )}
       onPointerDown={engageOverlay}
-      onFocusCapture={engageOverlay}
     >
       <section
         className={cn(
@@ -392,19 +409,24 @@ export function RunHitlComposer({
                 </>
               )}
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            data-hitl-collapse=""
-            className="size-7 shrink-0 cursor-pointer rounded-full text-muted-foreground"
-            aria-label={t("workflowRun.hitl.collapseAction")}
-            aria-expanded={true}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => onExpandedChange(false)}
-          >
-            <IconChevronDown className="size-3.5" />
-          </Button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {accessory !== undefined && accessory !== null && (
+              <div data-hitl-accessory="">{accessory}</div>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              data-hitl-collapse=""
+              className="size-7 shrink-0 cursor-pointer rounded-full text-muted-foreground hover:bg-amber-500/10 hover:text-amber-950 dark:hover:text-amber-100"
+              aria-label={t("workflowRun.hitl.collapseAction")}
+              aria-expanded={true}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => onExpandedChange(false)}
+            >
+              <IconChevronDown className="size-3.5" />
+            </Button>
+          </div>
         </div>
 
         {schemaPrompt !== "" && (

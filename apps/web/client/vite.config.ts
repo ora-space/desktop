@@ -29,6 +29,8 @@ export default defineConfig(({ command, mode }) => {
         { find: /^@ora\/chat$/, replacement: path.resolve(__dirname, "../../../packages/chat/src/index.ts") },
         { find: /^@ora\/contracts$/, replacement: path.resolve(__dirname, "../../../packages/contracts/src/index.ts") },
         { find: /^@ora\/ui$/, replacement: path.resolve(__dirname, "../../../packages/ui/src/index.ts") },
+        { find: /^@ora\/workflow-mock$/, replacement: path.resolve(__dirname, "../../../packages/workflow-mock/src/index.ts") },
+        { find: /^@ora\/workflow-runtime$/, replacement: path.resolve(__dirname, "../../../packages/workflow-runtime/src/index.ts") },
       ],
     },
     server: {

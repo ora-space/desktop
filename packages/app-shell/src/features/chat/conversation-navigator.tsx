@@ -5,21 +5,21 @@ import { useTranslation } from "react-i18next";
 import type { ChatTurn } from "@ora/chat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 import { ConversationPreviewMarkdown } from "./conversation-preview-markdown";
+import type { ConversationAnchor } from "./conversation-navigation";
 
 interface ConversationNavigatorProps {
-  turns: ChatTurn[];
+  /** Full-chat turns; embedded callers can provide already-projected anchors instead. */
+  turns?: ChatTurn[];
+  /** Role-aware anchors rendered by the shared navigation skin. */
+  anchors?: ConversationAnchor[];
   activeAnchorId: string | null;
   isAtTail: boolean;
   onNavigate: (anchorId: string) => void;
   onNavigateToTail: () => void;
-}
-
-interface ConversationAnchor {
-  id: string;
-  label: string;
-  preview: string;
-  summary: string;
-  role: "user" | "assistant";
+  /** Keeps the full chat viewport skin while allowing an in-card rail. */
+  placement?: "viewport" | "container";
+  /** Full chat stays quiet until three anchors; compact node views can use two. */
+  minAnchors?: number;
 }
 
 interface AnchorPreview {
@@ -45,10 +45,13 @@ const ANCHOR_WIDTH = {
 /** Renders a Grok-style minimap with separate beats for prompts and responses. */
 export function ConversationNavigator({
   turns,
+  anchors: providedAnchors,
   activeAnchorId,
   isAtTail,
   onNavigate,
   onNavigateToTail,
+  placement = "viewport",
+  minAnchors = 3,
 }: ConversationNavigatorProps) {
   const { t } = useTranslation();
   const anchorListRef = useRef<HTMLDivElement>(null);
@@ -61,7 +64,7 @@ export function ConversationNavigator({
   const [preview, setPreview] = useState<AnchorPreview | null>(null);
   const [previousControlHovered, setPreviousControlHovered] = useState(false);
   const [nextControlHovered, setNextControlHovered] = useState(false);
-  const anchors = conversationAnchors(turns, t);
+  const anchors = providedAnchors ?? conversationAnchors(turns ?? [], t);
   const previewAnchorId = preview?.anchorId ?? null;
   const previewAnchor = anchors.find((anchor) => anchor.id === previewAnchorId);
   const lastGeneratedAnchorId = anchors.at(-1)?.id;
@@ -191,7 +194,7 @@ export function ConversationNavigator({
     });
   }, [preview]);
 
-  if (turns.length < 3) return null;
+  if (anchors.length < minAnchors) return null;
 
   const matchedActiveIndex = anchors.findIndex((anchor) => anchor.id === activeAnchorId);
   const activeIndex = matchedActiveIndex >= 0 ? matchedActiveIndex : Math.max(0, anchors.length - 1);
@@ -214,7 +217,9 @@ export function ConversationNavigator({
     <>
       <nav
         aria-label={t("chat.historyNavigation")}
-        className="group/history-nav pointer-events-none fixed right-1.5 top-1/2 z-20 hidden -translate-y-1/2 sm:block"
+        className={placement === "container"
+          ? "group/history-nav pointer-events-none absolute right-0 top-1/2 z-20 -translate-y-1/2"
+          : "group/history-nav pointer-events-none fixed right-1.5 top-1/2 z-20 hidden -translate-y-1/2 sm:block"}
       >
         <div className="pointer-events-auto relative flex w-7 flex-col items-center">
         <Tooltip open={activeIndex === 0 && previousControlHovered}>

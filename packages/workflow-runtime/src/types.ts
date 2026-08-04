@@ -119,6 +119,8 @@ export interface GraphWorkflowNodeIo {
 
 export interface GraphWorkflowNodeState {
   status: GraphWorkflowNodeStatus;
+  /** Session bound to this node execution; opaque to the workflow UI. */
+  sessionId?: string;
   startedAt?: string;
   finishedAt?: string;
   durationMs?: number;
@@ -129,6 +131,54 @@ export interface GraphWorkflowNodeState {
   /** What this step produced when it finished (or HITL answer summary). */
   output?: GraphWorkflowNodeIo;
 }
+
+/** Lifecycle state for one projected session item. */
+export type WorkflowNodeConversationItemStatus = "streaming" | "complete";
+
+/** Roles used by visible text messages in a node-bound session. */
+export type WorkflowNodeConversationMessageRole = "user" | "assistant";
+
+/** Kinds of secondary session activity that can be disclosed on demand. */
+export type WorkflowNodeConversationActivityKind = "thought" | "tool";
+
+interface WorkflowNodeConversationItemBase {
+  id: string;
+  runId: string;
+  nodeId: string;
+  sessionId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A user or Agent message approved for the compact node conversation. */
+export interface WorkflowNodeConversationMessage
+  extends WorkflowNodeConversationItemBase {
+  kind: "message";
+  role: WorkflowNodeConversationMessageRole;
+  markdown: string;
+  status: WorkflowNodeConversationItemStatus;
+}
+
+/** A raw-session item retained for an explicitly expanded activity disclosure. */
+export interface WorkflowNodeConversationActivity
+  extends WorkflowNodeConversationItemBase {
+  kind: "activity";
+  activityKind: WorkflowNodeConversationActivityKind;
+  summary: string;
+  detail?: string;
+  status: WorkflowNodeConversationItemStatus;
+}
+
+/**
+ * Filtered session projection used by workflow cards.
+ *
+ * Adapters may retain thoughts and tool calls as activity items, but the card
+ * renders them behind one collapsed disclosure while showing text messages in
+ * the same layout as the full chat surface.
+ */
+export type WorkflowNodeConversationItem =
+  | WorkflowNodeConversationMessage
+  | WorkflowNodeConversationActivity;
 
 /**
  * A project-scoped execution of a mounted workflow definition.
@@ -187,6 +237,11 @@ export type WorkflowRunEvent =
       runId: string;
       artifact: WorkflowArtifact;
     }
+  | {
+      type: "node_conversation_item_upserted";
+      runId: string;
+      item: WorkflowNodeConversationItem;
+    }
   | { type: "hitl_required"; runId: string; request: HitlRequest }
   | {
       type: "hitl_resolved";
@@ -217,6 +272,8 @@ export type WorkflowRunEventEnvelope = WorkflowRunEvent & {
 export interface WorkflowRunLiveSnapshot {
   run: GraphWorkflowRun;
   artifacts: WorkflowArtifact[];
+  /** Filtered node session projection; activity stays available for disclosure. */
+  conversation: WorkflowNodeConversationItem[];
   cursor: WorkflowEventCursor | null;
 }
 

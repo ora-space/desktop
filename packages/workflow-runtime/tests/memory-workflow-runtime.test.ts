@@ -340,6 +340,7 @@ describe("createMemoryWorkflowRuntime", () => {
     expect(replayed).toEqual([
       { cursor: `${run.id}:1`, sequence: 1, type: "run_started" },
       { cursor: `${run.id}:2`, sequence: 2, type: "node_started" },
+      { cursor: `${run.id}:3`, sequence: 3, type: "node_conversation_item_upserted" },
     ]);
     runtime.dispose();
   });
@@ -364,8 +365,12 @@ describe("createMemoryWorkflowRuntime", () => {
 
     await runtime.runs.start(run.id);
 
-    expect(listenerErrors).toHaveLength(2);
-    expect(observed).toEqual(["run_started", "node_started"]);
+    expect(listenerErrors).toHaveLength(3);
+    expect(observed).toEqual([
+      "run_started",
+      "node_started",
+      "node_conversation_item_upserted",
+    ]);
     expect((await runtime.runs.get(run.id))?.status).toBe("running");
     runtime.dispose();
   });
@@ -428,6 +433,35 @@ describe("mock run engine", () => {
     expect(artifacts.length).toBeGreaterThan(0);
     expect(artifacts.every((item) => item.nodeId.length > 0)).toBe(true);
     expect(artifacts.some((item) => item.kind === "markdown")).toBe(true);
+    const liveSnapshot = await runtime.runs.getLiveSnapshot(run.id);
+    expect(liveSnapshot?.conversation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: "review",
+          sessionId: `workflow-node:${run.id}:review`,
+          kind: "message",
+          role: "assistant",
+          status: "complete",
+          markdown: expect.any(String),
+        }),
+        expect.objectContaining({
+          nodeId: "review",
+          sessionId: `workflow-node:${run.id}:review`,
+          kind: "message",
+          role: "user",
+          markdown: expect.any(String),
+        }),
+        expect.objectContaining({
+          nodeId: "review",
+          sessionId: `workflow-node:${run.id}:review`,
+          kind: "activity",
+          activityKind: "thought",
+        }),
+      ]),
+    );
+    expect(finished?.nodeStates.review?.sessionId).toBe(
+      `workflow-node:${run.id}:review`,
+    );
   });
 
   it("pauses on prompt nodes until HITL is submitted", async () => {
@@ -488,9 +522,68 @@ describe("mock run engine", () => {
         output: expect.objectContaining({ summary: expect.any(String) }),
       }),
     );
+    expect((await runtime.runs.getLiveSnapshot(run.id))?.conversation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: "understand",
+          kind: "message",
+          role: "assistant",
+        }),
+        expect.objectContaining({
+          nodeId: "understand",
+          kind: "message",
+          role: "user",
+          markdown: "looks good",
+        }),
+      ]),
+    );
 
     const finished = await drainRun(runtime, run.id, 100);
     expect(finished?.status).toBe("succeeded");
+  });
+
+  it("appends the approval answer and an ack into the node conversation", async () => {
+    vi.useFakeTimers();
+    const runtime = createMemoryWorkflowRuntime({
+      nodeStepMs: 100,
+      autoStart: false,
+      locale: "zh-CN",
+    });
+    const definition = createStaggeredParallelMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    await runtime.runs.start(run.id);
+    // quick_scan is a short approval gate on the staggered fixture.
+    await vi.advanceTimersByTimeAsync(1_000);
+    const paused = await runtime.runs.get(run.id);
+    const gate = paused?.openHitls.find((item) => item.nodeId === "quick_scan");
+    expect(gate).toEqual(expect.objectContaining({
+      nodeId: "quick_scan",
+      schema: expect.objectContaining({ kind: "approval" }),
+    }));
+    await runtime.runs.submitHitl(
+      run.id,
+      gate!.id,
+      hitlPayloadFor(gate!.schema.fields),
+    );
+    const conversation = (await runtime.runs.getLiveSnapshot(run.id))?.conversation
+      ?? [];
+    const nodeItems = conversation.filter((item) => item.nodeId === "quick_scan");
+    expect(nodeItems.some((item) => item.kind === "message" && item.role === "user")).toBe(
+      true,
+    );
+    expect(
+      nodeItems.some((item) =>
+        item.kind === "message"
+        && item.role === "assistant"
+        && item.markdown.includes("已收到你的确认")
+      ),
+    ).toBe(true);
+    runtime.dispose();
+    vi.useRealTimers();
   });
 
   it("rejects submitHitl without an open request or required fields", async () => {

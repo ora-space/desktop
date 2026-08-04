@@ -11,6 +11,7 @@ import type {
   GraphWorkflowRun,
   ProjectWorkflowMount,
   WorkflowArtifact,
+  WorkflowNodeConversationItem,
   WorkflowDefinition,
   WorkflowRunEvent,
   WorkflowRunEventEnvelope,
@@ -68,6 +69,7 @@ export function createMemoryWorkflowRuntime(
   const mounts: ProjectWorkflowMount[] = [];
   const runs = new Map<string, GraphWorkflowRun>();
   const artifacts = new Map<string, WorkflowArtifact[]>();
+  const conversations = new Map<string, WorkflowNodeConversationItem[]>();
   const listeners = new Map<string, Set<Listener>>();
   const changeListeners = new Set<ChangeListener>();
   const eventLogs = new Map<string, WorkflowRunEventEnvelope[]>();
@@ -75,6 +77,7 @@ export function createMemoryWorkflowRuntime(
   let runSeq = 0;
   let artifactSeq = 0;
   let hitlSeq = 0;
+  let conversationItemSeq = 0;
 
   const emit = (runId: string, event: WorkflowRunEvent) => {
     const sequence = (eventSequences.get(runId) ?? 0) + 1;
@@ -117,6 +120,16 @@ export function createMemoryWorkflowRuntime(
         list.push(artifact);
         artifacts.set(artifact.runId, list);
       },
+      upsertConversationItem: (item) => {
+        const list = conversations.get(item.runId) ?? [];
+        const index = list.findIndex((current) => current.id === item.id);
+        if (index < 0) {
+          list.push(item);
+        } else {
+          list[index] = item;
+        }
+        conversations.set(item.runId, list);
+      },
       emit,
       notifyChanged,
       nowIso,
@@ -127,6 +140,10 @@ export function createMemoryWorkflowRuntime(
       nextHitlId: () => {
         hitlSeq += 1;
         return `hitl-${hitlSeq}`;
+      },
+      nextConversationItemId: () => {
+        conversationItemSeq += 1;
+        return `wconv-${conversationItemSeq}`;
       },
     },
     {
@@ -231,6 +248,7 @@ export function createMemoryWorkflowRuntime(
       };
       runs.set(run.id, run);
       artifacts.set(run.id, []);
+      conversations.set(run.id, []);
       eventLogs.set(run.id, []);
       eventSequences.set(run.id, 0);
       if (autoStart) {
@@ -276,6 +294,7 @@ export function createMemoryWorkflowRuntime(
       }
       runs.delete(runId);
       artifacts.delete(runId);
+      conversations.delete(runId);
       listeners.delete(runId);
       eventLogs.delete(runId);
       eventSequences.delete(runId);
@@ -365,6 +384,7 @@ export function createMemoryWorkflowRuntime(
       return {
         run: structuredClone(run),
         artifacts: structuredClone(artifacts.get(runId) ?? []),
+        conversation: structuredClone(conversations.get(runId) ?? []),
         cursor: log.at(-1)?.cursor ?? null,
       };
     },
@@ -430,6 +450,7 @@ export function createMemoryWorkflowRuntime(
       changeListeners.clear();
       eventLogs.clear();
       eventSequences.clear();
+      conversations.clear();
     },
   };
 }

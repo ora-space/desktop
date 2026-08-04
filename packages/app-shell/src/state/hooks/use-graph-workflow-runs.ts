@@ -5,6 +5,7 @@ import type {
   GraphWorkflowRun,
   HitlRequest,
   WorkflowDefinitionInput,
+  WorkflowNodeConversationItem,
   WorkflowRunLiveSnapshot,
 } from "@ora/workflow-runtime";
 import { normalizeWorkflowDefinition } from "@ora/workflow-runtime";
@@ -270,8 +271,18 @@ export function useSubmitGraphWorkflowHitl() {
       requestId: string;
       payload: Record<string, unknown>;
     }) => runtime.runs.submitHitl(runId, requestId, payload),
-    onSuccess: (run) => {
+    onSuccess: async (run) => {
       queryClient.setQueryData(queryKeys.workflowRun(run.id), run);
+      // Resync the conversation projection from the live snapshot so a missed
+      // stream upsert cannot leave the node session looking unchanged after HITL.
+      const snapshot = await runtime.runs.getLiveSnapshot(run.id);
+      if (snapshot === null) {
+        return;
+      }
+      queryClient.setQueryData(
+        queryKeys.workflowArtifacts(run.id),
+        withConversationIndex(snapshot),
+      );
     },
   });
 }
@@ -294,9 +305,15 @@ export function useGraphWorkflowRunLive(
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
 
-  const query = useQuery({
+  const query = useQuery<LiveSnapshotIndexed | null>({
     queryKey: queryKeys.workflowArtifacts(runId ?? ""),
-    queryFn: () => runtime.runs.getLiveSnapshot(runId!),
+    queryFn: async () => {
+      const snapshot = await runtime.runs.getLiveSnapshot(runId!);
+      if (snapshot === null) {
+        return null;
+      }
+      return withConversationIndex(snapshot);
+    },
     enabled: runId != null && runId !== "",
     // Once loaded, the cursor stream owns freshness. Automatic refetch could
     // overwrite an event applied after the server produced its snapshot.
@@ -320,7 +337,7 @@ export function useGraphWorkflowRunLive(
         const artifact = structuredClone(event.artifact);
         queryClient.setQueryData(
           cacheKey,
-          (previous: WorkflowRunLiveSnapshot | null | undefined) => {
+          (previous: LiveSnapshotIndexed | null | undefined) => {
             if (previous === undefined || previous === null) {
               return previous;
             }
@@ -337,9 +354,54 @@ export function useGraphWorkflowRunLive(
         setRevealedId(artifact.id);
         return;
       }
+      if (event.type === "node_conversation_item_upserted") {
+        const item = structuredClone(event.item);
+        queryClient.setQueryData(
+          cacheKey,
+          (previous: LiveSnapshotIndexed | null | undefined) => {
+            if (previous === undefined || previous === null) {
+              return previous;
+            }
+            let resolvedIndex = previous.conversationIndexById.get(item.id) ?? -1;
+            if (resolvedIndex < 0) {
+              // Defensive fallback for cache migrations or external cache writes:
+              // if an item exists but was not indexed, repair instead of duplicating.
+              resolvedIndex = previous.conversation.findIndex((current) => current.id === item.id);
+            }
+            const existing = resolvedIndex < 0 ? undefined : previous.conversation[resolvedIndex];
+            const conversation = previous.conversation.slice();
+            if (resolvedIndex < 0) {
+              conversation.push(item);
+            } else if (
+              existing !== undefined
+              && isSameConversationItem(existing, item)
+            ) {
+              return {
+                ...previous,
+                cursor: event.cursor,
+              };
+            } else {
+              conversation[resolvedIndex] = item;
+            }
+            return {
+              ...previous,
+              conversation,
+              conversationIndexById: upsertConversationIndexById(
+                previous.conversationIndexById,
+                item,
+                resolvedIndex,
+                conversation.length,
+              ),
+              conversationByNodeId: upsertConversationByNodeId(previous.conversationByNodeId, item),
+              cursor: event.cursor,
+            };
+          },
+        );
+        return;
+      }
       queryClient.setQueryData(
         cacheKey,
-        (previous: WorkflowRunLiveSnapshot | null | undefined) => previous === undefined
+        (previous: LiveSnapshotIndexed | null | undefined) => previous === undefined
           || previous === null
           ? previous
           : { ...previous, cursor: event.cursor },
@@ -353,10 +415,127 @@ export function useGraphWorkflowRunLive(
       }
     }, { afterCursor: snapshotRef.current?.cursor ?? null });
   }, [runtime, queryClient, runId, hasSnapshot]);
+  const conversation = query.data?.conversation ?? [];
+  const conversationByNodeId = query.data?.conversationByNodeId ?? new Map<string, WorkflowNodeConversationItem[]>();
 
   return {
     ...query,
     artifacts: query.data?.artifacts ?? [],
+    conversation,
+    conversationByNodeId,
     revealedId,
   };
+}
+
+interface LiveSnapshotIndexed extends WorkflowRunLiveSnapshot {
+  conversationIndexById: Map<string, number>;
+  conversationByNodeId: Map<string, WorkflowNodeConversationItem[]>;
+}
+
+/** Adds a node-scoped conversation index to the live snapshot once at load time. */
+function withConversationIndex(snapshot: WorkflowRunLiveSnapshot): LiveSnapshotIndexed {
+  return {
+    ...snapshot,
+    conversationIndexById: buildConversationIndexById(snapshot.conversation),
+    conversationByNodeId: buildConversationByNodeId(snapshot.conversation),
+  };
+}
+
+/** Builds an id -> index lookup for ordered upsert operations. */
+function buildConversationIndexById(
+  conversation: WorkflowNodeConversationItem[],
+): Map<string, number> {
+  const indexById = new Map<string, number>();
+  for (let index = 0; index < conversation.length; index += 1) {
+    indexById.set(conversation[index].id, index);
+  }
+  return indexById;
+}
+
+/** Updates the id index map after one upsert in the ordered projection. */
+function upsertConversationIndexById(
+  previous: Map<string, number>,
+  item: WorkflowNodeConversationItem,
+  resolvedIndex: number,
+  conversationLength: number,
+): Map<string, number> {
+  const existingIndex = previous.get(item.id);
+  if (existingIndex !== undefined) {
+    return previous;
+  }
+  const next = new Map(previous);
+  next.set(item.id, resolvedIndex >= 0 ? resolvedIndex : conversationLength - 1);
+  return next;
+}
+
+/** Builds a nodeId -> ordered conversation list index from a full projection list. */
+function buildConversationByNodeId(
+  conversation: WorkflowNodeConversationItem[],
+): Map<string, WorkflowNodeConversationItem[]> {
+  const grouped = new Map<string, WorkflowNodeConversationItem[]>();
+  for (const item of conversation) {
+    const bucket = grouped.get(item.nodeId);
+    if (bucket === undefined) {
+      grouped.set(item.nodeId, [item]);
+    } else {
+      bucket.push(item);
+    }
+  }
+  return grouped;
+}
+
+/** Updates one node bucket immutably for an item upsert without rebuilding all groups. */
+function upsertConversationByNodeId(
+  previous: Map<string, WorkflowNodeConversationItem[]>,
+  item: WorkflowNodeConversationItem,
+): Map<string, WorkflowNodeConversationItem[]> {
+  const bucket = previous.get(item.nodeId);
+  if (bucket === undefined) {
+    const next = new Map(previous);
+    next.set(item.nodeId, [item]);
+    return next;
+  }
+  const index = bucket.findIndex((current) => current.id === item.id);
+  if (index < 0) {
+    const next = new Map(previous);
+    next.set(item.nodeId, [...bucket, item]);
+    return next;
+  }
+  const current = bucket[index];
+  if (isSameConversationItem(current, item)) {
+    return previous;
+  }
+  const next = new Map(previous);
+  const updated = bucket.slice();
+  updated[index] = item;
+  next.set(item.nodeId, updated);
+  return next;
+}
+
+/** Compares session items by semantic fields so no-op upserts do not trigger churn. */
+function isSameConversationItem(
+  left: WorkflowNodeConversationItem,
+  right: WorkflowNodeConversationItem,
+): boolean {
+  if (
+    left.id !== right.id
+    || left.kind !== right.kind
+    || left.runId !== right.runId
+    || left.nodeId !== right.nodeId
+    || left.sessionId !== right.sessionId
+    || left.createdAt !== right.createdAt
+    || left.updatedAt !== right.updatedAt
+    || left.status !== right.status
+  ) {
+    return false;
+  }
+  if (left.kind === "message" && right.kind === "message") {
+    return left.role === right.role && left.markdown === right.markdown;
+  }
+  if (left.kind === "activity" && right.kind === "activity") {
+    return left.activityKind === right.activityKind
+      && left.summary === right.summary
+      && left.detail === right.detail;
+  }
+  return false;
 }

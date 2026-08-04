@@ -21,7 +21,10 @@ interface TheaterHitlController {
   openHitls: HitlRequest[];
   primaryHasHitl: boolean;
   hitlExpanded: boolean;
+  /** Under-stage overlay composer (no session accessory). */
   hitlComposer: ReactNode;
+  /** Embedded composer; pass the session dock so both share one chrome. */
+  renderHitlComposer: (accessory?: ReactNode) => ReactNode;
   expandHitlForRequest: (requestId: string) => void;
 }
 
@@ -137,12 +140,16 @@ export function useTheaterHitl({
       return;
     }
     const gate = openHitls.find((item) => item.nodeId === focusNodeId);
-    if (gate === undefined) {
-      prevFocusHitlRef.current = focusNodeId;
-      return;
-    }
     const focusChanged = prevFocusHitlRef.current !== focusNodeId;
     prevFocusHitlRef.current = focusNodeId;
+    if (gate === undefined) {
+      // Browsing a non-waiting act — collapse to the under-stage compact prompt
+      // so autofocus / engage cannot yank focus back onto the open gate.
+      if (focusChanged) {
+        setHitlExpanded(false);
+      }
+      return;
+    }
     setSelectedHitlId(gate.id);
     if (focusChanged) {
       setHitlExpanded(true);
@@ -188,8 +195,11 @@ export function useTheaterHitl({
     : undefined;
   const primaryHasHitl = primaryHitl !== undefined;
 
-  const hitlComposer = hitlGates.length > 0 && selectedHitl !== null
-    ? (
+  function renderHitlComposer(accessory?: ReactNode): ReactNode {
+    if (hitlGates.length === 0 || selectedHitl === null) {
+      return null;
+    }
+    return (
       <RunHitlComposer
         layout={parallelCarouselFocus || !primaryHasHitl ? "overlay" : "embedded"}
         gates={hitlGates}
@@ -222,6 +232,7 @@ export function useTheaterHitl({
         submitError={submitHitl.error instanceof Error
           ? submitHitl.error.message
           : null}
+        accessory={accessory}
         onSubmit={async (payload) => {
           try {
             await submitHitl.mutateAsync({
@@ -234,14 +245,15 @@ export function useTheaterHitl({
           }
         }}
       />
-    )
-    : null;
+    );
+  }
 
   return {
     openHitls,
     primaryHasHitl,
     hitlExpanded,
-    hitlComposer,
+    hitlComposer: renderHitlComposer(),
+    renderHitlComposer,
     expandHitlForRequest,
   };
 }

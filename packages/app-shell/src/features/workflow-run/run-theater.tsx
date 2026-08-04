@@ -16,7 +16,11 @@ import {
   cancelOverlayWidthAnimation,
 } from "./theater-overlay-motion";
 import { useTheaterHitl } from "./use-theater-hitl";
-import type { GraphWorkflowRun, WorkflowArtifact } from "@ora/workflow-runtime";
+import type {
+  GraphWorkflowRun,
+  WorkflowArtifact,
+  WorkflowNodeConversationItem,
+} from "@ora/workflow-runtime";
 import "./theater-motion.css";
 
 const DEFAULT_INSPECTOR_WIDTH = 320;
@@ -31,6 +35,7 @@ interface RunTheaterProps {
   focusNodeId: string | null;
   onFocusNode: (nodeId: string) => void;
   artifacts: WorkflowArtifact[];
+  conversationByNodeId: Map<string, WorkflowNodeConversationItem[]>;
   revealedArtifactId: string | null;
   /** Opens the companion rail once on mount (e.g. Overview → Theater via node click). */
   openInspectorOnMount?: boolean;
@@ -48,6 +53,7 @@ export function RunTheater({
   focusNodeId,
   onFocusNode,
   artifacts,
+  conversationByNodeId,
   revealedArtifactId,
   openInspectorOnMount = false,
   onShowOverview,
@@ -81,6 +87,7 @@ export function RunTheater({
     primaryHasHitl,
     hitlExpanded,
     hitlComposer,
+    renderHitlComposer,
     expandHitlForRequest,
   } = useTheaterHitl({
     run,
@@ -131,6 +138,12 @@ export function RunTheater({
         : filterArtifacts(artifacts, { type: "node", nodeId: primaryId }),
     [artifacts, primaryId],
   );
+  const primaryConversation = useMemo(
+    () => primaryId === null
+      ? []
+      : (conversationByNodeId.get(primaryId) ?? []),
+    [primaryId, conversationByNodeId],
+  );
   const artifactCountByNode = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const artifact of artifacts) {
@@ -153,6 +166,7 @@ export function RunTheater({
         data: node.data,
         state,
         artifactCount: artifactCountByNode[nodeId] ?? 0,
+        conversation: conversationByNodeId.get(nodeId) ?? [],
       }];
     });
   }, [
@@ -161,6 +175,7 @@ export function RunTheater({
     nodeById,
     run.nodeStates,
     artifactCountByNode,
+    conversationByNodeId,
   ]);
 
   const progress = useMemo(() => {
@@ -355,9 +370,12 @@ export function RunTheater({
                       state={primaryState}
                       live={isNodeWorking(primaryState.status)}
                       artifactCount={primaryArtifacts.length}
+                      conversation={primaryConversation}
                       variant="stage"
                       onSelect={openInspector}
-                      interaction={primaryHasHitl ? hitlComposer : undefined}
+                      interaction={primaryHasHitl
+                        ? ({ accessory }) => renderHitlComposer(accessory ?? undefined)
+                        : undefined}
                     />
                     {!primaryHasHitl && hitlComposer !== null && (
                       <div className="mt-3">
