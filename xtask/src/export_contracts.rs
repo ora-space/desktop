@@ -333,6 +333,10 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "PromptSessionEvent"
         | "RespondToPermissionRequest"
         | "RespondToPermissionResponse"
+        | "ResumeSessionHistoryRequest"
+        | "ResumeSessionHistoryResponse"
+        | "SwitchSessionAgentRequest"
+        | "SwitchSessionAgentResponse"
         | "StopSessionRequest"
         | "StopSessionResponse" => "session",
         // agentRuntime

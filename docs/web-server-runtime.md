@@ -24,6 +24,9 @@ Every other runtime path is derived from it — there is no separate variable fo
 - Worktree creation root: `<ORA_DATA_DIR>/worktrees`
 - Imported skill folders: `<ORA_DATA_DIR>/atoms/skills`
 - Log file: `<ORA_DATA_DIR>/logs/ora.log`
+- Session history root: `<ORA_DATA_DIR>/sessions`
+
+Two Ora processes must not share one data root. SQLite tolerates it, but session history files are written on a single-writer assumption that only holds within one process. See [ACP Agent Runtime](agent-runtime.md).
 
 Startup asks `ora-backend` to create the required directories, bootstrap the database, apply the active migration catalog, and construct the shared composition before the runtime is marked ready. A SQLite database that cannot be opened, migrated, or pooled fails startup with a typed bootstrap error rather than serving requests from a partially initialized runtime. The server retains direct composition only for the Web-only project work context and filesystem services.
 
@@ -96,6 +99,8 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 - `POST /api/sessions/{sessionId}/prompt`
 - `POST /api/sessions/{sessionId}/permissions/respond`
 - `POST /api/sessions/{sessionId}/stop`
+- `POST /api/sessions/{sessionId}/agent`
+- `POST /api/sessions/{sessionId}/history/resume`
 - `DELETE /api/sessions/{sessionId}`
 
 ### agentRuntime
@@ -140,7 +145,7 @@ Project branch responses separate the logical branch name, exact resolvable ref,
 
 Backend construction immediately attempts one supervised `acp` child per supported CLI, rooted at the user's home directory. Executable resolution is platform-specific: on Unix each CLI is read from its fixed per-user directory (`<home>/.opencode/bin/opencode`, `<home>/.nga/bin/nga`, `<home>/.codeagentcli/bin/codeagentcli`); on Windows it is resolved from `PATH` through `where.exe` on every retry generation.
 
-Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Session create calls `session/new` on the connection selected by `agentCli` and returns the latest available-command catalog announced during setup. Updates emitted before the response reveals the private provider session id are temporarily buffered, then attached to the matching session route. Load calls `session/load` using that private id and the Task worktree `cwd`; the public Session payload never exposes it. `GET /api/agent-models` concurrently runs each CLI's bounded `models` discovery command and returns only successful groups.
+Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Session create calls `session/new` on the connection selected by `agentCli` and returns the latest available-command catalog announced during setup. Updates emitted before the response reveals the private provider session id are temporarily buffered, then attached to the matching session route. Load calls `session/load` using that private id and the Task worktree `cwd`; the public Session payload never exposes it. The load response streams Ora's own recorded conversation rather than the agent's replay, which is drained and discarded. `POST /api/sessions/{sessionId}/agent` rebinds a live conversation to a different CLI without changing its identifier, and `POST /api/sessions/{sessionId}/history/resume` returns a session whose history writes failed to a writable state. `GET /api/agent-models` concurrently runs each CLI's bounded `models` discovery command and returns only successful groups.
 
 Prompt requests carry an ordered ACP content-block list and may combine text, images, audio, and resources. The serialized prompt is limited to 16 MiB. Load and prompt responses use `application/x-ndjson`; each line is one complete frame. Data and control paths are separate, session-update queues are bounded at 256 items, frames are limited to 8 MiB, and overflow terminates the operation rather than dropping updates silently. See [ACP Agent Runtime](agent-runtime.md).
 

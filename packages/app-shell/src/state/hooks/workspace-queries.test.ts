@@ -51,13 +51,25 @@ describe("useSessions", () => {
   it("returns the session list from the client", async () => {
     const state = createMockClientState();
     state.sessions = [
-      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running" },
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        historyState: { type: "writable" },
+      },
     ];
     const client = createMockClient(state);
     const { result } = renderHookWithClient(() => useSessions(), client);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([
-      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running" },
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        historyState: { type: "writable" },
+      },
     ]);
   });
 });

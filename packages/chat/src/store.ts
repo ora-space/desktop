@@ -157,6 +157,8 @@ export function createChatStore(
             staged.applyUpdate(event.update);
           } else if (event.type === "permission_request") {
             staged.addPermission(event);
+          } else if (event.type === "turn_ended") {
+            staged.endTurn(event.stopReason);
           } else {
             completed = true;
           }
@@ -444,8 +446,12 @@ export function createChatStore(
 }
 
 /**
- * Reconstructs turn boundaries from a replayed provider history, where a user
- * message chunk starts a new turn and every other update flows into it.
+ * Reconstructs turn boundaries from Ora's replayed history, where a user message
+ * chunk starts a new turn and every other update flows into it.
+ *
+ * Unlike provider replay, this stream carries explicit turn boundaries, so a turn
+ * that was cancelled or failed is restored as such instead of being flattened
+ * into a completed one.
  */
 class HistoryBuilder {
   readonly permissions: SessionPermissionRequest[] = [];
@@ -453,6 +459,14 @@ class HistoryBuilder {
   private availableCommands: acp.AvailableCommand[] = [];
   private sessionTitle: string | null = null;
   private sessionUpdatedAt: string | null = null;
+  /**
+   * Whether the last turn is still accepting content.
+   *
+   * Two prompts in a row that produced no agent output are otherwise
+   * indistinguishable from one prompt sent in two chunks; the recorded turn
+   * boundary is what tells them apart.
+   */
+  private hasOpenTurn = false;
 
   constructor(
     private readonly createId: () => string,
@@ -480,11 +494,30 @@ class HistoryBuilder {
     this.permissions.push(request);
   }
 
+  /** Settles the open turn with the outcome the record captured for it. */
+  endTurn(stopReason: acp.StopReason): void {
+    const last = this.turns.at(-1);
+    this.hasOpenTurn = false;
+    if (last === undefined) return;
+    const settled: ChatTurn = {
+      ...last,
+      status: stopReason === "cancelled" ? "cancelled" : "completed",
+      stopReason,
+    };
+    this.replaceLast(
+      stopReason === "cancelled" ? cancelActiveToolCalls(settled, this.now()) : settled,
+    );
+  }
+
   /** Produces a complete loaded conversation after the finite replay stream ends. */
   finish(): SessionConversation {
     return {
       ...this.snapshot(),
-      turns: this.turns.map((turn) => ({ ...turn, status: "completed" as const })),
+      // A turn still streaming here never reached its boundary in the record,
+      // which is what an interrupted process leaves behind.
+      turns: this.turns.map((turn) =>
+        turn.status === "streaming" ? { ...turn, status: "completed" as const } : turn,
+      ),
       pendingPermissions: this.permissions,
       isLoaded: true,
     };
@@ -505,6 +538,7 @@ class HistoryBuilder {
     const last = this.turns.at(-1);
     const protocolMessageId = chunk.messageId ?? undefined;
     const continuesUser =
+      this.hasOpenTurn &&
       last !== undefined &&
       last.items.length === 0 &&
       last.userMessage.role === "user" &&
@@ -539,12 +573,13 @@ class HistoryBuilder {
       error: null,
       createdAt,
     });
+    this.hasOpenTurn = true;
   }
 
   /** Ensures an agent update always has a turn, even before any user message replays. */
   private currentTurn(): ChatTurn {
     const last = this.turns.at(-1);
-    if (last !== undefined) return last;
+    if (this.hasOpenTurn && last !== undefined) return last;
     const createdAt = this.now();
     const turn: ChatTurn = {
       id: this.createId(),
@@ -556,6 +591,7 @@ class HistoryBuilder {
       createdAt,
     };
     this.turns.push(turn);
+    this.hasOpenTurn = true;
     return turn;
   }
 

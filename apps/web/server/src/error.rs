@@ -220,7 +220,9 @@ const fn status_for(classification: ErrorClassification) -> StatusCode {
 #[cfg(test)]
 mod tests {
     use super::{WebApiError, status_for};
-    use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
     use ora_application::ApplicationError;
     use ora_backend::ErrorClassification;
     use ora_contracts::RequestId;
@@ -253,9 +255,11 @@ mod tests {
             Ok(actual) => actual,
             Err(error) => panic!("failed to decode JSON body: {error}"),
         };
+        // The request id is generated per response, so it is validated for shape and
+        // then removed to keep the remaining envelope comparable as a whole object.
         let request_id = actual
             .as_object_mut()
-            .and_then(|body| body.remove("requestId"))
+            .and_then(|envelope| envelope.remove("requestId"))
             .expect("contract error must include requestId");
         serde_json::from_value::<RequestId>(request_id)
             .expect("contract error requestId must be a UUID");

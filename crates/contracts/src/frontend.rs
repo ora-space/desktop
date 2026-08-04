@@ -93,6 +93,8 @@ pub const SESSION_LOAD_PATH: &str = "/api/sessions/{sessionId}/load";
 pub const SESSION_PROMPT_PATH: &str = "/api/sessions/{sessionId}/prompt";
 pub const SESSION_PERMISSION_RESPONSE_PATH: &str = "/api/sessions/{sessionId}/permissions/respond";
 pub const SESSION_STOP_PATH: &str = "/api/sessions/{sessionId}/stop";
+pub const SESSION_SWITCH_AGENT_PATH: &str = "/api/sessions/{sessionId}/agent";
+pub const SESSION_RESUME_HISTORY_PATH: &str = "/api/sessions/{sessionId}/history/resume";
 pub const AGENT_MODELS_PATH: &str = "/api/agent-models";
 pub const SKILLS_PATH: &str = "/api/skills";
 pub const SKILL_PATH: &str = "/api/skills/{skillId}";
@@ -476,6 +478,28 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         path_template: SESSION_STOP_PATH,
         request_type: "StopSessionRequest",
         response_type: "StopSessionResponse",
+        path_params: SESSION_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "switchSessionAgent",
+        namespace: SESSION_NAMESPACE,
+        member_name: "switchAgent",
+        method: FrontendHttpMethod::Post,
+        path_template: SESSION_SWITCH_AGENT_PATH,
+        request_type: "SwitchSessionAgentRequest",
+        response_type: "SwitchSessionAgentResponse",
+        path_params: SESSION_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "resumeSessionHistory",
+        namespace: SESSION_NAMESPACE,
+        member_name: "resumeHistory",
+        method: FrontendHttpMethod::Post,
+        path_template: SESSION_RESUME_HISTORY_PATH,
+        request_type: "ResumeSessionHistoryRequest",
+        response_type: "ResumeSessionHistoryResponse",
         path_params: SESSION_PATH_PARAMS,
         has_json_body: false,
     },

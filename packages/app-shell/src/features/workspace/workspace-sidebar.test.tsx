@@ -24,6 +24,7 @@ const SESSION: Session = {
   taskId: "t1",
   agentCli: "open_code",
   status: "running",
+  historyState: { type: "writable" },
 };
 
 /** Renders the sidebar with the same provider stack AppShell gives it. */
@@ -161,6 +162,7 @@ describe("WorkspaceSidebar", () => {
       taskId: "t2",
       agentCli: "open_code",
       status: "running",
+      historyState: { type: "writable" },
     });
     renderSidebar(state);
 

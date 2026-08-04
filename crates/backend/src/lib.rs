@@ -7,6 +7,7 @@ mod identity;
 mod project;
 mod request_lifecycle;
 mod session;
+mod session_history;
 mod skill;
 mod task;
 mod task_diff;

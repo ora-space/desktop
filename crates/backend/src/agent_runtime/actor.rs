@@ -3,17 +3,33 @@ use super::*;
 use ora_acp::AcpClient;
 use ora_contracts::SessionPermissionRequest;
 use ora_contracts::acp::common::SessionId as AcpSessionId;
+use ora_contracts::acp::content::TextContent;
 use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
 use ora_contracts::acp::notification::CancelNotification;
 use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
-use ora_contracts::acp::prompt::{PromptRequest, PromptResponse};
+use ora_contracts::acp::prompt::{PromptRequest, PromptResponse, StopReason};
 use ora_contracts::acp::session::{
     CloseSessionRequest, CloseSessionResponse, LoadSessionRequest as AcpLoadSessionRequest,
     LoadSessionResponse,
 };
-use ora_logging::ora_debug;
+use ora_history::{HistoryRecord, render_handoff};
+use ora_logging::{ora_debug, ora_warn};
 use tokio::process::ChildStdin;
 use tokio::time::{Instant, timeout};
+
+/// How far replaying Ora's record got before it stopped.
+///
+/// Only `Delivered` may complete the load. The other two are kept apart because
+/// they differ in who still has to be told: an unreadable history owes the
+/// client an error, while an abandoned one has no client left to send it to.
+enum Replay {
+    /// Every recorded line reached the client.
+    Delivered,
+    /// The history could not be read, and the client was told so.
+    Unreadable,
+    /// The client stopped listening partway through.
+    Abandoned,
+}
 
 impl RuntimeActor {
     /// Serializes operations for one logical session while the shared connection remains concurrent.
@@ -39,7 +55,12 @@ impl RuntimeActor {
                 None => self.commands.recv().await,
             };
             let Some(command) = command else {
-                self.unload().await;
+                // The manager dropped this actor, which it only does when it is
+                // replacing or deleting the row itself. Detaching from the
+                // provider is still required, but persisting anything would write
+                // a snapshot the manager has already moved past — that is exactly
+                // how a switch's new binding gets reverted to Stopped.
+                self.release().await;
                 return;
             };
             match command {
@@ -118,7 +139,12 @@ impl RuntimeActor {
             .await;
     }
 
-    /// Selects over load replay, routed updates, cancellation, and connection failure.
+    /// Selects over the provider handshake, routed updates, cancellation, and connection failure.
+    ///
+    /// `session/load` is still called, but only so the agent restores the context
+    /// it needs to answer the next prompt. Its replay is drained and discarded:
+    /// what the client is shown comes from Ora's own record, which is the same
+    /// conversation whichever agent is currently bound to it.
     async fn run_load_on_channel(
         &mut self,
         operation_id: u64,
@@ -142,10 +168,18 @@ impl RuntimeActor {
                     match response {
                         Ok(_) => {
                             ora_debug!(session_id = %self.session.id, "session/load completed");
-                            if events.try_send(Ok(LoadSessionEvent::Completed)).is_ok() {
-                                self.channel = Some(channel);
-                            } else {
-                                self.isolate_channel(channel).await;
+                            match self.replay_recorded_history(&events).await {
+                                Replay::Delivered
+                                    if events.send(Ok(LoadSessionEvent::Completed)).await.is_ok() =>
+                                {
+                                    self.channel = Some(channel);
+                                }
+                                // A replay that did not finish leaves the client
+                                // without the conversation it asked for, so the
+                                // registration goes with it and load can be retried.
+                                Replay::Delivered | Replay::Unreadable | Replay::Abandoned => {
+                                    self.isolate_channel(channel).await;
+                                }
                             }
                         }
                         Err(error) => {
@@ -157,16 +191,13 @@ impl RuntimeActor {
                     return;
                 }
                 update = channel.updates.recv() => {
-                    let Some(update) = update else {
+                    if update.is_none() {
                         self.fail_load(&events, runtime_unavailable());
                         return;
-                    };
-                    deadline.as_mut().reset(Instant::now() + SESSION_SETUP_TIMEOUT);
-                    if events.try_send(Ok(LoadSessionEvent::SessionUpdate { update: update.update })).is_err() {
-                        self.cancel(&client, &HashMap::new()).await;
-                        self.isolate_channel(channel).await;
-                        return;
                     }
+                    // The agent is reciting history Ora already owns. Draining it
+                    // keeps the queue clear and proves the agent is still working.
+                    deadline.as_mut().reset(Instant::now() + SESSION_SETUP_TIMEOUT);
                 }
                 control = channel.controls.recv() => {
                     match control {
@@ -261,7 +292,27 @@ impl RuntimeActor {
         }
         let client = channel.connection.client.clone();
         let content_count = prompt.len();
-        let request = PromptRequest::new(self.session.agent_session_id.clone(), prompt);
+        // Built before the prompt is recorded, so the transcript handed to a new
+        // agent describes the conversation up to this turn rather than including it.
+        let handoff_carried = self.handoff_pending;
+        let sent = self.prompt_for_agent(&prompt);
+        let outcome = self.recorder.record_prompt(&prompt);
+        let stopped_recording = matches!(outcome, RecordOutcome::JustFailed { .. });
+        self.settle_record(outcome);
+        if stopped_recording {
+            // A turn already streaming is allowed to finish, because the agent's
+            // work is real whether or not the file kept it. This one has not
+            // started: nothing is lost by refusing it, and running it would put
+            // the conversation somewhere the record cannot follow.
+            //
+            // The transcript this prompt would have carried was never delivered
+            // either, so the binding still owes it.
+            self.handoff_pending = handoff_carried;
+            let _ = events.try_send(Err(history_degraded()));
+            self.channel = Some(channel);
+            return;
+        }
+        let request = PromptRequest::new(self.session.agent_session_id.clone(), sent);
         ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
         let future =
             client.request::<_, PromptResponse>(AGENT_METHOD_NAMES.session_prompt, &request);
@@ -273,6 +324,7 @@ impl RuntimeActor {
                     match response {
                         Ok(response) => {
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
+                            self.end_turn(&mut channel, &events, response.stop_reason);
                             if events.try_send(Ok(PromptSessionEvent::Completed {
                                 stop_reason: response.stop_reason,
                             })).is_ok() {
@@ -284,6 +336,9 @@ impl RuntimeActor {
                         Err(error) => {
                             let reusable = matches!(&error, ora_acp::AcpError::RequestFailed(_));
                             ora_debug!(session_id = %self.session.id, error = %error, reusable = reusable, "prompt failed");
+                            // A turn that failed did not reach its own end, which
+                            // is the same shape in the record as one cut short.
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             let delivered = events.try_send(Err(map_acp_error(error))).is_ok();
                             if reusable && delivered {
                                 self.channel = Some(channel);
@@ -296,10 +351,16 @@ impl RuntimeActor {
                 }
                 update = channel.updates.recv() => {
                     let Some(update) = update else {
+                        self.end_turn(&mut channel, &events, StopReason::Cancelled);
                         self.fail_prompt(&events, runtime_unavailable());
                         return;
                     };
+                    // Recorded before it is forwarded: a client that drops mid-turn
+                    // must not also cost the record of what the agent produced.
+                    let outcome = self.recorder.record_update(&update.update);
+                    self.settle_record(outcome);
                     if events.try_send(Ok(PromptSessionEvent::SessionUpdate { update: update.update })).is_err() {
+                        self.end_turn(&mut channel, &events, StopReason::Cancelled);
                         self.cancel(&client, &permissions).await;
                         self.isolate_channel(channel).await;
                         return;
@@ -320,16 +381,19 @@ impl RuntimeActor {
                                 options: permission.request.options,
                             });
                             if events.try_send(Ok(event)).is_err() {
+                                self.end_turn(&mut channel, &events, StopReason::Cancelled);
                                 self.cancel(&client, &permissions).await;
                                 self.isolate_channel(channel).await;
                                 return;
                             }
                         }
                         Some(SessionControl::ConnectionLost(error)) => {
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.fail_prompt(&events, error);
                             return;
                         }
                         Some(SessionControl::UpdateOverflow) => {
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.cancel(&client, &permissions).await;
                             let _ = events.try_send(Err(runtime_internal(
                                 "agent_update_overflow",
@@ -339,6 +403,7 @@ impl RuntimeActor {
                             return;
                         }
                         None => {
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.fail_prompt(&events, runtime_unavailable());
                             return;
                         }
@@ -352,7 +417,12 @@ impl RuntimeActor {
                         }
                         Some(RuntimeCommand::Cancel { operation_id: cancelled }) if cancelled == operation_id => {
                             self.cancel(&client, &permissions).await;
-                            match timeout(CANCELLATION_GRACE, &mut future).await {
+                            let settled = timeout(CANCELLATION_GRACE, &mut future).await;
+                            // Closing the turn also collects whatever the agent
+                            // emitted on its way out, which the grace period above
+                            // was not watching for.
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
+                            match settled {
                                 Ok(Ok(_)) | Ok(Err(ora_acp::AcpError::RequestFailed(_))) => {
                                     self.channel = Some(channel);
                                 }
@@ -362,6 +432,7 @@ impl RuntimeActor {
                         }
                         Some(RuntimeCommand::Stop { response }) => {
                             self.cancel(&client, &permissions).await;
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.isolate_channel(channel).await;
                             let _ = response.send(Ok(StopSessionResponse {
                                 session: contract_session(self.session.clone()),
@@ -377,6 +448,139 @@ impl RuntimeActor {
                 }
             }
         }
+    }
+
+    /// Builds what actually reaches the agent, which is not always what is recorded.
+    ///
+    /// A binding that has never been told anything gets the recorded transcript
+    /// ahead of the user's words. That block is deliberately not recorded: it is
+    /// derived from the history, and storing it would nest the conversation inside
+    /// itself on the next switch.
+    fn prompt_for_agent(&mut self, prompt: &[ContentBlock]) -> Vec<ContentBlock> {
+        if !self.handoff_pending {
+            return prompt.to_vec();
+        }
+        let history = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
+            Ok(history) => history,
+            Err(error) => {
+                // The flag is held rather than cleared, because nothing would ask
+                // again. It is derived from the record — a trailing `AgentSwitched`
+                // with no user message after it — and recording this prompt is
+                // exactly what stops that from being true. A transient read would
+                // otherwise cost the new agent the whole conversation, silently and
+                // for good, while the turn it answered without any of it becomes
+                // history the agent after that one inherits as fact.
+                ora_warn!(
+                    session_id = %self.session.id,
+                    error = %error,
+                    "handoff transcript unreadable; retrying on the next prompt",
+                );
+                return prompt.to_vec();
+            }
+        };
+        self.handoff_pending = false;
+        // Nothing recorded to hand over, which is a session switched before it was
+        // ever prompted. The binding has now been spoken to either way.
+        let Some(transcript) = render_handoff(&history) else {
+            return prompt.to_vec();
+        };
+        ora_debug!(
+            session_id = %self.session.id,
+            transcript_bytes = transcript.len(),
+            "prepending recorded transcript for a new agent binding",
+        );
+        let mut sent = Vec::with_capacity(prompt.len() + 1);
+        sent.push(ContentBlock::Text(TextContent::new(transcript)));
+        sent.extend_from_slice(prompt);
+        sent
+    }
+
+    /// Closes the recorded turn once everything it produced is in hand.
+    ///
+    /// The select loop stops consuming updates the moment another branch wins —
+    /// a resolved response, a cancellation, a lost connection — and during the
+    /// cancellation grace it is not running at all. The agent's last updates are
+    /// usually already queued behind that, so they are drained here and settled
+    /// into the turn that produced them. Leaving them queued would carry them
+    /// into the next prompt, where they arrive after that prompt's own position
+    /// and, because this call clears the assembler, reopen a finished tool call
+    /// as a second record instead of correcting the first.
+    fn end_turn(
+        &mut self,
+        channel: &mut SessionChannel,
+        events: &mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
+        stop_reason: StopReason,
+    ) {
+        while let Ok(notification) = channel.updates.try_recv() {
+            let outcome = self.recorder.record_update(&notification.update);
+            self.settle_record(outcome);
+            // Forwarded on the same best-effort terms as the loop's own updates:
+            // the client may already be gone, which costs the stream but never
+            // the record.
+            let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                update: notification.update,
+            }));
+        }
+        let outcome = self.recorder.record_turn_end(stop_reason);
+        self.settle_record(outcome);
+    }
+
+    /// Marks the session degraded when a recording attempt just broke its history.
+    fn settle_record(&mut self, outcome: RecordOutcome) {
+        let RecordOutcome::JustFailed { reason } = outcome else {
+            return;
+        };
+        ora_debug!(
+            session_id = %self.session.id,
+            path = %self.recorder.path().display(),
+            "session history stopped recording",
+        );
+        self.persist_session(|session, now| {
+            session.with_history_state(HistoryState::Degraded { reason }, now)
+        });
+    }
+
+    /// Streams Ora's recorded conversation to a client that asked to load it.
+    ///
+    /// Sends apply backpressure rather than failing fast: a long history is far
+    /// larger than the event queue, and a slow consumer is not a disconnected one.
+    async fn replay_recorded_history(
+        &self,
+        events: &mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
+    ) -> Replay {
+        let history = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
+            Ok(history) => history,
+            Err(error) => {
+                // Load is how a user asks to see the conversation, so a history
+                // that cannot be read is reported rather than shown as an empty
+                // one. Completing here would state that nothing was ever said.
+                ora_warn!(session_id = %self.session.id, error = %error, "session history unreadable during load");
+                let _ = events
+                    .send(Err(runtime_internal(
+                        "session_history_unreadable",
+                        "session history could not be read",
+                    )))
+                    .await;
+                return Replay::Unreadable;
+            }
+        };
+        for line in history.lines {
+            let event = match line.record {
+                HistoryRecord::Update { update } => LoadSessionEvent::SessionUpdate { update },
+                HistoryRecord::TurnEnded { stop_reason } => {
+                    LoadSessionEvent::TurnEnded { stop_reason }
+                }
+                // Bookkeeping the conversation view has no place for. It stays in
+                // the file, where the handoff renderer and a human can still see it.
+                HistoryRecord::Meta(_)
+                | HistoryRecord::AgentSwitched(_)
+                | HistoryRecord::Gap { .. } => continue,
+            };
+            if events.send(Ok(event)).await.is_err() {
+                return Replay::Abandoned;
+            }
+        }
+        Replay::Delivered
     }
 
     /// Handles controls arriving while a registered session has no active operation.
@@ -431,8 +635,24 @@ impl RuntimeActor {
         }
     }
 
+    /// Detaches from the provider without recording any lifecycle change.
+    ///
+    /// Used only when the manager retires this actor, because it owns the row's
+    /// next state and this actor's view of it is already out of date.
+    async fn release(&mut self) {
+        if let Some(channel) = self.channel.take() {
+            self.close_provider_session(&channel).await;
+        }
+    }
+
     /// Detaches one routed session while leaving the shared CLI process available.
     async fn isolate_channel(&mut self, channel: SessionChannel) {
+        self.close_provider_session(&channel).await;
+        self.mark_stopped();
+    }
+
+    /// Releases the provider-side registration when the agent advertises the call.
+    async fn close_provider_session(&self, channel: &SessionChannel) {
         if channel.connection.close_session_supported {
             let _ = timeout(
                 CANCELLATION_GRACE,
@@ -446,7 +666,6 @@ impl RuntimeActor {
             )
             .await;
         }
-        self.mark_stopped();
     }
 
     /// Completes an interrupted load request with the connection-level failure.
@@ -472,12 +691,26 @@ impl RuntimeActor {
     /// Persists a stopped state after the provider session is detached or becomes unusable.
     fn mark_stopped(&mut self) {
         self.channel = None;
-        self.session = self
-            .session
-            .clone()
-            .with_status(SessionStatus::Stopped, self.clock.now_timestamp_millis());
-        let _ = self.repository.update_session(self.session.clone());
+        self.persist_session(|session, now| session.with_status(SessionStatus::Stopped, now));
         ora_debug!(session_id = %self.session.id, "session marked stopped");
+    }
+
+    /// Applies one change to the stored session, refreshing the row first.
+    ///
+    /// The actor holds the snapshot it was built from, but switching agents and
+    /// resuming history both rewrite fields it never learns about. Writing that
+    /// snapshot back would silently revert them, so a lifecycle update reads the
+    /// current row and changes only what it means to change.
+    fn persist_session(&mut self, change: impl FnOnce(Session, i64) -> Session) {
+        let now = self.clock.now_timestamp_millis();
+        let current = self
+            .repository
+            .find_session(&self.session.id)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| self.session.clone());
+        self.session = change(current, now);
+        let _ = self.repository.update_session(self.session.clone());
     }
 }
 

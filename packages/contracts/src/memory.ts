@@ -174,6 +174,7 @@ export function createMemoryContractsClient(
           taskId: request.taskId,
           agentCli: request.agentCli,
           status: "running",
+          historyState: { type: "writable" },
         };
         state.sessions.push(session);
         return { session: structuredClone(session), availableCommands: [] };
@@ -185,6 +186,24 @@ export function createMemoryContractsClient(
         yield { type: "completed" as const, stopReason: "end_turn" as const };
       },
       respondToPermission: async () => ({}),
+      switchAgent: async (request) => {
+        const index = requireRecordIndex(state.sessions, request.sessionId, "session");
+        const session: Session = {
+          ...state.sessions[index]!,
+          agentCli: request.agentCli,
+        };
+        state.sessions[index] = session;
+        return { session: structuredClone(session), availableCommands: [] };
+      },
+      resumeHistory: async (request) => {
+        const index = requireRecordIndex(state.sessions, request.sessionId, "session");
+        const session: Session = {
+          ...state.sessions[index]!,
+          historyState: { type: "writable" },
+        };
+        state.sessions[index] = session;
+        return { session: structuredClone(session) };
+      },
       stop: async (request) => {
         const index = requireRecordIndex(state.sessions, request.sessionId, "session");
         const session: Session = { ...state.sessions[index]!, status: "stopped" };

@@ -1,4 +1,6 @@
 use crate::clock::SystemClock;
+use std::path::PathBuf;
+
 use ora_application::{
     ApplicationError, BranchLister, BranchListingError, BranchReference, Clock,
     CreateProjectHandler, GetProjectHandler, ListProjectBranchesHandler, ListProjectsHandler,
@@ -31,6 +33,8 @@ type ProjectBranchListHandler = ListProjectBranchesHandler<
 /// Groups the concrete project handlers shared by runtime adapters.
 pub(crate) struct ProjectApi {
     pool: RepositoryPool,
+    /// Where cascaded sessions' recorded conversations are removed from.
+    sessions_root: PathBuf,
     create: CreateProjectHandler<SqliteProjectRepository, UuidProjectIdGenerator, SystemClock>,
     get: GetProjectHandler<SqliteProjectRepository>,
     list: ListProjectsHandler<SqliteProjectRepository>,
@@ -41,11 +45,12 @@ pub(crate) struct ProjectApi {
 
 impl ProjectApi {
     /// Builds project handlers from the shared repository pool.
-    pub(crate) fn new(pool: RepositoryPool, clock: SystemClock) -> Self {
+    pub(crate) fn new(pool: RepositoryPool, sessions_root: PathBuf, clock: SystemClock) -> Self {
         let repository = SqliteProjectRepository::new(pool.clone());
 
         Self {
             pool: pool.clone(),
+            sessions_root,
             create: CreateProjectHandler::new(
                 repository.clone(),
                 UuidProjectIdGenerator::new(),
@@ -110,6 +115,9 @@ impl ProjectApi {
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {
         let project_id = ProjectId::new(request.project_id);
+        // Collected before the cascade: once the rows are soft-deleted nothing
+        // links their history files back to the tasks that owned them.
+        let session_ids = crate::session_history::session_ids_for_project(&self.pool, &project_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
             .delete_project(&project_id, self.clock.now_timestamp_millis())
             .map_err(|source| {
@@ -117,9 +125,12 @@ impl ProjectApi {
             })?;
 
         match outcome {
-            CascadeDeleteOutcome::Deleted => Ok(DeleteProjectResponse {
-                project_id: project_id.to_string(),
-            }),
+            CascadeDeleteOutcome::Deleted => {
+                crate::session_history::remove_session_histories(&self.sessions_root, session_ids);
+                Ok(DeleteProjectResponse {
+                    project_id: project_id.to_string(),
+                })
+            }
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
                 ErrorClassification::NotFound,
                 PublicError::ProjectNotFound(EmptyErrorParams {}),

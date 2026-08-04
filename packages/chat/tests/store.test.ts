@@ -78,6 +78,75 @@ test("loads provider history and reconstructs turns from message boundaries", as
   });
 });
 
+test("restores a cancelled turn and its unfinished tools from the recorded boundary", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([
+      textEvent("user_message_chunk", "run the suite", "user-1"),
+      {
+        type: "session_update",
+        update: { sessionUpdate: "tool_call", toolCallId: "t1", title: "Run tests", status: "in_progress" },
+      },
+      { type: "turn_ended", stopReason: "cancelled" },
+      { type: "completed" },
+    ]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, {
+    createId: () => `local-${++nextId}`,
+    now: () => 42,
+  });
+
+  await store.getState().loadSession("ora-1");
+
+  // Provider replay could never carry this: it would restore the turn as
+  // completed and leave the tool looking like it succeeded.
+  const [turn] = store.getState().conversations["ora-1"]!.turns;
+  assert.equal(turn?.status, "cancelled");
+  assert.equal(turn?.stopReason, "cancelled");
+  assert.deepEqual(turn?.items, [{
+    kind: "toolCall",
+    id: "t1",
+    title: "Run tests",
+    status: "cancelled",
+    content: [],
+    locations: [],
+    createdAt: 42,
+    updatedAt: 42,
+  }]);
+});
+
+test("keeps consecutive prompts apart when neither produced agent output", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([
+      textEvent("user_message_chunk", "first", "user-1"),
+      { type: "turn_ended", stopReason: "end_turn" },
+      textEvent("user_message_chunk", "second", "user-2"),
+      { type: "turn_ended", stopReason: "end_turn" },
+      { type: "completed" },
+    ]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+  };
+  const store = createChatStore(client, {
+    createId: (() => {
+      let nextId = 0;
+      return () => `local-${++nextId}`;
+    })(),
+    now: () => 42,
+  });
+
+  await store.getState().loadSession("ora-1");
+
+  // Without the recorded boundary these two would merge into one user message,
+  // because an empty turn looks exactly like one still receiving chunks.
+  assert.deepEqual(
+    store.getState().conversations["ora-1"]?.turns.map((turn) => turn.userMessage.content),
+    ["first", "second"],
+  );
+});
+
 test("loads commands, session metadata, and structured content without creating metadata turns", async () => {
   const image = { type: "image" as const, data: "aGVsbG8=", mimeType: "image/png", uri: "file:///preview.png" };
   const client: ChatSessionClient = {

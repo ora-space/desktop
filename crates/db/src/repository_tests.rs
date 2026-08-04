@@ -6,7 +6,7 @@ use ora_application::{
     TaskRepository, WorktreeRepository,
 };
 use ora_domain::{
-    AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, Project, ProjectId,
+    AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, HistoryState, Project, ProjectId,
     ProjectWorkContext, ProjectWorkContextId, ProjectWorkContextSurface, Session, SessionId,
     SessionStatus, Skill, SkillId, Task, TaskId, TaskStatus, Worktree, WorktreeActivity,
     WorktreeId,
@@ -546,6 +546,65 @@ fn session_repository_supports_crud_and_soft_delete() {
     assert_eq!(repository.list_sessions().unwrap(), Vec::<Session>::new());
 }
 
+/// Verifies switching agents rewrites the provider binding while the conversation keeps its identity.
+#[test]
+fn session_repository_rebinds_a_session_to_another_agent_cli() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    insert_cascade_fixture(&pool, SessionStatus::Stopped);
+    let repository = SqliteSessionRepository::new(pool);
+    let existing = repository
+        .find_session(&SessionId::new("session-1"))
+        .unwrap()
+        .expect("fixture session");
+
+    let rebound =
+        existing
+            .clone()
+            .with_binding(AgentCli::Nga, "provider-2", /*updated_at*/ 40);
+
+    assert_eq!(repository.update_session(rebound.clone()).unwrap(), rebound);
+    assert_eq!(
+        repository.find_session(&rebound.id).unwrap(),
+        Some(rebound.clone())
+    );
+    // The conversation is the row, not the provider session behind it.
+    assert_eq!(rebound.id, existing.id);
+    assert_eq!(rebound.task_id, existing.task_id);
+}
+
+/// Verifies a degraded history reason survives storage and clears when the session recovers.
+#[test]
+fn session_repository_round_trips_history_state() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    insert_cascade_fixture(&pool, SessionStatus::Stopped);
+    let repository = SqliteSessionRepository::new(pool);
+    let existing = repository
+        .find_session(&SessionId::new("session-1"))
+        .unwrap()
+        .expect("fixture session");
+    assert_eq!(existing.history_state, HistoryState::Writable);
+
+    let degraded = existing.clone().with_history_state(
+        HistoryState::Degraded {
+            reason: "no space left on device".to_string(),
+        },
+        /*updated_at*/ 40,
+    );
+    repository.update_session(degraded.clone()).unwrap();
+    assert_eq!(
+        repository.find_session(&degraded.id).unwrap(),
+        Some(degraded.clone())
+    );
+
+    let recovered = degraded.with_history_state(HistoryState::Writable, /*updated_at*/ 50);
+    repository.update_session(recovered.clone()).unwrap();
+
+    assert_eq!(
+        repository.find_session(&recovered.id).unwrap(),
+        Some(recovered)
+    );
+}
+
 /// Verifies a completed ACP handshake cannot attach a new session to a deleted task.
 #[test]
 fn session_repository_rejects_soft_deleted_task() {
@@ -760,8 +819,11 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
              ) VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0, 'base-commit');
              INSERT INTO project_work_contexts VALUES ('context-1', 'web', 'main', 'project-1', 100, 1, 1);",
         )?;
+        // Columns are named rather than positional so a later schema addition
+        // does not silently shift this fixture's values into the wrong ones.
         connection.execute(
-            "INSERT INTO sessions VALUES ('session-1', 'task-1', 'ora-space.opencode', 'provider-1', ?1, 1, 1, 0)",
+            "INSERT INTO sessions (id, task_id, agent_cli, agent_session_id, status, created_at, updated_at, is_deleted)
+             VALUES ('session-1', 'task-1', 'ora-space.opencode', 'provider-1', ?1, 1, 1, 0)",
             rusqlite::params![session_status.database_value()],
         )?;
         Ok(())

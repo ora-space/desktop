@@ -27,6 +27,11 @@ pub struct BackendPaths {
     pub database_path: PathBuf,
     pub worktree_root: PathBuf,
     pub home_directory: PathBuf,
+    /// Root of the Ora-owned session history tree.
+    ///
+    /// Each session's file is derived from its identifier under this directory,
+    /// so nothing records where an individual conversation lives.
+    pub sessions_root: PathBuf,
 }
 
 /// Reports failures that prevent the shared backend from opening persistent state.
@@ -76,13 +81,24 @@ impl Backend {
             .map_err(BackendBootstrapError::Database)?;
         let clock = SystemClock;
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
-        let agent_runtime = AgentRuntimeManager::new(pool.clone(), paths.home_directory, clock)
-            .map_err(BackendBootstrapError::AgentRuntime)?;
+        let sessions_root = paths.sessions_root;
+        let agent_runtime = AgentRuntimeManager::new(
+            pool.clone(),
+            paths.home_directory,
+            sessions_root.clone(),
+            clock,
+        )
+        .map_err(BackendBootstrapError::AgentRuntime)?;
         let skill_store = prepare_skill_storage(&paths.database_path, &pool)?;
 
         Ok(Self {
-            project: Arc::new(ProjectApi::new(pool.clone(), clock)),
-            task: Arc::new(TaskApi::new(pool.clone(), worktree_root.clone(), clock)),
+            project: Arc::new(ProjectApi::new(pool.clone(), sessions_root.clone(), clock)),
+            task: Arc::new(TaskApi::new(
+                pool.clone(),
+                worktree_root.clone(),
+                sessions_root,
+                clock,
+            )),
             task_diff: Arc::new(TaskDiffApi::new(pool.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime: Arc::new(agent_runtime),
@@ -320,7 +336,23 @@ impl Backend {
         self.agent_runtime.stop_session(request).await
     }
 
-    /// Stops one session before removing only its Ora-owned record.
+    /// Moves one existing conversation onto a different agent CLI.
+    pub async fn switch_session_agent(
+        &self,
+        request: SwitchSessionAgentRequest,
+    ) -> Result<SwitchSessionAgentResponse, BackendError> {
+        self.agent_runtime.switch_agent(request).await
+    }
+
+    /// Returns a session whose history writes failed to a writable state.
+    pub async fn resume_session_history(
+        &self,
+        request: ResumeSessionHistoryRequest,
+    ) -> Result<ResumeSessionHistoryResponse, BackendError> {
+        self.agent_runtime.resume_history(request).await
+    }
+
+    /// Stops one session before removing its Ora-owned record and recorded history.
     pub async fn delete_session(
         &self,
         request: DeleteSessionRequest,
@@ -500,6 +532,7 @@ mod tests {
             database_path: database_path.clone(),
             worktree_root: worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
         })
         .expect("open shared backend");
 
@@ -611,6 +644,7 @@ mod tests {
             database_path: temporary.path().join("ora.sqlite3"),
             worktree_root: original_worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
         })
         .expect("open shared backend");
         let project = backend

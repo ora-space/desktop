@@ -63,7 +63,44 @@ fn bootstraps_empty_database_with_default_catalog() {
             AppliedMigration::new("0002", 1_700_000_000_000),
             AppliedMigration::new("0003", 1_700_000_000_000),
             AppliedMigration::new("0004", 1_700_000_000_000),
+            AppliedMigration::new("0005", 1_700_000_000_000),
         ]
+    );
+}
+
+/// Verifies the session history column is installed by the catalog and rolled back with it.
+#[test]
+fn manages_session_history_state_column_lifecycle() {
+    let temp_dir = TempDir::new().unwrap();
+    let database_path = temp_dir.path().join("session-history.sqlite3");
+    let catalog = default_migration_catalog().unwrap();
+    let migrations = ["0001", "0002", "0003", "0004", "0005"].map(|version| {
+        catalog
+            .migration(version)
+            .cloned()
+            .unwrap_or_else(|| panic!("missing migration {version}"))
+    });
+
+    bootstrap_file_database(&database_path, catalog, 1_700_000_000_000);
+
+    let connection = Connection::open(&database_path).unwrap();
+    assert!(
+        load_table_column_names(&connection, "sessions")
+            .contains(&"history_degraded_reason".to_string())
+    );
+    drop(connection);
+
+    let rolled_back = MigrationCatalog::with_target_versions(
+        migrations.to_vec(),
+        vec!["0001", "0002", "0003", "0004"],
+    )
+    .unwrap();
+    bootstrap_file_database(&database_path, rolled_back, 1_700_000_000_100);
+
+    let connection = Connection::open(&database_path).unwrap();
+    assert!(
+        !load_table_column_names(&connection, "sessions")
+            .contains(&"history_degraded_reason".to_string())
     );
 }
 
@@ -73,7 +110,7 @@ fn manages_skill_and_agent_definition_schema_lifecycle() {
     let temp_dir = TempDir::new().unwrap();
     let database_path = temp_dir.path().join("skill-agent.sqlite3");
     let catalog = default_migration_catalog().unwrap();
-    let migrations = ["0001", "0002", "0003", "0004"].map(|version| {
+    let migrations = ["0001", "0002", "0003", "0004", "0005"].map(|version| {
         catalog
             .migration(version)
             .cloned()

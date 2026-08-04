@@ -26,6 +26,23 @@ pub enum SessionStatus {
     Stopped,
 }
 
+/// Reports whether Ora can still extend this session's recorded history.
+///
+/// Separate from [`SessionStatus`] on purpose: that says whether the conversation
+/// is registered on a CLI connection, this says whether the record of it can
+/// still grow. A running session whose disk filled is both at once, and the user
+/// has to be told which one broke.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub enum SessionHistoryState {
+    Writable,
+    /// A write failed; the session refuses prompts until its history is resumed.
+    Degraded {
+        reason: String,
+    },
+}
+
 /// Describes the public session payload without exposing the provider session identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -33,8 +50,10 @@ pub enum SessionStatus {
 pub struct Session {
     pub id: String,
     pub task_id: String,
+    /// The CLI this conversation currently runs on, which switching replaces.
     pub agent_cli: AgentCli,
     pub status: SessionStatus,
+    pub history_state: SessionHistoryState,
 }
 
 /// Creates a provider-backed session on one selected application-scoped CLI.
@@ -135,13 +154,24 @@ pub struct SessionPermissionRequest {
     pub options: Vec<PermissionOption>,
 }
 
-/// Streams provider history while keeping JSON-RPC framing private to the backend.
+/// Replays Ora's recorded history while keeping JSON-RPC framing private to the backend.
+///
+/// The stream carries assembled updates read back from Ora's own record, not the
+/// provider's replay. `TurnEnded` has no ACP equivalent and exists because a
+/// cancelled turn would otherwise be indistinguishable from a completed one —
+/// information provider replay never carried.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export_to = "session.ts")]
 pub enum LoadSessionEvent {
-    SessionUpdate { update: SessionUpdate },
+    SessionUpdate {
+        update: SessionUpdate,
+    },
     PermissionRequest(SessionPermissionRequest),
+    TurnEnded {
+        #[serde(rename = "stopReason")]
+        stop_reason: StopReason,
+    },
     Completed,
 }
 
@@ -192,6 +222,47 @@ pub struct StopSessionResponse {
     pub session: Session,
 }
 
+/// Moves one existing conversation onto a different agent CLI.
+///
+/// Only the binding changes: the session keeps its identifier, its task, and the
+/// history it has accumulated. The new CLI starts with no context, so Ora's
+/// recorded transcript is prepended to the next prompt sent into it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct SwitchSessionAgentRequest {
+    pub session_id: String,
+    pub agent_cli: AgentCli,
+}
+
+/// Returns the session rebound to its new CLI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct SwitchSessionAgentResponse {
+    pub session: Session,
+    pub available_commands: Vec<AvailableCommand>,
+}
+
+/// Returns a session whose history writes failed to a writable state.
+///
+/// Resuming appends a record of what went missing before accepting new content,
+/// so the conversation never contains a gap that cannot be seen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct ResumeSessionHistoryRequest {
+    pub session_id: String,
+}
+
+/// Returns the session after its history became writable again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct ResumeSessionHistoryResponse {
+    pub session: Session,
+}
+
 /// Identifies which Ora session record to remove.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -212,7 +283,12 @@ pub struct DeleteSessionResponse {
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentCli::export(config)?;
     SessionStatus::export(config)?;
+    SessionHistoryState::export(config)?;
     Session::export(config)?;
+    SwitchSessionAgentRequest::export(config)?;
+    SwitchSessionAgentResponse::export(config)?;
+    ResumeSessionHistoryRequest::export(config)?;
+    ResumeSessionHistoryResponse::export(config)?;
     CreateSessionRequest::export(config)?;
     AgentCliModels::export(config)?;
     ListAgentModelsRequest::export(config)?;

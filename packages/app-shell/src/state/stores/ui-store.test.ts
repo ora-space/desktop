@@ -71,6 +71,7 @@ describe("useUiStore", () => {
       taskId: "t1",
       agentCli: "open_code",
       status: "running",
+      historyState: { type: "writable" },
     };
 
     useUiStore.getState().setDialog({ kind: "project", entity: project });

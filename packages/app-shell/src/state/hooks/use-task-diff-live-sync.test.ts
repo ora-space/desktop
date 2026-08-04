@@ -13,6 +13,7 @@ const SESSION: Session = {
   taskId: "task-1",
   agentCli: "code_agent_cli",
   status: "running",
+  historyState: { type: "writable" },
 };
 
 /** Builds one conversation state with just enough lifecycle data for diff syncing. */
