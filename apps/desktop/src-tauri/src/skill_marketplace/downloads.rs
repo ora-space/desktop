@@ -23,9 +23,9 @@ struct DownloadPaths {
     part_path: PathBuf,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum DownloadAcceptance {
-    Accepted,
+    Accepted { file_name: String },
     Rejected,
 }
 
@@ -38,7 +38,7 @@ pub(super) enum DownloadStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum DownloadFinish {
     Completed { file_name: String, path: PathBuf },
-    Failed,
+    Failed { file_name: String },
     Ignored,
 }
 
@@ -78,8 +78,9 @@ impl SkillDownloadCoordinator {
         }
         let paths = available_paths(&self.directory, &file_name, &active);
         *suggested_destination = paths.part_path.clone();
+        let file_name = final_file_name(&paths.final_path);
         active.insert(key, paths);
-        Ok(DownloadAcceptance::Accepted)
+        Ok(DownloadAcceptance::Accepted { file_name })
     }
 
     /// Promotes a successful `.part` file or removes it after failure or cancellation.
@@ -90,7 +91,9 @@ impl SkillDownloadCoordinator {
 
         if status == DownloadStatus::Failed {
             remove_file_if_present(&paths.part_path)?;
-            return Ok(DownloadFinish::Failed);
+            return Ok(DownloadFinish::Failed {
+                file_name: final_file_name(&paths.final_path),
+            });
         }
 
         if let Err(error) = fs::rename(&paths.part_path, &paths.final_path) {
@@ -99,12 +102,7 @@ impl SkillDownloadCoordinator {
             return Err(error);
         }
 
-        let file_name = paths
-            .final_path
-            .file_name()
-            .and_then(OsStr::to_str)
-            .unwrap_or(DEFAULT_ZIP_FILE_NAME)
-            .to_owned();
+        let file_name = final_file_name(&paths.final_path);
         Ok(DownloadFinish::Completed {
             file_name,
             path: paths.final_path,
@@ -138,6 +136,14 @@ impl SkillDownloadCoordinator {
             .lock()
             .map_err(|_| io::Error::other("SkillHub download state lock is poisoned"))
     }
+}
+
+/// Converts an Ora-owned final path into the portable filename reported to the frontend.
+fn final_file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or(DEFAULT_ZIP_FILE_NAME)
+        .to_owned()
 }
 
 /// Selects and sanitizes a ZIP name from WebView metadata, including unnamed Blob downloads.
@@ -353,7 +359,9 @@ mod tests {
             ),
             (
                 DownloadAcceptance::Rejected,
-                DownloadAcceptance::Accepted,
+                DownloadAcceptance::Accepted {
+                    file_name: "skill.zip".to_owned(),
+                },
                 DownloadAcceptance::Rejected,
                 Some("skill.zip.part".to_owned()),
             ),
@@ -382,7 +390,9 @@ mod tests {
                 fs::read(partial_path).expect("read existing partial file"),
             ),
             (
-                DownloadAcceptance::Accepted,
+                DownloadAcceptance::Accepted {
+                    file_name: "skill-2.zip".to_owned(),
+                },
                 coordinator.directory().join("skill-2.zip.part"),
                 b"existing".to_vec(),
                 b"partial".to_vec(),
@@ -446,7 +456,13 @@ mod tests {
                 destination.exists(),
                 fs::read(existing_path).expect("read existing ZIP"),
             ),
-            (DownloadFinish::Failed, false, b"existing".to_vec()),
+            (
+                DownloadFinish::Failed {
+                    file_name: "failing.zip".to_owned(),
+                },
+                false,
+                b"existing".to_vec(),
+            ),
         );
     }
 

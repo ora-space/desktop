@@ -1,16 +1,46 @@
 mod downloads;
 
 use crate::error::CommandError;
-use downloads::{DownloadAcceptance, DownloadStatus, SkillDownloadCoordinator};
+use downloads::{DownloadAcceptance, DownloadFinish, DownloadStatus, SkillDownloadCoordinator};
 use ora_backend::{BackendError, ErrorClassification};
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_logging::{ora_info, ora_warn};
+use serde::Serialize;
 use tauri::{
-    AppHandle, Manager, Runtime, Url, WebviewUrl, WebviewWindowBuilder, webview::DownloadEvent,
+    AppHandle, Emitter, Manager, Runtime, Url, WebviewUrl, WebviewWindowBuilder,
+    webview::DownloadEvent,
 };
 
 const SKILLHUB_URL: &str = "https://www.skillhub.cn";
 const SKILLHUB_WINDOW_LABEL: &str = "skillhub-marketplace";
+const SKILL_MARKETPLACE_STATUS_EVENT: &str = "skill-marketplace://status";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum SkillMarketplaceStatus {
+    Downloading {
+        file_name: String,
+    },
+    Downloaded {
+        file_name: String,
+        archive_path: String,
+    },
+    Failed {
+        stage: SkillMarketplaceFailureStage,
+        code: String,
+        message: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum SkillMarketplaceFailureStage {
+    Download,
+}
 
 /// Opens the SkillHub marketplace or focuses the existing marketplace window.
 #[tauri::command]
@@ -42,7 +72,10 @@ fn open_or_focus_skill_marketplace<R: Runtime>(app: &AppHandle<R>) -> Result<(),
         .min_inner_size(720.0, 520.0)
         .center()
         .on_navigation(is_skillhub_navigation_allowed)
-        .on_download(move |_webview, event| handle_download_event(&downloads, event))
+        .on_download({
+            let app = app.clone();
+            move |_webview, event| handle_download_event(&app, &downloads, event)
+        })
         .build()
         .map_err(|_| marketplace_window_error())?;
 
@@ -50,11 +83,16 @@ fn open_or_focus_skill_marketplace<R: Runtime>(app: &AppHandle<R>) -> Result<(),
 }
 
 /// Routes the marketplace WebView download lifecycle through Ora-owned ZIP storage.
-fn handle_download_event(downloads: &SkillDownloadCoordinator, event: DownloadEvent<'_>) -> bool {
+fn handle_download_event<R: Runtime>(
+    app: &AppHandle<R>,
+    downloads: &SkillDownloadCoordinator,
+    event: DownloadEvent<'_>,
+) -> bool {
     match event {
         DownloadEvent::Requested { url, destination } => match downloads.request(&url, destination)
         {
-            Ok(DownloadAcceptance::Accepted) => {
+            Ok(DownloadAcceptance::Accepted { file_name }) => {
+                emit_marketplace_status(app, SkillMarketplaceStatus::Downloading { file_name });
                 ora_info!(
                     message = "SkillHub ZIP download started",
                     url = %url,
@@ -64,6 +102,11 @@ fn handle_download_event(downloads: &SkillDownloadCoordinator, event: DownloadEv
             }
             Ok(DownloadAcceptance::Rejected) => false,
             Err(error) => {
+                emit_download_failure(
+                    app,
+                    "skill_download_reservation_failed",
+                    "Ora could not prepare the SkillHub download destination",
+                );
                 ora_warn!(
                     message = "failed to reserve SkillHub ZIP download",
                     url = %url,
@@ -79,15 +122,36 @@ fn handle_download_event(downloads: &SkillDownloadCoordinator, event: DownloadEv
                 DownloadStatus::Failed
             };
             match downloads.finish(&url, status) {
-                Ok(result) => {
+                Ok(DownloadFinish::Completed { file_name, path }) => {
+                    emit_marketplace_status(
+                        app,
+                        SkillMarketplaceStatus::Downloaded {
+                            file_name,
+                            archive_path: path.display().to_string(),
+                        },
+                    );
                     ora_info!(
                         message = "SkillHub ZIP download finished",
                         url = %url,
-                        result = ?result,
+                        result = "completed",
                     );
                     true
                 }
+                Ok(DownloadFinish::Failed { file_name }) => {
+                    emit_download_failure(
+                        app,
+                        "skill_download_cancelled",
+                        &format!("The SkillHub download was cancelled: {file_name}"),
+                    );
+                    true
+                }
+                Ok(DownloadFinish::Ignored) => true,
                 Err(error) => {
+                    emit_download_failure(
+                        app,
+                        "skill_download_finalize_failed",
+                        "Ora could not finalize the SkillHub ZIP download",
+                    );
                     ora_warn!(
                         message = "failed to finalize SkillHub ZIP download",
                         url = %url,
@@ -99,6 +163,30 @@ fn handle_download_event(downloads: &SkillDownloadCoordinator, event: DownloadEv
         }
         _ => true,
     }
+}
+
+/// Sends one typed marketplace status to the main window without disrupting the download itself.
+fn emit_marketplace_status<R: Runtime>(app: &AppHandle<R>, status: SkillMarketplaceStatus) {
+    if let Err(error) = app.emit_to("main", SKILL_MARKETPLACE_STATUS_EVENT, status) {
+        // Download persistence is the source of truth; a temporarily unavailable UI must not
+        // cancel or discard a file that the WebView is already transferring.
+        ora_warn!(
+            message = "failed to emit SkillHub download status",
+            error = %error,
+        );
+    }
+}
+
+/// Reports a stable download-stage failure while keeping transport details out of the payload.
+fn emit_download_failure<R: Runtime>(app: &AppHandle<R>, code: &str, message: &str) {
+    emit_marketplace_status(
+        app,
+        SkillMarketplaceStatus::Failed {
+            stage: SkillMarketplaceFailureStage::Download,
+            code: code.to_owned(),
+            message: message.to_owned(),
+        },
+    );
 }
 
 /// Allows top-level navigation only to canonical SkillHub hosts over standard HTTPS.
@@ -132,10 +220,12 @@ fn internal_command_error(context: &'static str) -> CommandError {
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+    use serde_json::json;
     use tauri::{Manager, Url};
 
     use super::{
-        SKILLHUB_WINDOW_LABEL, is_skillhub_navigation_allowed, open_or_focus_skill_marketplace,
+        SKILLHUB_WINDOW_LABEL, SkillMarketplaceFailureStage, SkillMarketplaceStatus,
+        is_skillhub_navigation_allowed, open_or_focus_skill_marketplace,
     };
 
     /// Verifies both canonical SkillHub hosts remain available over standard HTTPS.
@@ -186,6 +276,42 @@ mod tests {
                 .filter(|label| label.as_str() == SKILLHUB_WINDOW_LABEL)
                 .count(),
             1,
+        );
+    }
+
+    /// Verifies Rust emits the exact tagged payload shape consumed by the platform adapter.
+    #[test]
+    fn serializes_marketplace_download_statuses() {
+        assert_eq!(
+            [
+                SkillMarketplaceStatus::Downloading {
+                    file_name: "skill.zip".to_owned(),
+                },
+                SkillMarketplaceStatus::Downloaded {
+                    file_name: "skill.zip".to_owned(),
+                    archive_path: "/app-data/skill-downloads/skill.zip".to_owned(),
+                },
+                SkillMarketplaceStatus::Failed {
+                    stage: SkillMarketplaceFailureStage::Download,
+                    code: "skill_download_cancelled".to_owned(),
+                    message: "cancelled".to_owned(),
+                },
+            ]
+            .map(|status| serde_json::to_value(status).expect("serialize marketplace status")),
+            [
+                json!({ "status": "downloading", "fileName": "skill.zip" }),
+                json!({
+                    "status": "downloaded",
+                    "fileName": "skill.zip",
+                    "archivePath": "/app-data/skill-downloads/skill.zip",
+                }),
+                json!({
+                    "status": "failed",
+                    "stage": "download",
+                    "code": "skill_download_cancelled",
+                    "message": "cancelled",
+                }),
+            ],
         );
     }
 
