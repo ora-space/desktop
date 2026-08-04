@@ -1621,6 +1621,7 @@ dependencies = [
 name = "ora-application"
 version = "0.0.0"
 dependencies = [
+ "flate2",
  "gitlancer",
  "gray_matter",
  "ora-contracts",
@@ -1630,11 +1631,14 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
+ "zip",
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
 use crate::skill::SkillStorageError;
+use crate::skill_import::SkillImportError;
 use crate::{
     BoxRepositorySource, BranchListingError, RepositoryError, TaskDiffCommentRepositoryError,
     TaskDiffReaderError, TaskWorktreeProvisionerError,
@@ -58,6 +59,8 @@ pub enum ApplicationError {
         #[source]
         source: SkillStorageError,
     },
+    #[error("skill import failed")]
+    SkillImport(#[source] SkillImportError),
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
     #[error("agent definition not found: {agent_id}")]
@@ -308,6 +311,7 @@ impl PartialEq for ApplicationError {
             | (SkillManifestDescriptionBlank, SkillManifestDescriptionBlank)
             | (SkillManifestNameInvalid, SkillManifestNameInvalid)
             | (SkillStorage { .. }, SkillStorage { .. })
+            | (SkillImport(_), SkillImport(_))
             | (AgentDefinitionNameBlank, AgentDefinitionNameBlank)
             | (TaskWorktreeRequiresGitRepository, TaskWorktreeRequiresGitRepository)
             | (SkillRepository { .. }, SkillRepository { .. })
