@@ -135,7 +135,7 @@ impl Drop for TemporaryIndex {
     }
 }
 
-/// Accepts exit code one because `git diff --no-index` uses it to report that files differ.
+/// Accepts normal difference and TOCTOU disappearance exits from `git diff --no-index`.
 fn run_untracked_diff<R: GitRunner>(
     runner: &R,
     command: &GitCommand,
@@ -148,8 +148,22 @@ fn run_untracked_diff<R: GitRunner>(
             stdout,
             ..
         }) => Ok(stdout),
+        Err(GitExecError::NonZeroExit {
+            code: Some(128),
+            stdout,
+            stderr,
+            ..
+        }) if is_missing_untracked_file_error(&stderr) => Ok(stdout),
         Err(error) => Err(map_bounded_diff_error(error)),
     }
+}
+
+/// Identifies the Git diagnostics produced when a listed untracked file disappears before comparison.
+fn is_missing_untracked_file_error(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("no such file or directory")
+        || stderr.contains("does not exist")
+        || (stderr.contains("pathspec") && stderr.contains("did not match"))
 }
 
 /// Uses an isolated intent-to-add index so Git emits metadata for an empty untracked file.
@@ -350,7 +364,7 @@ mod tests {
     use super::{
         DiffRequest, DiffScope, build_diff_command, build_empty_untracked_diff_command,
         build_initialize_temporary_index_command, build_intent_to_add_command,
-        build_untracked_diff_command,
+        build_untracked_diff_command, is_missing_untracked_file_error,
     };
     use crate::{CommitId, GitDir, RepoRoot, WorktreeHandle, WorktreeKind, WorktreeRoot};
     use pretty_assertions::assert_eq;
@@ -460,6 +474,25 @@ mod tests {
                     .into(),
                 ),
             ]
+        );
+    }
+
+    /// Accepts the platform-specific diagnostics emitted when a listed file is deleted mid-read.
+    #[test]
+    fn recognizes_missing_untracked_file_diagnostics() {
+        assert_eq!(
+            is_missing_untracked_file_error("fatal: pathspec 'gone.txt' did not match any files"),
+            true
+        );
+        assert_eq!(
+            is_missing_untracked_file_error(
+                "fatal: unable to read file: No such file or directory"
+            ),
+            true
+        );
+        assert_eq!(
+            is_missing_untracked_file_error("fatal: bad repository"),
+            false
         );
     }
 
