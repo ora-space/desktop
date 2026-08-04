@@ -195,7 +195,7 @@ where
                 })
             })?;
 
-        let response = {
+        let response: CommitSkillImportResponse = {
             let mut state = session.lock().map_err(lock_error)?;
             let now = self.clock.now_timestamp_millis();
             if state.status == ora_contracts::SkillImportSessionStatus::Prepared
@@ -238,7 +238,7 @@ where
                     state.status = ora_contracts::SkillImportSessionStatus::Committing;
                     state.processed = 0;
                     state.results.clear();
-                    Ok(CommitSkillImportResponse {
+                    Ok::<CommitSkillImportResponse, ApplicationError>(CommitSkillImportResponse {
                         session_id: state.id.clone(),
                         status: state.status.clone(),
                         progress: project_progress(&state),

@@ -83,6 +83,11 @@ pub struct WebApiError {
 }
 
 impl WebApiError {
+    /// Builds a client-correctable upload or source-validation failure without leaking internals.
+    pub fn bad_request(context: &'static str) -> Self {
+        Self::invalid_request(context)
+    }
+
     /// Creates a malformed-input failure without returning parser-generated diagnostics.
     pub fn invalid_request(context: &'static str) -> Self {
         Self::semantic(

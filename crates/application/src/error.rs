@@ -334,14 +334,15 @@ impl PartialEq for ApplicationError {
                 left == right
             }
             (SkillNameInvalid { name: left }, SkillNameInvalid { name: right })
-            | (SkillNameConflict { name: left }, SkillNameConflict { name: right }) => left == right,
+            | (SkillNameConflict { name: left }, SkillNameConflict { name: right }) => {
+                left == right
+            }
             (SkillNameTooLong, SkillNameTooLong)
             | (SkillDescriptionBlank, SkillDescriptionBlank)
             | (SkillDescriptionTooLarge, SkillDescriptionTooLarge) => true,
-            (
-                SkillStorageInconsistent { name: left },
-                SkillStorageInconsistent { name: right },
-            ) => left == right,
+            (SkillStorageInconsistent { name: left }, SkillStorageInconsistent { name: right }) => {
+                left == right
+            }
             (
                 AgentDefinitionNotFound { agent_id: left },
                 AgentDefinitionNotFound { agent_id: right },

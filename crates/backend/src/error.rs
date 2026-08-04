@@ -288,7 +288,7 @@ impl From<ApplicationError> for BackendError {
             ApplicationError::SkillRepository { .. }
             | ApplicationError::SkillStorage { .. }
             | ApplicationError::SkillStorageInconsistent { .. }
-            | ApplicationError::SkillImport(_) 
+            | ApplicationError::SkillImport(_)
             | ApplicationError::AgentDefinitionRepository { .. }
             | ApplicationError::ProjectRepository { .. }
             | ApplicationError::ProjectWorkContextRepository { .. }

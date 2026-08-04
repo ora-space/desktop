@@ -155,7 +155,10 @@ pub fn build_router(app_state: AppState) -> Router {
 /// Builds the import endpoints with room for multipart framing over the 200 MiB file budget.
 fn skill_imports_router() -> Router<AppState> {
     Router::new()
-        .route(SKILL_IMPORTS_PATH, post(skill_imports::prepare_skill_import))
+        .route(
+            SKILL_IMPORTS_PATH,
+            post(skill_imports::prepare_skill_import),
+        )
         .route(
             SKILL_IMPORT_PATH,
             get(skill_imports::get_skill_import).delete(skill_imports::cancel_skill_import),

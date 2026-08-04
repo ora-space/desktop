@@ -1,8 +1,6 @@
 mod filesystem_storage;
 mod handlers;
 mod id_generator;
-mod import;
-mod local_store;
 mod mapper;
 mod ports;
 mod storage;
@@ -10,7 +8,6 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
-pub use filesystem_storage::FilesystemSkillStorage;
 pub use filesystem_storage::FilesystemSkillStorage;
 pub use handlers::{
     CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ListSkillsHandler, UpdateSkillHandler,

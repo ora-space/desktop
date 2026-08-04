@@ -10,10 +10,7 @@ use crate::task_diff::TaskDiffApi;
 use ora_application::ApplicationError;
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_db::{
-    DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteSkillRepository,
-    default_migration_catalog,
-};
+use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
