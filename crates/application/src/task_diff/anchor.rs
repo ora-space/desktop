@@ -17,7 +17,7 @@ fn section_contains_anchor(section: &str, anchor: &TaskDiffCommentAnchor) -> boo
     if !section
         .lines()
         .find_map(|line| line.strip_prefix(marker))
-        .is_some_and(|path| patch_path_matches(path, &anchor.path))
+        .is_some_and(|path| patch_path_matches(path, &anchor.path, anchor.side))
     {
         return false;
     }
@@ -65,6 +65,8 @@ fn hunk_contains_anchor(lines: &[&str], anchor: &TaskDiffCommentAnchor) -> bool 
         }
     }
 
+    // A side-exclusive +/- line does not advance the other side's line number, so every
+    // requested line must contribute to this count before the anchor can be accepted.
     matched_lines == anchor.end_line - anchor.start_line + 1
 }
 
@@ -83,15 +85,19 @@ fn parse_range_start(range: &str, prefix: char) -> Option<u32> {
 }
 
 /// Matches ordinary Git paths and the quoted representation used for unusual filenames.
-fn patch_path_matches(patch_path: &str, expected: &str) -> bool {
+fn patch_path_matches(patch_path: &str, expected: &str, side: TaskDiffSide) -> bool {
     let decoded = if patch_path.starts_with('"') {
         decode_quoted_path(patch_path)
     } else {
         Some(patch_path.to_string())
     };
+    let prefix = match side {
+        TaskDiffSide::Old => "a/",
+        TaskDiffSide::New => "b/",
+    };
     decoded
         .as_deref()
-        .and_then(|path| path.strip_prefix("a/").or_else(|| path.strip_prefix("b/")))
+        .and_then(|path| path.strip_prefix(prefix))
         == Some(expected)
 }
 
