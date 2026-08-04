@@ -24,7 +24,10 @@ pub use error::{
 };
 pub use file_system::{
     FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryRequest,
-    ListDirectoryResponse,
+    ListDirectoryResponse, ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse,
+    ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchWorkspaceRequest,
+    SearchWorkspaceResponse, WatchWorkspaceRequest, WorkspaceEntry, WorkspaceEntryKind,
+    WorkspaceFileChange, WorkspaceFileEventBatch, WorkspaceSearchKind, WorkspaceSearchResult,
 };
 pub use frontend::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, FrontendEndpoint,
@@ -36,6 +39,8 @@ pub use frontend::{
     SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH,
     TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASK_WORKSPACE_PATH,
     TASKS_PATH, frontend_endpoints,
+    WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
+    frontend_endpoints,
 };
 pub use git::{GetGitIdentityRequest, GitIdentityResponse};
 pub use project::{

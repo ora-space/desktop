@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use crate::handlers::{
     agents, file_system, git, health, project_work_contexts, projects, sessions, skills,
-    task_diffs, tasks,
+    task_diffs, tasks, workspace_files,
 };
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -15,6 +15,7 @@ use ora_contracts::{
     SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH, SKILL_IMPORT_PATH, SKILL_PATH,
     SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH,
     TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASKS_PATH,
+    WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -144,6 +145,13 @@ pub fn build_router(app_state: AppState) -> Router {
         // fileSystem
         // =============================================================================
         .route(FILE_SYSTEM_DIRECTORY_PATH, get(file_system::list_directory))
+        .route(
+            WORKSPACE_DIRECTORY_PATH,
+            post(workspace_files::list_directory),
+        )
+        .route(WORKSPACE_FILE_PATH, post(workspace_files::read_file))
+        .route(WORKSPACE_SEARCH_PATH, post(workspace_files::search))
+        .route(WORKSPACE_WATCH_PATH, get(workspace_files::watch))
         // =============================================================================
         // gitIdentity
         // =============================================================================

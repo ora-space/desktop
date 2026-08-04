@@ -128,6 +128,14 @@ export function createContractsClient(
     fileSystem: {
       listDirectory: (request, options) =>
         executeOperation("listDirectory", request, transport, options),
+      listWorkspaceDirectory: (request, options) =>
+        executeOperation("listWorkspaceDirectory", request, transport, options),
+      readWorkspaceFile: (request, options) =>
+        executeOperation("readWorkspaceFile", request, transport, options),
+      searchWorkspace: (request, options) =>
+        executeOperation("searchWorkspace", request, transport, options),
+      watchWorkspace: (request, options) =>
+        executeStreamOperation("watchWorkspace", request, transport, options),
     },
     gitIdentity: {
       get: (request, options) =>

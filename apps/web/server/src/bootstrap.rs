@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use crate::config::{ProjectConfig, RuntimeConfig};
 use crate::error::WebBootstrapError;
-use crate::service::{FileSystemApi, ProjectWorkContextApi};
+use crate::service::{FileSystemApi, ProjectWorkContextApi, WorkspaceFileApi};
 use ora_application::{
     Clock, OpenProjectWorkContextHandler, ProjectIdGenerator, ProjectRepository, RepositoryError,
     UuidProjectIdGenerator, UuidProjectWorkContextIdGenerator,
@@ -33,6 +33,7 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
             runtime_config.file_system().home_directory().to_path_buf(),
         )),
         Arc::new(ProjectWorkContextApi::new(pool.clone(), clock)),
+        Arc::new(WorkspaceFileApi::new(resolve_ripgrep_path())),
     ))
 }
 
@@ -58,6 +59,7 @@ pub(crate) fn build_app_state_for_database(
             project_root.parent().unwrap_or(project_root).to_path_buf(),
         )),
         Arc::new(ProjectWorkContextApi::new(pool.clone(), clock)),
+        Arc::new(WorkspaceFileApi::new(resolve_ripgrep_path())),
     ))
 }
 
@@ -129,6 +131,21 @@ fn build_backend(
         sessions_root: sessions_root.to_path_buf(),
     })
     .map_err(web_backend_bootstrap_error)
+}
+
+/// Resolves ripgrep from a development override or the bundled release executable.
+fn resolve_ripgrep_path() -> std::path::PathBuf {
+    if cfg!(debug_assertions) {
+        return std::env::var_os("ORA_RG_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("rg"));
+    }
+
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("rg.exe")
 }
 
 /// Maps shared backend bootstrap failures into the stable Web process error surface.

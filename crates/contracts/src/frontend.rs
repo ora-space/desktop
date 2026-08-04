@@ -65,7 +65,7 @@ impl FrontendEndpoint {
     /// Returns the transport mode explicitly owned by the Rust endpoint catalog.
     pub fn response_mode(&self) -> FrontendResponseMode {
         match self.operation_name {
-            "loadSession" | "promptSession" => FrontendResponseMode::Stream,
+            "loadSession" | "promptSession" | "watchWorkspace" => FrontendResponseMode::Stream,
             _ => FrontendResponseMode::Unary,
         }
     }
@@ -103,6 +103,10 @@ pub const SKILL_IMPORT_PATH: &str = "/api/skills/import";
 pub const AGENTS_PATH: &str = "/api/agents";
 pub const AGENT_PATH: &str = "/api/agents/{agentId}";
 pub const FILE_SYSTEM_DIRECTORY_PATH: &str = "/api/file-system/directory";
+pub const WORKSPACE_DIRECTORY_PATH: &str = "/api/tasks/{taskId}/files/list";
+pub const WORKSPACE_FILE_PATH: &str = "/api/tasks/{taskId}/files/read";
+pub const WORKSPACE_SEARCH_PATH: &str = "/api/tasks/{taskId}/files/search";
+pub const WORKSPACE_WATCH_PATH: &str = "/api/tasks/{taskId}/files/watch";
 pub const GIT_IDENTITY_PATH: &str = "/api/git/identity";
 
 const PROJECT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
@@ -656,6 +660,50 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "ListDirectoryRequest",
         response_type: "ListDirectoryResponse",
         path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "listWorkspaceDirectory",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "listWorkspaceDirectory",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_DIRECTORY_PATH,
+        request_type: "ListWorkspaceDirectoryRequest",
+        response_type: "ListWorkspaceDirectoryResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "readWorkspaceFile",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "readWorkspaceFile",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_FILE_PATH,
+        request_type: "ReadWorkspaceFileRequest",
+        response_type: "ReadWorkspaceFileResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "searchWorkspace",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "searchWorkspace",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_SEARCH_PATH,
+        request_type: "SearchWorkspaceRequest",
+        response_type: "SearchWorkspaceResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "watchWorkspace",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "watchWorkspace",
+        method: FrontendHttpMethod::Get,
+        path_template: WORKSPACE_WATCH_PATH,
+        request_type: "WatchWorkspaceRequest",
+        response_type: "WorkspaceFileEventBatch",
+        path_params: TASK_PATH_PARAMS,
         has_json_body: false,
     },
     // =============================================================================
