@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { useTranslation } from "react-i18next";
 import { Badge, cn } from "@ora/ui";
 import { useUpdateGraphWorkflowRunSnapshotNode, useSubmitGraphWorkflowHitl } from "../../state/hooks/use-graph-workflow-runs";
-import { filterArtifacts } from "./artifact-filter";
+import { filterArtifacts, latestArtifact } from "./artifact-filter";
 import { RunActInspector } from "./run-act-inspector";
 import { RunHitlComposer } from "./run-hitl-composer";
+import { RunResultAct } from "./run-result-act";
 import { RunTheaterActCard } from "./run-theater-act-card";
 import { RunTheaterParallelStage } from "./run-theater-parallel-stage";
 import { resolveTheaterFocus } from "./run-focus";
 import { RunStatusMark, isNodeWorking } from "./run-status-mark";
-import { runStatusTone } from "./run-status-style";
+import { isTerminalRunStatus, runStatusTone } from "./run-status-style";
 import {
   animateOverlayWidth,
   cancelOverlayWidthAnimation,
@@ -33,14 +34,15 @@ interface RunTheaterProps {
   revealedArtifactId: string | null;
   /** Opens the companion rail once on mount (e.g. Overview → Theater via node click). */
   openInspectorOnMount?: boolean;
+  /** Result act CTA — return to Overview path map. */
+  onShowOverview: () => void;
 }
 
 /**
  * Focused act stage + path rail + overlay companion inspector.
  * Stage stays full-bleed (card does not shift) when the rail opens.
- * HITL embeds in the waiting act card (or under the stage column).
- * Parallel acts use drag-to-switch; click opens details.
- * Esc (handled by workspace) returns to Overview.
+ * HITL embeds in the waiting act card or docks under the stage / carousel.
+ * Terminal + no path pin → result act. Esc (workspace) returns to Overview.
  */
 export function RunTheater({
   run,
@@ -49,6 +51,7 @@ export function RunTheater({
   artifacts,
   revealedArtifactId,
   openInspectorOnMount = false,
+  onShowOverview,
 }: RunTheaterProps) {
   const { t } = useTranslation();
   const updateSnapshotNode = useUpdateGraphWorkflowRunSnapshotNode();
@@ -338,6 +341,8 @@ export function RunTheater({
   // Otherwise show a single card so path chips can open completed / pending nodes
   // while HITL gates are still open elsewhere.
   const showParallelCarousel = parallelCarouselFocus;
+  // Terminal + no history pin → result act (path chips still open single-node review).
+  const showResultAct = isTerminalRunStatus(run.status) && focusNodeId === null;
 
   const progress = useMemo(() => {
     const states = Object.values(run.nodeStates);
@@ -457,12 +462,23 @@ export function RunTheater({
   }, []);
 
   // New outcome: open the companion rail so reveal motion is visible.
+  // Skip on the result act — keep that surface uncluttered until the user asks.
   useEffect(() => {
-    if (revealedArtifactId === null) {
+    if (revealedArtifactId === null || showResultAct) {
       return;
     }
     openInspector();
-  }, [revealedArtifactId]);
+  }, [revealedArtifactId, showResultAct]);
+
+  // Landing on the result act closes a leftover rail from the last live tick.
+  useEffect(() => {
+    if (!showResultAct || inspectorCollapsed) {
+      return;
+    }
+    closeInspector();
+    // Only react to entering the result surface; ignore later collapse toggles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [showResultAct]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -492,6 +508,10 @@ export function RunTheater({
                 "relative h-full overflow-hidden rounded-full bg-foreground/75 transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
                 run.status === "running" && "bg-sky-600/80",
                 run.status === "awaiting_input" && "bg-amber-600/80",
+                run.status === "succeeded" && "bg-emerald-600/75",
+                (run.status === "failed" || run.status === "partial_failed")
+                  && "bg-rose-600/75",
+                run.status === "cancelled" && "bg-zinc-500/60",
               )}
               style={{ width: `${progress.percent}%` }}
             >
@@ -505,7 +525,7 @@ export function RunTheater({
               {run.definitionSnapshot.nodes.map((node) => {
                 const state = run.nodeStates[node.id] ?? { status: "idle" as const };
                 const tone = runStatusTone(state.status);
-                const selected = node.id === primaryId;
+                const selected = !showResultAct && node.id === primaryId;
                 const waiting = state.status === "awaiting_input";
                 const active = focus.activeIds.includes(node.id);
                 const nodeArtifactCount = artifactCountByNode[node.id] ?? 0;
@@ -574,7 +594,25 @@ export function RunTheater({
               without covering the path rail above this pane.
             */}
             <div className="relative mx-auto my-auto w-full max-w-xl shrink-0">
-              {showParallelCarousel
+              {showResultAct
+                ? (
+                  <RunResultAct
+                    run={run}
+                    artifactCount={artifacts.length}
+                    onShowOverview={onShowOverview}
+                    onOpenArtifacts={artifacts.length > 0
+                      ? () => {
+                        const recent = latestArtifact(artifacts);
+                        if (recent !== null) {
+                          // Pin the producing act so the rail matches the count CTA.
+                          onFocusNode(recent.nodeId);
+                        }
+                        openInspector();
+                      }
+                      : undefined}
+                  />
+                )
+                : showParallelCarousel
                 ? (
                   <div className="space-y-3">
                     <RunTheaterParallelStage
@@ -623,6 +661,7 @@ export function RunTheater({
                   </p>
                 )}
 
+              {!showResultAct && (
               <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
                 {parallel && (
                   <Badge variant="secondary" className="tabular-nums">
@@ -646,11 +685,14 @@ export function RunTheater({
                   </Badge>
                 )}
               </div>
+              )}
+              {!showResultAct && (
               <p className="mt-3 text-center text-[10px] text-muted-foreground/70">
                 {inspectorCollapsed
                   ? t("workflowRun.theater.inspectorHint")
                   : t("workflowRun.theater.returnOverviewHint")}
               </p>
+              )}
             </div>
           </div>
 

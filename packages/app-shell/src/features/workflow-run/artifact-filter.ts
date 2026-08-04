@@ -18,3 +18,13 @@ export function filterArtifacts(
     : artifacts.filter((item) => item.nodeId === mode.nodeId);
   return scoped.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
+
+/** Newest artifact by createdAt, or null when the list is empty. */
+export function latestArtifact(
+  artifacts: readonly WorkflowArtifact[],
+): WorkflowArtifact | null {
+  if (artifacts.length === 0) {
+    return null;
+  }
+  return filterArtifacts(artifacts, { type: "all" })[0] ?? null;
+}

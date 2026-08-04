@@ -2,6 +2,15 @@
 
 Ports and in-memory mock for project workflow mounts and graph runs.
 
+## Boundaries vs other stacks
+
+- **Not** the settings React Flow definition editor (deploy calls into Host/
+  Run from settings chrome; graph editing stays there).
+- **Not** OpenSpec `workflow-store` / Spec stepper — types are named
+  `GraphWorkflowRun*` to avoid collisions; do not mix Spec-mode writes here.
+- **This package slice** owns mock Host/Run repositories and the event stream
+  consumed by Theater / Overview in the parent feature.
+
 ## Responsibilities
 
 - Define `WorkflowHostRepository` / `WorkflowRunRepository` and shared run types.
@@ -10,18 +19,23 @@ Ports and in-memory mock for project workflow mounts and graph runs.
 - Drive runs with `mock-run-engine` + `mock-execution-plan` (timed progression and
   `WorkflowRunEvent` stream). Cancel / delete clear timers so mid-run stop is reliable.
 - Expose the active runtime through React context for hooks and UI.
+  The default memory instance is process-lifetime for the provider mount —
+  language switches must not recreate it (that would wipe mounts/runs).
 - Notify `runs.watch` listeners on mutations so react-query can refresh sidebar
   status without Theater UI.
 
 ## Non-responsibilities
 
 - No HTTP/NDJSON transport (Follow-up F2).
-- No Theater / overview UI (parent `workflow-run` feature owns forms/toasts).
+- No Theater / overview UI (parent `workflow-run` feature owns forms/toasts /
+  result act).
 - Not the settings session graph editor.
 - Settings **Test run** still uses `@ora/workflow-mock` `runDemoWorkflow` — a
   separate demo path until an optional later convergence.
 - HITL `fail` / `skip` timeout policies are reserved on the type; MVP uses
   `wait` and never auto-times out.
+- No `partial_failed` aggregation — status exists on the type for UI
+  placeholders; the mock finish path does not synthesize it.
 
 ## Invariants
 

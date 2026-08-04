@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterArtifacts } from "./artifact-filter";
+import { filterArtifacts, latestArtifact } from "./artifact-filter";
 import type { WorkflowArtifact } from "./runtime/types";
 
 function artifact(
@@ -37,5 +37,23 @@ describe("filterArtifacts", () => {
 
   it("returns an empty list when the node has no artifacts", () => {
     expect(filterArtifacts(items, { type: "node", nodeId: "missing" })).toEqual([]);
+  });
+});
+
+describe("latestArtifact", () => {
+  it("returns null for an empty list", () => {
+    expect(latestArtifact([])).toBeNull();
+  });
+
+  it("returns the newest artifact", () => {
+    expect(
+      latestArtifact([
+        artifact({ id: "a", nodeId: "n1", createdAt: "2026-08-01T12:00:01+08:00" }),
+        artifact({ id: "b", nodeId: "n2", createdAt: "2026-08-01T12:00:03+08:00" }),
+        artifact({ id: "c", nodeId: "n1", createdAt: "2026-08-01T12:00:02+08:00" }),
+      ]),
+    ).toEqual(
+      expect.objectContaining({ id: "b", nodeId: "n2" }),
+    );
   });
 });

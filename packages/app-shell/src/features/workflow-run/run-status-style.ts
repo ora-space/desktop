@@ -1,5 +1,15 @@
 import type { GraphWorkflowNodeStatus, GraphWorkflowRunStatus } from "./runtime/types";
 
+/** Run-level terminal statuses (not node-level skipped). */
+export function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
+  return (
+    status === "succeeded"
+    || status === "failed"
+    || status === "partial_failed"
+    || status === "cancelled"
+  );
+}
+
 /** Shared run/node status chrome — color is never the only signal (dot + label + tone). */
 export function runStatusTone(status: GraphWorkflowRunStatus | GraphWorkflowNodeStatus): {
   dot: string;
@@ -31,14 +41,19 @@ export function runStatusTone(status: GraphWorkflowRunStatus | GraphWorkflowNode
         labelKey: "workflowRun.status.succeeded",
       };
     case "failed":
-    case "partial_failed":
       return {
         dot: "bg-rose-500",
         ring: "border-rose-500/45 ring-rose-500/15",
         badge: "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300",
-        labelKey: status === "partial_failed"
-          ? "workflowRun.status.partial_failed"
-          : "workflowRun.status.failed",
+        labelKey: "workflowRun.status.failed",
+      };
+    case "partial_failed":
+      // Same rose family as failed, but badge copy and quiet mark differ.
+      return {
+        dot: "bg-rose-500/80",
+        ring: "border-rose-500/40 ring-rose-500/12",
+        badge: "border-rose-500/35 bg-rose-500/[0.08] text-rose-900 dark:text-rose-200",
+        labelKey: "workflowRun.status.partial_failed",
       };
     case "cancelled":
       return {

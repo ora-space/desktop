@@ -38,27 +38,17 @@ import {
 import { RunOverviewCanvas } from "./run-overview-canvas";
 import { RunTheater } from "./run-theater";
 import { RunStatusBadge } from "./run-status-mark";
-import { runStatusTone } from "./run-status-style";
+import { isTerminalRunStatus, runStatusTone } from "./run-status-style";
 import { useWorkflowRuntime } from "./runtime/workflow-runtime-context";
-import type { GraphWorkflowRunStatus } from "./runtime/types";
 import type { WorkflowRunViewMode } from "./run-view-mode";
 
 interface WorkflowRunWorkspaceProps {
   runId: string;
 }
 
-function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
-  return (
-    status === "succeeded"
-    || status === "failed"
-    || status === "partial_failed"
-    || status === "cancelled"
-  );
-}
-
 /**
  * Graph workflow run workspace: Theater / Overview.
- * Artifacts live on the focused Theater act card (no separate rail).
+ * Outcomes open in the Theater act inspector rail.
  */
 export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const { t } = useTranslation();
@@ -83,6 +73,8 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
 
   /** Same-node status edge: live pin just finished → resume auto-follow. */
   const focusStatusSampleRef = useRef<TheaterFocusStatusSample | null>(null);
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
 
   // Reset local chrome when switching runs; mode is primed once below.
   useEffect(() => {
@@ -120,8 +112,14 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   }, [run, focusNodeId]);
 
   // New artifact on the stage: keep Theater focus on the producing act.
+  // Skip once terminal so a stale reveal cannot hide the result act.
   useEffect(() => {
-    if (artifactsQuery.revealedId === null || viewMode !== "theater") {
+    if (
+      run === null
+      || isTerminalRunStatus(run.status)
+      || artifactsQuery.revealedId === null
+      || viewMode !== "theater"
+    ) {
       return;
     }
     const artifact = artifactsQuery.artifacts.find(
@@ -131,6 +129,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       setFocusNodeId(artifact.nodeId);
     }
   }, [
+    run,
     artifactsQuery.revealedId,
     artifactsQuery.artifacts,
     viewMode,
@@ -154,9 +153,16 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     }
   }, [run, runId]);
 
-  // HITL: toast only — never yank Overview / focus away from the user’s view.
+  // HITL toast + terminal result act: finish while Theater clears path pin.
   useEffect(() => {
     return runtime.runs.subscribe(runId, (event) => {
+      if (event.type === "run_finished") {
+        // Expose RunResultAct (focus null); path chips still reopen history acts.
+        if (viewModeRef.current === "theater") {
+          setFocusNodeId(null);
+        }
+        return;
+      }
       if (event.type !== "hitl_required") {
         return;
       }
@@ -222,6 +228,14 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   function enterTheater(options?: { openInspector?: boolean }): void {
     setOpenInspectorOnTheaterEnter(options?.openInspector === true);
     setViewMode("theater");
+  }
+
+  /** Header Theater: terminal runs show the result act, not a leftover path pin. */
+  function enterTheaterFromHeader(): void {
+    if (run !== null && isTerminalRunStatus(run.status)) {
+      setFocusNodeId(null);
+    }
+    enterTheater();
   }
 
   async function handleStart(): Promise<void> {
@@ -308,7 +322,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               variant={viewMode === "theater" ? "secondary" : "ghost"}
               className="h-7 gap-1.5 px-2.5 text-xs"
               aria-pressed={viewMode === "theater"}
-              onClick={() => enterTheater()}
+              onClick={() => enterTheaterFromHeader()}
             >
               <IconTheater className="size-3.5" />
               {t("workflowRun.viewMode.theater")}
@@ -399,6 +413,10 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             artifacts={artifactsQuery.artifacts}
             revealedArtifactId={artifactsQuery.revealedId}
             openInspectorOnMount={openInspectorOnTheaterEnter}
+            onShowOverview={() => {
+              setOpenInspectorOnTheaterEnter(false);
+              setViewMode("overview");
+            }}
           />
         )
         : (

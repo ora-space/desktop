@@ -13,19 +13,25 @@ interface WorkflowRuntimeProviderProps {
 
 /**
  * Provides Host/Run repositories to the shell.
- * One memory instance per provider mount so remounting tests get a clean slate
- * when they pass an explicit runtime.
+ * Default memory runtime is created once per provider mount (not on locale
+ * change) so switching language cannot wipe mounts / in-flight runs.
+ * Mock HITL schema copy uses the locale at first creation; HTTP backends will
+ * carry localized copy on events instead.
  */
 export function WorkflowRuntimeProvider({
   children,
   runtime: runtimeOverride,
 }: WorkflowRuntimeProviderProps) {
   const { i18n } = useTranslation();
-  const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
-  const runtime = useMemo(
-    () => runtimeOverride ?? createMemoryWorkflowRuntime({ locale }),
-    [runtimeOverride, locale],
-  );
+  const runtime = useMemo(() => {
+    if (runtimeOverride !== undefined) {
+      return runtimeOverride;
+    }
+    const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
+    return createMemoryWorkflowRuntime({ locale });
+    // Process-lifetime store: locale must not recreate Maps / engines.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [runtimeOverride]);
   return (
     <WorkflowRuntimeContext.Provider value={runtime}>
       {children}

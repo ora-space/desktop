@@ -87,6 +87,21 @@ export function RunStatusMark({
     );
   }
 
+  // Quiet path/header: partial_failed uses a tiny triangle so it is not identical to failed.
+  if (quiet && status === "partial_failed") {
+    return (
+      <span
+        className={cn(
+          "inline-flex size-2.5 shrink-0 items-center justify-center text-rose-500",
+          className,
+        )}
+        aria-hidden
+      >
+        <IconAlertTriangle className="size-2.5" stroke={2.5} />
+      </span>
+    );
+  }
+
   return (
     <span
       className={cn("inline-flex size-1.5 shrink-0 rounded-full", tone.dot, className)}

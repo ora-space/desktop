@@ -698,6 +698,44 @@ describe("mock run engine", () => {
       expect.objectContaining({ status: "succeeded" }),
     );
   });
+
+  /**
+   * Demo-path smoke: mount -> start -> drain HITL gates -> succeeded.
+   * Mirrors the manual Theater checklist without browser e2e.
+   */
+  it("demo path: mount, start, drain HITL, succeed", async () => {
+    const stepMs = 50;
+    const runtime = createMemoryWorkflowRuntime({
+      nodeStepMs: stepMs,
+      autoStart: false,
+    });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const created = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    expect(created.status).toBe("pending");
+
+    const types: string[] = [];
+    runtime.runs.subscribe(created.id, (event) => {
+      types.push(event.type);
+    });
+
+    await runtime.runs.start(created.id);
+    expect(types).toContain("run_started");
+
+    const finished = await drainRun(runtime, created.id, stepMs);
+    expect(finished).toEqual(
+      expect.objectContaining({
+        status: "succeeded",
+        openHitls: [],
+      }),
+    );
+    expect(types).toContain("hitl_required");
+    expect(types).toContain("hitl_resolved");
+    expect(types.at(-1)).toBe("run_finished");
+  });
 });
 
 describe("planMockExecution", () => {
