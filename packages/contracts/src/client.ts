@@ -118,6 +118,15 @@ export function createContractsClient(
       update: (request, options) => executeOperation("updateSkill", request, transport, options),
       delete: (request, options) => executeOperation("deleteSkill", request, transport, options),
     },
+    skillImport: {
+      prepare: (request, options) =>
+        executeOperation("prepareSkillImport", request, transport, options),
+      get: (request, options) => executeOperation("getSkillImport", request, transport, options),
+      commit: (request, options) =>
+        executeOperation("commitSkillImport", request, transport, options),
+      cancel: (request, options) =>
+        executeOperation("cancelSkillImport", request, transport, options),
+    },
     agent: {
       create: (request, options) => executeOperation("createAgent", request, transport, options),
       get: (request, options) => executeOperation("getAgent", request, transport, options),

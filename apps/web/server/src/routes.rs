@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skills,
-    task_diffs, tasks, workspace_files,
+    agents, file_system, git, health, project_work_contexts, projects, sessions, skill_imports,
+    skills, task_diffs, tasks, workspace_files,
 };
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -12,10 +12,11 @@ use ora_contracts::{
     PROJECT_BRANCHES_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
     PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
     SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_RESUME_HISTORY_PATH,
-    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH, SKILL_IMPORT_PATH, SKILL_PATH,
-    SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH,
-    TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASKS_PATH,
-    WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
+    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH, SKILL_IMPORT_COMMIT_PATH,
+    SKILL_IMPORT_PATH, SKILL_IMPORTS_PATH, SKILL_PATH, SKILLS_PATH, TASK_COMMIT_PATH,
+    TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH,
+    TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASKS_PATH, WORKSPACE_DIRECTORY_PATH,
+    WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -119,15 +120,12 @@ pub fn build_router(app_state: AppState) -> Router {
             post(skills::create_skill).get(skills::list_skills),
         )
         .route(
-            SKILL_IMPORT_PATH,
-            post(skills::import_skill).layer(DefaultBodyLimit::max(skills::MAX_SKILL_UPLOAD_BYTES)),
-        )
-        .route(
             SKILL_PATH,
             get(skills::get_skill)
                 .put(skills::update_skill)
                 .delete(skills::delete_skill),
         )
+        .merge(skill_imports_router())
         // =============================================================================
         // agent
         // =============================================================================
@@ -160,6 +158,24 @@ pub fn build_router(app_state: AppState) -> Router {
         .layer(PropagateRequestIdLayer::new(crate::error::X_REQUEST_ID))
         .layer(middleware::from_fn(crate::error::request_context))
         .layer(CorsLayer::new().expose_headers([crate::error::X_REQUEST_ID]))
+}
+
+/// Builds the import endpoints with room for multipart framing over the 200 MiB file budget.
+fn skill_imports_router() -> Router<AppState> {
+    Router::new()
+        .route(
+            SKILL_IMPORTS_PATH,
+            post(skill_imports::prepare_skill_import),
+        )
+        .route(
+            SKILL_IMPORT_PATH,
+            get(skill_imports::get_skill_import).delete(skill_imports::cancel_skill_import),
+        )
+        .route(
+            SKILL_IMPORT_COMMIT_PATH,
+            post(skill_imports::commit_skill_import),
+        )
+        .layer(DefaultBodyLimit::max(201 * 1024 * 1024))
 }
 
 #[cfg(test)]
@@ -993,7 +1009,7 @@ mod tests {
             &app,
             Method::POST,
             "/api/skills",
-            json!({ "name": " review / guide ", "description": "Reviews guides" }),
+            json!({ "name": " review-guide ", "description": "Reviews guides" }),
         )
         .await;
         assert_eq!(skill_create.status(), StatusCode::OK);
@@ -1002,7 +1018,7 @@ mod tests {
             .as_str()
             .unwrap_or_else(|| panic!("response did not include a skill id"))
             .to_string();
-        assert_eq!(skill["skill"]["name"], "review / guide");
+        assert_eq!(skill["skill"]["name"], "review-guide");
         let skill_path = format!("/api/skills/{skill_id}");
         let skill_get = request_empty(&app, Method::GET, &skill_path).await;
         assert_eq!(skill_get.status(), StatusCode::OK);
@@ -1024,10 +1040,27 @@ mod tests {
             &app,
             Method::POST,
             "/api/skills",
-            json!({ "name": "reviewer", "description": "Duplicate" }),
+            json!({ "name": "Reviewer", "description": "Duplicate" }),
         )
         .await;
-        assert_eq!(duplicate_skill.status(), StatusCode::OK);
+        assert_eq!(duplicate_skill.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(duplicate_skill).await,
+            json!({
+                "error": {
+                    "code": "skill_name_conflict",
+                    "message": "skill name already exists: Reviewer",
+                },
+            })
+        );
+        let invalid_slug = request_json(
+            &app,
+            Method::POST,
+            "/api/skills",
+            json!({ "name": "bad/name", "description": "Invalid" }),
+        )
+        .await;
+        assert_eq!(invalid_slug.status(), StatusCode::BAD_REQUEST);
         let skill_delete = request_empty(&app, Method::DELETE, &skill_path).await;
         assert_eq!(skill_delete.status(), StatusCode::OK);
         assert_eq!(
@@ -1099,86 +1132,6 @@ mod tests {
             .status(),
             StatusCode::BAD_REQUEST
         );
-    }
-
-    /// Verifies the router imports a skill folder atomically and rejects conflicts and bad uploads.
-    #[tokio::test]
-    async fn serves_skill_folder_import_route() {
-        let (_temp_dir, _database_path, app) = test_router();
-        let manifest: &[u8] = b"---\nname: grilling\ndescription: Grill the user\n---\n";
-
-        let import = app
-            .clone()
-            .oneshot(multipart_request(
-                "/api/skills/import",
-                &[("SKILL.md", manifest), ("refs/util.py", b"noop".as_slice())],
-            ))
-            .await
-            .unwrap_or_else(|error| panic!("request failed: {error}"));
-        assert_eq!(import.status(), StatusCode::OK);
-        let created = response_json(import).await;
-        let skill_id = created["skill"]["id"]
-            .as_str()
-            .unwrap_or_else(|| panic!("response did not include a skill id"))
-            .to_string();
-        assert_eq!(
-            created,
-            json!({
-                "skill": { "id": skill_id, "name": "grilling", "description": "Grill the user" },
-            })
-        );
-
-        // A second import that resolves to the same committed directory name conflicts.
-        let conflict = app
-            .clone()
-            .oneshot(multipart_request(
-                "/api/skills/import",
-                &[("SKILL.md", manifest)],
-            ))
-            .await
-            .unwrap_or_else(|error| panic!("request failed: {error}"));
-        assert_eq!(conflict.status(), StatusCode::CONFLICT);
-        assert_contract_error(&response_json(conflict).await, "skill_folder_conflict");
-
-        // An upload without a manifest is unprocessable.
-        let invalid = app
-            .oneshot(multipart_request(
-                "/api/skills/import",
-                &[("refs/util.py", b"noop".as_slice())],
-            ))
-            .await
-            .unwrap_or_else(|error| panic!("request failed: {error}"));
-        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert_contract_error(&response_json(invalid).await, "skill_manifest_missing");
-    }
-
-    /// Builds one multipart upload request whose file parts carry their relative path as the filename.
-    fn multipart_request(uri: &str, parts: &[(&str, &[u8])]) -> Request<Body> {
-        let boundary = "ORASKILLBOUNDARY";
-        let mut body = Vec::new();
-        for (filename, bytes) in parts {
-            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-            body.extend_from_slice(
-                format!(
-                    "Content-Disposition: form-data; name=\"files\"; filename=\"{filename}\"\r\n"
-                )
-                .as_bytes(),
-            );
-            body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
-            body.extend_from_slice(bytes);
-            body.extend_from_slice(b"\r\n");
-        }
-        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-
-        Request::builder()
-            .method(Method::POST)
-            .uri(uri)
-            .header(
-                "content-type",
-                format!("multipart/form-data; boundary={boundary}"),
-            )
-            .body(Body::from(body))
-            .unwrap_or_else(|error| panic!("failed to build request: {error}"))
     }
 
     /// Sends one JSON request to the router under test.

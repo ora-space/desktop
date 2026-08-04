@@ -24,6 +24,17 @@ Three contract operations are not implemented on Desktop:
 
 No Tauri command exists for them. The contracts transport rejects them with `unsupported_operation` before any IPC call is made, so the exclusion is enforced client-side rather than by a stub command. `ProjectWorkContext` remains outside this extraction; see [Project Work Contexts](project-work-contexts.md).
 
+## Skill imports
+
+Desktop exposes the shared import session lifecycle through four unary Tauri commands:
+`prepare_skill_import`, `get_skill_import`, `commit_skill_import`, and `cancel_skill_import`.
+The frontend sends the system picker's local path inside `PrepareSkillImportRequest`; the Rust
+side reads the folder or archive, so file bytes (up to 200 MiB) are never serialized over Tauri
+IPC. Preparation, preview, conflict decisions, background commit, and result retention behave
+identically to the Web runtime because both adapters call the same `ora-backend` composition.
+
+The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads. Task and project deletion never mutate Git.
+
 ## Persistent Paths
 
 The Tauri identifier is `space.ora.desktop`. Tauri's system `app_data_dir` owns all default runtime state:
@@ -33,6 +44,7 @@ The Tauri identifier is `space.ora.desktop`. Tauri's system `app_data_dir` owns 
 - Logs: `app_data_dir/logs/ora.log`
 - Default new-worktree root: `app_data_dir/worktrees`
 - Session history: `app_data_dir/sessions`
+ - Skill packages root: `app_data_dir/atoms/skills`
 
 On first launch, Desktop creates the app data directory, default worktree directory, and a versioned configuration file using an atomic sibling-temporary-file replacement. `config.json` currently holds version `1` and the `worktreeRoot`. Existing malformed, unknown-version, or otherwise invalid configuration is fatal; Desktop does not silently reset it.
 

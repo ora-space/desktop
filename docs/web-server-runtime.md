@@ -115,7 +115,13 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 - `GET /api/skills/{skillId}`
 - `PUT /api/skills/{skillId}`
 - `DELETE /api/skills/{skillId}`
-- `POST /api/skills/import`
+
+### skillImport
+
+- `POST /api/skill-imports`
+- `GET /api/skill-imports/{sessionId}`
+- `POST /api/skill-imports/{sessionId}/commit`
+- `DELETE /api/skill-imports/{sessionId}`
 
 ### agent
 
@@ -161,17 +167,13 @@ Prompt requests carry an ordered ACP content-block list and may combine text, im
 
 Unary requests and streams receive a server-generated canonical request id before entering business logic. Client-provided `X-Request-Id` values are ignored. Every Web response publishes the canonical id through `X-Request-Id`, CORS exposes that header, and a failure body or error frame carries the same id in its direct `{ code, params, requestId }` payload. A stream keeps one id from creation through normal completion, failure, disconnect, or cancellation.
 
-### Skill folder import
+### Skill imports
 
-`POST /api/skills/import` uploads a local skill folder as one `multipart/form-data` request. Each file part carries its skill-root-relative path as the part file name. The request body is capped at 50 MB: oversized uploads return the typed `413` `skill_upload_too_large` error, while uploads over 1000 files return `422`.
+`POST /api/skill-imports?mode=folder|archive` accepts one `multipart/form-data` source. Folder parts carry a validated source-relative path as their filename; archive mode accepts exactly one `.zip`, `.skill`, `.tar.gz`, or `.tgz` part. The adapter streams the upload to OS temporary storage before it calls the shared prepare service, so previewing never touches the database or committed skill packages.
 
-The import is atomic across the filesystem and the database:
+Preparation snapshots and safely scans the source, rejects unsafe paths, links and archive expansion attacks, then returns an opaque session id and every discovered candidate. `GET` renews the prepared session while it is within its idle and absolute lifetime. `POST .../commit` returns `202 Accepted` after it freezes every conflict decision; the background job remains observable via `GET`. `DELETE` cancels only prepared sessions.
 
-- Files stream into `<ORA_DATA_DIR>/atoms/skills/<uuid>.tmp`, where `<uuid>` is the skill's future identifier.
-- Root `SKILL.md` front matter supplies the persisted `name` and `description`; the committed directory uses the validated name.
-- The SQLite row insert, staging-directory promotion, and transaction commit execute as one unit of work. A primary failure keeps its full Rust source chain for the correlated completion log, while any compensating cleanup failure is logged separately without replacing that primary error.
-- Empty uploads, excessive file counts, unsafe or duplicate relative paths, and invalid manifests return typed `422` contract errors. An existing committed directory returns the typed `409` `skill_folder_conflict` error.
-- Deleting a skill also removes its committed directory. Startup reconciliation removes leftover staging directories and committed directories with no visible database row before the backend becomes ready.
+Each created, updated, overwritten, or deleted skill is atomic across its SQLite row and `<ORA_DATA_DIR>/atoms/skills/<name>/` package. The package transaction uses a same-filesystem staging directory and backup, while import sources remain in OS temp because it may be a different filesystem. Startup recovers interrupted package transactions, removes unowned package directories, and refuses to start if a visible row lacks its package or root `SKILL.md`.
 
 ### Project work contexts
 

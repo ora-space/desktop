@@ -18,12 +18,14 @@ ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
 ora-fs = { workspace = true }
 ora-logging = { workspace = true }
+ora-skill-package = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
 tracing = { workspace = true }
 tower-http = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 futures-util = "0.3"
@@ -32,3 +34,4 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
+zip = { workspace = true }
