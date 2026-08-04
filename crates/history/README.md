@@ -45,6 +45,7 @@ Agent identities are stored as the same namespaced text the database uses, not a
 - A missing file is an empty history, not an error. A session that was never prompted has nothing recorded, and neither does one created before Ora owned its own history.
 - A final line left unterminated by an interrupted write is discarded silently — that is the expected shape of a crash. Any other unparseable line is dropped but counted in `dropped_lines`, because it lost content that no longer has a place in the timeline and the caller must be able to say so.
 - Writes are flushed, not synced. Losing the last records to a power cut is an accepted trade for keeping a long turn's appends off the disk's latency path.
+- Deleting a session's history removes its file and leaves its two shard directories in place. They are shared with every other session whose identifier starts the same way, so removing one that looks empty would race a session being created alongside it.
 - Every write error is a reason to stop writing that session, never to retry silently. A history that skips records is more dangerous than one that stops, because the gap is invisible to whoever replays it — see the degraded-write handling in [ACP Agent Runtime](../../docs/agent-runtime.md).
 
 ## Handoff rendering

@@ -98,6 +98,13 @@ impl SessionRepository for SqliteSessionRepository {
     /// conversation onto a different CLI. The task is not: it decides the working
     /// directory the session runs in, so a session that changed tasks would be a
     /// different conversation wearing the same identifier.
+    ///
+    /// Making the binding assignable also gave up the guard that used to catch a
+    /// caller writing a stale one. The statement no longer matches on the binding,
+    /// so a snapshot taken before a switch now overwrites the newer binding
+    /// silently where it once updated zero rows. Callers must therefore read the
+    /// current row immediately before writing it, and must not write a session
+    /// concurrently with the actor that owns it.
     fn update_session(&self, session: Session) -> Result<Session, RepositoryError> {
         self.pool
             .with_connection(|connection| {
