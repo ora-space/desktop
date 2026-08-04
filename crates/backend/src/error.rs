@@ -1,5 +1,8 @@
 use ora_application::ApplicationError;
-use ora_contracts::{ContractError, EmptyErrorParams, PublicError, RequestId};
+use ora_contracts::{
+    ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
+    SkillUploadTooManyFilesParams,
+};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -10,8 +13,10 @@ type SharedError = Arc<dyn Error + Send + Sync + 'static>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorClassification {
     InvalidRequest,
+    PayloadTooLarge,
     NotFound,
     Conflict,
+    Unprocessable,
     Internal,
 }
 
@@ -47,6 +52,19 @@ impl BackendError {
             context,
             source,
         )
+    }
+
+    /// Creates an internal failure from an already boxed source-chain boundary.
+    pub fn internal_boxed(
+        context: &'static str,
+        source: Box<dyn Error + Send + Sync + 'static>,
+    ) -> Self {
+        Self {
+            classification: ErrorClassification::Internal,
+            public_error: PublicError::InternalError(EmptyErrorParams {}),
+            context: context.to_string(),
+            source: Some(Arc::from(source)),
+        }
     }
 
     /// Creates a classified semantic failure while retaining a lower-level source.
@@ -110,6 +128,58 @@ impl From<ApplicationError> for BackendError {
                 PublicError::SkillNotFound(EmptyErrorParams {}),
                 "skill not found",
             ),
+            ApplicationError::SkillUploadEmpty => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadEmpty(EmptyErrorParams {}),
+                "skill upload contained no files",
+            ),
+            ApplicationError::SkillUploadTooManyFiles { max_files } => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
+                    max_files: *max_files,
+                }),
+                "skill upload contains too many files",
+            ),
+            ApplicationError::SkillUploadPathInvalid => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadPathInvalid(EmptyErrorParams {}),
+                "skill upload contains an unsafe path",
+            ),
+            ApplicationError::SkillUploadPathDuplicate => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadPathDuplicate(EmptyErrorParams {}),
+                "skill upload contains a duplicate path",
+            ),
+            ApplicationError::SkillManifestMissing => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestMissing(EmptyErrorParams {}),
+                "skill manifest is missing",
+            ),
+            ApplicationError::SkillManifestInvalid { .. } => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestInvalid(EmptyErrorParams {}),
+                "skill manifest is invalid",
+            ),
+            ApplicationError::SkillManifestNameBlank => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestNameBlank(EmptyErrorParams {}),
+                "skill manifest name is blank",
+            ),
+            ApplicationError::SkillManifestDescriptionBlank => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestDescriptionBlank(EmptyErrorParams {}),
+                "skill manifest description is blank",
+            ),
+            ApplicationError::SkillManifestNameInvalid => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestNameInvalid(EmptyErrorParams {}),
+                "skill manifest name is invalid",
+            ),
+            ApplicationError::SkillFolderConflict { name } => (
+                ErrorClassification::Conflict,
+                PublicError::SkillFolderConflict(SkillFolderConflictParams { name: name.clone() }),
+                "skill folder already exists",
+            ),
             ApplicationError::AgentDefinitionNameBlank => (
                 ErrorClassification::InvalidRequest,
                 PublicError::AgentNameBlank(EmptyErrorParams {}),
@@ -135,6 +205,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::ProjectWorkContextNotFound(EmptyErrorParams {}),
                 "project work context not found",
             ),
+            ApplicationError::ProjectBranchListing { .. } => (
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "project branch listing operation failed",
+            ),
             ApplicationError::TaskNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::TaskNotFound(EmptyErrorParams {}),
@@ -145,10 +220,52 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorktreeRequiresGitRepository(EmptyErrorParams {}),
                 "worktree mode requires a Git repository",
             ),
+            ApplicationError::TaskBaseBranchRequired => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskBaseBranchRequired(EmptyErrorParams {}),
+                "worktree mode requires a base branch",
+            ),
+            ApplicationError::TaskBaseBranchNotFound { branch_name } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskBaseBranchNotFound(ora_contracts::TaskBaseBranchNotFoundParams {
+                    branch_name: branch_name.clone(),
+                }),
+                "base branch was not found",
+            ),
             ApplicationError::WorktreeNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::WorktreeNotFound(EmptyErrorParams {}),
                 "worktree not found",
+            ),
+            ApplicationError::TaskDiffBaselineUnavailable => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffBaselineUnavailable(EmptyErrorParams {}),
+                "task diff baseline is unavailable",
+            ),
+            ApplicationError::TaskDiffCommitMessageBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommitMessageBlank(EmptyErrorParams {}),
+                "task diff commit message must not be blank",
+            ),
+            ApplicationError::TaskDiffTooLarge { .. } => (
+                ErrorClassification::PayloadTooLarge,
+                PublicError::TaskDiffTooLarge(EmptyErrorParams {}),
+                "task diff exceeds the response limit",
+            ),
+            ApplicationError::TaskDiffStale => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffStale(EmptyErrorParams {}),
+                "task diff changed before the comment was created",
+            ),
+            ApplicationError::TaskDiffCommentNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::TaskDiffCommentNotFound(EmptyErrorParams {}),
+                "task diff comment not found",
+            ),
+            ApplicationError::TaskDiffCommentInvalid { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommentInvalid(EmptyErrorParams {}),
+                "task diff comment is invalid",
             ),
             ApplicationError::SessionNotFound { .. } => (
                 ErrorClassification::NotFound,
@@ -156,6 +273,7 @@ impl From<ApplicationError> for BackendError {
                 "session not found",
             ),
             ApplicationError::SkillRepository { .. }
+            | ApplicationError::SkillPackageStorage { .. }
             | ApplicationError::AgentDefinitionRepository { .. }
             | ApplicationError::ProjectRepository { .. }
             | ApplicationError::ProjectWorkContextRepository { .. }
@@ -164,6 +282,8 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::TaskWorktreeRootUnavailable
             | ApplicationError::TaskFilesystem { .. }
             | ApplicationError::TaskWorktreeProvisioner { .. }
+            | ApplicationError::TaskDiff { .. }
+            | ApplicationError::TaskDiffCommentRepository { .. }
             | ApplicationError::WorktreeRepository { .. }
             | ApplicationError::SessionRepository { .. } => (
                 ErrorClassification::Internal,
@@ -185,10 +305,13 @@ impl From<ApplicationError> for BackendError {
 mod tests {
     use super::{BackendError, ErrorClassification};
     use ora_application::{ApplicationError, RepositoryError};
-    use ora_contracts::{EmptyErrorParams, PublicError};
+    use ora_contracts::{
+        EmptyErrorParams, PublicError, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
+    };
     use pretty_assertions::assert_eq;
     use std::error::Error;
 
+    /// Verifies non-Git roots retain the stable bad-request contract used by runtime adapters.
     #[test]
     fn maps_semantics_without_inspecting_the_source_chain() {
         let error = BackendError::from(ApplicationError::TaskWorktreeRequiresGitRepository);
@@ -201,6 +324,70 @@ mod tests {
         assert_eq!(
             error.source().map(ToString::to_string),
             Some("worktree mode requires a Git repository".to_string())
+        );
+    }
+
+    /// Verifies skill import validation and conflicts expose only bounded typed parameters.
+    #[test]
+    fn maps_skill_import_semantics_to_public_contracts() {
+        let too_many =
+            BackendError::from(ApplicationError::SkillUploadTooManyFiles { max_files: 1000 });
+        let conflict = BackendError::from(ApplicationError::SkillFolderConflict {
+            name: "grilling".to_string(),
+        });
+
+        assert_eq!(
+            (
+                too_many.classification(),
+                too_many.public_error().clone(),
+                conflict.classification(),
+                conflict.public_error().clone(),
+            ),
+            (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
+                    max_files: 1000,
+                }),
+                ErrorClassification::Conflict,
+                PublicError::SkillFolderConflict(SkillFolderConflictParams {
+                    name: "grilling".to_string(),
+                }),
+            )
+        );
+    }
+
+    /// Verifies a blank task commit message is reported as a client-correctable request error.
+    #[test]
+    fn maps_blank_task_commit_messages_to_invalid_request() {
+        let error = BackendError::from(ApplicationError::TaskDiffCommitMessageBlank);
+
+        assert_eq!(
+            (error.classification(), error.public_error().clone()),
+            (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommitMessageBlank(EmptyErrorParams {})
+            )
+        );
+    }
+
+    /// Verifies task-diff infrastructure failures retain their concrete source chain.
+    #[test]
+    fn retains_task_diff_source_chain_through_the_backend_projection() {
+        let application_error = ApplicationError::TaskDiff {
+            source: Box::new(std::io::Error::other("git process failed")),
+        };
+        let backend_error = BackendError::from(application_error);
+
+        assert_eq!(
+            backend_error.source().map(ToString::to_string),
+            Some("task diff operation failed".to_string())
+        );
+        assert_eq!(
+            backend_error
+                .source()
+                .and_then(Error::source)
+                .map(ToString::to_string),
+            Some("git process failed".to_string())
         );
     }
 
@@ -228,6 +415,22 @@ mod tests {
                 "repository operation failed",
                 "database connection closed",
             ]
+        );
+    }
+
+    /// Verifies missing base branches remain actionable and retain their selected ref name.
+    #[test]
+    fn exposes_missing_base_branches_as_a_stable_bad_request() {
+        let error = BackendError::from(ApplicationError::TaskBaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        });
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::TaskBaseBranchNotFound(ora_contracts::TaskBaseBranchNotFoundParams {
+                branch_name: "ghost-branch".to_string(),
+            })
         );
     }
 }

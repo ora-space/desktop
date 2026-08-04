@@ -17,6 +17,7 @@ use ora_db::{
     SqliteTaskRepository, SqliteWorktreeRepository,
 };
 use ora_domain::{Project, ProjectId, TaskId, WorktreeActivity};
+use ora_logging::ora_warn;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -154,6 +155,30 @@ fn project_repository_error(error: RepositoryError) -> ApplicationError {
     ApplicationError::ProjectRepository { source: error }
 }
 
+/// Lists every visible task belonging to one project.
+///
+/// Read before a cascading project delete, which soft-deletes those rows and
+/// leaves this query with nothing to report afterwards. A failure here yields an
+/// empty list rather than an error: the caller uses it to clean up warm sessions
+/// the deleted project owned, and failing the user's delete over a cleanup query
+/// would be the larger harm.
+pub(crate) fn task_ids_in_project(pool: &RepositoryPool, project_id: &ProjectId) -> Vec<TaskId> {
+    match SqliteTaskRepository::new(pool.clone()).list_tasks() {
+        Ok(tasks) => tasks
+            .into_iter()
+            .filter(|task| &task.project_id == project_id)
+            .map(|task| task.id)
+            .collect(),
+        Err(_) => {
+            ora_warn!(
+                project_id = %project_id,
+                "listing project tasks for warm session cleanup failed",
+            );
+            Vec::new()
+        }
+    }
+}
+
 /// Resolves the task's authoritative execution directory from its selected workspace mode.
 pub(crate) fn resolve_task_cwd(
     pool: &RepositoryPool,
@@ -207,6 +232,28 @@ pub(crate) fn resolve_task_cwd(
 ///
 /// Relative project roots remain valid in persisted server configurations, while providers
 /// require a stable absolute working directory after Ora starts them.
+/// Resolves the execution directory for a chat whose Task does not exist yet.
+///
+/// Direct chats create their Task only when the first message is sent, but the
+/// model selector needs a session before that. Those Tasks are always created in
+/// project-root mode, so the project root resolved here matches the directory
+/// the eventual Task resolves to.
+pub(crate) fn resolve_project_cwd(
+    pool: &RepositoryPool,
+    project_id: &ProjectId,
+) -> Result<PathBuf, BackendError> {
+    let project = SqliteProjectRepository::new(pool.clone())
+        .find_project(project_id)
+        .map_err(|_| task_project_root_unavailable())?
+        .ok_or_else(task_project_root_unavailable)?;
+    let cwd = absolute_project_root(PathBuf::from(project.root_path))?;
+    if cwd.is_dir() {
+        Ok(cwd)
+    } else {
+        Err(task_project_root_unavailable())
+    }
+}
+
 fn absolute_project_root(path: PathBuf) -> Result<PathBuf, BackendError> {
     if path.is_absolute() {
         return Ok(path);

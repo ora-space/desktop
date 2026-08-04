@@ -21,6 +21,12 @@ pub struct AddResponse {
     pub staged_paths: Vec<RepoRelativePath>,
 }
 
+/// Carries the worktree whose complete change set should be staged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageAllRequest<'a> {
+    pub worktree: &'a WorktreeHandle,
+}
+
 /// Carries the information needed to create a commit in one worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitRequest<'a> {
@@ -45,6 +51,22 @@ impl<R: GitRunner> Git<R> {
         Ok(AddResponse {
             staged_paths: request.paths,
         })
+    }
+
+    /// Stages tracked changes, deletions, and untracked files for an explicit task commit.
+    pub fn stage_all(&self, request: StageAllRequest<'_>) -> Result<(), GitlancerError> {
+        self.runner().run(&GitCommand::new(
+            request.worktree.worktree_root().as_path().to_path_buf(),
+            vec![
+                "add".to_string(),
+                "--all".to_string(),
+                "--".to_string(),
+                ".".to_string(),
+            ],
+            GitEnv::default(),
+            GitIntent::Mutating,
+        ))?;
+        Ok(())
     }
 
     /// Creates one commit and returns typed metadata once the commit parser is implemented.

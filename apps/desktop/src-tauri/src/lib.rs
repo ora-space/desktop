@@ -34,6 +34,7 @@ pub fn run() {
             commands::create_project,
             commands::get_project,
             commands::list_projects,
+            commands::list_project_branches,
             commands::update_project,
             commands::delete_project,
             // =============================================================================
@@ -44,10 +45,19 @@ pub fn run() {
             commands::list_tasks,
             commands::update_task,
             commands::delete_task,
+            commands::get_task_diff,
+            commands::commit_task_changes,
+            commands::push_task_branch,
+            commands::list_task_diff_comments,
+            commands::create_task_diff_comment,
+            commands::reply_task_diff_comment,
+            commands::set_task_diff_comment_status,
             // =============================================================================
             // session
             // =============================================================================
-            commands::create_session,
+            commands::warm_session,
+            commands::set_session_config,
+            commands::attach_session,
             commands::get_session,
             commands::list_sessions,
             commands::respond_to_session_permission,
@@ -60,7 +70,6 @@ pub fn run() {
             // =============================================================================
             // agentRuntime
             // =============================================================================
-            commands::list_agent_models,
             commands::get_agent_runtime_status,
             // =============================================================================
             // skill

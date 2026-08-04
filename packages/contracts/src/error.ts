@@ -18,7 +18,18 @@ export type ContractError =
     | { "code": "task_not_found"; "params": EmptyErrorParams }
     | { "code": "resource_in_use"; "params": EmptyErrorParams }
     | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
+    | { "code": "task_base_branch_required"; "params": EmptyErrorParams }
+    | {
+      "code": "task_base_branch_not_found";
+      "params": TaskBaseBranchNotFoundParams;
+    }
     | { "code": "worktree_not_found"; "params": EmptyErrorParams }
+    | { "code": "task_diff_baseline_unavailable"; "params": EmptyErrorParams }
+    | { "code": "task_diff_commit_message_blank"; "params": EmptyErrorParams }
+    | { "code": "task_diff_too_large"; "params": EmptyErrorParams }
+    | { "code": "task_diff_stale"; "params": EmptyErrorParams }
+    | { "code": "task_diff_comment_not_found"; "params": EmptyErrorParams }
+    | { "code": "task_diff_comment_invalid"; "params": EmptyErrorParams }
     | { "code": "session_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_cli_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
@@ -44,6 +55,7 @@ export type ContractError =
     | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
     | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
     | { "code": "skill_upload_empty"; "params": EmptyErrorParams }
+    | { "code": "skill_upload_too_large"; "params": SkillUploadTooLargeParams }
     | {
       "code": "skill_upload_too_many_files";
       "params": SkillUploadTooManyFilesParams;
@@ -89,7 +101,18 @@ export type PublicError =
   | { "code": "task_not_found"; "params": EmptyErrorParams }
   | { "code": "resource_in_use"; "params": EmptyErrorParams }
   | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
+  | { "code": "task_base_branch_required"; "params": EmptyErrorParams }
+  | {
+    "code": "task_base_branch_not_found";
+    "params": TaskBaseBranchNotFoundParams;
+  }
   | { "code": "worktree_not_found"; "params": EmptyErrorParams }
+  | { "code": "task_diff_baseline_unavailable"; "params": EmptyErrorParams }
+  | { "code": "task_diff_commit_message_blank"; "params": EmptyErrorParams }
+  | { "code": "task_diff_too_large"; "params": EmptyErrorParams }
+  | { "code": "task_diff_stale"; "params": EmptyErrorParams }
+  | { "code": "task_diff_comment_not_found"; "params": EmptyErrorParams }
+  | { "code": "task_diff_comment_invalid"; "params": EmptyErrorParams }
   | { "code": "session_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_cli_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
@@ -112,6 +135,7 @@ export type PublicError =
   | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
   | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
   | { "code": "skill_upload_empty"; "params": EmptyErrorParams }
+  | { "code": "skill_upload_too_large"; "params": SkillUploadTooLargeParams }
   | {
     "code": "skill_upload_too_many_files";
     "params": SkillUploadTooManyFilesParams;
@@ -136,6 +160,16 @@ export type RequestId = string;
 export type SkillFolderConflictParams = { name: string };
 
 /**
+ * Carries the configured request-body limit without exposing uploaded file contents.
+ */
+export type SkillUploadTooLargeParams = { maxBytes: number };
+
+/**
  * Carries the configured upload limit without exposing uploaded file names.
  */
 export type SkillUploadTooManyFilesParams = { maxFiles: number };
+
+/**
+ * Carries the user-selected base branch name when Git cannot resolve it.
+ */
+export type TaskBaseBranchNotFoundParams = { branchName: string };

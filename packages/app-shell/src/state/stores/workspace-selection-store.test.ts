@@ -43,15 +43,6 @@ describe("useWorkspaceSelectionStore", () => {
     });
   });
 
-  it("selectDraftSession records a project-scoped session before a task exists", () => {
-    useWorkspaceSelectionStore.getState().selectDraftSession("draft-1", "p1");
-    expect(useWorkspaceSelectionStore.getState().selection).toEqual({
-      projectId: "p1",
-      taskId: null,
-      sessionId: "draft-1",
-    });
-  });
-
   it("clearSelection empties all three legs", () => {
     useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
     useWorkspaceSelectionStore.getState().clearSelection();

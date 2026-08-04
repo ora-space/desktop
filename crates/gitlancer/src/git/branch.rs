@@ -1,4 +1,4 @@
-use crate::domain::refs::BranchName;
+use crate::domain::refs::{BranchName, CommitId};
 use crate::domain::repo::Repository;
 use crate::error::{DomainError, GitlancerError};
 use crate::exec::command::{GitCommand, GitIntent};
@@ -23,6 +23,7 @@ pub struct ListBranchesResponse {
 pub struct CreateBranchRequest<'a> {
     pub repository: &'a Repository,
     pub branch_name: BranchName,
+    pub commit_id: CommitId,
 }
 
 /// Returns the branch created through the runtime API.
@@ -142,6 +143,7 @@ pub fn build_create_branch_command(request: &CreateBranchRequest<'_>) -> GitComm
         vec![
             "branch".to_string(),
             request.branch_name.as_str().to_string(),
+            request.commit_id.as_str().to_string(),
         ],
         GitEnv::default(),
         GitIntent::Mutating,
@@ -178,7 +180,7 @@ mod tests {
         build_delete_branch_command,
     };
     use crate::domain::paths::RepoRoot;
-    use crate::domain::refs::BranchName;
+    use crate::domain::refs::{BranchName, CommitId};
     use crate::domain::repo::Repository;
     use crate::error::{DomainError, GitExecError, GitlancerError};
     use crate::exec::command::{GitCommand, GitIntent};
@@ -275,6 +277,7 @@ mod tests {
             .create_branch(CreateBranchRequest {
                 repository: &repository,
                 branch_name: BranchName::new("feature/runtime"),
+                commit_id: CommitId::new("0123456789abcdef"),
             })
             .expect("create branch");
 
@@ -294,7 +297,11 @@ mod tests {
                 ),
                 GitCommand::new(
                     repository.root().as_path().to_path_buf(),
-                    vec!["branch".to_string(), "feature/runtime".to_string()],
+                    vec![
+                        "branch".to_string(),
+                        "feature/runtime".to_string(),
+                        "0123456789abcdef".to_string(),
+                    ],
                     crate::GitEnv::default(),
                     GitIntent::Mutating,
                 ),
@@ -317,6 +324,7 @@ mod tests {
             .create_branch(CreateBranchRequest {
                 repository: &repository,
                 branch_name: BranchName::new("feature/runtime"),
+                commit_id: CommitId::new("0123456789abcdef"),
             })
             .expect_err("duplicate branch should be rejected");
 
@@ -408,6 +416,7 @@ mod tests {
         let create_command = build_create_branch_command(&CreateBranchRequest {
             repository: &repository,
             branch_name: BranchName::new("feature/runtime"),
+            commit_id: CommitId::new("0123456789abcdef"),
         });
         let delete_command = build_delete_branch_command(&DeleteBranchRequest {
             repository: &repository,
@@ -419,7 +428,11 @@ mod tests {
             create_command,
             GitCommand::new(
                 repository.root().as_path().to_path_buf(),
-                vec!["branch".to_string(), "feature/runtime".to_string()],
+                vec![
+                    "branch".to_string(),
+                    "feature/runtime".to_string(),
+                    "0123456789abcdef".to_string(),
+                ],
                 crate::GitEnv::default(),
                 GitIntent::Mutating,
             )

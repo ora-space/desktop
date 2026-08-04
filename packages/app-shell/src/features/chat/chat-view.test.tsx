@@ -8,6 +8,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { ContractsClientContext } from "../../contracts-client-context";
+import { ChatStoreContext } from "../../chat-store-context";
+import { createChatStore } from "@ora/chat";
 import { createMockClient, createMockClientState } from "../../test/mock-client";
 import { ChatView } from "./chat-view";
 import { Composer } from "./composer";
@@ -33,8 +35,10 @@ function createTestQueryClient() {
 function renderWithI18n(element: ReactNode) {
   const client = createMockClient(createMockClientState());
   const queryClient = createTestQueryClient();
+  const chatStore = createChatStore(client.session);
   // A wrapper (rather than a one-off wrapped element) so `rerender` re-applies
-  // every provider — the model selector reads the contracts client on each pass.
+  // every provider — the model selector reads the contracts client and the
+  // conversation's configuration options on each pass.
   const wrapper = ({ children }: { children: ReactNode }) =>
     createElement(
       QueryClientProvider,
@@ -42,7 +46,11 @@ function renderWithI18n(element: ReactNode) {
       createElement(
         ContractsClientContext.Provider,
         { value: client },
-        createElement(AppI18nProvider, null, children),
+        createElement(
+          ChatStoreContext.Provider,
+          { value: chatStore },
+          createElement(AppI18nProvider, null, children),
+        ),
       ),
     );
   return {
@@ -519,6 +527,26 @@ describe("ChatView", () => {
 });
 
 describe("MessageList", () => {
+  it("divides the thread where the answering model changed", () => {
+    renderWithI18n(
+      <MessageList
+        turns={[turn("turn-1", "First", 100), turn("turn-2", "Second", 200)]}
+        modelChanges={[
+          { id: "change-1", afterTurnCount: 1, modelName: "Smart", createdAt: 150 },
+        ]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+
+    const divider = screen.getByRole("separator", { name: /已切换到 Smart|Switched to Smart/ });
+    const [first, second] = screen.getAllByText(/First|Second/);
+    // The divider separates the turns it was recorded between, rather than
+    // landing at either end of the thread.
+    expect(first!.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(second!.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
+  });
+
   it("compresses consecutive reads into a second-level disclosure", async () => {
     const user = userEvent.setup();
     renderWithI18n(

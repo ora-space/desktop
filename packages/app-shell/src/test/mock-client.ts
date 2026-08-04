@@ -1,5 +1,7 @@
 import type {
+  acp,
   Agent,
+  AgentCli,
   ContractsClient,
   Project,
   Session,
@@ -15,11 +17,35 @@ export interface MockClientState {
   sessions: Session[];
   agents: Agent[];
   skills: Skill[];
+  /** Warm sessions handed out but not yet attached, keyed by session id. */
+  warmSessions: Map<string, AgentCli>;
+  /** What every warm and persisted session reports as its configuration. */
+  configOptions: acp.SessionConfigOption[];
 }
 
 /** Creates a fresh in-memory mock state with no records. */
 export function createMockClientState(): MockClientState {
-  return { projects: [], tasks: [], sessions: [], agents: [], skills: [] };
+  return {
+    projects: [],
+    tasks: [],
+    sessions: [],
+    agents: [],
+    skills: [],
+    warmSessions: new Map(),
+    configOptions: [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "opencode/big-pickle",
+        options: [
+          { value: "opencode/big-pickle", name: "Big Pickle" },
+          { value: "opencode/small-pickle", name: "Small Pickle" },
+        ],
+      },
+    ],
+  };
 }
 
 function nextId(prefix: string, count: number): string {
@@ -34,6 +60,9 @@ export function createMockClient(state: MockClientState): ContractsClient {
   return {
     project: {
       list: async () => ({ projects: [...state.projects] }),
+      listBranches: async () => ({
+        branches: [{ name: "main", refName: "origin/main", displayName: "main" }],
+      }),
       get: async (req) => ({ project: state.projects.find((p) => p.id === req.projectId)! }),
       create: async (req) => {
         const project: Project = { id: nextId("p", state.projects.length), name: req.name, rootPath: req.rootPath };
@@ -87,19 +116,65 @@ export function createMockClient(state: MockClientState): ContractsClient {
         if (idx >= 0) state.tasks.splice(idx, 1);
         return { taskId: req.taskId };
       },
+      getWorkspace: async (req) => ({
+        workspace: {
+          rootPath: `/worktrees/${req.taskId}`,
+          branchName: `task/${req.taskId}`,
+        },
+      }),
+      getDiff: async () => ({
+        baseCommitId: "base",
+        headCommitId: "head",
+        diffId: "diff",
+        patch: "",
+      }),
+      commitChanges: async () => {
+        throw new Error("commitChanges not implemented in mock");
+      },
+      pushBranch: async () => {
+        throw new Error("pushBranch not implemented in mock");
+      },
+      listDiffComments: async () => ({ comments: [] }),
+      createDiffComment: async () => {
+        throw new Error("createDiffComment not implemented in mock");
+      },
+      replyDiffComment: async () => {
+        throw new Error("replyDiffComment not implemented in mock");
+      },
+      setDiffCommentStatus: async () => {
+        throw new Error("setDiffCommentStatus not implemented in mock");
+      },
     },
     session: {
       list: async () => ({ sessions: [...state.sessions] }),
       get: async (req) => ({ session: state.sessions.find((s) => s.id === req.sessionId)! }),
-      create: async (req) => {
+      warm: async (req) => {
+        const sessionId = nextId("s", state.sessions.length + state.warmSessions.size);
+        state.warmSessions.set(sessionId, req.agentCli);
+        return { sessionId, configOptions: state.configOptions };
+      },
+      setConfig: async () => ({ configOptions: state.configOptions }),
+      attach: async (req) => {
         const session: Session = {
-          id: nextId("s", state.sessions.length),
+          id: req.sessionId,
           taskId: req.taskId,
-          agentCli: req.agentCli,
+          agentCli: state.warmSessions.get(req.sessionId) ?? "open_code",
           status: "running",
+          historyState: { type: "writable" },
         };
+        state.warmSessions.delete(req.sessionId);
         state.sessions.push(session);
         return { session, availableCommands: [] };
+      },
+      switchAgent: async (req) => {
+        const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
+        session.agentCli = req.agentCli;
+        return { session, availableCommands: [] };
+      },
+      resumeHistory: async (req) => {
+        const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
+        session.historyState = { type: "writable" };
+        return { session };
       },
       load: async function* () { yield { type: "completed" as const }; },
       prompt: async function* () { yield { type: "completed" as const, stopReason: "end_turn" as const }; },
@@ -116,13 +191,6 @@ export function createMockClient(state: MockClientState): ContractsClient {
       },
     },
     agentRuntime: {
-      listModels: async () => ({
-        groups: [
-          { agentCli: "open_code", models: ["opencode/big-pickle", "opencode/small-pickle"] },
-          { agentCli: "nga", models: ["nga/default"] },
-          { agentCli: "code_agent_cli", models: ["codeagentcli/default"] },
-        ],
-      }),
       getStatus: async () => ({
         statuses: [
           { agentCli: "open_code", status: "ready" },
@@ -180,6 +248,17 @@ export function createMockClient(state: MockClientState): ContractsClient {
         breadcrumbs: [],
         entries: [],
       }),
+      listWorkspaceDirectory: async () => ({ path: "", entries: [] }),
+      readWorkspaceFile: async (request) => ({
+        path: request.path,
+        content: "",
+        version: "test",
+        sizeBytes: 0,
+      }),
+      searchWorkspace: async () => ({ results: [], truncated: false }),
+      watchWorkspace: () => (async function* () {
+        yield* [];
+      })(),
     },
   };
 }

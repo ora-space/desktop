@@ -10,6 +10,7 @@ mod session;
 mod session_history;
 mod skill;
 mod task;
+mod task_diff;
 
 pub use agent_runtime::SessionEventStream;
 pub use bootstrap::{Backend, BackendBootstrapError, BackendPaths};

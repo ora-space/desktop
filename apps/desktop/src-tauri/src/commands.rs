@@ -119,19 +119,34 @@ backend_command!(
     "Lists projects through the shared Backend."
 );
 backend_command!(
+    list_project_branches,
+    ListProjectBranchesRequest,
+    ListProjectBranchesResponse,
+    list_project_branches,
+    "Lists local branches for one project through the shared Backend."
+);
+backend_command!(
     update_project,
     UpdateProjectRequest,
     UpdateProjectResponse,
     update_project,
     "Updates one project through the shared Backend."
 );
-backend_command!(
-    delete_project,
-    DeleteProjectRequest,
-    DeleteProjectResponse,
-    delete_project,
-    "Deletes one project through the shared Backend."
-);
+/// Deletes one project through the shared Backend.
+///
+/// Not a `backend_command!` because deleting also returns the warm provider
+/// sessions the project owned, which is asynchronous.
+#[tauri::command]
+pub async fn delete_project(
+    state: State<'_, DesktopState>,
+    request: DeleteProjectRequest,
+) -> Result<DeleteProjectResponse, CommandError> {
+    state
+        .backend
+        .delete_project(request)
+        .await
+        .map_err(CommandError::from)
+}
 
 // =============================================================================
 // task
@@ -165,25 +180,104 @@ backend_command!(
     update_task,
     "Updates one task through the shared Backend."
 );
+/// Deletes one task through the shared Backend.
+///
+/// Not a `backend_command!` because deleting also returns the warm provider
+/// session the Task owned, which is asynchronous.
+#[tauri::command]
+pub async fn delete_task(
+    state: State<'_, DesktopState>,
+    request: DeleteTaskRequest,
+) -> Result<DeleteTaskResponse, CommandError> {
+    state
+        .backend
+        .delete_task(request)
+        .await
+        .map_err(CommandError::from)
+}
 backend_command!(
-    delete_task,
-    DeleteTaskRequest,
-    DeleteTaskResponse,
-    delete_task,
-    "Deletes one task through the shared Backend."
+    get_task_diff,
+    GetTaskDiffRequest,
+    GetTaskDiffResponse,
+    get_task_diff,
+    "Reads one task diff through the shared Backend."
+);
+backend_command!(
+    commit_task_changes,
+    CommitTaskChangesRequest,
+    CommitTaskChangesResponse,
+    commit_task_changes,
+    "Commits one task worktree through the shared Backend."
+);
+backend_command!(
+    push_task_branch,
+    PushTaskBranchRequest,
+    PushTaskBranchResponse,
+    push_task_branch,
+    "Pushes one task worktree branch through the shared Backend."
+);
+backend_command!(
+    list_task_diff_comments,
+    ListTaskDiffCommentsRequest,
+    ListTaskDiffCommentsResponse,
+    list_task_diff_comments,
+    "Lists task diff discussions through the shared Backend."
+);
+backend_command!(
+    create_task_diff_comment,
+    CreateTaskDiffCommentRequest,
+    CreateTaskDiffCommentResponse,
+    create_task_diff_comment,
+    "Creates one task diff discussion through the shared Backend."
+);
+backend_command!(
+    reply_task_diff_comment,
+    ReplyTaskDiffCommentRequest,
+    ReplyTaskDiffCommentResponse,
+    reply_task_diff_comment,
+    "Replies to one task diff discussion through the shared Backend."
+);
+backend_command!(
+    set_task_diff_comment_status,
+    SetTaskDiffCommentStatusRequest,
+    SetTaskDiffCommentStatusResponse,
+    set_task_diff_comment_status,
+    "Updates one task diff discussion through the shared Backend."
 );
 
 // =============================================================================
 // session
 // =============================================================================
 
-/// Creates one provider-backed session through the asynchronous runtime manager.
+/// Returns the warm provider session backing one chat surface.
 #[tauri::command]
-pub async fn create_session(
+pub async fn warm_session(
     state: State<'_, DesktopState>,
-    request: CreateSessionRequest,
-) -> Result<CreateSessionResponse, CommandError> {
-    run_async_backend("create_session", state.backend.create_session(request)).await
+    request: WarmSessionRequest,
+) -> Result<WarmSessionResponse, CommandError> {
+    run_async_backend("warm_session", state.backend.warm_session(request)).await
+}
+
+/// Applies one configuration option to a warm or persisted session.
+#[tauri::command]
+pub async fn set_session_config(
+    state: State<'_, DesktopState>,
+    request: SetSessionConfigRequest,
+) -> Result<SetSessionConfigResponse, CommandError> {
+    run_async_backend(
+        "set_session_config",
+        state.backend.set_session_config(request),
+    )
+    .await
+}
+
+/// Persists one warm session against the Task that now owns it.
+#[tauri::command]
+pub async fn attach_session(
+    state: State<'_, DesktopState>,
+    request: AttachSessionRequest,
+) -> Result<AttachSessionResponse, CommandError> {
+    run_async_backend("attach_session", state.backend.attach_session(request)).await
 }
 backend_command!(
     get_session,
@@ -424,19 +518,6 @@ async fn forward_contract_stream<Event>(
 // =============================================================================
 // agentRuntime
 // =============================================================================
-
-/// Lists models grouped by every CLI whose discovery command succeeds.
-#[tauri::command]
-pub async fn list_agent_models(
-    state: State<'_, DesktopState>,
-    request: ListAgentModelsRequest,
-) -> Result<ListAgentModelsResponse, CommandError> {
-    run_async_backend(
-        "list_agent_models",
-        state.backend.list_agent_models(request),
-    )
-    .await
-}
 
 backend_command!(
     get_agent_runtime_status,

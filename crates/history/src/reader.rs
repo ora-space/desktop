@@ -92,12 +92,15 @@ pub fn read_session_history(root: &Path, session_id: &str) -> Result<SessionHist
 /// the conversation ended with.
 fn order_lines(lines: Vec<HistoryLine>) -> Vec<HistoryLine> {
     let mut seen = HashSet::with_capacity(lines.len());
+    // Scanning backwards keeps the last record written for a position and drops
+    // the ones it corrected. What survives is unique per position, so the sort
+    // that follows fully determines the order and the reversed scan order here
+    // does not need undoing.
     let mut latest: Vec<HistoryLine> = lines
         .into_iter()
         .rev()
         .filter(|line| seen.insert(line.seq))
         .collect();
-    latest.reverse();
     latest.sort_by_key(|line| line.seq);
     latest
 }

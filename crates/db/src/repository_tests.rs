@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use ora_application::{
     AgentDefinitionRepository, ProjectRepository, ProjectWorkContextRepository, RepositoryError,
-    SessionRepository, SkillRepository, TaskRepository, WorktreeRepository,
+    SessionRepository, SkillImportCommitError, SkillImportUnitOfWork, SkillRepository,
+    TaskRepository, WorktreeRepository,
 };
 use ora_domain::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, HistoryState, Project, ProjectId,
@@ -17,8 +18,9 @@ use tempfile::TempDir;
 use crate::{
     CascadeDeleteOutcome, DatabaseBootstrapper, DatabaseLocation, RepositoryPool,
     SqliteAgentDefinitionRepository, SqliteCascadeRepository, SqliteProjectRepository,
-    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillRepository,
-    SqliteTaskRepository, SqliteWorktreeRepository, TimestampSource, default_migration_catalog,
+    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillImportUnitOfWork,
+    SqliteSkillRepository, SqliteTaskRepository, SqliteWorktreeRepository, TimestampSource,
+    default_migration_catalog,
 };
 
 /// Verifies catalog repositories use stable identifiers and hide soft-deleted rows.
@@ -107,6 +109,41 @@ fn catalog_repositories_support_id_based_crud_and_allow_duplicate_names() {
             .soft_delete_agent_definition(&AgentDefinitionId::new("missing"), 4)
             .unwrap(),
         false
+    );
+}
+
+/// Verifies the import unit of work commits the row only when the promote callback succeeds.
+#[test]
+fn skill_import_unit_of_work_commits_on_success_and_rolls_back_on_promote_failure() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    let unit_of_work = SqliteSkillImportUnitOfWork::new(pool.clone());
+    let repository = SqliteSkillRepository::new(pool);
+    let committed = skill("skill-commit", "grilling", "Grill", 1, 1, false);
+    let rolled_back = skill("skill-rollback", "probe", "Probe", 2, 2, false);
+
+    unit_of_work
+        .insert_then(committed.clone(), || Ok(()))
+        .unwrap();
+    let rollback = unit_of_work
+        .insert_then(rolled_back, || {
+            Err(ora_application::SkillPackageStoreError::new(
+                std::io::Error::other("promote failed"),
+            ))
+        })
+        .unwrap_err();
+
+    assert!(matches!(rollback, SkillImportCommitError::Promote { .. }));
+    assert_eq!(
+        repository
+            .find_skill(&SkillId::new("skill-commit"))
+            .unwrap(),
+        Some(committed)
+    );
+    assert_eq!(
+        repository
+            .find_skill(&SkillId::new("skill-rollback"))
+            .unwrap(),
+        None
     );
 }
 
@@ -603,6 +640,7 @@ fn worktree_repository_supports_crud_and_soft_delete() {
         WorktreeId::new("worktree-1"),
         TaskId::new("task-1"),
         Some("feature/db-pool".to_string()),
+        ora_domain::WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Inactive,
         AuditFields::new(13, 13, false),
     );
@@ -626,6 +664,7 @@ fn worktree_repository_supports_crud_and_soft_delete() {
         created_worktree.id.clone(),
         created_worktree.task_id.clone(),
         None,
+        ora_domain::WorktreeBaseline::recorded("updated-base-commit").unwrap(),
         WorktreeActivity::Active,
         AuditFields::new(13, 23, false),
     );
@@ -687,6 +726,7 @@ fn repository_pool_composes_all_repository_adapters() {
         WorktreeId::new("worktree-1"),
         task.id.clone(),
         Some("feature/composition".to_string()),
+        ora_domain::WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Active,
         AuditFields::new(43, 43, false),
     );
@@ -774,7 +814,9 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
         connection.execute_batch(
             "INSERT INTO projects VALUES ('project-1', 'Ora', '/not/a/repository', 1, 1, 0);
              INSERT INTO tasks VALUES ('task-1', 'project-1', 'Task', 0, 'worktree-1', 1, 1, 0);
-             INSERT INTO worktrees VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0);
+             INSERT INTO worktrees (
+                 id, task_id, branch_name, is_active, created_at, updated_at, is_deleted, base_commit_id
+             ) VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0, 'base-commit');
              INSERT INTO project_work_contexts VALUES ('context-1', 'web', 'main', 'project-1', 100, 1, 1);",
         )?;
         // Columns are named rather than positional so a later schema addition

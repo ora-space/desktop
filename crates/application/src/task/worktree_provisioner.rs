@@ -1,7 +1,8 @@
 use super::{
-    CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskWorktreeDeletionMode,
-    TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
+    CreateTaskWorktreeRequest, CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest,
+    TaskWorktreeDeletionMode, TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
 };
+use gitlancer::git::base_branch::ResolveWorktreeBaseCommitRequest;
 use gitlancer::git::branch::ListBranchesRequest;
 use gitlancer::git::worktree::{
     CreateWorktreeRequest as GitCreateWorktreeRequest,
@@ -64,15 +65,34 @@ impl TaskWorktreeProvisioner for GitTaskWorktreeProvisioner {
     fn create_task_worktree(
         &self,
         request: CreateTaskWorktreeRequest,
-    ) -> Result<(), TaskWorktreeProvisionerError> {
+    ) -> Result<CreateTaskWorktreeResponse, TaskWorktreeProvisionerError> {
+        let base_reference_name = BranchName::new(request.base_reference_name);
+        let base_commit_id = self
+            .git
+            .resolve_worktree_base_commit(ResolveWorktreeBaseCommitRequest {
+                repository: &self.repository,
+                reference_name: &base_reference_name,
+            })
+            .map_err(|error| match error {
+                GitlancerError::Domain(DomainError::BranchNotFound { branch, .. }) => {
+                    TaskWorktreeProvisionerError::BaseBranchNotFound {
+                        branch_name: branch,
+                    }
+                }
+                source => TaskWorktreeProvisionerError::operation_failed(source),
+            })?
+            .commit_id;
         create_parent_directory(&request.worktree_path)?;
         self.git
             .create_worktree(GitCreateWorktreeRequest {
                 repository: &self.repository,
                 worktree_root: WorktreeRoot::new(&request.worktree_path),
                 branch_name: BranchName::new(request.branch_name),
+                base_commit_id,
             })
-            .map(|_| ())
+            .map(|response| CreateTaskWorktreeResponse {
+                base_commit_id: response.head_commit_id.as_str().to_string(),
+            })
             .map_err(TaskWorktreeProvisionerError::operation_failed)
     }
 

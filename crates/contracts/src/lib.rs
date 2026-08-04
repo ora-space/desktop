@@ -10,6 +10,7 @@ mod project_work_context;
 mod session;
 mod skill;
 mod task;
+mod task_diff;
 
 pub use agent::{
     Agent, CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
@@ -18,41 +19,50 @@ pub use agent::{
 };
 pub use error::{
     ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget, PublicError,
-    RequestId, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
+    RequestId, SkillFolderConflictParams, SkillUploadTooLargeParams, SkillUploadTooManyFilesParams,
+    TaskBaseBranchNotFoundParams,
 };
 pub use file_system::{
     FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryRequest,
-    ListDirectoryResponse,
+    ListDirectoryResponse, ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse,
+    ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchWorkspaceRequest,
+    SearchWorkspaceResponse, WatchWorkspaceRequest, WorkspaceEntry, WorkspaceEntryKind,
+    WorkspaceFileChange, WorkspaceFileEventBatch, WorkspaceSearchKind, WorkspaceSearchResult,
 };
 pub use frontend::{
-    AGENT_MODELS_PATH, AGENT_PATH, AGENT_RUNTIME_STATUS_PATH, AGENTS_PATH,
-    FILE_SYSTEM_DIRECTORY_PATH, FrontendEndpoint, FrontendHttpMethod, FrontendPathParam,
-    FrontendQueryParam, FrontendResponseMode, GIT_IDENTITY_PATH, PROJECT_PATH,
+    AGENT_PATH, AGENT_RUNTIME_STATUS_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH,
+    FrontendEndpoint, FrontendHttpMethod, FrontendPathParam, FrontendQueryParam,
+    FrontendResponseMode, GIT_IDENTITY_PATH, PROJECT_BRANCHES_PATH, PROJECT_PATH,
     PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
-    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_RESUME_HISTORY_PATH, SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH,
-    SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
+    SESSION_ATTACH_PATH, SESSION_CONFIG_PATH, SESSION_LOAD_PATH, SESSION_PATH,
+    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_RESUME_HISTORY_PATH,
+    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSION_WARM_PATH, SESSIONS_PATH,
+    SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH,
+    TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH,
+    TASK_PUSH_PATH, TASK_WORKSPACE_PATH, TASKS_PATH, WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH,
+    WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH, frontend_endpoints,
 };
 pub use git::{GetGitIdentityRequest, GitIdentityResponse};
 pub use project::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
-    GetProjectRequest, GetProjectResponse, ListProjectsRequest, ListProjectsResponse, Project,
-    UpdateProjectRequest, UpdateProjectResponse,
+    GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse,
+    ListProjectsRequest, ListProjectsResponse, Project, ProjectBranch, UpdateProjectRequest,
+    UpdateProjectResponse,
 };
 pub use project_work_context::{
     OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, ProjectWorkContext,
     ProjectWorkContextSurface, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse,
 };
 pub use session::{
-    AgentCli, AgentCliModels, AgentCliRuntimeStatus, AgentCliStatus, CreateSessionRequest,
-    CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
-    GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest,
-    GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest,
+    AgentCli, AgentCliRuntimeStatus, AgentCliStatus, AttachSessionRequest, AttachSessionResponse,
+    DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest,
+    GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest,
     ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent,
     PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse,
     ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, Session, SessionHistoryState,
-    SessionPermissionRequest, SessionStatus, StopSessionRequest, StopSessionResponse,
-    SwitchSessionAgentRequest, SwitchSessionAgentResponse,
+    SessionPermissionRequest, SessionStatus, SetSessionConfigRequest, SetSessionConfigResponse,
+    StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
+    WarmSessionRequest, WarmSessionResponse, WarmSessionTarget,
 };
 pub use skill::{
     CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,
@@ -62,8 +72,17 @@ pub use skill::{
 use std::path::Path;
 pub use task::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
-    GetTaskResponse, ListTasksRequest, ListTasksResponse, Task, TaskStatus, TaskWorkspaceMode,
-    UpdateTaskRequest, UpdateTaskResponse,
+    GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest,
+    ListTasksResponse, Task, TaskStatus, TaskWorkspace, TaskWorkspaceMode, UpdateTaskRequest,
+    UpdateTaskResponse,
+};
+pub use task_diff::{
+    CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest,
+    CreateTaskDiffCommentResponse, GetTaskDiffRequest, GetTaskDiffResponse,
+    ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse, PushTaskBranchRequest,
+    PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse,
+    SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse, TaskDiffComment,
+    TaskDiffCommentAnchor, TaskDiffCommentKind, TaskDiffScope, TaskDiffSide, TaskDiffThreadStatus,
 };
 use ts_rs::{Config, ExportError};
 
@@ -86,6 +105,7 @@ pub fn export_typescript_bindings_to(
     session::export(&config)?;
     skill::export(&config)?;
     task::export(&config)?;
+    task_diff::export(&config)?;
 
     Ok(())
 }

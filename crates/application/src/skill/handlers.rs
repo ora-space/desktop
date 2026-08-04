@@ -1,5 +1,5 @@
 use crate::skill::mapper::map_skill;
-use crate::skill::ports::{SkillIdGenerator, SkillRepository};
+use crate::skill::ports::{SkillIdGenerator, SkillPackageStore, SkillRepository};
 use crate::{ApplicationError, Clock};
 use ora_contracts::{
     CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,
@@ -171,29 +171,44 @@ where
     }
 }
 
-/// Handles soft deletion of reusable skill definitions.
-pub struct DeleteSkillHandler<Repository, ClockSource> {
+/// Handles soft deletion of reusable skill definitions and their imported folders.
+pub struct DeleteSkillHandler<Repository, Store, ClockSource> {
     repository: Repository,
+    store: Store,
     clock: ClockSource,
 }
 
-impl<Repository, ClockSource> DeleteSkillHandler<Repository, ClockSource> {
-    pub fn new(repository: Repository, clock: ClockSource) -> Self {
-        Self { repository, clock }
+impl<Repository, Store, ClockSource> DeleteSkillHandler<Repository, Store, ClockSource> {
+    pub fn new(repository: Repository, store: Store, clock: ClockSource) -> Self {
+        Self {
+            repository,
+            store,
+            clock,
+        }
     }
 }
 
-impl<Repository, ClockSource> DeleteSkillHandler<Repository, ClockSource>
+impl<Repository, Store, ClockSource> DeleteSkillHandler<Repository, Store, ClockSource>
 where
     Repository: SkillRepository,
+    Store: SkillPackageStore,
     ClockSource: Clock,
 {
-    /// Soft-deletes one visible skill and returns its identifier.
+    /// Soft-deletes one visible skill, frees its committed folder, and returns its identifier.
     pub fn handle(
         &self,
         request: DeleteSkillRequest,
     ) -> Result<DeleteSkillResponse, ApplicationError> {
         let skill_id = SkillId::new(request.skill_id);
+        // Resolve the name before deleting so the committed directory (named after the skill) can
+        // be located; a missing visible skill is reported the same way as a soft-delete miss.
+        let existing = self
+            .repository
+            .find_skill(&skill_id)
+            .map_err(ApplicationError::from_skill_repository_error)?
+            .ok_or_else(|| ApplicationError::SkillNotFound {
+                skill_id: skill_id.to_string(),
+            })?;
         let deleted = self
             .repository
             .soft_delete_skill(&skill_id, self.clock.now_timestamp_millis())
@@ -203,6 +218,10 @@ where
                 skill_id: skill_id.to_string(),
             });
         }
+
+        // Best-effort folder removal: the catalog row is already the source of truth, and a failure
+        // here self-heals on the next startup reconciliation because the row is no longer visible.
+        let _ = self.store.remove_committed(&existing.name);
 
         Ok(DeleteSkillResponse {
             skill_id: skill_id.to_string(),

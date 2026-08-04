@@ -11,8 +11,10 @@
 | `SqliteSessionRepository` | `SessionRepository` |
 | `SqliteWorktreeRepository` | `WorktreeRepository` |
 | `SqliteSkillRepository` | `SkillRepository` |
+| `SqliteSkillImportUnitOfWork` | `SkillImportUnitOfWork` |
 | `SqliteAgentDefinitionRepository` | `AgentDefinitionRepository` |
 | `SqliteProjectWorkContextRepository` | `ProjectWorkContextRepository` |
+| `SqliteTaskDiffCommentRepository` | `TaskDiffCommentRepository` |
 | `SqliteCascadeRepository` | aggregate deletion used by `ora-backend` |
 
 Adding an adapter never changes a port signature. Handlers keep depending on the traits they own, so a composition root can swap in fakes without touching use-case code.
@@ -53,6 +55,7 @@ Repositories map SQLite columns onto the current `ora-domain` shapes, including 
 - `sessions.status` becomes `SessionStatus`; `sessions.agent_cli` text becomes `AgentCli` through the namespaced persisted value; the nullable `sessions.history_degraded_reason` becomes `HistoryState`, where absence means writable.
 - `worktrees.is_active` becomes `WorktreeActivity`; `worktrees.branch_name` stays optional.
 - `project_work_contexts.surface` text becomes `ProjectWorkContextSurface`.
+- `task_diff_comments` maps root-thread columns and reply columns into the mutually exclusive `TaskDiffCommentKind` enum. Visible comments are returned in `(created_at, id)` order; malformed rows fail rather than being coerced.
 
 An unrecognized persisted category value is a mapping failure, not a silently coerced default.
 
@@ -70,6 +73,8 @@ These transactions touch Ora-owned database state only. They never invoke Git, n
 ## Error boundary
 
 SQLite execution, query, and row-mapping failures are wrapped in the shared application-owned `RepositoryError`. The wrapper keeps the concrete `DatabaseError` as its `Error::source()` instead of stringifying it, so application and backend layers can add semantic context while diagnostics still reach the original database failure without repeating source text. Database-specific types remain hidden from repository port signatures. Bootstrap and migration failures surface as `DatabaseError`.
+
+Skill import is the one repository operation that deliberately spans a filesystem callback. `SqliteSkillImportUnitOfWork` inserts the row inside an open transaction, invokes the injected package promotion, and commits only after promotion succeeds. Insert and commit failures retain SQLite sources; promotion failures retain the package-store source. The application layer uses the failure phase to choose the correct compensation without matching strings.
 
 Timestamps used by migration bookkeeping come from an injected `TimestampSource` so tests can be deterministic; `SystemTimestampSource` reads Unix epoch milliseconds from the system clock. Entity `created_at`/`updated_at` values are supplied from above through the application `Clock`, not generated inside the repositories.
 

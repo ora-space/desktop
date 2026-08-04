@@ -88,6 +88,7 @@ pub async fn delete_task(
         .delete_task(DeleteTaskRequest {
             task_id: path.task_id,
         })
+        .await
         .map(Json)
         .map_err(WebApiError::from)
 }

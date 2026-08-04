@@ -1,4 +1,8 @@
-use crate::{RepositoryError, TaskWorktreeProvisionerError};
+use crate::skill::SkillPackageStoreError;
+use crate::{
+    BoxRepositorySource, BranchListingError, RepositoryError, TaskDiffCommentRepositoryError,
+    TaskDiffReaderError, TaskWorktreeProvisionerError,
+};
 use ora_domain::DomainModelError;
 use thiserror::Error;
 
@@ -13,6 +17,34 @@ pub enum ApplicationError {
     SkillRepository {
         #[source]
         source: RepositoryError,
+    },
+    #[error("skill upload contained no files")]
+    SkillUploadEmpty,
+    #[error("skill upload exceeds the {max_files}-file limit")]
+    SkillUploadTooManyFiles { max_files: usize },
+    #[error("skill upload contains an unsafe path")]
+    SkillUploadPathInvalid,
+    #[error("skill upload contains a duplicate path")]
+    SkillUploadPathDuplicate,
+    #[error("skill upload is missing a root SKILL.md manifest")]
+    SkillManifestMissing,
+    #[error("skill manifest is invalid")]
+    SkillManifestInvalid {
+        #[source]
+        source: BoxRepositorySource,
+    },
+    #[error("skill manifest name must not be blank")]
+    SkillManifestNameBlank,
+    #[error("skill manifest description must not be blank")]
+    SkillManifestDescriptionBlank,
+    #[error("skill manifest name is not a safe directory name")]
+    SkillManifestNameInvalid,
+    #[error("skill folder already exists: {name}")]
+    SkillFolderConflict { name: String },
+    #[error("skill package storage operation failed")]
+    SkillPackageStorage {
+        #[source]
+        source: SkillPackageStoreError,
     },
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
@@ -29,6 +61,11 @@ pub enum ApplicationError {
     ProjectRepository {
         #[source]
         source: RepositoryError,
+    },
+    #[error("project branch listing operation failed")]
+    ProjectBranchListing {
+        #[source]
+        source: BoxRepositorySource,
     },
     #[error("project is already occupied: {project_id}")]
     ProjectOccupied { project_id: String },
@@ -48,6 +85,10 @@ pub enum ApplicationError {
     },
     #[error("worktree mode requires a Git repository")]
     TaskWorktreeRequiresGitRepository,
+    #[error("worktree mode requires a base branch")]
+    TaskBaseBranchRequired,
+    #[error("base branch not found: {branch_name}")]
+    TaskBaseBranchNotFound { branch_name: String },
     #[error("failed to generate a unique task worktree id after {attempts} attempts")]
     TaskWorktreeIdExhausted { attempts: usize },
     #[error("worktree root configuration is unavailable")]
@@ -62,6 +103,31 @@ pub enum ApplicationError {
     TaskWorktreeProvisioner {
         #[from]
         source: TaskWorktreeProvisionerError,
+    },
+    #[error("task diff operation failed")]
+    TaskDiff {
+        #[source]
+        source: BoxRepositorySource,
+    },
+    #[error("task diff commit message must not be blank")]
+    TaskDiffCommitMessageBlank,
+    #[error("task diff baseline is unavailable")]
+    TaskDiffBaselineUnavailable,
+    #[error("task diff is too large: {byte_count} bytes exceeds {max_byte_count} bytes")]
+    TaskDiffTooLarge {
+        byte_count: usize,
+        max_byte_count: usize,
+    },
+    #[error("task diff changed before the comment was created")]
+    TaskDiffStale,
+    #[error("task diff comment not found: {comment_id}")]
+    TaskDiffCommentNotFound { comment_id: String },
+    #[error("invalid task diff comment: {message}")]
+    TaskDiffCommentInvalid { message: String },
+    #[error("task diff comment repository operation failed")]
+    TaskDiffCommentRepository {
+        #[source]
+        source: BoxRepositorySource,
     },
     #[error("worktree not found: {worktree_id}")]
     WorktreeNotFound { worktree_id: String },
@@ -114,6 +180,14 @@ impl ApplicationError {
         Self::ProjectRepository { source: error }
     }
 
+    /// Maps Git-facing branch listing failures into stable application errors.
+    pub(crate) fn from_branch_listing_error(error: BranchListingError) -> Self {
+        match error {
+            BranchListingError::NotARepository => Self::TaskWorktreeRequiresGitRepository,
+            BranchListingError::OperationFailed(source) => Self::ProjectBranchListing { source },
+        }
+    }
+
     /// Maps project work context repository failures into stable application errors.
     pub(crate) fn from_project_work_context_repository_error(error: RepositoryError) -> Self {
         Self::ProjectWorkContextRepository { source: error }
@@ -130,9 +204,44 @@ impl ApplicationError {
     ) -> Self {
         match error {
             TaskWorktreeProvisionerError::NotARepository => Self::TaskWorktreeRequiresGitRepository,
+            TaskWorktreeProvisionerError::BaseBranchNotFound { branch_name } => {
+                Self::TaskBaseBranchNotFound { branch_name }
+            }
             source @ TaskWorktreeProvisionerError::OperationFailed { .. } => {
                 Self::TaskWorktreeProvisioner { source }
             }
+        }
+    }
+
+    /// Maps task diff reader failures while preserving infrastructure diagnostics.
+    pub(crate) fn from_task_diff_reader_error(error: TaskDiffReaderError) -> Self {
+        match error {
+            TaskDiffReaderError::OperationFailed(source) => Self::TaskDiff { source },
+            TaskDiffReaderError::TooLarge {
+                byte_count,
+                max_byte_count,
+            } => Self::TaskDiffTooLarge {
+                byte_count,
+                max_byte_count,
+            },
+        }
+    }
+
+    /// Maps task diff comment persistence failures while preserving infrastructure diagnostics.
+    pub(crate) fn from_task_diff_comment_repository_error(
+        error: TaskDiffCommentRepositoryError,
+    ) -> Self {
+        match error {
+            TaskDiffCommentRepositoryError::OperationFailed(source) => {
+                Self::TaskDiffCommentRepository { source }
+            }
+        }
+    }
+
+    /// Builds an internal task diff failure for an invariant that was violated below the handler.
+    pub(crate) fn task_diff_failure(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::TaskDiff {
+            source: Box::new(error),
         }
     }
 
@@ -154,16 +263,36 @@ impl PartialEq for ApplicationError {
 
         match (self, other) {
             (SkillNameBlank, SkillNameBlank)
+            | (SkillUploadEmpty, SkillUploadEmpty)
+            | (SkillUploadPathInvalid, SkillUploadPathInvalid)
+            | (SkillUploadPathDuplicate, SkillUploadPathDuplicate)
+            | (SkillManifestMissing, SkillManifestMissing)
+            | (SkillManifestInvalid { .. }, SkillManifestInvalid { .. })
+            | (SkillManifestNameBlank, SkillManifestNameBlank)
+            | (SkillManifestDescriptionBlank, SkillManifestDescriptionBlank)
+            | (SkillManifestNameInvalid, SkillManifestNameInvalid)
+            | (SkillPackageStorage { .. }, SkillPackageStorage { .. })
             | (AgentDefinitionNameBlank, AgentDefinitionNameBlank)
             | (TaskWorktreeRequiresGitRepository, TaskWorktreeRequiresGitRepository)
             | (SkillRepository { .. }, SkillRepository { .. })
             | (AgentDefinitionRepository { .. }, AgentDefinitionRepository { .. })
             | (ProjectRepository { .. }, ProjectRepository { .. })
+            | (ProjectBranchListing { .. }, ProjectBranchListing { .. })
             | (ProjectWorkContextRepository { .. }, ProjectWorkContextRepository { .. })
             | (TaskRepository { .. }, TaskRepository { .. })
+            | (TaskWorktreeProvisioner { .. }, TaskWorktreeProvisioner { .. })
+            | (TaskDiffStale, TaskDiffStale)
+            | (TaskDiffCommitMessageBlank, TaskDiffCommitMessageBlank)
             | (WorktreeRepository { .. }, WorktreeRepository { .. })
             | (SessionRepository { .. }, SessionRepository { .. }) => true,
             (SkillNotFound { skill_id: left }, SkillNotFound { skill_id: right }) => left == right,
+            (
+                SkillUploadTooManyFiles { max_files: left },
+                SkillUploadTooManyFiles { max_files: right },
+            ) => left == right,
+            (SkillFolderConflict { name: left }, SkillFolderConflict { name: right }) => {
+                left == right
+            }
             (
                 AgentDefinitionNotFound { agent_id: left },
                 AgentDefinitionNotFound { agent_id: right },
@@ -183,13 +312,38 @@ impl PartialEq for ApplicationError {
                 },
             ) => left_surface == right_surface && left_window == right_window,
             (TaskNotFound { task_id: left }, TaskNotFound { task_id: right }) => left == right,
+            (TaskBaseBranchRequired, TaskBaseBranchRequired) => true,
+            (
+                TaskBaseBranchNotFound { branch_name: left },
+                TaskBaseBranchNotFound { branch_name: right },
+            ) => left == right,
+            (TaskDiff { .. }, TaskDiff { .. })
+            | (TaskDiffCommentRepository { .. }, TaskDiffCommentRepository { .. }) => true,
+            (
+                TaskDiffCommentInvalid { message: left },
+                TaskDiffCommentInvalid { message: right },
+            ) => left == right,
+            (TaskDiffBaselineUnavailable, TaskDiffBaselineUnavailable) => true,
+            (
+                TaskDiffTooLarge {
+                    byte_count: left_bytes,
+                    max_byte_count: left_max,
+                },
+                TaskDiffTooLarge {
+                    byte_count: right_bytes,
+                    max_byte_count: right_max,
+                },
+            ) => left_bytes == right_bytes && left_max == right_max,
+            (
+                TaskDiffCommentNotFound { comment_id: left },
+                TaskDiffCommentNotFound { comment_id: right },
+            ) => left == right,
             (
                 TaskWorktreeIdExhausted { attempts: left },
                 TaskWorktreeIdExhausted { attempts: right },
             ) => left == right,
             (TaskWorktreeRootUnavailable, TaskWorktreeRootUnavailable) => true,
             (TaskFilesystem { .. }, TaskFilesystem { .. }) => true,
-            (TaskWorktreeProvisioner { .. }, TaskWorktreeProvisioner { .. }) => true,
             (WorktreeNotFound { worktree_id: left }, WorktreeNotFound { worktree_id: right }) => {
                 left == right
             }

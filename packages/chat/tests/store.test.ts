@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { LoadSessionEvent, PromptSessionEvent, PromptSessionRequest } from "@ora/contracts";
+import type { acp, LoadSessionEvent, PromptSessionEvent, PromptSessionRequest } from "@ora/contracts";
 import { createChatStore, type ChatSessionClient } from "../src/index.js";
 
 /** Builds one ACP text update without exposing protocol transport details to the tests. */
@@ -35,6 +35,7 @@ test("loads provider history and reconstructs turns from message boundaries", as
     ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, {
@@ -45,6 +46,8 @@ test("loads provider history and reconstructs turns from message boundaries", as
   await store.getState().loadSession("ora-1");
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: [],
+    modelChanges: [],
     turns: [
       {
         id: "local-1",
@@ -91,6 +94,7 @@ test("restores a cancelled turn and its unfinished tools from the recorded bound
     ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, {
@@ -128,6 +132,7 @@ test("keeps consecutive prompts apart when neither produced agent output", async
     ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, {
     createId: (() => {
@@ -178,6 +183,7 @@ test("loads commands, session metadata, and structured content without creating 
     ]),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, {
@@ -188,6 +194,8 @@ test("loads commands, session metadata, and structured content without creating 
   await store.getState().loadSession("ora-1");
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: [],
+    modelChanges: [],
     turns: [{
       id: "local-1",
       userMessage: { kind: "message", id: "local-2", role: "user", content: "", structuredContent: [image], createdAt: 42, protocolMessageId: "user-media" },
@@ -223,6 +231,7 @@ test("applies live command and partial session-info updates outside the response
       { type: "completed", stopReason: "end_turn" },
     ]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "local", now: () => 42 });
 
@@ -244,6 +253,7 @@ test("sends structured image prompts", async () => {
       return events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]);
     },
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "local", now: () => 42 });
 
@@ -297,6 +307,7 @@ test("aborting a prompt retains the partial response and marks the turn cancelle
       },
     }),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "id-1", now: () => 42 });
   const sending = store.getState().sendMessage({ oraSessionId: "ora-1", text: " hello " });
@@ -349,6 +360,7 @@ test("settles active tools when the provider completes with a cancelled stop rea
       { type: "completed", stopReason: "cancelled" },
     ]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "id-1", now: () => 42 });
 
@@ -380,7 +392,7 @@ test("settles active tools when the provider completes with a cancelled stop rea
   });
 });
 
-test("shows the user turn on a draft key before promoting to the created session", async () => {
+test("shows the user turn before the session is persisted", async () => {
   let promptSessionId: string | undefined;
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),
@@ -392,44 +404,38 @@ test("shows the user turn on a draft key before promoting to the created session
       ]);
     },
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   let nextId = 0;
   const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
 
-  let resolveCreate: (result: { oraSessionId: string; availableCommands: [{ name: string; description: string }] }) => void = () => {};
-  const created = new Promise<{ oraSessionId: string; availableCommands: [{ name: string; description: string }] }>((resolve) => { resolveCreate = resolve; });
-  const drafts: string[] = [];
-  const promoted: string[] = [];
+  type Prepared = { availableCommands: [{ name: string; description: string }] };
+  let finishPrepare: (result: Prepared) => void = () => {};
+  const prepared = new Promise<Prepared>((resolve) => { finishPrepare = resolve; });
 
   const sending = store.getState().sendMessage({
+    oraSessionId: "warm-session",
     text: "hi",
-    createSession: () => created,
-    onDraft: (id) => drafts.push(id),
-    onSessionCreated: (id) => promoted.push(id),
+    prepare: () => prepared,
   });
 
-  // The turn is visible under the draft key while the session is still being created.
-  assert.deepEqual(drafts, ["draft-local-1"]);
-  const draft = store.getState().conversations["draft-local-1"];
-  assert.equal(draft?.turns.length, 1);
-  assert.equal(draft?.turns[0]?.userMessage.content, "hi");
-  assert.equal(draft?.isResponding, true);
-  assert.equal(store.getState().conversations["real-session"], undefined);
+  // The warm session id is final, so the turn is visible under it while the
+  // session is still being persisted.
+  const pending = store.getState().conversations["warm-session"];
+  assert.equal(pending?.turns.length, 1);
+  assert.equal(pending?.turns[0]?.userMessage.content, "hi");
+  assert.equal(pending?.isResponding, true);
 
-  resolveCreate({
-    oraSessionId: "real-session",
+  finishPrepare({
     availableCommands: [{ name: "review", description: "Review current changes" }],
   });
   await sending;
 
-  // The conversation has moved onto the real id and the draft key is gone.
-  assert.deepEqual(promoted, ["real-session"]);
-  assert.equal(promptSessionId, "real-session");
-  assert.equal(store.getState().conversations["draft-local-1"], undefined);
-  const conversation = store.getState().conversations["real-session"];
+  assert.equal(promptSessionId, "warm-session");
+  const conversation = store.getState().conversations["warm-session"];
   assert.equal(conversation?.isResponding, false);
-  // The live turn is authoritative, so the promoted conversation is already
-  // "loaded" and the workspace never re-loads (and re-slides) it.
+  // The live turn is authoritative, so the conversation is already "loaded" and
+  // the workspace never re-loads (and re-slides) it.
   assert.equal(conversation?.isLoaded, true);
   assert.deepEqual(conversation?.availableCommands, [
     { name: "review", description: "Review current changes" },
@@ -450,6 +456,7 @@ test("rolls back staged load updates when replay fails before completion", async
     }),
     prompt: () => events<PromptSessionEvent>([]),
     respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
   };
   const store = createChatStore(client, { createId: () => "local", now: () => 42 });
   const previousTurn = {
@@ -466,6 +473,8 @@ test("rolls back staged load updates when replay fails before completion", async
   store.setState({
     conversations: {
       "ora-1": {
+        configOptions: [],
+        modelChanges: [],
         turns: [previousTurn],
         availableCommands: [],
         sessionTitle: null,
@@ -482,6 +491,8 @@ test("rolls back staged load updates when replay fails before completion", async
   await assert.rejects(store.getState().loadSession("ora-1"), /load failed/);
 
   assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: [],
+    modelChanges: [],
     turns: [previousTurn],
     availableCommands: [],
     sessionTitle: null,
@@ -492,4 +503,118 @@ test("rolls back staged load updates when replay fails before completion", async
     pendingPermissions: [],
     error: "load failed",
   });
+});
+
+/** Builds a model selector reporting `current` as the value in effect. */
+function modelOptions(current: string): acp.SessionConfigOption[] {
+  return [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: current,
+      options: [
+        { value: "fast", name: "Fast" },
+        { value: "smart", name: "Smart" },
+      ],
+    },
+  ];
+}
+
+test("adopts the agent's answer to a model selection over the requested value", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    // The agent declined the switch and reported that it stayed on "fast".
+    setConfig: async () => ({ configOptions: modelOptions("fast") }),
+  };
+  const store = createChatStore(client, { createId: () => "local", now: () => 42 });
+
+  await store.getState().setSessionConfig("ora-1", "model", "smart");
+
+  assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: modelOptions("fast"),
+    modelChanges: [],
+    turns: [],
+    availableCommands: [],
+    sessionTitle: null,
+    sessionUpdatedAt: null,
+    isLoaded: false,
+    isLoading: false,
+    isResponding: false,
+    pendingPermissions: [],
+    error: null,
+  });
+});
+
+test("reports an unreachable model selection instead of silently keeping the old value", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => { throw new Error("session is gone"); },
+  };
+  const store = createChatStore(client, { createId: () => "local", now: () => 42 });
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+
+  await assert.rejects(
+    store.getState().setSessionConfig("ora-1", "model", "smart"),
+    /session is gone/,
+  );
+
+  assert.deepEqual(store.getState().conversations["ora-1"], {
+    configOptions: modelOptions("fast"),
+    modelChanges: [],
+    turns: [],
+    availableCommands: [],
+    sessionTitle: null,
+    sessionUpdatedAt: null,
+    isLoaded: false,
+    isLoading: false,
+    isResponding: false,
+    pendingPermissions: [],
+    error: "session is gone",
+  });
+});
+
+test("marks the thread where the answering model changed", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
+
+  // Establishing the first model on an empty thread is not a change.
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+  store.getState().setConfigOptions("ora-1", modelOptions("smart"));
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.modelChanges, [
+    { id: "local-3", afterTurnCount: 1, modelName: "Smart", createdAt: 42 },
+  ]);
+});
+
+test("keeps one marker per point in the thread while the model is cycled", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
+
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "hi" });
+  store.getState().setConfigOptions("ora-1", modelOptions("smart"));
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.modelChanges, [
+    { id: "local-4", afterTurnCount: 1, modelName: "Fast", createdAt: 42 },
+  ]);
 });

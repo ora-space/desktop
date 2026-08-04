@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createChatStore } from "@ora/chat";
-import type { ContractsClient } from "@ora/contracts";
+import type { ContractsClient, WarmSessionResponse } from "@ora/contracts";
 import { TooltipProvider } from "@ora/ui";
 import { PlatformProvider } from "@ora/platform";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -257,9 +257,9 @@ describe("WorkspaceView", () => {
       },
       session: {
         ...baseClient.session,
-        create: async (request, options) => {
-          calls.push("session");
-          return baseClient.session.create(request, options);
+        attach: async (request, options) => {
+          calls.push("attach");
+          return baseClient.session.attach(request, options);
         },
         prompt: async function* (request, options) {
           calls.push("prompt");
@@ -296,14 +296,14 @@ describe("WorkspaceView", () => {
       screen.getByRole("button", { name: /发送消息|Send message/ }),
     );
 
+    // The warm session id is final before the task exists, so selection points
+    // at it immediately and only the task leg is still empty.
     await waitFor(() => {
-      expect(useWorkspaceSelectionStore.getState().selection.projectId).toBe(
-        "p1",
-      );
-      expect(useWorkspaceSelectionStore.getState().selection.taskId).toBeNull();
-      expect(useWorkspaceSelectionStore.getState().selection.sessionId).toMatch(
-        /^draft-/,
-      );
+      expect(useWorkspaceSelectionStore.getState().selection).toEqual({
+        projectId: "p1",
+        taskId: null,
+        sessionId: "s1",
+      });
     });
     expect(screen.getByText(/你好\s+workspace mode/)).toBeInTheDocument();
     expect(state.tasks).toEqual([]);
@@ -326,9 +326,10 @@ describe("WorkspaceView", () => {
           taskId: "t1",
           agentCli: "open_code",
           status: "running",
+          historyState: { type: "writable" },
         },
       ]);
-      expect(calls).toEqual(["task", "session", "prompt"]);
+      expect(calls).toEqual(["task", "attach", "prompt"]);
     });
     expect(useWorkspaceSelectionStore.getState().selection).toEqual({
       projectId: "p1",
@@ -338,13 +339,13 @@ describe("WorkspaceView", () => {
     expect(chatStore.getState().conversations.s1?.isLoaded).toBe(true);
   });
 
-  it("keeps a created direct task when session creation fails and reuses it on retry", async () => {
+  it("keeps a created direct task when attaching fails and reuses it on retry", async () => {
     const user = userEvent.setup();
     const state = createMockClientState();
     state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
     const baseClient = createMockClient(state);
     let taskCreateCalls = 0;
-    let sessionCreateCalls = 0;
+    let attachCalls = 0;
     const client: ContractsClient = {
       ...baseClient,
       task: {
@@ -356,10 +357,10 @@ describe("WorkspaceView", () => {
       },
       session: {
         ...baseClient.session,
-        create: async (request, options) => {
-          sessionCreateCalls += 1;
-          if (sessionCreateCalls === 1) throw new Error("session unavailable");
-          return baseClient.session.create(request, options);
+        attach: async (request, options) => {
+          attachCalls += 1;
+          if (attachCalls === 1) throw new Error("session unavailable");
+          return baseClient.session.attach(request, options);
         },
       },
     };
@@ -404,11 +405,89 @@ describe("WorkspaceView", () => {
 
     await waitFor(() => expect(state.sessions).toHaveLength(1));
     expect(taskCreateCalls).toBe(1);
-    expect(sessionCreateCalls).toBe(2);
+    expect(attachCalls).toBe(2);
     expect(state.tasks).toHaveLength(1);
   });
 
-  it("shows task creation failures in the optimistic draft conversation", async () => {
+  it("warms a fresh session for retry after attach fails, instead of reusing the consumed id", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    // An already-existing task keeps the warm-session query keyed the same
+    // way across both attempts (no task-creation side effect can re-target
+    // it), so this isolates the retry behavior this fix is about.
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Existing task",
+        status: "todo",
+        workspaceMode: "project_root",
+      },
+    ];
+    const baseClient = createMockClient(state);
+    let attachCalls = 0;
+    const attachedSessionIds: string[] = [];
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        attach: async (request, options) => {
+          attachCalls += 1;
+          attachedSessionIds.push(request.sessionId);
+          // The real backend's warm pool discards its entry the moment an
+          // attach is attempted, whether or not the rest of attach succeeds.
+          // Reusing the same warm session id here would incorrectly pass even
+          // if the client kept retrying with a stale id.
+          if (attachCalls === 1) throw new Error("session unavailable");
+          return baseClient.session.attach(request, options);
+        },
+      },
+    };
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectTask("t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const composer = await screen.findByRole("textbox");
+    await waitFor(() => expect(composer).toBeEnabled());
+    await user.type(composer, "first attempt");
+    await user.click(
+      screen.getByRole("button", { name: /发送消息|Send message/ }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "session unavailable",
+    );
+
+    await user.type(screen.getByRole("textbox"), "retry");
+    await user.click(
+      screen.getByRole("button", { name: /发送消息|Send message/ }),
+    );
+
+    await waitFor(() => expect(state.sessions).toHaveLength(1));
+    expect(attachCalls).toBe(2);
+    // The retry must not reuse the id the failed attach already consumed.
+    expect(attachedSessionIds[1]).not.toBe(attachedSessionIds[0]);
+    expect(state.sessions[0]?.id).toBe(attachedSessionIds[1]);
+  });
+
+  it("shows task creation failures in the optimistic conversation", async () => {
     const user = userEvent.setup();
     const state = createMockClientState();
     state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
@@ -456,9 +535,287 @@ describe("WorkspaceView", () => {
     expect(state.tasks).toEqual([]);
     expect(state.sessions).toEqual([]);
     expect(useWorkspaceSelectionStore.getState().selection.taskId).toBeNull();
-    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toMatch(
-      /^draft-/,
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe("s1");
+  });
+
+  it("shows a model switch that never reached the agent", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    const baseClient = createMockClient(state);
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        setConfig: async () => {
+          throw new Error("agent unreachable");
+        },
+      },
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
     );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    // The warm session supplies the picker's models, so wait for them to land.
+    const picker = await screen.findByRole("button", {
+      name: /选择模型|Select model/,
+    });
+    await waitFor(() => expect(picker).toHaveTextContent("Big Pickle"));
+    await user.click(picker);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Small Pickle" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "agent unreachable",
+    );
+    // The rejected switch must not be shown as if it took effect.
+    expect(picker).toHaveTextContent("Big Pickle");
+  });
+
+  it("keeps a switched model after the surface remounts with a still-warm session", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    const baseClient = createMockClient(state);
+    const warm = vi.fn(baseClient.session.warm);
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        warm,
+        // Reports back whichever model was requested, the way an agent answers
+        // a switch it accepted — the mock's default ignores the request.
+        setConfig: async (req) => ({
+          configOptions: state.configOptions.map((option) =>
+            option.type === "select" ? { ...option, currentValue: req.value } : option,
+          ),
+        }),
+      },
+    };
+    // One query client and one chat store across both renders, so this is the
+    // same app session leaving a surface and coming back to it.
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    const renderView = () =>
+      render(
+        <Wrapper>
+          <AppI18nProvider>
+            <PlatformProvider adapter={createStubPlatform()}>
+              <TooltipProvider>
+                <WorkspaceView userName="Eric" />
+              </TooltipProvider>
+            </PlatformProvider>
+          </AppI18nProvider>
+        </Wrapper>,
+      );
+
+    const first = renderView();
+    let picker = await screen.findByRole("button", {
+      name: /选择模型|Select model/,
+    });
+    await waitFor(() => expect(picker).toHaveTextContent("Big Pickle"));
+    await user.click(picker);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Small Pickle" }),
+    );
+    await waitFor(() => expect(picker).toHaveTextContent("Small Pickle"));
+
+    first.unmount();
+    renderView();
+
+    picker = await screen.findByRole("button", { name: /选择模型|Select model/ });
+    // The warm session is reused rather than re-opened, so its pinned handshake
+    // response — which still names the opening model — is what a remount sees.
+    // Replaying it would silently undo a switch the agent already accepted.
+    await waitFor(() => expect(picker).toHaveTextContent("Small Pickle"));
+    expect(warm).toHaveBeenCalledOnce();
+  });
+
+  it("says the model list is still arriving while the session is being warmed", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    const baseClient = createMockClient(state);
+    let openHandshake: (response: WarmSessionResponse) => void = () => {};
+    const client: ContractsClient = {
+      ...baseClient,
+      session: {
+        ...baseClient.session,
+        // Held open so the picker can be inspected mid-handshake, which is what
+        // a real agent's a second or so of start-up looks like.
+        warm: () =>
+          new Promise<WarmSessionResponse>((resolve) => {
+            openHandshake = resolve;
+          }),
+      },
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /选择模型|Select model/ }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText(/加载中|Loading/)).toBeInTheDocument();
+    // Announcing "no models" here would be a definite answer to a question the
+    // agent has not been asked yet.
+    expect(
+      within(menu).queryByText(/未提供可选模型|offers no model choice/),
+    ).toBeNull();
+
+    openHandshake({ sessionId: "s1", configOptions: state.configOptions });
+
+    expect(
+      await screen.findByRole("menuitem", { name: "Small Pickle" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says the model list is still arriving while a selected session replays", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Replaying",
+        status: "todo",
+        workspaceMode: "worktree",
+      },
+    ];
+    state.sessions = [
+      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running" },
+    ];
+    const client = createMockClient(state);
+    let finishReplay: () => void = () => {};
+    const replayed = new Promise<void>((resolve) => {
+      finishReplay = resolve;
+    });
+    // A selected session gets its options from `session/load`, which reports
+    // them partway through the stream rather than at its start.
+    client.session.load = async function* () {
+      await replayed;
+      yield {
+        type: "session_update" as const,
+        update: {
+          sessionUpdate: "config_option_update" as const,
+          configOptions: state.configOptions,
+        },
+      };
+      yield { type: "completed" as const };
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /选择模型|Select model/ }),
+    );
+    const menu = await screen.findByRole("menu");
+    // The replay seeds an empty option set before the agent reports the real
+    // one, which must not be mistaken for a settled "no models" answer.
+    await waitFor(() =>
+      expect(within(menu).getByText(/加载中|Loading/)).toBeInTheDocument(),
+    );
+    expect(
+      within(menu).queryByText(/未提供可选模型|offers no model choice/),
+    ).toBeNull();
+
+    finishReplay();
+
+    expect(
+      await screen.findByRole("menuitem", { name: "Small Pickle" }),
+    ).toBeInTheDocument();
+  });
+
+  it("still reports an agent that offers no model choice", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.configOptions = [];
+    const client = createMockClient(state);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /选择模型|Select model/ }),
+    );
+    const menu = await screen.findByRole("menu");
+
+    await waitFor(() =>
+      expect(
+        within(menu).getByText(/未提供可选模型|offers no model choice/),
+      ).toBeInTheDocument(),
+    );
+    expect(within(menu).queryByText(/加载中|Loading/)).toBeNull();
   });
 });
 

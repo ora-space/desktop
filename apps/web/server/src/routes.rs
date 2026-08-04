@@ -1,17 +1,22 @@
 use crate::app_state::AppState;
 use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skills, tasks,
+    agents, file_system, git, health, project_work_contexts, projects, sessions, skills,
+    task_diffs, tasks, workspace_files,
 };
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{get, post};
 use ora_contracts::{
-    AGENT_MODELS_PATH, AGENT_PATH, AGENT_RUNTIME_STATUS_PATH, AGENTS_PATH,
-    FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
-    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
-    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_RESUME_HISTORY_PATH,
-    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH,
-    TASK_PATH, TASKS_PATH,
+    AGENT_PATH, AGENT_RUNTIME_STATUS_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH,
+    GIT_IDENTITY_PATH, PROJECT_BRANCHES_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_ATTACH_PATH, SESSION_CONFIG_PATH,
+    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
+    SESSION_RESUME_HISTORY_PATH, SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSION_WARM_PATH,
+    SESSIONS_PATH, SKILL_IMPORT_PATH, SKILL_PATH, SKILLS_PATH, TASK_COMMIT_PATH,
+    TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH,
+    TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASKS_PATH, WORKSPACE_DIRECTORY_PATH,
+    WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -37,6 +42,7 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(projects::update_project)
                 .delete(projects::delete_project),
         )
+        .route(PROJECT_BRANCHES_PATH, get(projects::list_project_branches))
         // =============================================================================
         // projectWorkContext
         // =============================================================================
@@ -59,16 +65,36 @@ pub fn build_router(app_state: AppState) -> Router {
                 .delete(tasks::delete_task),
         )
         // =============================================================================
+        // taskDiff
+        // =============================================================================
+        .route(TASK_DIFF_PATH, get(task_diffs::get_task_diff))
+        .route(TASK_COMMIT_PATH, post(task_diffs::commit_task_changes))
+        .route(TASK_PUSH_PATH, post(task_diffs::push_task_branch))
+        .route(
+            TASK_DIFF_COMMENTS_PATH,
+            post(task_diffs::create_task_diff_comment).get(task_diffs::list_task_diff_comments),
+        )
+        .route(
+            TASK_DIFF_COMMENT_REPLIES_PATH,
+            post(task_diffs::reply_task_diff_comment),
+        )
+        .route(
+            TASK_DIFF_COMMENT_STATUS_PATH,
+            axum::routing::put(task_diffs::set_task_diff_comment_status),
+        )
+        // =============================================================================
         // session
         // =============================================================================
-        .route(
-            SESSIONS_PATH,
-            post(sessions::create_session).get(sessions::list_sessions),
-        )
+        // The static warm path is registered before the identifier route so it is
+        // never captured as a session id.
+        .route(SESSION_WARM_PATH, post(sessions::warm_session))
+        .route(SESSIONS_PATH, get(sessions::list_sessions))
         .route(
             SESSION_PATH,
             get(sessions::get_session).delete(sessions::delete_session),
         )
+        .route(SESSION_CONFIG_PATH, post(sessions::set_session_config))
+        .route(SESSION_ATTACH_PATH, post(sessions::attach_session))
         .route(SESSION_LOAD_PATH, post(sessions::load_session))
         .route(SESSION_PROMPT_PATH, post(sessions::prompt_session))
         .route(
@@ -87,7 +113,6 @@ pub fn build_router(app_state: AppState) -> Router {
         // =============================================================================
         // agentRuntime
         // =============================================================================
-        .route(AGENT_MODELS_PATH, get(sessions::list_agent_models))
         .route(
             AGENT_RUNTIME_STATUS_PATH,
             get(sessions::get_agent_runtime_status),
@@ -98,6 +123,10 @@ pub fn build_router(app_state: AppState) -> Router {
         .route(
             SKILLS_PATH,
             post(skills::create_skill).get(skills::list_skills),
+        )
+        .route(
+            SKILL_IMPORT_PATH,
+            post(skills::import_skill).layer(DefaultBodyLimit::max(skills::MAX_SKILL_UPLOAD_BYTES)),
         )
         .route(
             SKILL_PATH,
@@ -122,6 +151,13 @@ pub fn build_router(app_state: AppState) -> Router {
         // fileSystem
         // =============================================================================
         .route(FILE_SYSTEM_DIRECTORY_PATH, get(file_system::list_directory))
+        .route(
+            WORKSPACE_DIRECTORY_PATH,
+            post(workspace_files::list_directory),
+        )
+        .route(WORKSPACE_FILE_PATH, post(workspace_files::read_file))
+        .route(WORKSPACE_SEARCH_PATH, post(workspace_files::search))
+        .route(WORKSPACE_WATCH_PATH, get(workspace_files::watch))
         // =============================================================================
         // gitIdentity
         // =============================================================================
@@ -176,25 +212,29 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    /// Verifies model discovery remains successful when every test CLI is unavailable.
+    /// Verifies the static warm route is matched ahead of the session id route.
     ///
-    /// The real intention is to exercise the zero-CLI code path, but that depends on
-    /// the test machine having none of the three CLIs installed. Since developers'
-    /// machines differ, the assertion only validates the response shape (status + a
-    /// `groups` array) rather than asserting an exact empty payload. A proper
-    /// zero-CLI test would require injecting a discovery stub at the handler level.
+    /// `/api/sessions/warm` and `/api/sessions/{sessionId}` overlap, so a
+    /// regression in route order would silently turn every warm request into a
+    /// lookup for a session named "warm". Reaching the handler is the assertion:
+    /// warming itself needs a running agent CLI, which a test machine may lack.
     #[tokio::test]
-    async fn serves_partial_agent_model_results() {
+    async fn routes_warm_requests_past_the_session_identifier_route() {
         let (_temp_dir, _database_path, app) = test_router();
-        let response = request_empty(&app, Method::GET, "/api/agent-models").await;
-        let status = response.status();
-        let body = response_json(response).await;
+        let response = request_json(
+            &app,
+            Method::POST,
+            "/api/sessions/warm",
+            json!({
+                "target": { "type": "projectRoot", "projectId": "missing-project" },
+                "agentCli": "open_code",
+                "clientId": "client-1",
+            }),
+        )
+        .await;
 
-        assert_eq!(status, StatusCode::OK);
-        assert!(
-            body.get("groups").is_some_and(|g| g.is_array()),
-            "response must include a groups array"
-        );
+        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+        assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     /// Verifies readiness stays unavailable until bootstrap marks the state as ready.
@@ -729,6 +769,7 @@ mod tests {
                             "projectId": project_id,
                             "title": "Ship handlers",
                             "status": "todo",
+                            "baseBranch": "main",
                         })
                         .to_string(),
                     ))
@@ -744,6 +785,17 @@ mod tests {
             Some(task_id) => task_id.to_string(),
             None => panic!("response did not include a task id"),
         };
+        let branch_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/projects/{project_id}/branches"))
+                    .body(Body::empty())
+                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
         let list_response = match app
             .clone()
             .oneshot(
@@ -821,6 +873,23 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "todo",
                 "workspaceMode": "worktree",
+            })
+        );
+        assert_eq!(
+            response_json(branch_response).await,
+            json!({
+                "branches": [
+                    {
+                        "name": "main",
+                        "refName": "main",
+                        "displayName": "main",
+                    },
+                    {
+                        "name": format!("ora/{}", &task_id[..8]),
+                        "refName": format!("ora/{}", &task_id[..8]),
+                        "displayName": "Ship handlers",
+                    },
+                ],
             })
         );
         assert_eq!(
@@ -1040,6 +1109,86 @@ mod tests {
             .status(),
             StatusCode::BAD_REQUEST
         );
+    }
+
+    /// Verifies the router imports a skill folder atomically and rejects conflicts and bad uploads.
+    #[tokio::test]
+    async fn serves_skill_folder_import_route() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let manifest: &[u8] = b"---\nname: grilling\ndescription: Grill the user\n---\n";
+
+        let import = app
+            .clone()
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("SKILL.md", manifest), ("refs/util.py", b"noop".as_slice())],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(import.status(), StatusCode::OK);
+        let created = response_json(import).await;
+        let skill_id = created["skill"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("response did not include a skill id"))
+            .to_string();
+        assert_eq!(
+            created,
+            json!({
+                "skill": { "id": skill_id, "name": "grilling", "description": "Grill the user" },
+            })
+        );
+
+        // A second import that resolves to the same committed directory name conflicts.
+        let conflict = app
+            .clone()
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("SKILL.md", manifest)],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        assert_contract_error(&response_json(conflict).await, "skill_folder_conflict");
+
+        // An upload without a manifest is unprocessable.
+        let invalid = app
+            .oneshot(multipart_request(
+                "/api/skills/import",
+                &[("refs/util.py", b"noop".as_slice())],
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_contract_error(&response_json(invalid).await, "skill_manifest_missing");
+    }
+
+    /// Builds one multipart upload request whose file parts carry their relative path as the filename.
+    fn multipart_request(uri: &str, parts: &[(&str, &[u8])]) -> Request<Body> {
+        let boundary = "ORASKILLBOUNDARY";
+        let mut body = Vec::new();
+        for (filename, bytes) in parts {
+            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            body.extend_from_slice(
+                format!(
+                    "Content-Disposition: form-data; name=\"files\"; filename=\"{filename}\"\r\n"
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+            body.extend_from_slice(bytes);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+        Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap_or_else(|error| panic!("failed to build request: {error}"))
     }
 
     /// Sends one JSON request to the router under test.

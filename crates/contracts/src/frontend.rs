@@ -57,6 +57,7 @@ impl FrontendEndpoint {
     pub fn query_params(&self) -> &'static [FrontendQueryParam] {
         match self.operation_name {
             "listDirectory" => FILE_SYSTEM_DIRECTORY_QUERY_PARAMS,
+            "getTaskDiff" => TASK_DIFF_QUERY_PARAMS,
             _ => NO_QUERY_PARAMS,
         }
     }
@@ -64,7 +65,7 @@ impl FrontendEndpoint {
     /// Returns the transport mode explicitly owned by the Rust endpoint catalog.
     pub fn response_mode(&self) -> FrontendResponseMode {
         match self.operation_name {
-            "loadSession" | "promptSession" => FrontendResponseMode::Stream,
+            "loadSession" | "promptSession" | "watchWorkspace" => FrontendResponseMode::Stream,
             _ => FrontendResponseMode::Unary,
         }
     }
@@ -72,10 +73,20 @@ impl FrontendEndpoint {
 
 pub const PROJECTS_PATH: &str = "/api/projects";
 pub const PROJECT_PATH: &str = "/api/projects/{projectId}";
+pub const PROJECT_BRANCHES_PATH: &str = "/api/projects/{projectId}/branches";
 pub const PROJECT_WORK_CONTEXT_OPEN_PATH: &str = "/api/project-work-contexts/open";
 pub const PROJECT_WORK_CONTEXT_RENEW_PATH: &str = "/api/project-work-contexts/renew";
 pub const TASKS_PATH: &str = "/api/tasks";
 pub const TASK_PATH: &str = "/api/tasks/{taskId}";
+pub const TASK_WORKSPACE_PATH: &str = "/api/tasks/{taskId}/workspace";
+pub const TASK_DIFF_PATH: &str = "/api/tasks/{taskId}/diff";
+pub const TASK_COMMIT_PATH: &str = "/api/tasks/{taskId}/git/commit";
+pub const TASK_PUSH_PATH: &str = "/api/tasks/{taskId}/git/push";
+pub const TASK_DIFF_COMMENTS_PATH: &str = "/api/tasks/{taskId}/diff/comments";
+pub const TASK_DIFF_COMMENT_REPLIES_PATH: &str =
+    "/api/tasks/{taskId}/diff/comments/{commentId}/replies";
+pub const TASK_DIFF_COMMENT_STATUS_PATH: &str =
+    "/api/tasks/{taskId}/diff/comments/{commentId}/status";
 pub const SESSIONS_PATH: &str = "/api/sessions";
 pub const SESSION_PATH: &str = "/api/sessions/{sessionId}";
 pub const SESSION_LOAD_PATH: &str = "/api/sessions/{sessionId}/load";
@@ -84,13 +95,21 @@ pub const SESSION_PERMISSION_RESPONSE_PATH: &str = "/api/sessions/{sessionId}/pe
 pub const SESSION_STOP_PATH: &str = "/api/sessions/{sessionId}/stop";
 pub const SESSION_SWITCH_AGENT_PATH: &str = "/api/sessions/{sessionId}/agent";
 pub const SESSION_RESUME_HISTORY_PATH: &str = "/api/sessions/{sessionId}/history/resume";
-pub const AGENT_MODELS_PATH: &str = "/api/agent-models";
 pub const AGENT_RUNTIME_STATUS_PATH: &str = "/api/agent-runtime/status";
+pub const SESSION_WARM_PATH: &str = "/api/sessions/warm";
+pub const SESSION_CONFIG_PATH: &str = "/api/sessions/{sessionId}/config";
+pub const SESSION_ATTACH_PATH: &str = "/api/sessions/{sessionId}/attach";
 pub const SKILLS_PATH: &str = "/api/skills";
 pub const SKILL_PATH: &str = "/api/skills/{skillId}";
+/// Uploads a local skill folder as a multipart request that the backend commits atomically.
+pub const SKILL_IMPORT_PATH: &str = "/api/skills/import";
 pub const AGENTS_PATH: &str = "/api/agents";
 pub const AGENT_PATH: &str = "/api/agents/{agentId}";
 pub const FILE_SYSTEM_DIRECTORY_PATH: &str = "/api/file-system/directory";
+pub const WORKSPACE_DIRECTORY_PATH: &str = "/api/tasks/{taskId}/files/list";
+pub const WORKSPACE_FILE_PATH: &str = "/api/tasks/{taskId}/files/read";
+pub const WORKSPACE_SEARCH_PATH: &str = "/api/tasks/{taskId}/files/search";
+pub const WORKSPACE_WATCH_PATH: &str = "/api/tasks/{taskId}/files/watch";
 pub const GIT_IDENTITY_PATH: &str = "/api/git/identity";
 
 const PROJECT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
@@ -100,6 +119,10 @@ const PROJECT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
 const TASK_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "task_id",
     wire_name: "taskId",
+};
+const COMMENT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
+    rust_field_name: "comment_id",
+    wire_name: "commentId",
 };
 const SESSION_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "session_id",
@@ -117,6 +140,10 @@ const FILE_SYSTEM_DIRECTORY_PATH_QUERY_PARAM: FrontendQueryParam = FrontendQuery
     rust_field_name: "path",
     wire_name: "path",
 };
+const TASK_DIFF_SCOPE_QUERY_PARAM: FrontendQueryParam = FrontendQueryParam {
+    rust_field_name: "scope",
+    wire_name: "scope",
+};
 
 const PROJECT_NAMESPACE: &str = "project";
 const PROJECT_WORK_CONTEXT_NAMESPACE: &str = "projectWorkContext";
@@ -130,12 +157,14 @@ const GIT_NAMESPACE: &str = "gitIdentity";
 
 const PROJECT_PATH_PARAMS: &[FrontendPathParam] = &[PROJECT_ID_PATH_PARAM];
 const TASK_PATH_PARAMS: &[FrontendPathParam] = &[TASK_ID_PATH_PARAM];
+const TASK_COMMENT_PATH_PARAMS: &[FrontendPathParam] = &[TASK_ID_PATH_PARAM, COMMENT_ID_PATH_PARAM];
 const SESSION_PATH_PARAMS: &[FrontendPathParam] = &[SESSION_ID_PATH_PARAM];
 const SKILL_PATH_PARAMS: &[FrontendPathParam] = &[SKILL_ID_PATH_PARAM];
 const AGENT_PATH_PARAMS: &[FrontendPathParam] = &[AGENT_ID_PATH_PARAM];
 const NO_PATH_PARAMS: &[FrontendPathParam] = &[];
 const FILE_SYSTEM_DIRECTORY_QUERY_PARAMS: &[FrontendQueryParam] =
     &[FILE_SYSTEM_DIRECTORY_PATH_QUERY_PARAM];
+const TASK_DIFF_QUERY_PARAMS: &[FrontendQueryParam] = &[TASK_DIFF_SCOPE_QUERY_PARAM];
 const NO_QUERY_PARAMS: &[FrontendQueryParam] = &[];
 
 const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
@@ -173,6 +202,17 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "ListProjectsRequest",
         response_type: "ListProjectsResponse",
         path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "listProjectBranches",
+        namespace: PROJECT_NAMESPACE,
+        member_name: "listBranches",
+        method: FrontendHttpMethod::Get,
+        path_template: PROJECT_BRANCHES_PATH,
+        request_type: "ListProjectBranchesRequest",
+        response_type: "ListProjectBranchesResponse",
+        path_params: PROJECT_PATH_PARAMS,
         has_json_body: false,
     },
     FrontendEndpoint {
@@ -284,14 +324,124 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     // session
     // =============================================================================
     FrontendEndpoint {
-        operation_name: "createSession",
-        namespace: SESSION_NAMESPACE,
-        member_name: "create",
+        operation_name: "getTaskWorkspace",
+        namespace: TASK_NAMESPACE,
+        member_name: "getWorkspace",
+        method: FrontendHttpMethod::Get,
+        path_template: TASK_WORKSPACE_PATH,
+        request_type: "GetTaskWorkspaceRequest",
+        response_type: "GetTaskWorkspaceResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "getTaskDiff",
+        namespace: TASK_NAMESPACE,
+        member_name: "getDiff",
+        method: FrontendHttpMethod::Get,
+        path_template: TASK_DIFF_PATH,
+        request_type: "GetTaskDiffRequest",
+        response_type: "GetTaskDiffResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "commitTaskChanges",
+        namespace: TASK_NAMESPACE,
+        member_name: "commitChanges",
         method: FrontendHttpMethod::Post,
-        path_template: SESSIONS_PATH,
-        request_type: "CreateSessionRequest",
-        response_type: "CreateSessionResponse",
+        path_template: TASK_COMMIT_PATH,
+        request_type: "CommitTaskChangesRequest",
+        response_type: "CommitTaskChangesResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "pushTaskBranch",
+        namespace: TASK_NAMESPACE,
+        member_name: "pushBranch",
+        method: FrontendHttpMethod::Post,
+        path_template: TASK_PUSH_PATH,
+        request_type: "PushTaskBranchRequest",
+        response_type: "PushTaskBranchResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "listTaskDiffComments",
+        namespace: TASK_NAMESPACE,
+        member_name: "listDiffComments",
+        method: FrontendHttpMethod::Get,
+        path_template: TASK_DIFF_COMMENTS_PATH,
+        request_type: "ListTaskDiffCommentsRequest",
+        response_type: "ListTaskDiffCommentsResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "createTaskDiffComment",
+        namespace: TASK_NAMESPACE,
+        member_name: "createDiffComment",
+        method: FrontendHttpMethod::Post,
+        path_template: TASK_DIFF_COMMENTS_PATH,
+        request_type: "CreateTaskDiffCommentRequest",
+        response_type: "CreateTaskDiffCommentResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "replyTaskDiffComment",
+        namespace: TASK_NAMESPACE,
+        member_name: "replyDiffComment",
+        method: FrontendHttpMethod::Post,
+        path_template: TASK_DIFF_COMMENT_REPLIES_PATH,
+        request_type: "ReplyTaskDiffCommentRequest",
+        response_type: "ReplyTaskDiffCommentResponse",
+        path_params: TASK_COMMENT_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "setTaskDiffCommentStatus",
+        namespace: TASK_NAMESPACE,
+        member_name: "setDiffCommentStatus",
+        method: FrontendHttpMethod::Put,
+        path_template: TASK_DIFF_COMMENT_STATUS_PATH,
+        request_type: "SetTaskDiffCommentStatusRequest",
+        response_type: "SetTaskDiffCommentStatusResponse",
+        path_params: TASK_COMMENT_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "warmSession",
+        namespace: SESSION_NAMESPACE,
+        member_name: "warm",
+        method: FrontendHttpMethod::Post,
+        path_template: SESSION_WARM_PATH,
+        request_type: "WarmSessionRequest",
+        response_type: "WarmSessionResponse",
         path_params: NO_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "setSessionConfig",
+        namespace: SESSION_NAMESPACE,
+        member_name: "setConfig",
+        method: FrontendHttpMethod::Post,
+        path_template: SESSION_CONFIG_PATH,
+        request_type: "SetSessionConfigRequest",
+        response_type: "SetSessionConfigResponse",
+        path_params: SESSION_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "attachSession",
+        namespace: SESSION_NAMESPACE,
+        member_name: "attach",
+        method: FrontendHttpMethod::Post,
+        path_template: SESSION_ATTACH_PATH,
+        request_type: "AttachSessionRequest",
+        response_type: "AttachSessionResponse",
+        path_params: SESSION_PATH_PARAMS,
         has_json_body: true,
     },
     FrontendEndpoint {
@@ -396,17 +546,6 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     // =============================================================================
     // agentRuntime
     // =============================================================================
-    FrontendEndpoint {
-        operation_name: "listAgentModels",
-        namespace: AGENT_RUNTIME_NAMESPACE,
-        member_name: "listModels",
-        method: FrontendHttpMethod::Get,
-        path_template: AGENT_MODELS_PATH,
-        request_type: "ListAgentModelsRequest",
-        response_type: "ListAgentModelsResponse",
-        path_params: NO_PATH_PARAMS,
-        has_json_body: false,
-    },
     FrontendEndpoint {
         operation_name: "getAgentRuntimeStatus",
         namespace: AGENT_RUNTIME_NAMESPACE,
@@ -546,6 +685,50 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "ListDirectoryRequest",
         response_type: "ListDirectoryResponse",
         path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "listWorkspaceDirectory",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "listWorkspaceDirectory",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_DIRECTORY_PATH,
+        request_type: "ListWorkspaceDirectoryRequest",
+        response_type: "ListWorkspaceDirectoryResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "readWorkspaceFile",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "readWorkspaceFile",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_FILE_PATH,
+        request_type: "ReadWorkspaceFileRequest",
+        response_type: "ReadWorkspaceFileResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "searchWorkspace",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "searchWorkspace",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_SEARCH_PATH,
+        request_type: "SearchWorkspaceRequest",
+        response_type: "SearchWorkspaceResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "watchWorkspace",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "watchWorkspace",
+        method: FrontendHttpMethod::Get,
+        path_template: WORKSPACE_WATCH_PATH,
+        request_type: "WatchWorkspaceRequest",
+        response_type: "WorkspaceFileEventBatch",
+        path_params: TASK_PATH_PARAMS,
         has_json_body: false,
     },
     // =============================================================================

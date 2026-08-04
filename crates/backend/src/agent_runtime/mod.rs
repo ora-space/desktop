@@ -1,32 +1,38 @@
 mod actor;
 mod connection;
 mod history;
-mod models;
 mod routing;
 mod stream;
 mod support;
+mod warm;
+mod warm_pool;
 
 use history::{RecordOutcome, SessionRecorder};
 pub use stream::SessionEventStream;
 use support::*;
 
 use crate::clock::SystemClock;
-use crate::task::resolve_task_cwd;
+use crate::task::{resolve_project_cwd, resolve_task_cwd};
 use crate::{BackendError, ErrorClassification};
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
-use ora_application::{Clock, SessionIdGenerator, SessionRepository, UuidSessionIdGenerator};
+use ora_application::{Clock, SessionRepository};
 use ora_contracts::acp::content::ContentBlock;
 use ora_contracts::acp::session::SessionUpdate;
+use ora_contracts::acp::session_config_options::{SessionConfigId, SessionConfigOptionValue};
 use ora_contracts::acp::slash_command::AvailableCommand;
 use ora_contracts::{
-    CreateSessionRequest, CreateSessionResponse, DeleteSessionResponse, LoadSessionEvent,
+    AttachSessionRequest, AttachSessionResponse, DeleteSessionResponse, LoadSessionEvent,
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
     RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse,
-    StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
+    SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse,
+    SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse,
+    WarmSessionTarget,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
-use ora_domain::{AgentCli, AuditFields, HistoryState, Session, SessionId, SessionStatus, TaskId};
+use ora_domain::{
+    AgentCli, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus, TaskId,
+};
 use ora_history::{binding_needs_handoff, read_session_history};
 use ora_logging::{ora_debug, ora_warn};
 use routing::SessionChannel;
@@ -36,6 +42,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+use warm::WarmSessions;
+use warm_pool::WarmKey;
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -55,8 +63,8 @@ struct ManagerInner {
     lifecycle: tokio::sync::Mutex<()>,
     next_operation_id: AtomicU64,
     connections: ConnectionSupervisors,
-    home_directory: PathBuf,
     sessions_root: PathBuf,
+    warm: WarmSessions,
     clock: SystemClock,
 }
 
@@ -135,24 +143,43 @@ impl AgentRuntimeManager {
         clock: SystemClock,
     ) -> Result<Self, BackendError> {
         reconcile_running_sessions(&pool, clock)?;
-        let connections = ConnectionSupervisors::start(pool.clone(), home_directory.clone(), clock);
+        let connections = ConnectionSupervisors::start(pool.clone(), home_directory, clock);
         Ok(Self {
             inner: Arc::new(ManagerInner {
                 pool,
                 actors: RwLock::new(HashMap::new()),
                 lifecycle: tokio::sync::Mutex::new(()),
                 next_operation_id: AtomicU64::new(1),
+                warm: WarmSessions::new(connections.clone(), clock),
                 connections,
-                home_directory,
                 sessions_root,
                 clock,
             }),
         })
     }
 
-    /// Lists model identifiers from every CLI whose discovery command succeeds.
-    pub(crate) async fn list_agent_models(&self) -> ora_contracts::ListAgentModelsResponse {
-        models::list_agent_models(&self.inner.home_directory).await
+    /// Returns the warm provider session backing one chat surface.
+    ///
+    /// This deliberately avoids the lifecycle lock. Opening a chat surface is a
+    /// navigation-frequency operation now that every surface warms a session,
+    /// and serializing it against prompts would make browsing the workspace stall
+    /// unrelated conversations.
+    pub(crate) async fn warm_session(
+        &self,
+        request: WarmSessionRequest,
+    ) -> Result<WarmSessionResponse, BackendError> {
+        let agent_cli = domain_agent_cli(request.agent_cli);
+        let cwd = self.resolve_warm_cwd(&request.target)?;
+        let key = WarmKey {
+            target: request.target,
+            agent_cli,
+            client_id: request.client_id,
+        };
+        let (session_id, config_options) = self.inner.warm.warm(key, cwd).await?;
+        Ok(WarmSessionResponse {
+            session_id: session_id.to_string(),
+            config_options,
+        })
     }
 
     /// Reports the live ACP handshake status of every application-scoped CLI runtime.
@@ -172,54 +199,118 @@ impl AgentRuntimeManager {
         }
     }
 
-    /// Creates a session over the selected application-scoped CLI connection.
-    pub(crate) async fn create_session(
+    /// Discards the warm sessions belonging to chat surfaces that were deleted.
+    ///
+    /// Called when a Task or project goes away. Those surfaces can never be
+    /// requested again, so this is the only point at which their provider
+    /// sessions are returned to the agent.
+    pub(crate) async fn discard_warm_sessions(&self, targets: &[WarmSessionTarget]) {
+        self.inner.warm.discard(targets).await;
+    }
+
+    /// Applies one configuration option to a warm or persisted session.
+    pub(crate) async fn set_session_config(
         &self,
-        request: CreateSessionRequest,
-    ) -> Result<CreateSessionResponse, BackendError> {
-        let _lifecycle = self.inner.lifecycle.lock().await;
-        let agent_cli = domain_agent_cli(request.agent_cli);
-        let cwd = resolve_task_cwd(&self.inner.pool, &TaskId::new(request.task_id.clone()))?;
-        let provider = self.open_provider_session(agent_cli, &cwd).await?;
-        let now = self.inner.clock.now_timestamp_millis();
-        let session = Session::new(
-            UuidSessionIdGenerator::new().generate_session_id(),
-            TaskId::new(request.task_id),
-            agent_cli,
-            provider.agent_session_id,
-            SessionStatus::Running,
-            AuditFields::new(now, now, false),
-        );
-        SqliteSessionRepository::new(self.inner.pool.clone())
-            .create_session(session.clone())
-            .map_err(|source| {
-                BackendError::internal("failed to persist agent CLI session", source)
-            })?;
-        ora_debug!(
-            session_id = %session.id,
-            agent_session_id = %session.agent_session_id,
-            "session created",
-        );
-        // The header opens the file this conversation owns for the rest of its
-        // life, so it is written before the session can be prompted.
-        let mut opened = self.open_recorder(&session)?;
-        let outcome = match opened.failure.take() {
-            Some(reason) => RecordOutcome::JustFailed { reason },
-            None => opened.recorder.record_meta(&session, &cwd),
-        };
-        let session = self.settle_record(session, outcome);
-        self.insert_actor(
-            session.clone(),
-            cwd,
-            provider.supervisor,
-            Some(provider.channel),
-            opened.recorder,
-            /*handoff_pending*/ false,
-        )?;
-        Ok(CreateSessionResponse {
-            session: contract_session(session),
-            available_commands: provider.available_commands,
-        })
+        request: SetSessionConfigRequest,
+    ) -> Result<SetSessionConfigResponse, BackendError> {
+        let session_id = SessionId::new(request.session_id.as_str());
+        let config_id = SessionConfigId::new(request.config_id);
+        let value = SessionConfigOptionValue::value_id(request.value);
+        if let Some(result) = self
+            .inner
+            .warm
+            .set_config(&session_id, config_id.clone(), value.clone())
+            .await
+        {
+            return result.map(|config_options| SetSessionConfigResponse { config_options });
+        }
+        // Not warm, so this is a persisted session whose actor owns its stream;
+        // option changes are addressed by provider session id and do not need to
+        // queue behind whatever that actor is currently doing.
+        let session = self.find_session(&request.session_id)?;
+        let config_options = warm::request_config_option(
+            &self.inner.connections,
+            session.agent_cli,
+            &session.agent_session_id,
+            &config_id,
+            &value,
+        )
+        .await?;
+        Ok(SetSessionConfigResponse { config_options })
+    }
+
+    /// Persists one warm session against the Task that now owns it.
+    ///
+    /// `warm.take` only reserves the warm session; it stays in the pool until
+    /// `commit` below, which runs on the one path where the session is durably
+    /// persisted. Every other way out of this function — an error, or a caller
+    /// dropped mid-await — drops the reservation instead, which returns the
+    /// entry to the pool rather than stranding the client's id or pinning the
+    /// provider session behind it.
+    pub(crate) async fn attach_session(
+        &self,
+        request: AttachSessionRequest,
+    ) -> Result<AttachSessionResponse, BackendError> {
+        let session_id = SessionId::new(request.session_id.as_str());
+        let task_id = TaskId::new(request.task_id);
+        let cwd = resolve_task_cwd(&self.inner.pool, &task_id)?;
+        // The provider handshake a rebuild may need runs before the lifecycle
+        // lock is taken, so attaching never blocks other sessions on the network.
+        let reservation = self.inner.warm.take(&session_id, &cwd).await?;
+        let attachment = reservation.attachment();
+        let agent_cli = attachment.agent_cli;
+        let agent_session_id = attachment.agent_session_id.clone();
+        let session_cwd = attachment.cwd.clone();
+        let available_commands = attachment.available_commands.clone();
+
+        let response = async {
+            let _lifecycle = self.inner.lifecycle.lock().await;
+            let supervisor = self.inner.connections.for_agent(agent_cli);
+            let channel = supervisor.open_session_channel(&agent_session_id)?;
+            let now = self.inner.clock.now_timestamp_millis();
+            let session = Session::new(
+                session_id.clone(),
+                task_id,
+                agent_cli,
+                agent_session_id,
+                SessionStatus::Running,
+                AuditFields::new(now, now, false),
+            );
+            SqliteSessionRepository::new(self.inner.pool.clone())
+                .create_session(session.clone())
+                .map_err(|source| {
+                    BackendError::internal("failed to persist agent CLI session", source)
+                })?;
+            ora_debug!(
+                session_id = %session.id,
+                agent_session_id = %session.agent_session_id,
+                "warm session attached",
+            );
+            // The header opens the file this conversation owns for the rest of its
+            // life, so it is written before the session can be prompted.
+            let mut opened = self.open_recorder(&session)?;
+            let outcome = match opened.failure.take() {
+                Some(reason) => RecordOutcome::JustFailed { reason },
+                None => opened.recorder.record_meta(&session, &session_cwd),
+            };
+            let session = self.settle_record(session, outcome);
+            self.insert_actor(
+                session.clone(),
+                session_cwd,
+                supervisor,
+                Some(channel),
+                opened.recorder,
+                /*handoff_pending*/ false,
+            )?;
+            Ok::<_, BackendError>(AttachSessionResponse {
+                session: contract_session(session),
+                available_commands,
+            })
+        }
+        .await?;
+
+        reservation.commit();
+        Ok(response)
     }
 
     /// Moves one existing conversation onto a different agent CLI.
@@ -252,14 +343,57 @@ impl AgentRuntimeManager {
         // context is not reusable afterwards: work done on the new agent would be
         // missing from it, and switching back re-injects the transcript instead.
         let previous = session.agent_cli;
-        if let Some(handle) = self.lookup_actor(&session.id)? {
+        let (session, recorder) = match self
+            .rebind_to_provider(&session.id, previous, target, &provider)
+            .await
+        {
+            Ok(rebound) => rebound,
+            Err(error) => {
+                // `session/new` already succeeded, so the CLI is holding a session
+                // Ora has just decided not to use. Nothing else will ever close it:
+                // dropping the channel unregisters routing only, and no Ora row
+                // names this provider session for a later attempt to find.
+                close_provider_session(&provider).await;
+                return Err(error);
+            }
+        };
+        self.insert_actor(
+            session.clone(),
+            cwd,
+            provider.supervisor,
+            Some(provider.channel),
+            recorder,
+            // The new agent knows nothing; the next prompt carries the transcript.
+            /*handoff_pending*/
+            true,
+        )?;
+        Ok(SwitchSessionAgentResponse {
+            session: contract_session(session),
+            available_commands: provider.available_commands,
+        })
+    }
+
+    /// Moves one stored session onto a provider binding that already exists.
+    ///
+    /// Separate from `switch_agent` because every step here can fail *after*
+    /// `session/new` succeeded, and each of those failures owes the provider a
+    /// `session/close`. Keeping them in one fallible region gives the caller a
+    /// single place to release the binding instead of a release per `?`.
+    async fn rebind_to_provider(
+        &self,
+        session_id: &SessionId,
+        previous: AgentCli,
+        target: AgentCli,
+        provider: &ProviderSession,
+    ) -> Result<(Session, SessionRecorder), BackendError> {
+        if let Some(handle) = self.lookup_actor(session_id)? {
             self.stop_actor(handle).await?;
         }
-        self.actors_write()?.remove(&session.id);
+        self.actors_write()?.remove(session_id);
 
         let now = self.inner.clock.now_timestamp_millis();
         let session = self
-            .find_session(&request.session_id)?
+            .find_session(session_id.as_ref())?
             .with_binding(target, provider.agent_session_id.clone(), now)
             .with_status(SessionStatus::Running, now);
         SqliteSessionRepository::new(self.inner.pool.clone())
@@ -275,27 +409,13 @@ impl AgentRuntimeManager {
         let mut opened = self.open_recorder(&session)?;
         let outcome = match opened.failure.take() {
             Some(reason) => RecordOutcome::JustFailed { reason },
-            None => {
-                opened
-                    .recorder
-                    .record_agent_switch(previous, target, provider.agent_session_id)
-            }
+            None => opened.recorder.record_agent_switch(
+                previous,
+                target,
+                provider.agent_session_id.clone(),
+            ),
         };
-        let session = self.settle_record(session, outcome);
-        self.insert_actor(
-            session.clone(),
-            cwd,
-            provider.supervisor,
-            Some(provider.channel),
-            opened.recorder,
-            // The new agent knows nothing; the next prompt carries the transcript.
-            /*handoff_pending*/
-            true,
-        )?;
-        Ok(SwitchSessionAgentResponse {
-            session: contract_session(session),
-            available_commands: provider.available_commands,
-        })
+        Ok((self.settle_record(session, outcome), opened.recorder))
     }
 
     /// Returns a session whose history writes failed to a writable state.
@@ -447,6 +567,18 @@ impl AgentRuntimeManager {
             Err(error) => {
                 ora_warn!(error = %error, "failed to persist degraded session history state");
                 degraded
+            }
+        }
+    }
+
+    /// Derives the directory a warm session must be created against.
+    fn resolve_warm_cwd(&self, target: &WarmSessionTarget) -> Result<PathBuf, BackendError> {
+        match target {
+            WarmSessionTarget::Task { task_id } => {
+                resolve_task_cwd(&self.inner.pool, &TaskId::new(task_id.as_str()))
+            }
+            WarmSessionTarget::ProjectRoot { project_id } => {
+                resolve_project_cwd(&self.inner.pool, &ProjectId::new(project_id.as_str()))
             }
         }
     }
@@ -701,15 +833,28 @@ impl AgentRuntimeManager {
     }
 }
 
-/// Maps the transport CLI identity onto the stable persisted one.
-fn domain_agent_cli(agent_cli: ora_contracts::AgentCli) -> AgentCli {
-    match agent_cli {
-        ora_contracts::AgentCli::OpenCode => AgentCli::OpenCode,
-        ora_contracts::AgentCli::Nga => AgentCli::Nga,
-        ora_contracts::AgentCli::CodeAgentCli => AgentCli::CodeAgentCli,
-        ora_contracts::AgentCli::Claude => AgentCli::Claude,
-        ora_contracts::AgentCli::Codex => AgentCli::Codex,
+/// Releases a provider session Ora created and then decided not to keep.
+///
+/// The actor has its own detach for a binding it owns; this is the counterpart
+/// for one that never reached an actor, so it reads the connection from the
+/// channel rather than from a session row that does not name it yet.
+async fn close_provider_session(provider: &ProviderSession) {
+    use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
+    use ora_contracts::acp::session::{CloseSessionRequest, CloseSessionResponse};
+    use tokio::time::timeout;
+
+    let connection = &provider.channel.connection;
+    if !connection.close_session_supported {
+        return;
     }
+    let _ = timeout(
+        CANCELLATION_GRACE,
+        connection.client.request::<_, CloseSessionResponse>(
+            AGENT_METHOD_NAMES.session_close,
+            &CloseSessionRequest::new(provider.agent_session_id.clone()),
+        ),
+    )
+    .await;
 }
 
 /// Builds the refusal returned while a session's history cannot be extended.

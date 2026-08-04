@@ -6,9 +6,16 @@ use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
+use crate::task_diff::TaskDiffApi;
+use ora_application::{
+    ApplicationError, LocalSkillPackageStore, ReconcileSkillStorageHandler, UploadedSkillFile,
+};
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
+use ora_db::{
+    DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteSkillRepository,
+    default_migration_catalog,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -38,6 +45,8 @@ pub enum BackendBootstrapError {
     },
     #[error("failed to bootstrap backend database")]
     Database(#[source] ora_db::DatabaseError),
+    #[error("failed to reconcile skill storage")]
+    SkillStorage(#[source] ApplicationError),
     #[error("failed to initialize agent runtime")]
     AgentRuntime(#[source] BackendError),
 }
@@ -49,6 +58,7 @@ pub struct Backend {
     worktree_root: Arc<RwLock<PathBuf>>,
     project: Arc<ProjectApi>,
     task: Arc<TaskApi>,
+    task_diff: Arc<TaskDiffApi>,
     session: Arc<SessionApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     skill: Arc<SkillApi>,
@@ -79,6 +89,7 @@ impl Backend {
             clock,
         )
         .map_err(BackendBootstrapError::AgentRuntime)?;
+        let skill_store = prepare_skill_storage(&paths.database_path, &pool)?;
 
         Ok(Self {
             project: Arc::new(ProjectApi::new(pool.clone(), sessions_root.clone(), clock)),
@@ -88,9 +99,10 @@ impl Backend {
                 sessions_root,
                 clock,
             )),
+            task_diff: Arc::new(TaskDiffApi::new(pool.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime: Arc::new(agent_runtime),
-            skill: Arc::new(SkillApi::new(pool.clone(), clock)),
+            skill: Arc::new(SkillApi::new(pool.clone(), clock, skill_store)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             pool,
             worktree_root,
@@ -149,6 +161,15 @@ impl Backend {
     ) -> Result<ListProjectsResponse, BackendError> {
         self.project.list(request).map_err(BackendError::from)
     }
+    /// Lists selectable branches for one project repository.
+    pub fn list_project_branches(
+        &self,
+        request: ListProjectBranchesRequest,
+    ) -> Result<ListProjectBranchesResponse, BackendError> {
+        self.project
+            .list_branches(request)
+            .map_err(BackendError::from)
+    }
     /// Updates one project through the shared application composition.
     pub fn update_project(
         &self,
@@ -157,11 +178,36 @@ impl Backend {
         self.project.update(request).map_err(BackendError::from)
     }
     /// Deletes one project through the shared application composition.
-    pub fn delete_project(
+    ///
+    /// The delete cascades to the project's Tasks, so every chat surface beneath
+    /// it dies along with the project root's and their warm sessions are
+    /// discarded together. The Task identifiers are collected first because the
+    /// delete is what makes those rows invisible; both queries share one blocking
+    /// hop so that ordering cannot be broken by a scheduling decision.
+    pub async fn delete_project(
         &self,
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {
-        self.project.delete(request)
+        let project = self.project.clone();
+        let pool = self.pool.clone();
+        let project_id = ora_domain::ProjectId::new(request.project_id.as_str());
+        let (response, task_ids) = spawn_repository_work(move || {
+            let task_ids = crate::task::task_ids_in_project(&pool, &project_id);
+            project.delete(request).map(|response| (response, task_ids))
+        })
+        .await?;
+
+        let mut targets: Vec<WarmSessionTarget> = task_ids
+            .into_iter()
+            .map(|task_id| WarmSessionTarget::Task {
+                task_id: task_id.to_string(),
+            })
+            .collect();
+        targets.push(WarmSessionTarget::ProjectRoot {
+            project_id: response.project_id.clone(),
+        });
+        self.agent_runtime.discard_warm_sessions(&targets).await;
+        Ok(response)
     }
 
     // =============================================================================
@@ -191,23 +237,109 @@ impl Backend {
         self.task.update(request).map_err(BackendError::from)
     }
     /// Deletes one task through the shared application composition.
-    pub fn delete_task(
+    ///
+    /// Discards the Task's warm session on the way out. Nothing else would: the
+    /// target is gone, so no request can name it again, and the pool's bounds
+    /// only reclaim an entry once enough new surfaces are opened to displace it.
+    pub async fn delete_task(
         &self,
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
-        self.task.delete(request)
+        let task = self.task.clone();
+        let response = spawn_repository_work(move || task.delete(request)).await?;
+        self.agent_runtime
+            .discard_warm_sessions(&[WarmSessionTarget::Task {
+                task_id: response.task_id.clone(),
+            }])
+            .await;
+        Ok(response)
+    }
+
+    // =============================================================================
+    // taskDiff
+    // =============================================================================
+    /// Returns the current Git snapshot for the task directory used by its agent session.
+    pub fn get_task_diff(
+        &self,
+        request: GetTaskDiffRequest,
+    ) -> Result<GetTaskDiffResponse, BackendError> {
+        self.task_diff.get_diff(request)
+    }
+
+    /// Commits every current change in one isolated task worktree.
+    pub fn commit_task_changes(
+        &self,
+        request: CommitTaskChangesRequest,
+    ) -> Result<CommitTaskChangesResponse, BackendError> {
+        self.task_diff.commit_changes(request)
+    }
+
+    /// Pushes the verified branch owned by one isolated task worktree.
+    pub fn push_task_branch(
+        &self,
+        request: PushTaskBranchRequest,
+    ) -> Result<PushTaskBranchResponse, BackendError> {
+        self.task_diff.push_branch(request)
+    }
+
+    /// Lists every persisted review discussion for one task.
+    pub fn list_task_diff_comments(
+        &self,
+        request: ListTaskDiffCommentsRequest,
+    ) -> Result<ListTaskDiffCommentsResponse, BackendError> {
+        self.task_diff.list_comments(request)
+    }
+
+    /// Creates one line-anchored task diff discussion.
+    pub fn create_task_diff_comment(
+        &self,
+        request: CreateTaskDiffCommentRequest,
+    ) -> Result<CreateTaskDiffCommentResponse, BackendError> {
+        self.task_diff.create_comment(request)
+    }
+
+    /// Adds one reply under an existing task diff discussion.
+    pub fn reply_task_diff_comment(
+        &self,
+        request: ReplyTaskDiffCommentRequest,
+    ) -> Result<ReplyTaskDiffCommentResponse, BackendError> {
+        self.task_diff.reply_comment(request)
+    }
+
+    /// Resolves or reopens one root task diff discussion.
+    pub fn set_task_diff_comment_status(
+        &self,
+        request: SetTaskDiffCommentStatusRequest,
+    ) -> Result<SetTaskDiffCommentStatusResponse, BackendError> {
+        self.task_diff.set_comment_status(request)
     }
 
     // =============================================================================
     // session
     // =============================================================================
 
-    /// Creates one session through the shared application composition.
-    pub async fn create_session(
+    /// Returns the warm provider session backing one chat surface.
+    pub async fn warm_session(
         &self,
-        request: CreateSessionRequest,
-    ) -> Result<CreateSessionResponse, BackendError> {
-        self.agent_runtime.create_session(request).await
+        request: WarmSessionRequest,
+    ) -> Result<WarmSessionResponse, BackendError> {
+        self.agent_runtime.warm_session(request).await
+    }
+
+    /// Applies one configuration option to a warm or persisted session.
+    pub async fn set_session_config(
+        &self,
+        request: SetSessionConfigRequest,
+    ) -> Result<SetSessionConfigResponse, BackendError> {
+        self.agent_runtime.set_session_config(request).await
+    }
+
+    /// Persists one warm session against the Task that now owns it.
+    pub async fn attach_session(
+        &self,
+        request: AttachSessionRequest,
+    ) -> Result<AttachSessionResponse, BackendError> {
+        self.agent_runtime.attach_session(request).await
     }
 
     /// Gets one session through the shared application composition.
@@ -284,14 +416,6 @@ impl Backend {
     // agentRuntime
     // =============================================================================
 
-    /// Lists model identifiers grouped by each CLI that answers discovery successfully.
-    pub async fn list_agent_models(
-        &self,
-        _request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, BackendError> {
-        Ok(self.agent_runtime.list_agent_models().await)
-    }
-
     /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.
     pub fn get_agent_runtime_status(
         &self,
@@ -335,6 +459,13 @@ impl Backend {
         request: DeleteSkillRequest,
     ) -> Result<DeleteSkillResponse, BackendError> {
         self.skill.delete(request).map_err(BackendError::from)
+    }
+    /// Imports one uploaded skill folder atomically through the shared application composition.
+    pub fn import_skill(
+        &self,
+        files: Vec<UploadedSkillFile>,
+    ) -> Result<CreateSkillResponse, BackendError> {
+        self.skill.import(files).map_err(BackendError::from)
     }
 
     // =============================================================================
@@ -388,6 +519,56 @@ impl Backend {
     }
 }
 
+/// Creates the skill storage root, then reconciles it so startup begins from a clean layout.
+///
+/// Reconciliation runs while the backend is still opening so any crash-orphaned staging or
+/// promoted-but-uncommitted directory is gone before the first import can observe the filesystem.
+fn prepare_skill_storage(
+    database_path: &Path,
+    pool: &RepositoryPool,
+) -> Result<LocalSkillPackageStore, BackendBootstrapError> {
+    let skills_directory = skills_storage_dir(database_path);
+    ensure_directory(&skills_directory)?;
+    let store = LocalSkillPackageStore::new(skills_directory);
+
+    ReconcileSkillStorageHandler::new(store.clone(), SqliteSkillRepository::new(pool.clone()))
+        .handle()
+        .map_err(BackendBootstrapError::SkillStorage)?;
+
+    Ok(store)
+}
+
+/// Derives the `atoms/skills` root from the configured SQLite database location.
+///
+/// The database sits directly under the runtime data directory, so its parent is the data root
+/// that every derived path (worktrees, skills) hangs off of.
+fn skills_storage_dir(database_path: &Path) -> PathBuf {
+    database_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("atoms")
+        .join("skills")
+}
+
+/// Runs one blocking repository operation off the async runtime's worker threads.
+///
+/// The SQLite work behind a delete genuinely blocks: acquiring a pooled
+/// connection waits when every slot is taken, and a cascading delete opens an
+/// immediate transaction that parks on the busy timeout while another writer
+/// holds the reservation. Parking an async worker for that long starves every
+/// other request the runtime is serving, so the wait belongs on the blocking
+/// pool even though the caller is asynchronous for unrelated reasons.
+async fn spawn_repository_work<T>(
+    work: impl FnOnce() -> Result<T, BackendError> + Send + 'static,
+) -> Result<T, BackendError>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|source| BackendError::internal("repository operation did not complete", source))?
+}
+
 /// Creates one required runtime directory and preserves its exact failing path.
 fn ensure_directory(path: &Path) -> Result<(), BackendBootstrapError> {
     fs::create_dir_all(path).map_err(|source| BackendBootstrapError::DirectoryCreate {
@@ -413,8 +594,8 @@ mod tests {
     use tempfile::TempDir;
 
     /// Verifies the shared composition owns storage bootstrap and complete non-Git CRUD flows.
-    #[test]
-    fn opens_storage_and_serves_shared_crud_apis() {
+    #[tokio::test]
+    async fn opens_storage_and_serves_shared_crud_apis() {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let database_path = temporary.path().join("data").join("ora.sqlite3");
         let worktree_root = temporary.path().join("worktrees");
@@ -512,6 +693,7 @@ mod tests {
             .delete_project(DeleteProjectRequest {
                 project_id: project.id.clone(),
             })
+            .await
             .expect("delete project");
 
         let error = backend
@@ -524,8 +706,8 @@ mod tests {
     }
 
     /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.
-    #[test]
-    fn deletes_existing_task_after_worktree_root_changes() {
+    #[tokio::test]
+    async fn deletes_existing_task_after_worktree_root_changes() {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let repository_root = temporary.path().join("repository");
         initialize_repository(&repository_root);
@@ -550,6 +732,7 @@ mod tests {
                 title: "Move configuration".to_string(),
                 status: TaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .expect("create task")
             .task;
@@ -565,6 +748,7 @@ mod tests {
             .delete_task(DeleteTaskRequest {
                 task_id: task.id.clone(),
             })
+            .await
             .expect("delete task without Git mutation");
 
         assert!(original_worktree_path.exists());

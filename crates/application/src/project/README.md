@@ -6,12 +6,13 @@ This module owns the transport-independent project use cases and the shared `Clo
 
 - `CreateProjectHandler` assigns a new `ProjectId`, timestamps the domain entity, and persists it through `ProjectRepository`.
 - Get and list handlers return only repository-visible projects.
+- `ListProjectBranchesHandler` joins refreshed branch refs with project-owned task and worktree records so Ora-managed branches use task titles.
 - `UpdateProjectHandler` changes the project name while preserving its id, root path, creation timestamp, and deletion state.
 - Domain values are mapped to the shared project contract before leaving the application layer.
-- Repository and not-found failures are normalized as `ApplicationError` and accompanied by structured operational events.
+- Repository and not-found failures are normalized as `ApplicationError`; request lifecycle adapters own correlated completion events.
 
-The module does not inspect the project root, create Git repositories, manage worktrees, or delete project aggregates. Backend composition and the database cascade path own those responsibilities.
+The module does not execute Git commands, create Git repositories, manage worktrees, or delete project aggregates. Backend composition implements `BranchLister`, while the database cascade path owns project deletion.
 
-`ProjectRepository`, `ProjectIdGenerator`, and `Clock` keep persistence, identity, and time injectable. Implementations must preserve the visible-record and soft-delete semantics expected by the handlers.
+`ProjectRepository`, `BranchLister`, `ProjectIdGenerator`, and `Clock` keep persistence, Git inspection, identity, and time injectable. Implementations must preserve the visible-record, ref freshness, and soft-delete semantics expected by the handlers.
 
 See the [ora-application overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts.md).

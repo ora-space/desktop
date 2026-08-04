@@ -275,8 +275,11 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "DeleteProjectResponse"
         | "GetProjectRequest"
         | "GetProjectResponse"
+        | "ListProjectBranchesRequest"
+        | "ListProjectBranchesResponse"
         | "ListProjectsRequest"
         | "ListProjectsResponse"
+        | "ProjectBranch"
         | "UpdateProjectRequest"
         | "UpdateProjectResponse" => "project",
         // projectWorkContext
@@ -286,18 +289,49 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "RenewProjectWorkContextRequest"
         | "RenewProjectWorkContextResponse" => "project-work-context",
         // task
-        "CreateTaskRequest" | "CreateTaskResponse" | "DeleteTaskRequest" | "DeleteTaskResponse"
-        | "GetTaskRequest" | "GetTaskResponse" | "ListTasksRequest" | "ListTasksResponse"
-        | "UpdateTaskRequest" | "UpdateTaskResponse" => "task",
+        "CreateTaskRequest"
+        | "CreateTaskResponse"
+        | "DeleteTaskRequest"
+        | "DeleteTaskResponse"
+        | "GetTaskRequest"
+        | "GetTaskResponse"
+        | "GetTaskWorkspaceRequest"
+        | "GetTaskWorkspaceResponse"
+        | "ListTasksRequest"
+        | "ListTasksResponse"
+        | "TaskWorkspace"
+        | "UpdateTaskRequest"
+        | "UpdateTaskResponse" => "task",
+        // taskDiff
+        "CommitTaskChangesRequest"
+        | "CommitTaskChangesResponse"
+        | "CreateTaskDiffCommentRequest"
+        | "CreateTaskDiffCommentResponse"
+        | "GetTaskDiffRequest"
+        | "GetTaskDiffResponse"
+        | "ListTaskDiffCommentsRequest"
+        | "ListTaskDiffCommentsResponse"
+        | "PushTaskBranchRequest"
+        | "PushTaskBranchResponse"
+        | "ReplyTaskDiffCommentRequest"
+        | "ReplyTaskDiffCommentResponse"
+        | "SetTaskDiffCommentStatusRequest"
+        | "SetTaskDiffCommentStatusResponse"
+        | "TaskDiffScope" => "task_diff",
         // session
-        "CreateSessionRequest"
-        | "CreateSessionResponse"
+        "AttachSessionRequest"
+        | "AttachSessionResponse"
         | "DeleteSessionRequest"
         | "DeleteSessionResponse"
         | "GetAgentRuntimeStatusRequest"
         | "GetAgentRuntimeStatusResponse"
         | "GetSessionRequest"
         | "GetSessionResponse"
+        | "SetSessionConfigRequest"
+        | "SetSessionConfigResponse"
+        | "WarmSessionRequest"
+        | "WarmSessionResponse"
+        | "WarmSessionTarget"
         | "LoadSessionRequest"
         | "LoadSessionEvent"
         | "ListSessionsRequest"
@@ -312,8 +346,6 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "SwitchSessionAgentResponse"
         | "StopSessionRequest"
         | "StopSessionResponse" => "session",
-        // agentRuntime
-        "ListAgentModelsRequest" | "ListAgentModelsResponse" => "session",
         // skill
         "CreateSkillRequest"
         | "CreateSkillResponse"
@@ -337,7 +369,16 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "UpdateAgentRequest"
         | "UpdateAgentResponse" => "agent",
         // fileSystem
-        "ListDirectoryRequest" | "ListDirectoryResponse" => "file-system",
+        "ListDirectoryRequest"
+        | "ListDirectoryResponse"
+        | "ListWorkspaceDirectoryRequest"
+        | "ListWorkspaceDirectoryResponse"
+        | "ReadWorkspaceFileRequest"
+        | "ReadWorkspaceFileResponse"
+        | "SearchWorkspaceRequest"
+        | "SearchWorkspaceResponse"
+        | "WatchWorkspaceRequest"
+        | "WorkspaceFileEventBatch" => "file-system",
         // gitIdentity
         "GetGitIdentityRequest" | "GitIdentityResponse" => "git",
         other => panic!("unknown contract type `{other}`"),
@@ -486,6 +527,7 @@ mod tests {
             "session.ts",
             "skill.ts",
             "task.ts",
+            "task_diff.ts",
         ];
 
         for generated_file in generated_files {

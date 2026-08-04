@@ -5,16 +5,19 @@ import type {
 } from "@ora/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type {
+  ChatModelChange,
   ChatPlan,
   ChatToolCall,
   ChatTurn,
   SessionConversation,
 } from "./types.js";
+import { currentModel } from "./model-option.js";
 
 export type {
   ChatContent,
   ChatMessage,
   ChatMessageRole,
+  ChatModelChange,
   ChatPlan,
   ChatThought,
   ChatToolCall,
@@ -36,31 +39,23 @@ export interface SendMessageRequest {
    */
   agentText?: string;
   /**
-   * Target an existing session. Provide this OR `createSession`, never both:
-   * with an id the prompt streams straight into that session, without one the
-   * session is created lazily (see `createSession`).
+   * The session to stream into. Always known before sending, because a chat
+   * surface warms its session when it opens.
    */
-  oraSessionId?: string;
+  oraSessionId: string;
   /**
-   * Lazily creates the backing agent session, resolving to its real id. When
-   * present, the user turn is materialized immediately under a temporary key and
-   * the (slow, cold-start) session creation runs in the background, so the
-   * composer slides into the thread without waiting on the agent handshake. The
-   * store re-keys the conversation onto the real id once it arrives.
+   * Runs after the user's turn is on screen and before the prompt is sent, for
+   * work the session needs first — creating its Task and persisting it.
+   *
+   * Keeping it here rather than in the caller is what preserves the immediate
+   * composer slide: the turn renders under its final id straight away, and this
+   * runs in the gap before the agent is asked anything.
    */
-  createSession?: () => Promise<CreateSessionResult>;
-  /**
-   * Fired synchronously once the optimistic turn exists, carrying the temporary
-   * key so the caller can select the draft conversation for display. Only
-   * relevant on the `createSession` path.
-   */
-  onDraft?: (draftSessionId: string) => void;
-  /** Fired after the store has re-keyed onto the real session id. */
-  onSessionCreated?: (oraSessionId: string) => void;
+  prepare?: () => Promise<PreparedSession>;
 }
 
-export interface CreateSessionResult {
-  oraSessionId: string;
+/** What persisting a warm session revealed about the agent behind it. */
+export interface PreparedSession {
   availableCommands: acp.AvailableCommand[];
 }
 
@@ -68,6 +63,22 @@ export interface ChatState {
   conversations: Record<string, SessionConversation>;
   /** Registers a newly created provider session as an empty, already-loaded conversation. */
   initializeSession(oraSessionId: string): void;
+  /**
+   * Records the configuration selectors an agent reported for one session.
+   *
+   * Used to seed a warm session's options before any turn exists, from a warm
+   * or attach response the store did not issue itself.
+   */
+  setConfigOptions(oraSessionId: string, configOptions: acp.SessionConfigOption[]): void;
+  /**
+   * Applies one configuration selection — in practice the model — to a session.
+   *
+   * The agent's reply is authoritative rather than the requested value: an agent
+   * that adjusted or rejected the choice describes the result, and that is what
+   * gets recorded. Works on a warm session as well as a persisted one, so a model
+   * can be chosen before the first message is sent.
+   */
+  setSessionConfig(oraSessionId: string, configId: string, value: string): Promise<void>;
   loadSession(oraSessionId: string): Promise<void>;
   sendMessage(request: SendMessageRequest): Promise<void>;
   stopGeneration(oraSessionId: string): void;
@@ -84,10 +95,12 @@ export interface ChatStoreOptions {
 export type ChatStore = StoreApi<ChatState>;
 export type ChatSessionClient = Pick<
   ContractsClient["session"],
-  "load" | "prompt" | "respondToPermission"
+  "load" | "prompt" | "respondToPermission" | "setConfig"
 >;
 
 const EMPTY_CONVERSATION: SessionConversation = {
+  configOptions: [],
+  modelChanges: [],
   turns: [],
   availableCommands: [],
   sessionTitle: null,
@@ -135,6 +148,36 @@ export function createChatStore(
       }));
     },
 
+    setConfigOptions: (oraSessionId, configOptions) => {
+      updateConversation(set, oraSessionId, (conversation) =>
+        withConfigOptions(conversation, configOptions, createId, now()),
+      );
+    },
+
+    setSessionConfig: async (oraSessionId, configId, value) => {
+      try {
+        const { configOptions } = await client.setConfig({
+          sessionId: oraSessionId,
+          configId,
+          value,
+        });
+        updateConversation(set, oraSessionId, (conversation) => ({
+          ...withConfigOptions(conversation, configOptions, createId, now()),
+          error: null,
+        }));
+      } catch (error) {
+        // Only the round trip itself can fail here — a rejected selection comes
+        // back as a successful response carrying the agent's own options. So the
+        // picker must not silently snap back to its old value; report it like
+        // every other session action that could not reach the agent.
+        updateConversation(set, oraSessionId, (conversation) => ({
+          ...conversation,
+          error: errorMessage(error),
+        }));
+        throw error;
+      }
+    },
+
     loadSession: async (oraSessionId) => {
       if (operations.has(oraSessionId)) return;
       const previous = get().conversations[oraSessionId] ?? EMPTY_CONVERSATION;
@@ -154,7 +197,14 @@ export function createChatStore(
           { signal: controller.signal },
         )) {
           if (event.type === "session_update") {
-            staged.applyUpdate(event.update);
+            // Session-scoped updates are split out before the turn accumulator
+            // sees them; they describe the conversation, not any one turn.
+            const configOptions = sessionScopedConfigOptions(event.update);
+            if (configOptions) {
+              staged.configOptions = configOptions;
+            } else {
+              staged.applyUpdate(event.update);
+            }
           } else if (event.type === "permission_request") {
             staged.addPermission(event);
           } else if (event.type === "turn_ended") {
@@ -166,7 +216,16 @@ export function createChatStore(
         if (!completed) {
           throw new Error("agent session load ended before completion");
         }
-        updateConversation(set, oraSessionId, () => staged.finish());
+        updateConversation(set, oraSessionId, () => ({
+          ...staged.finish(),
+          // An agent that reports nothing on load leaves whatever the warm
+          // session already established, rather than blanking the picker.
+          configOptions: staged.configOptions ?? previous.configOptions,
+          // Replay rebuilds the transcript from the provider, which knows
+          // nothing about Ora's markers, so any earlier ones cannot be placed
+          // against the new turns and are dropped rather than misplaced.
+          modelChanges: [],
+        }));
       } catch (error) {
         updateConversation(set, oraSessionId, () => ({
           ...previous,
@@ -182,7 +241,7 @@ export function createChatStore(
       }
     },
 
-    sendMessage: async ({ oraSessionId, text, images = [], agentText, createSession, onDraft, onSessionCreated }) => {
+    sendMessage: async ({ oraSessionId, text, images = [], agentText, prepare }) => {
       const content = text.trim();
       if (content === "" && images.length === 0) return;
       // What the agent receives can differ from what the user sees in their turn,
@@ -193,10 +252,7 @@ export function createChatStore(
         ...images.map((image) => ({ type: "image" as const, ...image })),
       ];
 
-      // Stream into the given session, or a temporary draft key that is promoted
-      // to the real id once the background create resolves. The key is mutable
-      // because every store write below has to follow it across that promotion.
-      let key = oraSessionId ?? `draft-${createId()}`;
+      const key = oraSessionId;
       if (operations.has(key)) {
         throw new Error("this Ora session is already processing an operation");
       }
@@ -281,15 +337,12 @@ export function createChatStore(
         isResponding: true,
         error: null,
       }));
-      // Let the caller show the draft conversation before we block on the agent.
-      onDraft?.(key);
-
-      if (createSession) {
-        let created: CreateSessionResult;
+      if (prepare) {
+        let prepared: PreparedSession;
         try {
-          created = await createSession();
+          prepared = await prepare();
         } catch (error) {
-          // Nothing streamed yet; settle the draft turn and stop here.
+          // Nothing streamed yet; settle the optimistic turn and stop here.
           const message = errorMessage(error);
           updateTurn(set, key, turnId, (current) => ({ ...current, status: "failed", error: message }));
           updateConversation(set, key, (conversation) => ({
@@ -309,24 +362,16 @@ export function createChatStore(
           operations.delete(key);
           return;
         }
-        // Carry the live conversation and its operation onto the real id, then let
-        // the caller re-point selection at it. Order matters: the conversation is
-        // re-keyed before selection moves so the new id never reads as empty.
-        promoteConversation(set, key, created.oraSessionId);
-        operations.delete(key);
-        operations.set(created.oraSessionId, controller);
-        key = created.oraSessionId;
         // This turn was streamed live, so the local conversation already is the
         // session's history. Marking it loaded stops the workspace's "load if not
-        // loaded" effect from firing once the session id resolves — that reload
-        // clears turns to empty first, which would bounce the composer back to the
-        // landing layout and replay the slide-down animation.
+        // loaded" effect from firing once the session becomes selectable — that
+        // reload clears turns to empty first, which would bounce the composer back
+        // to the landing layout and replay the slide-down animation.
         updateConversation(set, key, (conversation) => ({
           ...conversation,
-          availableCommands: created.availableCommands,
+          availableCommands: prepared.availableCommands,
           isLoaded: true,
         }));
-        onSessionCreated?.(created.oraSessionId);
       }
 
       try {
@@ -339,6 +384,13 @@ export function createChatStore(
             // would only duplicate it; every other update belongs to this turn.
             const update = event.update;
             if (update.sessionUpdate === "user_message_chunk") continue;
+            // An agent may change its own configuration mid-turn; that describes
+            // the session, so it never reaches the turn accumulator.
+            const configOptions = sessionScopedConfigOptions(update);
+            if (configOptions) {
+              updateConversation(set, key, (conversation) => ({ ...conversation, configOptions }));
+              continue;
+            }
             if (isConversationUpdate(update)) {
               updateConversation(set, key, (conversation) =>
                 applyConversationUpdate(conversation, update),
@@ -455,6 +507,8 @@ export function createChatStore(
  */
 class HistoryBuilder {
   readonly permissions: SessionPermissionRequest[] = [];
+  /** Session-scoped options seen during replay; `null` when the agent reported none. */
+  configOptions: acp.SessionConfigOption[] | null = null;
   private readonly turns: ChatTurn[] = [];
   private availableCommands: acp.AvailableCommand[] = [];
   private sessionTitle: string | null = null;
@@ -838,6 +892,70 @@ function clearPendingPermissions(set: ChatStore["setState"], oraSessionId: strin
   }));
 }
 
+/** Adopts one reported option set, marking the transcript if it switched models. */
+function withConfigOptions(
+  conversation: SessionConversation,
+  configOptions: acp.SessionConfigOption[],
+  createId: () => string,
+  timestamp: number,
+): SessionConversation {
+  return {
+    ...conversation,
+    configOptions,
+    modelChanges: recordModelChange(conversation, configOptions, createId, timestamp),
+  };
+}
+
+/**
+ * Records a model switch in the transcript when one actually happened.
+ *
+ * Deliberately silent in three cases. There is nothing to divide before the
+ * first turn, so choosing a model on an empty chat leaves no mark. The first
+ * options a session reports establish the baseline rather than change it. And
+ * repeated switches at the same point in the thread collapse into one line, so
+ * cycling through the menu does not stack up dividers.
+ */
+function recordModelChange(
+  conversation: SessionConversation,
+  configOptions: acp.SessionConfigOption[],
+  createId: () => string,
+  timestamp: number,
+): ChatModelChange[] {
+  const previous = currentModel(conversation.configOptions);
+  const next = currentModel(configOptions);
+  if (
+    previous === null
+    || next === null
+    || previous.value === next.value
+    || conversation.turns.length === 0
+  ) {
+    return conversation.modelChanges;
+  }
+  const change: ChatModelChange = {
+    id: createId(),
+    afterTurnCount: conversation.turns.length,
+    modelName: next.name,
+    createdAt: timestamp,
+  };
+  const newest = conversation.modelChanges.at(-1);
+  return newest?.afterTurnCount === change.afterTurnCount
+    ? [...conversation.modelChanges.slice(0, -1), change]
+    : [...conversation.modelChanges, change];
+}
+
+/**
+ * Returns the configuration options carried by a session-scoped update.
+ *
+ * `null` means the update belongs to a turn. Keeping the test in one place means
+ * the load replay and the live prompt stream cannot disagree about which updates
+ * describe the conversation rather than its transcript.
+ */
+function sessionScopedConfigOptions(
+  update: acp.SessionUpdate,
+): acp.SessionConfigOption[] | null {
+  return update.sessionUpdate === "config_option_update" ? update.configOptions : null;
+}
+
 /** Applies an immutable update to one response turn. */
 function updateTurn(
   set: ChatStore["setState"],
@@ -849,21 +967,6 @@ function updateTurn(
     ...conversation,
     turns: conversation.turns.map((turn) => (turn.id === turnId ? update(turn) : turn)),
   }));
-}
-
-/** Moves a conversation from a temporary draft key onto its real session id. */
-function promoteConversation(
-  set: ChatStore["setState"],
-  fromKey: string,
-  toKey: string,
-): void {
-  set((state) => {
-    const conversation = state.conversations[fromKey];
-    if (conversation === undefined) return state;
-    const conversations = { ...state.conversations, [toKey]: conversation };
-    delete conversations[fromKey];
-    return { conversations };
-  });
 }
 
 function updateConversation(

@@ -9,13 +9,27 @@ use ora_contracts::acp::notification::CancelNotification;
 use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_contracts::acp::prompt::{PromptRequest, PromptResponse, StopReason};
 use ora_contracts::acp::session::{
-    CloseSessionRequest, CloseSessionResponse, LoadSessionRequest as AcpLoadSessionRequest,
-    LoadSessionResponse,
+    CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate,
+    LoadSessionRequest as AcpLoadSessionRequest, LoadSessionResponse, SessionUpdate,
 };
 use ora_history::{HistoryRecord, render_handoff};
-use ora_logging::ora_debug;
+use ora_logging::{ora_debug, ora_warn};
 use tokio::process::ChildStdin;
 use tokio::time::{Instant, timeout};
+
+/// How far replaying Ora's record got before it stopped.
+///
+/// Only `Delivered` may complete the load. The other two are kept apart because
+/// they differ in who still has to be told: an unreadable history owes the
+/// client an error, while an abandoned one has no client left to send it to.
+enum Replay {
+    /// Every recorded line reached the client.
+    Delivered,
+    /// The history could not be read, and the client was told so.
+    Unreadable,
+    /// The client stopped listening partway through.
+    Abandoned,
+}
 
 impl RuntimeActor {
     /// Serializes operations for one logical session while the shared connection remains concurrent.
@@ -152,14 +166,39 @@ impl RuntimeActor {
             tokio::select! {
                 response = &mut future => {
                     match response {
-                        Ok(_) => {
+                        Ok(response) => {
                             ora_debug!(session_id = %self.session.id, "session/load completed");
-                            if self.replay_recorded_history(&events).await
-                                && events.send(Ok(LoadSessionEvent::Completed)).await.is_ok()
+                            // `session/load` reports configuration options in its
+                            // reply rather than as an update, so they are pushed
+                            // into the same stream ahead of the replay. This keeps
+                            // the client's model selector fed by one code path for
+                            // both a warm session and a session reopened from
+                            // history.
+                            if let Some(config_options) = response.config_options
+                                && events
+                                    .send(Ok(LoadSessionEvent::SessionUpdate {
+                                        update: SessionUpdate::ConfigOptionUpdate(
+                                            ConfigOptionUpdate::new(config_options),
+                                        ),
+                                    }))
+                                    .await
+                                    .is_err()
                             {
-                                self.channel = Some(channel);
-                            } else {
                                 self.isolate_channel(channel).await;
+                                return;
+                            }
+                            match self.replay_recorded_history(&events).await {
+                                Replay::Delivered
+                                    if events.send(Ok(LoadSessionEvent::Completed)).await.is_ok() =>
+                                {
+                                    self.channel = Some(channel);
+                                }
+                                // A replay that did not finish leaves the client
+                                // without the conversation it asked for, so the
+                                // registration goes with it and load can be retried.
+                                Replay::Delivered | Replay::Unreadable | Replay::Abandoned => {
+                                    self.isolate_channel(channel).await;
+                                }
                             }
                         }
                         Err(error) => {
@@ -274,9 +313,24 @@ impl RuntimeActor {
         let content_count = prompt.len();
         // Built before the prompt is recorded, so the transcript handed to a new
         // agent describes the conversation up to this turn rather than including it.
+        let handoff_carried = self.handoff_pending;
         let sent = self.prompt_for_agent(&prompt);
         let outcome = self.recorder.record_prompt(&prompt);
+        let stopped_recording = matches!(outcome, RecordOutcome::JustFailed { .. });
         self.settle_record(outcome);
+        if stopped_recording {
+            // A turn already streaming is allowed to finish, because the agent's
+            // work is real whether or not the file kept it. This one has not
+            // started: nothing is lost by refusing it, and running it would put
+            // the conversation somewhere the record cannot follow.
+            //
+            // The transcript this prompt would have carried was never delivered
+            // either, so the binding still owes it.
+            self.handoff_pending = handoff_carried;
+            let _ = events.try_send(Err(history_degraded()));
+            self.channel = Some(channel);
+            return;
+        }
         let request = PromptRequest::new(self.session.agent_session_id.clone(), sent);
         ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
         let future =
@@ -289,7 +343,7 @@ impl RuntimeActor {
                     match response {
                         Ok(response) => {
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
-                            self.end_turn(response.stop_reason);
+                            self.end_turn(&mut channel, &events, response.stop_reason);
                             if events.try_send(Ok(PromptSessionEvent::Completed {
                                 stop_reason: response.stop_reason,
                             })).is_ok() {
@@ -303,7 +357,7 @@ impl RuntimeActor {
                             ora_debug!(session_id = %self.session.id, error = %error, reusable = reusable, "prompt failed");
                             // A turn that failed did not reach its own end, which
                             // is the same shape in the record as one cut short.
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             let delivered = events.try_send(Err(map_acp_error(error))).is_ok();
                             if reusable && delivered {
                                 self.channel = Some(channel);
@@ -316,7 +370,7 @@ impl RuntimeActor {
                 }
                 update = channel.updates.recv() => {
                     let Some(update) = update else {
-                        self.end_turn(StopReason::Cancelled);
+                        self.end_turn(&mut channel, &events, StopReason::Cancelled);
                         self.fail_prompt(&events, runtime_unavailable());
                         return;
                     };
@@ -325,7 +379,7 @@ impl RuntimeActor {
                     let outcome = self.recorder.record_update(&update.update);
                     self.settle_record(outcome);
                     if events.try_send(Ok(PromptSessionEvent::SessionUpdate { update: update.update })).is_err() {
-                        self.end_turn(StopReason::Cancelled);
+                        self.end_turn(&mut channel, &events, StopReason::Cancelled);
                         self.cancel(&client, &permissions).await;
                         self.isolate_channel(channel).await;
                         return;
@@ -346,19 +400,19 @@ impl RuntimeActor {
                                 options: permission.request.options,
                             });
                             if events.try_send(Ok(event)).is_err() {
-                                self.end_turn(StopReason::Cancelled);
+                                self.end_turn(&mut channel, &events, StopReason::Cancelled);
                                 self.cancel(&client, &permissions).await;
                                 self.isolate_channel(channel).await;
                                 return;
                             }
                         }
                         Some(SessionControl::ConnectionLost(error)) => {
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.fail_prompt(&events, error);
                             return;
                         }
                         Some(SessionControl::UpdateOverflow) => {
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.cancel(&client, &permissions).await;
                             let _ = events.try_send(Err(runtime_internal(
                                 "agent_update_overflow",
@@ -368,7 +422,7 @@ impl RuntimeActor {
                             return;
                         }
                         None => {
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.fail_prompt(&events, runtime_unavailable());
                             return;
                         }
@@ -383,9 +437,10 @@ impl RuntimeActor {
                         Some(RuntimeCommand::Cancel { operation_id: cancelled }) if cancelled == operation_id => {
                             self.cancel(&client, &permissions).await;
                             let settled = timeout(CANCELLATION_GRACE, &mut future).await;
-                            // Everything the agent produced before the interruption
-                            // is already recorded; this closes the turn around it.
-                            self.end_turn(StopReason::Cancelled);
+                            // Closing the turn also collects whatever the agent
+                            // emitted on its way out, which the grace period above
+                            // was not watching for.
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             match settled {
                                 Ok(Ok(_)) | Ok(Err(ora_acp::AcpError::RequestFailed(_))) => {
                                     self.channel = Some(channel);
@@ -396,7 +451,7 @@ impl RuntimeActor {
                         }
                         Some(RuntimeCommand::Stop { response }) => {
                             self.cancel(&client, &permissions).await;
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.isolate_channel(channel).await;
                             let _ = response.send(Ok(StopSessionResponse {
                                 session: contract_session(self.session.clone()),
@@ -424,15 +479,28 @@ impl RuntimeActor {
         if !self.handoff_pending {
             return prompt.to_vec();
         }
-        self.handoff_pending = false;
-        let transcript = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
-            Ok(history) => render_handoff(&history),
+        let history = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
+            Ok(history) => history,
             Err(error) => {
-                ora_debug!(session_id = %self.session.id, error = %error, "handoff transcript unavailable");
-                None
+                // The flag is held rather than cleared, because nothing would ask
+                // again. It is derived from the record — a trailing `AgentSwitched`
+                // with no user message after it — and recording this prompt is
+                // exactly what stops that from being true. A transient read would
+                // otherwise cost the new agent the whole conversation, silently and
+                // for good, while the turn it answered without any of it becomes
+                // history the agent after that one inherits as fact.
+                ora_warn!(
+                    session_id = %self.session.id,
+                    error = %error,
+                    "handoff transcript unreadable; retrying on the next prompt",
+                );
+                return prompt.to_vec();
             }
         };
-        let Some(transcript) = transcript else {
+        self.handoff_pending = false;
+        // Nothing recorded to hand over, which is a session switched before it was
+        // ever prompted. The binding has now been spoken to either way.
+        let Some(transcript) = render_handoff(&history) else {
             return prompt.to_vec();
         };
         ora_debug!(
@@ -446,8 +514,32 @@ impl RuntimeActor {
         sent
     }
 
-    /// Closes the recorded turn and settles any failure that closing revealed.
-    fn end_turn(&mut self, stop_reason: StopReason) {
+    /// Closes the recorded turn once everything it produced is in hand.
+    ///
+    /// The select loop stops consuming updates the moment another branch wins —
+    /// a resolved response, a cancellation, a lost connection — and during the
+    /// cancellation grace it is not running at all. The agent's last updates are
+    /// usually already queued behind that, so they are drained here and settled
+    /// into the turn that produced them. Leaving them queued would carry them
+    /// into the next prompt, where they arrive after that prompt's own position
+    /// and, because this call clears the assembler, reopen a finished tool call
+    /// as a second record instead of correcting the first.
+    fn end_turn(
+        &mut self,
+        channel: &mut SessionChannel,
+        events: &mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
+        stop_reason: StopReason,
+    ) {
+        while let Ok(notification) = channel.updates.try_recv() {
+            let outcome = self.recorder.record_update(&notification.update);
+            self.settle_record(outcome);
+            // Forwarded on the same best-effort terms as the loop's own updates:
+            // the client may already be gone, which costs the stream but never
+            // the record.
+            let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                update: notification.update,
+            }));
+        }
         let outcome = self.recorder.record_turn_end(stop_reason);
         self.settle_record(outcome);
     }
@@ -474,12 +566,21 @@ impl RuntimeActor {
     async fn replay_recorded_history(
         &self,
         events: &mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
-    ) -> bool {
+    ) -> Replay {
         let history = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
             Ok(history) => history,
             Err(error) => {
-                ora_debug!(session_id = %self.session.id, error = %error, "session history unreadable during load");
-                return true;
+                // Load is how a user asks to see the conversation, so a history
+                // that cannot be read is reported rather than shown as an empty
+                // one. Completing here would state that nothing was ever said.
+                ora_warn!(session_id = %self.session.id, error = %error, "session history unreadable during load");
+                let _ = events
+                    .send(Err(runtime_internal(
+                        "session_history_unreadable",
+                        "session history could not be read",
+                    )))
+                    .await;
+                return Replay::Unreadable;
             }
         };
         for line in history.lines {
@@ -495,10 +596,10 @@ impl RuntimeActor {
                 | HistoryRecord::Gap { .. } => continue,
             };
             if events.send(Ok(event)).await.is_err() {
-                return false;
+                return Replay::Abandoned;
             }
         }
-        true
+        Replay::Delivered
     }
 
     /// Handles controls arriving while a registered session has no active operation.
