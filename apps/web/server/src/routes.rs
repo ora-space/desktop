@@ -1,15 +1,22 @@
 use crate::app_state::AppState;
 use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skills, tasks,
+    agents, file_system, git, health, project_work_contexts, projects, sessions, skill_imports,
+    skills, tasks,
 };
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
     PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
     SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_IMPORT_COMMIT_PATH, SKILL_IMPORT_PATH,
+    SKILL_IMPORTS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
 };
+
+/// Multipart upload body ceiling: slightly above the 200 MiB folder/archive file budget so the
+/// multipart framing, headers, and boundary bytes fit without exceeding the strict file budget.
+const IMPORT_UPLOAD_BODY_LIMIT: usize = 201 * 1024 * 1024;
 
 /// Builds the top-level router for health checks and the persisted CRUD routes.
 pub fn build_router(app_state: AppState) -> Router {
@@ -69,6 +76,7 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(skills::update_skill)
                 .delete(skills::delete_skill),
         )
+        .merge(skill_imports_router())
         .route(
             AGENTS_PATH,
             post(agents::create_agent).get(agents::list_agents),
@@ -80,6 +88,29 @@ pub fn build_router(app_state: AppState) -> Router {
                 .delete(agents::delete_agent),
         )
         .with_state(app_state)
+}
+
+/// Builds the skill import routes with the raised multipart upload body ceiling.
+///
+/// axum caps `Multipart` request bodies at 2 MiB by default; the import prepare route must
+/// accept folder and archive uploads up to the 200 MiB file budget, so the ceiling is raised
+/// slightly above that to leave room for multipart framing while the handler still enforces
+/// the strict file-byte budget.
+fn skill_imports_router() -> Router<AppState> {
+    Router::new()
+        .route(
+            SKILL_IMPORTS_PATH,
+            post(skill_imports::prepare_skill_import),
+        )
+        .route(
+            SKILL_IMPORT_PATH,
+            get(skill_imports::get_skill_import).delete(skill_imports::cancel_skill_import),
+        )
+        .route(
+            SKILL_IMPORT_COMMIT_PATH,
+            post(skill_imports::commit_skill_import),
+        )
+        .layer(DefaultBodyLimit::max(IMPORT_UPLOAD_BODY_LIMIT))
 }
 
 #[cfg(test)]
@@ -1025,6 +1056,203 @@ mod tests {
             .status(),
             StatusCode::BAD_REQUEST
         );
+    }
+
+    /// Verifies the two-phase skill import routes accept a folder upload and commit it.
+    #[tokio::test]
+    async fn serves_skill_import_folder_routes() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let (boundary, body) = multipart_body(&[
+            (
+                "skills/alpha/SKILL.md",
+                b"---\nname: alpha\ndescription: Alpha skill\n---\n",
+            ),
+            ("skills/alpha/helper.txt", b"helper"),
+        ]);
+
+        let prepare = send_request(
+            &app,
+            Method::POST,
+            "/api/skill-imports?mode=folder",
+            &format!("multipart/form-data; boundary={boundary}"),
+            body,
+        )
+        .await;
+        assert_eq!(prepare.status(), StatusCode::OK);
+        let session = response_json(prepare).await;
+        let session_id = session["session"]["sessionId"]
+            .as_str()
+            .expect("session id missing")
+            .to_string();
+        assert_eq!(session["session"]["status"], json!("prepared"));
+        assert_eq!(
+            session["session"]["candidates"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            session["session"]["candidates"][0]["status"],
+            json!("ready")
+        );
+        assert_eq!(
+            session["session"]["candidates"][0]["sourcePath"],
+            json!("skills/alpha/SKILL.md")
+        );
+
+        let get = request_empty(
+            &app,
+            Method::GET,
+            &format!("/api/skill-imports/{session_id}"),
+        )
+        .await;
+        assert_eq!(get.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(get).await["session"]["status"],
+            json!("prepared")
+        );
+
+        let commit = request_json(
+            &app,
+            Method::POST,
+            &format!("/api/skill-imports/{session_id}/commit"),
+            json!({ "sessionId": session_id, "decisions": [] }),
+        )
+        .await;
+        assert_eq!(commit.status(), StatusCode::ACCEPTED);
+        assert_eq!(response_json(commit).await["status"], json!("committing"));
+
+        let completed = poll_session(&app, &session_id).await;
+        assert_eq!(completed["session"]["status"], json!("completed"));
+        assert_eq!(completed["session"]["progress"]["processed"], json!(1));
+        assert_eq!(
+            completed["session"]["progress"]["results"][0]["status"],
+            json!("imported")
+        );
+
+        let skills = response_json(request_empty(&app, Method::GET, "/api/skills").await).await;
+        assert_eq!(skills["skills"][0]["name"], json!("alpha"));
+    }
+
+    /// Verifies the archive upload mode rejects malformed archives with a stable code.
+    #[tokio::test]
+    async fn serves_skill_import_archive_format_errors() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let (boundary, body) = multipart_body(&[("skills.zip", b"this is not a zip")]);
+
+        let prepare = send_request(
+            &app,
+            Method::POST,
+            "/api/skill-imports?mode=archive",
+            &format!("multipart/form-data; boundary={boundary}"),
+            body,
+        )
+        .await;
+        assert_eq!(prepare.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response_json(prepare).await,
+            json!({
+                "error": {
+                    "code": "archive_format_mismatch",
+                    "message": "archive contents do not match the requested format",
+                },
+            })
+        );
+    }
+
+    /// Verifies a ready candidate commits without requiring conflict decisions.
+    #[tokio::test]
+    async fn commits_ready_candidate_without_decisions() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let (boundary, body) = multipart_body(&[(
+            "skills/review/SKILL.md",
+            b"---\nname: review\ndescription: Reviews\n---\n",
+        )]);
+
+        let prepare = send_request(
+            &app,
+            Method::POST,
+            "/api/skill-imports?mode=folder",
+            &format!("multipart/form-data; boundary={boundary}"),
+            body,
+        )
+        .await;
+        let session = response_json(prepare).await;
+        let session_id = session["session"]["sessionId"]
+            .as_str()
+            .expect("session id missing")
+            .to_string();
+
+        // No existing skill yet, so this candidate is ready and needs no decision.
+        let commit = request_json(
+            &app,
+            Method::POST,
+            &format!("/api/skill-imports/{session_id}/commit"),
+            json!({ "sessionId": session_id, "decisions": [] }),
+        )
+        .await;
+        assert_eq!(commit.status(), StatusCode::ACCEPTED);
+
+        let completed = poll_session(&app, &session_id).await;
+        assert_eq!(
+            completed["session"]["progress"]["results"][0]["status"],
+            json!("imported")
+        );
+    }
+
+    /// Builds a multipart body from named file parts with relative filenames.
+    fn multipart_body(files: &[(&str, &[u8])]) -> (String, Vec<u8>) {
+        let boundary = "----oraspace-test-boundary";
+        let mut body = Vec::new();
+        for (name, content) in files {
+            body.extend_from_slice(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(content);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        (boundary.to_string(), body)
+    }
+
+    /// Sends one arbitrary-body request to the router under test.
+    async fn send_request(
+        app: &axum::Router,
+        method: Method,
+        uri: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> axum::response::Response {
+        match app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", content_type)
+                    .body(Body::from(body))
+                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => panic!("request failed: {error}"),
+        }
+    }
+
+    /// Polls one import session until its background commit completes.
+    async fn poll_session(app: &axum::Router, session_id: &str) -> serde_json::Value {
+        let uri = format!("/api/skill-imports/{session_id}");
+        for _ in 0..200 {
+            let response = request_empty(app, Method::GET, &uri).await;
+            let body = response_json(response).await;
+            if body["session"]["status"] == json!("completed") {
+                return body;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("import session did not complete");
     }
 
     /// Sends one JSON request to the router under test.

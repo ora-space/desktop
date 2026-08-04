@@ -21,6 +21,7 @@ Startup asks `ora-backend` to bootstrap the database, apply the active migration
 
 - SQLite database path: `<ORA_DATA_DIR>/ora.sqlite3`
 - Worktree root: `<ORA_DATA_DIR>/worktrees`
+- Skill packages root: `<ORA_DATA_DIR>/atoms/skills`
 - Log file: `<ORA_DATA_DIR>/logs/ora.log`
 
 ## Project Configuration
@@ -88,6 +89,10 @@ The persisted runtime exposes CRUD routes for the supported public models:
 - `GET /api/skills/{skill_id}`
 - `PUT /api/skills/{skill_id}`
 - `DELETE /api/skills/{skill_id}`
+- `POST /api/skill-imports?mode={folder|archive}`
+- `GET /api/skill-imports/{session_id}`
+- `POST /api/skill-imports/{session_id}/commit`
+- `DELETE /api/skill-imports/{session_id}`
 - `POST /api/agents`
 - `GET /api/agents`
 - `GET /api/agents/{agent_id}`
@@ -118,6 +123,38 @@ The filesystem directory route supports the custom Web path picker.
 - Hidden entries are included. Symbolic links remain visible and preserve their link paths; broken links are reported as unavailable entries.
 - Directories sort before files, and the endpoint returns the complete directory without pagination.
 - The route intentionally has no configured browse root and can navigate outside home. Deployments must account for the exposed server directory metadata when setting network access to the Web Server.
+
+### Skill import sessions
+
+The import routes implement the two-phase `prepare -> preview -> commit` model with one logical
+source per session (a folder tree or a single supported archive: `.zip`, `.skill`, `.tar.gz`,
+`.tgz`).
+
+- `POST /api/skill-imports?mode=folder` receives a multipart body whose file parts carry
+  validated relative paths (`webkitRelativePath`-style filenames) and returns a prepared session
+  preview without touching formal storage.
+- `POST /api/skill-imports?mode=archive` receives exactly one file part and streams it to OS
+  temporary storage before preparation.
+- `GET /api/skill-imports/{session_id}` returns the session, its commit progress, and completed
+  per-item results.
+- `POST /api/skill-imports/{session_id}/commit` validates and freezes the conflict decisions and
+  returns `202 Accepted`; the commit continues as a background task that survives request drops.
+- `DELETE /api/skill-imports/{session_id}` cancels a prepared session only; committing sessions
+  reject cancellation.
+
+Preparation validates archive signatures, enforces zip-slip and portable case-conflict rules,
+applies capacity and expansion-ratio budgets, and parses every `SKILL.md` manifest. Preparation
+failures and per-candidate outcomes use the stable import error codes from `ora-backend`. The web
+adapter never buffers upload bytes in memory and streams them to disk under a strict size budget;
+the multipart body ceiling is raised to just above 200 MiB (axum's default is 2 MiB) while the
+handler still enforces the exact 200 MiB folder / 50 MiB archive file budgets.
+
+### Skill storage and startup coordination
+
+Every visible skill owns a database record plus `<ORA_DATA_DIR>/atoms/skills/<name>/SKILL.md`.
+At startup, `ora-backend` reconciles interrupted skill transactions from journal markers, cleans
+orphan formal directories, and blocks readiness when a visible record lacks its formal directory
+or root manifest.
 
 ## Frontend development modes
 
