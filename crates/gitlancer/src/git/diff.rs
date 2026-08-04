@@ -74,9 +74,6 @@ impl<R: GitRunner> Git<R> {
         {
             let separator_bytes = usize::from(!patch.is_empty() && !patch.ends_with('\n'));
             let remaining = MAX_DIFF_BYTES.saturating_sub(patch.len() + separator_bytes);
-            if remaining == 0 {
-                return Err(diff_too_large());
-            }
             let untracked_patch = run_untracked_diff(
                 self.runner(),
                 &build_untracked_diff_command(request.worktree, path, &isolated_git_dir),
@@ -99,6 +96,8 @@ impl<R: GitRunner> Git<R> {
 
 /// Generates a process-unique nonexistent Git directory so no-index ignores repository filters.
 fn isolated_git_dir() -> std::path::PathBuf {
+    // The path is intentionally never created: Git treats it as no repository, so there is
+    // no temporary directory or cleanup guard to maintain for this read-only comparison.
     let sequence = TEMPORARY_GIT_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let process_id = std::process::id();
     std::env::temp_dir().join(format!("ora-no-index-git-dir-{process_id}-{sequence}"))
