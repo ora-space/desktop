@@ -1,9 +1,9 @@
 use super::{
     CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, SkillIdGenerator, SkillRepository,
-    SkillRepositoryError, SkillStorage, SkillStorageError, UpdateSkillHandler,
+    SkillStorage, SkillStorageError, UpdateSkillHandler,
 };
 use crate::skill::storage::{CreateHandle, DeleteHandle, SwapHandle, TransactionJournal};
-use crate::{ApplicationError, Clock};
+use crate::{ApplicationError, Clock, RepositoryError};
 use ora_contracts::{CreateSkillRequest, DeleteSkillRequest, GetSkillRequest, UpdateSkillRequest};
 use ora_domain::{AuditFields, Skill, SkillId};
 use ora_skill_package::manifest::render_minimal_manifest;
@@ -95,9 +95,7 @@ fn reports_blank_name_not_found_and_repository_errors() {
         })
         .unwrap_err();
     let failing = Rc::new(FakeSkillRepository::default());
-    failing.fail_next(SkillRepositoryError::OperationFailed(
-        "unavailable".to_string(),
-    ));
+    failing.fail_next(RepositoryError::new(std::io::Error::other("unavailable")));
     let repository_error = GetSkillHandler::new(failing)
         .handle(GetSkillRequest {
             skill_id: "skill-1".to_string(),
@@ -114,7 +112,7 @@ fn reports_blank_name_not_found_and_repository_errors() {
     assert_eq!(
         repository_error,
         ApplicationError::SkillRepository {
-            message: "unavailable".to_string()
+            source: RepositoryError::new(std::io::Error::other("unavailable"))
         }
     );
 }
@@ -224,9 +222,7 @@ fn soft_delete_hides_a_skill_by_id() {
 fn rolls_back_formal_directory_when_repository_persist_fails() {
     let repository = Rc::new(FakeSkillRepository::default());
     let storage = Rc::new(FakeSkillStorage::default());
-    repository.fail_next(SkillRepositoryError::OperationFailed(
-        "write failed".to_string(),
-    ));
+    repository.fail_next(RepositoryError::new(std::io::Error::other("write failed")));
 
     let result = CreateSkillHandler::new(
         repository.clone(),
@@ -270,7 +266,7 @@ fn surfaces_storage_failures_without_half_staging() {
 #[derive(Default)]
 struct FakeSkillRepository {
     skills: RefCell<Vec<Skill>>,
-    next_error: RefCell<Option<SkillRepositoryError>>,
+    next_error: RefCell<Option<RepositoryError>>,
 }
 
 impl FakeSkillRepository {
@@ -280,21 +276,21 @@ impl FakeSkillRepository {
             next_error: RefCell::new(None),
         }
     }
-    fn fail_next(&self, error: SkillRepositoryError) {
+    fn fail_next(&self, error: RepositoryError) {
         self.next_error.replace(Some(error));
     }
-    fn take_error(&self) -> Result<(), SkillRepositoryError> {
+    fn take_error(&self) -> Result<(), RepositoryError> {
         self.next_error.borrow_mut().take().map_or(Ok(()), Err)
     }
 }
 
 impl SkillRepository for Rc<FakeSkillRepository> {
-    fn create_skill(&self, skill: Skill) -> Result<Skill, SkillRepositoryError> {
+    fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
         self.take_error()?;
         self.skills.borrow_mut().push(skill.clone());
         Ok(skill)
     }
-    fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, SkillRepositoryError> {
+    fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError> {
         self.take_error()?;
         Ok(self
             .skills
@@ -303,7 +299,7 @@ impl SkillRepository for Rc<FakeSkillRepository> {
             .find(|skill| skill.id == *skill_id && !skill.audit_fields.is_deleted)
             .cloned())
     }
-    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, SkillRepositoryError> {
+    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, RepositoryError> {
         self.take_error()?;
         Ok(self
             .skills
@@ -312,7 +308,7 @@ impl SkillRepository for Rc<FakeSkillRepository> {
             .find(|skill| !skill.audit_fields.is_deleted && skill.name.eq_ignore_ascii_case(name))
             .cloned())
     }
-    fn list_skills(&self) -> Result<Vec<Skill>, SkillRepositoryError> {
+    fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError> {
         self.take_error()?;
         Ok(self
             .skills
@@ -322,7 +318,7 @@ impl SkillRepository for Rc<FakeSkillRepository> {
             .cloned()
             .collect())
     }
-    fn update_skill(&self, skill: Skill) -> Result<Skill, SkillRepositoryError> {
+    fn update_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
         self.take_error()?;
         let mut skills = self.skills.borrow_mut();
         if let Some(existing) = skills
@@ -332,16 +328,14 @@ impl SkillRepository for Rc<FakeSkillRepository> {
             *existing = skill.clone();
             Ok(skill)
         } else {
-            Err(SkillRepositoryError::OperationFailed(
-                "skill missing".to_string(),
-            ))
+            Err(RepositoryError::new(std::io::Error::other("skill missing")))
         }
     }
     fn soft_delete_skill(
         &self,
         skill_id: &SkillId,
         deleted_at: i64,
-    ) -> Result<bool, SkillRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.take_error()?;
         if let Some(skill) = self
             .skills

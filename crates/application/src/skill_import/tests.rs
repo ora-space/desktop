@@ -3,7 +3,7 @@ use super::{
     SkillImportService,
 };
 use crate::skill::FilesystemSkillStorage;
-use crate::{Clock, SkillRepository, SkillRepositoryError};
+use crate::{Clock, RepositoryError, SkillRepository};
 use ora_contracts::{
     CommitSkillImportRequest, GetSkillImportSessionRequest, PrepareSkillImportRequest,
     SkillImportConflictDecision, SkillImportDecision, SkillImportSession, SkillImportSessionStatus,
@@ -879,17 +879,17 @@ impl FakeSkillRepository {
 }
 
 impl SkillRepository for Arc<FakeSkillRepository> {
-    fn create_skill(&self, skill: Skill) -> Result<Skill, SkillRepositoryError> {
+    fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
         if self.fail_create.load(Ordering::SeqCst) > 0 {
             self.fail_create.fetch_sub(1, Ordering::SeqCst);
-            return Err(SkillRepositoryError::OperationFailed(
-                "injected create failure".to_string(),
-            ));
+            return Err(RepositoryError::new(std::io::Error::other(
+                "injected create failure",
+            )));
         }
         self.skills.lock().unwrap().push(skill.clone());
         Ok(skill)
     }
-    fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, SkillRepositoryError> {
+    fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError> {
         Ok(self
             .skills
             .lock()
@@ -898,7 +898,7 @@ impl SkillRepository for Arc<FakeSkillRepository> {
             .find(|skill| skill.id == *skill_id && !skill.audit_fields.is_deleted)
             .cloned())
     }
-    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, SkillRepositoryError> {
+    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, RepositoryError> {
         Ok(self
             .skills
             .lock()
@@ -907,10 +907,10 @@ impl SkillRepository for Arc<FakeSkillRepository> {
             .find(|skill| !skill.audit_fields.is_deleted && skill.name.eq_ignore_ascii_case(name))
             .cloned())
     }
-    fn list_skills(&self) -> Result<Vec<Skill>, SkillRepositoryError> {
+    fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError> {
         Ok(self.snapshot())
     }
-    fn update_skill(&self, skill: Skill) -> Result<Skill, SkillRepositoryError> {
+    fn update_skill(&self, skill: Skill) -> Result<Skill, RepositoryError> {
         let mut skills = self.skills.lock().unwrap();
         if let Some(existing) = skills
             .iter_mut()
@@ -919,16 +919,14 @@ impl SkillRepository for Arc<FakeSkillRepository> {
             *existing = skill.clone();
             Ok(skill)
         } else {
-            Err(SkillRepositoryError::OperationFailed(
-                "skill missing".to_string(),
-            ))
+            Err(RepositoryError::new(std::io::Error::other("skill missing")))
         }
     }
     fn soft_delete_skill(
         &self,
         skill_id: &SkillId,
         deleted_at: i64,
-    ) -> Result<bool, SkillRepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         if let Some(skill) = self
             .skills
             .lock()
