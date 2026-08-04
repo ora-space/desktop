@@ -17,6 +17,20 @@ use ora_logging::{ora_debug, ora_warn};
 use tokio::process::ChildStdin;
 use tokio::time::{Instant, timeout};
 
+/// How far replaying Ora's record got before it stopped.
+///
+/// Only `Delivered` may complete the load. The other two are kept apart because
+/// they differ in who still has to be told: an unreadable history owes the
+/// client an error, while an abandoned one has no client left to send it to.
+enum Replay {
+    /// Every recorded line reached the client.
+    Delivered,
+    /// The history could not be read, and the client was told so.
+    Unreadable,
+    /// The client stopped listening partway through.
+    Abandoned,
+}
+
 impl RuntimeActor {
     /// Serializes operations for one logical session while the shared connection remains concurrent.
     pub(super) async fn run(mut self) {
@@ -154,12 +168,18 @@ impl RuntimeActor {
                     match response {
                         Ok(_) => {
                             ora_debug!(session_id = %self.session.id, "session/load completed");
-                            if self.replay_recorded_history(&events).await
-                                && events.send(Ok(LoadSessionEvent::Completed)).await.is_ok()
-                            {
-                                self.channel = Some(channel);
-                            } else {
-                                self.isolate_channel(channel).await;
+                            match self.replay_recorded_history(&events).await {
+                                Replay::Delivered
+                                    if events.send(Ok(LoadSessionEvent::Completed)).await.is_ok() =>
+                                {
+                                    self.channel = Some(channel);
+                                }
+                                // A replay that did not finish leaves the client
+                                // without the conversation it asked for, so the
+                                // registration goes with it and load can be retried.
+                                Replay::Delivered | Replay::Unreadable | Replay::Abandoned => {
+                                    self.isolate_channel(channel).await;
+                                }
                             }
                         }
                         Err(error) => {
@@ -512,12 +532,21 @@ impl RuntimeActor {
     async fn replay_recorded_history(
         &self,
         events: &mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
-    ) -> bool {
+    ) -> Replay {
         let history = match read_session_history(&self.sessions_root, self.session.id.as_ref()) {
             Ok(history) => history,
             Err(error) => {
-                ora_debug!(session_id = %self.session.id, error = %error, "session history unreadable during load");
-                return true;
+                // Load is how a user asks to see the conversation, so a history
+                // that cannot be read is reported rather than shown as an empty
+                // one. Completing here would state that nothing was ever said.
+                ora_warn!(session_id = %self.session.id, error = %error, "session history unreadable during load");
+                let _ = events
+                    .send(Err(runtime_internal(
+                        "session_history_unreadable",
+                        "session history could not be read",
+                    )))
+                    .await;
+                return Replay::Unreadable;
             }
         };
         for line in history.lines {
@@ -533,10 +562,10 @@ impl RuntimeActor {
                 | HistoryRecord::Gap { .. } => continue,
             };
             if events.send(Ok(event)).await.is_err() {
-                return false;
+                return Replay::Abandoned;
             }
         }
-        true
+        Replay::Delivered
     }
 
     /// Handles controls arriving while a registered session has no active operation.

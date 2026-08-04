@@ -43,6 +43,7 @@ A history that skips records is more dangerous than one that stops, because the 
 - The session moves to `historyState: degraded` carrying the operating-system reason, and further prompts are refused with `session_history_degraded` until it is resumed.
 - `resumeSessionHistory` appends a `Gap` record naming what interrupted the file *before* accepting new content, then returns the session to writable. Resuming does not restore what was lost; it records that something was.
 - A history file Ora cannot read degrades the session the same way. Appending without knowing which positions are already used would overwrite them.
+- A load whose history cannot be read fails the load rather than completing an empty one. Load is how a user asks to see the conversation, and an empty view is indistinguishable from a session that never said anything.
 
 ### Deletion
 
