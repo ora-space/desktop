@@ -235,14 +235,57 @@ impl AgentRuntimeManager {
         // context is not reusable afterwards: work done on the new agent would be
         // missing from it, and switching back re-injects the transcript instead.
         let previous = session.agent_cli;
-        if let Some(handle) = self.lookup_actor(&session.id)? {
+        let (session, recorder) = match self
+            .rebind_to_provider(&session.id, previous, target, &provider)
+            .await
+        {
+            Ok(rebound) => rebound,
+            Err(error) => {
+                // `session/new` already succeeded, so the CLI is holding a session
+                // Ora has just decided not to use. Nothing else will ever close it:
+                // dropping the channel unregisters routing only, and no Ora row
+                // names this provider session for a later attempt to find.
+                close_provider_session(&provider).await;
+                return Err(error);
+            }
+        };
+        self.insert_actor(
+            session.clone(),
+            cwd,
+            provider.supervisor,
+            Some(provider.channel),
+            recorder,
+            // The new agent knows nothing; the next prompt carries the transcript.
+            /*handoff_pending*/
+            true,
+        )?;
+        Ok(SwitchSessionAgentResponse {
+            session: contract_session(session),
+            available_commands: provider.available_commands,
+        })
+    }
+
+    /// Moves one stored session onto a provider binding that already exists.
+    ///
+    /// Separate from `switch_agent` because every step here can fail *after*
+    /// `session/new` succeeded, and each of those failures owes the provider a
+    /// `session/close`. Keeping them in one fallible region gives the caller a
+    /// single place to release the binding instead of a release per `?`.
+    async fn rebind_to_provider(
+        &self,
+        session_id: &SessionId,
+        previous: AgentCli,
+        target: AgentCli,
+        provider: &ProviderSession,
+    ) -> Result<(Session, SessionRecorder), BackendError> {
+        if let Some(handle) = self.lookup_actor(session_id)? {
             self.stop_actor(handle).await?;
         }
-        self.actors_write()?.remove(&session.id);
+        self.actors_write()?.remove(session_id);
 
         let now = self.inner.clock.now_timestamp_millis();
         let session = self
-            .find_session(&request.session_id)?
+            .find_session(session_id.as_ref())?
             .with_binding(target, provider.agent_session_id.clone(), now)
             .with_status(SessionStatus::Running, now);
         SqliteSessionRepository::new(self.inner.pool.clone())
@@ -258,27 +301,13 @@ impl AgentRuntimeManager {
         let mut opened = self.open_recorder(&session)?;
         let outcome = match opened.failure.take() {
             Some(reason) => RecordOutcome::JustFailed { reason },
-            None => {
-                opened
-                    .recorder
-                    .record_agent_switch(previous, target, provider.agent_session_id)
-            }
+            None => opened.recorder.record_agent_switch(
+                previous,
+                target,
+                provider.agent_session_id.clone(),
+            ),
         };
-        let session = self.settle_record(session, outcome);
-        self.insert_actor(
-            session.clone(),
-            cwd,
-            provider.supervisor,
-            Some(provider.channel),
-            opened.recorder,
-            // The new agent knows nothing; the next prompt carries the transcript.
-            /*handoff_pending*/
-            true,
-        )?;
-        Ok(SwitchSessionAgentResponse {
-            session: contract_session(session),
-            available_commands: provider.available_commands,
-        })
+        Ok((self.settle_record(session, outcome), opened.recorder))
     }
 
     /// Returns a session whose history writes failed to a writable state.
@@ -682,6 +711,30 @@ impl AgentRuntimeManager {
             .write()
             .map_err(|_poisoned| runtime_unavailable())
     }
+}
+
+/// Releases a provider session Ora created and then decided not to keep.
+///
+/// The actor has its own detach for a binding it owns; this is the counterpart
+/// for one that never reached an actor, so it reads the connection from the
+/// channel rather than from a session row that does not name it yet.
+async fn close_provider_session(provider: &ProviderSession) {
+    use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
+    use ora_contracts::acp::session::{CloseSessionRequest, CloseSessionResponse};
+    use tokio::time::timeout;
+
+    let connection = &provider.channel.connection;
+    if !connection.close_session_supported {
+        return;
+    }
+    let _ = timeout(
+        CANCELLATION_GRACE,
+        connection.client.request::<_, CloseSessionResponse>(
+            AGENT_METHOD_NAMES.session_close,
+            &CloseSessionRequest::new(provider.agent_session_id.clone()),
+        ),
+    )
+    .await;
 }
 
 /// Maps the transport CLI identity onto the stable persisted one.
