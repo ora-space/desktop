@@ -6,6 +6,7 @@ import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest,
 import type { OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse } from "./project-work-context.js";
 import type { CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, StopSessionRequest, StopSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
+import type { CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest, CommitSkillImportResponse, GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest, PrepareSkillImportResponse } from "./skill-import.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
 import type { HttpMethod } from "./transport.js";
 
@@ -60,6 +61,10 @@ export type RequestByOperation = {
   listSkills: ListSkillsRequest;
   updateSkill: UpdateSkillRequest;
   deleteSkill: DeleteSkillRequest;
+  prepareSkillImport: PrepareSkillImportRequest;
+  getSkillImport: GetSkillImportSessionRequest;
+  commitSkillImport: CommitSkillImportRequest;
+  cancelSkillImport: CancelSkillImportRequest;
   createAgent: CreateAgentRequest;
   getAgent: GetAgentRequest;
   listAgents: ListAgentsRequest;
@@ -96,6 +101,10 @@ export type ResponseByOperation = {
   listSkills: ListSkillsResponse;
   updateSkill: UpdateSkillResponse;
   deleteSkill: DeleteSkillResponse;
+  prepareSkillImport: PrepareSkillImportResponse;
+  getSkillImport: GetSkillImportSessionResponse;
+  commitSkillImport: CommitSkillImportResponse;
+  cancelSkillImport: CancelSkillImportResponse;
   createAgent: CreateAgentResponse;
   getAgent: GetAgentResponse;
   listAgents: ListAgentsResponse;
@@ -443,6 +452,58 @@ export const endpoints = {
     responseType: "DeleteSkillResponse",
     responseMode: "unary",
     pathParams: [{ rustFieldName: "skill_id", wireName: "skillId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  prepareSkillImport: {
+    operationName: "prepareSkillImport",
+    namespace: "skillImport",
+    memberName: "prepare",
+    method: "POST",
+    pathTemplate: "/api/skill-imports",
+    requestType: "PrepareSkillImportRequest",
+    responseType: "PrepareSkillImportResponse",
+    responseMode: "unary",
+    pathParams: [],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  getSkillImport: {
+    operationName: "getSkillImport",
+    namespace: "skillImport",
+    memberName: "get",
+    method: "GET",
+    pathTemplate: "/api/skill-imports/{sessionId}",
+    requestType: "GetSkillImportSessionRequest",
+    responseType: "GetSkillImportSessionResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  commitSkillImport: {
+    operationName: "commitSkillImport",
+    namespace: "skillImport",
+    memberName: "commit",
+    method: "POST",
+    pathTemplate: "/api/skill-imports/{sessionId}/commit",
+    requestType: "CommitSkillImportRequest",
+    responseType: "CommitSkillImportResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  cancelSkillImport: {
+    operationName: "cancelSkillImport",
+    namespace: "skillImport",
+    memberName: "cancel",
+    method: "DELETE",
+    pathTemplate: "/api/skill-imports/{sessionId}",
+    requestType: "CancelSkillImportRequest",
+    responseType: "CancelSkillImportResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
     queryParams: [],
     hasJsonBody: false,
   },

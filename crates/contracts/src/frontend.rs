@@ -85,6 +85,9 @@ pub const SESSION_STOP_PATH: &str = "/api/sessions/{sessionId}/stop";
 pub const AGENT_MODELS_PATH: &str = "/api/agent-models";
 pub const SKILLS_PATH: &str = "/api/skills";
 pub const SKILL_PATH: &str = "/api/skills/{skillId}";
+pub const SKILL_IMPORTS_PATH: &str = "/api/skill-imports";
+pub const SKILL_IMPORT_PATH: &str = "/api/skill-imports/{sessionId}";
+pub const SKILL_IMPORT_COMMIT_PATH: &str = "/api/skill-imports/{sessionId}/commit";
 pub const AGENTS_PATH: &str = "/api/agents";
 pub const AGENT_PATH: &str = "/api/agents/{agentId}";
 pub const FILE_SYSTEM_DIRECTORY_PATH: &str = "/api/file-system/directory";
@@ -106,6 +109,10 @@ const SKILL_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "skill_id",
     wire_name: "skillId",
 };
+const SKILL_IMPORT_SESSION_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
+    rust_field_name: "session_id",
+    wire_name: "sessionId",
+};
 const AGENT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "agent_id",
     wire_name: "agentId",
@@ -121,6 +128,7 @@ const TASK_NAMESPACE: &str = "task";
 const SESSION_NAMESPACE: &str = "session";
 const AGENT_RUNTIME_NAMESPACE: &str = "agentRuntime";
 const SKILL_NAMESPACE: &str = "skill";
+const SKILL_IMPORT_NAMESPACE: &str = "skillImport";
 const AGENT_NAMESPACE: &str = "agent";
 const FILE_SYSTEM_NAMESPACE: &str = "fileSystem";
 const GIT_NAMESPACE: &str = "gitIdentity";
@@ -129,6 +137,7 @@ const PROJECT_PATH_PARAMS: &[FrontendPathParam] = &[PROJECT_ID_PATH_PARAM];
 const TASK_PATH_PARAMS: &[FrontendPathParam] = &[TASK_ID_PATH_PARAM];
 const SESSION_PATH_PARAMS: &[FrontendPathParam] = &[SESSION_ID_PATH_PARAM];
 const SKILL_PATH_PARAMS: &[FrontendPathParam] = &[SKILL_ID_PATH_PARAM];
+const SKILL_IMPORT_PATH_PARAMS: &[FrontendPathParam] = &[SKILL_IMPORT_SESSION_ID_PATH_PARAM];
 const AGENT_PATH_PARAMS: &[FrontendPathParam] = &[AGENT_ID_PATH_PARAM];
 const NO_PATH_PARAMS: &[FrontendPathParam] = &[];
 const FILE_SYSTEM_DIRECTORY_QUERY_PARAMS: &[FrontendQueryParam] =
@@ -420,6 +429,50 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "DeleteSkillRequest",
         response_type: "DeleteSkillResponse",
         path_params: SKILL_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "prepareSkillImport",
+        namespace: SKILL_IMPORT_NAMESPACE,
+        member_name: "prepare",
+        method: FrontendHttpMethod::Post,
+        path_template: SKILL_IMPORTS_PATH,
+        request_type: "PrepareSkillImportRequest",
+        response_type: "PrepareSkillImportResponse",
+        path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "getSkillImport",
+        namespace: SKILL_IMPORT_NAMESPACE,
+        member_name: "get",
+        method: FrontendHttpMethod::Get,
+        path_template: SKILL_IMPORT_PATH,
+        request_type: "GetSkillImportSessionRequest",
+        response_type: "GetSkillImportSessionResponse",
+        path_params: SKILL_IMPORT_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "commitSkillImport",
+        namespace: SKILL_IMPORT_NAMESPACE,
+        member_name: "commit",
+        method: FrontendHttpMethod::Post,
+        path_template: SKILL_IMPORT_COMMIT_PATH,
+        request_type: "CommitSkillImportRequest",
+        response_type: "CommitSkillImportResponse",
+        path_params: SKILL_IMPORT_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "cancelSkillImport",
+        namespace: SKILL_IMPORT_NAMESPACE,
+        member_name: "cancel",
+        method: FrontendHttpMethod::Delete,
+        path_template: SKILL_IMPORT_PATH,
+        request_type: "CancelSkillImportRequest",
+        response_type: "CancelSkillImportResponse",
+        path_params: SKILL_IMPORT_PATH_PARAMS,
         has_json_body: false,
     },
     FrontendEndpoint {
