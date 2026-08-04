@@ -985,7 +985,7 @@ mod tests {
             &app,
             Method::POST,
             "/api/skills",
-            json!({ "name": " review / guide ", "description": "Reviews guides" }),
+            json!({ "name": " review-guide ", "description": "Reviews guides" }),
         )
         .await;
         assert_eq!(skill_create.status(), StatusCode::OK);
@@ -994,7 +994,7 @@ mod tests {
             .as_str()
             .unwrap_or_else(|| panic!("response did not include a skill id"))
             .to_string();
-        assert_eq!(skill["skill"]["name"], "review / guide");
+        assert_eq!(skill["skill"]["name"], "review-guide");
         let skill_path = format!("/api/skills/{skill_id}");
         let skill_get = request_empty(&app, Method::GET, &skill_path).await;
         assert_eq!(skill_get.status(), StatusCode::OK);

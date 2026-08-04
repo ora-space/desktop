@@ -37,7 +37,7 @@ fn updates_by_id_and_preserves_identity_and_creation_time() {
     let response = UpdateSkillHandler::new(repository.clone(), FixedClock(30))
         .handle(UpdateSkillRequest {
             skill_id: "skill-1".to_string(),
-            name: " code review ".to_string(),
+            name: " code-review ".to_string(),
             description: "Reviews code".to_string(),
         })
         .unwrap();
@@ -47,7 +47,7 @@ fn updates_by_id_and_preserves_identity_and_creation_time() {
         repository.skills.borrow().clone(),
         vec![skill(
             "skill-1",
-            "code review",
+            "code-review",
             "Reviews code",
             10,
             30,
