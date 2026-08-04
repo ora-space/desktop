@@ -44,6 +44,7 @@ describe("EntityDialog path field", () => {
       worktreeStorage: { kind: "unsupported" },
       windowControls: { kind: "none" },
       locationActions: { kind: "unsupported" },
+      skillMarketplace: { kind: "unsupported" },
       saveTextFile: vi.fn().mockResolvedValue(false),
     });
 
@@ -63,6 +64,7 @@ describe("EntityDialog path field", () => {
       worktreeStorage: { kind: "unsupported" },
       windowControls: { kind: "none" },
       locationActions: { kind: "unsupported" },
+      skillMarketplace: { kind: "unsupported" },
       saveTextFile: vi.fn().mockResolvedValue(false),
     });
 

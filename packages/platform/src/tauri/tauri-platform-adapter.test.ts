@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hasPlatformHostRenderer } from "../platform-host-renderer";
@@ -7,16 +8,54 @@ import { createTauriPlatformAdapter } from "./tauri-platform-adapter";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 const openMock = vi.mocked(open);
 const saveMock = vi.mocked(save);
 const invokeMock = vi.mocked(invoke);
+const listenMock = vi.mocked(listen);
 
 describe("TauriPlatformAdapter", () => {
   beforeEach(() => {
     openMock.mockReset();
     saveMock.mockReset();
     invokeMock.mockReset();
+    listenMock.mockReset();
+  });
+
+  it("opens SkillHub and forwards native download status events", async () => {
+    const stop = vi.fn();
+    const listener = vi.fn();
+    let forwardStatus: ((event: { payload: unknown }) => void) | undefined;
+    listenMock.mockImplementation(async (_event, handler) => {
+      forwardStatus = handler as (event: { payload: unknown }) => void;
+      return stop;
+    });
+    const adapter = createTauriPlatformAdapter();
+    const marketplace = adapter.skillMarketplace;
+    if (marketplace.kind !== "supported") {
+      throw new Error("expected Tauri marketplace capability");
+    }
+
+    await marketplace.open();
+    const unsubscribe = await marketplace.onStatus(listener);
+    forwardStatus?.({
+      payload: {
+        status: "downloaded",
+        fileName: "skill.zip",
+        archivePath: "/app-data/skill-downloads/skill.zip",
+      },
+    });
+    unsubscribe();
+
+    expect(invokeMock).toHaveBeenCalledWith("open_skill_marketplace");
+    expect(listenMock).toHaveBeenCalledWith("skill-marketplace://status", expect.any(Function));
+    expect(listener).toHaveBeenCalledWith({
+      status: "downloaded",
+      fileName: "skill.zip",
+      archivePath: "/app-data/skill-downloads/skill.zip",
+    });
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   it("reads and updates the desktop worktree root through Tauri commands", async () => {

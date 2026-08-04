@@ -67,11 +67,32 @@ export type LocationActionsCapability =
       open(target: LocationTarget, path: string): Promise<void>;
     };
 
+/** Reports the download lifecycle controlled by the native SkillHub marketplace window. */
+export type SkillMarketplaceStatus =
+  | { status: "downloading"; fileName: string }
+  | { status: "downloaded"; fileName: string; archivePath: string }
+  | {
+      status: "failed";
+      stage: "download";
+      code: string;
+      message: string;
+    };
+
+/** Opens the native SkillHub window and observes its Ora-owned download lifecycle. */
+export type SkillMarketplaceCapability =
+  | { kind: "unsupported" }
+  | {
+      kind: "supported";
+      open(): Promise<void>;
+      onStatus(listener: (status: SkillMarketplaceStatus) => void): Promise<() => void>;
+    };
+
 /** Abstracts one single-path selection interaction across Web and Tauri hosts. */
 export interface PlatformAdapter {
   readonly worktreeStorage: WorktreeStorageCapability;
   readonly windowControls: WindowControlsCapability;
   readonly locationActions: LocationActionsCapability;
+  readonly skillMarketplace: SkillMarketplaceCapability;
   selectPath(options: SelectPathOptions): Promise<string | null>;
   saveTextFile(options: SaveTextFileOptions): Promise<boolean>;
 }

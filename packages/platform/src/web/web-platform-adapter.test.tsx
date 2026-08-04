@@ -69,6 +69,13 @@ function PickerHarness({
 }
 
 describe("WebPlatformAdapter", () => {
+  it("reports the native SkillHub marketplace as unsupported", () => {
+    const { client } = fileSystemClient();
+    const adapter = createWebPlatformAdapter(client);
+
+    expect(adapter.skillMarketplace).toEqual({ kind: "unsupported" });
+  });
+
   it("rejects a second selection while preserving the first request", async () => {
     const { client } = fileSystemClient();
     const adapter = createWebPlatformAdapter(client);
