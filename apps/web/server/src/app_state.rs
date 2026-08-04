@@ -1,4 +1,4 @@
-use crate::service::{FileSystemApi, ProjectWorkContextApi};
+use crate::service::{FileSystemApi, ProjectWorkContextApi, WorkspaceFileApi};
 use ora_backend::Backend;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,6 +9,7 @@ pub struct AppState {
     backend: Backend,
     file_system_api: Arc<FileSystemApi>,
     project_work_context_api: Arc<ProjectWorkContextApi>,
+    workspace_file_api: Arc<WorkspaceFileApi>,
     ready: Arc<AtomicBool>,
 }
 
@@ -18,11 +19,13 @@ impl AppState {
         backend: Backend,
         file_system_api: Arc<FileSystemApi>,
         project_work_context_api: Arc<ProjectWorkContextApi>,
+        workspace_file_api: Arc<WorkspaceFileApi>,
     ) -> Self {
         Self {
             backend,
             file_system_api,
             project_work_context_api,
+            workspace_file_api,
             ready: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -40,6 +43,11 @@ impl AppState {
     /// Returns the shared project work context API that routes delegate into.
     pub fn project_work_context_api(&self) -> &Arc<ProjectWorkContextApi> {
         &self.project_work_context_api
+    }
+
+    /// Returns the shared task-workspace filesystem API used by explorer and viewer routes.
+    pub fn workspace_file_api(&self) -> &Arc<WorkspaceFileApi> {
+        &self.workspace_file_api
     }
 
     /// Marks the runtime as ready after bootstrap finishes successfully.
