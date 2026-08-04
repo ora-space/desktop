@@ -49,6 +49,11 @@ const MOCK_AGENT_MODELS: WorkflowAgentModel[] = [
     modelId: "deepseek/deepseek-v4-flash",
     label: "OpenCode · deepseek/deepseek-v4-flash",
   },
+  {
+    agentCli: "open_code",
+    modelId: "deepseek/deepseek-v4-pro",
+    label: "OpenCode · deepseek/deepseek-v4-pro",
+  },
   { agentCli: "nga", modelId: "nga/default", label: "NGA · Default" },
 ];
 
@@ -78,6 +83,11 @@ const MOCK_AGENT_SKILLS: WorkflowChoice[] = [
   "cdase:sfmea_review",
   "code-defect-scan",
 ].map((value) => ({ value, label: value }));
+
+/** Resolves a persisted role identifier to the label used by the mock configuration UI. */
+export function getMockWorkflowRoleLabel(roleId: string): string {
+  return MOCK_AGENT_ROLES.find((role) => role.value === roleId)?.label ?? roleId;
+}
 
 /**
  * Returns prototype workflow capabilities, optionally using models discovered

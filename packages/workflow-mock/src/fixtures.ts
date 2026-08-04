@@ -37,6 +37,11 @@ const OPENCODE_DEEPSEEK_V4_FLASH = {
   modelId: "deepseek/deepseek-v4-flash",
 };
 
+const OPENCODE_DEEPSEEK_V4_PRO = {
+  agentCli: "open_code",
+  modelId: "deepseek/deepseek-v4-pro",
+};
+
 export const MOCK_WORKFLOW: DemoWorkflow = {
   id: "code-review",
   name: "代码审查工作流",
@@ -233,7 +238,7 @@ export function createMockWorkflows(locale: "zh-CN" | "en-US"): DemoWorkflow[] {
 }
 
 /**
- * Creates a six-stage Agent workflow that demonstrates reusable OpenSpec-like
+ * Creates a seven-stage Agent workflow that demonstrates reusable OpenSpec-like
  * behavior without treating any particular methodology as a node type.
  */
 export function createOpenSpecMockWorkflow(
@@ -244,8 +249,8 @@ export function createOpenSpecMockWorkflow(
     id: "spec-change-lifecycle",
     name: zh ? "工作流演示" : "OpenSpec workflow demo",
     description: zh
-      ? "依次探索、检查、提案、实施、扫描和归档变更；六步均使用可配置的 Agent 执行契约。"
-      : "Explore, review, propose, apply, scan, and archive a change with six configurable Agent execution contracts.",
+      ? "依次探索、检查、提案、实施、扫描、修复和归档变更；七步均使用可配置的 Agent 执行契约。"
+      : "Explore, review, propose, apply, scan, repair, and archive a change with seven configurable Agent execution contracts.",
     updatedAt: "2026-08-03T10:00:00+08:00",
     viewport: { x: 28, y: 110, zoom: 0.82 },
     nodes: [
@@ -278,7 +283,7 @@ export function createOpenSpecMockWorkflow(
               : "Read relevant code, docs, and current specifications. Summarize the state, constraints, risks, and options without modifying project files.",
             {
               skillIds: ["openspec-explore"],
-              executor: OPENCODE_DEEPSEEK_V4_FLASH,
+              executor: OPENCODE_DEEPSEEK_V4_PRO,
             },
           ),
         },
@@ -298,7 +303,7 @@ export function createOpenSpecMockWorkflow(
               : "Review the current plan from upstream exploration. Identify potential failure modes, impacts, risks, and needed controls without modifying project files.",
             {
               skillIds: ["cdase:sfmea_review"],
-              executor: OPENCODE_DEEPSEEK_V4_FLASH,
+              executor: OPENCODE_DEEPSEEK_V4_PRO,
             },
           ),
         },
@@ -318,7 +323,7 @@ export function createOpenSpecMockWorkflow(
               : "Use the upstream exploration and SFMEA review to propose a scoped change plan, task breakdown, risks, and acceptance criteria without modifying project files.",
             {
               skillIds: ["openspec-propose"],
-              executor: OPENCODE_DEEPSEEK_V4_FLASH,
+              executor: OPENCODE_DEEPSEEK_V4_PRO,
             },
           ),
         },
@@ -358,6 +363,25 @@ export function createOpenSpecMockWorkflow(
               : "Scan the upstream implementation for code defects and record issues, impact, and remediation advice.",
             {
               skillIds: ["code-defect-scan"],
+              executor: OPENCODE_DEEPSEEK_V4_PRO,
+            },
+          ),
+        },
+      },
+      {
+        id: "defect-repair",
+        type: "workflow",
+        position: { x: 1720, y: 280 },
+        data: {
+          kind: "agent",
+          title: zh ? "缺陷修复" : "Defect repair",
+          description: zh ? "根据扫描结果修复并验证缺陷" : "Fix and verify defects found by the scan",
+          agentConfig: createAgentConfig(
+            "Implementer",
+            zh
+              ? "根据上游扫描结果修复确认的代码缺陷，运行必要验证，并记录未修复项及原因。"
+              : "Fix confirmed code defects from the upstream scan, run necessary validation, and record unresolved items with their rationale.",
+            {
               executor: OPENCODE_DEEPSEEK_V4_FLASH,
             },
           ),
@@ -366,7 +390,7 @@ export function createOpenSpecMockWorkflow(
       {
         id: "archive",
         type: "workflow",
-        position: { x: 1720, y: 280 },
+        position: { x: 2000, y: 280 },
         data: {
           kind: "agent",
           title: zh ? "归档" : "Archive",
@@ -390,7 +414,8 @@ export function createOpenSpecMockWorkflow(
       { id: "e-sfmea-propose", source: "sfmea-review", target: "propose", type: "workflow" },
       { id: "e-propose-apply", source: "propose", target: "apply", type: "workflow" },
       { id: "e-apply-scan", source: "apply", target: "code-defect-scan", type: "workflow" },
-      { id: "e-scan-archive", source: "code-defect-scan", target: "archive", type: "workflow" },
+      { id: "e-scan-repair", source: "code-defect-scan", target: "defect-repair", type: "workflow" },
+      { id: "e-repair-archive", source: "defect-repair", target: "archive", type: "workflow" },
     ],
   };
 

@@ -105,6 +105,11 @@ describe("createMockWorkflowNode", () => {
           modelId: "deepseek/deepseek-v4-flash",
           label: "OpenCode · deepseek/deepseek-v4-flash",
         },
+        {
+          agentCli: "open_code",
+          modelId: "deepseek/deepseek-v4-pro",
+          label: "OpenCode · deepseek/deepseek-v4-pro",
+        },
         { agentCli: "nga", modelId: "nga/default", label: "NGA · Default" },
       ],
       roles: [

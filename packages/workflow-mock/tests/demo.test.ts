@@ -125,7 +125,7 @@ describe("workflow demo", () => {
     });
   });
 
-  it("includes a six-stage Agent lifecycle demo with explicit execution contracts", () => {
+  it("includes a seven-stage Agent lifecycle demo with explicit execution contracts", () => {
     const workflow = createMockWorkflows("en-US").find(
       (candidate) => candidate.id === "spec-change-lifecycle",
     );
@@ -186,6 +186,17 @@ describe("workflow demo", () => {
           }),
         }),
         expect.objectContaining({
+          id: "defect-repair",
+          data: expect.objectContaining({
+            kind: "agent",
+            title: "Defect repair",
+            agentConfig: expect.objectContaining({
+              roleId: "Implementer",
+              skills: [],
+            }),
+          }),
+        }),
+        expect.objectContaining({
           id: "archive",
           data: expect.objectContaining({
             kind: "agent",
@@ -202,7 +213,8 @@ describe("workflow demo", () => {
         expect.objectContaining({ source: "sfmea-review", target: "propose" }),
         expect.objectContaining({ source: "propose", target: "apply" }),
         expect.objectContaining({ source: "apply", target: "code-defect-scan" }),
-        expect.objectContaining({ source: "code-defect-scan", target: "archive" }),
+        expect.objectContaining({ source: "code-defect-scan", target: "defect-repair" }),
+        expect.objectContaining({ source: "defect-repair", target: "archive" }),
       ],
     });
     expect(parseDemoWorkflow(workflow)).toEqual(workflow);
@@ -211,10 +223,11 @@ describe("workflow demo", () => {
         .filter((node) => node.data.kind === "agent")
         .map((node) => node.data.agentConfig?.executor),
     ).toEqual([
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-pro" },
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-pro" },
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-pro" },
       { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
-      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
-      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
-      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
+      { agentCli: "open_code", modelId: "deepseek/deepseek-v4-pro" },
       { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
       { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
     ]);
@@ -232,6 +245,7 @@ describe("workflow demo", () => {
       "提案",
       "实施",
       "代码缺陷扫描",
+      "缺陷修复",
       "归档",
     ]);
   });
