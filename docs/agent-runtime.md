@@ -21,6 +21,7 @@ Ora records every conversation itself, in one append-only JSONL file per Session
 - The runtime records what it chose to keep, not what it sent. A prompt is recorded from the request blocks before the agent is called, and the provider's echoed `user_message_chunk` is ignored, so context Ora injected never enters the record.
 - Streamed updates are recorded before they are forwarded. A client that disconnects mid-turn costs the stream, never the record of what the agent produced.
 - Every prompt turn closes with its `stopReason`. Provider replay never carried this, so a cancelled turn used to be indistinguishable from a completed one; replaying Ora's record restores it, along with the tool calls that never finished.
+- Closing a turn first drains whatever the agent already queued. A turn ends when its response resolves, when it is cancelled, or when the connection drops, and in each of those the agent's final updates are usually waiting behind the event that ended it — most visibly during the cancellation grace, which does not consume updates at all. They belong to the turn that produced them, so they are recorded before it closes rather than left to surface after the next prompt.
 - Writes are batched per settled item, flushed but not synced. A crash costs at most the item in flight.
 
 ### Switching Agents

@@ -289,7 +289,7 @@ impl RuntimeActor {
                     match response {
                         Ok(response) => {
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
-                            self.end_turn(response.stop_reason);
+                            self.end_turn(&mut channel, &events, response.stop_reason);
                             if events.try_send(Ok(PromptSessionEvent::Completed {
                                 stop_reason: response.stop_reason,
                             })).is_ok() {
@@ -303,7 +303,7 @@ impl RuntimeActor {
                             ora_debug!(session_id = %self.session.id, error = %error, reusable = reusable, "prompt failed");
                             // A turn that failed did not reach its own end, which
                             // is the same shape in the record as one cut short.
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             let delivered = events.try_send(Err(map_acp_error(error))).is_ok();
                             if reusable && delivered {
                                 self.channel = Some(channel);
@@ -316,7 +316,7 @@ impl RuntimeActor {
                 }
                 update = channel.updates.recv() => {
                     let Some(update) = update else {
-                        self.end_turn(StopReason::Cancelled);
+                        self.end_turn(&mut channel, &events, StopReason::Cancelled);
                         self.fail_prompt(&events, runtime_unavailable());
                         return;
                     };
@@ -325,7 +325,7 @@ impl RuntimeActor {
                     let outcome = self.recorder.record_update(&update.update);
                     self.settle_record(outcome);
                     if events.try_send(Ok(PromptSessionEvent::SessionUpdate { update: update.update })).is_err() {
-                        self.end_turn(StopReason::Cancelled);
+                        self.end_turn(&mut channel, &events, StopReason::Cancelled);
                         self.cancel(&client, &permissions).await;
                         self.isolate_channel(channel).await;
                         return;
@@ -346,19 +346,19 @@ impl RuntimeActor {
                                 options: permission.request.options,
                             });
                             if events.try_send(Ok(event)).is_err() {
-                                self.end_turn(StopReason::Cancelled);
+                                self.end_turn(&mut channel, &events, StopReason::Cancelled);
                                 self.cancel(&client, &permissions).await;
                                 self.isolate_channel(channel).await;
                                 return;
                             }
                         }
                         Some(SessionControl::ConnectionLost(error)) => {
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.fail_prompt(&events, error);
                             return;
                         }
                         Some(SessionControl::UpdateOverflow) => {
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.cancel(&client, &permissions).await;
                             let _ = events.try_send(Err(runtime_internal(
                                 "agent_update_overflow",
@@ -368,7 +368,7 @@ impl RuntimeActor {
                             return;
                         }
                         None => {
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.fail_prompt(&events, runtime_unavailable());
                             return;
                         }
@@ -383,9 +383,10 @@ impl RuntimeActor {
                         Some(RuntimeCommand::Cancel { operation_id: cancelled }) if cancelled == operation_id => {
                             self.cancel(&client, &permissions).await;
                             let settled = timeout(CANCELLATION_GRACE, &mut future).await;
-                            // Everything the agent produced before the interruption
-                            // is already recorded; this closes the turn around it.
-                            self.end_turn(StopReason::Cancelled);
+                            // Closing the turn also collects whatever the agent
+                            // emitted on its way out, which the grace period above
+                            // was not watching for.
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             match settled {
                                 Ok(Ok(_)) | Ok(Err(ora_acp::AcpError::RequestFailed(_))) => {
                                     self.channel = Some(channel);
@@ -396,7 +397,7 @@ impl RuntimeActor {
                         }
                         Some(RuntimeCommand::Stop { response }) => {
                             self.cancel(&client, &permissions).await;
-                            self.end_turn(StopReason::Cancelled);
+                            self.end_turn(&mut channel, &events, StopReason::Cancelled);
                             self.isolate_channel(channel).await;
                             let _ = response.send(Ok(StopSessionResponse {
                                 session: contract_session(self.session.clone()),
@@ -446,8 +447,32 @@ impl RuntimeActor {
         sent
     }
 
-    /// Closes the recorded turn and settles any failure that closing revealed.
-    fn end_turn(&mut self, stop_reason: StopReason) {
+    /// Closes the recorded turn once everything it produced is in hand.
+    ///
+    /// The select loop stops consuming updates the moment another branch wins —
+    /// a resolved response, a cancellation, a lost connection — and during the
+    /// cancellation grace it is not running at all. The agent's last updates are
+    /// usually already queued behind that, so they are drained here and settled
+    /// into the turn that produced them. Leaving them queued would carry them
+    /// into the next prompt, where they arrive after that prompt's own position
+    /// and, because this call clears the assembler, reopen a finished tool call
+    /// as a second record instead of correcting the first.
+    fn end_turn(
+        &mut self,
+        channel: &mut SessionChannel,
+        events: &mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
+        stop_reason: StopReason,
+    ) {
+        while let Ok(notification) = channel.updates.try_recv() {
+            let outcome = self.recorder.record_update(&notification.update);
+            self.settle_record(outcome);
+            // Forwarded on the same best-effort terms as the loop's own updates:
+            // the client may already be gone, which costs the stream but never
+            // the record.
+            let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
+                update: notification.update,
+            }));
+        }
         let outcome = self.recorder.record_turn_end(stop_reason);
         self.settle_record(outcome);
     }
