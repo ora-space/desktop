@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { decodeRemoteError, type Agent, type PrepareSkillImportResponse, type Skill, type SkillImportConflictDecision, type SkillImportDecision, type SkillImportSession } from "@ora/contracts";
 import { useQueryClient } from "@tanstack/react-query";
@@ -47,6 +47,7 @@ import {
 } from "../../state/hooks/use-atom-mutations";
 import { SettingsHeading } from "./settings-heading";
 import { queryKeys } from "../../state/hooks/query-keys";
+import { SkillMarketplacePanel } from "./skill-marketplace-panel";
 
 type AtomRecord = Agent | Skill;
 type TablerIcon = typeof IconRobot;
@@ -65,7 +66,9 @@ interface AtomManagerConfig {
   onCreate: (name: string, description: string) => Promise<void>;
   onUpdate: (item: AtomRecord, name: string, description: string) => Promise<void>;
   onDelete: (item: AtomRecord) => Promise<void>;
-  extraAction?: React.ReactNode;
+  extraAction?: ReactNode;
+  /** Optional host-specific surface shown between the pane heading and local atom controls. */
+  intro?: ReactNode;
 }
 
 /** The Roles pane manages the configurable agents surfaced to Ora sessions. */
@@ -109,6 +112,7 @@ export function SkillsSettings() {
       loading={skillsQuery.isPending}
       error={skillsQuery.error !== null}
       extraAction={<Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}><IconUpload />{t("settings.skills.import")}</Button>}
+      intro={<SkillMarketplacePanel />}
       onCreate={(name, description) => createSkill.mutateAsync({ name, description }).then(() => undefined)}
       onUpdate={(item, name, description) => updateSkill.mutateAsync({ skill: item as Skill, name, description }).then(() => undefined)}
       onDelete={(item) => deleteSkill.mutateAsync({ skillId: item.id }).then(() => undefined)}
@@ -125,7 +129,7 @@ export function SkillsSettings() {
  * The list-and-editor surface shared by both panes. While creating or editing, the toolbar and
  * list are replaced entirely by {@link AtomEditor}; leaving the editor brings the list back.
  */
-function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, onUpdate, onDelete, extraAction }: AtomManagerConfig) {
+function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, onUpdate, onDelete, extraAction, intro }: AtomManagerConfig) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   // `null` = list view; `{ item: null }` = creating; `{ item }` = editing that record.
@@ -166,6 +170,8 @@ function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, 
   return (
     <div className="space-y-5">
       <SettingsHeading title={t(`${tPrefix}.title`)} description={t(`${tPrefix}.description`)} />
+
+      {intro}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative min-w-0 flex-1">
