@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { Agent, Skill } from "@ora/contracts";
 import {
@@ -35,6 +35,7 @@ import {
   useDeleteSkill,
 } from "../../state/hooks/use-atom-mutations";
 import { SettingsHeading } from "./settings-heading";
+import { SkillMarketplacePanel } from "./skill-marketplace-panel";
 
 type AtomRecord = Agent | Skill;
 type TablerIcon = typeof IconRobot;
@@ -53,6 +54,8 @@ interface AtomManagerConfig {
   onCreate: (name: string, description: string) => Promise<void>;
   onUpdate: (item: AtomRecord, name: string, description: string) => Promise<void>;
   onDelete: (item: AtomRecord) => Promise<void>;
+  /** Optional host-specific surface shown between the pane heading and local atom controls. */
+  intro?: ReactNode;
 }
 
 /** The Roles pane manages the configurable agents surfaced to Ora sessions. */
@@ -92,6 +95,7 @@ export function SkillsSettings() {
       items={skillsQuery.data ?? []}
       loading={skillsQuery.isPending}
       error={skillsQuery.error !== null}
+      intro={<SkillMarketplacePanel />}
       onCreate={(name, description) => createSkill.mutateAsync({ name, description }).then(() => undefined)}
       onUpdate={(item, name, description) => updateSkill.mutateAsync({ skill: item as Skill, name, description }).then(() => undefined)}
       onDelete={(item) => deleteSkill.mutateAsync({ skillId: item.id }).then(() => undefined)}
@@ -103,7 +107,7 @@ export function SkillsSettings() {
  * The list-and-editor surface shared by both panes. While creating or editing, the toolbar and
  * list are replaced entirely by {@link AtomEditor}; leaving the editor brings the list back.
  */
-function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, onUpdate, onDelete }: AtomManagerConfig) {
+function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, onUpdate, onDelete, intro }: AtomManagerConfig) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   // `null` = list view; `{ item: null }` = creating; `{ item }` = editing that record.
@@ -143,6 +147,8 @@ function AtomManager({ tPrefix, icon, hasBody, items, loading, error, onCreate, 
   return (
     <div className="space-y-5">
       <SettingsHeading title={t(`${tPrefix}.title`)} description={t(`${tPrefix}.description`)} />
+
+      {intro}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative min-w-0 flex-1">
