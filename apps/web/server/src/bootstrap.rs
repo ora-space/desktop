@@ -149,6 +149,11 @@ fn web_backend_bootstrap_error(error: BackendBootstrapError) -> WebBootstrapErro
         BackendBootstrapError::AgentRuntime(source) => WebBootstrapError::ProjectBootstrap {
             source: Box::new(source),
         },
+        BackendBootstrapError::SkillStorageReconciliation(source) => {
+            WebBootstrapError::ProjectBootstrap {
+                message: format!("failed to reconcile skill storage: {source}"),
+            }
+        }
     }
 }
 
