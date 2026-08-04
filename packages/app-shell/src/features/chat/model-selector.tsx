@@ -15,8 +15,10 @@ import { useChatStore } from "../../chat-store-context";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useSetSessionConfig } from "../../state/hooks/use-session-config";
-import { useWarmSession } from "../../state/hooks/use-warm-session";
+import { useWarmSession, warmTargetKey } from "../../state/hooks/use-warm-session";
+import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
 import { useSwitchSessionAgent } from "../../state/hooks/use-workspace-mutations";
+import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import { currentValueName, findModelOption, selectableValues } from "@ora/chat";
 import { AGENT_CLI_LABELS, AGENT_CLI_ORDER } from "./model-catalog";
 import { ProviderLogo } from "./provider-logos";
@@ -36,12 +38,20 @@ import { ProviderLogo } from "./provider-logos";
  */
 export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
   const { t } = useTranslation();
-  const agentCli = useSettingsStore((state) => state.settings.agentCli);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
   const selection = useWorkspaceSelectionStore((state) => state.selection);
   const chatStore = useChatStore();
   const setSessionConfig = useSetSessionConfig();
   const switchAgent = useSwitchSessionAgent();
+
+  // Before a chat has a session, its agent is scoped to this specific target
+  // rather than read off the shared default — otherwise picking an agent for
+  // one not-yet-started chat would silently repaint every other one still
+  // waiting on its first message.
+  const targetKey = warmTargetKey(selection);
+  const hasSession = selection.sessionId !== null;
+  const setPendingAgent = usePendingAgentStore((state) => state.setPendingAgent);
+  const agentCli = useTargetAgentCli(selection);
 
   // Shares the workspace's warm-session query key, so this is a cache read
   // rather than a second provider session.
@@ -78,13 +88,21 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
 
   /**
    * A persisted session is moved onto the chosen CLI rather than left behind;
-   * a warm one only needs the new default, which re-warms it against that CLI.
+   * a not-yet-started chat only records the pick against its own target, so it
+   * survives navigating away and back without touching any other chat.
+   *
+   * Either way the shared default also moves, so the next chat surface no one
+   * has touched yet still opens on whatever the user picked most recently.
    */
   const selectAgent = (candidate: AgentCli) => {
     updateSettings({ agentCli: candidate });
-    if (selection.sessionId !== null && candidate !== agentCli) {
-      switchAgent.mutate({ sessionId: selection.sessionId, agentCli: candidate });
+    if (hasSession) {
+      if (selection.sessionId !== null && candidate !== agentCli) {
+        switchAgent.mutate({ sessionId: selection.sessionId, agentCli: candidate });
+      }
+      return;
     }
+    if (targetKey !== null) setPendingAgent(targetKey, candidate);
   };
 
   const selectModel = (value: string) => {

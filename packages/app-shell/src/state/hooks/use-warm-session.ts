@@ -95,3 +95,19 @@ function warmTarget(selection: {
   }
   return null;
 }
+
+/**
+ * Reduces a warm target to the string key callers use to scope per-target UI state.
+ *
+ * Shares `warmTarget`'s precedence (task before project root) so a value keyed
+ * off this always lines up with the warm session it describes — most directly,
+ * which agent a not-yet-started chat surface is currently offering.
+ */
+export function warmTargetKey(selection: {
+  projectId: string | null;
+  taskId: string | null;
+}): string | null {
+  const target = warmTarget(selection);
+  if (target === null) return null;
+  return target.type === "task" ? `task:${target.taskId}` : `project:${target.projectId}`;
+}

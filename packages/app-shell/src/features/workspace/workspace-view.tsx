@@ -20,7 +20,7 @@ import { useWarmSession } from "../../state/hooks/use-warm-session";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
-import { useSettingsStore } from "../../state/stores/settings-store";
+import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import {
   buildWorkflowReminder,
@@ -76,7 +76,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
-  const settingsAgentCli = useSettingsStore((s) => s.settings.agentCli);
+  // Resolved the same way the picker shows it, so the session warmed here is
+  // the one the composer and model picker are actually pointing at — a stale
+  // read would warm a different agent than what is on screen.
+  const targetAgentCli = useTargetAgentCli(selection);
 
   const chatStore = useChatStore();
   useTaskDiffLiveSync(chatStore, sessions);
@@ -84,7 +87,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const queryClient = useQueryClient();
   // Opens the provider session for this surface before anything is sent, so the
   // model picker has real options and the send path skips the agent handshake.
-  const { sessionId: warmSessionId } = useWarmSession(selection, settingsAgentCli);
+  const { sessionId: warmSessionId } = useWarmSession(selection, targetAgentCli);
 
   const project = projects.find((item) => item.id === selection.projectId);
   const task = tasks.find((item) => item.id === selection.taskId);
@@ -231,13 +234,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             queryClient.removeQueries({
               queryKey: queryKeys.warmSession(
                 { type: "task", taskId: attachedTaskId },
-                settingsAgentCli,
+                targetAgentCli,
               ),
             });
             queryClient.removeQueries({
               queryKey: queryKeys.warmSession(
                 { type: "projectRoot", projectId },
-                settingsAgentCli,
+                targetAgentCli,
               ),
             });
           }
