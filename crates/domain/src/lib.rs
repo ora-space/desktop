@@ -26,7 +26,9 @@ pub use ids::{
 pub use project::Project;
 pub use project_work_context::{ProjectWorkContext, ProjectWorkContextSurface};
 pub use session::{AgentCli, Session, SessionStatus};
-pub use skill::Skill;
+pub use skill::{
+    Skill, SkillDescriptionError, SkillNameError, validate_skill_description, validate_skill_name,
+};
 pub use task::{Task, TaskStatus};
 pub use virtual_entry::{VirtualEntry, VirtualEntryKind};
 pub use virtual_folder::VirtualFolder;
