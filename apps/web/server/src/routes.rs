@@ -1016,10 +1016,27 @@ mod tests {
             &app,
             Method::POST,
             "/api/skills",
-            json!({ "name": "reviewer", "description": "Duplicate" }),
+            json!({ "name": "Reviewer", "description": "Duplicate" }),
         )
         .await;
-        assert_eq!(duplicate_skill.status(), StatusCode::OK);
+        assert_eq!(duplicate_skill.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(duplicate_skill).await,
+            json!({
+                "error": {
+                    "code": "skill_name_conflict",
+                    "message": "skill name already exists: Reviewer",
+                },
+            })
+        );
+        let invalid_slug = request_json(
+            &app,
+            Method::POST,
+            "/api/skills",
+            json!({ "name": "bad/name", "description": "Invalid" }),
+        )
+        .await;
+        assert_eq!(invalid_slug.status(), StatusCode::BAD_REQUEST);
         let skill_delete = request_empty(&app, Method::DELETE, &skill_path).await;
         assert_eq!(skill_delete.status(), StatusCode::OK);
         assert_eq!(

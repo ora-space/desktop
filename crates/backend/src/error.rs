@@ -123,6 +123,19 @@ impl From<ApplicationError> for BackendError {
                 PublicError::SkillNameBlank(EmptyErrorParams {}),
                 "skill name must not be blank",
             ),
+            ApplicationError::SkillNameInvalid { .. }
+            | ApplicationError::SkillNameTooLong
+            | ApplicationError::SkillDescriptionBlank
+            | ApplicationError::SkillDescriptionTooLarge => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "skill fields are invalid",
+            ),
+            ApplicationError::SkillNameConflict { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "skill name already exists",
+            ),
             ApplicationError::SkillNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::SkillNotFound(EmptyErrorParams {}),
@@ -273,7 +286,8 @@ impl From<ApplicationError> for BackendError {
                 "session not found",
             ),
             ApplicationError::SkillRepository { .. }
-            | ApplicationError::SkillPackageStorage { .. }
+            | ApplicationError::SkillStorage { .. }
+            | ApplicationError::SkillStorageInconsistent { .. }
             | ApplicationError::AgentDefinitionRepository { .. }
             | ApplicationError::ProjectRepository { .. }
             | ApplicationError::ProjectWorkContextRepository { .. }

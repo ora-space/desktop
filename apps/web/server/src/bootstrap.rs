@@ -127,6 +127,11 @@ fn build_backend(
         worktree_root: worktree_root.to_path_buf(),
         home_directory: home_directory.to_path_buf(),
         sessions_root: sessions_root.to_path_buf(),
+        skills_root: database_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("atoms")
+            .join("skills"),
     })
     .map_err(web_backend_bootstrap_error)
 }

@@ -1,4 +1,4 @@
-use crate::skill::SkillPackageStoreError;
+use crate::skill::SkillStorageError;
 use crate::{
     BoxRepositorySource, BranchListingError, RepositoryError, TaskDiffCommentRepositoryError,
     TaskDiffReaderError, TaskWorktreeProvisionerError,
@@ -11,6 +11,16 @@ use thiserror::Error;
 pub enum ApplicationError {
     #[error("skill name must not be blank")]
     SkillNameBlank,
+    #[error("invalid skill name: {name}")]
+    SkillNameInvalid { name: String },
+    #[error("skill name exceeds the single path segment limit")]
+    SkillNameTooLong,
+    #[error("skill description must not be blank")]
+    SkillDescriptionBlank,
+    #[error("skill description exceeds 4096 bytes")]
+    SkillDescriptionTooLarge,
+    #[error("skill name already exists: {name}")]
+    SkillNameConflict { name: String },
     #[error("skill not found: {skill_id}")]
     SkillNotFound { skill_id: String },
     #[error("skill repository operation failed")]
@@ -41,10 +51,12 @@ pub enum ApplicationError {
     SkillManifestNameInvalid,
     #[error("skill folder already exists: {name}")]
     SkillFolderConflict { name: String },
-    #[error("skill package storage operation failed")]
-    SkillPackageStorage {
+    #[error("skill storage is inconsistent for: {name}")]
+    SkillStorageInconsistent { name: String },
+    #[error("skill storage operation failed")]
+    SkillStorage {
         #[source]
-        source: SkillPackageStoreError,
+        source: SkillStorageError,
     },
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
@@ -150,8 +162,32 @@ impl ApplicationError {
     pub(crate) fn from_skill_domain_error(error: DomainModelError) -> Self {
         match error {
             DomainModelError::EmptySkillName => Self::SkillNameBlank,
+            DomainModelError::InvalidSkillName { name } => Self::SkillNameInvalid { name },
+            DomainModelError::SkillNameTooLong => Self::SkillNameTooLong,
+            DomainModelError::EmptySkillDescription => Self::SkillDescriptionBlank,
+            DomainModelError::SkillDescriptionTooLarge => Self::SkillDescriptionTooLarge,
             _ => Self::SkillRepository {
                 source: RepositoryError::new(error),
+            },
+        }
+    }
+
+    /// Converts formal-storage failures into the stable application contract.
+    pub(crate) fn from_skill_storage_error(error: SkillStorageError) -> Self {
+        match error {
+            SkillStorageError::FormalDirectoryMissing { name }
+            | SkillStorageError::FormalDirectoryExists { name } => {
+                Self::SkillStorageInconsistent { name }
+            }
+            source @ SkillStorageError::OperationFailed { .. } => Self::SkillStorage { source },
+        }
+    }
+
+    /// Keeps manifest rewrite failures internal while preserving the formal package invariant.
+    pub(crate) fn from_manifest_error(error: ora_skill_package::ManifestError) -> Self {
+        Self::SkillStorage {
+            source: SkillStorageError::OperationFailed {
+                message: format!("failed to rewrite the skill manifest: {error}"),
             },
         }
     }
@@ -271,7 +307,7 @@ impl PartialEq for ApplicationError {
             | (SkillManifestNameBlank, SkillManifestNameBlank)
             | (SkillManifestDescriptionBlank, SkillManifestDescriptionBlank)
             | (SkillManifestNameInvalid, SkillManifestNameInvalid)
-            | (SkillPackageStorage { .. }, SkillPackageStorage { .. })
+            | (SkillStorage { .. }, SkillStorage { .. })
             | (AgentDefinitionNameBlank, AgentDefinitionNameBlank)
             | (TaskWorktreeRequiresGitRepository, TaskWorktreeRequiresGitRepository)
             | (SkillRepository { .. }, SkillRepository { .. })
@@ -293,6 +329,15 @@ impl PartialEq for ApplicationError {
             (SkillFolderConflict { name: left }, SkillFolderConflict { name: right }) => {
                 left == right
             }
+            (SkillNameInvalid { name: left }, SkillNameInvalid { name: right })
+            | (SkillNameConflict { name: left }, SkillNameConflict { name: right }) => left == right,
+            (SkillNameTooLong, SkillNameTooLong)
+            | (SkillDescriptionBlank, SkillDescriptionBlank)
+            | (SkillDescriptionTooLarge, SkillDescriptionTooLarge) => true,
+            (
+                SkillStorageInconsistent { name: left },
+                SkillStorageInconsistent { name: right },
+            ) => left == right,
             (
                 AgentDefinitionNotFound { agent_id: left },
                 AgentDefinitionNotFound { agent_id: right },
