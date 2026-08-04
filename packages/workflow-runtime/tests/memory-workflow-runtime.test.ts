@@ -1,14 +1,37 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  createMockWorkflow,
-  createParallelMockWorkflow,
-  createStaggeredParallelMockWorkflow,
+  createMockWorkflow as createMockWorkflowFixture,
+  createParallelMockWorkflow as createParallelMockWorkflowFixture,
+  createStaggeredParallelMockWorkflow as createStaggeredParallelMockWorkflowFixture,
 } from "@ora/workflow-mock";
-import { createMemoryWorkflowRuntime } from "./memory-workflow-runtime";
-import type { WorkflowRuntime } from "./ports";
-import { planMockExecution } from "./mock-execution-plan";
-import { executionOrder } from "./mock-run-engine";
-import type { GraphWorkflowRun } from "./types";
+import {
+  normalizeWorkflowDefinition,
+  type GraphWorkflowRun,
+  type WorkflowDefinition,
+  type WorkflowRuntime,
+} from "../src/index";
+import {
+  createMemoryWorkflowRuntime,
+  executionOrder,
+  planMockExecution,
+} from "../src/memory";
+
+/** Produces the transport-neutral definition used by runtime tests. */
+function createMockWorkflow(locale: "zh-CN" | "en-US"): WorkflowDefinition {
+  return normalizeWorkflowDefinition(createMockWorkflowFixture(locale));
+}
+
+/** Produces the normalized parallel fixture used by runtime tests. */
+function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): WorkflowDefinition {
+  return normalizeWorkflowDefinition(createParallelMockWorkflowFixture(locale));
+}
+
+/** Produces the normalized staggered fixture used by runtime tests. */
+function createStaggeredParallelMockWorkflow(
+  locale: "zh-CN" | "en-US",
+): WorkflowDefinition {
+  return normalizeWorkflowDefinition(createStaggeredParallelMockWorkflowFixture(locale));
+}
 
 /** Builds a valid payload for whatever fields the open gate requires. */
 function hitlPayloadFor(
@@ -63,6 +86,37 @@ async function drainRun(
 }
 
 describe("createMemoryWorkflowRuntime", () => {
+  it("does not lose synchronous events during cursor replay handoff", async () => {
+    const runtime = createMemoryWorkflowRuntime({
+      autoStart: false,
+      nodeStepMs: 60_000,
+    });
+    const definition = createMockWorkflow("en-US");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    await runtime.runs.start(run.id);
+
+    const observed: string[] = [];
+    const unsubscribe = runtime.runs.subscribe(
+      run.id,
+      (event) => {
+        observed.push(event.type);
+        if (event.type === "run_started") {
+          void runtime.runs.cancel(run.id);
+        }
+      },
+      { afterCursor: null },
+    );
+
+    expect(observed.at(-1)).toBe("run_finished");
+    expect(observed.filter((type) => type === "run_finished")).toHaveLength(1);
+    unsubscribe();
+    runtime.dispose();
+  });
+
   it("mounts the same definition on multiple projects by reference", async () => {
     const runtime = createMemoryWorkflowRuntime({ autoStart: false });
     const definition = createMockWorkflow("zh-CN");
@@ -258,6 +312,62 @@ describe("createMemoryWorkflowRuntime", () => {
         instruction: "x",
       }),
     ).rejects.toThrow(/unknown snapshot node/i);
+  });
+
+  it("replays events created after an atomic live snapshot cursor", async () => {
+    const runtime = createMemoryWorkflowRuntime({ autoStart: false });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    const snapshot = await runtime.runs.getLiveSnapshot(run.id);
+    expect(snapshot).toEqual(expect.objectContaining({ cursor: null, artifacts: [] }));
+
+    await runtime.runs.start(run.id);
+    const replayed: Array<{ cursor: string; sequence: number; type: string }> = [];
+    runtime.runs.subscribe(
+      run.id,
+      (event) => replayed.push({
+        cursor: event.cursor,
+        sequence: event.sequence,
+        type: event.type,
+      }),
+      { afterCursor: snapshot!.cursor },
+    );
+
+    expect(replayed).toEqual([
+      { cursor: `${run.id}:1`, sequence: 1, type: "run_started" },
+      { cursor: `${run.id}:2`, sequence: 2, type: "node_started" },
+    ]);
+    runtime.dispose();
+  });
+
+  it("isolates a failing listener from the engine and sibling observers", async () => {
+    const listenerErrors: unknown[] = [];
+    const runtime = createMemoryWorkflowRuntime({
+      autoStart: false,
+      onListenerError: (error) => listenerErrors.push(error),
+    });
+    const definition = createMockWorkflow("zh-CN");
+    await runtime.host.mount("p1", definition);
+    const run = await runtime.runs.create({
+      projectId: "p1",
+      definitionId: definition.id,
+    });
+    const observed: string[] = [];
+    runtime.runs.subscribe(run.id, () => {
+      throw new Error("observer failed");
+    });
+    runtime.runs.subscribe(run.id, (event) => observed.push(event.type));
+
+    await runtime.runs.start(run.id);
+
+    expect(listenerErrors).toHaveLength(2);
+    expect(observed).toEqual(["run_started", "node_started"]);
+    expect((await runtime.runs.get(run.id))?.status).toBe("running");
+    runtime.dispose();
   });
 });
 

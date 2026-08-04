@@ -1,4 +1,4 @@
-import type { GraphWorkflowNodeStatus, GraphWorkflowRunStatus } from "./runtime/types";
+import type { GraphWorkflowNodeStatus, GraphWorkflowRunStatus } from "@ora/workflow-runtime";
 
 /** Run-level terminal statuses (not node-level skipped). */
 export function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
@@ -10,7 +10,7 @@ export function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
   );
 }
 
-/** Shared run/node status chrome — color is never the only signal (dot + label + tone). */
+/** Shared run/node status chrome —color is never the only signal (dot + label + tone). */
 export function runStatusTone(status: GraphWorkflowRunStatus | GraphWorkflowNodeStatus): {
   dot: string;
   ring: string;
@@ -26,7 +26,7 @@ export function runStatusTone(status: GraphWorkflowRunStatus | GraphWorkflowNode
         labelKey: "workflowRun.status.running",
       };
     case "awaiting_input":
-      // Amber matches HITL “must handle” chrome on the dock and stage card.
+      // Amber matches HITL “must handle—chrome on the dock and stage card.
       return {
         dot: "bg-amber-500",
         ring: "border-amber-500/50 ring-amber-500/20",

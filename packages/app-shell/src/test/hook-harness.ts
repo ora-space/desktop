@@ -5,9 +5,9 @@ import type { ContractsClient } from "@ora/contracts";
 import { createChatStore, type ChatStore } from "@ora/chat";
 import { ContractsClientContext } from "../contracts-client-context";
 import { ChatStoreContext } from "../chat-store-context";
-import { WorkflowRuntimeProvider } from "../features/workflow-run/runtime/workflow-runtime-context";
-import { createMemoryWorkflowRuntime } from "../features/workflow-run/runtime/memory-workflow-runtime";
-import type { WorkflowRuntime } from "../features/workflow-run/runtime/ports";
+import type { WorkflowRuntime } from "@ora/workflow-runtime";
+import { createMemoryWorkflowRuntime } from "@ora/workflow-runtime/memory";
+import { WorkflowRuntimeProvider } from "../features/workflow-run/workflow-runtime-context";
 
 /** Builds a QueryClient with retries disabled so tests fail fast on transport errors. */
 export function createTestQueryClient(): QueryClient {
@@ -32,12 +32,14 @@ export function createHookWrapper(
       { client: queryClient },
       createElement(
         WorkflowRuntimeProvider,
-        { runtime },
-        createElement(
+        {
+          runtime,
+          children: createElement(
           ContractsClientContext.Provider,
           { value: client },
           createElement(ChatStoreContext.Provider, { value: chatStore }, children),
-        ),
+          ),
+        },
       ),
     );
   };
@@ -49,7 +51,10 @@ export function renderHookWithClient<TResult>(
   client: ContractsClient,
   queryClient: QueryClient = createTestQueryClient(),
   chatStore: ChatStore = createChatStore(client.session),
+  runtime: WorkflowRuntime = createMemoryWorkflowRuntime(),
 ): RenderHookResult<TResult, TResult> & { queryClient: QueryClient } {
-  const result = renderHook(hook, { wrapper: createHookWrapper(client, queryClient, chatStore) });
+  const result = renderHook(hook, {
+    wrapper: createHookWrapper(client, queryClient, chatStore, runtime),
+  });
   return { ...result, queryClient };
 }

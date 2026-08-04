@@ -1,4 +1,4 @@
-import type { GraphWorkflowNodeStatus, GraphWorkflowRun } from "./runtime/types";
+import type { GraphWorkflowNodeStatus, GraphWorkflowRun } from "@ora/workflow-runtime";
 
 const ACTIVE_STATUSES: ReadonlySet<GraphWorkflowNodeStatus> = new Set([
   "running",
@@ -37,7 +37,7 @@ function isTerminalNodeStatus(status: GraphWorkflowNodeStatus): boolean {
 }
 
 /**
- * True when the same focused act just left live → terminal.
+ * True when the same focused act just left live —terminal.
  * Clears a live pin so Theater can resume auto-follow; history pins
  * (clicked while already non-live) must not release.
  */
@@ -143,7 +143,7 @@ export function resolveTheaterFocus(
   return { primaryId, activeIds };
 }
 
-/** @deprecated Prefer resolveTheaterFocus — kept for older call sites. */
+/** @deprecated Prefer resolveTheaterFocus —kept for older call sites. */
 export function resolveFocusNodeId(
   run: GraphWorkflowRun,
   preferredNodeId: string | null,

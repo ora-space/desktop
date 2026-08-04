@@ -1,7 +1,7 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { createMemoryWorkflowRuntime } from "./memory-workflow-runtime";
-import type { WorkflowRuntime } from "./ports";
+import type { WorkflowRuntime } from "@ora/workflow-runtime";
+import { createMemoryWorkflowRuntime } from "@ora/workflow-runtime/memory";
 
 const WorkflowRuntimeContext = createContext<WorkflowRuntime | null>(null);
 
@@ -32,6 +32,12 @@ export function WorkflowRuntimeProvider({
     // Process-lifetime store: locale must not recreate Maps / engines.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [runtimeOverride]);
+  useEffect(() => {
+    if (runtimeOverride !== undefined) {
+      return;
+    }
+    return () => runtime.dispose();
+  }, [runtime, runtimeOverride]);
   return (
     <WorkflowRuntimeContext.Provider value={runtime}>
       {children}

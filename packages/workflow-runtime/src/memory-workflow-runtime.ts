@@ -1,5 +1,5 @@
-import type { DemoWorkflow } from "@ora/workflow-mock";
 import { createMockRunEngine } from "./mock-run-engine";
+import { validateWorkflowDefinition } from "./definition";
 import type { MockPathPolicy } from "./mock-execution-plan";
 import type {
   WorkflowHostRepository,
@@ -11,10 +11,12 @@ import type {
   GraphWorkflowRun,
   ProjectWorkflowMount,
   WorkflowArtifact,
+  WorkflowDefinition,
   WorkflowRunEvent,
+  WorkflowRunEventEnvelope,
 } from "./types";
 
-type Listener = (event: WorkflowRunEvent) => void;
+type Listener = (event: WorkflowRunEventEnvelope) => void;
 type ChangeListener = (run: GraphWorkflowRun) => void;
 
 export interface MemoryWorkflowRuntimeOptions {
@@ -29,6 +31,10 @@ export interface MemoryWorkflowRuntimeOptions {
   pathPolicy?: MockPathPolicy;
   /** Locale for mock HITL schema strings. */
   locale?: "zh-CN" | "en-US";
+  /** Receives observer failures without allowing UI code to stop the engine. */
+  onListenerError?: (error: unknown) => void;
+  /** Bounds replay memory while retaining enough events for UI setup races. */
+  maxRetainedEvents?: number;
 }
 
 /** Local-time ISO timestamp for run metadata (Ora prefers local clocks). */
@@ -42,7 +48,7 @@ function nowIso(): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}${offset}`;
 }
 
-function idleNodeStates(workflow: DemoWorkflow): Record<string, GraphWorkflowNodeState> {
+function idleNodeStates(workflow: WorkflowDefinition): Record<string, GraphWorkflowNodeState> {
   return Object.fromEntries(
     workflow.nodes.map((node) => [node.id, { status: "idle" as const }]),
   );
@@ -57,29 +63,46 @@ export function createMemoryWorkflowRuntime(
   options: MemoryWorkflowRuntimeOptions = {},
 ): WorkflowRuntime {
   const autoStart = options.autoStart ?? false;
-  const definitions = new Map<string, DemoWorkflow>();
+  const maxRetainedEvents = Math.max(1, options.maxRetainedEvents ?? 2_048);
+  const definitions = new Map<string, WorkflowDefinition>();
   const mounts: ProjectWorkflowMount[] = [];
   const runs = new Map<string, GraphWorkflowRun>();
   const artifacts = new Map<string, WorkflowArtifact[]>();
   const listeners = new Map<string, Set<Listener>>();
   const changeListeners = new Set<ChangeListener>();
+  const eventLogs = new Map<string, WorkflowRunEventEnvelope[]>();
+  const eventSequences = new Map<string, number>();
   let runSeq = 0;
   let artifactSeq = 0;
   let hitlSeq = 0;
 
   const emit = (runId: string, event: WorkflowRunEvent) => {
+    const sequence = (eventSequences.get(runId) ?? 0) + 1;
+    eventSequences.set(runId, sequence);
+    const envelope: WorkflowRunEventEnvelope = {
+      ...event,
+      cursor: `${runId}:${sequence}`,
+      sequence,
+      occurredAt: nowIso(),
+    };
+    const log = eventLogs.get(runId) ?? [];
+    log.push(envelope);
+    if (log.length > maxRetainedEvents) {
+      log.splice(0, log.length - maxRetainedEvents);
+    }
+    eventLogs.set(runId, log);
     const set = listeners.get(runId);
     if (set === undefined) {
       return;
     }
     for (const listener of set) {
-      listener(event);
+      notifyListener(listener, envelope, options.onListenerError);
     }
   };
 
   const notifyChanged = (run: GraphWorkflowRun) => {
     for (const listener of changeListeners) {
-      listener(run);
+      notifyListener(listener, run, options.onListenerError);
     }
   };
 
@@ -127,6 +150,7 @@ export function createMemoryWorkflowRuntime(
     },
 
     async mount(projectId, definition) {
+      validateWorkflowDefinition(definition);
       definitions.set(definition.id, structuredClone(definition));
       const existing = mounts.findIndex(
         (mount) =>
@@ -207,6 +231,8 @@ export function createMemoryWorkflowRuntime(
       };
       runs.set(run.id, run);
       artifacts.set(run.id, []);
+      eventLogs.set(run.id, []);
+      eventSequences.set(run.id, 0);
       if (autoStart) {
         engine.start(run.id);
       }
@@ -221,6 +247,7 @@ export function createMemoryWorkflowRuntime(
         throw new Error(`Unknown workflow run ${runId}`);
       }
       engine.start(runId);
+      return structuredClone(runs.get(runId)!);
     },
 
     async cancel(runId) {
@@ -229,6 +256,7 @@ export function createMemoryWorkflowRuntime(
         throw new Error(`Unknown workflow run ${runId}`);
       }
       engine.cancel(runId);
+      return structuredClone(runs.get(runId)!);
     },
 
     async delete(runId) {
@@ -249,6 +277,8 @@ export function createMemoryWorkflowRuntime(
       runs.delete(runId);
       artifacts.delete(runId);
       listeners.delete(runId);
+      eventLogs.delete(runId);
+      eventSequences.delete(runId);
     },
 
     async rename(runId, name) {
@@ -319,21 +349,64 @@ export function createMemoryWorkflowRuntime(
         throw new Error(`Unknown workflow run ${runId}`);
       }
       engine.submitHitl(runId, requestId, payload);
+      return structuredClone(runs.get(runId)!);
     },
 
     async listArtifacts(runId) {
       return structuredClone(artifacts.get(runId) ?? []);
     },
 
-    subscribe(runId, onEvent) {
+    async getLiveSnapshot(runId) {
+      const run = runs.get(runId);
+      if (run === undefined) {
+        return null;
+      }
+      const log = eventLogs.get(runId) ?? [];
+      return {
+        run: structuredClone(run),
+        artifacts: structuredClone(artifacts.get(runId) ?? []),
+        cursor: log.at(-1)?.cursor ?? null,
+      };
+    },
+
+    subscribe(runId, onEvent, subscribeOptions = {}) {
+      const afterCursor = subscribeOptions.afterCursor;
+      const queuedLiveEvents: WorkflowRunEventEnvelope[] = [];
+      let replaying = true;
+      const liveListener: Listener = (event) => {
+        const clone = structuredClone(event);
+        if (replaying) {
+          queuedLiveEvents.push(clone);
+          return;
+        }
+        notifyListener(onEvent, clone, options.onListenerError);
+      };
       let set = listeners.get(runId);
       if (set === undefined) {
         set = new Set();
         listeners.set(runId, set);
       }
-      set.add(onEvent);
+      // Register before replay so an observer-triggered synchronous mutation
+      // cannot land in the snapshot-to-live handoff gap.
+      set.add(liveListener);
+      if ("afterCursor" in subscribeOptions) {
+        const log = eventLogs.get(runId) ?? [];
+        const cursorIndex = afterCursor === null
+          ? -1
+          : log.findIndex((event) => event.cursor === afterCursor);
+        const replayFrom = afterCursor === null || cursorIndex < 0
+          ? 0
+          : cursorIndex + 1;
+        for (const event of log.slice(replayFrom)) {
+          notifyListener(onEvent, structuredClone(event), options.onListenerError);
+        }
+      }
+      replaying = false;
+      for (const event of queuedLiveEvents) {
+        notifyListener(onEvent, event, options.onListenerError);
+      }
       return () => {
-        set.delete(onEvent);
+        set.delete(liveListener);
         if (set.size === 0) {
           listeners.delete(runId);
         }
@@ -348,5 +421,28 @@ export function createMemoryWorkflowRuntime(
     },
   };
 
-  return { host, runs: runRepo };
+  return {
+    host,
+    runs: runRepo,
+    dispose() {
+      engine.dispose();
+      listeners.clear();
+      changeListeners.clear();
+      eventLogs.clear();
+      eventSequences.clear();
+    },
+  };
+}
+
+/** Isolates observer failures so one consumer cannot stop workflow progression. */
+function notifyListener<T>(
+  listener: (value: T) => void,
+  value: T,
+  onListenerError: ((error: unknown) => void) | undefined,
+): void {
+  try {
+    listener(value);
+  } catch (error) {
+    onListenerError?.(error);
+  }
 }

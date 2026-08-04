@@ -13,6 +13,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  toast,
 } from "@ora/ui";
 import {
   IconChevronDown,
@@ -47,7 +48,7 @@ import { OraMark } from "../../components/ora-mark";
 import { AgentActivityDots } from "../../components/agent-activity-dots";
 import { DragRegion } from "../../components/drag-region";
 import { useChatStore } from "../../chat-store-context";
-import type { GraphWorkflowRunStatus } from "../workflow-run/runtime/types";
+import type { GraphWorkflowRunStatus } from "@ora/workflow-runtime";
 import { agentCliLabel } from "./agent-cli";
 
 interface WorkspaceSidebarProps {
@@ -570,7 +571,9 @@ function ProjectWorkflowRunRows({
                 onEdit={() => onEditRun({ id: run.id, name: run.name })}
                 onCancel={canCancel
                   ? () => {
-                    void cancelRun.mutateAsync({ runId: run.id, projectId });
+                    cancelRun.mutate({ runId: run.id }, {
+                      onError: () => toast.error(t("workflowRun.cancelFailed")),
+                    });
                   }
                   : undefined}
                 onDelete={() => onDeleteRun({ id: run.id, name: run.name })}

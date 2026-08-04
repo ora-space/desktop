@@ -12,17 +12,22 @@ import { runStatusTone } from "./run-status-style";
 import type {
   GraphWorkflowNodeStatus,
   GraphWorkflowRunStatus,
-} from "./runtime/types";
+} from "@ora/workflow-runtime";
 import "./theater-motion.css";
 
 type Status = GraphWorkflowRunStatus | GraphWorkflowNodeStatus;
 
-/** Node is actively executing or blocked on HITL — the only spinner-worthy states. */
+/** Node is actively executing or blocked on HITL—the only spinner-worthy states. */
 export function isNodeWorking(status: Status): boolean {
   return status === "running" || status === "awaiting_input";
 }
 
-function isTerminal(status: Status): boolean {
+type TerminalStatus = Extract<
+  Status,
+  "succeeded" | "failed" | "partial_failed" | "cancelled" | "skipped"
+>;
+
+function isTerminal(status: Status): status is TerminalStatus {
   return status === "succeeded"
     || status === "failed"
     || status === "partial_failed"
@@ -34,7 +39,7 @@ const ICON_BOX = "size-3.5";
 const ICON_GLYPH = "size-2.5";
 
 /**
- * Status mark — pick exactly one language per surface:
+ * Status mark—pick exactly one language per surface:
  * - `live`: spinner (working cue on the focused card only)
  * - terminal + not quiet: check / x glyph
  * - otherwise: pure color dot (path, header, inspector, idle/pending)
@@ -143,10 +148,7 @@ function TerminalGlyph({
   status,
   className,
 }: {
-  status: Extract<
-    Status,
-    "succeeded" | "failed" | "partial_failed" | "cancelled" | "skipped"
-  >;
+  status: TerminalStatus;
   className: string;
 }) {
   switch (status) {

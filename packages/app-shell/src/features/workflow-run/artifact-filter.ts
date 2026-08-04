@@ -1,4 +1,4 @@
-import type { WorkflowArtifact } from "./runtime/types";
+import type { WorkflowArtifact } from "@ora/workflow-runtime";
 
 /** Filter mode: all run artifacts or one node's outputs. */
 export type ArtifactFilterMode =

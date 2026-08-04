@@ -10,6 +10,7 @@ import {
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ContractsClient } from "@ora/contracts";
 import type { ChatStore } from "@ora/chat";
+import type { WorkflowRuntime } from "@ora/workflow-runtime";
 import {
   PlatformHost,
   PlatformProvider,
@@ -31,13 +32,15 @@ import { useSessionUnreadSync } from "./state/hooks/use-session-unread-sync";
 import { useUiStore } from "./state/stores/ui-store";
 import { startThemeSubscription } from "./state/stores/settings-store";
 import { useTranslation } from "react-i18next";
-import { WorkflowRuntimeProvider } from "./features/workflow-run/runtime/workflow-runtime-context";
+import { WorkflowRuntimeProvider } from "./features/workflow-run/workflow-runtime-context";
 
 interface AppShellProps {
   client: ContractsClient;
   chatStore: ChatStore;
   platform: PlatformAdapter;
   user?: CurrentUser;
+  /** Runtime adapter; hosts will inject the generated-contract adapter once available. */
+  workflowRuntime?: WorkflowRuntime;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 320;
@@ -46,13 +49,19 @@ const MAX_SIDEBAR_WIDTH = 480;
 const MIN_WORKSPACE_WIDTH = 480;
 
 /** The main Ora application shell: sidebar + chat view with conversation state. */
-export function AppShell({ client, chatStore, platform, user }: AppShellProps) {
+export function AppShell({
+  client,
+  chatStore,
+  platform,
+  user,
+  workflowRuntime,
+}: AppShellProps) {
   // One client per shell instance so HMR or multiple mounted shells never share cache.
   const [queryClient] = useState(() => createAppQueryClient());
   return (
     <QueryClientProvider client={queryClient}>
       <AppI18nProvider>
-        <WorkflowRuntimeProvider>
+        <WorkflowRuntimeProvider runtime={workflowRuntime}>
           <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} />
         </WorkflowRuntimeProvider>
       </AppI18nProvider>

@@ -3,13 +3,15 @@ import type { ReactNode } from "react";
 import { Badge, cn } from "@ora/ui";
 import {
   createMockWorkflowNodeType,
-  type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { WorkflowNodeCardShell } from "../workflow-node-chrome";
 import { RunStatusBadge, isNodeWorking } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
-import type { GraphWorkflowNodeState } from "./runtime/types";
+import type {
+  GraphWorkflowNodeState,
+  WorkflowNodeData,
+} from "@ora/workflow-runtime";
 import "./theater-motion.css";
 
 interface RunTheaterActCardProps {
@@ -64,7 +66,7 @@ export function RunTheaterActCard({
       state.finishedAt !== undefined
         ? formatRunClock(state.finishedAt, locale)
         : "—",
-    ].join(" → ")
+    ].join(" — ")
     : null;
 
   const metrics = (
@@ -121,7 +123,7 @@ export function RunTheaterActCard({
         "transition-[border-color,box-shadow] duration-200 ease-out motion-reduce:transition-none",
         interactive
           && "cursor-pointer hover:border-foreground/25 hover:shadow-sm",
-        // Scale only when the whole card is the hit target — not when HITL
+        // Scale only when the whole card is the hit target —not when HITL
         // lives in the footer (CSS :active would otherwise shake the card
         // while pressing the composer).
         interactive && interaction === undefined && "active:scale-[0.99]",

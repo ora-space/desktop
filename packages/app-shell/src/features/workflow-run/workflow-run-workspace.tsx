@@ -26,8 +26,8 @@ import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import {
   useCancelGraphWorkflowRun,
-  useGraphWorkflowArtifacts,
   useGraphWorkflowRun,
+  useGraphWorkflowRunLive,
   useRerunGraphWorkflowRun,
   useStartGraphWorkflowRun,
 } from "../../state/hooks/use-graph-workflow-runs";
@@ -39,7 +39,6 @@ import { RunOverviewCanvas } from "./run-overview-canvas";
 import { RunTheater } from "./run-theater";
 import { RunStatusBadge } from "./run-status-mark";
 import { isTerminalRunStatus, runStatusTone } from "./run-status-style";
-import { useWorkflowRuntime } from "./runtime/workflow-runtime-context";
 import type { WorkflowRunViewMode } from "./run-view-mode";
 
 interface WorkflowRunWorkspaceProps {
@@ -52,13 +51,11 @@ interface WorkflowRunWorkspaceProps {
  */
 export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const { t } = useTranslation();
-  const runtime = useWorkflowRuntime();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const selectWorkflowRun = useWorkspaceSelectionStore((s) => s.selectWorkflowRun);
   const runQuery = useGraphWorkflowRun(runId);
   const run = runQuery.data ?? null;
-  const artifactsQuery = useGraphWorkflowArtifacts(runId);
   const startRun = useStartGraphWorkflowRun();
   const cancelRun = useCancelGraphWorkflowRun();
   const rerun = useRerunGraphWorkflowRun();
@@ -71,10 +68,35 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     false,
   );
 
-  /** Same-node status edge: live pin just finished → resume auto-follow. */
+  /** Same-node status edge: live pin just finished -> resume auto-follow. */
   const focusStatusSampleRef = useRef<TheaterFocusStatusSample | null>(null);
   const viewModeRef = useRef(viewMode);
   viewModeRef.current = viewMode;
+
+  // Shared run subscribe: artifacts cache + HITL toast + result-act focus clear.
+  const artifactsQuery = useGraphWorkflowRunLive(runId, {
+    onHitlRequired: (request) => {
+      const clarify = request.schema.kind === "clarify";
+      toast.message(t("workflowRun.hitl.toastTitle"), {
+        description: clarify
+          ? t("workflowRun.hitl.toastClarifyDescription")
+          : t("workflowRun.hitl.toastDescription"),
+        action: {
+          label: t("workflowRun.hitl.toastAction"),
+          onClick: () => {
+            setFocusNodeId(request.nodeId);
+            setOpenInspectorOnTheaterEnter(false);
+            setViewMode("theater");
+          },
+        },
+      });
+    },
+    onRunFinished: () => {
+      if (viewModeRef.current === "theater") {
+        setFocusNodeId(null);
+      }
+    },
+  });
 
   // Reset local chrome when switching runs; mode is primed once below.
   useEffect(() => {
@@ -84,7 +106,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     focusStatusSampleRef.current = null;
   }, [runId]);
 
-  // Live pin release: only when the focused act itself just left live → terminal.
+  // Live pin release: only when the focused act itself just left live -> terminal.
   // History pins (clicked while already non-live) stay until the user picks again.
   useEffect(() => {
     if (run === null || focusNodeId === null) {
@@ -135,7 +157,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     viewMode,
   ]);
 
-  // Prime view once per selected run: pending/terminal → Overview, live → Theater.
+  // Prime view once per selected run: pending/terminal -> Overview, live -> Theater.
   // Later status ticks must not steal Overview if the user chose it mid-run.
   const primedRunIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -152,35 +174,6 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       setViewMode("overview");
     }
   }, [run, runId]);
-
-  // HITL toast + terminal result act: finish while Theater clears path pin.
-  useEffect(() => {
-    return runtime.runs.subscribe(runId, (event) => {
-      if (event.type === "run_finished") {
-        // Expose RunResultAct (focus null); path chips still reopen history acts.
-        if (viewModeRef.current === "theater") {
-          setFocusNodeId(null);
-        }
-        return;
-      }
-      if (event.type !== "hitl_required") {
-        return;
-      }
-      const clarify = event.request.schema.kind === "clarify";
-      toast.message(t("workflowRun.hitl.toastTitle"), {
-        description: clarify
-          ? t("workflowRun.hitl.toastClarifyDescription")
-          : t("workflowRun.hitl.toastDescription"),
-        action: {
-          label: t("workflowRun.hitl.toastAction"),
-          onClick: () => {
-            setFocusNodeId(event.request.nodeId);
-            enterTheater({ openInspector: false });
-          },
-        },
-      });
-    });
-  }, [runtime, runId, t]);
 
   // Esc from Theater returns to Overview.
   useEffect(() => {
@@ -242,19 +235,26 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     if (run === null || !canStart) {
       return;
     }
-    await startRun.mutateAsync({
-      runId: run.id,
-      projectId: run.projectId,
-    });
-    enterTheater();
+    try {
+      await startRun.mutateAsync({
+        runId: run.id,
+      });
+      enterTheater();
+    } catch {
+      toast.error(t("workflowRun.startFailed"));
+    }
   }
 
   async function handleRunAgain(): Promise<void> {
     if (run === null || !canRunAgain) {
       return;
     }
-    const next = await rerun.mutateAsync(run);
-    selectWorkflowRun(next.id, next.projectId);
+    try {
+      const next = await rerun.mutateAsync(run);
+      selectWorkflowRun(next.id, next.projectId);
+    } catch {
+      toast.error(t("workflowRun.rerunFailed"));
+    }
   }
 
   async function handleConfirmStop(): Promise<void> {
@@ -266,8 +266,9 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     try {
       await cancelRun.mutateAsync({
         runId: run.id,
-        projectId: run.projectId,
       });
+    } catch {
+      toast.error(t("workflowRun.cancelFailed"));
     } finally {
       setStopOpen(false);
     }

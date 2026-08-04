@@ -175,8 +175,14 @@ Shared backend failures project to the same typed `{ code, params, requestId }` 
 
 - `task run:web-backend` starts the Rust HTTP backend on its default port.
 - `task run:web-frontend` starts Vite with the fetch contracts transport and expects the backend to run separately.
+- `task run:web-proto` starts Vite with an isolated in-memory `ContractsClient` and never calls `/api/*`.
+- Running `pnpm --filter @ora/web-client dev` directly also defaults to the in-memory client.
 
-The Web frontend always uses the fetch contracts transport and talks to the Rust HTTP backend, in both development and production builds.
+Development defaults to `mock`; production builds default to `fetch`. Set
+`VITE_ORA_CONTRACT_TRANSPORT` explicitly to `mock` or `fetch` when overriding
+that behavior. Mock records live only for the current page lifetime and reset
+on refresh; the explicit fetch mode remains the integration path for the Rust
+HTTP backend.
 
 ## Storage behavior
 

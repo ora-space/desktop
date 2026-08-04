@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { createMockWorkflow } from "@ora/workflow-mock";
+import { createMockWorkflow as createMockWorkflowFixture } from "@ora/workflow-mock";
 import {
   resolveFocusNodeId,
   resolveTheaterFocus,
   shouldReleaseFocusToFollow,
 } from "./run-focus";
-import type { GraphWorkflowRun } from "./runtime/types";
+import {
+  normalizeWorkflowDefinition,
+  type GraphWorkflowRun,
+} from "@ora/workflow-runtime";
 
 function baseRun(
   overrides: Partial<GraphWorkflowRun> = {},
 ): GraphWorkflowRun {
-  const snapshot = createMockWorkflow("zh-CN");
+  const snapshot = normalizeWorkflowDefinition(createMockWorkflowFixture("zh-CN"));
   return {
     id: "gwr-1",
     projectId: "p1",
@@ -21,6 +24,7 @@ function baseRun(
     nodeStates: Object.fromEntries(
       snapshot.nodes.map((node) => [node.id, { status: "idle" as const }]),
     ),
+    openHitls: [],
     totals: {},
     createdAt: "2026-08-01T12:00:00+08:00",
     updatedAt: "2026-08-01T12:00:00+08:00",

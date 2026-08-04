@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { DemoWorkflow } from "@ora/workflow-mock";
+import type { WorkflowDefinitionInput } from "@ora/workflow-runtime";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -37,7 +37,7 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
 
 interface DeployToProjectDialogProps {
   open: boolean;
-  workflow: DemoWorkflow | null;
+  workflow: WorkflowDefinitionInput | null;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -273,7 +273,7 @@ export function DeployToProjectDialog({
 }
 
 interface DeployWorkflowButtonProps {
-  workflow: DemoWorkflow | null;
+  workflow: WorkflowDefinitionInput | null;
 }
 
 /** Toolbar control that opens DeployToProjectDialog for the active library workflow. */

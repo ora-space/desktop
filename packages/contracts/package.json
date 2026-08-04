@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "generate:error-schema": "ts-to-zod src/error.ts src/error.schema.ts",
-    "test": "tsc -p tsconfig.json && node --test .test-dist/tests/*.test.js"
+    "clean:test": "node -e \"require('node:fs').rmSync('.test-dist',{recursive:true,force:true})\"",
+    "test": "pnpm run clean:test && tsc -p tsconfig.json && node --test .test-dist/tests/*.test.js"
   },
   "dependencies": {
     "zod": "^4.4.3"
@@ -16,6 +17,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./acp": "./src/acp/index.ts",
-    "./fetch": "./src/fetch.ts"
+    "./fetch": "./src/fetch.ts",
+    "./memory": "./src/memory.ts"
   }
 }

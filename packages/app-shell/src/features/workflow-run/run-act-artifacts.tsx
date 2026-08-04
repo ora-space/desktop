@@ -3,11 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Badge, Button, cn } from "@ora/ui";
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { formatRunClock } from "../../lib/format";
-import type { WorkflowArtifact } from "./runtime/types";
+import type { WorkflowArtifact } from "@ora/workflow-runtime";
 
 interface RunActArtifactsProps {
   artifacts: WorkflowArtifact[];
-  /** Artifact id that just arrived — opens and animates that item. */
+  /** Artifact id that just arrived —opens and animates that item. */
   revealedId: string | null;
   /**
    * When true, omit the outer section chrome (parent already provides a heading).

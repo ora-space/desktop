@@ -12,13 +12,15 @@ import {
   createMockWorkflowNodeType,
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_WIDTH,
-  type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { WorkflowNodeCardShell } from "../workflow-node-chrome";
 import { RunStatusBadge, isNodeWorking } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
-import type { GraphWorkflowNodeState } from "./runtime/types";
+import type {
+  GraphWorkflowNodeState,
+  WorkflowNodeData,
+} from "@ora/workflow-runtime";
 import "./theater-motion.css";
 
 export type RunOverviewNodeData = WorkflowNodeData & {
@@ -143,7 +145,7 @@ export const RunOverviewNode = memo(function RunOverviewNode({
                   ? " · "
                   : ""}
                 {startedLabel ?? "—"}
-                –
+                {" — "}
                 {finishedLabel ?? "—"}
               </span>
             )}

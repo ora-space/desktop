@@ -9,7 +9,7 @@ import {
 } from "@tabler/icons-react";
 import { RunStatusBadge } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
-import type { GraphWorkflowRun, GraphWorkflowRunStatus } from "./runtime/types";
+import type { GraphWorkflowRun, GraphWorkflowRunStatus } from "@ora/workflow-runtime";
 
 interface RunResultActProps {
   run: GraphWorkflowRun;
@@ -135,7 +135,7 @@ export function RunResultAct({
   );
 }
 
-/** Single hero circle — avoids nesting RunStatusMark's own disc. */
+/** Single hero circle —avoids nesting RunStatusMark's own disc. */
 function ResultHeroMark({ status }: { status: GraphWorkflowRunStatus }) {
   const glyphClass = "size-5";
   return (

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { filterArtifacts, latestArtifact } from "./artifact-filter";
-import type { WorkflowArtifact } from "./runtime/types";
+import type { WorkflowArtifact } from "@ora/workflow-runtime";
 
 function artifact(
   partial: Pick<WorkflowArtifact, "id" | "nodeId" | "createdAt">,

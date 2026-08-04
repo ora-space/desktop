@@ -8,11 +8,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
-import type { WorkflowNodeData } from "@ora/workflow-mock";
 import { resolveParallelDragSwitch } from "./parallel-drag";
 import { RunTheaterActCard } from "./run-theater-act-card";
 import { isNodeWorking } from "./run-status-mark";
-import type { GraphWorkflowNodeState } from "./runtime/types";
+import type {
+  GraphWorkflowNodeState,
+  WorkflowNodeData,
+} from "@ora/workflow-runtime";
 import "./theater-motion.css";
 
 const DRAG_THRESHOLD_PX = 64;
@@ -64,7 +66,7 @@ export function RunTheaterParallelStage({
   const dragProgress = Math.max(-1, Math.min(1, dragX / 140));
 
   useEffect(() => {
-    // External focus (path rail) caught up — drop any stale local slide index.
+    // External focus (path rail) caught up —drop any stale local slide index.
     if (slideIndex !== null && committedIndex === slideIndex) {
       setSlideIndex(null);
       setDragX(0);
@@ -86,7 +88,7 @@ export function RunTheaterParallelStage({
 
   /**
    * Programmed peer switch: nudge the track, then commit focus after the tween
-   * so chevron clicks feel like the drag settle path — not an instant cut.
+   * so chevron clicks feel like the drag settle path —not an instant cut.
    */
   function slideTo(nextIndex: number): void {
     if (
@@ -293,7 +295,7 @@ export function RunTheaterParallelStage({
               const live = isNodeWorking(act.state.status);
               const distance = Math.abs(actIndex - index - dragProgress);
               const inactive = distance > 0.08;
-              // Soft neighbor peek — avoid harsh scale jumps on programmed slides.
+              // Soft neighbor peek —avoid harsh scale jumps on programmed slides.
               const scale = inactive
                 ? Math.max(0.94, 1 - distance * 0.04)
                 : 1 - Math.min(0.02, Math.abs(dragProgress) * 0.02);

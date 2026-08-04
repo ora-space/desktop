@@ -22,7 +22,7 @@ import {
   type RunOverviewNodeData,
 } from "./run-overview-node";
 import { RunOverviewEdge } from "./run-overview-edge";
-import type { GraphWorkflowRun, WorkflowArtifact } from "./runtime/types";
+import type { GraphWorkflowRun, WorkflowArtifact } from "@ora/workflow-runtime";
 import "@xyflow/react/dist/style.css";
 
 const NODE_TYPE = "workflow" as const;

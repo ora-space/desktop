@@ -68,7 +68,9 @@ describe("WorkspaceDialogs project creation", () => {
 describe("WorkspaceDialogs task creation", () => {
   it("creates only worktree tasks and does not offer a workspace-mode selector", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
+    const state = createMockClientState({
+      projects: [{ id: "p1", name: "Project", rootPath: "/workspace/project" }],
+    });
     const client = createMockClient(state);
     const Wrapper = createHookWrapper(client, createTestQueryClient(), createChatStore(client.session));
     useUiStore.getState().setDialog({ kind: "task", projectId: "p1" });

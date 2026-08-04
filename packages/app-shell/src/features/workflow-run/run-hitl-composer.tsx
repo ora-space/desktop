@@ -10,7 +10,7 @@ import {
   IconLoader2,
 } from "@tabler/icons-react";
 import { formatRunClock } from "../../lib/format";
-import type { HitlField, HitlGateKind, HitlRequest } from "./runtime/types";
+import type { HitlField, HitlGateKind, HitlRequest } from "@ora/workflow-runtime";
 
 export interface HitlGateOption {
   request: HitlRequest;
@@ -52,8 +52,8 @@ interface RunHitlComposerProps {
   submitError?: string | null;
   onSubmit: (payload: Record<string, string>) => void | Promise<void>;
   /**
-   * `overlay` — standalone dock card.
-   * `embedded` — lives inside the act card (no second chrome shell).
+   * `overlay` —standalone dock card.
+   * `embedded` —lives inside the act card (no second chrome shell).
    */
   layout?: "overlay" | "embedded";
   /**
@@ -69,8 +69,8 @@ interface RunHitlComposerProps {
 
 /**
  * One expandable HITL surface:
- * - Collapsed → warm amber prompt (must handle / open)
- * - Expanded → amber wait pulse + model prompt body + tiles / composer
+ * - Collapsed —warm amber prompt (must handle / open)
+ * - Expanded —amber wait pulse + model prompt body + tiles / composer
  * Closing collapses only; it does not cancel the gate.
  */
 export function RunHitlComposer({
@@ -156,7 +156,7 @@ export function RunHitlComposer({
     setLocalError(null);
   }, [request?.id]);
 
-  // Focus once when the surface opens or the active gate changes — not per keystroke.
+  // Focus once when the surface opens or the active gate changes —not per keystroke.
   useEffect(() => {
     if (!expanded || request === null || primaryTextField === null) {
       return;
@@ -583,7 +583,7 @@ export function RunHitlComposer({
   );
 }
 
-/** Mixed-mode chips — same capsule language as the choice tiles. */
+/** Mixed-mode chips —same capsule language as the choice tiles. */
 function HitlChoiceStrip({
   fields,
   values,

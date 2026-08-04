@@ -7,7 +7,7 @@ import {
   Textarea,
   cn,
 } from "@ora/ui";
-import type { HitlSchema } from "./runtime/types";
+import type { HitlSchema } from "@ora/workflow-runtime";
 
 export interface WorkflowFieldFormProps {
   schema: HitlSchema;

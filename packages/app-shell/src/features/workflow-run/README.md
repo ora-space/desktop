@@ -1,7 +1,8 @@
 # workflow-run
 
-Product UI and mock runtime for **graph workflow runs** attached to projects
-(sibling to tasks in the workspace tree).
+Product UI for **graph workflow runs** attached to projects (sibling to tasks
+in the workspace tree). Host/Run ports and the memory mock engine live in
+[`@ora/workflow-runtime`](../../../../workflow-runtime/README.md).
 
 ## Three surfaces (D5.2 boundaries)
 
@@ -13,17 +14,18 @@ Keep these stacks separate — shared chrome only where noted.
 2. **OpenSpec stepper + `workflow-store`** — Spec-mode composer workflow.
    Must **not** write `GraphWorkflowRun` or share run state with Theater.
 3. **This module (`GraphWorkflowRun` Theater / Overview)** — project-level
-   **run** workspace after deploy. Mock Host/Run repositories + Theater UI.
+   **run** workspace after deploy. Consumes `@ora/workflow-runtime` via React
+   context; owns Theater / Overview / hooks only.
 
-| | Settings RF | OpenSpec / `workflow-store` | `workflow-run` |
-| --- | --- | --- | --- |
-| Owns | Definition edit, deploy entry | Spec stepper state | Mounts, runs, Theater |
-| Must not | Drive live run Theater | Mutate `GraphWorkflowRun` | Reuse settings `WorkflowCanvas` |
+| | Settings RF | OpenSpec / `workflow-store` | `workflow-run` | `@ora/workflow-runtime` |
+| --- | --- | --- | --- | --- |
+| Owns | Definition edit, deploy entry | Spec stepper state | Theater UI + context | Ports, memory engine, events |
+| Must not | Drive live run Theater | Mutate `GraphWorkflowRun` | Reuse settings `WorkflowCanvas` | Own React / Theater |
 
 ## Responsibilities
 
-- Host project mounts of workflow definitions and create/list `GraphWorkflowRun`
-  instances (mock Host/Run repositories today; shape ready to extract).
+- Wire project mounts and `GraphWorkflowRun` lists through react-query hooks
+  against the injected `WorkflowRuntime`.
 - Render the Run Workspace when `workflowRunId` is selected:
   - **Theater**: focused act stage + path rail + live totals. Parallel
     `running` / `awaiting_input` nodes share a drag-to-switch stage carousel
@@ -62,10 +64,11 @@ Keep these stacks separate — shared chrome only where noted.
 
 ## Non-responsibilities
 
+- Does not own Host/Run repository implementations (see `@ora/workflow-runtime`).
 - Does not persist definitions in `@ora/workflow-mock` (that package stays
   session-demo + validation).
 - Does not own OpenSpec Spec-mode state.
-- Does not call Rust/contracts workflow APIs yet.
+- Does not call Rust/contracts workflow APIs yet (F2 HTTP/NDJSON later).
 - Does not reuse settings `WorkflowCanvas` (no catalog / reconnect / delete).
 - Does not implement HITL timeout (always waits for submit; `HitlTimeoutPolicy`
   enum reserved for later).
@@ -90,8 +93,16 @@ Keep these stacks separate — shared chrome only where noted.
 - Selection: `useWorkspaceSelectionStore.selectWorkflowRun`.
 - Lists: react-query via `queryKeys.workflowMounts` /
   `workflowMountsByDefinition` / `workflowRuns`.
-- Runtime: `WorkflowRuntimeProvider` in `AppShell` (memory + mock engine).
+- Runtime: `WorkflowRuntimeProvider` in `AppShell` injects
+  `@ora/workflow-runtime` (`createMemoryWorkflowRuntime` today).
+  Web/Desktop hosts can supply `AppShell.workflowRuntime`; the future production
+  adapter will wrap the repository-wide generated contracts transport (HTTP +
+  NDJSON on Web, Tauri commands + channels on Desktop).
   `useGraphWorkflowRunLiveSync` patches run caches via `runs.watch`.
+  Per-run UI side effects (artifacts cache, HITL toast, result-act focus)
+  share one cursor-aware `runs.subscribe` inside `useGraphWorkflowRunLive`.
+  The initial run/artifact snapshot and cursor are fetched atomically so events
+  emitted during setup are replayed instead of being lost or overwriting cache.
   Sidebar supports cancel (keep row) and delete (cancel then remove).
 - View toggle: Theater ↔ Overview. Overview node click returns to Theater
   focused on that node and opens the act inspector. Header Theater toggle
@@ -107,7 +118,7 @@ Keep these stacks separate — shared chrome only where noted.
 - Stop confirm: if the run reaches a terminal status while the dialog is open,
   the dialog dismisses (and Confirm is a no-op close) so a finished run cannot
   leave a stuck modal after `preventDefault` on the action button.
-- Outcomes / config: `useGraphWorkflowArtifacts` lists + patches on
+- Outcomes / config: `useGraphWorkflowRunLive` lists + patches on
   `artifact_added`. Theater scopes them in the act inspector with the focused
   node; reveal expands the rail and focuses that act when already on stage.
   Overview shows a per-node count affordance only.

@@ -1,11 +1,13 @@
-import type { DemoWorkflow } from "@ora/workflow-mock";
 import type {
   GraphWorkflowRun,
   GraphWorkflowSnapshotNodePatch,
   ProjectWorkflowMount,
   Unsubscribe,
   WorkflowArtifact,
-  WorkflowRunEvent,
+  WorkflowDefinition,
+  WorkflowEventCursor,
+  WorkflowRunEventEnvelope,
+  WorkflowRunLiveSnapshot,
 } from "./types";
 
 /**
@@ -24,10 +26,10 @@ export interface WorkflowHostRepository {
   /** Registers or refreshes the definition blob, then upserts the project mount. */
   mount: (
     projectId: string,
-    definition: DemoWorkflow,
+    definition: WorkflowDefinition,
   ) => Promise<ProjectWorkflowMount>;
   unmount: (projectId: string, definitionId: string) => Promise<void>;
-  getDefinition: (definitionId: string) => Promise<DemoWorkflow | null>;
+  getDefinition: (definitionId: string) => Promise<WorkflowDefinition | null>;
 }
 
 /** Lifecycle and event surface for GraphWorkflowRun instances. */
@@ -40,11 +42,11 @@ export interface WorkflowRunRepository {
     kickoffInput?: string;
   }) => Promise<GraphWorkflowRun>;
   /**
-   * Starts a pending run (mock engine). No-op when already running or terminal.
+   * Starts a pending run. No-op when already running or terminal.
    * Create() does not auto-start by default; workspace Start calls this.
    */
-  start: (runId: string) => Promise<void>;
-  cancel: (runId: string) => Promise<void>;
+  start: (runId: string) => Promise<GraphWorkflowRun>;
+  cancel: (runId: string) => Promise<GraphWorkflowRun>;
   /**
    * Removes a run from the project list. Active runs are cancelled first so
    * concurrent siblings stay unaffected.
@@ -66,15 +68,18 @@ export interface WorkflowRunRepository {
     runId: string,
     requestId: string,
     payload: Record<string, unknown>,
-  ) => Promise<void>;
+  ) => Promise<GraphWorkflowRun>;
   listArtifacts: (runId: string) => Promise<WorkflowArtifact[]>;
+  /** Returns an atomic run/artifact snapshot and the matching stream cursor. */
+  getLiveSnapshot: (runId: string) => Promise<WorkflowRunLiveSnapshot | null>;
   /**
    * Subscribes to run events (node progress, artifacts, finish).
    * Callers must unregister on unmount.
    */
   subscribe: (
     runId: string,
-    onEvent: (event: WorkflowRunEvent) => void,
+    onEvent: (event: WorkflowRunEventEnvelope) => void,
+    options?: { afterCursor?: WorkflowEventCursor | null },
   ) => Unsubscribe;
   /**
    * Fires whenever a run record mutates (engine steps, cancel, rename).
@@ -87,4 +92,6 @@ export interface WorkflowRunRepository {
 export interface WorkflowRuntime {
   host: WorkflowHostRepository;
   runs: WorkflowRunRepository;
+  /** Releases adapter-owned timers, streams, and listeners. */
+  dispose: () => void;
 }

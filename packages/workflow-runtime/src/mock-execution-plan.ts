@@ -1,13 +1,18 @@
-import type { Edge, Node } from "@xyflow/react";
-import type { DemoWorkflow, WorkflowNodeData } from "@ora/workflow-mock";
+import type {
+  WorkflowDefinition,
+  WorkflowDefinitionEdge,
+  WorkflowDefinitionNode,
+  WorkflowNodeData,
+} from "./types";
+import { validateWorkflowDefinition } from "./definition";
 
 /** Inputs available when planning a mock path (extensible for HITL / schemas later). */
 export interface MockExecutionContext {
   kickoffInput?: string;
 }
 
-type WorkflowEdge = Edge;
-type WorkflowNode = Node<WorkflowNodeData, "workflow">;
+type WorkflowEdge = WorkflowDefinitionEdge;
+type WorkflowNode = WorkflowDefinitionNode;
 
 /**
  * Pluggable path selection for exclusive condition fan-out.
@@ -73,10 +78,11 @@ export function createDefaultMockPathPolicy(): MockPathPolicy {
  * Returns a topo order over the reachable subgraph and the skipped remainder.
  */
 export function planMockExecution(
-  workflow: DemoWorkflow,
+  workflow: WorkflowDefinition,
   context: MockExecutionContext = {},
   policy: MockPathPolicy = createDefaultMockPathPolicy(),
 ): MockExecutionPlan {
+  validateWorkflowDefinition(workflow);
   const nodes = workflow.nodes as WorkflowNode[];
   const edges = workflow.edges as WorkflowEdge[];
   const ids = nodes.map((node) => node.id);
@@ -113,6 +119,9 @@ export function planMockExecution(
     if (node?.data.kind === "condition") {
       if (outs.length > 0) {
         const chosen = policy.chooseConditionEdge(outs, node, context);
+        if (!outs.includes(chosen)) {
+          throw new Error(`Condition policy returned an unrelated edge for node ${id}`);
+        }
         walk.push(chosen.target);
       }
       continue;

@@ -14,7 +14,9 @@ describe("useCreateTask", () => {
     ["worktree", "worktree"],
     ["project_root", "project_root"],
   ] as const)("forwards the %s workspace mode", async (_label, workspaceMode) => {
-    const state = createMockClientState();
+    const state = createMockClientState({
+      projects: [{ id: "p1", name: "Project", rootPath: "/workspace/project" }],
+    });
     const client = createMockClient(state);
     const { result } = renderHookWithClient(
       () => useCreateTask(),
@@ -33,7 +35,7 @@ describe("useCreateTask", () => {
 
     expect(state.tasks[0]?.workspaceMode).toBe(workspaceMode);
     expect(useWorkspaceSelectionStore.getState().selection).toEqual(workspaceMode === "worktree"
-      ? { projectId: "p1", taskId: "t1", sessionId: null }
-      : { projectId: "p1", taskId: null, sessionId: null });
+      ? { projectId: "p1", taskId: "t1", sessionId: null, workflowRunId: null }
+      : { projectId: "p1", taskId: null, sessionId: null, workflowRunId: null });
   });
 });

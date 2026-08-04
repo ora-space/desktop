@@ -1,4 +1,3 @@
-import type { DemoWorkflow } from "@ora/workflow-mock";
 import {
   createDefaultMockPathPolicy,
   nodeKindUsesTokens,
@@ -7,6 +6,7 @@ import {
   type MockExecutionPlan,
   type MockPathPolicy,
 } from "./mock-execution-plan";
+import { validateWorkflowDefinition } from "./definition";
 import type {
   GraphWorkflowNodeIo,
   GraphWorkflowNodeState,
@@ -15,6 +15,7 @@ import type {
   HitlRequest,
   HitlSchema,
   WorkflowArtifact,
+  WorkflowDefinition,
   WorkflowRunEvent,
 } from "./types";
 
@@ -204,7 +205,7 @@ function hitlAnswerOutput(
 }
 
 /**
- * Mock executor over a frozen DemoWorkflow snapshot.
+ * Mock executor over a frozen transport-neutral workflow snapshot.
  * Plans a reachable path (condition = exclusive), then runs ready nodes in
  * parallel waves: every node whose predecessors have succeeded starts together.
  * `prompt` nodes pause for HITL; other kinds use timed auto-complete.
@@ -645,7 +646,14 @@ export function createMockRunEngine(
     finishRun(runId, "cancelled");
   }
 
-  return { start, stop, cancel, submitHitl };
+  /** Releases every timer owned by this adapter instance. */
+  function dispose(): void {
+    for (const runId of [...timers.keys()]) {
+      stop(runId);
+    }
+  }
+
+  return { start, stop, cancel, submitHitl, dispose };
 }
 
 function isTerminal(status: GraphWorkflowRun["status"]): boolean {
@@ -669,7 +677,8 @@ function stubTokenUsage(nodeId: string): GraphWorkflowTokenUsage {
  * Full-graph topological order (does not apply condition exclusivity).
  * Prefer `planMockExecution` when simulating a run.
  */
-export function executionOrder(workflow: DemoWorkflow): string[] {
+export function executionOrder(workflow: WorkflowDefinition): string[] {
+  validateWorkflowDefinition(workflow);
   return topologicalOrder(
     workflow.nodes.map((node) => node.id),
     workflow.edges,

@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { DemoWorkflow } from "@ora/workflow-mock";
-import { useWorkflowRuntime } from "../../features/workflow-run/runtime/workflow-runtime-context";
+import { useWorkflowRuntime } from "../../features/workflow-run/workflow-runtime-context";
 import type {
   GraphWorkflowRun,
-  WorkflowArtifact,
-} from "../../features/workflow-run/runtime/types";
+  HitlRequest,
+  WorkflowDefinitionInput,
+  WorkflowRunLiveSnapshot,
+} from "@ora/workflow-runtime";
+import { normalizeWorkflowDefinition } from "@ora/workflow-runtime";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { queryKeys } from "./query-keys";
 
@@ -70,8 +72,8 @@ export function useMountWorkflow() {
       definition,
     }: {
       projectId: string;
-      definition: DemoWorkflow;
-    }) => runtime.host.mount(projectId, definition),
+      definition: WorkflowDefinitionInput;
+    }) => runtime.host.mount(projectId, normalizeWorkflowDefinition(definition)),
     onSuccess: (_mount, variables) => {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.workflowMounts(variables.projectId),
@@ -136,30 +138,21 @@ export function useStartGraphWorkflowRun() {
   const runtime = useWorkflowRuntime();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      runId,
-      projectId,
-    }: {
-      runId: string;
-      projectId: string;
-    }) => {
-      await runtime.runs.start(runId);
-      return { runId, projectId };
+    mutationFn: async ({ runId }: { runId: string }) => {
+      const run = await runtime.runs.start(runId);
+      return run;
     },
-    onSuccess: async ({ runId, projectId }) => {
-      const run = await runtime.runs.get(runId);
-      if (run !== null) {
-        queryClient.setQueryData(queryKeys.workflowRun(runId), run);
-        queryClient.setQueryData(
-          queryKeys.workflowRuns(projectId),
-          (previous: GraphWorkflowRun[] | undefined) => {
-            if (previous === undefined) {
-              return previous;
-            }
-            return previous.map((item) => (item.id === runId ? run : item));
-          },
-        );
-      }
+    onSuccess: (run) => {
+      queryClient.setQueryData(queryKeys.workflowRun(run.id), run);
+      queryClient.setQueryData(
+        queryKeys.workflowRuns(run.projectId),
+        (previous: GraphWorkflowRun[] | undefined) => {
+          if (previous === undefined) {
+            return previous;
+          }
+          return previous.map((item) => (item.id === run.id ? run : item));
+        },
+      );
     },
   });
 }
@@ -169,30 +162,21 @@ export function useCancelGraphWorkflowRun() {
   const runtime = useWorkflowRuntime();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      runId,
-      projectId,
-    }: {
-      runId: string;
-      projectId: string;
-    }) => {
-      await runtime.runs.cancel(runId);
-      return { runId, projectId };
+    mutationFn: async ({ runId }: { runId: string }) => {
+      const run = await runtime.runs.cancel(runId);
+      return run;
     },
-    onSuccess: async ({ runId, projectId }) => {
-      const run = await runtime.runs.get(runId);
-      if (run !== null) {
-        queryClient.setQueryData(queryKeys.workflowRun(runId), run);
-        queryClient.setQueryData(
-          queryKeys.workflowRuns(projectId),
-          (previous: GraphWorkflowRun[] | undefined) => {
-            if (previous === undefined) {
-              return previous;
-            }
-            return previous.map((item) => (item.id === runId ? run : item));
-          },
-        );
-      }
+    onSuccess: (run) => {
+      queryClient.setQueryData(queryKeys.workflowRun(run.id), run);
+      queryClient.setQueryData(
+        queryKeys.workflowRuns(run.projectId),
+        (previous: GraphWorkflowRun[] | undefined) => {
+          if (previous === undefined) {
+            return previous;
+          }
+          return previous.map((item) => (item.id === run.id ? run : item));
+        },
+      );
     },
   });
 }
@@ -211,9 +195,7 @@ export function useRerunGraphWorkflowRun() {
         definitionId: source.definitionId,
         kickoffInput: source.kickoffInput,
       });
-      await runtime.runs.start(created.id);
-      const started = await runtime.runs.get(created.id);
-      return started ?? created;
+      return runtime.runs.start(created.id);
     },
     onSuccess: (run) => {
       void queryClient.invalidateQueries({
@@ -288,61 +270,93 @@ export function useSubmitGraphWorkflowHitl() {
       requestId: string;
       payload: Record<string, unknown>;
     }) => runtime.runs.submitHitl(runId, requestId, payload),
-    onSuccess: (_void, variables) => {
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.workflowRun(variables.runId),
-      });
+    onSuccess: (run) => {
+      queryClient.setQueryData(queryKeys.workflowRun(run.id), run);
     },
   });
 }
 
 /**
- * Lists artifacts for a run and patches the cache on `artifact_added`
- * so Theater act cards update without refetching on every node tick.
+ * Live artifacts for a run on a single `subscribe`.
+ * Optional handlers piggy-back the same stream (HITL toast / finish) so the
+ * workspace does not open a second subscription.
  */
-export function useGraphWorkflowArtifacts(runId: string | null | undefined) {
+export function useGraphWorkflowRunLive(
+  runId: string | null | undefined,
+  handlers: {
+    onHitlRequired?: (request: HitlRequest) => void;
+    onRunFinished?: () => void;
+  } = {},
+) {
   const runtime = useWorkflowRuntime();
   const queryClient = useQueryClient();
   const [revealedId, setRevealedId] = useState<string | null>(null);
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
 
   const query = useQuery({
     queryKey: queryKeys.workflowArtifacts(runId ?? ""),
-    queryFn: () => runtime.runs.listArtifacts(runId!),
+    queryFn: () => runtime.runs.getLiveSnapshot(runId!),
     enabled: runId != null && runId !== "",
+    // Once loaded, the cursor stream owns freshness. Automatic refetch could
+    // overwrite an event applied after the server produced its snapshot.
+    staleTime: Number.POSITIVE_INFINITY,
   });
+  const snapshotRef = useRef(query.data);
+  snapshotRef.current = query.data;
+  const hasSnapshot = query.data !== undefined && query.data !== null;
 
   useEffect(() => {
     setRevealedId(null);
   }, [runId]);
 
   useEffect(() => {
-    if (runId == null || runId === "") {
+    if (runId == null || runId === "" || !hasSnapshot) {
       return;
     }
     return runtime.runs.subscribe(runId, (event) => {
-      if (event.type !== "artifact_added") {
+      const cacheKey = queryKeys.workflowArtifacts(runId);
+      if (event.type === "artifact_added") {
+        const artifact = structuredClone(event.artifact);
+        queryClient.setQueryData(
+          cacheKey,
+          (previous: WorkflowRunLiveSnapshot | null | undefined) => {
+            if (previous === undefined || previous === null) {
+              return previous;
+            }
+            if (previous.artifacts.some((item) => item.id === artifact.id)) {
+              return previous;
+            }
+            return {
+              ...previous,
+              artifacts: [...previous.artifacts, artifact],
+              cursor: event.cursor,
+            };
+          },
+        );
+        setRevealedId(artifact.id);
         return;
       }
-      const artifact = structuredClone(event.artifact);
       queryClient.setQueryData(
-        queryKeys.workflowArtifacts(runId),
-        (previous: WorkflowArtifact[] | undefined) => {
-          if (previous === undefined) {
-            return [artifact];
-          }
-          if (previous.some((item) => item.id === artifact.id)) {
-            return previous;
-          }
-          return [...previous, artifact];
-        },
+        cacheKey,
+        (previous: WorkflowRunLiveSnapshot | null | undefined) => previous === undefined
+          || previous === null
+          ? previous
+          : { ...previous, cursor: event.cursor },
       );
-      setRevealedId(artifact.id);
-    });
-  }, [runtime, queryClient, runId]);
+      if (event.type === "hitl_required") {
+        handlersRef.current.onHitlRequired?.(event.request);
+        return;
+      }
+      if (event.type === "run_finished") {
+        handlersRef.current.onRunFinished?.();
+      }
+    }, { afterCursor: snapshotRef.current?.cursor ?? null });
+  }, [runtime, queryClient, runId, hasSnapshot]);
 
   return {
     ...query,
-    artifacts: query.data ?? [],
+    artifacts: query.data?.artifacts ?? [],
     revealedId,
   };
 }

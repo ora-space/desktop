@@ -14,7 +14,6 @@ import {
 } from "@tabler/icons-react";
 import {
   createMockWorkflowNodeType,
-  type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { getNodeMetadata } from "../workflow-node-chrome";
@@ -24,7 +23,8 @@ import type {
   GraphWorkflowNodeState,
   GraphWorkflowSnapshotNodePatch,
   WorkflowArtifact,
-} from "./runtime/types";
+  WorkflowNodeData,
+} from "@ora/workflow-runtime";
 
 interface RunActInspectorProps {
   nodeId: string | null;
@@ -127,7 +127,7 @@ function RunActInspectorPanel({
       state.finishedAt !== undefined
         ? formatRunClock(state.finishedAt, locale)
         : "—",
-    ].join(" → ")
+    ].join(" — ")
     : null;
   const canEdit = editable && onPatchNode !== undefined;
 
@@ -219,7 +219,7 @@ function RunActInspectorPanel({
                 <EditableField
                   id={`run-node-instruction-${nodeId}`}
                   label={t("settings.workflow.field.instruction")}
-                  value={data.instruction}
+                  value={data.instruction ?? ""}
                   multiline
                   onChange={(value) => onPatchNode({ instruction: value })}
                 />
@@ -227,7 +227,7 @@ function RunActInspectorPanel({
               : (
                 <ReadOnlyField
                   label={t("settings.workflow.field.instruction")}
-                  value={data.instruction}
+                  value={data.instruction ?? ""}
                   multiline
                 />
               )

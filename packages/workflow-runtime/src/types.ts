@@ -1,4 +1,84 @@
-import type { DemoWorkflow } from "@ora/workflow-mock";
+/** Node variants understood by the graph workflow execution contract. */
+export type WorkflowNodeKind =
+  | "start"
+  | "prompt"
+  | "agent"
+  | "condition"
+  | "tool"
+  | "output";
+
+/** One Skill binding within an executable Agent node. */
+export interface WorkflowAgentSkillConfig {
+  skillId: string;
+  enabled: boolean;
+}
+
+/** Transport-neutral execution contract for an Agent node. */
+export interface WorkflowAgentConfig {
+  schemaVersion: 3;
+  executor: {
+    agentCli: string;
+    modelId: string;
+  };
+  roleId: string;
+  skills: WorkflowAgentSkillConfig[];
+  prompt: string;
+}
+
+/** Serializable workflow node data shared by memory and future Rust adapters. */
+export interface WorkflowNodeData extends Record<string, unknown> {
+  kind: WorkflowNodeKind;
+  title: string;
+  description: string;
+  instruction?: string;
+  model?: string;
+  tool?: string;
+  condition?: string;
+  agentConfig?: WorkflowAgentConfig;
+  /** Memory-adapter-only timing hint; real backends may ignore it. */
+  mockStepMs?: number;
+}
+
+export interface WorkflowPosition {
+  x: number;
+  y: number;
+}
+
+export interface WorkflowViewport extends WorkflowPosition {
+  zoom: number;
+}
+
+/** Serializable node snapshot; React Flow runtime internals are intentionally excluded. */
+export interface WorkflowDefinitionNode {
+  id: string;
+  type: "workflow";
+  position: WorkflowPosition;
+  data: WorkflowNodeData;
+  deletable?: boolean;
+  initialWidth?: number;
+  initialHeight?: number;
+}
+
+/** Serializable execution edge with display text kept as plain data. */
+export interface WorkflowDefinitionEdge {
+  id: string;
+  source: string;
+  target: string;
+  type?: "workflow";
+  label?: string;
+  data?: Record<string, unknown>;
+}
+
+/** Frozen workflow definition shared across memory and future generated contracts. */
+export interface WorkflowDefinition {
+  id: string;
+  name: string;
+  description: string;
+  updatedAt: string;
+  viewport: WorkflowViewport;
+  nodes: WorkflowDefinitionNode[];
+  edges: WorkflowDefinitionEdge[];
+}
 
 /** Run-level lifecycle for a project-attached graph workflow execution. */
 export type GraphWorkflowRunStatus =
@@ -58,7 +138,7 @@ export interface GraphWorkflowRun {
   id: string;
   projectId: string;
   definitionId: string;
-  definitionSnapshot: DemoWorkflow;
+  definitionSnapshot: WorkflowDefinition;
   name: string;
   status: GraphWorkflowRunStatus;
   kickoffInput?: string;
@@ -122,6 +202,23 @@ export type WorkflowRunEvent =
       status: GraphWorkflowRunStatus;
       totals: GraphWorkflowRun["totals"];
     };
+
+/** Opaque resume marker returned to a future NDJSON transport unchanged. */
+export type WorkflowEventCursor = string;
+
+/** Durable event metadata used for ordering, deduplication, and reconnect. */
+export type WorkflowRunEventEnvelope = WorkflowRunEvent & {
+  cursor: WorkflowEventCursor;
+  sequence: number;
+  occurredAt: string;
+};
+
+/** Consistent initial state paired with the cursor from which streaming resumes. */
+export interface WorkflowRunLiveSnapshot {
+  run: GraphWorkflowRun;
+  artifacts: WorkflowArtifact[];
+  cursor: WorkflowEventCursor | null;
+}
 
 export type WorkflowArtifactKind = "text" | "markdown" | "file" | "diff";
 
