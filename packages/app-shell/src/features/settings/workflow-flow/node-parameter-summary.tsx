@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import type { WorkflowNodeData } from "@ora/workflow-mock";
+import { getMockWorkflowRoleLabel, type WorkflowNodeData } from "@ora/workflow-mock";
 
 interface NodeParameter {
   label: string;
@@ -52,7 +52,10 @@ function configuredParameters(
       .filter((skill) => skill.enabled)
       .map((skill) => skill.skillId);
     parameters.push(
-      { label: t("settings.workflow.field.role"), values: [data.agentConfig.roleId] },
+      {
+        label: t("settings.workflow.field.role"),
+        values: [getMockWorkflowRoleLabel(data.agentConfig.roleId)],
+      },
       {
         label: t("settings.workflow.field.agentModel"),
         values: [`${data.agentConfig.executor.agentCli} · ${data.agentConfig.executor.modelId}`],

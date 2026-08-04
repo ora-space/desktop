@@ -446,7 +446,7 @@ describe("WorkflowSettings", () => {
       );
     });
     const configuredParameters = within(reviewNode).getByLabelText("配置参数");
-    expect(configuredParameters).toHaveTextContent("角色Reviewer");
+    expect(configuredParameters).toHaveTextContent("角色审查员");
     expect(configuredParameters).toHaveTextContent("open_code · opencode/big-pickle");
     expect(configuredParameters).toHaveTextContent("Skillsopenspec-verify-change");
     expect(configuredParameters).not.toHaveTextContent("按严重程度整理问题，并给出定位与修复建议。");
