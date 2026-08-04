@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { toast } from "@ora/ui";
 import {
   PlatformProvider,
   type SkillMarketplaceCapability,
@@ -32,6 +33,7 @@ describe("SkillMarketplacePanel", () => {
       listener = nextListener;
       return stop;
     });
+    const successToast = vi.spyOn(toast, "success").mockImplementation(() => "skill-download");
     const view = renderMarketplace({ kind: "supported", open, onStatus });
 
     await user.click(screen.getByRole("button", { name: /打开技能市场|Open marketplace/ }));
@@ -47,9 +49,17 @@ describe("SkillMarketplacePanel", () => {
       archivePath: "/app-data/skill-downloads/skill.zip",
     }));
     expect(screen.getByRole("status")).toHaveTextContent("/app-data/skill-downloads/skill.zip");
+    expect(successToast).toHaveBeenCalledWith(
+      expect.stringMatching(/已下载 skill.zip|Downloaded skill.zip/),
+      {
+        description: "/app-data/skill-downloads/skill.zip",
+        duration: 5_000,
+      },
+    );
 
     view.unmount();
     expect(stop).toHaveBeenCalledOnce();
+    successToast.mockRestore();
   });
 
   it("shows native download failures without reporting a completed archive", async () => {
