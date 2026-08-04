@@ -40,8 +40,6 @@ Startup reconciles this configured project into the `projects` table before the 
 - If a visible project exists with the configured name but a different stored path, startup fails, because project roots are immutable.
 - If both the configured name and path already match, startup leaves the row unchanged.
 
-After reconciliation, startup opens the synthetic web work context `surface = web`, `window_id = main` for that project and refreshes its lease immediately.
-
 Task creation resolves the project named in the request and provisions linked worktrees under `<ORA_DATA_DIR>/worktrees/<full-task-id>`. Agent session startup instead resolves Task → Worktree → branch name and then asks Git for the authoritative linked-worktree path, which becomes the ACP session `cwd`. See [Task Worktrees](task-worktrees.md).
 
 ## Bind configuration
@@ -71,9 +69,6 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 - `GET /api/projects/{projectId}`
 - `PUT /api/projects/{projectId}`
 - `DELETE /api/projects/{projectId}`
-
-### projectWorkContext
-
 
 ### task
 
@@ -138,13 +133,6 @@ Prompt requests carry an ordered ACP content-block list and may combine text, im
 
 Unary requests and streams receive a server-generated canonical request id before entering business logic. Client-provided `X-Request-Id` values are ignored. Every Web response publishes the canonical id through `X-Request-Id`, CORS exposes that header, and a failure body or error frame carries the same id in its direct `{ code, params, requestId }` payload. A stream keeps one id from creation through normal completion, failure, disconnect, or cancellation.
 
-### Project work contexts
-
-- `open` creates or switches one `(surface, window_id)` context into a project and refreshes its lease immediately.
-- `renew` extends an existing context lease using backend time.
-- Occupied-project conflicts return a stable HTTP `409` without exposing the owning surface or window id in the response.
-
-
 ### Filesystem browsing
 
 The filesystem directory route supports the custom Web path picker.
@@ -163,8 +151,6 @@ Error mapping is centralized so application outcomes become stable HTTP response
 - A not-found outcome from any project, task, session, skill, or agent get, update, or delete route returns an HTTP not-found status with a structured error payload identifying the missing entity family.
 - A repository or bootstrap failure returns an HTTP server-error status with a structured error payload rather than raw infrastructure error text.
 - Task-create failures caused by linked-worktree provisioning or compensating cleanup return a structured server error identifying task creation as failed, without exposing Git command output or filesystem-specific formatting.
-- An occupied project returns `409`.
-
 Shared backend failures project to the same typed `{ code, params, requestId }` payload used by Desktop; there is no public message or outer error envelope. HTTP status derives from the backend error classification.
 
 ## Frontend development modes
@@ -179,5 +165,5 @@ The Web frontend always uses the fetch contracts transport and talks to the Rust
 The runtime uses a file-backed SQLite database bootstrapped through `ora-db`.
 
 - Data persists across process restarts as long as the same `ORA_DATA_DIR` is reused.
-- Readiness depends on successful database bootstrap, repository-pool construction, bootstrap-project reconciliation, and synthetic web work context reconciliation.
+- Readiness depends on successful database bootstrap, repository-pool construction, and bootstrap-project reconciliation.
 - The request seam emits at most one correlated completion event. Ordinary success is `INFO`, health and readiness success are `DEBUG`, and failure levels derive from the shared backend classification.

@@ -107,7 +107,7 @@ fn removes_project_work_context_schema_without_changing_project_data() {
     assert_eq!(table_exists(&connection, "project_work_contexts"), false);
 }
 
-/// Verifies the catalog creates ID-keyed schema without name indexes and removes it during rollback.
+/// Verifies the catalog creates ID-keyed schema and restores the project work context schema during rollback.
 #[test]
 fn manages_skill_and_agent_definition_schema_lifecycle() {
     let temp_dir = TempDir::new().unwrap();
@@ -193,6 +193,19 @@ fn manages_skill_and_agent_definition_schema_lifecycle() {
     let connection = Connection::open(&database_path).unwrap();
     assert_eq!(table_exists(&connection, "skills"), false);
     assert_eq!(table_exists(&connection, "agents"), false);
+    assert!(table_exists(&connection, "project_work_contexts"));
+    assert_eq!(
+        load_table_column_names(&connection, "project_work_contexts"),
+        vec![
+            "id".to_string(),
+            "surface".to_string(),
+            "window_id".to_string(),
+            "project_id".to_string(),
+            "lease_expires_at".to_string(),
+            "created_at".to_string(),
+            "updated_at".to_string(),
+        ]
+    );
 }
 
 /// Verifies the runner applies only the missing tail of a linear migration history in ascending order.

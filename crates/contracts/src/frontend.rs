@@ -591,13 +591,10 @@ mod tests {
     /// Verifies the removed multi-client project ownership API is absent from generated clients.
     #[test]
     fn omits_project_work_context_endpoints_from_frontend_manifest() {
-        assert_eq!(
-            frontend_endpoints().iter().all(|endpoint| {
-                !endpoint.operation_name.contains("ProjectWorkContext")
-                    && !endpoint.path_template.contains("project-work-contexts")
-            }),
-            true
-        );
+        assert!(frontend_endpoints().iter().all(|endpoint| {
+            !endpoint.operation_name.contains("ProjectWorkContext")
+                && !endpoint.path_template.contains("project-work-contexts")
+        }));
     }
 
     /// Verifies catalogs publish separate collection and identifier resource routes.
