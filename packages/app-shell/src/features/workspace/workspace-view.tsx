@@ -348,6 +348,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         </div>
         <TaskChangesLayout taskId={task?.id}>
           <ChatView
+            taskId={task?.id}
             turns={conversation?.turns ?? []}
             modelChanges={conversation?.modelChanges}
             userName={userName}

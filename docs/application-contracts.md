@@ -25,6 +25,7 @@ Contracts are the app-facing protocol, not a projection of the domain. Each enti
 - `Skill` and `Agent`: `id`, `name`, `description`
 - `ProjectWorkContext`: `id`, `surface`, `windowId`, `projectId`, `leaseExpiresAt`
 - `ProjectBranch`: `name`, `refName`, `displayName`
+- Workspace file contracts keep task identity in the request and expose only normalized relative paths: `WorkspaceEntry`, `ReadWorkspaceFileResponse`, `SearchWorkspaceResponse`, and `WorkspaceFileEventBatch`. The server resolves the task's managed workspace; callers never provide a filesystem root.
 
 Public payloads expose documented business fields only. `createdAt`, `updatedAt`, `isDeleted`, and other internal audit fields never appear. Two exclusions are deliberate:
 
@@ -74,7 +75,7 @@ Deletion stays a normal delete use case at the boundary even though the reposito
 
 ## Error propagation and completion logging
 
-Application handlers preserve semantic errors and infrastructure source chains without emitting generic success or propagation-only failure events. Repository adapters likewise do not add another event merely to report the same failure. Web, Tauri, and stream entry seams own the single correlated request-completion event and derive its level from the public classification.
+Application handlers preserve semantic errors and infrastructure source chains without emitting generic success or propagation-only failure events. Repository adapters likewise do not add another event merely to report the same failure. Web, Tauri, and stream entry seams own the single correlated request-completion event and derive its level from the public classification. The task workspace watcher is a Web stream seam: watcher failures are converted to the same `{ code, params, requestId }` contract frame and complete the request lifecycle exactly once.
 
 Bootstrap, migration, state-transition, and secondary-cleanup events remain independent lifecycle facts. Logging initialization, sink selection, and writer lifetimes stay with runtime composition roots. See [Runtime Logging](runtime-logging.md).
 
@@ -88,3 +89,4 @@ Bootstrap, migration, state-transition, and secondary-cleanup events remain inde
 - Worktree task creation fetches `upstream`, or falls back to `origin`, before resolving the selected base ref to an immutable commit. Refreshed remote refs take precedence over stale same-named local branches, while local-only branches remain selectable.
 - Worktree paths are composed only when creating a new worktree. Existing paths are resolved from the persisted branch name and Git's authoritative metadata, never reconstructed from the configured creation root.
 - Isolated task diffs compare against the worktree creation commit; project-root task diffs resolve `HEAD` on every read so external edits appear without mutating a persisted baseline. `diffId` includes the complete patch and rejects comments anchored to an older snapshot.
+- Workspace file paths are validated as relative paths, canonicalized before containment checks, and returned with slash separators. The filesystem crate is read-only, bounds file reads and search output, and reports native watcher changes as cache-invalidating batches. See [Task Workspace Files](task-workspace-files.md).

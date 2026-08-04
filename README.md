@@ -4,6 +4,8 @@ Ora is an IDE for AI agents. The Rust backend lives in `crates/`, the two runtim
 
 ## Architecture Docs
 
+- [Task Workspace Files](docs/task-workspace-files.md) - read-only worktree browsing, bounded search, and native refresh
+
 - [Application and Contracts Boundary](docs/application-contracts.md) — cross-crate ownership, contract shapes, and the handler set
 - [Domain Models](docs/domain-models.md) — entities, identifier newtypes, and categorical enums
 - [Frontend Contract SDK](docs/frontend-contract-sdk.md) — Rust-owned endpoint manifest, generation workflow, and transports

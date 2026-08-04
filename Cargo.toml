@@ -7,6 +7,7 @@ members = [
     "crates/contracts",
     "crates/db",
     "crates/domain",
+    "crates/fs",
     "crates/gitlancer",
     "crates/history",
     "crates/logging",
@@ -34,6 +35,7 @@ ora-backend = { path = "crates/backend" }
 ora-contracts = { path = "crates/contracts" }
 ora-db = { path = "crates/db" }
 ora-domain = { path = "crates/domain" }
+ora-fs = { path = "crates/fs" }
 gitlancer = { path = "crates/gitlancer" }
 ora-history = { path = "crates/history" }
 ora-logging = { path = "crates/logging" }
@@ -51,6 +53,7 @@ futures-util = { version = "0.3", features = ["sink"] }
 gray_matter = { version = "0.3", default-features = false, features = ["yaml"] }
 libc = "0.2"
 log = "0.4"
+notify = "8.2"
 portable-pty = "0.9"
 pretty_assertions = "1"
 r2d2 = "0.8"

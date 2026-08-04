@@ -8,3 +8,4 @@ pub mod sessions;
 pub mod skills;
 pub mod task_diffs;
 pub mod tasks;
+pub mod workspace_files;
