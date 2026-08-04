@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { toast } from "@ora/ui";
 import {
   PlatformProvider,
+  type LocationActionsCapability,
   type SkillMarketplaceCapability,
   type SkillMarketplaceStatus,
 } from "@ora/platform";
@@ -12,8 +13,11 @@ import { createStubPlatform } from "../../test/stub-platform";
 import { SkillMarketplacePanel } from "./skill-marketplace-panel";
 
 /** Renders the marketplace panel with one explicitly injected host capability. */
-function renderMarketplace(skillMarketplace: SkillMarketplaceCapability) {
-  const platform = { ...createStubPlatform(), skillMarketplace };
+function renderMarketplace(
+  skillMarketplace: SkillMarketplaceCapability,
+  locationActions: LocationActionsCapability = { kind: "unsupported" },
+) {
+  const platform = { ...createStubPlatform(), skillMarketplace, locationActions };
   return render(
     <AppI18nProvider>
       <PlatformProvider adapter={platform}>
@@ -24,7 +28,7 @@ function renderMarketplace(skillMarketplace: SkillMarketplaceCapability) {
 }
 
 describe("SkillMarketplacePanel", () => {
-  it("opens SkillHub and displays native download progress and the final absolute path", async () => {
+  it("opens SkillHub and reveals the completed archive directory on request", async () => {
     const user = userEvent.setup();
     const open = vi.fn().mockResolvedValue(undefined);
     const stop = vi.fn();
@@ -34,7 +38,15 @@ describe("SkillMarketplacePanel", () => {
       return stop;
     });
     const successToast = vi.spyOn(toast, "success").mockImplementation(() => "skill-download");
-    const view = renderMarketplace({ kind: "supported", open, onStatus });
+    const openLocation = vi.fn().mockResolvedValue(undefined);
+    const view = renderMarketplace(
+      { kind: "supported", open, onStatus },
+      {
+        kind: "supported",
+        resolveTaskCwd: vi.fn(),
+        open: openLocation,
+      },
+    );
 
     await user.click(screen.getByRole("button", { name: /打开技能市场|Open marketplace/ }));
     await waitFor(() => expect(onStatus).toHaveBeenCalledOnce());
@@ -48,7 +60,6 @@ describe("SkillMarketplacePanel", () => {
       fileName: "skill.zip",
       archivePath: "/app-data/skill-downloads/skill.zip",
     }));
-    expect(screen.getByRole("status")).toHaveTextContent("/app-data/skill-downloads/skill.zip");
     expect(successToast).toHaveBeenCalledWith(
       expect.stringMatching(/已下载 skill.zip|Downloaded skill.zip/),
       {
@@ -56,6 +67,11 @@ describe("SkillMarketplacePanel", () => {
         duration: 5_000,
       },
     );
+    expect(screen.queryByText("/app-data/skill-downloads/skill.zip")).not.toBeInTheDocument();
+    const savedLocation = screen.getByRole("button", { name: /保存位置|Saved to/ });
+    expect(savedLocation).toHaveAttribute("title", "/app-data/skill-downloads/skill.zip");
+    await user.click(savedLocation);
+    expect(openLocation).toHaveBeenCalledWith("explorer", "/app-data/skill-downloads");
 
     view.unmount();
     expect(stop).toHaveBeenCalledOnce();
