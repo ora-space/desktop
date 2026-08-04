@@ -185,8 +185,8 @@ export function TaskDiffView({
     queryClient.invalidateQueries({ queryKey: queryKeys.taskDiffComments(taskId) });
 
   const createComment = useMutation({
-    mutationFn: ({ anchor, body }: { anchor: TaskDiffCommentAnchor; body: string }) =>
-      client.task.createDiffComment({ taskId, anchor, body }),
+    mutationFn: ({ scope, anchor, body }: { scope: TaskDiffScope; anchor: TaskDiffCommentAnchor; body: string }) =>
+      client.task.createDiffComment({ taskId, scope, anchor, body }),
     onSuccess: async () => {
       setSelectedAnchor(null);
       await refreshDiscussions();
@@ -286,14 +286,19 @@ export function TaskDiffView({
     ?? createComment.error
     ?? replyComment.error
     ?? setCommentStatus.error;
-  const currentComments = scope === "branch" ? comments.filter(
-    (comment) => comment.kind.kind === "reply"
-      || comment.kind.anchor.diffId === diff.diffId,
-  ) : [];
-  const outdatedThreads = scope === "branch" ? comments.filter(
+  const currentThreadIds = new Set(comments.filter(
+    (comment) => comment.kind.kind === "thread"
+      && comment.kind.anchor.diffId === diff.diffId,
+  ).map((comment) => comment.id));
+  const currentComments = comments.filter(
+    (comment) => comment.kind.kind === "thread"
+      ? comment.kind.anchor.diffId === diff.diffId
+      : currentThreadIds.has(comment.kind.parentCommentId),
+  );
+  const outdatedThreads = comments.filter(
     (comment) => comment.kind.kind === "thread"
       && comment.kind.anchor.diffId !== diff.diffId,
-  ) : [];
+  );
 
   return (
     <section
@@ -408,13 +413,13 @@ export function TaskDiffView({
                           viewType={viewType}
                           diffId={diff.diffId}
                           comments={currentComments}
-                          reviewEnabled={scope === "branch"}
+                          reviewEnabled
                           selectedAnchor={selectedAnchor}
                           onSelectAnchor={(selection) => {
                             createComment.reset();
                             setSelectedAnchor(selection);
                           }}
-                          onCreateComment={(anchor, body) => createComment.mutateAsync({ anchor, body })}
+                          onCreateComment={(anchor, body) => createComment.mutateAsync({ scope, anchor, body })}
                           onReply={(commentId, body) => replyComment.mutateAsync({ commentId, body })}
                           onSetStatus={(commentId, status) => setCommentStatus.mutateAsync({ commentId, status })}
                           mutationPending={createComment.isPending || replyComment.isPending || setCommentStatus.isPending}

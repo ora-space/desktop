@@ -225,7 +225,7 @@ where
             .read_task_diff(ReadTaskDiffRequest {
                 worktree_path: self.work_dir.join(task.id.as_ref()),
                 base_commit_id: base_commit_id.to_string(),
-                scope: ReadTaskDiffScope::Branch,
+                scope: map_diff_scope(request.scope),
             })
             .map_err(ApplicationError::from_task_diff_reader_error)?;
         let current_diff_id =

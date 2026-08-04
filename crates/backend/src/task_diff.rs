@@ -151,6 +151,7 @@ impl TaskDiffApi {
         )
         .handle(CreateTaskDiffCommentRequest {
             task_id: task.id.to_string(),
+            scope: request.scope,
             anchor: request.anchor,
             body: request.body,
         })

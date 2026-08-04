@@ -15,6 +15,7 @@ export type CommitTaskChangesResponse = { commitId: string; summary: string };
  */
 export type CreateTaskDiffCommentRequest = {
   taskId: string;
+  scope: TaskDiffScope;
   anchor: TaskDiffCommentAnchor;
   body: string;
 };

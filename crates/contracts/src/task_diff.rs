@@ -153,6 +153,7 @@ pub struct ListTaskDiffCommentsResponse {
 #[ts(export_to = "task_diff.ts")]
 pub struct CreateTaskDiffCommentRequest {
     pub task_id: String,
+    pub scope: TaskDiffScope,
     pub anchor: TaskDiffCommentAnchor,
     pub body: String,
 }
