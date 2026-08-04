@@ -19,6 +19,13 @@ export const queryKeys = {
   taskDiffs: (taskId: string) => ["task-diff", taskId] as const,
   taskDiff: (taskId: string, scope: TaskDiffScope) => ["task-diff", taskId, scope] as const,
   taskDiffComments: (taskId: string) => ["task-diff-comments", taskId] as const,
+  workspaceFiles: (taskId: string) => ["workspace-files", taskId] as const,
+  workspaceDirectory: (taskId: string, path: string) =>
+    ["workspace-files", taskId, "directory", path] as const,
+  workspaceFile: (taskId: string, path: string) =>
+    ["workspace-files", taskId, "file", path] as const,
+  workspaceSearch: (taskId: string, kind: string, query: string) =>
+    ["workspace-files", taskId, "search", kind, query] as const,
 };
 
 export type WorkspaceQueryKey = readonly ["projects"] | readonly ["tasks"] | readonly ["sessions"];
