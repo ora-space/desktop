@@ -254,7 +254,7 @@ fn operation_failed(error: impl std::fmt::Display) -> SkillStorageReconciliation
 #[cfg(test)]
 mod tests {
     use super::reconcile_skill_storage;
-    use ora_application::{SkillRepository, SkillStorage, TransactionJournal};
+    use ora_application::{SkillRepository, TransactionJournal};
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteSkillRepository,
         default_migration_catalog,

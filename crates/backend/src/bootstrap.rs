@@ -639,6 +639,7 @@ mod tests {
             database_path: temporary.path().join("ora.sqlite3"),
             worktree_root: temporary.path().join("worktrees"),
             home_directory: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
             skills_root: skills_root.clone(),
         })
         .expect("open shared backend");
