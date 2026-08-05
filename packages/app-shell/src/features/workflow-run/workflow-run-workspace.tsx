@@ -32,6 +32,7 @@ import {
   useStartGraphWorkflowRun,
 } from "../../state/hooks/use-graph-workflow-runs";
 import {
+  resolveTheaterFocus,
   shouldReleaseFocusToFollow,
   type TheaterFocusStatusSample,
 } from "./run-focus";
@@ -125,25 +126,46 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     focusStatusSampleRef.current = null;
   }, [runId]);
 
-  // Switching to a different explicit pin closes conversation. Overview ↔
-  // Theater keeps the same focusNodeId so an open session restores on remount.
-  const conversationFocusRef = useRef<string | null>(null);
+  const conversationNodeIdRef = useRef<string | null>(null);
+  conversationNodeIdRef.current = conversationNodeId;
+
+  /**
+   * Session dock is sticky attention: pin the act and ignore auto-follow /
+   * artifact steals until the reader closes it or picks another path node.
+   */
+  function setSessionConversationNodeId(nodeId: string | null): void {
+    setConversationNodeId(nodeId);
+    if (nodeId !== null) {
+      setFocusNodeId(nodeId);
+    }
+  }
+
+  /** Effective Theater/Overview focus — session pin wins over any raced auto focus. */
+  const stageFocusNodeId = conversationNodeId ?? focusNodeId;
+
+  // If anything drifted focus while a session is open, snap it back.
   useEffect(() => {
-    const previous = conversationFocusRef.current;
-    if (previous === focusNodeId) {
+    if (conversationNodeId === null || focusNodeId === conversationNodeId) {
       return;
     }
-    conversationFocusRef.current = focusNodeId;
-    if (previous !== null && previous !== focusNodeId) {
-      setConversationNodeId(null);
-    }
-  }, [focusNodeId]);
+    setFocusNodeId(conversationNodeId);
+  }, [conversationNodeId, focusNodeId]);
 
   // Live pin release: only when the focused act itself just left live -> terminal.
-  // History pins (clicked while already non-live) stay until the user picks again.
+  // History pins stay; an open node session is also sticky.
   useEffect(() => {
     if (run === null || focusNodeId === null) {
       focusStatusSampleRef.current = null;
+      return;
+    }
+    if (conversationNodeIdRef.current !== null) {
+      const currentStatus = run.nodeStates[focusNodeId]?.status;
+      if (currentStatus !== undefined) {
+        focusStatusSampleRef.current = {
+          nodeId: focusNodeId,
+          status: currentStatus,
+        };
+      }
       return;
     }
     const currentStatus = run.nodeStates[focusNodeId]?.status;
@@ -167,7 +189,8 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   }, [run, focusNodeId]);
 
   // New artifact on the stage: one-shot focus on the producing act.
-  // Skip once terminal so a stale reveal cannot hide the result act.
+  // Skip once terminal / while a node session is open; still consume the reveal
+  // so closing the session does not suddenly jump to a stale artifact.
   const lastFocusedRevealRef = useRef<string | null>(null);
   useEffect(() => {
     lastFocusedRevealRef.current = null;
@@ -185,12 +208,26 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     const artifact = artifactsQuery.artifacts.find(
       (item) => item.id === artifactsQuery.revealedId,
     );
-    if (artifact !== undefined) {
-      lastFocusedRevealRef.current = artifactsQuery.revealedId;
-      setFocusNodeId(artifact.nodeId);
+    if (artifact === undefined) {
+      return;
     }
+    lastFocusedRevealRef.current = artifactsQuery.revealedId;
+    if (conversationNodeIdRef.current !== null) {
+      return;
+    }
+    // Already on the producing act (auto-follow or pin) — pinning again only
+    // churns chrome (inspector tween / HITL collapse) without a useful jump.
+    const stagePrimary = resolveTheaterFocus(
+      run,
+      conversationNodeIdRef.current ?? focusNodeId,
+    ).primaryId;
+    if (stagePrimary === artifact.nodeId) {
+      return;
+    }
+    setFocusNodeId(artifact.nodeId);
   }, [
     run,
+    focusNodeId,
     artifactsQuery.revealedId,
     artifactsQuery.artifacts,
     viewMode,
@@ -246,10 +283,15 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   }, [stopOpen, canStop, cancelRun.isPending]);
 
   function focusNode(nodeId: string): void {
+    // Explicit path / carousel picks leave the session dock.
+    if (conversationNodeId !== null && conversationNodeId !== nodeId) {
+      setConversationNodeId(null);
+    }
     setFocusNodeId(nodeId);
   }
 
   function focusNodeFromOverview(nodeId: string): void {
+    setConversationNodeId(null);
     setFocusNodeId(nodeId);
     const waiting = run !== null && run.nodeStates[nodeId]?.status === "awaiting_input";
     enterTheater({
@@ -467,7 +509,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
         ? (
           <RunTheater
             run={run}
-            focusNodeId={focusNodeId}
+            focusNodeId={stageFocusNodeId}
             onFocusNode={focusNode}
             onClearFocus={clearPathFocus}
             artifacts={artifactsQuery.artifacts}
@@ -475,7 +517,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             revealedArtifactId={artifactsQuery.revealedId}
             openInspectorOnMount={openInspectorOnTheaterEnter}
             sessionConversationNodeId={conversationNodeId}
-            onSessionConversationNodeIdChange={setConversationNodeId}
+            onSessionConversationNodeIdChange={setSessionConversationNodeId}
             onShowOverview={() => {
               setOpenInspectorOnTheaterEnter(false);
               setViewMode("overview");
@@ -485,7 +527,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
         : (
           <RunOverviewCanvas
             run={run}
-            focusedNodeId={focusNodeId}
+            focusedNodeId={stageFocusNodeId}
             onFocusNode={focusNodeFromOverview}
             artifacts={artifactsQuery.artifacts}
             fitRequestKey={overviewFitRequestKey}

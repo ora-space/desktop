@@ -88,34 +88,6 @@ export function RunTheaterPathRail({
         </div>
         <div className="overflow-x-auto" ref={pathRailRef} data-slot="theater-path-rail">
           <ol className="flex w-max gap-2 pb-0.5">
-            {terminal && (
-              <li>
-                <button
-                  type="button"
-                  data-path-result=""
-                  onClick={onShowResultAct}
-                  className={cn(
-                    "inline-flex max-w-[11rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
-                    showResultAct
-                      ? "theater-chip-pop border-foreground/35 bg-background shadow-sm"
-                      : "border-transparent bg-background/60 hover:border-border hover:bg-background",
-                  )}
-                  aria-current={showResultAct ? "step" : undefined}
-                  aria-label={t("workflowRun.result.pathChip")}
-                >
-                  <span
-                    className={cn(
-                      "size-2 shrink-0 rounded-full",
-                      showResultAct ? "bg-foreground/70" : "bg-muted-foreground/45",
-                    )}
-                    aria-hidden
-                  />
-                  <span className="truncate text-[11px] font-medium">
-                    {t("workflowRun.result.pathChip")}
-                  </span>
-                </button>
-              </li>
-            )}
             {run.definitionSnapshot.nodes.map((node) => {
               const state = run.nodeStates[node.id] ?? { status: "idle" as const };
               const tone = runStatusTone(state.status);
@@ -170,6 +142,40 @@ export function RunTheaterPathRail({
                 </li>
               );
             })}
+            {terminal && (
+              <li>
+                <button
+                  type="button"
+                  data-path-result=""
+                  onClick={onShowResultAct}
+                  className={cn(
+                    "inline-flex max-w-[11rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
+                    showResultAct
+                      ? cn(
+                        "theater-chip-pop bg-background shadow-sm",
+                        run.status === "succeeded" && "border-emerald-500/45",
+                        run.status === "failed" && "border-rose-500/45",
+                        run.status === "partial_failed" && "border-rose-500/40",
+                        run.status === "cancelled" && "border-zinc-400/45",
+                      )
+                      : cn(
+                        "bg-background/60 hover:bg-background",
+                        run.status === "succeeded" && "border-emerald-500/25 hover:border-emerald-500/40",
+                        run.status === "failed" && "border-rose-500/25 hover:border-rose-500/40",
+                        run.status === "partial_failed" && "border-rose-500/20 hover:border-rose-500/35",
+                        run.status === "cancelled" && "border-zinc-400/25 hover:border-zinc-400/40",
+                      ),
+                  )}
+                  aria-current={showResultAct ? "step" : undefined}
+                  aria-label={`${t("workflowRun.result.pathChip")}: ${t(runStatusTone(run.status).labelKey)}`}
+                >
+                  <RunStatusMark status={run.status} quiet />
+                  <span className="truncate text-[11px] font-medium">
+                    {t("workflowRun.result.pathChip")}
+                  </span>
+                </button>
+              </li>
+            )}
           </ol>
         </div>
       </div>

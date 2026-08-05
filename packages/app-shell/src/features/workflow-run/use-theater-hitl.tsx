@@ -115,8 +115,11 @@ export function useTheaterHitl({
     if (hitlSignatureRef.current === "") {
       hitlSignatureRef.current = signature;
       setSelectedHitlId(openHitls[0]?.id ?? null);
-      // First discovery covers live hitl_required and cold-open of a waiting run.
-      setHitlExpanded(true);
+      // Only auto-expand when the stage is already on a waiting act. If the
+      // reader is on another card, keep the under-stage prompt collapsed.
+      const stageOnWaitingGate = primaryId !== null
+        && openHitls.some((item) => item.nodeId === primaryId);
+      setHitlExpanded(stageOnWaitingGate);
       return;
     }
     if (hitlSignatureRef.current !== signature) {
@@ -125,7 +128,7 @@ export function useTheaterHitl({
         setSelectedHitlId(openHitls[0]?.id ?? null);
       }
     }
-  }, [openHitls, selectedHitlId]);
+  }, [openHitls, selectedHitlId, primaryId]);
 
   useEffect(() => () => {
     if (hitlEngageTimerRef.current !== null) {

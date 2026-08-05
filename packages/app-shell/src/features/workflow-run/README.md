@@ -129,19 +129,22 @@ Keep these stacks separate — shared chrome only where noted.
   **result act** is the default Theater landing (no leftover live pin when
   finishing on Overview). Finishing while on Overview also shows a toast CTA
   to open the result act. Overview ↔ Theater keeps an explicit post-run pin;
-  path rail exposes a **Result** chip (and a second header Theater click while
-  already reviewing) to return to the result act. Overview node click still
+  path rail appends a **Result** chip after the nodes (status-toned like the
+  progress track: emerald / rose / zinc) and a second header Theater click
+  while already reviewing to return to the result act. Overview node click still
   opens Theater on that pin. Terminal Overview with no pin does not paint a
   fallback node as selected.
 - Outcomes / config: `useGraphWorkflowRunLive` lists + patches on
   `artifact_added`. Theater scopes them in the act inspector with the focused
-  node; each reveal focuses that act **once** (does not re-pin on later run
-  ticks). Overview shows a per-node count affordance only.
+  node; each reveal focuses that act **once** when the stage is not already
+  there (does not re-pin or re-open the inspector on the producing act — that
+  tween was flashing the card). Overview shows a per-node count affordance only.
 - HITL: mock `prompt` nodes pause with `awaiting_input` and append to
   `openHitls` (`kind` + optional `prompt` + `blocking` + field schema). Model
   questions use `kind: "clarify"` with `prompt` shown in the dock. First gate
-  discovery (live event or cold-open of a waiting run) expands HITL on Theater.
-  Mid-run toast still does not force Overview → Theater. Expanded HITL and the
+  discovery expands HITL only when the stage is already on that waiting act;
+  on another card the under-stage prompt stays collapsed until opened. Mid-run
+  toast still does not force Overview → Theater. Expanded HITL and the
   act inspector are mutually exclusive. Waiting acts **embed** HITL in the card
   footer (warm collapsed prompt → question body + tiles / composer), scoped to
   **that node only** — no multi-gate tabs or “N nodes waiting” copy inside the
@@ -182,6 +185,9 @@ Keep these stacks separate — shared chrome only where noted.
   conversation edge chains into the Theater stage scroll so HITL below can be
   reached without moving the cursor. Open conversation is keyed by node id in
   the workspace so Overview ↔ Theater remounts restore the same session view.
+  Opening a session also pins that act and wins over auto-follow: live-pin
+  release and artifact reveal cannot steal the stage, and Theater always shows
+  the session node until the reader closes the dock or picks another path node.
 
 ## Demo path checklist
 

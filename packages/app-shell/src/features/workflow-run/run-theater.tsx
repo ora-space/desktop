@@ -152,20 +152,6 @@ export function RunTheater({
       : (conversationByNodeId.get(primaryId) ?? []),
     [primaryId, conversationByNodeId],
   );
-
-  // Auto-follow can change primary without an explicit pin; drop a stale
-  // session dock so conversation does not reopen on the wrong act later.
-  useEffect(() => {
-    if (
-      sessionConversationNodeId === null
-      || primaryId === null
-      || sessionConversationNodeId === primaryId
-      || onSessionConversationNodeIdChange === undefined
-    ) {
-      return;
-    }
-    onSessionConversationNodeIdChange(null);
-  }, [primaryId, sessionConversationNodeId, onSessionConversationNodeIdChange]);
   const artifactCountByNode = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const artifact of artifacts) {
@@ -318,12 +304,37 @@ export function RunTheater({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, []);
 
+  // Artifact reveal: open the rail only when the stage just moved onto the
+  // producing act. If we were already there, skip — re-tweening the inspector
+  // collapses HITL and flashes the card for no navigation benefit.
+  const previousPrimaryForRevealRef = useRef<string | null>(primaryId);
   useEffect(() => {
-    if (revealedArtifactId === null || showResultAct) {
+    const previousPrimary = previousPrimaryForRevealRef.current;
+    previousPrimaryForRevealRef.current = primaryId;
+
+    if (
+      revealedArtifactId === null
+      || showResultAct
+      || sessionConversationNodeId !== null
+    ) {
+      return;
+    }
+    const artifact = artifacts.find((item) => item.id === revealedArtifactId);
+    if (artifact === undefined || artifact.nodeId !== primaryId) {
+      return;
+    }
+    if (previousPrimary === artifact.nodeId) {
       return;
     }
     openInspector();
-  }, [revealedArtifactId, showResultAct]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [
+    revealedArtifactId,
+    primaryId,
+    showResultAct,
+    sessionConversationNodeId,
+    artifacts,
+  ]);
 
   useEffect(() => {
     if (!showResultAct || inspectorCollapsed) {
