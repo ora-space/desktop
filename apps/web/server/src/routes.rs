@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use crate::handlers::{
     agents, file_system, git, health, project_work_contexts, projects, sessions, skill_imports,
-    skills, task_diffs, tasks, workspace_files,
+    skills, specs, task_diffs, tasks, workspace_files,
 };
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -9,13 +9,15 @@ use axum::middleware;
 use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_PATH, AGENT_RUNTIME_STATUS_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH,
-    GIT_IDENTITY_PATH, PROJECT_BRANCHES_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
-    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_ATTACH_PATH, SESSION_CONFIG_PATH,
-    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_RESUME_HISTORY_PATH, SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSION_WARM_PATH,
-    SESSIONS_PATH, SKILL_IMPORT_COMMIT_PATH, SKILL_IMPORT_PATH, SKILL_IMPORTS_PATH, SKILL_PATH,
-    SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH,
-    TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASKS_PATH,
+    GIT_IDENTITY_PATH, PROJECT_BRANCHES_PATH, PROJECT_PATH, PROJECT_SPEC_SOURCES_PATH,
+    PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
+    SESSION_ATTACH_PATH, SESSION_CONFIG_PATH, SESSION_LOAD_PATH, SESSION_PATH,
+    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_RESUME_HISTORY_PATH,
+    SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSION_WARM_PATH, SESSIONS_PATH,
+    SKILL_IMPORT_COMMIT_PATH, SKILL_IMPORT_PATH, SKILL_IMPORTS_PATH, SKILL_PATH, SKILLS_PATH,
+    SPEC_CATALOG_PATH, SPEC_READ_PATH, SPEC_RESOLVE_SOURCE_PATH, SPEC_WATCH_PATH, TASK_COMMIT_PATH,
+    TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH, TASK_DIFF_COMMENTS_PATH,
+    TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASK_WORKSPACE_PATH, TASKS_PATH,
     WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
 };
 use tower_http::cors::CorsLayer;
@@ -64,6 +66,18 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(tasks::update_task)
                 .delete(tasks::delete_task),
         )
+        .route(TASK_WORKSPACE_PATH, get(tasks::get_task_workspace))
+        // =============================================================================
+        // spec
+        // =============================================================================
+        .route(SPEC_CATALOG_PATH, post(specs::catalog))
+        .route(SPEC_READ_PATH, post(specs::read))
+        .route(SPEC_RESOLVE_SOURCE_PATH, post(specs::resolve_source))
+        .route(
+            PROJECT_SPEC_SOURCES_PATH,
+            axum::routing::put(specs::update_project_sources),
+        )
+        .route(SPEC_WATCH_PATH, post(specs::watch))
         // =============================================================================
         // taskDiff
         // =============================================================================
@@ -800,6 +814,39 @@ mod tests {
             Some(task_id) => task_id.to_string(),
             None => panic!("response did not include a task id"),
         };
+        let workspace_response = request_empty(
+            &app,
+            Method::GET,
+            &format!("/api/tasks/{task_id}/workspace"),
+        )
+        .await;
+        assert_eq!(workspace_response.status(), StatusCode::OK);
+        let workspace = response_json(workspace_response).await["workspace"].clone();
+        assert_eq!(workspace["branchName"], format!("ora/{}", &task_id[..8]));
+        let worktree_root = std::path::PathBuf::from(
+            workspace["rootPath"]
+                .as_str()
+                .expect("workspace response must include a root"),
+        );
+        let worktree_source = worktree_root.join("docs").join("specs");
+        std::fs::create_dir_all(&worktree_source)
+            .unwrap_or_else(|error| panic!("failed to create worktree Spec source: {error}"));
+        std::fs::write(worktree_source.join("task.md"), "# Task Spec\n")
+            .unwrap_or_else(|error| panic!("failed to write worktree Spec: {error}"));
+        let task_catalog = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/catalog",
+            json!({ "target": { "kind": "task", "taskId": task_id } }),
+        )
+        .await;
+        assert_eq!(task_catalog.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(task_catalog).await["documents"][0]["relativePath"],
+            "docs/specs/task.md"
+        );
+        std::fs::remove_dir_all(worktree_root.join("docs"))
+            .unwrap_or_else(|error| panic!("failed to clean worktree Spec fixture: {error}"));
         let branch_response = app
             .clone()
             .oneshot(
@@ -964,6 +1011,196 @@ mod tests {
                 .find_worktree(&WorktreeId::new(worktree_id))
                 .unwrap(),
             None
+        );
+    }
+
+    /// Verifies Spec catalog, guarded reads, source resolution, and project-wide overrides share one HTTP contract.
+    #[tokio::test]
+    async fn serves_spec_management_routes() {
+        let (temp_dir, _database_path, app) = test_router();
+        let project_root = temp_dir.path().join("spec-project");
+        let source_root = project_root.join("docs").join("specs");
+        std::fs::create_dir_all(&source_root)
+            .unwrap_or_else(|error| panic!("failed to create Spec source: {error}"));
+        std::fs::write(source_root.join("design.md"), "# Design\n")
+            .unwrap_or_else(|error| panic!("failed to write Spec fixture: {error}"));
+        let project_id =
+            create_project(&app, "Spec project", &project_root.to_string_lossy()).await;
+        let target = json!({ "kind": "project", "projectId": project_id });
+        let project_root_task = request_json(
+            &app,
+            Method::POST,
+            "/api/tasks",
+            json!({
+                "projectId": project_id,
+                "title": "Read root Specs",
+                "status": "todo",
+                "workspaceMode": "project_root",
+            }),
+        )
+        .await;
+        assert_eq!(project_root_task.status(), StatusCode::OK);
+        let project_root_task_id = response_json(project_root_task).await["task"]["id"]
+            .as_str()
+            .expect("project-root task id")
+            .to_string();
+        let task_workspace = request_empty(
+            &app,
+            Method::GET,
+            &format!("/api/tasks/{project_root_task_id}/workspace"),
+        )
+        .await;
+        assert_eq!(task_workspace.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(task_workspace).await,
+            json!({
+                "workspace": {
+                    "rootPath": project_root,
+                },
+            })
+        );
+
+        let catalog = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/catalog",
+            json!({ "target": target.clone() }),
+        )
+        .await;
+        assert_eq!(catalog.status(), StatusCode::OK);
+        let catalog = response_json(catalog).await;
+        assert_eq!(catalog["truncated"], false);
+        assert_eq!(
+            catalog["documents"][0]["relativePath"],
+            "docs/specs/design.md"
+        );
+        assert_eq!(catalog["documents"][0]["sourceRelativePath"], "docs/specs");
+
+        let task_catalog = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/catalog",
+            json!({ "target": { "kind": "task", "taskId": project_root_task_id } }),
+        )
+        .await;
+        assert_eq!(task_catalog.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(task_catalog).await["documents"][0]["relativePath"],
+            "docs/specs/design.md"
+        );
+
+        let read = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/read",
+            json!({
+                "target": target.clone(),
+                "relativePath": "docs/specs/design.md",
+            }),
+        )
+        .await;
+        assert_eq!(read.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(read).await,
+            json!({
+                "relativePath": "docs/specs/design.md",
+                "content": "# Design\n",
+                "byteSize": 9,
+            })
+        );
+
+        let unauthorized_read = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/read",
+            json!({
+                "target": target.clone(),
+                "relativePath": "README.md",
+            }),
+        )
+        .await;
+        assert_eq!(unauthorized_read.status(), StatusCode::NOT_FOUND);
+        assert_contract_error(
+            &response_json(unauthorized_read).await,
+            "spec_document_not_found",
+        );
+
+        let resolved = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/resolve-source",
+            json!({
+                "target": target.clone(),
+                "absolutePath": source_root,
+            }),
+        )
+        .await;
+        assert_eq!(resolved.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(resolved).await,
+            json!({
+                "relativePath": "docs/specs",
+                "workflow": { "kind": "custom", "name": "Custom" },
+            })
+        );
+
+        let root_source = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/resolve-source",
+            json!({
+                "target": target.clone(),
+                "absolutePath": project_root,
+            }),
+        )
+        .await;
+        assert_eq!(root_source.status(), StatusCode::BAD_REQUEST);
+        assert_contract_error(&response_json(root_source).await, "spec_source_invalid");
+
+        let update = request_json(
+            &app,
+            Method::PUT,
+            &format!("/api/projects/{project_id}/spec-sources"),
+            json!({
+                "sources": [{
+                    "relativePath": "docs/specs",
+                    "workflow": { "kind": "custom", "name": "Custom" },
+                    "visibility": "disabled",
+                }, {
+                    "relativePath": "architecture/missing",
+                    "workflow": { "kind": "custom", "name": " Architecture " },
+                    "visibility": "enabled",
+                }],
+            }),
+        )
+        .await;
+        assert_eq!(update.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(update).await["sources"][0]["visibility"],
+            "disabled"
+        );
+
+        let disabled_catalog = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/catalog",
+            json!({ "target": target }),
+        )
+        .await;
+        assert_eq!(disabled_catalog.status(), StatusCode::OK);
+        let disabled_catalog = response_json(disabled_catalog).await;
+        assert_eq!(disabled_catalog["documents"], json!([]));
+        assert!(
+            disabled_catalog["sources"]
+                .as_array()
+                .is_some_and(|sources| {
+                    sources.iter().any(|source| {
+                        source["relativePath"] == "architecture/missing"
+                            && source["workflow"]
+                                == json!({ "kind": "custom", "name": "Architecture" })
+                            && source["availability"] == "missing"
+                    })
+                })
         );
     }
 

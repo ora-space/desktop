@@ -21,14 +21,13 @@ type ChannelFactory = <TEvent>() => ChannelLike<TEvent>;
 const MAX_QUEUED_FRAMES = 256;
 
 const unsupportedOperations = {
-  getTaskWorkspace: true,
   openProjectWorkContext: true,
   renewProjectWorkContext: true,
   listDirectory: true,
 } as const satisfies Partial<Record<EndpointOperation, true>>;
 
 type UnsupportedTauriOperation = keyof typeof unsupportedOperations;
-type TauriStreamOperation = "loadSession" | "promptSession" | "watchWorkspace";
+type TauriStreamOperation = "loadSession" | "promptSession" | "watchSpecs" | "watchWorkspace";
 type SupportedTauriOperation = Exclude<
   EndpointOperation,
   UnsupportedTauriOperation | TauriStreamOperation
@@ -53,6 +52,7 @@ const tauriCommands = {
   listTasks: "list_tasks",
   updateTask: "update_task",
   deleteTask: "delete_task",
+  getTaskWorkspace: "get_task_workspace",
   getTaskDiff: "get_task_diff",
   commitTaskChanges: "commit_task_changes",
   pushTaskBranch: "push_task_branch",
@@ -67,6 +67,14 @@ const tauriCommands = {
   listWorkspaceDirectory: "list_workspace_directory",
   readWorkspaceFile: "read_workspace_file",
   searchWorkspace: "search_workspace",
+
+  // =============================================================================
+  // spec
+  // =============================================================================
+  getSpecCatalog: "get_spec_catalog",
+  readSpec: "read_spec",
+  resolveSpecSource: "resolve_spec_source",
+  updateProjectSpecSources: "update_project_spec_sources",
 
   // =============================================================================
   // session
@@ -154,7 +162,7 @@ export function createTauriTransport(
 
 /** Identifies operations that must use the shared Tauri channel stream command. */
 function isTauriStreamOperation(operation: EndpointOperation): operation is TauriStreamOperation {
-  return operation === "loadSession" || operation === "promptSession" || operation === "watchWorkspace";
+  return operation === "loadSession" || operation === "promptSession" || operation === "watchSpecs" || operation === "watchWorkspace";
 }
 
 /** Starts one private channel stream and cancels its backend registration on every early exit. */

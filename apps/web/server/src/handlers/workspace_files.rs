@@ -157,7 +157,7 @@ async fn resolve_workspace_root(
 }
 
 /// Maps crate-native watcher events into the stable transport contract.
-fn to_contract_change(change: WorkspaceChange) -> WorkspaceFileChange {
+pub(crate) fn to_contract_change(change: WorkspaceChange) -> WorkspaceFileChange {
     match change.kind {
         WorkspaceChangeKind::Created => WorkspaceFileChange::Created { path: change.path },
         WorkspaceChangeKind::Modified => WorkspaceFileChange::Modified { path: change.path },
@@ -171,7 +171,7 @@ fn to_contract_change(change: WorkspaceChange) -> WorkspaceFileChange {
 }
 
 /// Converts watcher batches into the same private NDJSON framing used by session streams.
-fn stream_response(
+pub(crate) fn stream_response(
     receiver: tokio::sync::mpsc::Receiver<Result<WorkspaceFileEventBatch, BackendError>>,
 ) -> Response<Body> {
     let lifecycle = current_lifecycle();

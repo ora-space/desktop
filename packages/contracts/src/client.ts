@@ -149,6 +149,18 @@ export function createContractsClient(
       watchWorkspace: (request, options) =>
         executeStreamOperation("watchWorkspace", request, transport, options),
     },
+    spec: {
+      catalog: (request, options) =>
+        executeOperation("getSpecCatalog", request, transport, options),
+      read: (request, options) =>
+        executeOperation("readSpec", request, transport, options),
+      resolveSource: (request, options) =>
+        executeOperation("resolveSpecSource", request, transport, options),
+      updateProjectSources: (request, options) =>
+        executeOperation("updateProjectSpecSources", request, transport, options),
+      watch: (request, options) =>
+        executeStreamOperation("watchSpecs", request, transport, options),
+    },
     gitIdentity: {
       get: (request, options) =>
         executeOperation("getGitIdentity", request, transport, options),

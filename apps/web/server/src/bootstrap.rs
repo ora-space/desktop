@@ -134,6 +134,7 @@ fn build_backend(
             .unwrap_or_else(|| Path::new("."))
             .join("atoms")
             .join("skills"),
+        ripgrep_path: resolve_ripgrep_path(),
     })
     .map_err(web_backend_bootstrap_error)
 }

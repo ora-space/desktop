@@ -605,6 +605,17 @@ pub async fn stream_contract(
                 lifecycle,
             ));
         }
+        "watchSpecs" => {
+            return crate::spec_commands::start_watch(
+                state,
+                request,
+                stream_call_id,
+                on_event,
+                lifecycle,
+                cancellation,
+            )
+            .await;
+        }
         _ => {
             return Err(CommandError::from_backend_with_lifecycle(
                 BackendError::new(
@@ -620,7 +631,7 @@ pub async fn stream_contract(
 }
 
 /// Registers a successfully-created stream and rejects duplicate private call identifiers.
-fn register_contract_stream(
+pub(crate) fn register_contract_stream(
     state: &DesktopState,
     stream_call_id: &str,
     cancellation: &CancellationToken,
@@ -706,7 +717,7 @@ async fn forward_contract_stream<Event>(
 }
 
 /// Forwards debounced native workspace changes until the Desktop stream is cancelled.
-async fn forward_workspace_watch(
+pub(crate) async fn forward_workspace_watch(
     watcher: ora_fs::WorkspaceWatcher,
     cancellation: CancellationToken,
     stream_call_id: String,

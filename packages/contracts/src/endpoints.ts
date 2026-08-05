@@ -7,6 +7,7 @@ import type { OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, Ren
 import type { AttachSessionRequest, AttachSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
 import type { CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest, CommitSkillImportResponse, GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest, PrepareSkillImportResponse } from "./skill-import.js";
+import type { GetSpecCatalogRequest, ReadSpecRequest, ReadSpecResponse, ResolveSpecSourceRequest, ResolveSpecSourceResponse, SpecCatalogResponse, UpdateProjectSpecSourcesRequest, UpdateProjectSpecSourcesResponse, WatchSpecsRequest } from "./spec.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
 import type { CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest, CreateTaskDiffCommentResponse, GetTaskDiffRequest, GetTaskDiffResponse, ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse, PushTaskBranchRequest, PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse, SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse } from "./task_diff.js";
 import type { ActivateWorkflowRequest, ActivateWorkflowResponse, CreateWorkflowRequest, CreateWorkflowResponse, DeleteSnapshotRequest, DeleteSnapshotResponse, DeleteWorkflowRequest, DeleteWorkflowResponse, GetDraftRequest, GetDraftResponse, GetVersionRequest, GetVersionResponse, GetWorkflowRequest, GetWorkflowResponse, ListVersionsRequest, ListVersionsResponse, ListWorkflowsRequest, ListWorkflowsResponse, PublishWorkflowRequest, PublishWorkflowResponse, RollbackWorkflowRequest, RollbackWorkflowResponse, UpdateDraftRequest, UpdateDraftResponse, UpdateWorkflowRequest, UpdateWorkflowResponse } from "./workflow.js";
@@ -92,6 +93,11 @@ export type RequestByOperation = {
   searchWorkspace: SearchWorkspaceRequest;
   watchWorkspace: WatchWorkspaceRequest;
   getGitIdentity: GetGitIdentityRequest;
+  getSpecCatalog: GetSpecCatalogRequest;
+  readSpec: ReadSpecRequest;
+  resolveSpecSource: ResolveSpecSourceRequest;
+  updateProjectSpecSources: UpdateProjectSpecSourcesRequest;
+  watchSpecs: WatchSpecsRequest;
   createWorkflow: CreateWorkflowRequest;
   getWorkflow: GetWorkflowRequest;
   listWorkflows: ListWorkflowsRequest;
@@ -167,6 +173,11 @@ export type ResponseByOperation = {
   searchWorkspace: SearchWorkspaceResponse;
   watchWorkspace: WorkspaceFileEventBatch;
   getGitIdentity: GitIdentityResponse;
+  getSpecCatalog: SpecCatalogResponse;
+  readSpec: ReadSpecResponse;
+  resolveSpecSource: ResolveSpecSourceResponse;
+  updateProjectSpecSources: UpdateProjectSpecSourcesResponse;
+  watchSpecs: WorkspaceFileEventBatch;
   createWorkflow: CreateWorkflowResponse;
   getWorkflow: GetWorkflowResponse;
   listWorkflows: ListWorkflowsResponse;
@@ -891,6 +902,71 @@ export const endpoints = {
     pathParams: [],
     queryParams: [],
     hasJsonBody: false,
+  },
+  getSpecCatalog: {
+    operationName: "getSpecCatalog",
+    namespace: "spec",
+    memberName: "catalog",
+    method: "POST",
+    pathTemplate: "/api/specs/catalog",
+    requestType: "GetSpecCatalogRequest",
+    responseType: "SpecCatalogResponse",
+    responseMode: "unary",
+    pathParams: [],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  readSpec: {
+    operationName: "readSpec",
+    namespace: "spec",
+    memberName: "read",
+    method: "POST",
+    pathTemplate: "/api/specs/read",
+    requestType: "ReadSpecRequest",
+    responseType: "ReadSpecResponse",
+    responseMode: "unary",
+    pathParams: [],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  resolveSpecSource: {
+    operationName: "resolveSpecSource",
+    namespace: "spec",
+    memberName: "resolveSource",
+    method: "POST",
+    pathTemplate: "/api/specs/resolve-source",
+    requestType: "ResolveSpecSourceRequest",
+    responseType: "ResolveSpecSourceResponse",
+    responseMode: "unary",
+    pathParams: [],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  updateProjectSpecSources: {
+    operationName: "updateProjectSpecSources",
+    namespace: "spec",
+    memberName: "updateProjectSources",
+    method: "PUT",
+    pathTemplate: "/api/projects/{projectId}/spec-sources",
+    requestType: "UpdateProjectSpecSourcesRequest",
+    responseType: "UpdateProjectSpecSourcesResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "project_id", wireName: "projectId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  watchSpecs: {
+    operationName: "watchSpecs",
+    namespace: "spec",
+    memberName: "watch",
+    method: "POST",
+    pathTemplate: "/api/specs/watch",
+    requestType: "WatchSpecsRequest",
+    responseType: "WorkspaceFileEventBatch",
+    responseMode: "stream",
+    pathParams: [],
+    queryParams: [],
+    hasJsonBody: true,
   },
   createWorkflow: {
     operationName: "createWorkflow",

@@ -5,13 +5,13 @@ The public application surface is split across `ora-domain`, `ora-contracts`, `o
 ## Ownership
 
 - `ora-domain` owns schema-backed entities, identifier newtypes, and categorical enums. See [Domain Models](domain-models.md).
-- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Session, Skill, Skill Import, Agent, Workflow, and Git identity operations, plus the Web-only project work context and filesystem operations.
+- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Spec management, Session, Skill, Skill Import, Agent, Workflow, and Git identity operations, plus the Web-only project work context and filesystem operations.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
 - The `xtask` exporter owns the generation-only frontend endpoint catalog for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode. `ora-contracts` keeps the shared HTTP path constants used by server adapters.
 - `ora-contracts` exports TypeScript DTOs into `packages/contracts/src` so frontend packages consume the contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`. See [Frontend Contract SDK](frontend-contract-sdk.md).
 - `ora-application` owns use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports those handlers depend on, and domain-to-contract mapping. It also owns project work context lease timing and occupancy conflicts.
 - `ora-db` implements those ports on SQLite and owns schema reconciliation. See [Database Repositories](database-repositories.md).
-- `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, task-diff workspace/baseline resolution, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
+- `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, task-diff workspace/baseline resolution, specification target/configuration/filesystem composition, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
 - Transport adapters stay thin: Web handlers and Tauri commands accept contract requests, delegate to the same `Backend`, then map its stable public errors into HTTP or IPC semantics.
 - `ProjectWorkContext` and filesystem browsing are deliberately outside `ora-backend`. The Web server keeps those services composed directly from the repository pool; Desktop's transport reports `unsupported_operation` for those three contract operations.
 
@@ -69,6 +69,7 @@ The handler set is intentionally narrower than full CRUD per entity, because som
 | `task_diff` | read diff, create/list/reply/update comments, commit, push |
 | `workflow` | create, get, list, update, delete, getDraft, updateDraft, publish, rollback, activate, listVersions, getVersion, deleteSnapshot |
 | `workflow_run` | create, get, list, listNodeRuns, delete |
+| `spec` | list and atomically replace project source overrides |
 | `worktree` | none — ports only |
 
 Notable consequences:

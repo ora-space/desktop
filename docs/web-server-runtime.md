@@ -6,11 +6,12 @@
 
 - It boots shared structured logging through `ora-logging` and registers the Gitlancer command-logging bridge.
 - It exposes health endpoints for process liveness and runtime readiness.
-- It serves persisted HTTP operations for Project, Task, Session, Skill, Agent, and Git identity through the shared `ora-backend` composition.
+- It serves persisted HTTP operations for Project, Task, Spec sources, Session, Skill, Agent, and Git identity through the shared `ora-backend` composition.
 - It provisions task-owned linked worktrees during creation and leaves Git untouched during deletion.
 - It streams ACP load replay and prompt updates as bounded NDJSON responses.
 - It provides read-only server filesystem listings for the Web platform path picker.
 - It provides a task-scoped, read-only workspace explorer with bounded file reads, ripgrep search, and native refresh events.
+- It exposes the shared project/task Spec catalog, safe Markdown reads, project-wide source configuration, and mounted-only refresh streams.
 - It owns the project work context routes, which are outside `ora-backend`.
 
 ## Data root configuration
@@ -141,12 +142,23 @@ Route paths come from shared `ora-contracts` path constants, while the generatio
 
 ### task workspace files
 
+- `GET /api/tasks/{taskId}/workspace` returns the authoritative root and optional Git branch used by task-scoped directory selection.
 - `POST /api/tasks/{taskId}/files/list` with `{ "path": "src" }` to list one workspace-relative directory
 - `POST /api/tasks/{taskId}/files/read` with `{ "path": "src/main.rs" }` to read one bounded UTF-8 file
 - `POST /api/tasks/{taskId}/files/search` with `{ "query": "needle", "kind": "files" | "content" }` to search filenames or text
 - `GET /api/tasks/{taskId}/files/watch` to stream debounced `WorkspaceFileEventBatch` NDJSON frames
 
 Every task workspace route resolves the active task workspace through `ora-backend`; the client cannot select a root directory. The filesystem service rejects absolute paths, parent traversal, and symlink escapes. File reads are capped at 10 MiB and reject binary or invalid UTF-8 content. Search uses fixed-string matching for content, a 15-second timeout, an 8 MiB output bound, and at most 10,000 results. Watch events are coalesced for 100 ms before a batch is emitted. See [Task Workspace Files](task-workspace-files.md).
+
+### specs
+
+- `POST /api/specs/catalog` returns effective sources, bounded Markdown/MDX documents, and truncation state for a tagged Project or Task target.
+- `POST /api/specs/read` reads one document only after revalidating that it still belongs to an enabled source.
+- `POST /api/specs/resolve-source` converts a directory selected by the platform picker into a safe target-relative source.
+- `PUT /api/projects/{projectId}/spec-sources` atomically replaces the project's source overrides.
+- `POST /api/specs/watch` streams workspace file-event batches for the tagged target.
+
+Spec catalog and read responses never expose an absolute workspace root. Discovery and source configuration are composed by the shared backend, so Web and Desktop retain identical source inference, path containment, persistence, and error semantics. See [Spec Management](spec-management.md).
 
 ### gitIdentity
 

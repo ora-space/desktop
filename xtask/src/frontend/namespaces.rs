@@ -9,6 +9,7 @@ mod project_work_context;
 mod session;
 mod skill;
 mod skill_import;
+mod spec;
 mod task;
 mod workflow;
 mod workflow_run;
@@ -31,6 +32,7 @@ pub(super) fn frontend_endpoints() -> Vec<FrontendEndpoint> {
         agent::ENDPOINTS,
         file_system::ENDPOINTS,
         git::ENDPOINTS,
+        spec::ENDPOINTS,
         workflow::ENDPOINTS,
         workflow_run::ENDPOINTS,
     ]

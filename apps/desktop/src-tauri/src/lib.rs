@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod error;
+mod spec_commands;
 mod state;
 mod workspace_files;
 
@@ -46,6 +47,7 @@ pub fn run() {
             commands::list_tasks,
             commands::update_task,
             commands::delete_task,
+            spec_commands::get_task_workspace,
             commands::get_task_diff,
             commands::commit_task_changes,
             commands::push_task_branch,
@@ -59,6 +61,10 @@ pub fn run() {
             commands::list_workspace_directory,
             commands::read_workspace_file,
             commands::search_workspace,
+            spec_commands::get_spec_catalog,
+            spec_commands::read_spec,
+            spec_commands::resolve_spec_source,
+            spec_commands::update_project_spec_sources,
             // =============================================================================
             // session
             // =============================================================================
@@ -154,6 +160,7 @@ fn bootstrap_desktop(
         timezone_source = "system_timezone",
     );
     register_gitlancer_logger();
+    let ripgrep_path = resolve_ripgrep_path();
     let backend = Backend::open(BackendPaths {
         database_path: app_data_directory.join("ora.sqlite3"),
         worktree_root: config_snapshot.worktree_root().to_path_buf(),
@@ -163,10 +170,9 @@ fn bootstrap_desktop(
             .map_err(DesktopBootstrapError::AppDataDirectory)?,
         sessions_root: app_data_directory.join("sessions"),
         skills_root: app_data_directory.join("atoms").join("skills"),
+        ripgrep_path: ripgrep_path.clone(),
     })?;
-    let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(
-        resolve_ripgrep_path(),
-    ));
+    let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
 
     Ok((
         DesktopState {
