@@ -1044,15 +1044,7 @@ mod tests {
         )
         .await;
         assert_eq!(duplicate_skill.status(), StatusCode::CONFLICT);
-        assert_eq!(
-            response_json(duplicate_skill).await,
-            json!({
-                "error": {
-                    "code": "skill_name_conflict",
-                    "message": "skill name already exists: Reviewer",
-                },
-            })
-        );
+        assert_contract_error(&response_json(duplicate_skill).await, "skill_name_conflict");
         let invalid_slug = request_json(
             &app,
             Method::POST,

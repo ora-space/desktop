@@ -21,7 +21,7 @@ use ora_db::{
     SqliteWorktreeRepository,
 };
 use ora_domain::{Project, Task, TaskId};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Owns task-scoped Git review operations shared by the Web and Desktop adapters.
 pub(crate) struct TaskDiffApi {
@@ -46,18 +46,11 @@ impl TaskDiffApi {
         let cwd = resolve_task_cwd(&self.pool, &task_id)?;
 
         if task.worktree_id.is_some() {
-            let work_dir = cwd.parent().map(Path::to_path_buf).ok_or_else(|| {
-                BackendError::new(
-                    ErrorClassification::Internal,
-                    PublicError::InternalError(EmptyErrorParams {}),
-                    "task worktree parent directory is unavailable",
-                )
-            })?;
             return GetTaskDiffHandler::new(
                 SqliteTaskRepository::new(self.pool.clone()),
                 SqliteWorktreeRepository::new(self.pool.clone()),
                 GitTaskDiffReader::new(PathBuf::from(project.root_path)),
-                work_dir,
+                cwd,
             )
             .handle(request)
             .map_err(BackendError::from);
