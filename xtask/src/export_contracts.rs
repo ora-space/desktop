@@ -352,6 +352,25 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListSkillsResponse"
         | "UpdateSkillRequest"
         | "UpdateSkillResponse" => "skill",
+        "CancelSkillImportRequest"
+        | "CancelSkillImportResponse"
+        | "CommitSkillImportRequest"
+        | "CommitSkillImportResponse"
+        | "GetSkillImportSessionRequest"
+        | "GetSkillImportSessionResponse"
+        | "PrepareSkillImportRequest"
+        | "PrepareSkillImportResponse"
+        | "SkillConflictInfo"
+        | "SkillImportCandidate"
+        | "SkillImportCandidateStatus"
+        | "SkillImportConflictDecision"
+        | "SkillImportDecision"
+        | "SkillImportProgress"
+        | "SkillImportResult"
+        | "SkillImportResultStatus"
+        | "SkillImportSession"
+        | "SkillImportSessionStatus"
+        | "SkillImportSource" => "skill-import",
         // agent
         "CreateAgentRequest"
         | "CreateAgentResponse"
@@ -364,7 +383,16 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "UpdateAgentRequest"
         | "UpdateAgentResponse" => "agent",
         // fileSystem
-        "ListDirectoryRequest" | "ListDirectoryResponse" => "file-system",
+        "ListDirectoryRequest"
+        | "ListDirectoryResponse"
+        | "ListWorkspaceDirectoryRequest"
+        | "ListWorkspaceDirectoryResponse"
+        | "ReadWorkspaceFileRequest"
+        | "ReadWorkspaceFileResponse"
+        | "SearchWorkspaceRequest"
+        | "SearchWorkspaceResponse"
+        | "WatchWorkspaceRequest"
+        | "WorkspaceFileEventBatch" => "file-system",
         // gitIdentity
         "GetGitIdentityRequest" | "GitIdentityResponse" => "git",
         other => panic!("unknown contract type `{other}`"),

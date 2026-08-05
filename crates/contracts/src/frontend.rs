@@ -65,7 +65,7 @@ impl FrontendEndpoint {
     /// Returns the transport mode explicitly owned by the Rust endpoint catalog.
     pub fn response_mode(&self) -> FrontendResponseMode {
         match self.operation_name {
-            "loadSession" | "promptSession" => FrontendResponseMode::Stream,
+            "loadSession" | "promptSession" | "watchWorkspace" => FrontendResponseMode::Stream,
             _ => FrontendResponseMode::Unary,
         }
     }
@@ -98,11 +98,16 @@ pub const SESSION_RESUME_HISTORY_PATH: &str = "/api/sessions/{sessionId}/history
 pub const AGENT_MODELS_PATH: &str = "/api/agent-models";
 pub const SKILLS_PATH: &str = "/api/skills";
 pub const SKILL_PATH: &str = "/api/skills/{skillId}";
-/// Uploads a local skill folder as a multipart request that the backend commits atomically.
-pub const SKILL_IMPORT_PATH: &str = "/api/skills/import";
+pub const SKILL_IMPORTS_PATH: &str = "/api/skill-imports";
+pub const SKILL_IMPORT_PATH: &str = "/api/skill-imports/{sessionId}";
+pub const SKILL_IMPORT_COMMIT_PATH: &str = "/api/skill-imports/{sessionId}/commit";
 pub const AGENTS_PATH: &str = "/api/agents";
 pub const AGENT_PATH: &str = "/api/agents/{agentId}";
 pub const FILE_SYSTEM_DIRECTORY_PATH: &str = "/api/file-system/directory";
+pub const WORKSPACE_DIRECTORY_PATH: &str = "/api/tasks/{taskId}/files/list";
+pub const WORKSPACE_FILE_PATH: &str = "/api/tasks/{taskId}/files/read";
+pub const WORKSPACE_SEARCH_PATH: &str = "/api/tasks/{taskId}/files/search";
+pub const WORKSPACE_WATCH_PATH: &str = "/api/tasks/{taskId}/files/watch";
 pub const GIT_IDENTITY_PATH: &str = "/api/git/identity";
 
 const PROJECT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
@@ -125,6 +130,10 @@ const SKILL_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "skill_id",
     wire_name: "skillId",
 };
+const SKILL_IMPORT_SESSION_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
+    rust_field_name: "session_id",
+    wire_name: "sessionId",
+};
 const AGENT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "agent_id",
     wire_name: "agentId",
@@ -144,6 +153,7 @@ const TASK_NAMESPACE: &str = "task";
 const SESSION_NAMESPACE: &str = "session";
 const AGENT_RUNTIME_NAMESPACE: &str = "agentRuntime";
 const SKILL_NAMESPACE: &str = "skill";
+const SKILL_IMPORT_NAMESPACE: &str = "skillImport";
 const AGENT_NAMESPACE: &str = "agent";
 const FILE_SYSTEM_NAMESPACE: &str = "fileSystem";
 const GIT_NAMESPACE: &str = "gitIdentity";
@@ -153,6 +163,7 @@ const TASK_PATH_PARAMS: &[FrontendPathParam] = &[TASK_ID_PATH_PARAM];
 const TASK_COMMENT_PATH_PARAMS: &[FrontendPathParam] = &[TASK_ID_PATH_PARAM, COMMENT_ID_PATH_PARAM];
 const SESSION_PATH_PARAMS: &[FrontendPathParam] = &[SESSION_ID_PATH_PARAM];
 const SKILL_PATH_PARAMS: &[FrontendPathParam] = &[SKILL_ID_PATH_PARAM];
+const SKILL_IMPORT_PATH_PARAMS: &[FrontendPathParam] = &[SKILL_IMPORT_SESSION_ID_PATH_PARAM];
 const AGENT_PATH_PARAMS: &[FrontendPathParam] = &[AGENT_ID_PATH_PARAM];
 const NO_PATH_PARAMS: &[FrontendPathParam] = &[];
 const FILE_SYSTEM_DIRECTORY_QUERY_PARAMS: &[FrontendQueryParam] =
@@ -590,6 +601,50 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
     // agent
     // =============================================================================
     FrontendEndpoint {
+        operation_name: "prepareSkillImport",
+        namespace: SKILL_IMPORT_NAMESPACE,
+        member_name: "prepare",
+        method: FrontendHttpMethod::Post,
+        path_template: SKILL_IMPORTS_PATH,
+        request_type: "PrepareSkillImportRequest",
+        response_type: "PrepareSkillImportResponse",
+        path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "getSkillImport",
+        namespace: SKILL_IMPORT_NAMESPACE,
+        member_name: "get",
+        method: FrontendHttpMethod::Get,
+        path_template: SKILL_IMPORT_PATH,
+        request_type: "GetSkillImportSessionRequest",
+        response_type: "GetSkillImportSessionResponse",
+        path_params: SKILL_IMPORT_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "commitSkillImport",
+        namespace: SKILL_IMPORT_NAMESPACE,
+        member_name: "commit",
+        method: FrontendHttpMethod::Post,
+        path_template: SKILL_IMPORT_COMMIT_PATH,
+        request_type: "CommitSkillImportRequest",
+        response_type: "CommitSkillImportResponse",
+        path_params: SKILL_IMPORT_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "cancelSkillImport",
+        namespace: SKILL_IMPORT_NAMESPACE,
+        member_name: "cancel",
+        method: FrontendHttpMethod::Delete,
+        path_template: SKILL_IMPORT_PATH,
+        request_type: "CancelSkillImportRequest",
+        response_type: "CancelSkillImportResponse",
+        path_params: SKILL_IMPORT_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
         operation_name: "createAgent",
         namespace: AGENT_NAMESPACE,
         member_name: "create",
@@ -656,6 +711,50 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "ListDirectoryRequest",
         response_type: "ListDirectoryResponse",
         path_params: NO_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "listWorkspaceDirectory",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "listWorkspaceDirectory",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_DIRECTORY_PATH,
+        request_type: "ListWorkspaceDirectoryRequest",
+        response_type: "ListWorkspaceDirectoryResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "readWorkspaceFile",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "readWorkspaceFile",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_FILE_PATH,
+        request_type: "ReadWorkspaceFileRequest",
+        response_type: "ReadWorkspaceFileResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "searchWorkspace",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "searchWorkspace",
+        method: FrontendHttpMethod::Post,
+        path_template: WORKSPACE_SEARCH_PATH,
+        request_type: "SearchWorkspaceRequest",
+        response_type: "SearchWorkspaceResponse",
+        path_params: TASK_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "watchWorkspace",
+        namespace: FILE_SYSTEM_NAMESPACE,
+        member_name: "watchWorkspace",
+        method: FrontendHttpMethod::Get,
+        path_template: WORKSPACE_WATCH_PATH,
+        request_type: "WatchWorkspaceRequest",
+        response_type: "WorkspaceFileEventBatch",
+        path_params: TASK_PATH_PARAMS,
         has_json_body: false,
     },
     // =============================================================================

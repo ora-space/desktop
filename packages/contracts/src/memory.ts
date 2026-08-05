@@ -289,6 +289,18 @@ export function createMemoryContractsClient(
         breadcrumbs: [],
         entries: [],
       }),
+      listWorkspaceDirectory: async () => ({ path: "", entries: [] }),
+      readWorkspaceFile: async (request) => ({
+        path: request.path,
+        content: "",
+        version: "test",
+        sizeBytes: 0,
+      }),
+      searchWorkspace: async () => ({ results: [], truncated: false }),
+      watchWorkspace: () =>
+        (async function* () {
+          yield* [];
+        })(),
     },
     gitIdentity: {
       get: async () => ({ name: "Prototype User", email: "prototype@ora.local" }),

@@ -19,6 +19,14 @@ pub enum DomainModelError {
     InvalidAgentCli(String),
     #[error("skill name must not be blank")]
     EmptySkillName,
+    #[error("invalid skill name: {name}")]
+    InvalidSkillName { name: String },
+    #[error("skill name exceeds the single path segment limit")]
+    SkillNameTooLong,
+    #[error("skill description must not be blank")]
+    EmptySkillDescription,
+    #[error("skill description exceeds 4096 bytes")]
+    SkillDescriptionTooLarge,
     #[error("agent definition name must not be blank")]
     EmptyAgentDefinitionName,
 }

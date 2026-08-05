@@ -204,10 +204,37 @@ pub(super) fn runtime_internal(code: &'static str, message: impl Into<String>) -
             ErrorClassification::Internal,
             PublicError::AgentRuntimeUnavailable(EmptyErrorParams {}),
         ),
+        "session_history_unreadable" => (
+            ErrorClassification::Conflict,
+            PublicError::SessionHistoryDegraded(EmptyErrorParams {}),
+        ),
         _ => (
             ErrorClassification::Internal,
             PublicError::InternalError(EmptyErrorParams {}),
         ),
     };
     BackendError::new(classification, public_error, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_internal;
+    use crate::ErrorClassification;
+    use ora_contracts::{EmptyErrorParams, PublicError};
+    use pretty_assertions::assert_eq;
+
+    /// Keeps unreadable session history on the same typed recovery path as a failed write.
+    #[test]
+    fn maps_unreadable_session_history_to_degraded_error() {
+        let error = runtime_internal(
+            "session_history_unreadable",
+            "session history could not be read",
+        );
+
+        assert_eq!(error.classification(), ErrorClassification::Conflict);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::SessionHistoryDegraded(EmptyErrorParams {})
+        );
+    }
 }

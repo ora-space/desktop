@@ -9,6 +9,7 @@ import {
   IconArrowsMaximize,
   IconArrowsMinimize,
   IconColumns2,
+  IconFolderOpen,
   IconGitBranch,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
@@ -20,6 +21,7 @@ import {
   type TaskDiffViewType,
 } from "./task-diff-view";
 import { TaskChangesNavigationProvider } from "./task-changes-navigation";
+import { WorkspaceFilesView } from "../files/workspace-files-view";
 
 const EXPANDED_PANEL_EXIT_MS = 180;
 
@@ -36,6 +38,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
   const [closing, setClosing] = useState(false);
   const [viewType, setViewType] = useState<TaskDiffViewType>("unified");
   const [fileTreeOpen, setFileTreeOpen] = useState(true);
+  const [panel, setPanel] = useState<"changes" | "files">("changes");
   const [fileRequest, setFileRequest] = useState<TaskDiffFileRequest | undefined>();
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRequestSequence = useRef(0);
@@ -44,6 +47,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
     if (taskId === undefined) return;
     fileRequestSequence.current += 1;
     setFileRequest({ path, requestId: fileRequestSequence.current });
+    setPanel("changes");
     setOpen(true);
   }, [taskId]);
 
@@ -79,7 +83,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
     >
       {open && (
         <>
-          {expanded && (
+          {panel === "changes" && expanded && (
             <Button
               size="icon-sm"
               variant={viewType === "split" ? "secondary" : "ghost"}
@@ -90,19 +94,21 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
               <IconColumns2 />
             </Button>
           )}
-          <Button
-            size="icon-sm"
-            variant={fileTreeOpen ? "secondary" : "ghost"}
-            className="size-7"
-            aria-label={t("diff.toggleFileTree")}
-            onClick={() => setFileTreeOpen((value) => !value)}
-          >
-            {fileTreeOpen ? (
-              <IconLayoutSidebarRightCollapse />
-            ) : (
-              <IconLayoutSidebarRightExpand />
-            )}
-          </Button>
+          {panel === "changes" && (
+            <Button
+              size="icon-sm"
+              variant={fileTreeOpen ? "secondary" : "ghost"}
+              className="size-7"
+              aria-label={t("diff.toggleFileTree")}
+              onClick={() => setFileTreeOpen((value) => !value)}
+            >
+              {fileTreeOpen ? (
+                <IconLayoutSidebarRightCollapse />
+              ) : (
+                <IconLayoutSidebarRightExpand />
+              )}
+            </Button>
+          )}
           <Button
             size="icon-sm"
             variant={expanded ? "secondary" : "ghost"}
@@ -117,15 +123,50 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
       )}
       <Button
         size="sm"
-        variant={open ? "secondary" : "ghost"}
+        variant={open && panel === "changes" ? "secondary" : "ghost"}
         className="h-7 px-2.5 shadow-none"
-        aria-pressed={open}
-        onClick={() => open ? close() : setOpen(true)}
+        aria-pressed={open && panel === "changes"}
+        onClick={() => {
+          if (open && panel === "changes") close();
+          else {
+            setPanel("changes");
+            setOpen(true);
+          }
+        }}
       >
         <IconGitBranch />
         {t("diff.changes")}
       </Button>
+      <Button
+        size="sm"
+        variant={open && panel === "files" ? "secondary" : "ghost"}
+        className="h-7 px-2.5 shadow-none"
+        aria-pressed={open && panel === "files"}
+        onClick={() => {
+          if (open && panel === "files") close();
+          else {
+            setPanel("files");
+            setOpen(true);
+          }
+        }}
+      >
+        <IconFolderOpen />
+        {t("files.files")}
+      </Button>
     </div>
+  );
+
+  const panelContent = panel === "changes" ? (
+    <TaskDiffView
+      taskId={taskId!}
+      viewType={viewType}
+      fileTreeOpen={fileTreeOpen}
+      fileRequest={fileRequest}
+      toolbar={changesControls}
+      onFileTreeOpenChange={setFileTreeOpen}
+    />
+  ) : (
+    <WorkspaceFilesView key={taskId} taskId={taskId!} toolbar={changesControls} />
   );
 
   const workspaceContent = taskId === undefined || !open || expanded ? children : (
@@ -152,14 +193,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
           if (size.inPixels === 0) close();
         }}
       >
-        <TaskDiffView
-          taskId={taskId}
-          viewType={viewType}
-          fileTreeOpen={fileTreeOpen}
-          fileRequest={fileRequest}
-          toolbar={changesControls}
-          onFileTreeOpenChange={setFileTreeOpen}
-        />
+        {panelContent}
       </ResizablePanel>
     </ResizablePanelGroup>
   );
@@ -190,14 +224,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
                 aria-label={t("diff.expandedPanel")}
                 className={`ora-changes-overlay absolute inset-2 z-50 overflow-hidden rounded-xl border border-border/80 bg-background shadow-[0_24px_90px_rgba(0,0,0,0.32),0_2px_12px_rgba(0,0,0,0.16)] ring-1 ring-foreground/5 dark:shadow-[0_28px_100px_rgba(0,0,0,0.62),0_2px_16px_rgba(0,0,0,0.32)] ${closing ? "is-closing" : ""}`}
               >
-                <TaskDiffView
-                  taskId={taskId}
-                  viewType={viewType}
-                  fileTreeOpen={fileTreeOpen}
-                  fileRequest={fileRequest}
-                  toolbar={changesControls}
-                  onFileTreeOpenChange={setFileTreeOpen}
-                />
+                {panelContent}
               </section>
             </>
           )}

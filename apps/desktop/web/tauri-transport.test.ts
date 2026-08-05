@@ -34,6 +34,24 @@ describe("createTauriTransport", () => {
     expect(invoke).toHaveBeenCalledWith("list_agent_models", { request: {} });
   });
 
+  it("maps workspace directory reads to the dedicated desktop command", async () => {
+    const response = { path: "src", entries: [] };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+
+    await expect(transport.send({
+      operationName: "listWorkspaceDirectory",
+      request: { taskId: "task-1", path: "src" },
+      method: "POST",
+      path: "/api/tasks/task-1/files/list",
+      body: { taskId: "task-1", path: "src" },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("list_workspace_directory", {
+      request: { taskId: "task-1", path: "src" },
+    });
+  });
+
   it("maps task diff reads to the shared desktop backend command", async () => {
     const response = {
       baseCommitId: "base",

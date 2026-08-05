@@ -7,15 +7,10 @@ use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
 use crate::task_diff::TaskDiffApi;
-use ora_application::{
-    ApplicationError, LocalSkillPackageStore, ReconcileSkillStorageHandler, UploadedSkillFile,
-};
+use ora_application::ApplicationError;
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_db::{
-    DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteSkillRepository,
-    default_migration_catalog,
-};
+use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -27,11 +22,9 @@ pub struct BackendPaths {
     pub database_path: PathBuf,
     pub worktree_root: PathBuf,
     pub home_directory: PathBuf,
-    /// Root of the Ora-owned session history tree.
-    ///
-    /// Each session's file is derived from its identifier under this directory,
-    /// so nothing records where an individual conversation lives.
     pub sessions_root: PathBuf,
+    /// Root of the formal skill package tree (`<data>/atoms/skills`).
+    pub skills_root: PathBuf,
 }
 
 /// Reports failures that prevent the shared backend from opening persistent state.
@@ -49,6 +42,10 @@ pub enum BackendBootstrapError {
     SkillStorage(#[source] ApplicationError),
     #[error("failed to initialize agent runtime")]
     AgentRuntime(#[source] BackendError),
+    #[error("failed to reconcile skill storage")]
+    SkillStorageReconciliation(
+        #[source] crate::skill_reconciliation::SkillStorageReconciliationError,
+    ),
 }
 
 /// Owns the concrete persisted use-case composition shared by Web and Tauri adapters.
@@ -79,6 +76,10 @@ impl Backend {
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(&DatabaseLocation::path(&paths.database_path), &catalog)
             .map_err(BackendBootstrapError::Database)?;
+        crate::skill_reconciliation::reconcile_skill_storage(&pool, &paths.skills_root)
+            .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
+        crate::skill_reconciliation::cleanup_import_temp_sessions()
+            .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let sessions_root = paths.sessions_root;
@@ -89,7 +90,6 @@ impl Backend {
             clock,
         )
         .map_err(BackendBootstrapError::AgentRuntime)?;
-        let skill_store = prepare_skill_storage(&paths.database_path, &pool)?;
 
         Ok(Self {
             project: Arc::new(ProjectApi::new(pool.clone(), sessions_root.clone(), clock)),
@@ -102,7 +102,7 @@ impl Backend {
             task_diff: Arc::new(TaskDiffApi::new(pool.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime: Arc::new(agent_runtime),
-            skill: Arc::new(SkillApi::new(pool.clone(), clock, skill_store)),
+            skill: Arc::new(SkillApi::new(pool.clone(), paths.skills_root, clock)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             pool,
             worktree_root,
@@ -408,17 +408,44 @@ impl Backend {
     ) -> Result<DeleteSkillResponse, BackendError> {
         self.skill.delete(request).map_err(BackendError::from)
     }
-    /// Imports one uploaded skill folder atomically through the shared application composition.
-    pub fn import_skill(
-        &self,
-        files: Vec<UploadedSkillFile>,
-    ) -> Result<CreateSkillResponse, BackendError> {
-        self.skill.import(files).map_err(BackendError::from)
-    }
-
     // =============================================================================
     // agent
     // =============================================================================
+
+    /// Prepares one skill import source into a previewed session.
+    pub fn prepare_skill_import(
+        &self,
+        request: PrepareSkillImportRequest,
+    ) -> Result<PrepareSkillImportResponse, BackendError> {
+        self.skill
+            .prepare_import(request)
+            .map_err(BackendError::from)
+    }
+    /// Returns one skill import session with its current progress.
+    pub fn get_skill_import(
+        &self,
+        request: GetSkillImportSessionRequest,
+    ) -> Result<GetSkillImportSessionResponse, BackendError> {
+        self.skill.get_import(request).map_err(BackendError::from)
+    }
+    /// Accepts and freezes one skill import commit, starting the background task.
+    pub fn commit_skill_import(
+        &self,
+        request: CommitSkillImportRequest,
+    ) -> Result<CommitSkillImportResponse, BackendError> {
+        self.skill
+            .commit_import(request)
+            .map_err(BackendError::from)
+    }
+    /// Cancels a prepared skill import session.
+    pub fn cancel_skill_import(
+        &self,
+        request: CancelSkillImportRequest,
+    ) -> Result<CancelSkillImportResponse, BackendError> {
+        self.skill
+            .cancel_import(request)
+            .map_err(BackendError::from)
+    }
 
     /// Creates one configurable agent through the shared application composition.
     pub fn create_agent(
@@ -467,37 +494,6 @@ impl Backend {
     }
 }
 
-/// Creates the skill storage root, then reconciles it so startup begins from a clean layout.
-///
-/// Reconciliation runs while the backend is still opening so any crash-orphaned staging or
-/// promoted-but-uncommitted directory is gone before the first import can observe the filesystem.
-fn prepare_skill_storage(
-    database_path: &Path,
-    pool: &RepositoryPool,
-) -> Result<LocalSkillPackageStore, BackendBootstrapError> {
-    let skills_directory = skills_storage_dir(database_path);
-    ensure_directory(&skills_directory)?;
-    let store = LocalSkillPackageStore::new(skills_directory);
-
-    ReconcileSkillStorageHandler::new(store.clone(), SqliteSkillRepository::new(pool.clone()))
-        .handle()
-        .map_err(BackendBootstrapError::SkillStorage)?;
-
-    Ok(store)
-}
-
-/// Derives the `atoms/skills` root from the configured SQLite database location.
-///
-/// The database sits directly under the runtime data directory, so its parent is the data root
-/// that every derived path (worktrees, skills) hangs off of.
-fn skills_storage_dir(database_path: &Path) -> PathBuf {
-    database_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("atoms")
-        .join("skills")
-}
-
 /// Creates one required runtime directory and preserves its exact failing path.
 fn ensure_directory(path: &Path) -> Result<(), BackendBootstrapError> {
     fs::create_dir_all(path).map_err(|source| BackendBootstrapError::DirectoryCreate {
@@ -533,6 +529,7 @@ mod tests {
             worktree_root: worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms").join("skills"),
         })
         .expect("open shared backend");
 
@@ -633,6 +630,47 @@ mod tests {
         assert_eq!(error.public_error().code(), "project_not_found");
     }
 
+    /// Verifies an update rewrites only the manifest and preserves other package files.
+    #[test]
+    fn update_preserves_other_package_files() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let skills_root = temporary.path().join("atoms").join("skills");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
+            skills_root: skills_root.clone(),
+        })
+        .expect("open shared backend");
+
+        let skill = backend
+            .create_skill(CreateSkillRequest {
+                name: "review".to_string(),
+                description: "Reviews changes".to_string(),
+            })
+            .expect("create skill")
+            .skill;
+        // A user-added package file must survive an ordinary update.
+        fs::create_dir_all(skills_root.join("review")).expect("create package directory");
+        fs::write(skills_root.join("review").join("helper.sh"), "echo hi")
+            .expect("write helper file");
+
+        let updated = backend
+            .update_skill(UpdateSkillRequest {
+                skill_id: skill.id,
+                name: "review".to_string(),
+                description: "Reviews pull requests".to_string(),
+            })
+            .expect("update skill")
+            .skill;
+        assert_eq!(updated.description, "Reviews pull requests");
+        assert!(skills_root.join("review").join("helper.sh").is_file());
+        let manifest =
+            fs::read_to_string(skills_root.join("review").join("SKILL.md")).expect("read manifest");
+        assert!(manifest.contains("description: Reviews pull requests"));
+    }
+
     /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.
     #[test]
     fn deletes_existing_task_after_worktree_root_changes() {
@@ -645,6 +683,7 @@ mod tests {
             worktree_root: original_worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms").join("skills"),
         })
         .expect("open shared backend");
         let project = backend

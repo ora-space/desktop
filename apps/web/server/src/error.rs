@@ -83,6 +83,11 @@ pub struct WebApiError {
 }
 
 impl WebApiError {
+    /// Builds a client-correctable upload or source-validation failure without leaking internals.
+    pub fn bad_request(context: &'static str) -> Self {
+        Self::invalid_request(context)
+    }
+
     /// Creates a malformed-input failure without returning parser-generated diagnostics.
     pub fn invalid_request(context: &'static str) -> Self {
         Self::semantic(
@@ -123,6 +128,58 @@ impl WebApiError {
         Self {
             error: BackendError::internal(context, source),
         }
+    }
+
+    /// Transfers the classified failure to a stream that owns its completion lifecycle.
+    pub(crate) fn into_backend_error(self) -> BackendError {
+        self.error
+    }
+}
+
+impl From<ora_fs::WorkspaceFileSystemError> for WebApiError {
+    /// Maps read-only workspace filesystem failures into stable backend classifications.
+    fn from(error: ora_fs::WorkspaceFileSystemError) -> Self {
+        use ora_fs::WorkspaceFileSystemError;
+
+        let (classification, public_error, context) = match &error {
+            WorkspaceFileSystemError::PathNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::FileSystemPathNotFound(EmptyErrorParams {}),
+                "workspace path was not found",
+            ),
+            WorkspaceFileSystemError::PathNotRelative { .. }
+            | WorkspaceFileSystemError::PathOutsideWorkspace { .. }
+            | WorkspaceFileSystemError::NotDirectory { .. }
+            | WorkspaceFileSystemError::NotFile { .. }
+            | WorkspaceFileSystemError::BinaryFile { .. }
+            | WorkspaceFileSystemError::InvalidUtf8 { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "workspace file request is invalid",
+            ),
+            WorkspaceFileSystemError::FileTooLarge { .. }
+            | WorkspaceFileSystemError::SearchOutputTooLarge { .. } => (
+                ErrorClassification::PayloadTooLarge,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "workspace output is too large",
+            ),
+            WorkspaceFileSystemError::SearchTimedOut => (
+                ErrorClassification::Unprocessable,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "workspace search timed out",
+            ),
+            WorkspaceFileSystemError::WorkspaceUnavailable { .. }
+            | WorkspaceFileSystemError::Io { .. }
+            | WorkspaceFileSystemError::SearchToolUnavailable { .. }
+            | WorkspaceFileSystemError::SearchFailed { .. }
+            | WorkspaceFileSystemError::InvalidSearchOutput { .. }
+            | WorkspaceFileSystemError::WatchFailed { .. } => (
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "workspace filesystem operation failed",
+            ),
+        };
+        Self::with_source(classification, public_error, context, error)
     }
 }
 

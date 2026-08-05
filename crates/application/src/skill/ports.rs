@@ -1,15 +1,16 @@
-use crate::{BoxRepositorySource, RepositoryError};
+use crate::RepositoryError;
 use ora_domain::{Skill, SkillId};
-use std::path::Path;
-use thiserror::Error;
 
-/// Defines persistence operations required by the skill CRUD use cases.
+/// Defines catalog persistence required by skill CRUD and import sessions.
 pub trait SkillRepository {
-    /// Persists a new skill snapshot.
+    /// Persists a new visible skill snapshot.
     fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError>;
 
-    /// Loads one visible skill by identifier.
+    /// Loads one visible skill by its stable identifier.
     fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError>;
+
+    /// Loads one visible skill by an ASCII case-insensitive name.
+    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, RepositoryError>;
 
     /// Lists visible skills in deterministic storage order.
     fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError>;
@@ -25,117 +26,8 @@ pub trait SkillRepository {
     ) -> Result<bool, RepositoryError>;
 }
 
-/// Supplies new skill identifiers for create use cases.
+/// Supplies opaque identifiers for newly created skills.
 pub trait SkillIdGenerator {
-    /// Produces the identifier for a newly created skill.
+    /// Produces an identifier that does not reveal a filesystem path.
     fn generate_skill_id(&self) -> SkillId;
-}
-
-/// Owns the `atoms/skills` on-disk layout so import orchestration stays testable and hexagonal.
-///
-/// A skill is uploaded into an `<id>.tmp` staging directory keyed by its future identifier, then
-/// promoted to a committed `<name>` directory once its manifest is parsed. Implementations must
-/// keep those two directory shapes distinct because startup reconciliation relies on the `.tmp`
-/// suffix to identify never-committed staging left behind by a crash.
-pub trait SkillPackageStore {
-    /// Creates the empty `<id>.tmp` staging directory for a new import.
-    fn create_staging(&self, skill_id: &SkillId) -> Result<(), SkillPackageStoreError>;
-
-    /// Writes one uploaded file at `relative_path` inside the staging directory, creating parents.
-    fn write_file(
-        &self,
-        skill_id: &SkillId,
-        relative_path: &Path,
-        bytes: &[u8],
-    ) -> Result<(), SkillPackageStoreError>;
-
-    /// Reads the staged `SKILL.md` manifest contents, or `None` when the root has no manifest.
-    fn read_manifest(&self, skill_id: &SkillId) -> Result<Option<String>, SkillPackageStoreError>;
-
-    /// Reports whether a committed `<name>` directory already exists for a resolved skill name.
-    fn committed_exists(&self, name: &str) -> Result<bool, SkillPackageStoreError>;
-
-    /// Atomically renames the `<id>.tmp` staging directory to the committed `<name>` directory.
-    ///
-    /// Implementations must fail rather than overwrite when `<name>` already exists so a losing
-    /// concurrent import cannot clobber a committed skill.
-    fn promote(&self, skill_id: &SkillId, name: &str) -> Result<(), SkillPackageStoreError>;
-
-    /// Removes the `<id>.tmp` staging directory when an import is rolled back.
-    fn discard_staging(&self, skill_id: &SkillId) -> Result<(), SkillPackageStoreError>;
-
-    /// Removes the committed `<name>` directory; used by delete, commit compensation, and GC.
-    fn remove_committed(&self, name: &str) -> Result<(), SkillPackageStoreError>;
-
-    /// Removes every `*.tmp` staging directory, discarding crash-orphaned incomplete imports.
-    fn remove_all_staging(&self) -> Result<(), SkillPackageStoreError>;
-
-    /// Lists the names of committed (non-`.tmp`) skill directories for reconciliation.
-    fn list_committed_names(&self) -> Result<Vec<String>, SkillPackageStoreError>;
-}
-
-/// Represents skill filesystem failures exposed as stable application outcomes.
-#[derive(Debug, Error)]
-#[error("skill package storage operation failed")]
-pub struct SkillPackageStoreError {
-    #[source]
-    source: BoxRepositorySource,
-}
-
-impl SkillPackageStoreError {
-    /// Preserves a concrete filesystem adapter failure behind the application-owned port type.
-    pub fn new(error: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self {
-            source: Box::new(error),
-        }
-    }
-
-    /// Preserves an already boxed adapter failure without adding another string-only layer.
-    pub fn from_boxed(source: BoxRepositorySource) -> Self {
-        Self { source }
-    }
-}
-
-/// Runs the durable commit step of a skill import as one SQLite transaction.
-///
-/// Implementations insert the skill row, invoke `on_inserted` while the transaction is still open,
-/// and commit only when it returns `Ok`. The `on_inserted` callback performs the filesystem
-/// promote (rename), so the database row and the on-disk directory are made durable together: any
-/// callback error rolls the row back, keeping "insert then rename then commit" atomic.
-pub trait SkillImportUnitOfWork {
-    /// Inserts `skill`, runs `on_inserted` inside the open transaction, and commits iff it succeeds.
-    fn insert_then<OnInserted>(
-        &self,
-        skill: Skill,
-        on_inserted: OnInserted,
-    ) -> Result<(), SkillImportCommitError>
-    where
-        OnInserted: FnOnce() -> Result<(), SkillPackageStoreError>;
-}
-
-/// Distinguishes the failure points of the import commit so the caller can compensate correctly.
-///
-/// The variants tell the orchestrator which side effects already happened: whether the on-disk
-/// promote ran, and therefore whether it must discard the staging directory or remove a directory
-/// that was already promoted before the commit failed.
-#[derive(Debug, Error)]
-pub enum SkillImportCommitError {
-    /// The row insert failed before the promote ran; only staging needs discarding.
-    #[error("failed to insert imported skill")]
-    Insert {
-        #[source]
-        source: RepositoryError,
-    },
-    /// The promote failed and the row was rolled back; staging still needs discarding.
-    #[error("failed to promote imported skill package")]
-    Promote {
-        #[source]
-        source: SkillPackageStoreError,
-    },
-    /// The promote succeeded but the commit failed; the promoted directory must be removed.
-    #[error("failed to commit imported skill after package promotion")]
-    CommitAfterPromote {
-        #[source]
-        source: RepositoryError,
-    },
 }

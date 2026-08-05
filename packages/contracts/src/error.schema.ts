@@ -39,6 +39,21 @@ export const contractErrorSchema = z.object({
         "code": z.literal("skill_name_blank"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("skill_name_invalid"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_name_too_long"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_description_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_description_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_name_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("skill_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -188,6 +203,66 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("skill_folder_conflict"),
         "params": skillFolderConflictParamsSchema
+    }), z.object({
+        "code": z.literal("skill_manifest_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_manifest_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("too_many_skills"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_format_unsupported"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_format_mismatch"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_corrupt"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_encrypted_unsupported"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_special_entry_unsupported"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_path_encoding_invalid"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_path_case_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("path_segment_too_long"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("path_too_long"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("path_too_deep"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_expansion_ratio_exceeded"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_preparation_timeout"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_session_expired"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_session_cancelled"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_session_commit_in_progress"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_session_already_committed"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_storage_inconsistent"),
+        "params": emptyErrorParamsSchema
     })]));
 
 export const publicErrorSchema = z.union([z.object({
@@ -200,6 +275,21 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("skill_name_blank"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("skill_name_invalid"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_name_too_long"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_description_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_description_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_name_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("skill_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -349,4 +439,64 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("skill_folder_conflict"),
         "params": skillFolderConflictParamsSchema
+    }), z.object({
+        "code": z.literal("skill_manifest_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_manifest_too_large"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("too_many_skills"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_format_unsupported"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_format_mismatch"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_corrupt"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_encrypted_unsupported"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_special_entry_unsupported"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_path_encoding_invalid"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_path_case_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("path_segment_too_long"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("path_too_long"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("path_too_deep"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("archive_expansion_ratio_exceeded"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_preparation_timeout"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_session_expired"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_session_cancelled"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_session_commit_in_progress"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("import_session_already_committed"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("skill_storage_inconsistent"),
+        "params": emptyErrorParamsSchema
     })]);

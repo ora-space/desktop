@@ -10,6 +10,7 @@
 - It provisions task-owned linked worktrees during creation and leaves Git untouched during deletion.
 - It streams ACP load replay and prompt updates as bounded NDJSON responses.
 - It provides read-only server filesystem listings for the Web platform path picker.
+- It provides a task-scoped, read-only workspace explorer with bounded file reads, ripgrep search, and native refresh events.
 - It owns the project work context routes, which are outside `ora-backend`.
 
 ## Data root configuration
@@ -114,7 +115,13 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 - `GET /api/skills/{skillId}`
 - `PUT /api/skills/{skillId}`
 - `DELETE /api/skills/{skillId}`
-- `POST /api/skills/import`
+
+### skillImport
+
+- `POST /api/skill-imports`
+- `GET /api/skill-imports/{sessionId}`
+- `POST /api/skill-imports/{sessionId}/commit`
+- `DELETE /api/skill-imports/{sessionId}`
 
 ### agent
 
@@ -128,6 +135,15 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 
 - `GET /api/file-system/directory?path={absolute_path}`
 - `GET /api/projects/{projectId}/branches`
+
+### task workspace files
+
+- `POST /api/tasks/{taskId}/files/list` with `{ "path": "src" }` to list one workspace-relative directory
+- `POST /api/tasks/{taskId}/files/read` with `{ "path": "src/main.rs" }` to read one bounded UTF-8 file
+- `POST /api/tasks/{taskId}/files/search` with `{ "query": "needle", "kind": "files" | "content" }` to search filenames or text
+- `GET /api/tasks/{taskId}/files/watch` to stream debounced `WorkspaceFileEventBatch` NDJSON frames
+
+Every task workspace route resolves the active task workspace through `ora-backend`; the client cannot select a root directory. The filesystem service rejects absolute paths, parent traversal, and symlink escapes. File reads are capped at 10 MiB and reject binary or invalid UTF-8 content. Search uses fixed-string matching for content, a 15-second timeout, an 8 MiB output bound, and at most 10,000 results. Watch events are coalesced for 100 ms before a batch is emitted. See [Task Workspace Files](task-workspace-files.md).
 
 ### gitIdentity
 
@@ -151,17 +167,13 @@ Prompt requests carry an ordered ACP content-block list and may combine text, im
 
 Unary requests and streams receive a server-generated canonical request id before entering business logic. Client-provided `X-Request-Id` values are ignored. Every Web response publishes the canonical id through `X-Request-Id`, CORS exposes that header, and a failure body or error frame carries the same id in its direct `{ code, params, requestId }` payload. A stream keeps one id from creation through normal completion, failure, disconnect, or cancellation.
 
-### Skill folder import
+### Skill imports
 
-`POST /api/skills/import` uploads a local skill folder as one `multipart/form-data` request. Each file part carries its skill-root-relative path as the part file name. The request body is capped at 50 MB: oversized uploads return the typed `413` `skill_upload_too_large` error, while uploads over 1000 files return `422`.
+`POST /api/skill-imports?mode=folder|archive` accepts one `multipart/form-data` source. Folder parts carry a validated source-relative path as their filename; archive mode accepts exactly one `.zip`, `.skill`, `.tar.gz`, or `.tgz` part. The adapter streams the upload to OS temporary storage before it calls the shared prepare service, so previewing never touches the database or committed skill packages.
 
-The import is atomic across the filesystem and the database:
+Preparation snapshots and safely scans the source, rejects unsafe paths, links and archive expansion attacks, then returns an opaque session id and every discovered candidate. `GET` renews the prepared session while it is within its idle and absolute lifetime. `POST .../commit` returns `202 Accepted` after it freezes every conflict decision; the background job remains observable via `GET`. `DELETE` cancels only prepared sessions.
 
-- Files stream into `<ORA_DATA_DIR>/atoms/skills/<uuid>.tmp`, where `<uuid>` is the skill's future identifier.
-- Root `SKILL.md` front matter supplies the persisted `name` and `description`; the committed directory uses the validated name.
-- The SQLite row insert, staging-directory promotion, and transaction commit execute as one unit of work. A primary failure keeps its full Rust source chain for the correlated completion log, while any compensating cleanup failure is logged separately without replacing that primary error.
-- Empty uploads, excessive file counts, unsafe or duplicate relative paths, and invalid manifests return typed `422` contract errors. An existing committed directory returns the typed `409` `skill_folder_conflict` error.
-- Deleting a skill also removes its committed directory. Startup reconciliation removes leftover staging directories and committed directories with no visible database row before the backend becomes ready.
+Each created, updated, overwritten, or deleted skill is atomic across its SQLite row and `<ORA_DATA_DIR>/atoms/skills/<name>/` package. The package transaction uses a same-filesystem staging directory and backup, while import sources remain in OS temp because it may be a different filesystem. Startup recovers interrupted package transactions, removes unowned package directories, and refuses to start if a visible row lacks its package or root `SKILL.md`.
 
 ### Project work contexts
 
@@ -194,6 +206,8 @@ Error mapping is centralized so application outcomes become stable HTTP response
 
 Shared backend failures project to the same typed `{ code, params, requestId }` payload used by Desktop; there is no public message or outer error envelope. HTTP status derives from the backend error classification.
 
+Task workspace failures use the same mapping: missing task or workspace path returns a typed not-found response, invalid relative paths and unreadable text return a typed bad request, and bounded-output failures retain their native `413`/`422` classification. Watch failures are emitted as `{ "type": "error", "error": { "code", "params", "requestId" } }` frames rather than raw filesystem messages.
+
 ## Frontend development modes
 
 - `task run:web-backend` starts the Rust HTTP backend on its default port.
@@ -206,6 +220,8 @@ Development defaults to `mock`; production builds default to `fetch`. Set
 that behavior. Mock records live only for the current page lifetime and reset
 on refresh; the explicit fetch mode remains the integration path for the Rust
 HTTP backend.
+
+Long-lived task workspace watch responses defer completion until an end or error frame so the request id, error payload, and log event remain correlated. This keeps the watcher aligned with the ACP stream lifecycle and prevents an early success event followed by a duplicate failure event.
 
 ## Storage behavior
 
