@@ -116,7 +116,9 @@ Keep these stacks separate — shared chrome only where noted.
 - View toggle: Theater ↔ Overview. Overview node click returns to Theater
   focused on that node and opens the act inspector. Header Theater toggle
   does not force the rail open. Clicking Overview again while already there
-  re-runs `fitView` so a resized pane refits without leaving the mode.
+  re-runs `fitView` and re-enables resize auto-fit after a manual pan/zoom.
+  While Overview stays open, pane/window resize debounces a `fitView` so the
+  graph stays framed — until the user pans or zooms, which pauses auto-fit.
   `awaiting_input` does **not** force a view change (toast only); warm
   overview/path chips stay discoverable in place.
 - Theater focus: a live pin (focused while `running` / `awaiting_input`)

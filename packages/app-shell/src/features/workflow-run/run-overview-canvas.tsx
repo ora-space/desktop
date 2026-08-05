@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Background,
@@ -27,6 +27,8 @@ import "@xyflow/react/dist/style.css";
 
 const NODE_TYPE = "workflow" as const;
 const EDGE_TYPE = "workflow" as const;
+const FIT_PADDING = 0.18;
+const RESIZE_FIT_DEBOUNCE_MS = 160;
 
 const nodeTypes = { [NODE_TYPE]: RunOverviewNode };
 const edgeTypes = { [EDGE_TYPE]: RunOverviewEdge };
@@ -51,27 +53,76 @@ interface RunOverviewCanvasProps {
   /** Used for a soft per-node artifact affordance (count only). */
   artifacts?: WorkflowArtifact[];
   /**
-   * Bump to re-run fitView while the canvas stays mounted (e.g. user clicks
-   * Overview again after resizing the pane).
+   * Bump to re-run fitView and re-enable resize auto-fit (e.g. user clicks
+   * Overview again after a manual pan/zoom).
    */
   fitRequestKey?: number;
 }
 
-/** Fits the read-only graph after mount, snapshot change, or an explicit refit. */
-function FitViewOnRequest({
+/**
+ * Fits on demand and on container resize until the user pan/zooms the graph.
+ * Explicit fitRequest / snapshot change clears the manual lock.
+ * Mode-enter and resize fits are instant — animated fitView after remount
+ * reads as a top-to-bottom jump when switching from Theater.
+ */
+function OverviewViewportController({
+  containerRef,
   snapshotId,
   fitRequestKey,
+  userAdjustedRef,
 }: {
+  containerRef: RefObject<HTMLDivElement | null>;
   snapshotId: string;
   fitRequestKey: number;
+  userAdjustedRef: MutableRefObject<boolean>;
 }) {
   const { fitView } = useReactFlow();
+  const suppressResizeFitRef = useRef(true);
+
   useEffect(() => {
+    userAdjustedRef.current = false;
+    // Ignore ResizeObserver callbacks that fire from the Theater→Overview
+    // layout swap; those would otherwise queue a second fit right after mount.
+    suppressResizeFitRef.current = true;
     const frame = requestAnimationFrame(() => {
-      void fitView({ padding: 0.18, duration: 200 });
+      void fitView({ padding: FIT_PADDING, duration: 0 });
+      // Allow resize auto-fit only after the enter fit has committed.
+      requestAnimationFrame(() => {
+        suppressResizeFitRef.current = false;
+      });
     });
     return () => cancelAnimationFrame(frame);
-  }, [fitView, snapshotId, fitRequestKey]);
+  }, [fitRequestKey, fitView, snapshotId, userAdjustedRef]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container === null || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new ResizeObserver(() => {
+      if (userAdjustedRef.current || suppressResizeFitRef.current) {
+        return;
+      }
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        if (!userAdjustedRef.current && !suppressResizeFitRef.current) {
+          void fitView({ padding: FIT_PADDING, duration: 0 });
+        }
+      }, RESIZE_FIT_DEBOUNCE_MS);
+    });
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [containerRef, fitView, userAdjustedRef]);
+
   return null;
 }
 
@@ -87,6 +138,8 @@ export function RunOverviewCanvas({
   fitRequestKey = 0,
 }: RunOverviewCanvasProps) {
   const { t } = useTranslation();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const userAdjustedRef = useRef(false);
   const snapshot = run.definitionSnapshot;
   const nodeStates = run.nodeStates;
   const focus = useMemo(
@@ -137,6 +190,7 @@ export function RunOverviewCanvas({
 
   return (
     <div
+      ref={containerRef}
       className="relative min-h-0 flex-1 bg-muted/15"
       aria-label={t("workflowRun.overview.label")}
     >
@@ -161,16 +215,23 @@ export function RunOverviewCanvas({
             zoomOnScroll
             minZoom={MIN_WORKFLOW_ZOOM}
             maxZoom={MAX_WORKFLOW_ZOOM}
-            fitView
             proOptions={{ hideAttribution: true }}
+            onMoveEnd={(event) => {
+              // Programmatic fitView reports a null event; user gestures do not.
+              if (event !== null) {
+                userAdjustedRef.current = true;
+              }
+            }}
             onNodeClick={(_event, node) => {
               onFocusNode(node.id);
             }}
             className="h-full w-full"
           >
-            <FitViewOnRequest
+            <OverviewViewportController
+              containerRef={containerRef}
               snapshotId={snapshot.id}
               fitRequestKey={fitRequestKey}
+              userAdjustedRef={userAdjustedRef}
             />
             <Background
               id="run-overview-dots"
