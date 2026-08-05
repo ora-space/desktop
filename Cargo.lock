@@ -1729,6 +1729,7 @@ dependencies = [
  "ora-contracts",
  "ora-db",
  "ora-domain",
+ "ora-fs",
  "ora-history",
  "ora-logging",
  "ora-process",

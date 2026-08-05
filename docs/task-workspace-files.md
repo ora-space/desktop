@@ -6,6 +6,8 @@ Ora's task workspace file feature gives the Web and Desktop frontends a read-onl
 
 The client sends a task id and, where needed, a workspace-relative path. The Web handler asks `ora-backend` to resolve the task's active working directory, then passes that server-owned root to `ora-fs`. The client never supplies a root path, and `ora-fs` does not depend on HTTP or frontend types.
 
+`GET /api/tasks/{taskId}/workspace` exposes that same authoritative root for platform directory-selection UX. Its `branchName` is optional so project-root tasks, non-Git projects, and detached contexts do not invent a branch.
+
 The layers are intentionally narrow:
 
 - `crates/fs` owns path validation, canonical containment checks, file bounds, ripgrep execution, and native watching.

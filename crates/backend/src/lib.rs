@@ -10,6 +10,7 @@ mod session;
 mod session_history;
 mod skill;
 mod skill_reconciliation;
+mod spec;
 mod task;
 mod task_diff;
 mod workflow;

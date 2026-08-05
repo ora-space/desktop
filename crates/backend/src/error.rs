@@ -231,6 +231,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::ProjectOccupied(EmptyErrorParams {}),
                 "project is already occupied",
             ),
+            ApplicationError::SpecSourceInvalid => (
+                ErrorClassification::InvalidRequest,
+                PublicError::SpecSourceInvalid(EmptyErrorParams {}),
+                "specification source configuration is invalid",
+            ),
             ApplicationError::ProjectWorkContextNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::ProjectWorkContextNotFound(EmptyErrorParams {}),
@@ -312,6 +317,7 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::SkillStorage { .. }
             | ApplicationError::AgentDefinitionRepository { .. }
             | ApplicationError::ProjectRepository { .. }
+            | ApplicationError::SpecSourceRepository { .. }
             | ApplicationError::ProjectWorkContextRepository { .. }
             | ApplicationError::TaskRepository { .. }
             | ApplicationError::TaskWorktreeIdExhausted { .. }

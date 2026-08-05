@@ -5,6 +5,7 @@ use crate::error::{BackendError, ErrorClassification};
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
+use crate::spec::SpecApi;
 use crate::task::TaskApi;
 use crate::task_diff::TaskDiffApi;
 use crate::workflow::WorkflowApi;
@@ -27,6 +28,8 @@ pub struct BackendPaths {
     pub sessions_root: PathBuf,
     /// Root of the formal skill package tree (`<data>/atoms/skills`).
     pub skills_root: PathBuf,
+    /// Bundled ripgrep executable used by shared specification discovery.
+    pub ripgrep_path: PathBuf,
 }
 
 /// Reports failures that prevent the shared backend from opening persistent state.
@@ -62,6 +65,7 @@ pub struct Backend {
     agent_runtime: Arc<AgentRuntimeManager>,
     skill: Arc<SkillApi>,
     agent: Arc<AgentApi>,
+    spec: Arc<SpecApi>,
     workflow: Arc<WorkflowApi>,
     workflow_run: Arc<WorkflowRunApi>,
 }
@@ -108,6 +112,7 @@ impl Backend {
             agent_runtime: Arc::new(agent_runtime),
             skill: Arc::new(SkillApi::new(pool.clone(), paths.skills_root, clock)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
+            spec: Arc::new(SpecApi::new(pool.clone(), paths.ripgrep_path)),
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
             workflow_run: Arc::new(WorkflowRunApi::new(
                 pool.clone(),
@@ -263,6 +268,58 @@ impl Backend {
             }])
             .await;
         Ok(response)
+    }
+
+    /// Returns the authoritative checkout root and optional branch for a task.
+    pub fn get_task_workspace(
+        &self,
+        request: GetTaskWorkspaceRequest,
+    ) -> Result<GetTaskWorkspaceResponse, BackendError> {
+        crate::task::get_task_workspace(&self.pool, &request.task_id)
+    }
+
+    // =============================================================================
+    // spec
+    // =============================================================================
+
+    /// Builds the effective specification catalog for one project or task target.
+    pub async fn get_spec_catalog(
+        &self,
+        request: GetSpecCatalogRequest,
+    ) -> Result<SpecCatalogResponse, BackendError> {
+        self.spec.catalog(request).await
+    }
+
+    /// Reads one catalog-authorized Markdown document.
+    pub async fn read_spec(
+        &self,
+        request: ReadSpecRequest,
+    ) -> Result<ReadSpecResponse, BackendError> {
+        self.spec.read(request).await
+    }
+
+    /// Validates one platform-selected source directory.
+    pub fn resolve_spec_source(
+        &self,
+        request: ResolveSpecSourceRequest,
+    ) -> Result<ResolveSpecSourceResponse, BackendError> {
+        self.spec.resolve_source(request)
+    }
+
+    /// Atomically replaces project-wide specification source overrides.
+    pub fn update_project_spec_sources(
+        &self,
+        request: UpdateProjectSpecSourcesRequest,
+    ) -> Result<UpdateProjectSpecSourcesResponse, BackendError> {
+        self.spec.update_project_sources(request)
+    }
+
+    /// Resolves a specification watch request to its authoritative workspace root.
+    pub fn resolve_spec_watch_root(
+        &self,
+        request: &WatchSpecsRequest,
+    ) -> Result<PathBuf, BackendError> {
+        self.spec.watch_root(&request.target)
     }
 
     // =============================================================================
@@ -761,6 +818,7 @@ mod tests {
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open shared backend");
 
@@ -873,6 +931,7 @@ mod tests {
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
             skills_root: skills_root.clone(),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open shared backend");
 
@@ -916,6 +975,7 @@ mod tests {
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open shared backend");
         let project = backend

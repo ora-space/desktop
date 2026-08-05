@@ -375,6 +375,7 @@ mod tests {
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open shared backend")
     }

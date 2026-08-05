@@ -9,7 +9,8 @@ use ora_application::{
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
-    GetTaskResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse,
+    GetTaskResponse, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, TaskWorkspace,
+    UpdateTaskRequest, UpdateTaskResponse,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{
@@ -228,6 +229,39 @@ pub(crate) fn resolve_task_cwd(
     Ok(cwd)
 }
 
+/// Resolves the same task root used by agent sessions and reports a branch only for linked worktrees.
+pub(crate) fn get_task_workspace(
+    pool: &RepositoryPool,
+    task_id: &str,
+) -> Result<GetTaskWorkspaceResponse, BackendError> {
+    let task_id = TaskId::new(task_id);
+    let task = SqliteTaskRepository::new(pool.clone())
+        .find_task(&task_id)
+        .map_err(|source| BackendError::internal("task repository operation failed", source))?
+        .ok_or_else(|| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::TaskNotFound(EmptyErrorParams {}),
+                format!("task not found: {task_id}"),
+            )
+        })?;
+    let branch_name = match task.worktree_id {
+        Some(worktree_id) => SqliteWorktreeRepository::new(pool.clone())
+            .find_worktree(&worktree_id)
+            .map_err(task_worktree_unavailable_with)?
+            .filter(|worktree| worktree.activity == WorktreeActivity::Active)
+            .and_then(|worktree| worktree.branch_name),
+        None => None,
+    };
+    let root = resolve_task_cwd(pool, &task_id)?;
+    Ok(GetTaskWorkspaceResponse {
+        workspace: TaskWorkspace {
+            root_path: root.to_string_lossy().into_owned(),
+            branch_name,
+        },
+    })
+}
+
 /// Normalizes a stored project root before it crosses the ACP process boundary.
 ///
 /// Relative project roots remain valid in persisted server configurations, while providers
@@ -305,8 +339,9 @@ fn task_project_root_unavailable_with(
 
 #[cfg(test)]
 mod tests {
-    use super::{absolute_project_root, resolve_task_cwd};
+    use super::{absolute_project_root, get_task_workspace, resolve_task_cwd};
     use ora_application::{ProjectRepository, TaskRepository};
+    use ora_contracts::{GetTaskWorkspaceResponse, TaskWorkspace};
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteTaskRepository,
         default_migration_catalog,
@@ -351,7 +386,16 @@ mod tests {
 
         assert_eq!(
             resolve_task_cwd(&pool, &TaskId::new("task-1")).expect("resolve project root cwd"),
-            project_root,
+            project_root.clone(),
+        );
+        assert_eq!(
+            get_task_workspace(&pool, "task-1").expect("load project-root workspace"),
+            GetTaskWorkspaceResponse {
+                workspace: TaskWorkspace {
+                    root_path: project_root.to_string_lossy().into_owned(),
+                    branch_name: None,
+                },
+            },
         );
     }
 
