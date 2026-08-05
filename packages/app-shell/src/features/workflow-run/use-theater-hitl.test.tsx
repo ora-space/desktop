@@ -131,4 +131,65 @@ describe("useTheaterHitl", () => {
     unmount();
     runtime.dispose();
   });
+
+  it("keeps HITL collapsed on first discovery when the stage is on another act", async () => {
+    const client = createMockClient(createMockClientState());
+    const runtime = createMemoryWorkflowRuntime();
+    const wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const run = waitingRun("run-1", "hitl-1");
+    const onFocusNode = vi.fn();
+    const { result, unmount } = renderHook(
+      () =>
+        useTheaterHitl({
+          run,
+          focusNodeId: "start",
+          primaryId: "start",
+          onFocusNode,
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(result.current.openHitls).toHaveLength(1);
+      expect(result.current.hitlExpanded).toBe(false);
+      expect(result.current.primaryHasHitl).toBe(false);
+    });
+    unmount();
+    runtime.dispose();
+  });
+
+  it("expands HITL on first discovery when the stage is already on the waiting act", async () => {
+    const client = createMockClient(createMockClientState());
+    const runtime = createMemoryWorkflowRuntime();
+    const wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const run = waitingRun("run-1", "hitl-1");
+    const onFocusNode = vi.fn();
+    const { result, unmount } = renderHook(
+      () =>
+        useTheaterHitl({
+          run,
+          focusNodeId: null,
+          primaryId: "understand",
+          onFocusNode,
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(result.current.hitlExpanded).toBe(true);
+      expect(result.current.primaryHasHitl).toBe(true);
+    });
+    unmount();
+    runtime.dispose();
+  });
 });

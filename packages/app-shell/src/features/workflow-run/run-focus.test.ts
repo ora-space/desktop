@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createMockWorkflow as createMockWorkflowFixture } from "@ora/workflow-mock";
 import {
   resolveFocusNodeId,
+  resolveOverviewFocusedId,
+  resolveStageFocusNodeId,
   resolveTheaterFocus,
   shouldReleaseFocusToFollow,
+  shouldReleaseLivePinToFollow,
+  shouldStealFocusForArtifactReveal,
 } from "./run-focus";
 import {
   normalizeWorkflowDefinition,
@@ -183,6 +187,24 @@ describe("resolveTheaterFocus", () => {
     });
   });
 
+  it("falls back to the latest succeeded node when nothing is active", () => {
+    const run = baseRun({
+      status: "succeeded",
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "2026-08-01T12:00:01+08:00" },
+        understand: { status: "succeeded", finishedAt: "2026-08-01T12:00:05+08:00" },
+        quality: { status: "succeeded", finishedAt: "2026-08-01T12:00:03+08:00" },
+        tests: { status: "skipped" },
+        review: { status: "idle" },
+        output: { status: "idle" },
+      },
+    });
+    expect(resolveTheaterFocus(run, null)).toEqual({
+      primaryId: "understand",
+      activeIds: [],
+    });
+  });
+
   it("keeps resolveFocusNodeId aligned with primaryId", () => {
     const run = baseRun({
       nodeStates: {
@@ -197,5 +219,106 @@ describe("resolveTheaterFocus", () => {
     expect(resolveFocusNodeId(run, null)).toBe(
       resolveTheaterFocus(run, null).primaryId,
     );
+  });
+});
+
+describe("resolveOverviewFocusedId", () => {
+  it("suppresses Theater fallback selection on a terminal run with no pin", () => {
+    const run = baseRun({
+      status: "succeeded",
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "2026-08-01T12:00:01+08:00" },
+        understand: { status: "succeeded", finishedAt: "2026-08-01T12:00:05+08:00" },
+        quality: { status: "idle" },
+        tests: { status: "idle" },
+        review: { status: "idle" },
+        output: { status: "idle" },
+      },
+    });
+    expect(resolveTheaterFocus(run, null).primaryId).toBe("understand");
+    expect(resolveOverviewFocusedId(run, null)).toBeNull();
+  });
+
+  it("keeps an explicit pin on a terminal run", () => {
+    const run = baseRun({ status: "failed" });
+    expect(resolveOverviewFocusedId(run, "quality")).toBe("quality");
+  });
+
+  it("still auto-follows while the run is live", () => {
+    const run = baseRun({
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "a" },
+        understand: { status: "running", startedAt: "b" },
+        quality: { status: "idle" },
+        tests: { status: "idle" },
+        review: { status: "idle" },
+        output: { status: "idle" },
+      },
+    });
+    expect(resolveOverviewFocusedId(run, null)).toBe("understand");
+  });
+});
+
+describe("resolveStageFocusNodeId", () => {
+  it("prefers an open node session over path focus", () => {
+    expect(resolveStageFocusNodeId("review", "understand")).toBe("review");
+    expect(resolveStageFocusNodeId(null, "understand")).toBe("understand");
+    expect(resolveStageFocusNodeId(null, null)).toBeNull();
+  });
+});
+
+describe("shouldReleaseLivePinToFollow", () => {
+  it("blocks live-pin release while a node session is open", () => {
+    expect(
+      shouldReleaseLivePinToFollow(
+        "understand",
+        { nodeId: "understand", status: "running" },
+        "understand",
+        "succeeded",
+      ),
+    ).toBe(false);
+  });
+
+  it("still releases a live pin when no session is open", () => {
+    expect(
+      shouldReleaseLivePinToFollow(
+        null,
+        { nodeId: "understand", status: "running" },
+        "understand",
+        "succeeded",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("shouldStealFocusForArtifactReveal", () => {
+  it("does not steal focus while a node session is open", () => {
+    expect(
+      shouldStealFocusForArtifactReveal({
+        conversationNodeId: "review",
+        stagePrimaryId: "review",
+        artifactNodeId: "output",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not steal when the stage is already on the producing act", () => {
+    expect(
+      shouldStealFocusForArtifactReveal({
+        conversationNodeId: null,
+        stagePrimaryId: "output",
+        artifactNodeId: "output",
+      }),
+    ).toBe(false);
+  });
+
+  it("steals focus onto a different producing act when idle", () => {
+    expect(
+      shouldStealFocusForArtifactReveal({
+        conversationNodeId: null,
+        stagePrimaryId: "review",
+        artifactNodeId: "output",
+      }),
+    ).toBe(true);
   });
 });

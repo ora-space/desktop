@@ -1,4 +1,5 @@
 import type { GraphWorkflowNodeStatus, GraphWorkflowRun } from "@ora/workflow-runtime";
+import { isTerminalRunStatus } from "./run-status-style";
 
 const ACTIVE_STATUSES: ReadonlySet<GraphWorkflowNodeStatus> = new Set([
   "running",
@@ -141,6 +142,60 @@ export function resolveTheaterFocus(
   const primaryId = pickPrimaryAmongActive(run, activeIds)
     ?? pickFallbackPrimary(run);
   return { primaryId, activeIds };
+}
+
+/**
+ * Overview selection ring. Terminal + no pin stays unselected so Theater's
+ * result act and the graph do not disagree on "who is focused".
+ */
+export function resolveOverviewFocusedId(
+  run: GraphWorkflowRun,
+  focusedNodeId: string | null,
+): string | null {
+  if (focusedNodeId === null && isTerminalRunStatus(run.status)) {
+    return null;
+  }
+  return resolveTheaterFocus(run, focusedNodeId).primaryId;
+}
+
+/**
+ * Effective stage focus: an open node session wins over path / auto-follow pins.
+ */
+export function resolveStageFocusNodeId(
+  conversationNodeId: string | null,
+  focusNodeId: string | null,
+): string | null {
+  return conversationNodeId ?? focusNodeId;
+}
+
+/**
+ * Live-pin release is suppressed while a node session owns attention.
+ */
+export function shouldReleaseLivePinToFollow(
+  conversationNodeId: string | null,
+  prev: TheaterFocusStatusSample | null,
+  focusNodeId: string | null,
+  currentStatus: GraphWorkflowNodeStatus | undefined,
+): boolean {
+  if (conversationNodeId !== null) {
+    return false;
+  }
+  return shouldReleaseFocusToFollow(prev, focusNodeId, currentStatus);
+}
+
+/**
+ * After a reveal is consumed, whether Theater should jump to the producing act.
+ * Skip when a session is open or the stage is already on that act (avoids flash).
+ */
+export function shouldStealFocusForArtifactReveal(options: {
+  conversationNodeId: string | null;
+  stagePrimaryId: string | null;
+  artifactNodeId: string;
+}): boolean {
+  if (options.conversationNodeId !== null) {
+    return false;
+  }
+  return options.stagePrimaryId !== options.artifactNodeId;
 }
 
 /** @deprecated Prefer resolveTheaterFocus —kept for older call sites. */

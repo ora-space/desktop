@@ -32,8 +32,10 @@ import {
   useStartGraphWorkflowRun,
 } from "../../state/hooks/use-graph-workflow-runs";
 import {
+  resolveStageFocusNodeId,
   resolveTheaterFocus,
-  shouldReleaseFocusToFollow,
+  shouldReleaseLivePinToFollow,
+  shouldStealFocusForArtifactReveal,
   type TheaterFocusStatusSample,
 } from "./run-focus";
 import { RunOverviewCanvas } from "./run-overview-canvas";
@@ -141,7 +143,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   }
 
   /** Effective Theater/Overview focus — session pin wins over any raced auto focus. */
-  const stageFocusNodeId = conversationNodeId ?? focusNodeId;
+  const stageFocusNodeId = resolveStageFocusNodeId(conversationNodeId, focusNodeId);
 
   // If anything drifted focus while a session is open, snap it back.
   useEffect(() => {
@@ -158,19 +160,10 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       focusStatusSampleRef.current = null;
       return;
     }
-    if (conversationNodeIdRef.current !== null) {
-      const currentStatus = run.nodeStates[focusNodeId]?.status;
-      if (currentStatus !== undefined) {
-        focusStatusSampleRef.current = {
-          nodeId: focusNodeId,
-          status: currentStatus,
-        };
-      }
-      return;
-    }
     const currentStatus = run.nodeStates[focusNodeId]?.status;
     if (
-      shouldReleaseFocusToFollow(
+      shouldReleaseLivePinToFollow(
+        conversationNodeIdRef.current,
         focusStatusSampleRef.current,
         focusNodeId,
         currentStatus,
@@ -212,16 +205,18 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       return;
     }
     lastFocusedRevealRef.current = artifactsQuery.revealedId;
-    if (conversationNodeIdRef.current !== null) {
-      return;
-    }
-    // Already on the producing act (auto-follow or pin) — pinning again only
-    // churns chrome (inspector tween / HITL collapse) without a useful jump.
-    const stagePrimary = resolveTheaterFocus(
-      run,
-      conversationNodeIdRef.current ?? focusNodeId,
-    ).primaryId;
-    if (stagePrimary === artifact.nodeId) {
+    const preferredFocus = resolveStageFocusNodeId(
+      conversationNodeIdRef.current,
+      focusNodeId,
+    );
+    const stagePrimary = resolveTheaterFocus(run, preferredFocus).primaryId;
+    if (
+      !shouldStealFocusForArtifactReveal({
+        conversationNodeId: conversationNodeIdRef.current,
+        stagePrimaryId: stagePrimary,
+        artifactNodeId: artifact.nodeId,
+      })
+    ) {
       return;
     }
     setFocusNodeId(artifact.nodeId);

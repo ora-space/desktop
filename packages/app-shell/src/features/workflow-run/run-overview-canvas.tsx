@@ -15,14 +15,13 @@ import {
   MAX_WORKFLOW_ZOOM,
   MIN_WORKFLOW_ZOOM,
 } from "../settings/workflow-flow/viewport";
-import { resolveTheaterFocus } from "./run-focus";
+import { resolveOverviewFocusedId, resolveTheaterFocus } from "./run-focus";
 import {
   RunOverviewNode,
   RunOverviewStatusProvider,
   type RunOverviewNodeData,
 } from "./run-overview-node";
 import { RunOverviewEdge } from "./run-overview-edge";
-import { isTerminalRunStatus } from "./run-status-style";
 import type { GraphWorkflowRun, WorkflowArtifact } from "@ora/workflow-runtime";
 import "@xyflow/react/dist/style.css";
 
@@ -147,11 +146,12 @@ export function RunOverviewCanvas({
     () => resolveTheaterFocus(run, focusedNodeId),
     [run, focusedNodeId],
   );
-  // Terminal + no pin: do not paint resolveTheaterFocus's fallback as selected —
+  // Terminal + no pin: do not paint Theater's fallback as selected —
   // Theater shows the result act for the same state.
-  const overviewFocusedId = focusedNodeId === null && isTerminalRunStatus(run.status)
-    ? null
-    : focus.primaryId;
+  const overviewFocusedId = useMemo(
+    () => resolveOverviewFocusedId(run, focusedNodeId),
+    [run, focusedNodeId],
+  );
   const artifactCountByNode = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const artifact of artifacts) {
