@@ -24,9 +24,7 @@ import {
   IconPlayerPlay,
   IconTrash,
 } from "@tabler/icons-react";
-import type { AgentCliStatus } from "@ora/contracts";
 import type { PluginEntry } from "./plugin-catalog";
-import { PluginDetectionStatus } from "./plugin-detection-status";
 import { PluginTile } from "./plugin-tile";
 
 /** The prompt suggestions and feature bullets are generic; each is filled with the plugin's name. */
@@ -49,11 +47,10 @@ const RESOURCE_KEYS = [
  * the skills it contributes, a details section and a VS Code-style info table. Every
  * value is read from the hard-coded catalog; the skill switches are local-only.
  */
-export function PluginDetail({ plugin, installed, enabled, detectionStatus, onBack, onToggleEnabled, onToggleInstall }: {
+export function PluginDetail({ plugin, installed, enabled, onBack, onToggleEnabled, onToggleInstall }: {
   plugin: PluginEntry;
   installed: boolean;
   enabled: boolean;
-  detectionStatus?: AgentCliStatus;
   onBack: () => void;
   onToggleEnabled: () => void;
   onToggleInstall: () => void;
@@ -91,38 +88,26 @@ export function PluginDetail({ plugin, installed, enabled, detectionStatus, onBa
           <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {detectionStatus
+          {installed
             ? (
               <>
-                <PluginDetectionStatus status={detectionStatus} />
-                {detectionStatus === "ready" && (
-                  <Button variant={enabled ? "outline" : "default"} onClick={onToggleEnabled}>
-                    {enabled ? <IconPlayerPause /> : <IconPlayerPlay />}
-                    {t(enabled ? "settings.plugins.disable" : "settings.plugins.enable")}
-                  </Button>
-                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={<Button variant="ghost" size="icon-sm" aria-label={t("settings.plugins.openMenu", { name: plugin.name })} className="text-muted-foreground" />}
+                  >
+                    <IconDots />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem variant="destructive" onClick={onToggleInstall}><IconTrash />{t("settings.plugins.uninstall")}</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant={enabled ? "outline" : "default"} onClick={onToggleEnabled}>
+                  {enabled ? <IconPlayerPause /> : <IconPlayerPlay />}
+                  {t(enabled ? "settings.plugins.disable" : "settings.plugins.enable")}
+                </Button>
               </>
             )
-            : installed
-              ? (
-                <>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={<Button variant="ghost" size="icon-sm" aria-label={t("settings.plugins.openMenu", { name: plugin.name })} className="text-muted-foreground" />}
-                    >
-                      <IconDots />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-40">
-                      <DropdownMenuItem variant="destructive" onClick={onToggleInstall}><IconTrash />{t("settings.plugins.uninstall")}</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                  <Button variant={enabled ? "outline" : "default"} onClick={onToggleEnabled}>
-                    {enabled ? <IconPlayerPause /> : <IconPlayerPlay />}
-                    {t(enabled ? "settings.plugins.disable" : "settings.plugins.enable")}
-                  </Button>
-                </>
-              )
-              : <Button variant="outline" onClick={onToggleInstall}><IconDownload />{t("settings.plugins.install")}</Button>}
+            : <Button variant="outline" onClick={onToggleInstall}><IconDownload />{t("settings.plugins.install")}</Button>}
         </div>
       </header>
 

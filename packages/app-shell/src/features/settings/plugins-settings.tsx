@@ -33,7 +33,6 @@ import {
   type PluginEntry,
 } from "./plugin-catalog";
 import { PluginDetail } from "./plugin-detail";
-import { PluginDetectionStatus } from "./plugin-detection-status";
 import { PluginManager } from "./plugin-manager";
 import { PluginTile } from "./plugin-tile";
 import { SettingsHeading } from "./settings-heading";
@@ -112,7 +111,6 @@ export function PluginsSettings() {
         plugin={openPlugin}
         installed={isInstalled(openPlugin)}
         enabled={!disabledIds.includes(openPlugin.id)}
-        detectionStatus={detectionStatusByPluginId.get(openPlugin.id)}
         onBack={() => setOpenId(null)}
         onToggleEnabled={() => toggleEnabled(openPlugin.id)}
         onToggleInstall={() => toggleInstall(openPlugin.id)}
@@ -313,7 +311,6 @@ function PluginGrid({ items, installedIds, detectionStatusByPluginId, onOpen, on
             key={plugin.id}
             plugin={plugin}
             installed={detectionStatus ? detectionStatus === "ready" : installedIds.includes(plugin.id)}
-            detectionStatus={detectionStatus}
             onOpen={() => onOpen(plugin.id)}
             onToggleInstall={() => onToggleInstall(plugin.id)}
           />
@@ -324,10 +321,9 @@ function PluginGrid({ items, installedIds, detectionStatusByPluginId, onOpen, on
 }
 
 /** One catalog row: the mark and copy open the detail page, the trailing control installs it. */
-function PluginCard({ plugin, installed, detectionStatus, onOpen, onToggleInstall }: {
+function PluginCard({ plugin, installed, onOpen, onToggleInstall }: {
   plugin: PluginEntry;
   installed: boolean;
-  detectionStatus?: AgentCliStatus;
   onOpen: () => void;
   onToggleInstall: () => void;
 }) {
@@ -346,11 +342,9 @@ function PluginCard({ plugin, installed, detectionStatus, onOpen, onToggleInstal
           <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">{plugin.publisher}</span>
         </span>
       </button>
-      {detectionStatus
-        ? <PluginDetectionStatus status={detectionStatus} />
-        : installed
-          ? <PluginActionsMenu plugin={plugin} onOpen={onOpen} onUninstall={onToggleInstall} />
-          : <Button variant="outline" size="sm" className="shrink-0" onClick={onToggleInstall}>{t("settings.plugins.install")}</Button>}
+      {installed
+        ? <PluginActionsMenu plugin={plugin} onOpen={onOpen} onUninstall={onToggleInstall} />
+        : <Button variant="outline" size="sm" className="shrink-0" onClick={onToggleInstall}>{t("settings.plugins.install")}</Button>}
     </div>
   );
 }
