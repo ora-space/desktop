@@ -81,8 +81,32 @@ export interface ChatTurn {
   createdAt: number;
 }
 
+/**
+ * Marks the point in a thread where the answering model changed.
+ *
+ * Kept beside the turns rather than inside them because a switch happens between
+ * turns — often while the thread is idle — and belongs to no prompt or response.
+ */
+export interface ChatModelChange {
+  id: string;
+  /** How many turns preceded the switch, which is where it renders in the thread. */
+  afterTurnCount: number;
+  /** The human-readable name of the model that took over. */
+  modelName: string;
+  createdAt: number;
+}
+
 /** Holds the in-memory chat state isolated to one stable Ora session identifier. */
 export interface SessionConversation {
+  /**
+   * The agent's configuration selectors (model, and anything else it offers) with
+   * their current values. Session-scoped rather than turn-scoped: they arrive
+   * with the warm session, are refreshed by `config_option_update`, and are the
+   * only source for what the model picker can show.
+   */
+  configOptions: acp.SessionConfigOption[];
+  /** Model switches recorded in this thread, oldest first. */
+  modelChanges: ChatModelChange[];
   turns: ChatTurn[];
   availableCommands: acp.AvailableCommand[];
   sessionTitle: string | null;

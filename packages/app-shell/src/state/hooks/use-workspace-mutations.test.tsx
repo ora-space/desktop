@@ -15,9 +15,7 @@ describe("useCreateTask", () => {
     ["worktree", "worktree"],
     ["project_root", "project_root"],
   ] as const)("forwards the %s workspace mode", async (_label, workspaceMode) => {
-    const state = createMockClientState({
-      projects: [{ id: "p1", name: "Project", rootPath: "/workspace/project" }],
-    });
+    const state = createMockClientState();
     const client = createMockClient(state);
     const { result } = renderHookWithClient(
       () => useCreateTask(),
@@ -41,9 +39,7 @@ describe("useCreateTask", () => {
   });
 
   it("invalidates project branches after creating a worktree", async () => {
-    const state = createMockClientState({
-      projects: [{ id: "p1", name: "Project", rootPath: "/workspace/project" }],
-    });
+    const state = createMockClientState();
     const client = createMockClient(state);
     const queryClient = createTestQueryClient();
     const projectBranchesKey = queryKeys.projectBranches("p1");

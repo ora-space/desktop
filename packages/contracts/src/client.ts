@@ -92,8 +92,11 @@ export function createContractsClient(
         executeOperation("setTaskDiffCommentStatus", request, transport, options),
     },
     session: {
-      create: (request, options) =>
-        executeOperation("createSession", request, transport, options),
+      warm: (request, options) => executeOperation("warmSession", request, transport, options),
+      setConfig: (request, options) =>
+        executeOperation("setSessionConfig", request, transport, options),
+      attach: (request, options) =>
+        executeOperation("attachSession", request, transport, options),
       get: (request, options) => executeOperation("getSession", request, transport, options),
       list: (request, options) => executeOperation("listSessions", request, transport, options),
       load: (request, options) => executeStreamOperation("loadSession", request, transport, options),
@@ -106,10 +109,6 @@ export function createContractsClient(
         executeOperation("resumeSessionHistory", request, transport, options),
       delete: (request, options) =>
         executeOperation("deleteSession", request, transport, options),
-    },
-    agentRuntime: {
-      listModels: (request, options) =>
-        executeOperation("listAgentModels", request, transport, options),
     },
     skill: {
       create: (request, options) => executeOperation("createSkill", request, transport, options),

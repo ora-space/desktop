@@ -72,6 +72,15 @@ pub(super) fn contract_agent_cli(agent_cli: AgentCli) -> ContractAgentCli {
     }
 }
 
+/// Maps the transport CLI identity into its stable persisted form.
+pub(super) fn domain_agent_cli(agent_cli: ContractAgentCli) -> AgentCli {
+    match agent_cli {
+        ContractAgentCli::OpenCode => AgentCli::OpenCode,
+        ContractAgentCli::Nga => AgentCli::Nga,
+        ContractAgentCli::CodeAgentCli => AgentCli::CodeAgentCli,
+    }
+}
+
 /// Resolves one CLI through the Windows executable lookup mechanism for each retry generation.
 #[cfg(windows)]
 pub(super) fn resolve_agent_cli_path(

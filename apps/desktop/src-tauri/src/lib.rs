@@ -62,7 +62,9 @@ pub fn run() {
             // =============================================================================
             // session
             // =============================================================================
-            commands::create_session,
+            commands::warm_session,
+            commands::set_session_config,
+            commands::attach_session,
             commands::get_session,
             commands::list_sessions,
             commands::respond_to_session_permission,
@@ -72,10 +74,6 @@ pub fn run() {
             commands::delete_session,
             commands::stream_contract,
             commands::cancel_contract_stream,
-            // =============================================================================
-            // agentRuntime
-            // =============================================================================
-            commands::list_agent_models,
             // =============================================================================
             // skill
             // =============================================================================

@@ -36,11 +36,9 @@ import {
   type DemoWorkflow,
   type MockWorkflowVersion,
   type WorkflowCapabilities,
-  type WorkflowAgentModel,
   type WorkflowNodeData,
   type WorkflowNodeKind,
 } from "@ora/workflow-mock";
-import type { AgentCli, AgentCliModels } from "@ora/contracts";
 import { usePlatform } from "@ora/platform";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowInspector } from "./workflow-inspector";
@@ -50,7 +48,6 @@ import {
   cancelWorkflowPanelAnimation,
 } from "./workflow-panel-motion";
 import { DeployWorkflowButton } from "../workflow-run/deploy-to-project-dialog";
-import { useAgentModels } from "../../state/hooks/use-agent-models";
 
 const DEFAULT_WORKFLOW_LIBRARY_WIDTH = 220;
 const MIN_WORKFLOW_LIBRARY_WIDTH = 180;
@@ -65,23 +62,6 @@ const WORKFLOW_INSPECTOR_FADE_START = 120;
 const WORKFLOW_PANEL_SETTLE_DURATION = 180;
 const MIN_WORKFLOW_CANVAS_WIDTH = 360;
 const NARROW_WORKFLOW_EDITOR_WIDTH = 1_000;
-
-const AGENT_CLI_LABELS: Record<AgentCli, string> = {
-  open_code: "OpenCode",
-  nga: "NGA",
-  code_agent_cli: "CodeAgentCLI",
-};
-
-/** Maps the backend's grouped catalog to the stable executor reference stored on Agent nodes. */
-function workflowAgentModels(groups: AgentCliModels[]): WorkflowAgentModel[] {
-  return groups.flatMap((group) =>
-    group.models.map((modelId) => ({
-      agentCli: group.agentCli,
-      modelId,
-      label: `${AGENT_CLI_LABELS[group.agentCli]} · ${modelId}`,
-    })),
-  );
-}
 
 export interface WorkflowSettingsProps {
   capabilities?: WorkflowCapabilities;
@@ -122,19 +102,15 @@ function WorkflowSettingsContent({
   const { i18n, t } = useTranslation();
   const platform = usePlatform();
   const { deleteElements, toObject } = useReactFlow<Node<WorkflowNodeData, "workflow">, Edge>();
-  const {
-    data: agentModelGroups = [],
-    isLoading: agentModelsLoading,
-  } = useAgentModels();
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
-  const agentModels = useMemo(
-    () => workflowAgentModels(agentModelGroups),
-    [agentModelGroups],
-  );
+  // Model discovery moved off listModels (removed upstream); demo capabilities
+  // keep the editor selectable while real session config owns live catalogs.
   const capabilities = useMemo(
-    () => capabilitiesOverride ?? createMockWorkflowCapabilities(locale, agentModels),
-    [agentModels, capabilitiesOverride, locale],
+    () => capabilitiesOverride ?? createMockWorkflowCapabilities(locale),
+    [capabilitiesOverride, locale],
   );
+  const agentModels = capabilities.agentModels;
+  const agentModelsLoading = false;
   const [workflows, setWorkflows] = useState<DemoWorkflow[]>(() =>
     createMockWorkflows(locale),
   );

@@ -8,7 +8,8 @@ use crate::clock::SystemClock;
 use ora_acp::{AcpClient, AcpControl, AcpPeer};
 use ora_application::{Clock, SessionRepository};
 use ora_contracts::acp::initialization::{
-    Implementation, InitializeRequest, InitializeResponse, ProtocolVersion,
+    ClientCapabilities, ClientSessionCapabilities, Implementation, InitializeRequest,
+    InitializeResponse, ProtocolVersion, SessionConfigOptionsCapabilities,
 };
 use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
 use ora_contracts::acp::notification::SessionNotification;
@@ -38,6 +39,12 @@ pub(super) struct RuntimeConnection {
     pub generation: u64,
     pub load_session_supported: bool,
     pub close_session_supported: bool,
+    /// Whether the agent advertises `session/delete`.
+    ///
+    /// Warm sessions Ora created but never handed to the user are removed with
+    /// it so unused provider history does not accumulate; agents without it fall
+    /// back to `session/close`, which only detaches.
+    pub delete_session_supported: bool,
 }
 
 #[derive(Clone)]
@@ -253,6 +260,7 @@ struct SharedProcess {
     control: mpsc::UnboundedReceiver<AcpControl>,
     load_session_supported: bool,
     close_session_supported: bool,
+    delete_session_supported: bool,
 }
 
 /// Supervises one process generation at a time and retries only after it is fully reaped.
@@ -281,6 +289,7 @@ async fn run_supervisor(context: SupervisorContext) {
                     generation,
                     load_session_supported: process.load_session_supported,
                     close_session_supported: process.close_session_supported,
+                    delete_session_supported: process.delete_session_supported,
                 };
                 let _ = state.send(ConnectionState::Ready(connection));
                 ora_info!(
@@ -397,7 +406,17 @@ async fn spawn_initialized_process(
         tokio::spawn(super::drain_stderr(stderr));
     }
     let peer = AcpPeer::spawn(stdout, stdin);
+    // Config options are only sent by agents that see the client advertise them,
+    // so the model selector depends on this declaration. Boolean options stay
+    // undeclared because Ora renders only select-style options today; claiming
+    // support would invite payloads the client silently drops.
     let initialize = InitializeRequest::new(ProtocolVersion(1))
+        .client_capabilities(
+            ClientCapabilities::new().session(
+                ClientSessionCapabilities::new()
+                    .config_options(SessionConfigOptionsCapabilities::new()),
+            ),
+        )
         .client_info(Implementation::new("ora", env!("CARGO_PKG_VERSION")));
     let response = match timeout(
         INITIALIZE_TIMEOUT,
@@ -430,6 +449,11 @@ async fn spawn_initialized_process(
             .agent_capabilities
             .session_capabilities
             .close
+            .is_some(),
+        delete_session_supported: response
+            .agent_capabilities
+            .session_capabilities
+            .delete
             .is_some(),
     })
 }

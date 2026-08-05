@@ -51,6 +51,8 @@ function renderSidebar(state: MockClientState, chatStore?: ChatStore) {
 /** Builds an idle conversation, overriding only the fields a test cares about. */
 function conversation(overrides: Partial<SessionConversation> = {}): SessionConversation {
   return {
+    configOptions: [],
+    modelChanges: [],
     turns: [],
     availableCommands: [],
     sessionTitle: null,
@@ -108,7 +110,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: TASK.id,
       sessionId: SESSION.id,
-      workflowRunId: null,
+    workflowRunId: null,
     });
     expect(useUiStore.getState().expandedProjects.has(PROJECT.id)).toBe(false);
   });
@@ -127,7 +129,7 @@ describe("WorkspaceSidebar", () => {
       projectId: null,
       taskId: null,
       sessionId: null,
-      workflowRunId: null,
+    workflowRunId: null,
     });
   });
 
@@ -142,7 +144,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: null,
       sessionId: null,
-      workflowRunId: null,
+    workflowRunId: null,
     });
     expect(useUiStore.getState().dialog).toBeNull();
   });
@@ -162,7 +164,7 @@ describe("WorkspaceSidebar", () => {
       taskId: "t2",
       agentCli: "open_code",
       status: "running",
-      historyState: { type: "writable" },
+    historyState: { type: "writable" },
     });
     renderSidebar(state);
 
@@ -189,7 +191,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: null,
       sessionId: null,
-      workflowRunId: null,
+    workflowRunId: null,
     });
   });
 

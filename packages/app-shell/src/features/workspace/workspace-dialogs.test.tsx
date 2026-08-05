@@ -68,9 +68,7 @@ describe("WorkspaceDialogs project creation", () => {
 describe("WorkspaceDialogs task creation", () => {
   it("creates only worktree tasks and does not offer a workspace-mode selector", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState({
-      projects: [{ id: "p1", name: "Project", rootPath: "/workspace/project" }],
-    });
+    const state = createMockClientState();
     const baseClient = createMockClient(state);
     let submittedBaseBranch: string | undefined;
     let branchesLoaded = false;
@@ -206,20 +204,8 @@ describe("WorkspaceDialogs project deletion", () => {
     const state = createMockClientState();
     state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
     state.sessions = [
-      {
-        id: "s1",
-        taskId: "t1",
-        agentCli: "open_code",
-        status: "running",
-        historyState: { type: "writable" },
-      },
-      {
-        id: "s2",
-        taskId: "t2",
-        agentCli: "open_code",
-        status: "running",
-        historyState: { type: "writable" },
-      },
+      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running", historyState: { type: "writable" } },
+      { id: "s2", taskId: "t2", agentCli: "open_code", status: "running", historyState: { type: "writable" } },
     ];
     const calls: string[] = [];
     const baseClient = createMockClient(state);

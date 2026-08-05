@@ -1,4 +1,6 @@
+import type * as acp from "./acp/index.js";
 import type { Agent } from "./agent.js";
+import type { AgentCli } from "./session.js";
 import type { ContractsClient } from "./client.js";
 import type { Project } from "./project.js";
 import type { ProjectWorkContext } from "./project-work-context.js";
@@ -13,6 +15,10 @@ export interface MemoryContractsState {
   sessions: Session[];
   agents: Agent[];
   skills: Skill[];
+  /** Warm sessions handed out but not yet attached, keyed by session id. */
+  warmSessions: Map<string, AgentCli>;
+  /** What every warm and persisted session reports as its configuration. */
+  configOptions: acp.SessionConfigOption[];
 }
 
 /** Creates isolated state, optionally seeded for a browser prototype. */
@@ -25,6 +31,20 @@ export function createMemoryContractsState(
     sessions: structuredClone(seed.sessions ?? []),
     agents: structuredClone(seed.agents ?? []),
     skills: structuredClone(seed.skills ?? []),
+    warmSessions: seed.warmSessions ?? new Map(),
+    configOptions: structuredClone(seed.configOptions ?? [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "opencode/big-pickle",
+        options: [
+          { value: "opencode/big-pickle", name: "Big Pickle" },
+          { value: "opencode/small-pickle", name: "Small Pickle" },
+        ],
+      },
+    ]),
   };
 }
 
@@ -167,15 +187,29 @@ export function createMemoryContractsClient(
       get: async (request) => ({
         session: structuredClone(requireRecord(state.sessions, request.sessionId, "session")),
       }),
-      create: async (request) => {
-        requireRecord(state.tasks, request.taskId, "task");
+      warm: async (request) => {
+        const sessionId = nextId("s", [
+          ...state.sessions,
+          ...[...state.warmSessions.keys()].map((id) => ({ id })),
+        ]);
+        state.warmSessions.set(sessionId, request.agentCli);
+        return {
+          sessionId,
+          configOptions: structuredClone(state.configOptions),
+        };
+      },
+      setConfig: async () => ({
+        configOptions: structuredClone(state.configOptions),
+      }),
+      attach: async (request) => {
         const session: Session = {
-          id: nextId("s", state.sessions),
+          id: request.sessionId,
           taskId: request.taskId,
-          agentCli: request.agentCli,
+          agentCli: state.warmSessions.get(request.sessionId) ?? "open_code",
           status: "running",
           historyState: { type: "writable" },
         };
+        state.warmSessions.delete(request.sessionId);
         state.sessions.push(session);
         return { session: structuredClone(session), availableCommands: [] };
       },
@@ -214,15 +248,6 @@ export function createMemoryContractsClient(
         removeRecord(state.sessions, request.sessionId);
         return { sessionId: request.sessionId };
       },
-    },
-    agentRuntime: {
-      listModels: async () => ({
-        groups: [
-          { agentCli: "open_code", models: ["opencode/big-pickle", "opencode/small-pickle"] },
-          { agentCli: "nga", models: ["nga/default"] },
-          { agentCli: "code_agent_cli", models: ["codeagentcli/default"] },
-        ],
-      }),
     },
     agent: {
       list: async () => ({ agents: structuredClone(state.agents) }),
@@ -281,6 +306,21 @@ export function createMemoryContractsClient(
         removeRecord(state.skills, request.skillId);
         return { skillId: request.skillId };
       },
+    },
+    skillImport: {
+      prepare: async () => {
+        throw new Error("skillImport.prepare not implemented in memory client");
+      },
+      get: async () => {
+        throw new Error("skillImport.get not implemented in memory client");
+      },
+      commit: async () => {
+        throw new Error("skillImport.commit not implemented in memory client");
+      },
+      cancel: async (request) => ({
+        sessionId: request.sessionId,
+        cancelled: true,
+      }),
     },
     fileSystem: {
       listDirectory: async (request) => ({

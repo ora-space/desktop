@@ -4,7 +4,7 @@ import type { ListDirectoryRequest, ListDirectoryResponse, ListWorkspaceDirector
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse } from "./project-work-context.js";
-import type { CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse } from "./session.js";
+import type { AttachSessionRequest, AttachSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
 import type { CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest, CommitSkillImportResponse, GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest, PrepareSkillImportResponse } from "./skill-import.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
@@ -57,7 +57,9 @@ export type RequestByOperation = {
   createTaskDiffComment: CreateTaskDiffCommentRequest;
   replyTaskDiffComment: ReplyTaskDiffCommentRequest;
   setTaskDiffCommentStatus: SetTaskDiffCommentStatusRequest;
-  createSession: CreateSessionRequest;
+  warmSession: WarmSessionRequest;
+  setSessionConfig: SetSessionConfigRequest;
+  attachSession: AttachSessionRequest;
   getSession: GetSessionRequest;
   listSessions: ListSessionsRequest;
   loadSession: LoadSessionRequest;
@@ -67,7 +69,6 @@ export type RequestByOperation = {
   switchSessionAgent: SwitchSessionAgentRequest;
   resumeSessionHistory: ResumeSessionHistoryRequest;
   deleteSession: DeleteSessionRequest;
-  listAgentModels: ListAgentModelsRequest;
   createSkill: CreateSkillRequest;
   getSkill: GetSkillRequest;
   listSkills: ListSkillsRequest;
@@ -112,7 +113,9 @@ export type ResponseByOperation = {
   createTaskDiffComment: CreateTaskDiffCommentResponse;
   replyTaskDiffComment: ReplyTaskDiffCommentResponse;
   setTaskDiffCommentStatus: SetTaskDiffCommentStatusResponse;
-  createSession: CreateSessionResponse;
+  warmSession: WarmSessionResponse;
+  setSessionConfig: SetSessionConfigResponse;
+  attachSession: AttachSessionResponse;
   getSession: GetSessionResponse;
   listSessions: ListSessionsResponse;
   loadSession: LoadSessionEvent;
@@ -122,7 +125,6 @@ export type ResponseByOperation = {
   switchSessionAgent: SwitchSessionAgentResponse;
   resumeSessionHistory: ResumeSessionHistoryResponse;
   deleteSession: DeleteSessionResponse;
-  listAgentModels: ListAgentModelsResponse;
   createSkill: CreateSkillResponse;
   getSkill: GetSkillResponse;
   listSkills: ListSkillsResponse;
@@ -421,16 +423,42 @@ export const endpoints = {
     queryParams: [],
     hasJsonBody: true,
   },
-  createSession: {
-    operationName: "createSession",
+  warmSession: {
+    operationName: "warmSession",
     namespace: "session",
-    memberName: "create",
+    memberName: "warm",
     method: "POST",
-    pathTemplate: "/api/sessions",
-    requestType: "CreateSessionRequest",
-    responseType: "CreateSessionResponse",
+    pathTemplate: "/api/sessions/warm",
+    requestType: "WarmSessionRequest",
+    responseType: "WarmSessionResponse",
     responseMode: "unary",
     pathParams: [],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  setSessionConfig: {
+    operationName: "setSessionConfig",
+    namespace: "session",
+    memberName: "setConfig",
+    method: "POST",
+    pathTemplate: "/api/sessions/{sessionId}/config",
+    requestType: "SetSessionConfigRequest",
+    responseType: "SetSessionConfigResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  attachSession: {
+    operationName: "attachSession",
+    namespace: "session",
+    memberName: "attach",
+    method: "POST",
+    pathTemplate: "/api/sessions/{sessionId}/attach",
+    requestType: "AttachSessionRequest",
+    responseType: "AttachSessionResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
     queryParams: [],
     hasJsonBody: true,
   },
@@ -548,19 +576,6 @@ export const endpoints = {
     responseType: "DeleteSessionResponse",
     responseMode: "unary",
     pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
-    queryParams: [],
-    hasJsonBody: false,
-  },
-  listAgentModels: {
-    operationName: "listAgentModels",
-    namespace: "agentRuntime",
-    memberName: "listModels",
-    method: "GET",
-    pathTemplate: "/api/agent-models",
-    requestType: "ListAgentModelsRequest",
-    responseType: "ListAgentModelsResponse",
-    responseMode: "unary",
-    pathParams: [],
     queryParams: [],
     hasJsonBody: false,
   },

@@ -95,7 +95,9 @@ pub const SESSION_PERMISSION_RESPONSE_PATH: &str = "/api/sessions/{sessionId}/pe
 pub const SESSION_STOP_PATH: &str = "/api/sessions/{sessionId}/stop";
 pub const SESSION_SWITCH_AGENT_PATH: &str = "/api/sessions/{sessionId}/agent";
 pub const SESSION_RESUME_HISTORY_PATH: &str = "/api/sessions/{sessionId}/history/resume";
-pub const AGENT_MODELS_PATH: &str = "/api/agent-models";
+pub const SESSION_WARM_PATH: &str = "/api/sessions/warm";
+pub const SESSION_CONFIG_PATH: &str = "/api/sessions/{sessionId}/config";
+pub const SESSION_ATTACH_PATH: &str = "/api/sessions/{sessionId}/attach";
 pub const SKILLS_PATH: &str = "/api/skills";
 pub const SKILL_PATH: &str = "/api/skills/{skillId}";
 pub const SKILL_IMPORTS_PATH: &str = "/api/skill-imports";
@@ -151,7 +153,6 @@ const PROJECT_NAMESPACE: &str = "project";
 const PROJECT_WORK_CONTEXT_NAMESPACE: &str = "projectWorkContext";
 const TASK_NAMESPACE: &str = "task";
 const SESSION_NAMESPACE: &str = "session";
-const AGENT_RUNTIME_NAMESPACE: &str = "agentRuntime";
 const SKILL_NAMESPACE: &str = "skill";
 const SKILL_IMPORT_NAMESPACE: &str = "skillImport";
 const AGENT_NAMESPACE: &str = "agent";
@@ -416,14 +417,36 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         has_json_body: true,
     },
     FrontendEndpoint {
-        operation_name: "createSession",
+        operation_name: "warmSession",
         namespace: SESSION_NAMESPACE,
-        member_name: "create",
+        member_name: "warm",
         method: FrontendHttpMethod::Post,
-        path_template: SESSIONS_PATH,
-        request_type: "CreateSessionRequest",
-        response_type: "CreateSessionResponse",
+        path_template: SESSION_WARM_PATH,
+        request_type: "WarmSessionRequest",
+        response_type: "WarmSessionResponse",
         path_params: NO_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "setSessionConfig",
+        namespace: SESSION_NAMESPACE,
+        member_name: "setConfig",
+        method: FrontendHttpMethod::Post,
+        path_template: SESSION_CONFIG_PATH,
+        request_type: "SetSessionConfigRequest",
+        response_type: "SetSessionConfigResponse",
+        path_params: SESSION_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "attachSession",
+        namespace: SESSION_NAMESPACE,
+        member_name: "attach",
+        method: FrontendHttpMethod::Post,
+        path_template: SESSION_ATTACH_PATH,
+        request_type: "AttachSessionRequest",
+        response_type: "AttachSessionResponse",
+        path_params: SESSION_PATH_PARAMS,
         has_json_body: true,
     },
     FrontendEndpoint {
@@ -523,20 +546,6 @@ const FRONTEND_ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "DeleteSessionRequest",
         response_type: "DeleteSessionResponse",
         path_params: SESSION_PATH_PARAMS,
-        has_json_body: false,
-    },
-    // =============================================================================
-    // agentRuntime
-    // =============================================================================
-    FrontendEndpoint {
-        operation_name: "listAgentModels",
-        namespace: AGENT_RUNTIME_NAMESPACE,
-        member_name: "listModels",
-        method: FrontendHttpMethod::Get,
-        path_template: AGENT_MODELS_PATH,
-        request_type: "ListAgentModelsRequest",
-        response_type: "ListAgentModelsResponse",
-        path_params: NO_PATH_PARAMS,
         has_json_body: false,
     },
     // =============================================================================

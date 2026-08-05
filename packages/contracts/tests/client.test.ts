@@ -146,20 +146,47 @@ test("omits absent optional query parameters", async () => {
   assert.deepEqual(requests[0]?.path, "/api/file-system/directory");
 });
 
-test("builds the agent model discovery request without a body", async () => {
+test("posts a warm session request against the static warm path", async () => {
   const requests: ContractTransportRequest[] = [];
-  const client = createContractsClient(recordingTransport(requests, { groups: [] }));
+  const client = createContractsClient(
+    recordingTransport(requests, { sessionId: "session-1", configOptions: [] }),
+  );
+  const request = {
+    target: { type: "projectRoot", projectId: "project-1" } as const,
+    agentCli: "open_code" as const,
+    clientId: "client-1",
+  };
 
-  await client.agentRuntime.listModels({});
+  await client.session.warm(request);
 
   assert.deepEqual(requests, [
     {
-      operationName: "listAgentModels",
-      request: {},
-      method: "GET",
-      path: "/api/agent-models",
-      body: undefined,
-      headers: {},
+      operationName: "warmSession",
+      request,
+      method: "POST",
+      path: "/api/sessions/warm",
+      body: request,
+      headers: { "content-type": "application/json" },
+    },
+  ]);
+});
+
+test("puts the session id in the config path while the choice stays in the body", async () => {
+  const requests: ContractTransportRequest[] = [];
+  const client = createContractsClient(recordingTransport(requests, { configOptions: [] }));
+  const request = { sessionId: "session-1", configId: "model", value: "fast" };
+
+  await client.session.setConfig(request);
+
+  assert.deepEqual(requests, [
+    {
+      operationName: "setSessionConfig",
+      request,
+      method: "POST",
+      path: "/api/sessions/session-1/config",
+      // The session id addresses the route, so it is not repeated in the body.
+      body: { configId: "model", value: "fast" },
+      headers: { "content-type": "application/json" },
     },
   ]);
 });

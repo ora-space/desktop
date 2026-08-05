@@ -409,6 +409,7 @@ function SkillImportDialog({ open, onOpenChange, onCompleted }: {
         <DialogDescription>{t("settings.skills.importDescription")}</DialogDescription>
       </DialogHeader>
       {session === null && <div className="grid gap-3 sm:grid-cols-2">
+        {/* @ts-expect-error webkitdirectory is a Chromium-only input attribute */}
         <input ref={folderInput} className="hidden" type="file" multiple webkitdirectory="" onChange={(event) => { void prepareBrowserUpload("folder", event.currentTarget.files); event.currentTarget.value = ""; }} />
         <input ref={archiveInput} className="hidden" type="file" accept=".zip,.skill,.tar.gz,.tgz" onChange={(event) => { void prepareBrowserUpload("archive", event.currentTarget.files); event.currentTarget.value = ""; }} />
         <Button variant="secondary" disabled={preparing} onClick={() => usesBrowserUploads ? folderInput.current?.click() : void chooseSource("folder")}>{t("settings.skills.importFolder")}</Button>
