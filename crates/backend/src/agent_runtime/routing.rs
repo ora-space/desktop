@@ -1,6 +1,6 @@
 use super::connection::RuntimeConnection;
 use crate::BackendError;
-use ora_acp::PermissionRequest;
+use ora_acp::{PermissionRequest, SessionResponse};
 use ora_contracts::acp::notification::SessionNotification;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,17 +8,35 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
-/// Carries low-volume session controls independently from bounded update traffic.
-pub(super) enum SessionControl {
+/// Carries normal session traffic in the same order observed on the ACP connection.
+#[derive(Debug)]
+pub(super) enum SessionEvent {
+    Update(SessionNotification),
     Permission(PermissionRequest),
+    Response(SessionResponse),
+}
+
+impl SessionEvent {
+    /// Returns the provider session id used to select the destination route.
+    fn session_id(&self) -> &str {
+        match self {
+            Self::Update(update) => &update.session_id.0,
+            Self::Permission(permission) => &permission.request.session_id.0,
+            Self::Response(response) => &response.session_id().0,
+        }
+    }
+}
+
+/// Carries failures that must remain observable when the normal event queue is full.
+pub(super) enum SessionControl {
     ConnectionLost(BackendError),
-    UpdateOverflow,
+    QueueOverflow,
 }
 
 /// Owns one session's generation-bound routes on the shared ACP connection.
 pub(super) struct SessionChannel {
     pub connection: RuntimeConnection,
-    pub updates: mpsc::Receiver<SessionNotification>,
+    pub events: mpsc::Receiver<SessionEvent>,
     pub pending_updates: VecDeque<SessionNotification>,
     pub controls: mpsc::UnboundedReceiver<SessionControl>,
     pub(super) _registration: RouteRegistration,
@@ -35,7 +53,7 @@ pub(super) struct RouteRegistry {
 struct RouteEntry {
     generation: u64,
     token: u64,
-    updates: mpsc::Sender<SessionNotification>,
+    events: mpsc::Sender<SessionEvent>,
     controls: mpsc::UnboundedSender<SessionControl>,
 }
 
@@ -53,7 +71,7 @@ impl RouteRegistry {
         self: &Arc<Self>,
         session_id: &str,
         generation: u64,
-        updates: mpsc::Sender<SessionNotification>,
+        events: mpsc::Sender<SessionEvent>,
         controls: mpsc::UnboundedSender<SessionControl>,
     ) -> RouteRegistration {
         // Serializing registration with setup buffering closes the race where an
@@ -68,14 +86,14 @@ impl RouteRegistry {
             RouteEntry {
                 generation,
                 token,
-                updates: updates.clone(),
+                events: events.clone(),
                 controls,
             },
         );
         let mut retained = VecDeque::new();
         while let Some(update) = pending.pop_front() {
             if update.session_id.0.as_ref() == session_id {
-                let _ = updates.try_send(update);
+                let _ = events.try_send(SessionEvent::Update(update));
             } else {
                 retained.push_back(update);
             }
@@ -88,55 +106,42 @@ impl RouteRegistry {
         }
     }
 
-    /// Routes one high-volume update without allowing a slow session to poison the connection.
-    pub(super) fn route_update(&self, update: SessionNotification) {
+    /// Routes one ordered event without allowing a slow session to poison the connection.
+    pub(super) fn route_event(&self, event: SessionEvent) -> Result<(), Box<SessionEvent>> {
         let mut pending = self
             .pending_setup_updates
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let session_id = update.session_id.to_string();
+        let session_id = event.session_id().to_string();
         let route = self
             .read_entries()
             .get(&session_id)
-            .map(|entry| (entry.token, entry.updates.clone()));
+            .map(|entry| (entry.token, entry.events.clone()));
         match route {
-            Some((token, updates)) => match updates.try_send(update) {
-                Err(TrySendError::Full(_)) => {
+            Some((token, events)) => match events.try_send(event) {
+                Err(TrySendError::Full(event)) => {
                     if let Some(entry) = self.remove_route(&session_id, token) {
-                        let _ = entry.controls.send(SessionControl::UpdateOverflow);
+                        let _ = entry.controls.send(SessionControl::QueueOverflow);
                     }
+                    Err(Box::new(event))
                 }
-                Err(TrySendError::Closed(_)) => {
+                Err(TrySendError::Closed(event)) => {
                     self.remove_route(&session_id, token);
+                    Err(Box::new(event))
                 }
-                Ok(()) => {}
+                Ok(()) => Ok(()),
             },
-            None if self.setup_count.load(Ordering::Acquire) > 0 => {
-                if pending.len() == super::CONTRACT_QUEUE_CAPACITY {
-                    pending.pop_front();
+            None if self.setup_count.load(Ordering::Acquire) > 0 => match event {
+                SessionEvent::Update(update) => {
+                    if pending.len() == super::CONTRACT_QUEUE_CAPACITY {
+                        pending.pop_front();
+                    }
+                    pending.push_back(update);
+                    Ok(())
                 }
-                pending.push_back(update);
-            }
-            None => {}
-        }
-    }
-
-    /// Routes a permission request or returns it so the supervisor can reject an orphan safely.
-    pub(super) fn route_permission(
-        &self,
-        permission: PermissionRequest,
-    ) -> Result<(), Box<PermissionRequest>> {
-        let session_id = permission.request.session_id.to_string();
-        match self.read_entries().get(&session_id) {
-            Some(entry)
-                if entry
-                    .controls
-                    .send(SessionControl::Permission(permission.clone()))
-                    .is_ok() =>
-            {
-                Ok(())
-            }
-            Some(_) | None => Err(Box::new(permission)),
+                SessionEvent::Permission(_) | SessionEvent::Response(_) => Err(Box::new(event)),
+            },
+            None => Err(Box::new(event)),
         }
     }
 
@@ -213,11 +218,18 @@ impl Drop for RouteRegistration {
 
 #[cfg(test)]
 mod tests {
-    use super::{RouteRegistry, SessionControl};
+    use super::{RouteRegistry, SessionControl, SessionEvent};
+    use ora_acp::{AcpInboundEvent, AcpPeer, PermissionRequest};
+    use ora_contracts::acp::common::SessionId;
     use ora_contracts::acp::notification::SessionNotification;
+    use ora_contracts::acp::permission::RequestPermissionRequest;
+    use ora_contracts::acp::rpc::RequestId;
     use ora_contracts::acp::session::{SessionInfoUpdate, SessionUpdate};
+    use ora_contracts::acp::tool_call::{ToolCallUpdate, ToolCallUpdateFields};
     use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
     use std::sync::Arc;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex, split};
     use tokio::sync::mpsc;
 
     /// Verifies central routing keeps concurrent session update streams isolated.
@@ -235,10 +247,110 @@ mod tests {
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("First")),
         );
 
-        routes.route_update(update.clone());
+        assert!(
+            routes
+                .route_event(SessionEvent::Update(update.clone()))
+                .is_ok()
+        );
 
-        assert_eq!(first_receiver.recv().await, Some(update));
+        match first_receiver.recv().await {
+            Some(SessionEvent::Update(received)) => assert_eq!(received, update),
+            Some(SessionEvent::Permission(_) | SessionEvent::Response(_)) | None => {
+                panic!("expected session update")
+            }
+        }
         assert!(second_receiver.try_recv().is_err());
+    }
+
+    /// Verifies a terminating response cannot overtake an update in the per-session FIFO.
+    #[tokio::test]
+    async fn preserves_update_then_response_order() {
+        let (ora_stream, agent_stream) = duplex(4096);
+        let (ora_reader, ora_writer) = split(ora_stream);
+        let (agent_reader, mut agent_writer) = split(agent_stream);
+        let mut agent_reader = BufReader::new(agent_reader);
+        let mut peer = AcpPeer::spawn(ora_reader, ora_writer);
+        let session_id = SessionId::new("session-1");
+        let _pending = peer
+            .client
+            .start_session_request::<_, Value>(
+                session_id.clone(),
+                "session/prompt",
+                &json!({ "sessionId": session_id }),
+            )
+            .await
+            .expect("start session request");
+        let mut outbound = String::new();
+        agent_reader
+            .read_line(&mut outbound)
+            .await
+            .expect("read session request");
+        let outbound: Value = serde_json::from_str(outbound.trim()).expect("parse session request");
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": outbound["id"],
+            "result": { "stopReason": "end_turn" },
+        });
+        agent_writer
+            .write_all(format!("{response}\n").as_bytes())
+            .await
+            .expect("write session response");
+        let response = match peer.next_event().await.expect("receive response event") {
+            AcpInboundEvent::SessionResponse(response) => response,
+            AcpInboundEvent::SessionUpdate(_)
+            | AcpInboundEvent::PermissionRequest(_)
+            | AcpInboundEvent::Fatal(_) => panic!("expected session response"),
+        };
+        let routes = Arc::new(RouteRegistry::default());
+        let (events, mut events_receiver) = mpsc::channel(2);
+        let (controls, _controls_receiver) = mpsc::unbounded_channel();
+        let _registration = routes.register("session-1", 1, events, controls);
+        let update = SessionNotification::new(
+            "session-1",
+            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+        );
+
+        assert!(
+            routes
+                .route_event(SessionEvent::Update(update.clone()))
+                .is_ok()
+        );
+        assert!(routes.route_event(SessionEvent::Response(response)).is_ok());
+
+        match events_receiver.recv().await {
+            Some(SessionEvent::Update(received)) => assert_eq!(received, update),
+            Some(SessionEvent::Permission(_) | SessionEvent::Response(_)) | None => {
+                panic!("expected session update")
+            }
+        }
+        assert!(matches!(
+            events_receiver.recv().await,
+            Some(SessionEvent::Response(_))
+        ));
+    }
+
+    /// Verifies an orphan permission is returned so the connection loop can cancel it immediately.
+    #[test]
+    fn returns_a_permission_that_has_no_session_route() {
+        let routes = RouteRegistry::default();
+        let permission = PermissionRequest {
+            request_id: RequestId::Number(7),
+            request: RequestPermissionRequest::new(
+                "missing-session",
+                ToolCallUpdate::new("tool-1", ToolCallUpdateFields::new()),
+                Vec::new(),
+            ),
+        };
+
+        match routes.route_event(SessionEvent::Permission(permission.clone())) {
+            Err(event) => match *event {
+                SessionEvent::Permission(received) => assert_eq!(received, permission),
+                SessionEvent::Update(_) | SessionEvent::Response(_) => {
+                    panic!("expected permission request")
+                }
+            },
+            Ok(()) => panic!("expected missing route"),
+        }
     }
 
     /// Verifies session/new updates survive until the provider id can be registered.
@@ -250,14 +362,23 @@ mod tests {
             "new-session",
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("Created")),
         );
-        routes.route_update(update.clone());
+        assert!(
+            routes
+                .route_event(SessionEvent::Update(update.clone()))
+                .is_ok()
+        );
         let (updates, mut receiver) = mpsc::channel(1);
         let (controls, _controls_receiver) = mpsc::unbounded_channel();
 
         let _registration = routes.register("new-session", 1, updates, controls);
         drop(setup);
 
-        assert_eq!(receiver.recv().await, Some(update));
+        match receiver.recv().await {
+            Some(SessionEvent::Update(received)) => assert_eq!(received, update),
+            Some(SessionEvent::Permission(_) | SessionEvent::Response(_)) | None => {
+                panic!("expected setup update")
+            }
+        }
     }
 
     /// Verifies one slow session is detached without invalidating unrelated routes.
@@ -272,12 +393,16 @@ mod tests {
             SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
         );
 
-        routes.route_update(update.clone());
-        routes.route_update(update);
+        assert!(
+            routes
+                .route_event(SessionEvent::Update(update.clone()))
+                .is_ok()
+        );
+        assert!(routes.route_event(SessionEvent::Update(update)).is_err());
 
         assert!(matches!(
             controls_receiver.recv().await,
-            Some(SessionControl::UpdateOverflow)
+            Some(SessionControl::QueueOverflow)
         ));
         assert!(!routes.read_entries().contains_key("session-1"));
     }
@@ -301,11 +426,71 @@ mod tests {
                 assert_eq!(received.classification(), error.classification());
                 assert_eq!(received.public_error(), error.public_error());
             }
-            Some(SessionControl::Permission(_)) | Some(SessionControl::UpdateOverflow) | None => {
+            Some(SessionControl::QueueOverflow) | None => {
                 panic!("expected connection loss")
             }
         }
         assert!(new_controls_receiver.try_recv().is_err());
         assert!(routes.read_entries().contains_key("new"));
+    }
+
+    /// Verifies an event already queued remains readable after generation failure notifies loss.
+    ///
+    /// Active scheduling drains this queue before applying a terminal connection control.
+    #[tokio::test]
+    async fn keeps_queued_events_readable_after_connection_loss() {
+        let (ora_stream, agent_stream) = duplex(4096);
+        let (ora_reader, ora_writer) = split(ora_stream);
+        let (agent_reader, mut agent_writer) = split(agent_stream);
+        let mut agent_reader = BufReader::new(agent_reader);
+        let mut peer = AcpPeer::spawn(ora_reader, ora_writer);
+        let session_id = SessionId::new("session-1");
+        let _pending = peer
+            .client
+            .start_session_request::<_, Value>(
+                session_id.clone(),
+                "session/prompt",
+                &json!({ "sessionId": session_id }),
+            )
+            .await
+            .expect("start session request");
+        let mut outbound = String::new();
+        agent_reader
+            .read_line(&mut outbound)
+            .await
+            .expect("read session request");
+        let outbound: Value = serde_json::from_str(outbound.trim()).expect("parse session request");
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": outbound["id"],
+            "result": { "stopReason": "end_turn" },
+        });
+        agent_writer
+            .write_all(format!("{response}\n").as_bytes())
+            .await
+            .expect("write session response");
+        let response = match peer.next_event().await.expect("receive response event") {
+            AcpInboundEvent::SessionResponse(response) => response,
+            AcpInboundEvent::SessionUpdate(_)
+            | AcpInboundEvent::PermissionRequest(_)
+            | AcpInboundEvent::Fatal(_) => panic!("expected session response"),
+        };
+        let routes = Arc::new(RouteRegistry::default());
+        let (events, mut events_receiver) = mpsc::channel(2);
+        let (controls, mut controls_receiver) = mpsc::unbounded_channel();
+        let _registration = routes.register("session-1", 1, events, controls);
+        assert!(routes.route_event(SessionEvent::Response(response)).is_ok());
+        let error = super::super::runtime_internal("agent_runtime_unavailable", "connection lost");
+
+        routes.fail_generation(1, error);
+
+        assert!(matches!(
+            events_receiver.recv().await,
+            Some(SessionEvent::Response(_))
+        ));
+        assert!(matches!(
+            controls_receiver.recv().await,
+            Some(SessionControl::ConnectionLost(_))
+        ));
     }
 }

@@ -1,7 +1,10 @@
 mod actor;
 mod connection;
+mod events;
+mod handoff;
 mod history;
 mod routing;
+mod scheduling;
 mod stream;
 mod support;
 mod warm;
@@ -17,6 +20,7 @@ use crate::{BackendError, ErrorClassification};
 use connection::{ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionRepository};
 use ora_contracts::acp::content::ContentBlock;
+use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_contracts::acp::session::SessionUpdate;
 use ora_contracts::acp::session_config_options::{SessionConfigId, SessionConfigOptionValue};
 use ora_contracts::acp::slash_command::AvailableCommand;
@@ -35,7 +39,7 @@ use ora_domain::{
 };
 use ora_history::{binding_needs_handoff, read_session_history};
 use ora_logging::{ora_debug, ora_warn};
-use routing::SessionChannel;
+use routing::{SessionChannel, SessionEvent};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -876,16 +880,31 @@ async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<AvailableCo
     loop {
         // ACP sends setup updates before the response, but the shared router runs
         // independently and may need one short scheduling window to deliver them.
-        let Ok(Some(notification)) =
-            tokio::time::timeout(Duration::from_millis(10), channel.updates.recv()).await
+        let Ok(Some(event)) =
+            tokio::time::timeout(Duration::from_millis(10), channel.events.recv()).await
         else {
             break;
         };
-        if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
-            // Command updates replace the full catalog, so the last setup value wins.
-            available_commands = update.available_commands.clone();
-        } else {
-            channel.pending_updates.push_back(notification);
+        match event {
+            SessionEvent::Update(notification) => {
+                if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
+                    // Command updates replace the full catalog, so the last setup value wins.
+                    available_commands = update.available_commands.clone();
+                } else {
+                    channel.pending_updates.push_back(notification);
+                }
+            }
+            SessionEvent::Permission(permission) => {
+                let _ = channel
+                    .connection
+                    .client
+                    .respond(
+                        &permission.request_id,
+                        &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+                    )
+                    .await;
+            }
+            SessionEvent::Response(_) => {}
         }
     }
     available_commands
