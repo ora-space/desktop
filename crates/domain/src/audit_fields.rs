@@ -17,4 +17,9 @@ impl AuditFields {
             is_deleted,
         }
     }
+
+    /// Advances the modification timestamp without exposing audit-field mutation to callers.
+    pub fn touch(&mut self, updated_at: i64) {
+        self.updated_at = updated_at;
+    }
 }

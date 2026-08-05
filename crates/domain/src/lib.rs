@@ -27,7 +27,9 @@ pub use ids::{
 pub use project::Project;
 pub use project_work_context::{ProjectWorkContext, ProjectWorkContextSurface};
 pub use session::{AgentCli, HistoryState, Session, SessionStatus};
-pub use skill::Skill;
+pub use skill::{
+    Skill, SkillDescriptionError, SkillNameError, validate_skill_description, validate_skill_name,
+};
 pub use task::{Task, TaskStatus};
 pub use task_diff_comment::{
     TaskDiffAnchor, TaskDiffComment, TaskDiffCommentKind, TaskDiffSide, TaskDiffThreadStatus,

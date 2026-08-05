@@ -1,0 +1,28 @@
+[package]
+name = "ora-skill-package"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_skill_package"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+flate2 = { workspace = true }
+ora-domain = { workspace = true }
+serde_yaml = { workspace = true }
+tar = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+unicode-normalization = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+flate2 = { workspace = true }
+pretty_assertions = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
+zip = { workspace = true }

@@ -28,6 +28,7 @@ tauri = { version = "2.10.3", features = [] }
 tauri-plugin-dialog = "2"
 ora-backend = { path = "../../../crates/backend" }
 ora-contracts = { path = "../../../crates/contracts" }
+ora-fs = { path = "../../../crates/fs" }
 ora-logging = { path = "../../../crates/logging" }
 tempfile = "3"
 thiserror = "2"

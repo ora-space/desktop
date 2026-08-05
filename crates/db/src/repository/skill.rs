@@ -37,6 +37,16 @@ impl SkillRepository for SqliteSkillRepository {
         }).map_err(skill_repository_error_from_database)
     }
 
+    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, RepositoryError> {
+        self.pool.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, name, description, created_at, updated_at, is_deleted FROM skills WHERE name = ?1 COLLATE NOCASE AND is_deleted = 0",
+            )?;
+            let mut rows = statement.query(params![name])?;
+            rows.next()?.map(map_skill_row).transpose()
+        }).map_err(skill_repository_error_from_database)
+    }
+
     fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(

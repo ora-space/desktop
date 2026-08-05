@@ -1,6 +1,6 @@
 # Task Workspace Files
 
-Ora's task workspace file feature gives the Web frontend a read-only view of the active workspace for a task. It supports directory browsing, bounded text viewing, filename/content search, line selection for chat context, and native file-change refreshes.
+Ora's task workspace file feature gives the Web and Desktop frontends a read-only view of the active workspace for a task. It supports directory browsing, bounded text viewing, filename/content search, line selection for chat context, and native file-change refreshes.
 
 ## Ownership and flow
 
@@ -11,6 +11,7 @@ The layers are intentionally narrow:
 - `crates/fs` owns path validation, canonical containment checks, file bounds, ripgrep execution, and native watching.
 - `apps/web/server/src/service/workspace_file.rs` maps filesystem results to `ora-contracts` values.
 - `apps/web/server/src/handlers/workspace_files.rs` owns HTTP extraction, task-root resolution, NDJSON framing, and request lifecycle completion.
+- `apps/desktop/src-tauri/src/workspace_files.rs` maps the same filesystem results to Tauri commands and preserves typed lifecycle errors across IPC.
 - `packages/app-shell/src/features/files` owns the file tree, viewer, search UI, cache invalidation, and line-selection handoff to the composer.
 
 ## HTTP operations
@@ -24,6 +25,10 @@ The layers are intentionally narrow:
 
 All returned paths are slash-separated and relative to the resolved task workspace. `watchWorkspace` emits `data`, `error`, and `end` frames. Its error frame uses the shared `{ code, params, requestId }` contract, so the frontend can reuse the same remote-error decoder as unary requests.
 
+## Desktop operations
+
+The Tauri frontend uses the same contract operation names for unary calls and maps them to `list_workspace_directory`, `read_workspace_file`, and `search_workspace` commands. `watchWorkspace` uses the existing `stream_contract` channel with the operation name preserved, so Desktop and Web share the same file contracts and stream framing.
+
 ## Safety and bounds
 
 - Absolute paths, parent traversal, Windows prefix components, and paths that resolve outside the canonical root are rejected.
@@ -33,7 +38,7 @@ All returned paths are slash-separated and relative to the resolved task workspa
 
 ## Errors and logging
 
-Workspace filesystem failures stay typed inside `ora-fs` until the Web adapter maps them to a transport-neutral `BackendError`. The adapter hides paths and tool diagnostics from public payloads while retaining the Rust source chain for `ErrorReport` logging. Missing paths map to `file_system_path_not_found`; invalid paths, binary files, and invalid UTF-8 map to `invalid_request`; bounded failures keep their payload-size or unprocessable classification; infrastructure failures map to `internal_error`.
+Workspace filesystem failures stay typed inside `ora-fs` until the Web or Desktop adapter maps them to a transport-neutral `BackendError`. The adapters hide paths and tool diagnostics from public payloads while retaining the Rust source chain for `ErrorReport` logging. Missing paths map to `file_system_path_not_found`; invalid paths, binary files, and invalid UTF-8 map to `invalid_request`; bounded failures keep their payload-size or unprocessable classification; infrastructure failures map to `internal_error`.
 
 The watcher follows the shared stream lifecycle used by ACP session streams. It keeps one canonical request id from response creation through normal end, watcher failure, or cancellation. The handler defers completion logging until the stream ends or emits its typed error frame, preventing an early success event and a later duplicate failure event.
 

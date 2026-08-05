@@ -5,7 +5,7 @@ The public application surface is split across `ora-domain`, `ora-contracts`, `o
 ## Ownership
 
 - `ora-domain` owns schema-backed entities, identifier newtypes, and categorical enums. See [Domain Models](domain-models.md).
-- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Session, Skill, Agent, and Git identity operations, plus the Web-only project work context and filesystem operations.
+- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Session, Skill, Skill Import, Agent, and Git identity operations, plus the Web-only project work context and filesystem operations.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
 - `ora-contracts` also owns the frontend endpoint manifest for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode.
 - `ora-contracts` exports TypeScript DTOs into `packages/contracts/src` so frontend packages consume the contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`. See [Frontend Contract SDK](frontend-contract-sdk.md).
@@ -55,7 +55,8 @@ The handler set is intentionally narrower than full CRUD per entity, because som
 | `project` | create, get, list, list branches, update |
 | `task` | create, get, list, update |
 | `session` | get, list, delete |
-| `skill` | create, get, list, update, delete, import, startup reconciliation |
+| `skill` | create, get, list, update, delete, startup reconciliation |
+| `skill_import` | prepare, get, commit, cancel batch sessions |
 | `agent_definition` | create, get, list, update, delete |
 | `project_work_context` | open, renew |
 | `task_diff` | read diff, create/list/reply/update comments, commit, push |
