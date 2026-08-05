@@ -32,6 +32,11 @@ export const queryKeys = {
    */
   warmSession: (target: WarmSessionTarget | null, agentCli: AgentCli) =>
     ["warmSession", target?.type ?? "none", targetId(target), agentCli] as const,
+  specs: (projectId: string) => ["specs", projectId] as const,
+  specCatalog: (projectId: string, targetKey: string) =>
+    ["specs", projectId, "catalog", targetKey] as const,
+  specDocument: (projectId: string, targetKey: string, path: string) =>
+    ["specs", projectId, "document", targetKey, path] as const,
 };
 
 /** Extracts the identifier a warm target is scoped to, for cache-key purposes. */

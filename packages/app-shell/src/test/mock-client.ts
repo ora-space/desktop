@@ -181,6 +181,16 @@ export function createMockClient(state: MockClientState): ContractsClient {
       load: async function* () { yield { type: "completed" as const }; },
       prompt: async function* () { yield { type: "completed" as const, stopReason: "end_turn" as const }; },
       respondToPermission: async () => ({}),
+      switchAgent: async (req) => {
+        const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
+        session.agentCli = req.agentCli;
+        return { session, availableCommands: [] };
+      },
+      resumeHistory: async (req) => {
+        const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
+        session.historyState = { type: "writable" };
+        return { session };
+      },
       stop: async (req) => {
         const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
         session.status = "stopped";
@@ -265,6 +275,22 @@ export function createMockClient(state: MockClientState): ContractsClient {
       }),
       searchWorkspace: async () => ({ results: [], truncated: false }),
       watchWorkspace: () => (async function* () {
+        yield* [];
+      })(),
+    },
+    spec: {
+      catalog: async () => ({ sources: [], documents: [], truncated: false }),
+      read: async (request) => ({
+        relativePath: request.relativePath,
+        content: "",
+        byteSize: 0,
+      }),
+      resolveSource: async () => ({
+        relativePath: "docs/specs",
+        workflow: { kind: "custom", name: "Custom" },
+      }),
+      updateProjectSources: async (request) => ({ sources: request.sources }),
+      watch: () => (async function* () {
         yield* [];
       })(),
     },

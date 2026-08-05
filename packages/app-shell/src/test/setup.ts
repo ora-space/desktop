@@ -4,6 +4,30 @@ import { cleanup } from "@testing-library/react";
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
+});
+
+// Node 25 exposes an incomplete experimental `localStorage` when no
+// `--localstorage-file` is configured. Vitest can copy that object over jsdom's
+// implementation, so install a deterministic Storage implementation for tests.
+const storageEntries = new Map<string, string>();
+const testLocalStorage: Storage = {
+  get length() {
+    return storageEntries.size;
+  },
+  clear: () => storageEntries.clear(),
+  getItem: (key) => storageEntries.get(key) ?? null,
+  key: (index) => [...storageEntries.keys()][index] ?? null,
+  removeItem: (key) => {
+    storageEntries.delete(key);
+  },
+  setItem: (key, value) => {
+    storageEntries.set(key, String(value));
+  },
+};
+Object.defineProperty(window, "localStorage", {
+  configurable: true,
+  value: testLocalStorage,
 });
 
 // jsdom lacks matchMedia; settings theme subscription depends on it.

@@ -43,6 +43,9 @@ import { watchWorkspaceContinuously } from "./workspace-watch";
 interface WorkspaceFilesViewProps {
   taskId: string;
   toolbar?: ReactNode;
+  hideHeader?: boolean;
+  surface?: "explorer" | "search";
+  onSurfaceChange?: (surface: "explorer" | "search") => void;
 }
 
 interface DirectoryTreeProps {
@@ -58,11 +61,22 @@ interface DirectoryTreeProps {
 const MAX_VISIBLE_SEARCH_RESULTS = 500;
 
 /** Renders the task worktree explorer, ripgrep search, and bounded read-only file viewer. */
-export function WorkspaceFilesView({ taskId, toolbar }: WorkspaceFilesViewProps) {
+export function WorkspaceFilesView({
+  taskId,
+  toolbar,
+  hideHeader = false,
+  surface: controlledSurface,
+  onSurfaceChange,
+}: WorkspaceFilesViewProps) {
   const { t } = useTranslation();
   const client = useContractsClient();
   const queryClient = useQueryClient();
-  const [surface, setSurface] = useState<"explorer" | "search">("explorer");
+  const [internalSurface, setInternalSurface] = useState<"explorer" | "search">("explorer");
+  const surface = controlledSurface ?? internalSurface;
+  const setSurface = (next: "explorer" | "search") => {
+    if (controlledSurface === undefined) setInternalSurface(next);
+    onSurfaceChange?.(next);
+  };
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set([""]));
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<WorkspaceFileMatchTarget | null>(
@@ -158,37 +172,7 @@ export function WorkspaceFilesView({ taskId, toolbar }: WorkspaceFilesViewProps)
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.workspaceFiles(taskId) });
 
-  return (
-    <section className="flex h-full min-h-0 flex-col bg-background">
-      <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3">
-        <Button
-          size="sm"
-          variant={surface === "explorer" ? "secondary" : "ghost"}
-          onClick={() => setSurface("explorer")}
-        >
-          <IconFolderOpen />
-          {t("files.explorer")}
-        </Button>
-        <Button
-          size="sm"
-          variant={surface === "search" ? "secondary" : "ghost"}
-          onClick={() => setSurface("search")}
-        >
-          <IconSearch />
-          {t("files.search")}
-        </Button>
-        <div className="flex-1" />
-        {toolbar}
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label={t("files.refresh")}
-          onClick={() => void refresh()}
-        >
-          <IconRefresh />
-        </Button>
-      </header>
-
+  const body = (
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup orientation="horizontal" className="min-h-0">
         <ResizablePanel id="workspace-file-content" minSize={420}>
@@ -338,6 +322,43 @@ export function WorkspaceFilesView({ taskId, toolbar }: WorkspaceFilesViewProps)
         </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+  );
+
+  if (hideHeader) {
+    return <section className="flex h-full min-h-0 flex-col bg-background">{body}</section>;
+  }
+
+  return (
+    <section className="flex h-full min-h-0 flex-col bg-background">
+      <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3">
+        <Button
+          size="sm"
+          variant={surface === "explorer" ? "secondary" : "ghost"}
+          onClick={() => setSurface("explorer")}
+        >
+          <IconFolderOpen />
+          {t("files.explorer")}
+        </Button>
+        <Button
+          size="sm"
+          variant={surface === "search" ? "secondary" : "ghost"}
+          onClick={() => setSurface("search")}
+        >
+          <IconSearch />
+          {t("files.search")}
+        </Button>
+        <div className="flex-1" />
+        {toolbar}
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label={t("files.refresh")}
+          onClick={() => void refresh()}
+        >
+          <IconRefresh />
+        </Button>
+      </header>
+      {body}
     </section>
   );
 }
