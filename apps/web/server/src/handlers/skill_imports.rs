@@ -9,7 +9,7 @@ use ora_backend::Backend;
 use ora_contracts::{
     CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest,
     GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest,
-    PrepareSkillImportResponse, SkillImportSource,
+    PrepareSkillImportResponse, SkillImportConflictDecision, SkillImportSource,
 };
 use ora_skill_package::path::RelativePath;
 use serde::Deserialize;
@@ -30,6 +30,13 @@ pub struct PrepareSkillImportQuery {
 #[serde(rename_all = "camelCase")]
 pub struct SkillImportSessionPath {
     session_id: String,
+}
+
+/// Carries conflict decisions before the route session id is attached.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitSkillImportBody {
+    decisions: Vec<SkillImportConflictDecision>,
 }
 
 /// Cap for one raw archive upload streamed by the web adapter.
@@ -93,7 +100,7 @@ pub async fn get_skill_import(
 pub async fn commit_skill_import(
     State(app_state): State<AppState>,
     AxumPath(path): AxumPath<SkillImportSessionPath>,
-    Json(body): Json<CommitSkillImportRequest>,
+    Json(body): Json<CommitSkillImportBody>,
 ) -> Result<Response, WebApiError> {
     let response = app_state
         .backend()

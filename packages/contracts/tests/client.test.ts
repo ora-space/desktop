@@ -191,6 +191,38 @@ test("puts the session id in the config path while the choice stays in the body"
   ]);
 });
 
+test("puts the session id in the commit path while decisions stay in JSON", async () => {
+  const requests: ContractTransportRequest[] = [];
+  const client = createContractsClient(
+    recordingTransport(requests, {
+      sessionId: "import-1",
+      status: "committing",
+      progress: { processed: 0, total: 1, results: [] },
+    }),
+  );
+  const request = {
+    sessionId: "import-1",
+    decisions: [{ candidateId: "candidate-1", decision: "skip" as const }],
+  };
+
+  await client.skillImport.commit(request);
+
+  assert.deepEqual(requests, [
+    {
+      operationName: "commitSkillImport",
+      request,
+      method: "POST",
+      path: "/api/skill-imports/import-1/commit",
+      body: {
+        decisions: [{ candidateId: "candidate-1", decision: "skip" }],
+      },
+      headers: {
+        "content-type": "application/json",
+      },
+    },
+  ]);
+});
+
 test("uses a skill id in PUT paths while leaving editable fields in JSON", async () => {
   const requests: ContractTransportRequest[] = [];
   const client = createContractsClient(
