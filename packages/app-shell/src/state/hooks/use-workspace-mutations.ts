@@ -219,34 +219,6 @@ export function useCreateSession() {
 }
 
 /**
- * Moves a live conversation onto a different agent CLI.
- *
- * The session keeps its identity and its recorded history; only the agent behind
- * it changes. The new agent starts with no context, so the backend prepends the
- * recorded transcript to the next prompt rather than replaying anything now —
- * which is why the transcript on screen is left untouched.
- *
- * The switch does re-handshake, though, and the options that come back describe
- * the new CLI. They are written into the store rather than left to be refetched,
- * because ACP offers them only during a handshake: nothing else this session
- * does would ever ask again, so the picker would keep offering models the agent
- * behind it cannot serve.
- */
-export function useSwitchSessionAgent() {
-  const client = useContractsClient();
-  const queryClient = useQueryClient();
-  const chatStore = useChatStore();
-  return useMutation({
-    mutationFn: ({ sessionId, agentCli }: { sessionId: string; agentCli: AgentCli }) =>
-      client.session.switchAgent({ sessionId, agentCli }),
-    onSuccess: (response) => {
-      chatStore.getState().setConfigOptions(response.session.id, response.configOptions);
-      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-    },
-  });
-}
-
-/**
  * Returns a session whose history stopped being writable to a usable state.
  *
  * Everything else a degraded session can do is blocked until this succeeds —

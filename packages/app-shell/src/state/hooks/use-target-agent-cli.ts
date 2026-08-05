@@ -2,34 +2,50 @@ import type { AgentCli } from "@ora/contracts";
 import { useSettingsStore } from "../stores/settings-store";
 import { usePendingAgentStore } from "../stores/pending-agent-store";
 import { warmTargetKey } from "./use-warm-session";
+import { useSessions } from "./use-sessions";
 
-/**
- * Resolves which agent a chat surface warms against before it has a binding.
- *
- * This answers only for a surface the backend has no session row for. A
- * persisted session runs on whichever CLI it is bound to, and that binding —
- * not this — is what the picker must show for it; moving it is
- * `switchSessionAgent`'s job. Callers layer the binding over this result rather
- * than this hook guessing at it.
- *
- * Before a row exists there is nowhere else to record the pick, and the shared
- * default alone cannot hold it: reading that directly would let picking an
- * agent for one not-yet-started chat repaint every other one the moment it is
- * visited. So this prefers whatever was last picked for this exact target, held
- * in `usePendingAgentStore`, and falls back to the shared default only for a
- * target no one has touched yet.
- *
- * Keyed the same way `useWarmSession` keys its target, so a surface always warms
- * against the agent the picker is showing for it.
- */
-export function useTargetAgentCli(selection: {
+/** The selection legs that decide which agent a chat surface is pointing at. */
+interface AgentSelection {
   projectId: string | null;
   taskId: string | null;
-}): AgentCli {
+  sessionId: string | null;
+}
+
+/**
+ * Resolves which agent CLI a chat surface is currently pointing at.
+ *
+ * The composer and the model picker each warm a session against this answer, and
+ * a warm session's identity includes the CLI — so two call sites that computed it
+ * differently would build a second provider session and leave the picker offering
+ * models the composer is not pointing at. Owning the whole precedence chain in
+ * one place is what keeps them from drifting apart; callers must not re-derive
+ * any part of it.
+ *
+ * A pending switch outranks the session's own binding. The user has chosen to
+ * move this conversation, and everything on screen must already describe the
+ * agent it is moving to, even though the binding itself does not change until
+ * the next message is sent.
+ *
+ * With no pending move, a persisted session runs on whatever the backend has it
+ * bound to, which is not necessarily the stored default — that only decides what
+ * the *next* surface opens on. Before a session row exists there is nothing
+ * bound, so the pick recorded for this exact target answers instead; reading the
+ * shared default directly would let picking an agent for one not-yet-started chat
+ * repaint every other one the moment it is visited.
+ */
+export function useTargetAgentCli(selection: AgentSelection): AgentCli {
   const defaultAgentCli = useSettingsStore((state) => state.settings.agentCli);
+  const { data: sessions = [] } = useSessions();
   const targetKey = warmTargetKey(selection);
+  const pendingSwitch = usePendingAgentStore((state) =>
+    selection.sessionId === null ? undefined : state.switches[selection.sessionId],
+  );
   const pickedForTarget = usePendingAgentStore((state) =>
     targetKey === null ? undefined : state.selections[targetKey],
   );
-  return pickedForTarget ?? defaultAgentCli;
+  const boundAgentCli = sessions.find(
+    (session) => session.id === selection.sessionId,
+  )?.agentCli;
+  return pendingSwitch ?? boundAgentCli ?? pickedForTarget ?? defaultAgentCli;
 }
+

@@ -7,6 +7,7 @@ import { useChatStore } from "../../chat-store-context";
 import { clientId } from "../client-id";
 import { queryKeys } from "./query-keys";
 import { useSessions } from "./use-sessions";
+import { usePendingSwitch } from "../stores/pending-agent-store";
 
 /** The provider session backing one chat surface, and whether it is still being opened. */
 export interface WarmSession {
@@ -41,13 +42,19 @@ export function useWarmSession(
   const chatStore = useChatStore();
   const setConfigOptions = useStore(chatStore, (state) => state.setConfigOptions);
   const { data: sessions = [] } = useSessions();
+  const pendingSwitch = usePendingSwitch(selection.sessionId);
   // Selection can already point at a session that was never persisted — a chat
   // whose attach failed, for one — and that surface still needs a warm session
   // to retry with. Only a session the backend actually stored ends warming.
   const isPersisted =
     selection.sessionId !== null
     && sessions.some((session) => session.id === selection.sessionId);
-  const target = isPersisted ? null : warmTarget(selection);
+  // A persisted session normally has nothing to warm: its options arrive with
+  // `session/load`. A pending move is the exception — the CLI it is moving to
+  // has not handshaken here yet, and warming is the only way to show its models
+  // before the move is paid for. The backend claims this very session when the
+  // move commits, so the model chosen on it survives into the rebind.
+  const target = isPersisted && pendingSwitch === undefined ? null : warmTarget(selection);
 
   // The backend keys warm sessions by exactly these values, so the same surface
   // always resolves to the same session and repeated calls are cache hits rather

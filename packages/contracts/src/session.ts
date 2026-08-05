@@ -228,6 +228,16 @@ export type StopSessionResponse = { session: Session };
 export type SwitchSessionAgentRequest = {
   sessionId: string;
   agentCli: AgentCli;
+  /**
+   * Identifies the client surface whose warm session this switch claims.
+   *
+   * The provider session the new CLI runs on is the one this client already
+   * warmed while its picker was showing that CLI's models, and warm entries
+   * are keyed by client. Carrying the same value here is what makes the
+   * switch claim that entry — including any model chosen on it — rather than
+   * build a second session the user never configured.
+   */
+  clientId: string;
 };
 
 /**

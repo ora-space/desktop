@@ -319,6 +319,14 @@ pub struct StopSessionResponse {
 pub struct SwitchSessionAgentRequest {
     pub session_id: String,
     pub agent_cli: AgentCli,
+    /// Identifies the client surface whose warm session this switch claims.
+    ///
+    /// The provider session the new CLI runs on is the one this client already
+    /// warmed while its picker was showing that CLI's models, and warm entries
+    /// are keyed by client. Carrying the same value here is what makes the
+    /// switch claim that entry — including any model chosen on it — rather than
+    /// build a second session the user never configured.
+    pub client_id: String,
 }
 
 /// Returns the session rebound to its new CLI.
