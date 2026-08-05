@@ -11,7 +11,6 @@
 | `SqliteSessionRepository` | `SessionRepository` |
 | `SqliteWorktreeRepository` | `WorktreeRepository` |
 | `SqliteSkillRepository` | `SkillRepository` |
-| `SqliteSkillImportUnitOfWork` | `SkillImportUnitOfWork` |
 | `SqliteAgentDefinitionRepository` | `AgentDefinitionRepository` |
 | `SqliteProjectWorkContextRepository` | `ProjectWorkContextRepository` |
 | `SqliteTaskDiffCommentRepository` | `TaskDiffCommentRepository` |
@@ -74,7 +73,7 @@ These transactions touch Ora-owned database state only. They never invoke Git, n
 
 SQLite execution, query, and row-mapping failures are wrapped in the shared application-owned `RepositoryError`. The wrapper keeps the concrete `DatabaseError` as its `Error::source()` instead of stringifying it, so application and backend layers can add semantic context while diagnostics still reach the original database failure without repeating source text. Database-specific types remain hidden from repository port signatures. Bootstrap and migration failures surface as `DatabaseError`.
 
-Skill import is the one repository operation that deliberately spans a filesystem callback. `SqliteSkillImportUnitOfWork` inserts the row inside an open transaction, invokes the injected package promotion, and commits only after promotion succeeds. Insert and commit failures retain SQLite sources; promotion failures retain the package-store source. The application layer uses the failure phase to choose the correct compensation without matching strings.
+Skill import reuses `SqliteSkillRepository` for record reads and writes. Cross-filesystem package promotion, compensation, and per-skill atomicity are application-owned in the filesystem skill storage adapter; SQLite never holds a transaction open while a source archive is copied.
 
 Timestamps used by migration bookkeeping come from an injected `TimestampSource` so tests can be deterministic; `SystemTimestampSource` reads Unix epoch milliseconds from the system clock. Entity `created_at`/`updated_at` values are supplied from above through the application `Clock`, not generated inside the repositories.
 

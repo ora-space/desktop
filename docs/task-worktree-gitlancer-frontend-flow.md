@@ -121,6 +121,9 @@ const diff = await client.task.getDiff({ taskId });
 
 回答完成后，`useTaskDiffLiveSync` 监听 chat store 的工具调用完成事件，以 400ms 去抖刷新 diff query。`turn-diff-summary` 展示本轮编辑的文件和增删行数；点击文件通过 `TaskChangesNavigationProvider` 打开右侧 Changes 面板并定位到对应文件。刷新或下一次 prompt 完成也会使缓存失效，因此 VS Code 等外部编辑能回到同一审查入口。
 
+For a `project_root` task, `baseCommitId` and `headCommitId` are the same current `HEAD`.
+The project checkout can still have staged, unstaged, and untracked changes in the returned patch.
+
 ## 评论 API
 
 评论由根讨论和回复两种状态组成。只有根讨论拥有行锚点和 `open` / `resolved` 状态，回复只引用父评论。
@@ -131,6 +134,10 @@ POST /api/tasks/{taskId}/diff/comments
 POST /api/tasks/{taskId}/diff/comments/{commentId}/replies
 PUT  /api/tasks/{taskId}/diff/comments/{commentId}/status
 ```
+
+Line comments and Git write operations are supported only for isolated `worktree` tasks.
+For a `project_root` task, creating a comment, committing, or pushing returns HTTP `409`
+with the `task_worktree_unavailable` error code.
 
 创建根讨论：
 

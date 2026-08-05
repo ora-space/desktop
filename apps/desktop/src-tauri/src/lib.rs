@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod error;
 mod state;
+mod workspace_files;
 
 use crate::config::DesktopConfigStore;
 use crate::error::DesktopBootstrapError;
@@ -53,6 +54,12 @@ pub fn run() {
             commands::reply_task_diff_comment,
             commands::set_task_diff_comment_status,
             // =============================================================================
+            // fileSystem
+            // =============================================================================
+            commands::list_workspace_directory,
+            commands::read_workspace_file,
+            commands::search_workspace,
+            // =============================================================================
             // session
             // =============================================================================
             commands::warm_session,
@@ -78,6 +85,10 @@ pub fn run() {
             // =============================================================================
             // agent
             // =============================================================================
+            commands::prepare_skill_import,
+            commands::get_skill_import,
+            commands::commit_skill_import,
+            commands::cancel_skill_import,
             commands::create_agent,
             commands::get_agent,
             commands::list_agents,
@@ -147,16 +158,41 @@ fn bootstrap_desktop(
             .home_dir()
             .map_err(DesktopBootstrapError::AppDataDirectory)?,
         sessions_root: app_data_directory.join("sessions"),
+        skills_root: app_data_directory.join("atoms").join("skills"),
     })?;
+    let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(
+        resolve_ripgrep_path(),
+    ));
 
     Ok((
         DesktopState {
             backend,
             config,
+            workspace_files,
             stream_cancellations: Arc::new(Mutex::new(HashMap::new())),
         },
         DesktopRuntimeGuard { _logging: logging },
     ))
+}
+
+/// Resolves ripgrep from a development override or the executable directory in a release build.
+fn resolve_ripgrep_path() -> std::path::PathBuf {
+    if cfg!(debug_assertions) {
+        return std::env::var_os("ORA_RG_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("rg"));
+    }
+
+    let executable_name = if cfg!(target_os = "windows") {
+        "rg.exe"
+    } else {
+        "rg"
+    };
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(executable_name)
 }
 
 /// Carries the startup timezone selected from the operating system and any deferred warning.

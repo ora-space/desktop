@@ -4,7 +4,7 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 
 ## Runtime model
 
-- `AgentRuntimeManager` owns one independently supervised ACP child connection per supported CLI and routes sessions to the supervisor selected by their immutable `agent_cli`.
+- `AgentRuntimeManager` owns one independently supervised ACP child connection per supported CLI and routes sessions to the supervisor selected by their current `agent_cli` binding. Switching replaces that binding while preserving the Ora session and its recorded history.
 - Each session has one actor that serializes load, prompt, permission, cancellation, stop, and deletion commands.
 - Sessions targeting the same CLI share its process and connection; sessions targeting different CLIs or different actors can progress concurrently.
 - Prompts preserve the public ACP `ContentBlock` sequence, so one turn can contain text, images, audio, and linked or embedded resources instead of being reduced to plain text.
@@ -20,11 +20,11 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 
 ## Lifecycle boundaries
 
-Startup reconciles stale persisted Running sessions to Stopped. Create persists only after `session/new` succeeds, returns the latest setup-time available-command catalog, and retains other setup updates for the first prompt. Load restores Stopped on setup failure. A session accepts only one load or prompt operation at a time.
+Startup reconciles stale persisted Running sessions to Stopped. Create persists only after `session/new` succeeds, opens Ora's history record before the first prompt, returns the latest setup-time available-command catalog, and retains other setup updates for the first prompt. Load restores Stopped on setup failure and streams Ora's recorded history rather than the provider's replay. A session accepts only one load or prompt operation at a time.
 
 Prompt validation rejects an empty content-block sequence or one containing only blank text blocks. The serialized ACP prompt payload is limited to 16 MiB before it reaches the provider.
 
-Cancellation sends `session/cancel` and waits for bounded settlement. Explicit stop may call `session/close` when supported, unloads routing, and retains provider history. Deletion removes only Ora's stopped record after serialized unload; it does not delete provider history.
+Cancellation sends `session/cancel` and waits for bounded settlement. Explicit stop may call `session/close` when supported, unloads routing, and retains provider history. A failed history write moves the session into a degraded state and refuses later prompts until history is resumed. Switching creates the new provider session before releasing the old binding, then injects the recorded transcript into the next prompt. Deletion removes Ora's stopped record and its Ora-owned history after serialized unload; it does not delete provider history.
 
 Supervisors retry failed providers independently with capped backoff and reap the old process tree before replacement. Ora remains available when one or all providers are unavailable.
 

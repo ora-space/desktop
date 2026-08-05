@@ -16,13 +16,19 @@ gray_matter = { workspace = true }
 ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
 ora-logging = { workspace = true }
+ora-skill-package = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+flate2 = { workspace = true }
 ora-logging = { workspace = true }
 pretty_assertions = { workspace = true }
+tar = { workspace = true }
 tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+zip = { workspace = true }

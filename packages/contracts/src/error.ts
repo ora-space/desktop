@@ -9,6 +9,11 @@ export type ContractError =
     | { "code": "internal_error"; "params": EmptyErrorParams }
     | { "code": "invalid_request"; "params": EmptyErrorParams }
     | { "code": "skill_name_blank"; "params": EmptyErrorParams }
+    | { "code": "skill_name_invalid"; "params": EmptyErrorParams }
+    | { "code": "skill_name_too_long"; "params": EmptyErrorParams }
+    | { "code": "skill_description_blank"; "params": EmptyErrorParams }
+    | { "code": "skill_description_too_large"; "params": EmptyErrorParams }
+    | { "code": "skill_name_conflict"; "params": EmptyErrorParams }
     | { "code": "skill_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_name_blank"; "params": EmptyErrorParams }
     | { "code": "agent_not_found"; "params": EmptyErrorParams }
@@ -68,6 +73,32 @@ export type ContractError =
     | { "code": "skill_manifest_description_blank"; "params": EmptyErrorParams }
     | { "code": "skill_manifest_name_invalid"; "params": EmptyErrorParams }
     | { "code": "skill_folder_conflict"; "params": SkillFolderConflictParams }
+    | { "code": "skill_manifest_not_found"; "params": EmptyErrorParams }
+    | { "code": "skill_manifest_too_large"; "params": EmptyErrorParams }
+    | { "code": "too_many_skills"; "params": EmptyErrorParams }
+    | { "code": "archive_format_unsupported"; "params": EmptyErrorParams }
+    | { "code": "archive_format_mismatch"; "params": EmptyErrorParams }
+    | { "code": "archive_corrupt"; "params": EmptyErrorParams }
+    | { "code": "archive_encrypted_unsupported"; "params": EmptyErrorParams }
+    | {
+      "code": "archive_special_entry_unsupported";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "archive_path_encoding_invalid"; "params": EmptyErrorParams }
+    | { "code": "archive_path_case_conflict"; "params": EmptyErrorParams }
+    | { "code": "path_segment_too_long"; "params": EmptyErrorParams }
+    | { "code": "path_too_long"; "params": EmptyErrorParams }
+    | { "code": "path_too_deep"; "params": EmptyErrorParams }
+    | { "code": "archive_expansion_ratio_exceeded"; "params": EmptyErrorParams }
+    | { "code": "import_preparation_timeout"; "params": EmptyErrorParams }
+    | { "code": "import_session_expired"; "params": EmptyErrorParams }
+    | { "code": "import_session_cancelled"; "params": EmptyErrorParams }
+    | {
+      "code": "import_session_commit_in_progress";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "import_session_already_committed"; "params": EmptyErrorParams }
+    | { "code": "skill_storage_inconsistent"; "params": EmptyErrorParams }
   );
 
 /**
@@ -92,6 +123,11 @@ export type PublicError =
   | { "code": "internal_error"; "params": EmptyErrorParams }
   | { "code": "invalid_request"; "params": EmptyErrorParams }
   | { "code": "skill_name_blank"; "params": EmptyErrorParams }
+  | { "code": "skill_name_invalid"; "params": EmptyErrorParams }
+  | { "code": "skill_name_too_long"; "params": EmptyErrorParams }
+  | { "code": "skill_description_blank"; "params": EmptyErrorParams }
+  | { "code": "skill_description_too_large"; "params": EmptyErrorParams }
+  | { "code": "skill_name_conflict"; "params": EmptyErrorParams }
   | { "code": "skill_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_name_blank"; "params": EmptyErrorParams }
   | { "code": "agent_not_found"; "params": EmptyErrorParams }
@@ -147,7 +183,27 @@ export type PublicError =
   | { "code": "skill_manifest_name_blank"; "params": EmptyErrorParams }
   | { "code": "skill_manifest_description_blank"; "params": EmptyErrorParams }
   | { "code": "skill_manifest_name_invalid"; "params": EmptyErrorParams }
-  | { "code": "skill_folder_conflict"; "params": SkillFolderConflictParams };
+  | { "code": "skill_folder_conflict"; "params": SkillFolderConflictParams }
+  | { "code": "skill_manifest_not_found"; "params": EmptyErrorParams }
+  | { "code": "skill_manifest_too_large"; "params": EmptyErrorParams }
+  | { "code": "too_many_skills"; "params": EmptyErrorParams }
+  | { "code": "archive_format_unsupported"; "params": EmptyErrorParams }
+  | { "code": "archive_format_mismatch"; "params": EmptyErrorParams }
+  | { "code": "archive_corrupt"; "params": EmptyErrorParams }
+  | { "code": "archive_encrypted_unsupported"; "params": EmptyErrorParams }
+  | { "code": "archive_special_entry_unsupported"; "params": EmptyErrorParams }
+  | { "code": "archive_path_encoding_invalid"; "params": EmptyErrorParams }
+  | { "code": "archive_path_case_conflict"; "params": EmptyErrorParams }
+  | { "code": "path_segment_too_long"; "params": EmptyErrorParams }
+  | { "code": "path_too_long"; "params": EmptyErrorParams }
+  | { "code": "path_too_deep"; "params": EmptyErrorParams }
+  | { "code": "archive_expansion_ratio_exceeded"; "params": EmptyErrorParams }
+  | { "code": "import_preparation_timeout"; "params": EmptyErrorParams }
+  | { "code": "import_session_expired"; "params": EmptyErrorParams }
+  | { "code": "import_session_cancelled"; "params": EmptyErrorParams }
+  | { "code": "import_session_commit_in_progress"; "params": EmptyErrorParams }
+  | { "code": "import_session_already_committed"; "params": EmptyErrorParams }
+  | { "code": "skill_storage_inconsistent"; "params": EmptyErrorParams };
 
 /**
  * Identifies one Ora request across adapters, spans, responses, and completion events.

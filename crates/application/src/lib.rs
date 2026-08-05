@@ -9,6 +9,7 @@ mod task_diff;
 mod worktree;
 
 mod skill;
+mod skill_import;
 
 pub use agent_definition::{
     AgentDefinitionIdGenerator, AgentDefinitionRepository, CreateAgentDefinitionHandler,
@@ -31,10 +32,15 @@ pub use session::{
     SessionRepository, UuidSessionIdGenerator,
 };
 pub use skill::{
-    CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ImportSkillHandler, ListSkillsHandler,
-    LocalSkillPackageStore, ReconcileSkillStorageHandler, SkillIdGenerator, SkillImportCommitError,
-    SkillImportUnitOfWork, SkillPackageStore, SkillPackageStoreError, SkillRepository,
-    UpdateSkillHandler, UploadedSkillFile, UuidSkillIdGenerator,
+    BACKUP_DIR_NAME, CreateHandle, CreateSkillHandler, DeleteHandle, DeleteSkillHandler,
+    FilesystemSkillStorage, GetSkillHandler, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
+    ListSkillsHandler, STAGING_DIR_NAME, SkillIdGenerator, SkillRepository, SkillStorage,
+    SkillStorageError, SwapHandle, TransactionJournal, UpdateSkillHandler, UuidSkillIdGenerator,
+};
+pub use skill_import::{
+    DuplicateSkillName, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportError,
+    SkillImportIdGenerator, SkillImportProgressEvent, SkillImportProgressPublisher,
+    SkillImportService, UuidSkillImportIdGenerator,
 };
 pub use task::{
     CreateTaskHandler, CreateTaskWorktreeRequest, CreateTaskWorktreeResponse,

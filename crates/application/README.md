@@ -8,7 +8,8 @@
 - [project](src/project/README.md) manages project creation, reads, and rename operations.
 - [project_work_context](src/project_work_context/README.md) owns window-to-project leases and occupancy rules.
 - [session](src/session/README.md) provides persisted session reads and soft deletion.
-- [skill](src/skill/README.md) manages reusable skill records.
+- [skill](src/skill/README.md) manages reusable skill records, their atomic on-disk packages, and journaled filesystem transactions.
+- [skill_import](src/skill_import/README.md) owns the two-phase batch import sessions over folder and archive sources.
 - [task](src/task/README.md) coordinates task persistence and optional Git worktree creation.
 - [task_diff](src/task_diff/README.md) coordinates task-scoped diff review, Git writes, and anchored discussions.
 - [worktree](src/worktree/README.md) defines persistence and identity ports for task-owned worktrees.

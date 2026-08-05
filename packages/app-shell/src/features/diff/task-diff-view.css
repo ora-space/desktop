@@ -15,6 +15,12 @@
   container-type: inline-size;
 }
 
+/* Keep offscreen file tables out of layout and paint work while preserving scroll geometry. */
+.ora-diff-file-viewport {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
+
 .ora-task-diff--split {
   --diff-gutter-delete-background-color: color-mix(in oklab, #ef4444 12%, transparent);
   --diff-code-delete-background-color: color-mix(in oklab, #ef4444 7%, transparent);

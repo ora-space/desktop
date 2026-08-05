@@ -1,15 +1,26 @@
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area"
+import type { ReactNode } from "react"
 
 import { cn } from "#lib/utils"
+
+type ScrollbarMode = "vertical" | "horizontal" | "both"
+
+interface ScrollAreaProps extends ScrollAreaPrimitive.Root.Props {
+  /** Controls which custom scrollbar tracks are mounted for content with two-axis overflow. */
+  scrollbars?: ScrollbarMode
+  children?: ReactNode
+}
 
 function ScrollArea({
   className,
   children,
+  scrollbars = "vertical",
   ...props
-}: ScrollAreaPrimitive.Root.Props) {
+}: ScrollAreaProps) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
+      data-scrollbars={scrollbars}
       className={cn("relative", className)}
       {...props}
     >
@@ -19,7 +30,10 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
-      <ScrollBar />
+      {(scrollbars === "vertical" || scrollbars === "both") && <ScrollBar />}
+      {(scrollbars === "horizontal" || scrollbars === "both") && (
+        <ScrollBar orientation="horizontal" />
+      )}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )
