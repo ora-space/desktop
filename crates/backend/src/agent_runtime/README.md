@@ -12,10 +12,11 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 
 ## Flow control and failure isolation
 
-- The central connection router receives unbounded connection-wide updates, then forwards them into bounded per-session queues of 256 items.
-- While `session/new` is waiting to reveal its provider session id, the router temporarily buffers otherwise-unrouted setup updates. Registration drains matching updates into the new session route; unmatched setup updates are discarded when the last concurrent setup finishes.
+- The central connection router receives one unbounded, ordered connection-wide event stream, then forwards updates, permission requests, and terminating responses into a bounded per-session FIFO of 256 items.
+- While `session/new` is waiting to reveal its provider session id, the router temporarily buffers otherwise-unrouted setup updates. Registration drains matching updates into the new session route; unmatched setup updates are discarded when the last concurrent setup finishes. Permission requests and responses are never treated as setup updates and are cancelled or discarded when no route exists.
 - Session overflow, prompt timeout, or cancellation stops only the affected session. Connection framing, correlation, or stdio failure invalidates the connection generation and stops only sessions registered on that CLI.
-- Control messages such as permission requests use a separate path so update backpressure cannot block required protocol responses.
+- Connection loss and queue overflow use an independent control channel, so a terminal failure cannot be hidden behind the bounded event FIFO. An active actor drains already accepted events before applying that control and polls its command channel after a bounded event burst.
+- A load or prompt completes only after consuming its matching response fence. This keeps updates that precede the response in the same operation and prevents tail events from leaking into the next prompt.
 - Routes are generation-bound. Updates from old connections or unloaded sessions are discarded as stale.
 
 ## Lifecycle boundaries

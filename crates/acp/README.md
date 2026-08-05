@@ -1,20 +1,21 @@
 # ora-acp
 
-`ora-acp` is Ora's provider-neutral ACP v1 transport over newline-delimited JSON-RPC stdio. It turns an asynchronous reader and writer into a typed request client plus independent streams of session updates and control messages.
+`ora-acp` is Ora's provider-neutral ACP v1 transport over newline-delimited JSON-RPC stdio. It turns an asynchronous reader and writer into a typed request client plus one ordered inbound stream for each session's updates, permission requests, and terminating responses.
 
 ## Responsibilities
 
 - `AcpPeer` owns the reader task and exposes an `AcpClient` for serialized writes.
-- `AcpClient` correlates concurrent requests by `RequestId`, decodes typed responses, sends notifications, and answers agent-originated requests.
-- Session notifications and low-volume control traffic are separated so the backend can apply per-session flow control without blocking connection-wide parsing.
+- `AcpClient` correlates direct requests by `RequestId`, decodes typed responses, sends notifications, and answers agent-originated requests.
+- Session requests return a pending handle whose response is emitted into the same inbound stream as that session's updates and permission requests. The reader preserves their wire order, so a terminating response cannot overtake an earlier update.
+- Abandoned session requests retire their ids in a bounded tombstone registry. A late response for an abandoned request is discarded, while a genuinely unknown response remains a connection failure.
 - Protocol, framing, I/O, and response-decoding failures are normalized as `AcpError`.
 
 ## Boundaries and failure semantics
 
 - Frames are newline-delimited JSON with an 8 MiB maximum. An oversized or malformed frame is fatal to the connection.
-- Unmatched responses, stdio loss, and invalid response envelopes fail pending operations instead of being silently ignored.
+- Unmatched responses, stdio loss, and invalid response envelopes fail pending operations instead of being silently ignored. The exception is a response for a deliberately abandoned session request, which is recognized by its bounded tombstone.
 - Recognized permission requests are emitted as `PermissionRequest`. Unknown agent-originated methods receive a correlated method-not-found response without terminating the connection.
-- The connection-to-router update channel is intentionally unbounded. Per-session bounds and overflow policy belong to the backend runtime, where one noisy session can be isolated from others.
+- The connection-to-router inbound channel is intentionally unbounded and preserves the reader's order. Per-session bounds and overflow policy belong to the backend runtime, where one noisy session can be isolated from others.
 - Writes share one mutex so concurrent JSON-RPC frames cannot interleave.
 
 This crate does not spawn provider processes, supervise reconnects, route updates to Ora sessions, or enforce session lifecycle policy. Those responsibilities belong to `ora-backend`. See [ACP Agent Runtime](../../docs/agent-runtime.md).

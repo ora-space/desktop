@@ -36,7 +36,7 @@ Ora records every conversation itself, in one append-only JSONL file per Session
 - The runtime records what it chose to keep, not what it sent. A prompt is recorded from the request blocks before the agent is called, and the provider's echoed `user_message_chunk` is ignored, so context Ora injected never enters the record.
 - Streamed updates are recorded before they are forwarded. A client that disconnects mid-turn costs the stream, never the record of what the agent produced.
 - Every prompt turn closes with its `stopReason`. Provider replay never carried this, so a cancelled turn used to be indistinguishable from a completed one; replaying Ora's record restores it, along with the tool calls that never finished.
-- Closing a turn first drains whatever the agent already queued. A turn ends when its response resolves, when it is cancelled, or when the connection drops, and in each of those the agent's final updates are usually waiting behind the event that ended it — most visibly during the cancellation grace, which does not consume updates at all. They belong to the turn that produced them, so they are recorded before it closes rather than left to surface after the next prompt.
+- Ordered session events make the response a turn fence. Updates and permission requests observed before it are consumed by the same operation, and the turn is recorded only after that fence is settled. Cancellation keeps consuming through the matching response during its grace period; if the provider does not settle, the actor records the accepted event snapshot before isolating the route.
 - Writes are batched per settled item, flushed but not synced. A crash costs at most the item in flight.
 
 ### Switching Agents
@@ -68,13 +68,13 @@ Ora's soft delete is what a user experiences as deletion, so the conversation go
 
 ## Flow Control
 
-ACP stdout is newline-delimited JSON-RPC with an 8 MiB frame limit. The connection reader uses an unbounded handoff to the always-running central router, while each registered Session owns a bounded 256-item update queue and an independent control queue. This keeps connection-wide parsing from imposing one Session's backpressure on another. A per-Session overflow stops only the affected Session; no data is silently discarded.
+ACP stdout is newline-delimited JSON-RPC with an 8 MiB frame limit. The connection reader uses an unbounded, ordered handoff to the always-running central router, while each registered Session owns a bounded 256-item FIFO for updates, permission requests, and terminating responses. Connection loss and queue overflow use an independent control queue. This keeps connection-wide parsing from imposing one Session's backpressure on another while preserving the event order needed to close a turn safely. A per-Session overflow stops only the affected Session; an active operation drains events already accepted before applying that terminal control.
 
 Session setup has a separate bounded buffer for notifications that arrive before `session/new` reveals their provider session id. It is active only while one or more creates are in flight, holds at most 256 notifications across those setups, and retains the newest notifications when full. Registering a session drains only notifications whose provider id matches that route; when the final setup window closes, any still-unmatched notifications are discarded as stale.
 
 Unknown agent-originated JSON-RPC requests receive a correlated `-32601` method-not-found response and do not terminate the connection. Malformed frames, unmatched responses, oversized frames, and stdio loss are connection failures. Routes are generation-bound, so updates from an old connection or an unloaded Session are treated as stale and discarded rather than taking down unrelated work.
 
-Control traffic such as permission requests travels a separate queue from session updates, so update backpressure can never block a required protocol response. A permission request arriving during `session/load` is answered as cancelled and reported as `agent_protocol_error`, because only a prompt can legitimately request permission.
+Permission requests are part of the ordered session FIFO, so a prompt consumes them in the same order in which the provider emitted them and can correlate the user's response to the active operation. A permission request arriving during `session/load` or while the session is idle is answered as cancelled; the operation reports the backend's typed internal error when protocol traffic violates that lifecycle boundary. Connection loss and queue overflow remain separate terminal controls.
 
 Dropping a Web body, closing a Tauri stream, or aborting the frontend `AsyncIterable` sends `session/cancel`. A session-level timeout unloads and stops only that Session; it never restarts the shared process. Explicit Stop optionally calls `session/close` when advertised, unloads the route, and preserves provider history for a later load.
 
