@@ -62,6 +62,8 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
 
   const [viewMode, setViewMode] = useState<WorkflowRunViewMode>("overview");
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
+  /** Node whose session dock is open — survives Overview ↔ Theater remounts. */
+  const [conversationNodeId, setConversationNodeId] = useState<string | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   /** One-shot: Overview node click should open Theater's act inspector. */
   const [openInspectorOnTheaterEnter, setOpenInspectorOnTheaterEnter] = useState(
@@ -94,8 +96,22 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       });
     },
     onRunFinished: () => {
-      if (viewModeRef.current === "theater") {
-        setFocusNodeId(null);
+      // Drop live/auto pins in every view so Overview ↔ Theater cannot revive a
+      // stale path focus after the run ends; explicit post-run picks still stick
+      // because they happen after this clear.
+      setFocusNodeId(null);
+      setConversationNodeId(null);
+      if (viewModeRef.current === "overview") {
+        toast.message(t("workflowRun.result.finishedToastTitle"), {
+          description: t("workflowRun.result.finishedToastDescription"),
+          action: {
+            label: t("workflowRun.result.finishedToastAction"),
+            onClick: () => {
+              setOpenInspectorOnTheaterEnter(false);
+              setViewMode("theater");
+            },
+          },
+        });
       }
     },
   });
@@ -103,10 +119,25 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   // Reset local chrome when switching runs; mode is primed once below.
   useEffect(() => {
     setFocusNodeId(null);
+    setConversationNodeId(null);
     setStopOpen(false);
     setOpenInspectorOnTheaterEnter(false);
     focusStatusSampleRef.current = null;
   }, [runId]);
+
+  // Switching to a different explicit pin closes conversation. Overview ↔
+  // Theater keeps the same focusNodeId so an open session restores on remount.
+  const conversationFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = conversationFocusRef.current;
+    if (previous === focusNodeId) {
+      return;
+    }
+    conversationFocusRef.current = focusNodeId;
+    if (previous !== null && previous !== focusNodeId) {
+      setConversationNodeId(null);
+    }
+  }, [focusNodeId]);
 
   // Live pin release: only when the focused act itself just left live -> terminal.
   // History pins (clicked while already non-live) stay until the user picks again.
@@ -135,14 +166,19 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     }
   }, [run, focusNodeId]);
 
-  // New artifact on the stage: keep Theater focus on the producing act.
+  // New artifact on the stage: one-shot focus on the producing act.
   // Skip once terminal so a stale reveal cannot hide the result act.
+  const lastFocusedRevealRef = useRef<string | null>(null);
+  useEffect(() => {
+    lastFocusedRevealRef.current = null;
+  }, [runId]);
   useEffect(() => {
     if (
       run === null
       || isTerminalRunStatus(run.status)
       || artifactsQuery.revealedId === null
       || viewMode !== "theater"
+      || lastFocusedRevealRef.current === artifactsQuery.revealedId
     ) {
       return;
     }
@@ -150,6 +186,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       (item) => item.id === artifactsQuery.revealedId,
     );
     if (artifact !== undefined) {
+      lastFocusedRevealRef.current = artifactsQuery.revealedId;
       setFocusNodeId(artifact.nodeId);
     }
   }, [
@@ -225,12 +262,28 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     setViewMode("theater");
   }
 
-  /** Header Theater: terminal runs show the result act, not a leftover path pin. */
+  /**
+   * Header Theater: keep an explicit path pin across Overview ↔ Theater.
+   * A second header click while already on Theater (terminal + pin) returns
+   * to the result act.
+   */
   function enterTheaterFromHeader(): void {
-    if (run !== null && isTerminalRunStatus(run.status)) {
+    if (
+      viewMode === "theater"
+      && run !== null
+      && isTerminalRunStatus(run.status)
+      && focusNodeId !== null
+    ) {
       setFocusNodeId(null);
+      setConversationNodeId(null);
+      return;
     }
     enterTheater();
+  }
+
+  function clearPathFocus(): void {
+    setFocusNodeId(null);
+    setConversationNodeId(null);
   }
 
   async function handleStart(): Promise<void> {
@@ -416,10 +469,13 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             run={run}
             focusNodeId={focusNodeId}
             onFocusNode={focusNode}
+            onClearFocus={clearPathFocus}
             artifacts={artifactsQuery.artifacts}
             conversationByNodeId={artifactsQuery.conversationByNodeId}
             revealedArtifactId={artifactsQuery.revealedId}
             openInspectorOnMount={openInspectorOnTheaterEnter}
+            sessionConversationNodeId={conversationNodeId}
+            onSessionConversationNodeIdChange={setConversationNodeId}
             onShowOverview={() => {
               setOpenInspectorOnTheaterEnter(false);
               setViewMode("overview");

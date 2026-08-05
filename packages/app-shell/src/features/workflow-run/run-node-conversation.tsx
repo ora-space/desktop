@@ -106,14 +106,16 @@ export function RunNodeConversation({
                   <div
                     key={item.id}
                     data-conversation-anchor={item.id}
-                    className="relative overflow-visible rounded-xl"
+                    className={item.role === "assistant"
+                      ? "relative overflow-visible rounded-xl"
+                      : undefined}
                   >
-                    <AnchorHighlight />
+                    {item.role === "assistant" ? <AnchorHighlight /> : null}
                     <MessageBubble
                       message={toChatMessage(item)}
                       userName={t("account.unknownIdentity")}
                       compact
-                      showAnchorHighlight={false}
+                      showAnchorHighlight={item.role === "user"}
                       streaming={item.status === "streaming"}
                     />
                   </div>

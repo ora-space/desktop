@@ -68,7 +68,7 @@ export const RunOverviewNode = memo(function RunOverviewNode({
   selected,
 }: NodeProps<Node<RunOverviewNodeData, "workflow">>) {
   const { i18n, t } = useTranslation();
-  const { states, focusedNodeId, artifactCountByNode } = useContext(
+  const { states, focusedNodeId, activeNodeIds, artifactCountByNode } = useContext(
     RunOverviewStatusContext,
   );
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
@@ -76,6 +76,7 @@ export const RunOverviewNode = memo(function RunOverviewNode({
   const tone = runStatusTone(state.status);
   const kindLabel = createMockWorkflowNodeType(data.kind, locale).label;
   const focused = focusedNodeId === id || selected;
+  const peerActive = !focused && activeNodeIds.includes(id);
   const artifactCount = artifactCountByNode[id] ?? 0;
   const startedLabel = state.startedAt !== undefined
     ? formatRunClock(state.startedAt, locale)
@@ -106,6 +107,8 @@ export const RunOverviewNode = memo(function RunOverviewNode({
         state.status === "running" && "ring-sky-500/35 theater-live-breathe",
         state.status === "awaiting_input"
           && "ring-amber-500/35 theater-live-breathe-amber",
+        peerActive && state.status !== "running" && state.status !== "awaiting_input"
+          && "ring-sky-500/20",
       )}
       headerAccessory={(
         <div className="flex shrink-0 items-center gap-1">

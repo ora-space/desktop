@@ -22,6 +22,7 @@ import {
   type RunOverviewNodeData,
 } from "./run-overview-node";
 import { RunOverviewEdge } from "./run-overview-edge";
+import { isTerminalRunStatus } from "./run-status-style";
 import type { GraphWorkflowRun, WorkflowArtifact } from "@ora/workflow-runtime";
 import "@xyflow/react/dist/style.css";
 
@@ -146,6 +147,11 @@ export function RunOverviewCanvas({
     () => resolveTheaterFocus(run, focusedNodeId),
     [run, focusedNodeId],
   );
+  // Terminal + no pin: do not paint resolveTheaterFocus's fallback as selected —
+  // Theater shows the result act for the same state.
+  const overviewFocusedId = focusedNodeId === null && isTerminalRunStatus(run.status)
+    ? null
+    : focus.primaryId;
   const artifactCountByNode = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const artifact of artifacts) {
@@ -197,7 +203,7 @@ export function RunOverviewCanvas({
       <ReactFlowProvider>
         <RunOverviewStatusProvider
           states={nodeStates}
-          focusedNodeId={focus.primaryId}
+          focusedNodeId={overviewFocusedId}
           activeNodeIds={focus.activeIds}
           artifactCountByNode={artifactCountByNode}
         >

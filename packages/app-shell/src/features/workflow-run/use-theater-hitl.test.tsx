@@ -51,7 +51,7 @@ function waitingRun(id: string, requestId: string): GraphWorkflowRun {
 }
 
 describe("useTheaterHitl", () => {
-  it("resets expanded interaction state when the selected run changes", async () => {
+  it("resets drafts then re-engages HITL when switching to another waiting run", async () => {
     const client = createMockClient(createMockClientState());
     const runtime = createMemoryWorkflowRuntime();
     const wrapper = createHookWrapper(
@@ -73,7 +73,6 @@ describe("useTheaterHitl", () => {
           run,
           focusNodeId,
           primaryId: "understand",
-          parallelCarouselFocus: false,
           onFocusNode,
         }),
       {
@@ -85,7 +84,11 @@ describe("useTheaterHitl", () => {
 
     rerender({ run: second, focusNodeId: null });
 
-    await waitFor(() => expect(result.current.hitlExpanded).toBe(false));
+    // Cold-open / run switch onto an already-waiting run expands the gate again.
+    await waitFor(() => {
+      expect(result.current.hitlExpanded).toBe(true);
+      expect(result.current.openHitls[0]?.id).toBe("hitl-2");
+    });
     unmount();
     runtime.dispose();
   });
@@ -113,7 +116,6 @@ describe("useTheaterHitl", () => {
           run,
           focusNodeId,
           primaryId,
-          parallelCarouselFocus: false,
           onFocusNode,
         }),
       {

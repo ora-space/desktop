@@ -18,6 +18,8 @@ interface RunTheaterPathRailProps {
   pathRailRef: RefObject<HTMLDivElement | null>;
   onFocusNode: (nodeId: string) => void;
   onExpandHitl: (requestId: string) => void;
+  /** Terminal path review → back to the result act. */
+  onShowResultAct?: () => void;
 }
 
 /**
@@ -35,6 +37,7 @@ export function RunTheaterPathRail({
   pathRailRef,
   onFocusNode,
   onExpandHitl,
+  onShowResultAct,
 }: RunTheaterPathRailProps) {
   const { t } = useTranslation();
   const activeIdSet = useMemo(() => new Set(activeIds), [activeIds]);
@@ -42,6 +45,7 @@ export function RunTheaterPathRail({
     () => new Map(openHitls.map((request) => [request.nodeId, request])),
     [openHitls],
   );
+  const terminal = onShowResultAct !== undefined;
 
   return (
     <div className="shrink-0 border-b border-border/80 bg-muted/20 px-4 py-3">
@@ -84,6 +88,34 @@ export function RunTheaterPathRail({
         </div>
         <div className="overflow-x-auto" ref={pathRailRef} data-slot="theater-path-rail">
           <ol className="flex w-max gap-2 pb-0.5">
+            {terminal && (
+              <li>
+                <button
+                  type="button"
+                  data-path-result=""
+                  onClick={onShowResultAct}
+                  className={cn(
+                    "inline-flex max-w-[11rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
+                    showResultAct
+                      ? "theater-chip-pop border-foreground/35 bg-background shadow-sm"
+                      : "border-transparent bg-background/60 hover:border-border hover:bg-background",
+                  )}
+                  aria-current={showResultAct ? "step" : undefined}
+                  aria-label={t("workflowRun.result.pathChip")}
+                >
+                  <span
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      showResultAct ? "bg-foreground/70" : "bg-muted-foreground/45",
+                    )}
+                    aria-hidden
+                  />
+                  <span className="truncate text-[11px] font-medium">
+                    {t("workflowRun.result.pathChip")}
+                  </span>
+                </button>
+              </li>
+            )}
             {run.definitionSnapshot.nodes.map((node) => {
               const state = run.nodeStates[node.id] ?? { status: "idle" as const };
               const tone = runStatusTone(state.status);

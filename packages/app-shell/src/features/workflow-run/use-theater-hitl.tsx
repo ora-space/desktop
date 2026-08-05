@@ -12,8 +12,6 @@ interface UseTheaterHitlParams {
   run: GraphWorkflowRun;
   focusNodeId: string | null;
   primaryId: string | null;
-  /** True when the parallel carousel owns the stage. */
-  parallelCarouselFocus: boolean;
   onFocusNode: (nodeId: string) => void;
 }
 
@@ -26,6 +24,7 @@ interface TheaterHitlController {
   /** Embedded composer; pass the session dock so both share one chrome. */
   renderHitlComposer: (accessory?: ReactNode) => ReactNode;
   expandHitlForRequest: (requestId: string) => void;
+  collapseHitl: () => void;
 }
 
 /**
@@ -36,7 +35,6 @@ export function useTheaterHitl({
   run,
   focusNodeId,
   primaryId,
-  parallelCarouselFocus,
   onFocusNode,
 }: UseTheaterHitlParams): TheaterHitlController {
   const submitHitl = useSubmitGraphWorkflowHitl();
@@ -117,7 +115,8 @@ export function useTheaterHitl({
     if (hitlSignatureRef.current === "") {
       hitlSignatureRef.current = signature;
       setSelectedHitlId(openHitls[0]?.id ?? null);
-      setHitlExpanded(false);
+      // First discovery covers live hitl_required and cold-open of a waiting run.
+      setHitlExpanded(true);
       return;
     }
     if (hitlSignatureRef.current !== signature) {
@@ -199,22 +198,34 @@ export function useTheaterHitl({
     if (hitlGates.length === 0 || selectedHitl === null) {
       return null;
     }
+    // Embedded = this act's card owns only its gate(s). Overlay (under-stage
+    // while browsing elsewhere) may list every open gate so the user can jump.
+    const embedded = primaryHasHitl;
+    const gates = embedded && primaryId !== null
+      ? hitlGates.filter((gate) => gate.request.nodeId === primaryId)
+      : hitlGates;
+    if (gates.length === 0) {
+      return null;
+    }
+    const selectedRequest = gates.some((gate) => gate.request.id === selectedHitl.id)
+      ? selectedHitl
+      : gates[0]!.request;
     return (
       <RunHitlComposer
-        layout={parallelCarouselFocus || !primaryHasHitl ? "overlay" : "embedded"}
-        gates={hitlGates}
-        selectedRequestId={selectedHitl.id}
+        layout={embedded ? "embedded" : "overlay"}
+        gates={gates}
+        selectedRequestId={selectedRequest.id}
         onSelectRequest={expandHitlForRequest}
         expanded={hitlExpanded}
         onExpandedChange={(expanded) => {
           if (expanded) {
-            expandHitlForRequest(selectedHitl.id);
+            expandHitlForRequest(selectedRequest.id);
             return;
           }
           collapseHitl();
         }}
         onEngage={() => {
-          const requestId = selectedHitl.id;
+          const requestId = selectedRequest.id;
           if (hitlEngageTimerRef.current !== null) {
             window.clearTimeout(hitlEngageTimerRef.current);
           }
@@ -227,7 +238,7 @@ export function useTheaterHitl({
         onDraftsChange={setHitlDrafts}
         submitting={submitHitl.isPending}
         submittingRequestId={submitHitl.isPending
-          ? (submitHitl.variables?.requestId ?? selectedHitl.id)
+          ? (submitHitl.variables?.requestId ?? selectedRequest.id)
           : null}
         submitError={submitHitl.error instanceof Error
           ? submitHitl.error.message
@@ -237,7 +248,7 @@ export function useTheaterHitl({
           try {
             await submitHitl.mutateAsync({
               runId: run.id,
-              requestId: selectedHitl.id,
+              requestId: selectedRequest.id,
               payload,
             });
           } catch {
@@ -255,5 +266,6 @@ export function useTheaterHitl({
     hitlComposer: renderHitlComposer(),
     renderHitlComposer,
     expandHitlForRequest,
+    collapseHitl,
   };
 }

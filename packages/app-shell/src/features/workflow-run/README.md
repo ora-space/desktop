@@ -49,16 +49,17 @@ Keep these stacks separate — shared chrome only where noted.
   - **Result act**: when the run is terminal and Theater focus is not pinned
     to a path node (`focusNodeId === null`), the stage shows an end-of-run
     result surface (status, totals, artifact count, Overview CTA). Finishing
-    while already on Theater clears focus so the result act appears; path
-    chips still open single-node review. Cold-open of a finished run still
-    primes **Overview**. Run again stays in the header.
+    clears focus so the result act is the default; path chips (and the Result
+    chip) still open/close single-node review, and that pin survives Overview ↔
+    Theater. Cold-open of a finished run still primes **Overview**. Run again
+    stays in the header.
   - Status language (keep it harmonious):
     - **Working / running**: sky spinner + soft breathe on the card badge/frame
       only (stage focus or Overview node).
     - **Waiting (`awaiting_input`)**: amber mark / badge / path chip (same warm
       “must handle” cue as the HITL prompt). Path progress sheen turns amber while
-      any gate is open. Clicking a waiting path chip focuses that act; HITL docks
-      on / under the stage (see HITL below). Stage content uses safe vertical
+      any gate is open. Clicking a waiting path chip focuses that act; HITL embeds
+      in the focused card (see HITL below). Stage content uses safe vertical
       centering (`my-auto`) so tall HITL stacks scroll from the top and never
       cover the path rail.
     - **Terminal**: result act by default; one check / x / triangle on card
@@ -124,35 +125,38 @@ Keep these stacks separate — shared chrome only where noted.
 - Theater focus: a live pin (focused while `running` / `awaiting_input`)
   releases back to auto-follow when that same act just finishes. Clicking a
   already-finished or idle node is a history pin and stays until the user
-  picks another. On `run_finished` while Theater is open, focus clears so the
-  **result act** shows. The header Theater toggle on a terminal run also
-  clears focus so re-entry lands on the result act (Overview node click still
-  keeps an explicit pin).
-- Stop confirm: if the run reaches a terminal status while the dialog is open,
-  the dialog dismisses (and Confirm is a no-op close) so a finished run cannot
-  leave a stuck modal after `preventDefault` on the action button.
+  picks another. On `run_finished`, focus clears in every view so the
+  **result act** is the default Theater landing (no leftover live pin when
+  finishing on Overview). Finishing while on Overview also shows a toast CTA
+  to open the result act. Overview ↔ Theater keeps an explicit post-run pin;
+  path rail exposes a **Result** chip (and a second header Theater click while
+  already reviewing) to return to the result act. Overview node click still
+  opens Theater on that pin. Terminal Overview with no pin does not paint a
+  fallback node as selected.
 - Outcomes / config: `useGraphWorkflowRunLive` lists + patches on
   `artifact_added`. Theater scopes them in the act inspector with the focused
-  node; reveal expands the rail and focuses that act when already on stage.
-  Overview shows a per-node count affordance only.
+  node; each reveal focuses that act **once** (does not re-pin on later run
+  ticks). Overview shows a per-node count affordance only.
 - HITL: mock `prompt` nodes pause with `awaiting_input` and append to
   `openHitls` (`kind` + optional `prompt` + `blocking` + field schema). Model
-  questions use `kind: "clarify"` with `prompt` shown in the dock. On Theater,
-  the waiting act card can **embed** the expandable HITL surface (warm collapsed
-  prompt → sky pulse + question body + tiles / composer) in place of metrics —
-  no absolute bottom overlay covering the card. If focus is on a non-waiting
-  act while other gates are open, a compact prompt sits under the stage column
-  (expanded HITL collapses when focus leaves the waiting act so path chips stay
-  usable). Parallel waits dock HITL **under** the carousel (not inside sliding cards) so
-  peer switches stay height-stable. Collapse is respected
-  across run ticks so you can browse other nodes while a gate waits — including
-  completed / pending path chips during parallel waits (stage leaves the
-  parallel carousel when focus is outside the live peer set). Esc
-  collapses HITL first; a second Esc returns Overview. Submit payload keys
+  questions use `kind: "clarify"` with `prompt` shown in the dock. First gate
+  discovery (live event or cold-open of a waiting run) expands HITL on Theater.
+  Mid-run toast still does not force Overview → Theater. Expanded HITL and the
+  act inspector are mutually exclusive. Waiting acts **embed** HITL in the card
+  footer (warm collapsed prompt → question body + tiles / composer), scoped to
+  **that node only** — no multi-gate tabs or “N nodes waiting” copy inside the
+  card; peer switches use the parallel dots / name chips under the stage. If
+  focus is on a non-waiting act while other gates are open, a compact under-stage
+  prompt may list every open gate so the user can jump (expanded HITL collapses
+  when focus leaves a waiting act). Collapse is respected across later run ticks.
+  Esc collapses HITL first; a second Esc returns Overview. Submit payload keys
   match `field.name`. The focused card conversation shows node input, Agent
   messages, and submitted HITL answers (mock approval gates also append a short
   assistant ack so the session visibly updates after submit); inspector metrics
   remain available without duplicating that transcript.
+- Stop confirm: if the run reaches a terminal status while the dialog is open,
+  the dialog dismisses (and Confirm is a no-op close) so a finished run cannot
+  leave a stuck modal after `preventDefault` on the action button.
 
 ## Node conversation integration
 
@@ -176,7 +180,8 @@ Keep these stacks separate — shared chrome only where noted.
   prompt; expanded: next to collapse) with matching amber chrome so gate and
   conversation read as one footer composition. Wheel scrolling past the
   conversation edge chains into the Theater stage scroll so HITL below can be
-  reached without moving the cursor.
+  reached without moving the cursor. Open conversation is keyed by node id in
+  the workspace so Overview ↔ Theater remounts restore the same session view.
 
 ## Demo path checklist
 

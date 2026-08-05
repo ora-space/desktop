@@ -4,6 +4,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
@@ -36,6 +37,13 @@ interface RunTheaterParallelStageProps {
   primaryId: string;
   onFocusNode: (nodeId: string) => void;
   onOpenInspector: () => void;
+  sessionConversationNodeId?: string | null;
+  onSessionConversationNodeIdChange?: (nodeId: string | null) => void;
+  /**
+   * Embedded HITL for the focused parallel act. Peers stay chrome-only so the
+   * path chips / dots below remain the switcher.
+   */
+  primaryInteraction?: ReactNode | ((slots: { accessory: ReactNode | null }) => ReactNode);
 }
 
 /**
@@ -48,6 +56,9 @@ export function RunTheaterParallelStage({
   primaryId,
   onFocusNode,
   onOpenInspector,
+  sessionConversationNodeId = null,
+  onSessionConversationNodeIdChange,
+  primaryInteraction,
 }: RunTheaterParallelStageProps) {
   const { t } = useTranslation();
   const trackRef = useRef<HTMLDivElement>(null);
@@ -170,7 +181,9 @@ export function RunTheaterParallelStage({
     if (!wasDragging) {
       setDragging(false);
       setDragX(0);
-      onOpenInspector();
+      if (sessionConversationNodeId !== primaryId) {
+        onOpenInspector();
+      }
       return;
     }
 
@@ -210,7 +223,9 @@ export function RunTheaterParallelStage({
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      onOpenInspector();
+      if (sessionConversationNodeId !== primaryId) {
+        onOpenInspector();
+      }
     }
   }
 
@@ -330,8 +345,19 @@ export function RunTheaterParallelStage({
                       artifactCount={act.artifactCount}
                       conversation={act.conversation}
                       conversationEnabled={act.nodeId === primaryId}
+                      conversationOpen={sessionConversationNodeId === act.nodeId}
+                      onConversationOpenChange={act.nodeId === primaryId
+                        ? (open) => {
+                          onSessionConversationNodeIdChange?.(
+                            open ? act.nodeId : null,
+                          );
+                        }
+                        : undefined}
                       variant="stage"
                       emphasized={act.nodeId === primaryId}
+                      interaction={act.nodeId === primaryId
+                        ? primaryInteraction
+                        : undefined}
                     />
                   </div>
                 </div>

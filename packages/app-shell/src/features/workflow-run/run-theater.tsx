@@ -34,6 +34,8 @@ interface RunTheaterProps {
   run: GraphWorkflowRun;
   focusNodeId: string | null;
   onFocusNode: (nodeId: string) => void;
+  /** Clears path pin so the terminal result act can own the stage. */
+  onClearFocus?: () => void;
   artifacts: WorkflowArtifact[];
   conversationByNodeId: Map<string, WorkflowNodeConversationItem[]>;
   revealedArtifactId: string | null;
@@ -41,6 +43,9 @@ interface RunTheaterProps {
   openInspectorOnMount?: boolean;
   /** Result act CTA — return to Overview path map. */
   onShowOverview: () => void;
+  /** Which node's session dock is open — lifted across Overview remounts. */
+  sessionConversationNodeId?: string | null;
+  onSessionConversationNodeIdChange?: (nodeId: string | null) => void;
 }
 
 /**
@@ -52,11 +57,14 @@ export function RunTheater({
   run,
   focusNodeId,
   onFocusNode,
+  onClearFocus,
   artifacts,
   conversationByNodeId,
   revealedArtifactId,
   openInspectorOnMount = false,
   onShowOverview,
+  sessionConversationNodeId = null,
+  onSessionConversationNodeIdChange,
 }: RunTheaterProps) {
   const { t } = useTranslation();
   const updateSnapshotNode = useUpdateGraphWorkflowRunSnapshotNode();
@@ -89,11 +97,11 @@ export function RunTheater({
     hitlComposer,
     renderHitlComposer,
     expandHitlForRequest,
+    collapseHitl,
   } = useTheaterHitl({
     run,
     focusNodeId,
     primaryId,
-    parallelCarouselFocus,
     onFocusNode,
   });
 
@@ -144,6 +152,20 @@ export function RunTheater({
       : (conversationByNodeId.get(primaryId) ?? []),
     [primaryId, conversationByNodeId],
   );
+
+  // Auto-follow can change primary without an explicit pin; drop a stale
+  // session dock so conversation does not reopen on the wrong act later.
+  useEffect(() => {
+    if (
+      sessionConversationNodeId === null
+      || primaryId === null
+      || sessionConversationNodeId === primaryId
+      || onSessionConversationNodeIdChange === undefined
+    ) {
+      return;
+    }
+    onSessionConversationNodeIdChange(null);
+  }, [primaryId, sessionConversationNodeId, onSessionConversationNodeIdChange]);
   const artifactCountByNode = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const artifact of artifacts) {
@@ -206,8 +228,8 @@ export function RunTheater({
   }
 
   function openInspector(): void {
-    if (hitlExpanded && primaryHasHitl && !showParallelCarousel) {
-      return;
+    if (hitlExpanded) {
+      collapseHitl();
     }
     setInspectorCollapsed(false);
     animateOverlayWidth({
@@ -230,6 +252,15 @@ export function RunTheater({
       targetWidth: 0,
     });
   }
+
+  // Expanded HITL and the inspector rail compete for the same stage edge.
+  useEffect(() => {
+    if (!hitlExpanded || inspectorCollapsed) {
+      return;
+    }
+    closeInspector();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [hitlExpanded]);
 
   function settleInspectorAfterUserResize(): void {
     const width = inspectorCurrentWidthRef.current;
@@ -315,6 +346,7 @@ export function RunTheater({
         pathRailRef={pathRailRef}
         onFocusNode={onFocusNode}
         onExpandHitl={expandHitlForRequest}
+        onShowResultAct={isTerminalRunStatus(run.status) ? onClearFocus : undefined}
       />
 
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -350,8 +382,13 @@ export function RunTheater({
                       primaryId={primaryId!}
                       onFocusNode={onFocusNode}
                       onOpenInspector={openInspector}
+                      sessionConversationNodeId={sessionConversationNodeId}
+                      onSessionConversationNodeIdChange={onSessionConversationNodeIdChange}
+                      primaryInteraction={primaryHasHitl
+                        ? ({ accessory }) => renderHitlComposer(accessory ?? undefined)
+                        : undefined}
                     />
-                    {hitlComposer !== null && (
+                    {!primaryHasHitl && hitlComposer !== null && (
                       <div className="px-0.5">
                         {hitlComposer}
                       </div>
@@ -371,6 +408,12 @@ export function RunTheater({
                       live={isNodeWorking(primaryState.status)}
                       artifactCount={primaryArtifacts.length}
                       conversation={primaryConversation}
+                      conversationOpen={sessionConversationNodeId === primaryNode.id}
+                      onConversationOpenChange={(open) => {
+                        onSessionConversationNodeIdChange?.(
+                          open ? primaryNode.id : null,
+                        );
+                      }}
                       variant="stage"
                       onSelect={openInspector}
                       interaction={primaryHasHitl
@@ -417,7 +460,9 @@ export function RunTheater({
               )}
               {!showResultAct && (
                 <p className="mt-3 text-center text-[10px] text-muted-foreground/70">
-                  {inspectorCollapsed
+                  {hitlExpanded
+                    ? t("workflowRun.theater.hitlHint")
+                    : inspectorCollapsed
                     ? t("workflowRun.theater.inspectorHint")
                     : t("workflowRun.theater.returnOverviewHint")}
                 </p>
