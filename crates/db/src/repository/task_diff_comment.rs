@@ -237,12 +237,27 @@ fn map_comment_row(row: &Row<'_>) -> Result<TaskDiffComment, crate::DatabaseErro
 
 /// Constructs a deterministic database error for malformed mutually exclusive comment columns.
 fn invalid_comment_row() -> crate::DatabaseError {
-    crate::DatabaseError::Sqlite(rusqlite::Error::InvalidQuery)
+    crate::DatabaseError::CorruptCommentRow
 }
 
 /// Converts database-layer failures into the application repository error.
 fn comment_repository_error_from_database(
     error: crate::DatabaseError,
 ) -> TaskDiffCommentRepositoryError {
-    TaskDiffCommentRepositoryError::operation_failed(error)
+    match error {
+        crate::DatabaseError::Sqlite(rusqlite::Error::SqliteFailure(code, message))
+            if code.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            let detail = message
+                .map(|message| message.to_string())
+                .unwrap_or_else(|| "sqlite constraint violation".to_string());
+            let message = format!("task diff comment constraint violated: {detail}");
+            if matches!(code.extended_code, 1555 | 2067) {
+                TaskDiffCommentRepositoryError::Conflict(message)
+            } else {
+                TaskDiffCommentRepositoryError::Invalid(message)
+            }
+        }
+        error => TaskDiffCommentRepositoryError::operation_failed(error),
+    }
 }

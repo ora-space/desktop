@@ -12,9 +12,9 @@ mod tests;
 pub use git_reader::GitTaskDiffReader;
 pub use git_writer::GitTaskGitWriter;
 pub use handlers::{
-    CommitTaskChangesHandler, CreateTaskDiffCommentHandler, GetTaskDiffHandler,
-    ListTaskDiffCommentsHandler, PushTaskBranchHandler, ReplyTaskDiffCommentHandler,
-    SetTaskDiffCommentStatusHandler, task_diff_id,
+    CommitTaskChangesHandler, CreateTaskDiffCommentHandler, ListTaskDiffCommentsHandler,
+    PushTaskBranchHandler, ReplyTaskDiffCommentHandler, SetTaskDiffCommentStatusHandler,
+    task_diff_id,
 };
 pub use id_generator::UuidTaskDiffCommentIdGenerator;
 pub use ports::{

@@ -146,7 +146,10 @@ where
             Some(branch_name.clone()),
             ora_domain::WorktreeBaseline::recorded(provisioned_worktree.base_commit_id).map_err(
                 |error| ApplicationError::TaskWorktreeProvisioner {
-                    source: crate::TaskWorktreeProvisionerError::operation_failed(error),
+                    source: crate::TaskWorktreeProvisionerError::operation_failed(
+                        "failed to record task worktree baseline",
+                        error,
+                    ),
                 },
             )?,
             DomainWorktreeActivity::Active,

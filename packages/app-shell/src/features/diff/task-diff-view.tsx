@@ -190,8 +190,8 @@ export function TaskDiffView({
     queryClient.invalidateQueries({ queryKey: queryKeys.taskDiffComments(taskId) });
 
   const createComment = useMutation({
-    mutationFn: ({ anchor, body }: { anchor: TaskDiffCommentAnchor; body: string }) =>
-      client.task.createDiffComment({ taskId, anchor, body }),
+    mutationFn: ({ scope, anchor, body }: { scope: TaskDiffScope; anchor: TaskDiffCommentAnchor; body: string }) =>
+      client.task.createDiffComment({ taskId, scope, anchor, body }),
     onSuccess: async () => {
       setSelectedAnchor(null);
       await refreshDiscussions();
@@ -252,8 +252,8 @@ export function TaskDiffView({
     setSelectedAnchor(selection);
   }, [createComment]);
   const handleCreateComment = useCallback(
-    (anchor: TaskDiffCommentAnchor, body: string) => createComment.mutateAsync({ anchor, body }),
-    [createComment],
+    (anchor: TaskDiffCommentAnchor, body: string) => createComment.mutateAsync({ scope, anchor, body }),
+    [createComment, scope],
   );
   const handleReply = useCallback(
     (commentId: string, body: string) => replyComment.mutateAsync({ commentId, body }),

@@ -150,6 +150,12 @@ pub enum TaskDiffCommentRepositoryError {
     /// Indicates that comment persistence failed below the application port.
     #[error("task diff comment repository operation failed")]
     OperationFailed(#[source] BoxRepositorySource),
+    /// Classifies an invalid comment row or request without exposing database details.
+    #[error("invalid task diff comment: {0}")]
+    Invalid(String),
+    /// Classifies a comment write that conflicts with stored state.
+    #[error("task diff comment conflicts with stored state: {0}")]
+    Conflict(String),
 }
 
 impl TaskDiffCommentRepositoryError {

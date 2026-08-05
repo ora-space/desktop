@@ -35,6 +35,7 @@ export type ContractError =
     | { "code": "task_diff_stale"; "params": EmptyErrorParams }
     | { "code": "task_diff_comment_not_found"; "params": EmptyErrorParams }
     | { "code": "task_diff_comment_invalid"; "params": EmptyErrorParams }
+    | { "code": "task_diff_comment_conflict"; "params": EmptyErrorParams }
     | { "code": "session_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_cli_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
@@ -174,6 +175,7 @@ export type PublicError =
   | { "code": "task_diff_stale"; "params": EmptyErrorParams }
   | { "code": "task_diff_comment_not_found"; "params": EmptyErrorParams }
   | { "code": "task_diff_comment_invalid"; "params": EmptyErrorParams }
+  | { "code": "task_diff_comment_conflict"; "params": EmptyErrorParams }
   | { "code": "session_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_cli_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }

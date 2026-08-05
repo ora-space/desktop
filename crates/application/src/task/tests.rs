@@ -664,6 +664,7 @@ fn reports_application_errors() {
         let worktree_repository = Rc::new(FakeWorktreeRepository::default());
         let provisioner = Rc::new(FakeTaskWorktreeProvisioner::default());
         provisioner.fail_next_create(TaskWorktreeProvisionerError::operation_failed(
+            "failed to create task worktree",
             std::io::Error::other("failed to create linked worktree"),
         ));
         let create_handler = CreateTaskHandler::new(

@@ -271,6 +271,7 @@ fn reports_provisioning_failure() {
     let run_repository = Arc::new(MockWorkflowRunRepository::default());
     let provisioner = Arc::new(FakeTaskWorktreeProvisioner::default());
     provisioner.fail_next_create(TaskWorktreeProvisionerError::operation_failed(
+        "failed to create workflow run worktree",
         std::io::Error::other("failed to create linked worktree"),
     ));
     let handler = CreateWorkflowRunHandler::new(
