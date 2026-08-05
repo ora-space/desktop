@@ -57,6 +57,7 @@ Repositories map SQLite columns onto the current `ora-domain` shapes, including 
 - `worktrees.is_active` becomes `WorktreeActivity`; `worktrees.branch_name` stays optional.
 - `project_work_contexts.surface` text becomes `ProjectWorkContextSurface`.
 - `task_diff_comments` maps root-thread columns and reply columns into the mutually exclusive `TaskDiffCommentKind` enum. Visible comments are returned in `(created_at, id)` order; malformed rows fail rather than being coerced.
+- `project_spec_source_overrides` is replaced transactionally per project. Previous active rows are soft-deleted before the validated replacement is inserted, and aggregate project deletion updates them in the same transaction as other descendants.
 
 An unrecognized persisted category value is a mapping failure, not a silently coerced default.
 

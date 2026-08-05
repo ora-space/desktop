@@ -16,6 +16,7 @@ Every table owned by the migration catalog in `ora-db` has a first-class domain 
 | `AgentDefinition` | `agents` |
 | `ProjectWorkContext` | `project_work_contexts` |
 | `TaskDiffComment` | `task_diff_comments` |
+| `ProjectSpecSourceOverride` | `project_spec_source_overrides` |
 | `VirtualFolder` | `virtual_folders` |
 | `VirtualEntry` | `virtual_entries` |
 | `Artifact` | `artifacts` |

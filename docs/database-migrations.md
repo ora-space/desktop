@@ -19,8 +19,9 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 | `0004` | `worktrees.base_commit_id`, `task_diff_comments`, comment indexes, and the root-parent trigger |
 | `0005` | `sessions.history_degraded_reason` |
 | `0006` | `workflows`, `workflow_snapshots` with a partial unique index for visible `(workflow_id, version)` pairs and foreign key from snapshots to workflows; later extended with `workflow_runs`, `workflow_node_runs`, and `tasks.type`/`workflow_run_id` (unique partial index for the run-task association) |
+| `0007` | `project_spec_source_overrides` and its active project/path unique index |
 
-`default_migration_catalog()` returns all six with every version as the active target.
+`default_migration_catalog()` returns all seven with every version as the active target.
 
 ## Reconciliation model
 
@@ -39,6 +40,8 @@ Because rollback needs `down` statements, retired tail migrations must stay defi
 Migration `0004` is additive for existing databases: it adds the nullable worktree baseline and the new comment table. Its rollback removes only the task-diff indexes, trigger, table, and baseline column; it does not rewrite existing tasks or worktrees. A production rollback must still be treated as destructive for task-diff comments because the down migration drops that table.
 
 Migration `0005` is additive as well: it adds the nullable `sessions.history_degraded_reason` column, and its rollback only drops that column. On-disk conversation history lives outside SQLite, so neither direction touches recorded transcripts.
+
+Migration `0006` adds workflow definitions/snapshots, workflow runs/node runs, and the task `type`/`workflow_run_id` association columns. Migration `0007` stores audited project-level Spec source decisions. Database checks make custom workflow names mandatory and forbid custom names on built-in workflows; the partial unique index applies only to active rows so replacements can retain soft-deleted history.
 
 ## Operational logging
 

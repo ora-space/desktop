@@ -104,7 +104,9 @@ pub struct GetTaskWorkspaceRequest {
 #[ts(export_to = "task.ts")]
 pub struct TaskWorkspace {
     pub root_path: String,
-    pub branch_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub branch_name: Option<String>,
 }
 
 /// Returns one task-owned workspace without exposing repository internals.
@@ -189,8 +191,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 mod tests {
     use super::{
         CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse,
-        GetTaskRequest, GetTaskResponse, ListTasksRequest, ListTasksResponse, Task, TaskStatus,
-        TaskType, TaskWorkspaceMode, UpdateTaskRequest, UpdateTaskResponse,
+        GetTaskRequest, GetTaskResponse, GetTaskWorkspaceResponse, ListTasksRequest,
+        ListTasksResponse, Task, TaskStatus, TaskType, TaskWorkspace, TaskWorkspaceMode,
+        UpdateTaskRequest, UpdateTaskResponse,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -367,6 +370,20 @@ mod tests {
         assert_eq!(
             UpdateTaskResponse { task: task.clone() },
             UpdateTaskResponse { task }
+        );
+    }
+
+    /// Verifies project-root and detached contexts omit the optional branch without changing the root shape.
+    #[test]
+    fn serializes_task_workspace_without_a_branch() {
+        assert_serialized_json(
+            &GetTaskWorkspaceResponse {
+                workspace: TaskWorkspace {
+                    root_path: "C:/projects/ora".to_string(),
+                    branch_name: None,
+                },
+            },
+            json!({ "workspace": { "rootPath": "C:/projects/ora" } }),
         );
     }
 

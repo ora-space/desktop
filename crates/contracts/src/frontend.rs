@@ -1,5 +1,12 @@
 //! HTTP path templates shared by server adapters and frontend contract generation.
 
+mod spec;
+
+pub use spec::{
+    PROJECT_SPEC_SOURCES_PATH, SPEC_CATALOG_PATH, SPEC_READ_PATH, SPEC_RESOLVE_SOURCE_PATH,
+    SPEC_WATCH_PATH,
+};
+
 pub const PROJECTS_PATH: &str = "/api/projects";
 pub const PROJECT_PATH: &str = "/api/projects/{projectId}";
 pub const PROJECT_BRANCHES_PATH: &str = "/api/projects/{projectId}/branches";

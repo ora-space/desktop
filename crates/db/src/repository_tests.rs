@@ -6,16 +6,18 @@ use std::{
 
 use ora_application::{
     ActivateVersionResult, AgentDefinitionRepository, DeleteSnapshotResult, DeleteWorkflowResult,
-    DeleteWorkflowRunResult, ProjectRepository, ProjectWorkContextRepository,
-    PublishSnapshotResult, RepositoryError, RollbackDraftResult, SessionRepository,
-    SkillRepository, TaskRepository, WorkflowRepository, WorkflowRunRepository, WorktreeRepository,
+    DeleteWorkflowRunResult, ProjectRepository, ProjectSpecSourceOverrideRepository,
+    ProjectWorkContextRepository, PublishSnapshotResult, RepositoryError, RollbackDraftResult,
+    SessionRepository, SkillRepository, TaskRepository, WorkflowRepository, WorkflowRunRepository,
+    WorktreeRepository,
 };
 use ora_domain::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, HistoryState, Project, ProjectId,
-    ProjectWorkContext, ProjectWorkContextId, ProjectWorkContextSurface, Session, SessionId,
-    SessionStatus, Skill, SkillId, Task, TaskId, TaskStatus, Workflow, WorkflowId, WorkflowRun,
-    WorkflowRunDetail, WorkflowRunId, WorkflowRunStatus, WorkflowRunSummary, WorkflowSnapshot,
-    WorkflowSnapshotId, Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
+    ProjectSpecSourceOverride, ProjectSpecSourceOverrideId, ProjectWorkContext,
+    ProjectWorkContextId, ProjectWorkContextSurface, Session, SessionId, SessionStatus, Skill,
+    SkillId, SpecSourceVisibility, SpecWorkflow, Task, TaskId, TaskStatus, Workflow, WorkflowId,
+    WorkflowRun, WorkflowRunDetail, WorkflowRunId, WorkflowRunStatus, WorkflowRunSummary,
+    WorkflowSnapshot, WorkflowSnapshotId, Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -24,10 +26,110 @@ use tempfile::TempDir;
 use crate::{
     CascadeDeleteOutcome, DatabaseBootstrapper, DatabaseLocation, RepositoryPool,
     SqliteAgentDefinitionRepository, SqliteCascadeRepository, SqliteProjectRepository,
-    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillRepository,
-    SqliteTaskRepository, SqliteWorkflowRepository, SqliteWorkflowRunRepository,
-    SqliteWorktreeRepository, TimestampSource, default_migration_catalog,
+    SqliteProjectSpecSourceOverrideRepository, SqliteProjectWorkContextRepository,
+    SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository, SqliteWorkflowRepository,
+    SqliteWorkflowRunRepository, SqliteWorktreeRepository, TimestampSource,
+    default_migration_catalog,
 };
+
+/// Verifies source replacement is atomic at the collection boundary and hides prior rows.
+#[test]
+fn project_spec_source_repository_replaces_active_configuration() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let repository = SqliteProjectSpecSourceOverrideRepository::new(pool);
+    let project_id = ProjectId::new("project-specs");
+    project_repository
+        .create_project(Project::new(
+            project_id.clone(),
+            "Specs",
+            "C:/project",
+            AuditFields::new(1, 1, false),
+        ))
+        .unwrap();
+    let initial = ProjectSpecSourceOverride::new(
+        ProjectSpecSourceOverrideId::new("source-1"),
+        project_id.clone(),
+        "openspec/specs",
+        SpecWorkflow::OpenSpec,
+        SpecSourceVisibility::Enabled,
+        AuditFields::new(2, 2, false),
+    );
+    repository
+        .replace_spec_source_overrides(&project_id, vec![initial.clone()], 2)
+        .unwrap();
+    let conflicting_replacement = ProjectSpecSourceOverride::new(
+        ProjectSpecSourceOverrideId::new("source-1"),
+        project_id.clone(),
+        "docs/specs",
+        SpecWorkflow::Custom {
+            name: "Custom".to_string(),
+        },
+        SpecSourceVisibility::Enabled,
+        AuditFields::new(3, 3, false),
+    );
+    assert!(
+        repository
+            .replace_spec_source_overrides(&project_id, vec![conflicting_replacement], 3)
+            .is_err()
+    );
+    assert_eq!(
+        repository.list_spec_source_overrides(&project_id).unwrap(),
+        vec![initial]
+    );
+    let replacement = ProjectSpecSourceOverride::new(
+        ProjectSpecSourceOverrideId::new("source-2"),
+        project_id.clone(),
+        "docs/plans",
+        SpecWorkflow::Superpowers,
+        SpecSourceVisibility::Disabled,
+        AuditFields::new(3, 3, false),
+    );
+
+    assert_eq!(
+        repository
+            .replace_spec_source_overrides(&project_id, vec![replacement.clone()], 3)
+            .unwrap(),
+        vec![replacement.clone()]
+    );
+    assert_eq!(
+        repository.list_spec_source_overrides(&project_id).unwrap(),
+        vec![replacement]
+    );
+}
+
+/// Verifies migration constraints keep custom workflow names and built-in columns consistent.
+#[test]
+fn project_spec_source_schema_rejects_invalid_workflow_columns() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    SqliteProjectRepository::new(pool.clone())
+        .create_project(Project::new(
+            ProjectId::new("project-spec-constraints"),
+            "Specs",
+            "C:/project",
+            AuditFields::new(1, 1, false),
+        ))
+        .unwrap();
+
+    for (id, workflow_kind, custom_name) in [
+        ("missing-custom-name", "custom", None),
+        ("unexpected-built-in-name", "open_spec", Some("OpenSpec")),
+    ] {
+        assert!(
+            pool.with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO project_spec_source_overrides (
+                        id, project_id, relative_path, workflow_kind, custom_name, visibility,
+                        created_at, updated_at, is_deleted
+                     ) VALUES (?1, 'project-spec-constraints', ?1, ?2, ?3, 'enabled', 1, 1, 0)",
+                    rusqlite::params![id, workflow_kind, custom_name],
+                )?;
+                Ok(())
+            })
+            .is_err()
+        );
+    }
+}
 
 /// Verifies catalog repositories use stable identifiers and hide soft-deleted rows.
 #[test]
@@ -1587,7 +1689,7 @@ fn task_cascade_delete_is_atomic_and_does_not_require_git() {
         repository.delete_task(&TaskId::new("task-1"), 20).unwrap(),
         CascadeDeleteOutcome::ActiveSession
     );
-    assert_eq!(cascade_flags(&pool), (0, 0, 0, 0, 1));
+    assert_eq!(cascade_flags(&pool), (0, 0, 0, 0, 0, 1));
     pool.with_connection(|connection| {
         connection.execute(
             "UPDATE sessions SET status = ?1 WHERE id = 'session-1'",
@@ -1601,7 +1703,7 @@ fn task_cascade_delete_is_atomic_and_does_not_require_git() {
         repository.delete_task(&TaskId::new("task-1"), 30).unwrap(),
         CascadeDeleteOutcome::Deleted
     );
-    assert_eq!(cascade_flags(&pool), (0, 1, 1, 1, 1));
+    assert_eq!(cascade_flags(&pool), (0, 1, 1, 1, 0, 1));
 }
 
 /// Verifies project deletion removes its transient lease and soft-deletes the full Ora aggregate.
@@ -1617,7 +1719,7 @@ fn project_cascade_delete_removes_work_context_without_touching_external_state()
             .unwrap(),
         CascadeDeleteOutcome::Deleted
     );
-    assert_eq!(cascade_flags(&pool), (1, 1, 1, 1, 0));
+    assert_eq!(cascade_flags(&pool), (1, 1, 1, 1, 1, 0));
 }
 
 /// Inserts one complete aggregate using only Ora-owned rows, deliberately without Git fixtures.
@@ -1632,6 +1734,13 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
              ) VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0, 'base-commit');
              INSERT INTO project_work_contexts VALUES ('context-1', 'web', 'main', 'project-1', 100, 1, 1);",
         )?;
+        connection.execute(
+            "INSERT INTO project_spec_source_overrides (
+                id, project_id, relative_path, workflow_kind, custom_name, visibility,
+                created_at, updated_at, is_deleted
+             ) VALUES ('source-1', 'project-1', 'docs/specs', 'custom', 'Custom', 'enabled', 1, 1, 0)",
+            [],
+        )?;
         // Columns are named rather than positional so a later schema addition
         // does not silently shift this fixture's values into the wrong ones.
         connection.execute(
@@ -1645,7 +1754,7 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
 }
 
 /// Reads all aggregate deletion markers plus the remaining transient work-context count.
-fn cascade_flags(pool: &RepositoryPool) -> (i64, i64, i64, i64, i64) {
+fn cascade_flags(pool: &RepositoryPool) -> (i64, i64, i64, i64, i64, i64) {
     pool.with_connection(|connection| {
         Ok((
             connection.query_row(
@@ -1665,6 +1774,11 @@ fn cascade_flags(pool: &RepositoryPool) -> (i64, i64, i64, i64, i64) {
             )?,
             connection.query_row(
                 "SELECT is_deleted FROM sessions WHERE id = 'session-1'",
+                [],
+                |row| row.get(0),
+            )?,
+            connection.query_row(
+                "SELECT is_deleted FROM project_spec_source_overrides WHERE id = 'source-1'",
                 [],
                 |row| row.get(0),
             )?,

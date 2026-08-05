@@ -29,6 +29,10 @@ macro_rules! define_id {
 
 define_id!(ProjectId, "Identifies a persisted project.");
 define_id!(
+    ProjectSpecSourceOverrideId,
+    "Identifies a persisted project specification source override."
+);
+define_id!(
     ProjectWorkContextId,
     "Identifies a persisted project work context."
 );

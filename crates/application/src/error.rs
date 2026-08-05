@@ -77,6 +77,13 @@ pub enum ApplicationError {
         #[source]
         source: RepositoryError,
     },
+    #[error("specification source configuration is invalid")]
+    SpecSourceInvalid,
+    #[error("specification source repository operation failed")]
+    SpecSourceRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("project branch listing operation failed")]
     ProjectBranchListing {
         #[source]
@@ -271,6 +278,11 @@ impl ApplicationError {
         Self::ProjectRepository { source: error }
     }
 
+    /// Maps specification source persistence failures into stable application errors.
+    pub(crate) fn from_spec_source_repository_error(error: RepositoryError) -> Self {
+        Self::SpecSourceRepository { source: error }
+    }
+
     /// Maps Git-facing branch listing failures into stable application errors.
     pub(crate) fn from_branch_listing_error(error: BranchListingError) -> Self {
         match error {
@@ -391,6 +403,7 @@ impl PartialEq for ApplicationError {
             | (SkillStorage { .. }, SkillStorage { .. })
             | (SkillImport(_), SkillImport(_))
             | (AgentDefinitionNameBlank, AgentDefinitionNameBlank)
+            | (SpecSourceInvalid, SpecSourceInvalid)
             | (TaskWorktreeRequiresGitRepository, TaskWorktreeRequiresGitRepository)
             | (TaskWorktreeRootUnavailable, TaskWorktreeRootUnavailable)
             | (WorkflowNameBlank, WorkflowNameBlank)

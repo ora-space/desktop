@@ -165,6 +165,18 @@ export const contractErrorSchema = z.object({
         "code": z.literal("file_system_path_permission_denied"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("spec_source_invalid"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("spec_source_outside_workspace"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("spec_source_workspace_root"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("spec_document_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("worktree_root_not_absolute"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -450,6 +462,18 @@ export const publicErrorSchema = z.union([z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("file_system_path_permission_denied"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("spec_source_invalid"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("spec_source_outside_workspace"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("spec_source_workspace_root"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("spec_document_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("worktree_root_not_absolute"),
