@@ -926,6 +926,46 @@ backend_command!(
 );
 
 // =============================================================================
+// workflowRun
+// =============================================================================
+
+backend_command!(
+    create_workflow_run,
+    CreateWorkflowRunRequest,
+    CreateWorkflowRunResponse,
+    create_workflow_run,
+    "Creates one workflow run through the shared Backend."
+);
+backend_command!(
+    get_workflow_run,
+    GetWorkflowRunRequest,
+    GetWorkflowRunResponse,
+    get_workflow_run,
+    "Gets one workflow run through the shared Backend."
+);
+backend_command!(
+    list_workflow_runs,
+    ListWorkflowRunsRequest,
+    ListWorkflowRunsResponse,
+    list_workflow_runs,
+    "Lists workflow runs for one project through the shared Backend."
+);
+backend_command!(
+    list_workflow_node_runs,
+    ListWorkflowNodeRunsRequest,
+    ListWorkflowNodeRunsResponse,
+    list_workflow_node_runs,
+    "Lists the node-run history of one workflow run through the shared Backend."
+);
+backend_command!(
+    delete_workflow_run,
+    DeleteWorkflowRunRequest,
+    DeleteWorkflowRunResponse,
+    delete_workflow_run,
+    "Deletes one workflow run through the shared Backend."
+);
+
+// =============================================================================
 // desktop
 // =============================================================================
 

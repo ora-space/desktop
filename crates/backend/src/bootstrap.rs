@@ -7,6 +7,8 @@ use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::task::TaskApi;
 use crate::task_diff::TaskDiffApi;
+use crate::workflow::WorkflowApi;
+use crate::workflow_run::WorkflowRunApi;
 use ora_application::ApplicationError;
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
@@ -60,6 +62,8 @@ pub struct Backend {
     agent_runtime: Arc<AgentRuntimeManager>,
     skill: Arc<SkillApi>,
     agent: Arc<AgentApi>,
+    workflow: Arc<WorkflowApi>,
+    workflow_run: Arc<WorkflowRunApi>,
 }
 
 impl Backend {
@@ -104,6 +108,12 @@ impl Backend {
             agent_runtime: Arc::new(agent_runtime),
             skill: Arc::new(SkillApi::new(pool.clone(), paths.skills_root, clock)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
+            workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
+            workflow_run: Arc::new(WorkflowRunApi::new(
+                pool.clone(),
+                worktree_root.clone(),
+                clock,
+            )),
             pool,
             worktree_root,
         })
@@ -531,6 +541,156 @@ impl Backend {
         _request: GetGitIdentityRequest,
     ) -> Result<GitIdentityResponse, BackendError> {
         Ok(crate::identity::resolve_git_identity())
+    }
+
+    // =============================================================================
+    // workflow
+    // =============================================================================
+
+    /// Creates one workflow through the shared application composition.
+    pub fn create_workflow(
+        &self,
+        request: CreateWorkflowRequest,
+    ) -> Result<CreateWorkflowResponse, BackendError> {
+        self.workflow.create(request).map_err(BackendError::from)
+    }
+    /// Gets one workflow through the shared application composition.
+    pub fn get_workflow(
+        &self,
+        request: GetWorkflowRequest,
+    ) -> Result<GetWorkflowResponse, BackendError> {
+        self.workflow.get(request).map_err(BackendError::from)
+    }
+    /// Lists workflows through the shared application composition.
+    pub fn list_workflows(
+        &self,
+        request: ListWorkflowsRequest,
+    ) -> Result<ListWorkflowsResponse, BackendError> {
+        self.workflow.list(request).map_err(BackendError::from)
+    }
+    /// Updates one workflow through the shared application composition.
+    pub fn update_workflow(
+        &self,
+        request: UpdateWorkflowRequest,
+    ) -> Result<UpdateWorkflowResponse, BackendError> {
+        self.workflow.update(request).map_err(BackendError::from)
+    }
+    /// Deletes one workflow through the shared application composition.
+    pub fn delete_workflow(
+        &self,
+        request: DeleteWorkflowRequest,
+    ) -> Result<DeleteWorkflowResponse, BackendError> {
+        self.workflow.delete(request).map_err(BackendError::from)
+    }
+    /// Gets the draft snapshot through the shared application composition.
+    pub fn get_workflow_draft(
+        &self,
+        request: GetDraftRequest,
+    ) -> Result<GetDraftResponse, BackendError> {
+        self.workflow.get_draft(request).map_err(BackendError::from)
+    }
+    /// Updates the draft snapshot through the shared application composition.
+    pub fn update_workflow_draft(
+        &self,
+        request: UpdateDraftRequest,
+    ) -> Result<UpdateDraftResponse, BackendError> {
+        self.workflow
+            .update_draft(request)
+            .map_err(BackendError::from)
+    }
+    /// Publishes a workflow draft through the shared application composition.
+    pub fn publish_workflow(
+        &self,
+        request: PublishWorkflowRequest,
+    ) -> Result<PublishWorkflowResponse, BackendError> {
+        self.workflow.publish(request).map_err(BackendError::from)
+    }
+    /// Rolls back the draft through the shared application composition.
+    pub fn rollback_workflow(
+        &self,
+        request: RollbackWorkflowRequest,
+    ) -> Result<RollbackWorkflowResponse, BackendError> {
+        self.workflow.rollback(request).map_err(BackendError::from)
+    }
+    /// Activates a published version through the shared application composition.
+    pub fn activate_workflow(
+        &self,
+        request: ActivateWorkflowRequest,
+    ) -> Result<ActivateWorkflowResponse, BackendError> {
+        self.workflow.activate(request).map_err(BackendError::from)
+    }
+    /// Lists published versions through the shared application composition.
+    pub fn list_workflow_versions(
+        &self,
+        request: ListVersionsRequest,
+    ) -> Result<ListVersionsResponse, BackendError> {
+        self.workflow
+            .list_versions(request)
+            .map_err(BackendError::from)
+    }
+    /// Gets one version snapshot through the shared application composition.
+    pub fn get_workflow_version(
+        &self,
+        request: GetVersionRequest,
+    ) -> Result<GetVersionResponse, BackendError> {
+        self.workflow
+            .get_version(request)
+            .map_err(BackendError::from)
+    }
+    /// Deletes one version snapshot through the shared application composition.
+    pub fn delete_workflow_snapshot(
+        &self,
+        request: DeleteSnapshotRequest,
+    ) -> Result<DeleteSnapshotResponse, BackendError> {
+        self.workflow
+            .delete_snapshot(request)
+            .map_err(BackendError::from)
+    }
+
+    // =============================================================================
+    // workflowRun
+    // =============================================================================
+
+    /// Creates one workflow run through the shared application composition.
+    pub fn create_workflow_run(
+        &self,
+        request: CreateWorkflowRunRequest,
+    ) -> Result<CreateWorkflowRunResponse, BackendError> {
+        self.workflow_run
+            .create(request)
+            .map_err(BackendError::from)
+    }
+    /// Gets one workflow run through the shared application composition.
+    pub fn get_workflow_run(
+        &self,
+        request: GetWorkflowRunRequest,
+    ) -> Result<GetWorkflowRunResponse, BackendError> {
+        self.workflow_run.get(request).map_err(BackendError::from)
+    }
+    /// Lists workflow runs for one project through the shared application composition.
+    pub fn list_workflow_runs(
+        &self,
+        request: ListWorkflowRunsRequest,
+    ) -> Result<ListWorkflowRunsResponse, BackendError> {
+        self.workflow_run.list(request).map_err(BackendError::from)
+    }
+    /// Lists the node-run history of one run through the shared application composition.
+    pub fn list_workflow_node_runs(
+        &self,
+        request: ListWorkflowNodeRunsRequest,
+    ) -> Result<ListWorkflowNodeRunsResponse, BackendError> {
+        self.workflow_run
+            .list_node_runs(request)
+            .map_err(BackendError::from)
+    }
+    /// Deletes one workflow run through the shared application composition.
+    pub fn delete_workflow_run(
+        &self,
+        request: DeleteWorkflowRunRequest,
+    ) -> Result<DeleteWorkflowRunResponse, BackendError> {
+        self.workflow_run
+            .delete(request)
+            .map_err(BackendError::from)
     }
 }
 

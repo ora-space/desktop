@@ -316,10 +316,97 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::TaskDiff { .. }
             | ApplicationError::TaskDiffCommentRepository { .. }
             | ApplicationError::WorktreeRepository { .. }
-            | ApplicationError::SessionRepository { .. } => (
+            | ApplicationError::SessionRepository { .. }
+            | ApplicationError::WorkflowRepository { .. }
+            | ApplicationError::WorkflowRunRepository { .. } => (
                 ErrorClassification::Internal,
                 PublicError::InternalError(EmptyErrorParams {}),
                 "application operation failed",
+            ),
+            ApplicationError::WorkflowNameBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowNameBlank(EmptyErrorParams {}),
+                "workflow name must not be blank",
+            ),
+            ApplicationError::WorkflowNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorkflowNotFound(EmptyErrorParams {}),
+                "workflow not found",
+            ),
+            ApplicationError::WorkflowSnapshotNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorkflowSnapshotNotFound(EmptyErrorParams {}),
+                "workflow snapshot not found",
+            ),
+            ApplicationError::WorkflowVersionAlreadyExists { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::WorkflowVersionAlreadyExists(EmptyErrorParams {}),
+                "workflow version already exists",
+            ),
+            ApplicationError::WorkflowVersionInvalid => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowVersionInvalid(EmptyErrorParams {}),
+                "workflow version is invalid",
+            ),
+            ApplicationError::WorkflowVersionReserved => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowVersionReserved(EmptyErrorParams {}),
+                "workflow version 'draft' is reserved",
+            ),
+            ApplicationError::WorkflowCannotDeleteDraft => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotDeleteDraft(EmptyErrorParams {}),
+                "cannot delete the draft workflow snapshot",
+            ),
+            ApplicationError::WorkflowCannotDeleteActiveVersion => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotDeleteActiveVersion(EmptyErrorParams {}),
+                "cannot delete the active workflow version",
+            ),
+            ApplicationError::WorkflowActiveRuns => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowActiveRuns(EmptyErrorParams {}),
+                "cannot delete a workflow with live runs",
+            ),
+            ApplicationError::WorkflowCannotRollbackToDraft => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotRollbackToDraft(EmptyErrorParams {}),
+                "cannot roll back to the draft workflow snapshot",
+            ),
+            ApplicationError::WorkflowCannotActivateDraft => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotActivateDraft(EmptyErrorParams {}),
+                "cannot activate the draft workflow snapshot",
+            ),
+            ApplicationError::WorkflowSnapshotInUse => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowSnapshotInUse(EmptyErrorParams {}),
+                "cannot delete a snapshot referenced by a workflow run",
+            ),
+            ApplicationError::WorkflowSnapshotNotFoundById { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorkflowSnapshotNotFound(EmptyErrorParams {}),
+                "workflow snapshot not found by id",
+            ),
+            ApplicationError::WorkflowNoPublishedSnapshot => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowNoPublishedSnapshot(EmptyErrorParams {}),
+                "workflow has no published snapshot",
+            ),
+            ApplicationError::WorkflowRunCannotUseDraftSnapshot => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunCannotUseDraftSnapshot(EmptyErrorParams {}),
+                "cannot use the draft snapshot for a workflow run",
+            ),
+            ApplicationError::WorkflowRunNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorkflowRunNotFound(EmptyErrorParams {}),
+                "workflow run not found",
+            ),
+            ApplicationError::WorkflowRunActive => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunActive(EmptyErrorParams {}),
+                "workflow run is active and cannot be deleted",
             ),
         };
 
@@ -549,6 +636,110 @@ mod tests {
                 .map(ToString::to_string),
             Some("git process failed".to_string())
         );
+    }
+
+    /// Verifies workflow domain failures preserve their distinct public contract codes.
+    #[test]
+    fn maps_workflow_failures_to_distinct_public_errors() {
+        let cases = [
+            (
+                ApplicationError::WorkflowNameBlank,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowNameBlank(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowNotFound {
+                    workflow_id: "workflow-1".to_string(),
+                },
+                ErrorClassification::NotFound,
+                PublicError::WorkflowNotFound(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowSnapshotNotFound {
+                    workflow_id: "workflow-1".to_string(),
+                    version: "v1".to_string(),
+                },
+                ErrorClassification::NotFound,
+                PublicError::WorkflowSnapshotNotFound(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowVersionAlreadyExists {
+                    workflow_id: "workflow-1".to_string(),
+                    version: "v1".to_string(),
+                },
+                ErrorClassification::Conflict,
+                PublicError::WorkflowVersionAlreadyExists(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowVersionInvalid,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowVersionInvalid(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowVersionReserved,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowVersionReserved(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowCannotDeleteDraft,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotDeleteDraft(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowCannotDeleteActiveVersion,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotDeleteActiveVersion(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowActiveRuns,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowActiveRuns(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowCannotRollbackToDraft,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotRollbackToDraft(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowCannotActivateDraft,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotActivateDraft(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowSnapshotInUse,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowSnapshotInUse(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowNoPublishedSnapshot,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowNoPublishedSnapshot(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowRunCannotUseDraftSnapshot,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunCannotUseDraftSnapshot(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowRunNotFound {
+                    run_id: "run-1".to_string(),
+                },
+                ErrorClassification::NotFound,
+                PublicError::WorkflowRunNotFound(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowRunActive,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunActive(EmptyErrorParams {}),
+            ),
+        ];
+
+        for (application_error, classification, public_error) in cases {
+            let backend_error = BackendError::from(application_error);
+
+            assert_eq!(backend_error.classification(), classification);
+            assert_eq!(backend_error.public_error(), &public_error);
+        }
     }
 
     #[test]

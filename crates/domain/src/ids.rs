@@ -47,3 +47,13 @@ define_id!(
     AgentDefinitionId,
     "Identifies a persisted configurable agent definition."
 );
+define_id!(WorkflowId, "Identifies a persisted workflow.");
+define_id!(
+    WorkflowSnapshotId,
+    "Identifies a persisted workflow snapshot."
+);
+define_id!(WorkflowRunId, "Identifies a persisted workflow run.");
+define_id!(
+    WorkflowNodeRunId,
+    "Identifies a persisted workflow node run."
+);

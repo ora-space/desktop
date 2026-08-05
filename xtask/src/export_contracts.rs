@@ -385,6 +385,49 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListAgentsResponse"
         | "UpdateAgentRequest"
         | "UpdateAgentResponse" => "agent",
+        // workflow
+        "CreateWorkflowRequest"
+        | "CreateWorkflowResponse"
+        | "GetWorkflowRequest"
+        | "GetWorkflowResponse"
+        | "ListWorkflowsRequest"
+        | "ListWorkflowsResponse"
+        | "UpdateWorkflowRequest"
+        | "UpdateWorkflowResponse"
+        | "DeleteWorkflowRequest"
+        | "DeleteWorkflowResponse"
+        | "GetDraftRequest"
+        | "GetDraftResponse"
+        | "UpdateDraftRequest"
+        | "UpdateDraftResponse"
+        | "PublishWorkflowRequest"
+        | "PublishWorkflowResponse"
+        | "RollbackWorkflowRequest"
+        | "RollbackWorkflowResponse"
+        | "ActivateWorkflowRequest"
+        | "ActivateWorkflowResponse"
+        | "ListVersionsRequest"
+        | "ListVersionsResponse"
+        | "GetVersionRequest"
+        | "GetVersionResponse"
+        | "DeleteSnapshotRequest"
+        | "DeleteSnapshotResponse" => "workflow",
+        // workflowRun
+        "WorkflowRunStatus"
+        | "WorkflowNodeStatus"
+        | "WorkflowRun"
+        | "WorkflowNodeRun"
+        | "WorkflowRunSummary"
+        | "CreateWorkflowRunRequest"
+        | "CreateWorkflowRunResponse"
+        | "GetWorkflowRunRequest"
+        | "GetWorkflowRunResponse"
+        | "ListWorkflowRunsRequest"
+        | "ListWorkflowRunsResponse"
+        | "ListWorkflowNodeRunsRequest"
+        | "ListWorkflowNodeRunsResponse"
+        | "DeleteWorkflowRunRequest"
+        | "DeleteWorkflowRunResponse" => "workflowRun",
         // fileSystem
         "ListDirectoryRequest"
         | "ListDirectoryResponse"
@@ -545,6 +588,7 @@ mod tests {
             "skill.ts",
             "task.ts",
             "task_diff.ts",
+            "workflow.ts",
         ];
 
         for generated_file in generated_files {

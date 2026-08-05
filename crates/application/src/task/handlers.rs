@@ -383,18 +383,22 @@ where
             }
         };
 
-        let task = DomainTask::new(
-            task_id,
-            existing_task.project_id,
-            request.title,
-            map_contract_task_status(request.status),
-            existing_task.worktree_id,
-            AuditFields::new(
+        let task = DomainTask {
+            id: task_id,
+            project_id: existing_task.project_id,
+            title: request.title,
+            status: map_contract_task_status(request.status),
+            // Preserve the task kind and run association: updating a workflow-run task must not
+            // degrade it to a Default task, just as the owned worktree is carried forward.
+            task_type: existing_task.task_type,
+            workflow_run_id: existing_task.workflow_run_id,
+            worktree_id: existing_task.worktree_id,
+            audit_fields: AuditFields::new(
                 existing_task.audit_fields.created_at,
                 self.clock.now_timestamp_millis(),
                 existing_task.audit_fields.is_deleted,
             ),
-        );
+        };
         let task = self
             .repository
             .update_task(task)

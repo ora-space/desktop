@@ -263,6 +263,33 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("skill_storage_inconsistent"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_name_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_snapshot_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_version_already_exists"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_version_reserved"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_cannot_delete_draft"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_cannot_delete_active_version"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_cannot_rollback_to_draft"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_cannot_activate_draft"),
+        "params": emptyErrorParamsSchema
     })]));
 
 export const publicErrorSchema = z.union([z.object({
@@ -498,5 +525,32 @@ export const publicErrorSchema = z.union([z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("skill_storage_inconsistent"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_name_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_snapshot_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_version_already_exists"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_version_reserved"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_cannot_delete_draft"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_cannot_delete_active_version"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_cannot_rollback_to_draft"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_cannot_activate_draft"),
         "params": emptyErrorParamsSchema
     })]);

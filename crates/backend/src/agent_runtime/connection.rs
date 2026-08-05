@@ -7,6 +7,7 @@ use crate::BackendError;
 use crate::clock::SystemClock;
 use ora_acp::{AcpClient, AcpInboundEvent, AcpPeer};
 use ora_application::{Clock, SessionRepository};
+use ora_contracts::PublicError;
 use ora_contracts::acp::initialization::{
     ClientCapabilities, ClientSessionCapabilities, Implementation, InitializeRequest,
     InitializeResponse, ProtocolVersion, SessionConfigOptionsCapabilities,
@@ -326,11 +327,17 @@ async fn run_supervisor(context: SupervisorContext) {
             }
             Err(error) => {
                 let _ = state.send(ConnectionState::Unavailable);
-                ora_warn!(
-                    agent_cli = agent_cli.database_value(),
-                    error = %error,
-                    "agent CLI startup failed; scheduling retry"
-                );
+                // A CLI that is simply not installed is an expected local configuration, and the
+                // supervisor keeps retrying it for the whole process lifetime. Logging it would
+                // flood the runtime log with one line per retry while `ConnectionState::Unavailable`
+                // already carries that fact to the UI, so only genuine startup failures are logged.
+                if !matches!(error.public_error(), PublicError::AgentCliNotFound(_)) {
+                    ora_warn!(
+                        agent_cli = agent_cli.database_value(),
+                        error = %error,
+                        "agent CLI startup failed; scheduling retry"
+                    );
+                }
             }
         }
         tokio::select! {

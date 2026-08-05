@@ -9,6 +9,12 @@ pub enum DomainModelError {
     InvalidProjectWorkContextSurface(String),
     #[error("invalid task status value: {0}")]
     InvalidTaskStatus(i64),
+    #[error("invalid task type value: {0}")]
+    InvalidTaskType(i64),
+    #[error("invalid workflow run status value: {0}")]
+    InvalidWorkflowRunStatus(i64),
+    #[error("invalid workflow node status value: {0}")]
+    InvalidWorkflowNodeStatus(i64),
     #[error("invalid worktree activity value: {0}")]
     InvalidWorktreeActivity(i64),
     #[error("invalid virtual entry kind value: {0}")]
@@ -29,4 +35,6 @@ pub enum DomainModelError {
     SkillDescriptionTooLarge,
     #[error("agent definition name must not be blank")]
     EmptyAgentDefinitionName,
+    #[error("workflow name must not be blank")]
+    EmptyWorkflowName,
 }

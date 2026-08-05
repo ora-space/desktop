@@ -12,6 +12,8 @@ mod skill;
 mod skill_import;
 mod task;
 mod task_diff;
+mod workflow;
+mod workflow_run;
 
 pub use agent::{
     Agent, CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
@@ -40,8 +42,10 @@ pub use frontend::{
     SESSIONS_PATH, SKILL_IMPORT_COMMIT_PATH, SKILL_IMPORT_PATH, SKILL_IMPORTS_PATH, SKILL_PATH,
     SKILLS_PATH, TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH,
     TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASK_WORKSPACE_PATH,
-    TASKS_PATH, WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH,
-    WORKSPACE_WATCH_PATH, frontend_endpoints,
+    TASKS_PATH, WORKFLOW_ACTIVATE_PATH, WORKFLOW_DRAFT_PATH, WORKFLOW_PATH, WORKFLOW_PUBLISH_PATH,
+    WORKFLOW_ROLLBACK_PATH, WORKFLOW_VERSION_PATH, WORKFLOW_VERSIONS_PATH, WORKFLOWS_PATH,
+    WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
+    frontend_endpoints,
 };
 pub use git::{GetGitIdentityRequest, GitIdentityResponse};
 pub use project::{
@@ -81,8 +85,8 @@ use std::path::Path;
 pub use task::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
     GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest,
-    ListTasksResponse, Task, TaskStatus, TaskWorkspace, TaskWorkspaceMode, UpdateTaskRequest,
-    UpdateTaskResponse,
+    ListTasksResponse, Task, TaskStatus, TaskType, TaskWorkspace, TaskWorkspaceMode,
+    UpdateTaskRequest, UpdateTaskResponse,
 };
 pub use task_diff::{
     CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest,
@@ -93,6 +97,23 @@ pub use task_diff::{
     TaskDiffCommentAnchor, TaskDiffCommentKind, TaskDiffScope, TaskDiffSide, TaskDiffThreadStatus,
 };
 use ts_rs::{Config, ExportError};
+pub use workflow::{
+    ActivateWorkflowRequest, ActivateWorkflowResponse, CreateWorkflowRequest,
+    CreateWorkflowResponse, DeleteSnapshotRequest, DeleteSnapshotResponse, DeleteWorkflowRequest,
+    DeleteWorkflowResponse, GetDraftRequest, GetDraftResponse, GetVersionRequest,
+    GetVersionResponse, GetWorkflowRequest, GetWorkflowResponse, ListVersionsRequest,
+    ListVersionsResponse, ListWorkflowsRequest, ListWorkflowsResponse, PublishWorkflowRequest,
+    PublishWorkflowResponse, RollbackWorkflowRequest, RollbackWorkflowResponse, UpdateDraftRequest,
+    UpdateDraftResponse, UpdateWorkflowRequest, UpdateWorkflowResponse, Workflow, WorkflowSnapshot,
+    WorkflowSummary, WorkflowVersion,
+};
+pub use workflow_run::{
+    CreateWorkflowRunRequest, CreateWorkflowRunResponse, DeleteWorkflowRunRequest,
+    DeleteWorkflowRunResponse, GetWorkflowRunRequest, GetWorkflowRunResponse,
+    ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse, ListWorkflowRunsRequest,
+    ListWorkflowRunsResponse, WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun, WorkflowRunStatus,
+    WorkflowRunSummary,
+};
 
 /// Exports every contract DTO family into the shared TypeScript package for frontend consumers.
 ///
@@ -115,6 +136,8 @@ pub fn export_typescript_bindings_to(
     skill_import::export(&config)?;
     task::export(&config)?;
     task_diff::export(&config)?;
+    workflow::export(&config)?;
+    workflow_run::export(&config)?;
 
     Ok(())
 }

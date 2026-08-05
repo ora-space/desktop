@@ -7,8 +7,8 @@ use crate::{
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest,
-    ListTasksResponse, Task as ContractTask, TaskStatus as ContractTaskStatus, TaskWorkspaceMode,
-    UpdateTaskRequest, UpdateTaskResponse,
+    ListTasksResponse, Task as ContractTask, TaskStatus as ContractTaskStatus,
+    TaskType as ContractTaskType, TaskWorkspaceMode, UpdateTaskRequest, UpdateTaskResponse,
 };
 use ora_domain::{
     AuditFields, ProjectId, Task, TaskId, TaskStatus as DomainTaskStatus, Worktree,
@@ -60,6 +60,8 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
                     title: "Ship handlers".to_string(),
                     status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::Worktree,
+                    task_type: ContractTaskType::Default,
+                    workflow_run_id: None,
                 },
             }
         );
@@ -132,6 +134,8 @@ fn creates_project_root_tasks_without_worktrees() {
                     title: "Chat in project root".to_string(),
                     status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::ProjectRoot,
+                    task_type: ContractTaskType::Default,
+                    workflow_run_id: None,
                 },
             }
         );
@@ -294,6 +298,8 @@ fn regenerates_task_ids_when_branch_prefix_folder_exists() {
                     title: "Ship handlers".to_string(),
                     status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::Worktree,
+                    task_type: ContractTaskType::Default,
+                    workflow_run_id: None,
                 },
             }
         );
@@ -359,6 +365,8 @@ fn regenerates_task_ids_when_orphaned_branch_exists() {
                     title: "Ship handlers".to_string(),
                     status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::Worktree,
+                    task_type: ContractTaskType::Default,
+                    workflow_run_id: None,
                 },
             }
         );
@@ -408,6 +416,8 @@ fn creates_task_when_work_dir_does_not_exist() {
                     title: "Ship handlers".to_string(),
                     status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::Worktree,
+                    task_type: ContractTaskType::Default,
+                    workflow_run_id: None,
                 },
             }
         );
@@ -484,6 +494,8 @@ fn gets_tasks_by_identifier() {
                     title: "Ship handlers".to_string(),
                     status: ContractTaskStatus::Todo,
                     workspace_mode: TaskWorkspaceMode::ProjectRoot,
+                    task_type: ContractTaskType::Default,
+                    workflow_run_id: None,
                 },
             }
         );
@@ -528,6 +540,8 @@ fn lists_visible_tasks() {
                         title: "Ship handlers".to_string(),
                         status: ContractTaskStatus::Todo,
                         workspace_mode: TaskWorkspaceMode::ProjectRoot,
+                        task_type: ContractTaskType::Default,
+                        workflow_run_id: None,
                     },
                     ContractTask {
                         id: "task-2".to_string(),
@@ -535,6 +549,8 @@ fn lists_visible_tasks() {
                         title: "Wire exports".to_string(),
                         status: ContractTaskStatus::Done,
                         workspace_mode: TaskWorkspaceMode::Worktree,
+                        task_type: ContractTaskType::Default,
+                        workflow_run_id: None,
                     },
                 ],
             }
@@ -573,6 +589,8 @@ fn updates_tasks_with_refreshed_timestamps() {
                     title: "Ship updated handlers".to_string(),
                     status: ContractTaskStatus::Done,
                     workspace_mode: TaskWorkspaceMode::ProjectRoot,
+                    task_type: ContractTaskType::Default,
+                    workflow_run_id: None,
                 },
             }
         );

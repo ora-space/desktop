@@ -11,6 +11,18 @@ pub enum TaskStatus {
     Done,
 }
 
+/// Selects the task kind so the frontend can distinguish workflow-run tasks from ordinary tasks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "task.ts")]
+pub enum TaskType {
+    /// An ordinary task created through the generic task path.
+    #[default]
+    Default,
+    /// A task that backs one workflow run.
+    Workflow,
+}
+
 /// Selects the filesystem context used when a task starts an agent session.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -33,6 +45,9 @@ pub struct Task {
     pub title: String,
     pub status: TaskStatus,
     pub workspace_mode: TaskWorkspaceMode,
+    #[serde(rename = "type")]
+    pub task_type: TaskType,
+    pub workflow_run_id: Option<String>,
 }
 
 /// Carries the app-facing payload for task creation requests.
@@ -151,6 +166,7 @@ pub struct DeleteTaskResponse {
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     TaskStatus::export(config)?;
+    TaskType::export(config)?;
     TaskWorkspaceMode::export(config)?;
     Task::export(config)?;
     CreateTaskRequest::export(config)?;
@@ -174,7 +190,7 @@ mod tests {
     use super::{
         CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse,
         GetTaskRequest, GetTaskResponse, ListTasksRequest, ListTasksResponse, Task, TaskStatus,
-        TaskWorkspaceMode, UpdateTaskRequest, UpdateTaskResponse,
+        TaskType, TaskWorkspaceMode, UpdateTaskRequest, UpdateTaskResponse,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -189,6 +205,8 @@ mod tests {
             title: "Ship handlers".to_string(),
             status: TaskStatus::Doing,
             workspace_mode: TaskWorkspaceMode::Worktree,
+            task_type: TaskType::Default,
+            workflow_run_id: None,
         };
         let create_request = CreateTaskRequest {
             project_id: "project-1".to_string(),
@@ -218,6 +236,8 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "doing",
                 "workspaceMode": "worktree",
+                "type": "default",
+                "workflowRunId": null,
             }),
         );
         assert_serialized_json(
@@ -238,6 +258,8 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "doing",
                 "workspaceMode": "worktree",
+                "type": "default",
+                "workflowRunId": null,
                 },
             }),
         );
@@ -251,6 +273,8 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "doing",
                 "workspaceMode": "worktree",
+                "type": "default",
+                "workflowRunId": null,
                 },
             }),
         );
@@ -267,6 +291,8 @@ mod tests {
                         "title": "Ship handlers",
                         "status": "doing",
                         "workspaceMode": "worktree",
+                        "type": "default",
+                        "workflowRunId": null,
                     },
                 ],
             }),
@@ -288,6 +314,8 @@ mod tests {
                     "title": "Ship handlers",
                     "status": "doing",
                     "workspaceMode": "worktree",
+                    "type": "default",
+                    "workflowRunId": null,
                 },
             }),
         );
@@ -300,6 +328,13 @@ mod tests {
         );
     }
 
+    /// Verifies the task `type` values are stable and frontend-friendly.
+    #[test]
+    fn serializes_task_type_values() {
+        assert_serialized_json(&TaskType::Default, json!("default"));
+        assert_serialized_json(&TaskType::Workflow, json!("workflow"));
+    }
+
     /// Confirms the shared task view remains the single reusable payload across responses.
     #[test]
     fn preserves_shared_task_shape_across_responses() {
@@ -309,6 +344,8 @@ mod tests {
             title: "Ship handlers".to_string(),
             status: TaskStatus::Todo,
             workspace_mode: TaskWorkspaceMode::Worktree,
+            task_type: TaskType::Default,
+            workflow_run_id: None,
         };
 
         assert_eq!(

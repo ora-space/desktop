@@ -9,6 +9,7 @@ import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, Delet
 import type { CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest, CommitSkillImportResponse, GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest, PrepareSkillImportResponse } from "./skill-import.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
 import type { CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest, CreateTaskDiffCommentResponse, GetTaskDiffRequest, GetTaskDiffResponse, ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse, PushTaskBranchRequest, PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse, SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse } from "./task_diff.js";
+import type { ActivateWorkflowRequest, ActivateWorkflowResponse, CreateWorkflowRequest, CreateWorkflowResponse, DeleteSnapshotRequest, DeleteSnapshotResponse, DeleteWorkflowRequest, DeleteWorkflowResponse, GetDraftRequest, GetDraftResponse, GetVersionRequest, GetVersionResponse, GetWorkflowRequest, GetWorkflowResponse, ListVersionsRequest, ListVersionsResponse, ListWorkflowsRequest, ListWorkflowsResponse, PublishWorkflowRequest, PublishWorkflowResponse, RollbackWorkflowRequest, RollbackWorkflowResponse, UpdateDraftRequest, UpdateDraftResponse, UpdateWorkflowRequest, UpdateWorkflowResponse } from "./workflow.js";
 import type { HttpMethod } from "./transport.js";
 
 export type EndpointPathParam = {
@@ -89,6 +90,19 @@ export type RequestByOperation = {
   searchWorkspace: SearchWorkspaceRequest;
   watchWorkspace: WatchWorkspaceRequest;
   getGitIdentity: GetGitIdentityRequest;
+  createWorkflow: CreateWorkflowRequest;
+  getWorkflow: GetWorkflowRequest;
+  listWorkflows: ListWorkflowsRequest;
+  updateWorkflow: UpdateWorkflowRequest;
+  deleteWorkflow: DeleteWorkflowRequest;
+  getDraft: GetDraftRequest;
+  updateDraft: UpdateDraftRequest;
+  publishWorkflow: PublishWorkflowRequest;
+  rollbackWorkflow: RollbackWorkflowRequest;
+  activateWorkflow: ActivateWorkflowRequest;
+  listVersions: ListVersionsRequest;
+  getVersion: GetVersionRequest;
+  deleteSnapshot: DeleteSnapshotRequest;
 };
 
 export type ResponseByOperation = {
@@ -145,6 +159,19 @@ export type ResponseByOperation = {
   searchWorkspace: SearchWorkspaceResponse;
   watchWorkspace: WorkspaceFileEventBatch;
   getGitIdentity: GitIdentityResponse;
+  createWorkflow: CreateWorkflowResponse;
+  getWorkflow: GetWorkflowResponse;
+  listWorkflows: ListWorkflowsResponse;
+  updateWorkflow: UpdateWorkflowResponse;
+  deleteWorkflow: DeleteWorkflowResponse;
+  getDraft: GetDraftResponse;
+  updateDraft: UpdateDraftResponse;
+  publishWorkflow: PublishWorkflowResponse;
+  rollbackWorkflow: RollbackWorkflowResponse;
+  activateWorkflow: ActivateWorkflowResponse;
+  listVersions: ListVersionsResponse;
+  getVersion: GetVersionResponse;
+  deleteSnapshot: DeleteSnapshotResponse;
 };
 
 export type EndpointOperation = keyof RequestByOperation;
@@ -836,6 +863,175 @@ export const endpoints = {
     responseType: "GitIdentityResponse",
     responseMode: "unary",
     pathParams: [],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  createWorkflow: {
+    operationName: "createWorkflow",
+    namespace: "workflow",
+    memberName: "create",
+    method: "POST",
+    pathTemplate: "/api/workflows",
+    requestType: "CreateWorkflowRequest",
+    responseType: "CreateWorkflowResponse",
+    responseMode: "unary",
+    pathParams: [],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  getWorkflow: {
+    operationName: "getWorkflow",
+    namespace: "workflow",
+    memberName: "get",
+    method: "GET",
+    pathTemplate: "/api/workflows/{workflowId}",
+    requestType: "GetWorkflowRequest",
+    responseType: "GetWorkflowResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  listWorkflows: {
+    operationName: "listWorkflows",
+    namespace: "workflow",
+    memberName: "list",
+    method: "GET",
+    pathTemplate: "/api/workflows",
+    requestType: "ListWorkflowsRequest",
+    responseType: "ListWorkflowsResponse",
+    responseMode: "unary",
+    pathParams: [],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  updateWorkflow: {
+    operationName: "updateWorkflow",
+    namespace: "workflow",
+    memberName: "update",
+    method: "PUT",
+    pathTemplate: "/api/workflows/{workflowId}",
+    requestType: "UpdateWorkflowRequest",
+    responseType: "UpdateWorkflowResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  deleteWorkflow: {
+    operationName: "deleteWorkflow",
+    namespace: "workflow",
+    memberName: "delete",
+    method: "DELETE",
+    pathTemplate: "/api/workflows/{workflowId}",
+    requestType: "DeleteWorkflowRequest",
+    responseType: "DeleteWorkflowResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  getDraft: {
+    operationName: "getDraft",
+    namespace: "workflow",
+    memberName: "getDraft",
+    method: "GET",
+    pathTemplate: "/api/workflows/{workflowId}/draft",
+    requestType: "GetDraftRequest",
+    responseType: "GetDraftResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  updateDraft: {
+    operationName: "updateDraft",
+    namespace: "workflow",
+    memberName: "updateDraft",
+    method: "PUT",
+    pathTemplate: "/api/workflows/{workflowId}/draft",
+    requestType: "UpdateDraftRequest",
+    responseType: "UpdateDraftResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  publishWorkflow: {
+    operationName: "publishWorkflow",
+    namespace: "workflow",
+    memberName: "publish",
+    method: "POST",
+    pathTemplate: "/api/workflows/{workflowId}/publish",
+    requestType: "PublishWorkflowRequest",
+    responseType: "PublishWorkflowResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  rollbackWorkflow: {
+    operationName: "rollbackWorkflow",
+    namespace: "workflow",
+    memberName: "rollback",
+    method: "POST",
+    pathTemplate: "/api/workflows/{workflowId}/rollback",
+    requestType: "RollbackWorkflowRequest",
+    responseType: "RollbackWorkflowResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  activateWorkflow: {
+    operationName: "activateWorkflow",
+    namespace: "workflow",
+    memberName: "activate",
+    method: "POST",
+    pathTemplate: "/api/workflows/{workflowId}/activate",
+    requestType: "ActivateWorkflowRequest",
+    responseType: "ActivateWorkflowResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  listVersions: {
+    operationName: "listVersions",
+    namespace: "workflow",
+    memberName: "listVersions",
+    method: "GET",
+    pathTemplate: "/api/workflows/{workflowId}/versions",
+    requestType: "ListVersionsRequest",
+    responseType: "ListVersionsResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  getVersion: {
+    operationName: "getVersion",
+    namespace: "workflow",
+    memberName: "getVersion",
+    method: "GET",
+    pathTemplate: "/api/workflows/{workflowId}/versions/{version}",
+    requestType: "GetVersionRequest",
+    responseType: "GetVersionResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }, { rustFieldName: "version", wireName: "version" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  deleteSnapshot: {
+    operationName: "deleteSnapshot",
+    namespace: "workflow",
+    memberName: "deleteSnapshot",
+    method: "DELETE",
+    pathTemplate: "/api/workflows/{workflowId}/versions/{version}",
+    requestType: "DeleteSnapshotRequest",
+    responseType: "DeleteSnapshotResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }, { rustFieldName: "version", wireName: "version" }],
     queryParams: [],
     hasJsonBody: false,
   },

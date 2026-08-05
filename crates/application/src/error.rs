@@ -158,6 +158,56 @@ pub enum ApplicationError {
         #[source]
         source: RepositoryError,
     },
+    #[error("workflow name must not be blank")]
+    WorkflowNameBlank,
+    #[error("workflow not found: {workflow_id}")]
+    WorkflowNotFound { workflow_id: String },
+    #[error("workflow snapshot not found: {workflow_id}/{version}")]
+    WorkflowSnapshotNotFound {
+        workflow_id: String,
+        version: String,
+    },
+    #[error("workflow version already exists: {workflow_id}/{version}")]
+    WorkflowVersionAlreadyExists {
+        workflow_id: String,
+        version: String,
+    },
+    #[error("workflow version is invalid")]
+    WorkflowVersionInvalid,
+    #[error("workflow version 'draft' is reserved")]
+    WorkflowVersionReserved,
+    #[error("cannot delete the draft snapshot")]
+    WorkflowCannotDeleteDraft,
+    #[error("cannot delete the currently active version")]
+    WorkflowCannotDeleteActiveVersion,
+    #[error("cannot delete a workflow with live runs")]
+    WorkflowActiveRuns,
+    #[error("cannot rollback to the draft snapshot")]
+    WorkflowCannotRollbackToDraft,
+    #[error("cannot activate the draft snapshot")]
+    WorkflowCannotActivateDraft,
+    #[error("cannot delete a snapshot referenced by a workflow run")]
+    WorkflowSnapshotInUse,
+    #[error("workflow snapshot not found by id: {snapshot_id}")]
+    WorkflowSnapshotNotFoundById { snapshot_id: String },
+    #[error("workflow has no published snapshot")]
+    WorkflowNoPublishedSnapshot,
+    #[error("cannot use the draft snapshot for a workflow run")]
+    WorkflowRunCannotUseDraftSnapshot,
+    #[error("workflow run not found: {run_id}")]
+    WorkflowRunNotFound { run_id: String },
+    #[error("workflow run is active and cannot be deleted")]
+    WorkflowRunActive,
+    #[error("workflow repository operation failed")]
+    WorkflowRepository {
+        #[source]
+        source: RepositoryError,
+    },
+    #[error("workflow run repository operation failed")]
+    WorkflowRunRepository {
+        #[source]
+        source: RepositoryError,
+    },
 }
 
 impl ApplicationError {
@@ -293,6 +343,26 @@ impl ApplicationError {
     pub(crate) fn from_session_repository_error(error: RepositoryError) -> Self {
         Self::SessionRepository { source: error }
     }
+
+    /// Converts workflow-construction validation failures into application errors.
+    pub(crate) fn from_workflow_domain_error(error: DomainModelError) -> Self {
+        match error {
+            DomainModelError::EmptyWorkflowName => Self::WorkflowNameBlank,
+            _ => Self::WorkflowRepository {
+                source: RepositoryError::new(error),
+            },
+        }
+    }
+
+    /// Maps workflow repository failures into stable application errors.
+    pub(crate) fn from_workflow_repository_error(error: RepositoryError) -> Self {
+        Self::WorkflowRepository { source: error }
+    }
+
+    /// Maps workflow run repository failures into stable application errors.
+    pub(crate) fn from_workflow_run_repository_error(error: RepositoryError) -> Self {
+        Self::WorkflowRunRepository { source: error }
+    }
 }
 
 #[cfg(test)]
@@ -314,6 +384,20 @@ impl PartialEq for ApplicationError {
             | (SkillImport(_), SkillImport(_))
             | (AgentDefinitionNameBlank, AgentDefinitionNameBlank)
             | (TaskWorktreeRequiresGitRepository, TaskWorktreeRequiresGitRepository)
+            | (TaskWorktreeRootUnavailable, TaskWorktreeRootUnavailable)
+            | (WorkflowNameBlank, WorkflowNameBlank)
+            | (WorkflowVersionInvalid, WorkflowVersionInvalid)
+            | (WorkflowVersionReserved, WorkflowVersionReserved)
+            | (WorkflowCannotDeleteDraft, WorkflowCannotDeleteDraft)
+            | (WorkflowCannotDeleteActiveVersion, WorkflowCannotDeleteActiveVersion)
+            | (WorkflowActiveRuns, WorkflowActiveRuns)
+            | (WorkflowCannotRollbackToDraft, WorkflowCannotRollbackToDraft)
+            | (WorkflowCannotActivateDraft, WorkflowCannotActivateDraft)
+            | (WorkflowSnapshotInUse, WorkflowSnapshotInUse)
+            | (WorkflowNoPublishedSnapshot, WorkflowNoPublishedSnapshot)
+            | (WorkflowRunCannotUseDraftSnapshot, WorkflowRunCannotUseDraftSnapshot)
+            | (WorkflowRunActive, WorkflowRunActive)
+            | (WorkflowRunRepository { .. }, WorkflowRunRepository { .. })
             | (SkillRepository { .. }, SkillRepository { .. })
             | (AgentDefinitionRepository { .. }, AgentDefinitionRepository { .. })
             | (ProjectRepository { .. }, ProjectRepository { .. })
@@ -324,7 +408,9 @@ impl PartialEq for ApplicationError {
             | (TaskDiffStale, TaskDiffStale)
             | (TaskDiffCommitMessageBlank, TaskDiffCommitMessageBlank)
             | (WorktreeRepository { .. }, WorktreeRepository { .. })
-            | (SessionRepository { .. }, SessionRepository { .. }) => true,
+            | (SessionRepository { .. }, SessionRepository { .. })
+            | (WorkflowRepository { .. }, WorkflowRepository { .. })
+            | (TaskFilesystem { .. }, TaskFilesystem { .. }) => true,
             (SkillNotFound { skill_id: left }, SkillNotFound { skill_id: right }) => left == right,
             (
                 SkillUploadTooManyFiles { max_files: left },
@@ -392,14 +478,42 @@ impl PartialEq for ApplicationError {
                 TaskWorktreeIdExhausted { attempts: left },
                 TaskWorktreeIdExhausted { attempts: right },
             ) => left == right,
-            (TaskWorktreeRootUnavailable, TaskWorktreeRootUnavailable) => true,
-            (TaskFilesystem { .. }, TaskFilesystem { .. }) => true,
             (WorktreeNotFound { worktree_id: left }, WorktreeNotFound { worktree_id: right }) => {
                 left == right
             }
             (SessionNotFound { session_id: left }, SessionNotFound { session_id: right }) => {
                 left == right
             }
+            (WorkflowNotFound { workflow_id: left }, WorkflowNotFound { workflow_id: right }) => {
+                left == right
+            }
+            (
+                WorkflowSnapshotNotFound {
+                    workflow_id: left_wf,
+                    version: left_v,
+                },
+                WorkflowSnapshotNotFound {
+                    workflow_id: right_wf,
+                    version: right_v,
+                },
+            ) => left_wf == right_wf && left_v == right_v,
+            (
+                WorkflowSnapshotNotFoundById { snapshot_id: left },
+                WorkflowSnapshotNotFoundById { snapshot_id: right },
+            ) => left == right,
+            (WorkflowRunNotFound { run_id: left }, WorkflowRunNotFound { run_id: right }) => {
+                left == right
+            }
+            (
+                WorkflowVersionAlreadyExists {
+                    workflow_id: left_wf,
+                    version: left_v,
+                },
+                WorkflowVersionAlreadyExists {
+                    workflow_id: right_wf,
+                    version: right_v,
+                },
+            ) => left_wf == right_wf && left_v == right_v,
             _ => false,
         }
     }

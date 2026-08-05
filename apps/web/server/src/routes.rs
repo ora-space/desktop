@@ -881,6 +881,8 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "todo",
                 "workspaceMode": "worktree",
+                "type": "default",
+                "workflowRunId": null,
             })
         );
         assert_eq!(
@@ -910,6 +912,8 @@ mod tests {
                         "title": "Ship handlers",
                         "status": "todo",
                         "workspaceMode": "worktree",
+                        "type": "default",
+                        "workflowRunId": null,
                     },
                 ],
             })
@@ -923,6 +927,8 @@ mod tests {
                     "title": "Ship handlers",
                     "status": "todo",
                     "workspaceMode": "worktree",
+                    "type": "default",
+                    "workflowRunId": null,
                 },
             })
         );
@@ -935,6 +941,8 @@ mod tests {
                     "title": "Ship updated handlers",
                     "status": "doing",
                     "workspaceMode": "worktree",
+                    "type": "default",
+                    "workflowRunId": null,
                 },
             })
         );
