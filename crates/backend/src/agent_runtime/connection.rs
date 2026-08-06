@@ -1,17 +1,18 @@
-use super::routing::{RouteRegistry, SessionChannel};
+use super::routing::{RouteRegistry, SessionChannel, SessionEvent};
 use super::{
     CANCELLATION_GRACE, CONTRACT_QUEUE_CAPACITY, INITIALIZE_TIMEOUT, map_acp_error,
     resolve_agent_cli_path, runtime_internal,
 };
 use crate::BackendError;
 use crate::clock::SystemClock;
-use ora_acp::{AcpClient, AcpControl, AcpPeer};
+use ora_acp::{AcpClient, AcpInboundEvent, AcpPeer};
 use ora_application::{Clock, SessionRepository};
+use ora_contracts::PublicError;
 use ora_contracts::acp::initialization::{
-    Implementation, InitializeRequest, InitializeResponse, ProtocolVersion,
+    ClientCapabilities, ClientSessionCapabilities, Implementation, InitializeRequest,
+    InitializeResponse, ProtocolVersion, SessionConfigOptionsCapabilities,
 };
 use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
-use ora_contracts::acp::notification::SessionNotification;
 use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentCli, SessionStatus};
@@ -38,12 +39,26 @@ pub(super) struct RuntimeConnection {
     pub generation: u64,
     pub load_session_supported: bool,
     pub close_session_supported: bool,
+    /// Whether the agent advertises `session/delete`.
+    ///
+    /// Warm sessions Ora created but never handed to the user are removed with
+    /// it so unused provider history does not accumulate; agents without it fall
+    /// back to `session/close`, which only detaches.
+    pub delete_session_supported: bool,
 }
 
 #[derive(Clone)]
 enum ConnectionState {
     Starting,
     Ready(RuntimeConnection),
+    Unavailable,
+}
+
+/// Reports one CLI's live detection state without exposing its private connection handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConnectionStatus {
+    Ready,
+    Starting,
     Unavailable,
 }
 
@@ -75,6 +90,8 @@ pub(super) struct ConnectionSupervisors {
     opencode: ConnectionSupervisor,
     nga: ConnectionSupervisor,
     code_agent_cli: ConnectionSupervisor,
+    claude: ConnectionSupervisor,
+    codex: ConnectionSupervisor,
 }
 
 impl ConnectionSupervisors {
@@ -95,10 +112,17 @@ impl ConnectionSupervisors {
             ),
             code_agent_cli: ConnectionSupervisor::start(
                 AgentCli::CodeAgentCli,
-                pool,
-                home_directory,
+                pool.clone(),
+                home_directory.clone(),
                 clock,
             ),
+            claude: ConnectionSupervisor::start(
+                AgentCli::Claude,
+                pool.clone(),
+                home_directory.clone(),
+                clock,
+            ),
+            codex: ConnectionSupervisor::start(AgentCli::Codex, pool, home_directory, clock),
         }
     }
 
@@ -108,6 +132,8 @@ impl ConnectionSupervisors {
             AgentCli::OpenCode => self.opencode.clone(),
             AgentCli::Nga => self.nga.clone(),
             AgentCli::CodeAgentCli => self.code_agent_cli.clone(),
+            AgentCli::Claude => self.claude.clone(),
+            AgentCli::Codex => self.codex.clone(),
         }
     }
 }
@@ -157,52 +183,72 @@ impl ConnectionSupervisor {
         }
     }
 
+    /// Reports the live tri-state detection status without exposing the connection itself.
+    pub fn status(&self) -> ConnectionStatus {
+        match &*self.state.borrow() {
+            ConnectionState::Ready(_) => ConnectionStatus::Ready,
+            ConnectionState::Starting => ConnectionStatus::Starting,
+            ConnectionState::Unavailable => ConnectionStatus::Unavailable,
+        }
+    }
+
     /// Returns the initialized shared connection or a stable degraded-runtime error.
     pub fn current(&self) -> Result<RuntimeConnection, BackendError> {
         match self.state.borrow().clone() {
             ConnectionState::Ready(connection) => Ok(connection),
-            ConnectionState::Starting | ConnectionState::Unavailable => Err(runtime_internal(
-                "agent_runtime_unavailable",
-                format!(
-                    "{} runtime is unavailable",
-                    self.agent_cli.executable_name()
-                ),
-            )),
+            ConnectionState::Starting | ConnectionState::Unavailable => {
+                let executable_name = self.agent_cli.executable_name();
+                Err(runtime_internal(
+                    "agent_runtime_unavailable",
+                    format!("{executable_name} runtime is unavailable"),
+                ))
+            }
         }
     }
 
-    /// Registers bounded update and independent control routes for one provider session.
+    /// Registers a bounded ordered event route and independent failure controls for one session.
     pub fn open_session_channel(
         &self,
         agent_session_id: &str,
+        ora_session_id: &str,
     ) -> Result<SessionChannel, BackendError> {
         let connection = self.current()?;
         if self.active_generation.load(Ordering::Acquire) != connection.generation {
             return Err(runtime_internal(
                 "agent_runtime_unavailable",
-                format!("{} runtime is recovering", self.agent_cli.executable_name()),
+                format!(
+                    "{executable_name} runtime is recovering",
+                    executable_name = self.agent_cli.executable_name()
+                ),
             ));
         }
-        let (updates_sender, updates) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
+        let (events_sender, events) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
         let (controls_sender, controls) = mpsc::unbounded_channel();
+        let trace_registration = connection
+            .client
+            .register_session_trace(agent_session_id, ora_session_id);
         let registration = self.routes.register(
             agent_session_id,
             connection.generation,
-            updates_sender,
+            events_sender,
             controls_sender,
         );
         if self.active_generation.load(Ordering::Acquire) != connection.generation {
             drop(registration);
             return Err(runtime_internal(
                 "agent_runtime_unavailable",
-                format!("{} runtime is recovering", self.agent_cli.executable_name()),
+                format!(
+                    "{executable_name} runtime is recovering",
+                    executable_name = self.agent_cli.executable_name()
+                ),
             ));
         }
         Ok(SessionChannel {
             connection,
-            updates,
+            events,
             pending_updates: std::collections::VecDeque::new(),
             controls,
+            _trace_registration: trace_registration,
             _registration: registration,
         })
     }
@@ -217,7 +263,10 @@ where
     Supervisor: Future<Output = ()> + Send + 'static,
 {
     std::thread::Builder::new()
-        .name(format!("ora-{}-supervisor", agent_cli.executable_name()))
+        .name(format!(
+            "ora-{executable_name}-supervisor",
+            executable_name = agent_cli.executable_name()
+        ))
         .spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -249,10 +298,10 @@ impl Drop for ConnectionSupervisor {
 struct SharedProcess {
     child: TokioManagedProcess,
     client: AcpClient<ChildStdin>,
-    updates: mpsc::UnboundedReceiver<SessionNotification>,
-    control: mpsc::UnboundedReceiver<AcpControl>,
+    inbound: mpsc::UnboundedReceiver<AcpInboundEvent>,
     load_session_supported: bool,
     close_session_supported: bool,
+    delete_session_supported: bool,
 }
 
 /// Supervises one process generation at a time and retries only after it is fully reaped.
@@ -281,6 +330,7 @@ async fn run_supervisor(context: SupervisorContext) {
                     generation,
                     load_session_supported: process.load_session_supported,
                     close_session_supported: process.close_session_supported,
+                    delete_session_supported: process.delete_session_supported,
                 };
                 let _ = state.send(ConnectionState::Ready(connection));
                 ora_info!(
@@ -310,11 +360,17 @@ async fn run_supervisor(context: SupervisorContext) {
             }
             Err(error) => {
                 let _ = state.send(ConnectionState::Unavailable);
-                ora_warn!(
-                    agent_cli = agent_cli.database_value(),
-                    error = %error,
-                    "agent CLI startup failed; scheduling retry"
-                );
+                // A CLI that is simply not installed is an expected local configuration, and the
+                // supervisor keeps retrying it for the whole process lifetime. Logging it would
+                // flood the runtime log with one line per retry while `ConnectionState::Unavailable`
+                // already carries that fact to the UI, so only genuine startup failures are logged.
+                if !matches!(error.public_error(), PublicError::AgentCliNotFound(_)) {
+                    ora_warn!(
+                        agent_cli = agent_cli.database_value(),
+                        error = %error,
+                        "agent CLI startup failed; scheduling retry"
+                    );
+                }
             }
         }
         tokio::select! {
@@ -333,23 +389,30 @@ async fn run_process_generation(
 ) -> bool {
     loop {
         tokio::select! {
-            update = process.updates.recv() => {
-                match update {
-                    Some(update) => routes.route_update(update),
-                    None => return false,
-                }
-            }
-            control = process.control.recv() => {
-                match control {
-                    Some(AcpControl::PermissionRequest(permission)) => {
-                        if let Err(orphan) = routes.route_permission(permission) {
-                            let _ = process.client.respond(
-                                &orphan.request_id,
-                                &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
-                            ).await;
+            inbound = process.inbound.recv() => {
+                match inbound {
+                    Some(AcpInboundEvent::SessionUpdate(update)) => {
+                        let _ = routes.route_event(SessionEvent::Update(update));
+                    }
+                    Some(AcpInboundEvent::PermissionRequest(permission)) => {
+                        if let Err(orphan) = routes.route_event(SessionEvent::Permission(permission)) {
+                            match *orphan {
+                                SessionEvent::Permission(orphan) => {
+                                    let _ = process.client.respond(
+                                        &orphan.request_id,
+                                        &RequestPermissionResponse::new(
+                                            RequestPermissionOutcome::Cancelled,
+                                        ),
+                                    ).await;
+                                }
+                                SessionEvent::Update(_) | SessionEvent::Response(_) => {}
+                            }
                         }
                     }
-                    Some(AcpControl::Fatal(error)) => {
+                    Some(AcpInboundEvent::SessionResponse(response)) => {
+                        let _ = routes.route_event(SessionEvent::Response(response));
+                    }
+                    Some(AcpInboundEvent::Fatal(error)) => {
                         ora_warn!(
                             error = %error,
                             "agent CLI ACP connection failed"
@@ -373,11 +436,18 @@ async fn spawn_initialized_process(
     if !executable.is_file() {
         return Err(runtime_internal(
             "agent_cli_not_found",
-            format!("agent CLI executable not found: {}", executable.display()),
+            format!(
+                "agent CLI executable not found: {path}",
+                path = executable.display()
+            ),
         ));
     }
     let mut child = TokioProcessSpawner::new()
-        .spawn(ProcessSpec::new(executable).arg("acp").cwd(home_directory))
+        .spawn(
+            ProcessSpec::new(executable)
+                .args(agent_cli.launch_arguments())
+                .cwd(home_directory),
+        )
         .map_err(|source| BackendError::internal("failed to start agent CLI", source))?;
     let Some(stdin) = child.take_stdin() else {
         terminate_and_reap(&child).await;
@@ -397,7 +467,17 @@ async fn spawn_initialized_process(
         tokio::spawn(super::drain_stderr(stderr));
     }
     let peer = AcpPeer::spawn(stdout, stdin);
+    // Config options are only sent by agents that see the client advertise them,
+    // so the model selector depends on this declaration. Boolean options stay
+    // undeclared because Ora renders only select-style options today; claiming
+    // support would invite payloads the client silently drops.
     let initialize = InitializeRequest::new(ProtocolVersion(1))
+        .client_capabilities(
+            ClientCapabilities::new().session(
+                ClientSessionCapabilities::new()
+                    .config_options(SessionConfigOptionsCapabilities::new()),
+            ),
+        )
         .client_info(Implementation::new("ora", env!("CARGO_PKG_VERSION")));
     let response = match timeout(
         INITIALIZE_TIMEOUT,
@@ -419,17 +499,21 @@ async fn spawn_initialized_process(
             ));
         }
     };
-    let (client, updates, control) = peer.into_parts();
+    let (client, inbound) = peer.into_parts();
     Ok(SharedProcess {
         child,
         client,
-        updates,
-        control,
+        inbound,
         load_session_supported: response.agent_capabilities.load_session,
         close_session_supported: response
             .agent_capabilities
             .session_capabilities
             .close
+            .is_some(),
+        delete_session_supported: response
+            .agent_capabilities
+            .session_capabilities
+            .delete
             .is_some(),
     })
 }

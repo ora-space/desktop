@@ -27,9 +27,10 @@ const unsupportedOperations = {
 } as const satisfies Partial<Record<EndpointOperation, true>>;
 
 type UnsupportedTauriOperation = keyof typeof unsupportedOperations;
+type TauriStreamOperation = "loadSession" | "promptSession" | "watchSpecs" | "watchWorkspace";
 type SupportedTauriOperation = Exclude<
   EndpointOperation,
-  UnsupportedTauriOperation | "loadSession" | "promptSession"
+  UnsupportedTauriOperation | TauriStreamOperation
 >;
 
 const tauriCommands = {
@@ -39,6 +40,7 @@ const tauriCommands = {
   createProject: "create_project",
   getProject: "get_project",
   listProjects: "list_projects",
+  listProjectBranches: "list_project_branches",
   updateProject: "update_project",
   deleteProject: "delete_project",
 
@@ -50,13 +52,40 @@ const tauriCommands = {
   listTasks: "list_tasks",
   updateTask: "update_task",
   deleteTask: "delete_task",
+  getTaskWorkspace: "get_task_workspace",
+  getTaskDiff: "get_task_diff",
+  commitTaskChanges: "commit_task_changes",
+  pushTaskBranch: "push_task_branch",
+  listTaskDiffComments: "list_task_diff_comments",
+  createTaskDiffComment: "create_task_diff_comment",
+  replyTaskDiffComment: "reply_task_diff_comment",
+  setTaskDiffCommentStatus: "set_task_diff_comment_status",
+
+  // =============================================================================
+  // fileSystem
+  // =============================================================================
+  listWorkspaceDirectory: "list_workspace_directory",
+  readWorkspaceFile: "read_workspace_file",
+  searchWorkspace: "search_workspace",
+
+  // =============================================================================
+  // spec
+  // =============================================================================
+  getSpecCatalog: "get_spec_catalog",
+  readSpec: "read_spec",
+  resolveSpecSource: "resolve_spec_source",
+  updateProjectSpecSources: "update_project_spec_sources",
 
   // =============================================================================
   // session
   // =============================================================================
-  createSession: "create_session",
+  warmSession: "warm_session",
+  setSessionConfig: "set_session_config",
+  attachSession: "attach_session",
   getSession: "get_session",
   listSessions: "list_sessions",
+  switchSessionAgent: "switch_session_agent",
+  resumeSessionHistory: "resume_session_history",
   respondToSessionPermission: "respond_to_session_permission",
   stopSession: "stop_session",
   deleteSession: "delete_session",
@@ -64,7 +93,7 @@ const tauriCommands = {
   // =============================================================================
   // agentRuntime
   // =============================================================================
-  listAgentModels: "list_agent_models",
+  getAgentRuntimeStatus: "get_agent_runtime_status",
 
   // =============================================================================
   // skill
@@ -74,10 +103,15 @@ const tauriCommands = {
   listSkills: "list_skills",
   updateSkill: "update_skill",
   deleteSkill: "delete_skill",
-
   // =============================================================================
   // agent
   // =============================================================================
+  prepareSkillImport: "prepare_skill_import",
+  getSkillImport: "get_skill_import",
+  commitSkillImport: "commit_skill_import",
+  cancelSkillImport: "cancel_skill_import",
+  prepareAgentImport: "prepare_agent_import",
+  commitAgentImport: "commit_agent_import",
   createAgent: "create_agent",
   getAgent: "get_agent",
   listAgents: "list_agents",
@@ -98,7 +132,7 @@ export function createTauriTransport(
   return {
     async send<TResponse>(request: ContractTransportRequest, options?: ContractCallOptions): Promise<TResponse> {
       const operation = request.operationName as EndpointOperation;
-      if (operation in unsupportedOperations || operation === "loadSession" || operation === "promptSession") {
+      if (operation in unsupportedOperations || isTauriStreamOperation(operation)) {
         throw unsupportedOperation(operation);
       }
       const command = tauriCommands[operation as SupportedTauriOperation];
@@ -126,6 +160,11 @@ export function createTauriTransport(
       };
     },
   };
+}
+
+/** Identifies operations that must use the shared Tauri channel stream command. */
+function isTauriStreamOperation(operation: EndpointOperation): operation is TauriStreamOperation {
+  return operation === "loadSession" || operation === "promptSession" || operation === "watchSpecs" || operation === "watchWorkspace";
 }
 
 /** Starts one private channel stream and cancels its backend registration on every early exit. */

@@ -5,7 +5,12 @@ use crate::error::{BackendError, ErrorClassification};
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
+use crate::spec::SpecApi;
 use crate::task::TaskApi;
+use crate::task_diff::TaskDiffApi;
+use crate::workflow::WorkflowApi;
+use crate::workflow_run::WorkflowRunApi;
+use ora_application::ApplicationError;
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
@@ -20,6 +25,11 @@ pub struct BackendPaths {
     pub database_path: PathBuf,
     pub worktree_root: PathBuf,
     pub home_directory: PathBuf,
+    pub sessions_root: PathBuf,
+    /// Root of the formal skill package tree (`<data>/atoms/skills`).
+    pub skills_root: PathBuf,
+    /// Bundled ripgrep executable used by shared specification discovery.
+    pub ripgrep_path: PathBuf,
 }
 
 /// Reports failures that prevent the shared backend from opening persistent state.
@@ -33,8 +43,14 @@ pub enum BackendBootstrapError {
     },
     #[error("failed to bootstrap backend database")]
     Database(#[source] ora_db::DatabaseError),
+    #[error("failed to reconcile skill storage")]
+    SkillStorage(#[source] ApplicationError),
     #[error("failed to initialize agent runtime")]
     AgentRuntime(#[source] BackendError),
+    #[error("failed to reconcile skill storage")]
+    SkillStorageReconciliation(
+        #[source] crate::skill_reconciliation::SkillStorageReconciliationError,
+    ),
 }
 
 /// Owns the concrete persisted use-case composition shared by Web and Tauri adapters.
@@ -44,10 +60,14 @@ pub struct Backend {
     worktree_root: Arc<RwLock<PathBuf>>,
     project: Arc<ProjectApi>,
     task: Arc<TaskApi>,
+    task_diff: Arc<TaskDiffApi>,
     session: Arc<SessionApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
     skill: Arc<SkillApi>,
     agent: Arc<AgentApi>,
+    spec: Arc<SpecApi>,
+    workflow: Arc<WorkflowApi>,
+    workflow_run: Arc<WorkflowRunApi>,
 }
 
 impl Backend {
@@ -64,18 +84,41 @@ impl Backend {
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(&DatabaseLocation::path(&paths.database_path), &catalog)
             .map_err(BackendBootstrapError::Database)?;
+        crate::skill_reconciliation::reconcile_skill_storage(&pool, &paths.skills_root)
+            .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
+        crate::skill_reconciliation::cleanup_import_temp_sessions()
+            .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
-        let agent_runtime = AgentRuntimeManager::new(pool.clone(), paths.home_directory, clock)
-            .map_err(BackendBootstrapError::AgentRuntime)?;
+        let sessions_root = paths.sessions_root;
+        let agent_runtime = AgentRuntimeManager::new(
+            pool.clone(),
+            paths.home_directory,
+            sessions_root.clone(),
+            clock,
+        )
+        .map_err(BackendBootstrapError::AgentRuntime)?;
 
         Ok(Self {
-            project: Arc::new(ProjectApi::new(pool.clone(), clock)),
-            task: Arc::new(TaskApi::new(pool.clone(), worktree_root.clone(), clock)),
+            project: Arc::new(ProjectApi::new(pool.clone(), sessions_root.clone(), clock)),
+            task: Arc::new(TaskApi::new(
+                pool.clone(),
+                worktree_root.clone(),
+                sessions_root,
+                clock,
+            )),
+            task_diff: Arc::new(TaskDiffApi::new(pool.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime: Arc::new(agent_runtime),
-            skill: Arc::new(SkillApi::new(pool.clone(), clock)),
+            skill: Arc::new(SkillApi::new(pool.clone(), paths.skills_root, clock)),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
+            spec: Arc::new(SpecApi::new(pool.clone(), paths.ripgrep_path)),
+            workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
+            workflow_run: Arc::new(WorkflowRunApi::new(
+                pool.clone(),
+                worktree_root.clone(),
+                clock,
+            )),
             pool,
             worktree_root,
         })
@@ -133,6 +176,15 @@ impl Backend {
     ) -> Result<ListProjectsResponse, BackendError> {
         self.project.list(request).map_err(BackendError::from)
     }
+    /// Lists selectable branches for one project repository.
+    pub fn list_project_branches(
+        &self,
+        request: ListProjectBranchesRequest,
+    ) -> Result<ListProjectBranchesResponse, BackendError> {
+        self.project
+            .list_branches(request)
+            .map_err(BackendError::from)
+    }
     /// Updates one project through the shared application composition.
     pub fn update_project(
         &self,
@@ -141,11 +193,36 @@ impl Backend {
         self.project.update(request).map_err(BackendError::from)
     }
     /// Deletes one project through the shared application composition.
-    pub fn delete_project(
+    ///
+    /// The delete cascades to the project's Tasks, so every chat surface beneath
+    /// it dies along with the project root's and their warm sessions are
+    /// discarded together. The Task identifiers are collected first because the
+    /// delete is what makes those rows invisible; both queries share one blocking
+    /// hop so that ordering cannot be broken by a scheduling decision.
+    pub async fn delete_project(
         &self,
         request: DeleteProjectRequest,
     ) -> Result<DeleteProjectResponse, BackendError> {
-        self.project.delete(request)
+        let project = self.project.clone();
+        let pool = self.pool.clone();
+        let project_id = ora_domain::ProjectId::new(request.project_id.as_str());
+        let (response, task_ids) = spawn_repository_work(move || {
+            let task_ids = crate::task::task_ids_in_project(&pool, &project_id);
+            project.delete(request).map(|response| (response, task_ids))
+        })
+        .await?;
+
+        let mut targets: Vec<WarmSessionTarget> = task_ids
+            .into_iter()
+            .map(|task_id| WarmSessionTarget::Task {
+                task_id: task_id.to_string(),
+            })
+            .collect();
+        targets.push(WarmSessionTarget::ProjectRoot {
+            project_id: response.project_id.clone(),
+        });
+        self.agent_runtime.discard_warm_sessions(&targets).await;
+        Ok(response)
     }
 
     // =============================================================================
@@ -175,23 +252,161 @@ impl Backend {
         self.task.update(request).map_err(BackendError::from)
     }
     /// Deletes one task through the shared application composition.
-    pub fn delete_task(
+    ///
+    /// Discards the Task's warm session on the way out. Nothing else would: the
+    /// target is gone, so no request can name it again, and the pool's bounds
+    /// only reclaim an entry once enough new surfaces are opened to displace it.
+    pub async fn delete_task(
         &self,
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
-        self.task.delete(request)
+        let task = self.task.clone();
+        let response = spawn_repository_work(move || task.delete(request)).await?;
+        self.agent_runtime
+            .discard_warm_sessions(&[WarmSessionTarget::Task {
+                task_id: response.task_id.clone(),
+            }])
+            .await;
+        Ok(response)
+    }
+
+    /// Returns the authoritative checkout root and optional branch for a task.
+    pub fn get_task_workspace(
+        &self,
+        request: GetTaskWorkspaceRequest,
+    ) -> Result<GetTaskWorkspaceResponse, BackendError> {
+        crate::task::get_task_workspace(&self.pool, &request.task_id)
+    }
+
+    // =============================================================================
+    // spec
+    // =============================================================================
+
+    /// Builds the effective specification catalog for one project or task target.
+    pub async fn get_spec_catalog(
+        &self,
+        request: GetSpecCatalogRequest,
+    ) -> Result<SpecCatalogResponse, BackendError> {
+        self.spec.catalog(request).await
+    }
+
+    /// Reads one catalog-authorized Markdown document.
+    pub async fn read_spec(
+        &self,
+        request: ReadSpecRequest,
+    ) -> Result<ReadSpecResponse, BackendError> {
+        self.spec.read(request).await
+    }
+
+    /// Validates one platform-selected source directory.
+    pub fn resolve_spec_source(
+        &self,
+        request: ResolveSpecSourceRequest,
+    ) -> Result<ResolveSpecSourceResponse, BackendError> {
+        self.spec.resolve_source(request)
+    }
+
+    /// Atomically replaces project-wide specification source overrides.
+    pub fn update_project_spec_sources(
+        &self,
+        request: UpdateProjectSpecSourcesRequest,
+    ) -> Result<UpdateProjectSpecSourcesResponse, BackendError> {
+        self.spec.update_project_sources(request)
+    }
+
+    /// Resolves a specification watch request to its authoritative workspace root.
+    pub fn resolve_spec_watch_root(
+        &self,
+        request: &WatchSpecsRequest,
+    ) -> Result<PathBuf, BackendError> {
+        self.spec.watch_root(&request.target)
+    }
+
+    // =============================================================================
+    // taskDiff
+    // =============================================================================
+    /// Returns the current Git snapshot for the task directory used by its agent session.
+    pub fn get_task_diff(
+        &self,
+        request: GetTaskDiffRequest,
+    ) -> Result<GetTaskDiffResponse, BackendError> {
+        self.task_diff.get_diff(request)
+    }
+
+    /// Commits every current change in one isolated task worktree.
+    pub fn commit_task_changes(
+        &self,
+        request: CommitTaskChangesRequest,
+    ) -> Result<CommitTaskChangesResponse, BackendError> {
+        self.task_diff.commit_changes(request)
+    }
+
+    /// Pushes the verified branch owned by one isolated task worktree.
+    pub fn push_task_branch(
+        &self,
+        request: PushTaskBranchRequest,
+    ) -> Result<PushTaskBranchResponse, BackendError> {
+        self.task_diff.push_branch(request)
+    }
+
+    /// Lists every persisted review discussion for one task.
+    pub fn list_task_diff_comments(
+        &self,
+        request: ListTaskDiffCommentsRequest,
+    ) -> Result<ListTaskDiffCommentsResponse, BackendError> {
+        self.task_diff.list_comments(request)
+    }
+
+    /// Creates one line-anchored task diff discussion.
+    pub fn create_task_diff_comment(
+        &self,
+        request: CreateTaskDiffCommentRequest,
+    ) -> Result<CreateTaskDiffCommentResponse, BackendError> {
+        self.task_diff.create_comment(request)
+    }
+
+    /// Adds one reply under an existing task diff discussion.
+    pub fn reply_task_diff_comment(
+        &self,
+        request: ReplyTaskDiffCommentRequest,
+    ) -> Result<ReplyTaskDiffCommentResponse, BackendError> {
+        self.task_diff.reply_comment(request)
+    }
+
+    /// Resolves or reopens one root task diff discussion.
+    pub fn set_task_diff_comment_status(
+        &self,
+        request: SetTaskDiffCommentStatusRequest,
+    ) -> Result<SetTaskDiffCommentStatusResponse, BackendError> {
+        self.task_diff.set_comment_status(request)
     }
 
     // =============================================================================
     // session
     // =============================================================================
 
-    /// Creates one session through the shared application composition.
-    pub async fn create_session(
+    /// Returns the warm provider session backing one chat surface.
+    pub async fn warm_session(
         &self,
-        request: CreateSessionRequest,
-    ) -> Result<CreateSessionResponse, BackendError> {
-        self.agent_runtime.create_session(request).await
+        request: WarmSessionRequest,
+    ) -> Result<WarmSessionResponse, BackendError> {
+        self.agent_runtime.warm_session(request).await
+    }
+
+    /// Applies one configuration option to a warm or persisted session.
+    pub async fn set_session_config(
+        &self,
+        request: SetSessionConfigRequest,
+    ) -> Result<SetSessionConfigResponse, BackendError> {
+        self.agent_runtime.set_session_config(request).await
+    }
+
+    /// Persists one warm session against the Task that now owns it.
+    pub async fn attach_session(
+        &self,
+        request: AttachSessionRequest,
+    ) -> Result<AttachSessionResponse, BackendError> {
+        self.agent_runtime.attach_session(request).await
     }
 
     /// Gets one session through the shared application composition.
@@ -240,7 +455,23 @@ impl Backend {
         self.agent_runtime.stop_session(request).await
     }
 
-    /// Stops one session before removing only its Ora-owned record.
+    /// Moves one existing conversation onto a different agent CLI.
+    pub async fn switch_session_agent(
+        &self,
+        request: SwitchSessionAgentRequest,
+    ) -> Result<SwitchSessionAgentResponse, BackendError> {
+        self.agent_runtime.switch_agent(request).await
+    }
+
+    /// Returns a session whose history writes failed to a writable state.
+    pub async fn resume_session_history(
+        &self,
+        request: ResumeSessionHistoryRequest,
+    ) -> Result<ResumeSessionHistoryResponse, BackendError> {
+        self.agent_runtime.resume_history(request).await
+    }
+
+    /// Stops one session before removing its Ora-owned record and recorded history.
     pub async fn delete_session(
         &self,
         request: DeleteSessionRequest,
@@ -252,12 +483,12 @@ impl Backend {
     // agentRuntime
     // =============================================================================
 
-    /// Lists model identifiers grouped by each CLI that answers discovery successfully.
-    pub async fn list_agent_models(
+    /// Reports whether each application-scoped CLI runtime is ready, starting, or unavailable.
+    pub fn get_agent_runtime_status(
         &self,
-        _request: ListAgentModelsRequest,
-    ) -> Result<ListAgentModelsResponse, BackendError> {
-        Ok(self.agent_runtime.list_agent_models().await)
+        _request: GetAgentRuntimeStatusRequest,
+    ) -> Result<GetAgentRuntimeStatusResponse, BackendError> {
+        Ok(self.agent_runtime.agent_runtime_status())
     }
 
     // =============================================================================
@@ -296,10 +527,44 @@ impl Backend {
     ) -> Result<DeleteSkillResponse, BackendError> {
         self.skill.delete(request).map_err(BackendError::from)
     }
-
     // =============================================================================
     // agent
     // =============================================================================
+
+    /// Prepares one skill import source into a previewed session.
+    pub fn prepare_skill_import(
+        &self,
+        request: PrepareSkillImportRequest,
+    ) -> Result<PrepareSkillImportResponse, BackendError> {
+        self.skill
+            .prepare_import(request)
+            .map_err(BackendError::from)
+    }
+    /// Returns one skill import session with its current progress.
+    pub fn get_skill_import(
+        &self,
+        request: GetSkillImportSessionRequest,
+    ) -> Result<GetSkillImportSessionResponse, BackendError> {
+        self.skill.get_import(request).map_err(BackendError::from)
+    }
+    /// Accepts and freezes one skill import commit, starting the background task.
+    pub fn commit_skill_import(
+        &self,
+        request: CommitSkillImportRequest,
+    ) -> Result<CommitSkillImportResponse, BackendError> {
+        self.skill
+            .commit_import(request)
+            .map_err(BackendError::from)
+    }
+    /// Cancels a prepared skill import session.
+    pub fn cancel_skill_import(
+        &self,
+        request: CancelSkillImportRequest,
+    ) -> Result<CancelSkillImportResponse, BackendError> {
+        self.skill
+            .cancel_import(request)
+            .map_err(BackendError::from)
+    }
 
     /// Creates one configurable agent through the shared application composition.
     pub fn create_agent(
@@ -333,6 +598,23 @@ impl Backend {
     ) -> Result<DeleteAgentResponse, BackendError> {
         self.agent.delete(request).map_err(BackendError::from)
     }
+    pub fn prepare_agent_import(
+        &self,
+        request: PrepareAgentImportRequest,
+    ) -> Result<PrepareAgentImportResponse, BackendError> {
+        self.agent
+            .prepare_import(request)
+            .map_err(BackendError::from)
+    }
+
+    pub fn commit_agent_import(
+        &self,
+        request: CommitAgentImportRequest,
+    ) -> Result<CommitAgentImportResponse, BackendError> {
+        self.agent
+            .commit_import(request)
+            .map_err(BackendError::from)
+    }
 
     // =============================================================================
     // gitIdentity
@@ -346,6 +628,193 @@ impl Backend {
     ) -> Result<GitIdentityResponse, BackendError> {
         Ok(crate::identity::resolve_git_identity())
     }
+
+    // =============================================================================
+    // workflow
+    // =============================================================================
+
+    /// Creates one workflow through the shared application composition.
+    pub fn create_workflow(
+        &self,
+        request: CreateWorkflowRequest,
+    ) -> Result<CreateWorkflowResponse, BackendError> {
+        self.workflow.create(request).map_err(BackendError::from)
+    }
+    /// Gets one workflow through the shared application composition.
+    pub fn get_workflow(
+        &self,
+        request: GetWorkflowRequest,
+    ) -> Result<GetWorkflowResponse, BackendError> {
+        self.workflow.get(request).map_err(BackendError::from)
+    }
+    /// Lists workflows through the shared application composition.
+    pub fn list_workflows(
+        &self,
+        request: ListWorkflowsRequest,
+    ) -> Result<ListWorkflowsResponse, BackendError> {
+        self.workflow.list(request).map_err(BackendError::from)
+    }
+    /// Updates one workflow through the shared application composition.
+    pub fn update_workflow(
+        &self,
+        request: UpdateWorkflowRequest,
+    ) -> Result<UpdateWorkflowResponse, BackendError> {
+        self.workflow.update(request).map_err(BackendError::from)
+    }
+    /// Deletes one workflow through the shared application composition.
+    pub fn delete_workflow(
+        &self,
+        request: DeleteWorkflowRequest,
+    ) -> Result<DeleteWorkflowResponse, BackendError> {
+        self.workflow.delete(request).map_err(BackendError::from)
+    }
+    /// Gets the draft snapshot through the shared application composition.
+    pub fn get_workflow_draft(
+        &self,
+        request: GetDraftRequest,
+    ) -> Result<GetDraftResponse, BackendError> {
+        self.workflow.get_draft(request).map_err(BackendError::from)
+    }
+    /// Updates the draft snapshot through the shared application composition.
+    pub fn update_workflow_draft(
+        &self,
+        request: UpdateDraftRequest,
+    ) -> Result<UpdateDraftResponse, BackendError> {
+        self.workflow
+            .update_draft(request)
+            .map_err(BackendError::from)
+    }
+    /// Publishes a workflow draft through the shared application composition.
+    pub fn publish_workflow(
+        &self,
+        request: PublishWorkflowRequest,
+    ) -> Result<PublishWorkflowResponse, BackendError> {
+        self.workflow.publish(request).map_err(BackendError::from)
+    }
+    /// Rolls back the draft through the shared application composition.
+    pub fn rollback_workflow(
+        &self,
+        request: RollbackWorkflowRequest,
+    ) -> Result<RollbackWorkflowResponse, BackendError> {
+        self.workflow.rollback(request).map_err(BackendError::from)
+    }
+    /// Activates a published version through the shared application composition.
+    pub fn activate_workflow(
+        &self,
+        request: ActivateWorkflowRequest,
+    ) -> Result<ActivateWorkflowResponse, BackendError> {
+        self.workflow.activate(request).map_err(BackendError::from)
+    }
+    /// Lists published versions through the shared application composition.
+    pub fn list_workflow_versions(
+        &self,
+        request: ListVersionsRequest,
+    ) -> Result<ListVersionsResponse, BackendError> {
+        self.workflow
+            .list_versions(request)
+            .map_err(BackendError::from)
+    }
+    /// Gets one version snapshot through the shared application composition.
+    pub fn get_workflow_version(
+        &self,
+        request: GetVersionRequest,
+    ) -> Result<GetVersionResponse, BackendError> {
+        self.workflow
+            .get_version(request)
+            .map_err(BackendError::from)
+    }
+    /// Deletes one version snapshot through the shared application composition.
+    pub fn delete_workflow_snapshot(
+        &self,
+        request: DeleteSnapshotRequest,
+    ) -> Result<DeleteSnapshotResponse, BackendError> {
+        self.workflow
+            .delete_snapshot(request)
+            .map_err(BackendError::from)
+    }
+    /// Gets one snapshot by its stable identifier through the shared application composition.
+    pub fn get_workflow_snapshot(
+        &self,
+        request: GetWorkflowSnapshotRequest,
+    ) -> Result<GetWorkflowSnapshotResponse, BackendError> {
+        self.workflow
+            .get_snapshot(request)
+            .map_err(BackendError::from)
+    }
+
+    // =============================================================================
+    // workflowRun
+    // =============================================================================
+
+    /// Creates one workflow run through the shared application composition.
+    pub fn create_workflow_run(
+        &self,
+        request: CreateWorkflowRunRequest,
+    ) -> Result<CreateWorkflowRunResponse, BackendError> {
+        self.workflow_run
+            .create(request)
+            .map_err(BackendError::from)
+    }
+    /// Gets one workflow run through the shared application composition.
+    pub fn get_workflow_run(
+        &self,
+        request: GetWorkflowRunRequest,
+    ) -> Result<GetWorkflowRunResponse, BackendError> {
+        self.workflow_run.get(request).map_err(BackendError::from)
+    }
+    /// Lists workflow runs for one project through the shared application composition.
+    pub fn list_workflow_runs(
+        &self,
+        request: ListWorkflowRunsRequest,
+    ) -> Result<ListWorkflowRunsResponse, BackendError> {
+        self.workflow_run.list(request).map_err(BackendError::from)
+    }
+    /// Lists workflow runs for one workflow through the shared application composition.
+    pub fn list_workflow_runs_by_workflow(
+        &self,
+        request: ListWorkflowRunsByWorkflowRequest,
+    ) -> Result<ListWorkflowRunsByWorkflowResponse, BackendError> {
+        self.workflow_run
+            .list_by_workflow(request)
+            .map_err(BackendError::from)
+    }
+    /// Lists the node-run history of one run through the shared application composition.
+    pub fn list_workflow_node_runs(
+        &self,
+        request: ListWorkflowNodeRunsRequest,
+    ) -> Result<ListWorkflowNodeRunsResponse, BackendError> {
+        self.workflow_run
+            .list_node_runs(request)
+            .map_err(BackendError::from)
+    }
+    /// Deletes one workflow run through the shared application composition.
+    pub fn delete_workflow_run(
+        &self,
+        request: DeleteWorkflowRunRequest,
+    ) -> Result<DeleteWorkflowRunResponse, BackendError> {
+        self.workflow_run
+            .delete(request)
+            .map_err(BackendError::from)
+    }
+}
+
+/// Runs one blocking repository operation off the async runtime's worker threads.
+///
+/// The SQLite work behind a delete genuinely blocks: acquiring a pooled
+/// connection waits when every slot is taken, and a cascading delete opens an
+/// immediate transaction that parks on the busy timeout while another writer
+/// holds the reservation. Parking an async worker for that long starves every
+/// other request the runtime is serving, so the wait belongs on the blocking
+/// pool even though the caller is asynchronous for unrelated reasons.
+async fn spawn_repository_work<T>(
+    work: impl FnOnce() -> Result<T, BackendError> + Send + 'static,
+) -> Result<T, BackendError>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|source| BackendError::internal("repository operation did not complete", source))?
 }
 
 /// Creates one required runtime directory and preserves its exact failing path.
@@ -373,8 +842,8 @@ mod tests {
     use tempfile::TempDir;
 
     /// Verifies the shared composition owns storage bootstrap and complete non-Git CRUD flows.
-    #[test]
-    fn opens_storage_and_serves_shared_crud_apis() {
+    #[tokio::test]
+    async fn opens_storage_and_serves_shared_crud_apis() {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let database_path = temporary.path().join("data").join("ora.sqlite3");
         let worktree_root = temporary.path().join("worktrees");
@@ -382,6 +851,9 @@ mod tests {
             database_path: database_path.clone(),
             worktree_root: worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open shared backend");
 
@@ -419,6 +891,7 @@ mod tests {
             .create_skill(CreateSkillRequest {
                 name: "review".to_string(),
                 description: "Review changes".to_string(),
+                content: None,
             })
             .expect("create skill")
             .skill;
@@ -427,6 +900,7 @@ mod tests {
                 skill_id: skill.id,
                 name: "review-code".to_string(),
                 description: "Review implementation changes".to_string(),
+                content: None,
             })
             .expect("update skill")
             .skill;
@@ -442,6 +916,7 @@ mod tests {
             .create_agent(CreateAgentRequest {
                 name: "codex".to_string(),
                 description: "Coding agent".to_string(),
+                content: None,
             })
             .expect("create agent")
             .agent;
@@ -450,6 +925,7 @@ mod tests {
                 agent_id: agent.id,
                 name: "codex-desktop".to_string(),
                 description: "Desktop coding agent".to_string(),
+                content: None,
             })
             .expect("update agent")
             .agent;
@@ -471,6 +947,7 @@ mod tests {
             .delete_project(DeleteProjectRequest {
                 project_id: project.id.clone(),
             })
+            .await
             .expect("delete project");
 
         let error = backend
@@ -482,9 +959,53 @@ mod tests {
         assert_eq!(error.public_error().code(), "project_not_found");
     }
 
-    /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.
+    /// Verifies an update rewrites only the manifest and preserves other package files.
     #[test]
-    fn deletes_existing_task_after_worktree_root_changes() {
+    fn update_preserves_other_package_files() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let skills_root = temporary.path().join("atoms").join("skills");
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
+            skills_root: skills_root.clone(),
+            ripgrep_path: std::path::PathBuf::from("rg"),
+        })
+        .expect("open shared backend");
+
+        let skill = backend
+            .create_skill(CreateSkillRequest {
+                name: "review".to_string(),
+                description: "Reviews changes".to_string(),
+                content: None,
+            })
+            .expect("create skill")
+            .skill;
+        // A user-added package file must survive an ordinary update.
+        fs::create_dir_all(skills_root.join("review")).expect("create package directory");
+        fs::write(skills_root.join("review").join("helper.sh"), "echo hi")
+            .expect("write helper file");
+
+        let updated = backend
+            .update_skill(UpdateSkillRequest {
+                skill_id: skill.id,
+                name: "review".to_string(),
+                description: "Reviews pull requests".to_string(),
+                content: None,
+            })
+            .expect("update skill")
+            .skill;
+        assert_eq!(updated.description, "Reviews pull requests");
+        assert!(skills_root.join("review").join("helper.sh").is_file());
+        let manifest =
+            fs::read_to_string(skills_root.join("review").join("SKILL.md")).expect("read manifest");
+        assert!(manifest.contains("description: Reviews pull requests"));
+    }
+
+    /// Verifies task deletion hides Ora records while deliberately preserving the Git worktree.
+    #[tokio::test]
+    async fn deletes_existing_task_after_worktree_root_changes() {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let repository_root = temporary.path().join("repository");
         initialize_repository(&repository_root);
@@ -493,6 +1014,9 @@ mod tests {
             database_path: temporary.path().join("ora.sqlite3"),
             worktree_root: original_worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open shared backend");
         let project = backend
@@ -508,6 +1032,7 @@ mod tests {
                 title: "Move configuration".to_string(),
                 status: TaskStatus::Todo,
                 workspace_mode: None,
+                base_branch: Some("main".to_string()),
             })
             .expect("create task")
             .task;
@@ -523,6 +1048,7 @@ mod tests {
             .delete_task(DeleteTaskRequest {
                 task_id: task.id.clone(),
             })
+            .await
             .expect("delete task without Git mutation");
 
         assert!(original_worktree_path.exists());

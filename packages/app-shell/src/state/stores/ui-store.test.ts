@@ -65,12 +65,15 @@ describe("useUiStore", () => {
       title: "Refactor",
       status: "todo",
       workspaceMode: "worktree",
+      type: "default",
+      workflowRunId: null,
     };
     const session: Session = {
       id: "s1",
       taskId: "t1",
       agentCli: "open_code",
       status: "running",
+      historyState: { type: "writable" },
     };
 
     useUiStore.getState().setDialog({ kind: "project", entity: project });

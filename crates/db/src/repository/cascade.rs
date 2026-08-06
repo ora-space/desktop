@@ -122,6 +122,12 @@ impl SqliteCascadeRepository {
                 "UPDATE tasks SET updated_at = ?2, is_deleted = 1 WHERE project_id = ?1 AND is_deleted = 0",
                 params![project_id.as_ref(), deleted_at],
             )?;
+            transaction.execute(
+                "UPDATE project_spec_source_overrides
+                 SET updated_at = ?2, is_deleted = 1
+                 WHERE project_id = ?1 AND is_deleted = 0",
+                params![project_id.as_ref(), deleted_at],
+            )?;
             // Work contexts are renewable leases rather than durable user records, so removing
             // them is the only meaningful cascade operation for this table.
             transaction.execute(

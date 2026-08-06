@@ -11,8 +11,8 @@
     "./tauri": "./src/tauri/index.ts"
   },
   "scripts": {
-    "lint": "eslint src",
-    "test": "vitest run",
+    "lint": "tsc -p tsconfig.json --noEmit && eslint src",
+    "test": "node ../../scripts/run-with-clean-stderr.mjs \"vitest run\"",
     "test:watch": "vitest"
   },
   "dependencies": {

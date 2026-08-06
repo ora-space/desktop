@@ -34,3 +34,103 @@ export type ListDirectoryResponse = {
   breadcrumbs: Array<FileSystemBreadcrumb>;
   entries: Array<FileSystemEntry>;
 };
+
+/**
+ * Requests one immediate directory inside a task's managed worktree.
+ */
+export type ListWorkspaceDirectoryRequest = { taskId: string; path?: string };
+
+/**
+ * Returns one normalized workspace directory and its immediate entries.
+ */
+export type ListWorkspaceDirectoryResponse = {
+  path: string;
+  entries: Array<WorkspaceEntry>;
+};
+
+/**
+ * Identifies one text file inside a task's managed worktree.
+ */
+export type ReadWorkspaceFileRequest = { taskId: string; path: string };
+
+/**
+ * Returns one bounded UTF-8 file for the read-only workspace viewer.
+ */
+export type ReadWorkspaceFileResponse = {
+  path: string;
+  content: string;
+  version: string;
+  sizeBytes: number;
+};
+
+/**
+ * Requests a bounded ripgrep search inside one task workspace.
+ */
+export type SearchWorkspaceRequest = {
+  taskId: string;
+  query: string;
+  kind: WorkspaceSearchKind;
+};
+
+/**
+ * Returns ordered search results and indicates output truncated by the server limit.
+ */
+export type SearchWorkspaceResponse = {
+  results: Array<WorkspaceSearchResult>;
+  truncated: boolean;
+};
+
+/**
+ * Starts one workspace watcher stream scoped to a task's managed worktree.
+ */
+export type WatchWorkspaceRequest = { taskId: string };
+
+/**
+ * Describes one task-workspace entry using a slash-separated relative path.
+ */
+export type WorkspaceEntry = {
+  name: string;
+  path: string;
+  kind: WorkspaceEntryKind;
+  isSymbolicLink: boolean;
+};
+
+/**
+ * Distinguishes files from directories inside a task workspace.
+ */
+export type WorkspaceEntryKind = "file" | "directory";
+
+/**
+ * Describes cache-invalidating changes emitted by the native workspace watcher.
+ */
+export type WorkspaceFileChange =
+  | { "kind": "created"; path: string }
+  | { "kind": "modified"; path: string }
+  | { "kind": "removed"; path: string }
+  | { "kind": "renamed"; from: string; path: string }
+  | { "kind": "rescanRequired" };
+
+/**
+ * Batches native filesystem changes so event storms do not trigger one refetch per callback.
+ */
+export type WorkspaceFileEventBatch = { changes: Array<WorkspaceFileChange> };
+
+/**
+ * Selects filename discovery or text-content search.
+ */
+export type WorkspaceSearchKind = "files" | "content";
+
+/**
+ * Keeps filename results and line-oriented content matches structurally distinct.
+ */
+export type WorkspaceSearchResult = { "kind": "file"; path: string } | {
+  "kind": "match";
+  path: string;
+  line: number;
+  /**
+   * Uses ripgrep's one-based UTF-8 byte offset so every transport preserves its location.
+   */
+  column: number;
+  matchedText: string;
+  preview: string;
+};

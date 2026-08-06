@@ -2,11 +2,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AgentCli,
   Project,
+  Session,
   Task,
   TaskStatus,
   TaskWorkspaceMode,
 } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
+import { clientId } from "../client-id";
 import { queryKeys } from "./query-keys";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { useUiStore } from "../stores/ui-store";
@@ -86,14 +88,16 @@ export function useCreateTask() {
       title,
       status,
       workspaceMode,
+      baseBranch,
     }: {
       projectId: string;
       title: string;
       status: TaskStatus;
       workspaceMode?: TaskWorkspaceMode;
+      baseBranch?: string;
     }) =>
       client.task
-        .create({ projectId, title, status, workspaceMode })
+        .create({ projectId, title, status, workspaceMode, baseBranch })
         .then((response) => response.task),
     onSuccess: (task) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks });
@@ -101,6 +105,11 @@ export function useCreateTask() {
       // waits until its provider session is ready before changing selection,
       // avoiding an intermediate task-only state in the composer.
       if (task.workspaceMode === "worktree") {
+        // The backend created a new Ora branch, so the next worktree dialog
+        // must refetch before offering base branches.
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.projectBranches(task.projectId),
+        });
         useWorkspaceSelectionStore
           .getState()
           .selectTask(task.id, task.projectId);
@@ -155,7 +164,13 @@ export function useDeleteTask() {
   });
 }
 
-/** Creates a session under a task and selects it once the server confirms the id. */
+/**
+ * Starts an additional session under an existing task and selects it.
+ *
+ * A provider session is warmed and then persisted in one step because there is
+ * no chat surface here to warm it in advance; the model can still be changed
+ * from the composer once the session is selected.
+ */
 export function useCreateSession() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -166,11 +181,22 @@ export function useCreateSession() {
       agentCli,
     }: {
       taskId: string;
-      agentCli: string;
+      agentCli: AgentCli;
     }) => {
-      return client.session
-        .create({ taskId, agentCli: agentCli as AgentCli })
-        .then((response) => response.session);
+      const warmed = await client.session.warm({
+        target: { type: "task", taskId },
+        agentCli,
+        clientId: clientId(),
+      });
+      const response = await client.session.attach({
+        sessionId: warmed.sessionId,
+        taskId,
+      });
+      queryClient.removeQueries({
+        queryKey: queryKeys.warmSession({ type: "task", taskId }, agentCli),
+      });
+      chatStore.getState().setConfigOptions(response.session.id, warmed.configOptions);
+      return response.session;
     },
     onSuccess: (session) => {
       // A just-created provider session has no history to replay. Register an
@@ -188,6 +214,31 @@ export function useCreateSession() {
         useUiStore.getState().expandProject(task.projectId);
         useUiStore.getState().expandTask(task.id);
       }
+    },
+  });
+}
+
+/**
+ * Returns a session whose history stopped being writable to a usable state.
+ *
+ * Everything else a degraded session can do is blocked until this succeeds —
+ * prompting and switching agent both refuse — so the refreshed session is
+ * pushed into the list rather than only invalidated, letting the surface that
+ * offered the retry stop offering it without waiting for a refetch.
+ */
+export function useResumeSessionHistory() {
+  const client = useContractsClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId }: { sessionId: string }) =>
+      client.session.resumeHistory({ sessionId }).then((response) => response.session),
+    onSuccess: (session) => {
+      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
+        (current ?? []).map((candidate) =>
+          candidate.id === session.id ? session : candidate,
+        ),
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     },
   });
 }

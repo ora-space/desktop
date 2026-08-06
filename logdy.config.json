@@ -1,0 +1,87 @@
+{
+  "name": "Ora structured logging",
+  "columns": [
+    {
+      "id": "ora-timestamp",
+      "name": "timestamp",
+      "idx": 0,
+      "width": 160,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  return { text: line.json_content?.timestamp ?? \"\" };\n}"
+    },
+    {
+      "id": "ora-request-id",
+      "name": "request_id",
+      "idx": 1,
+      "width": 160,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  return { text: line.json_content?.request_id ?? \"\" };\n}"
+    },
+    {
+      "id": "ora-level",
+      "name": "level",
+      "idx": 2,
+      "width": 80,
+      "faceted": true,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  return { text: line.json_content?.level ?? \"\" };\n}"
+    },
+    {
+      "id": "ora-message",
+      "name": "message",
+      "idx": 3,
+      "width": 200,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  return { text: line.json_content?.message ?? \"\" };\n}"
+    },
+    {
+      "id": "ora-context",
+      "name": "context/error",
+      "idx": 4,
+      "width": 500,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  const content = line.json_content?.level === \"ERROR\"\n    ? line.json_content?.error ?? {}\n    : line.json_content?.context ?? {};\n  return { text: content, isJson: true };\n}"
+    },
+    {
+      "id": "ora-target",
+      "name": "target",
+      "idx": 5,
+      "width": 220,
+      "hidden": true,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  return { text: line.json_content?.target ?? \"\" };\n}"
+    },
+    {
+      "id": "ora-method",
+      "name": "method",
+      "idx": 6,
+      "width": 180,
+      "faceted": true,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  return { text: line.json_content?.method ?? \"\" };\n}"
+    },
+    {
+      "id": "ora-span",
+      "name": "span",
+      "idx": 7,
+      "width": 180,
+      "hidden": true,
+      "faceted": true,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  return { text: line.json_content?.span ?? \"\" };\n}"
+    },
+    {
+      "id": "ora-error",
+      "name": "error",
+      "idx": 8,
+      "width": 360,
+      "hidden": true,
+      "handlerTsCode": "(line: Message): CellHandler => {\n  return { text: line.json_content?.error ?? {}, isJson: true };\n}"
+    }
+  ],
+  "settings": {
+    "maxMessages": 10000,
+    "entriesOrder": "asc",
+    "leftColWidth": 260,
+    "drawerColWidth": 900,
+    "middlewares": [
+      {
+        "id": "ora-normalize-event",
+        "name": "Normalize Ora timestamp and correlation",
+        "handlerTsCode": "(line: Message): Message | void => {\n  const timestamp = line.json_content?.timestamp;\n  if (typeof timestamp === \"string\") {\n    const parsedTimestamp = Date.parse(timestamp);\n    if (!Number.isNaN(parsedTimestamp)) {\n      line.ts = parsedTimestamp;\n      line.order_key = parsedTimestamp;\n    }\n  }\n\n  // Logdy can assign the same internal id to several JSONL lines read in one batch.\n  // Use the event timestamp and raw content so the browser does not collapse rows.\n  if (typeof timestamp === \"string\") {\n    line.id = `ora-${timestamp}-${line.content}`;\n  }\n\n  const requestId = line.json_content?.request_id;\n  if (typeof requestId === \"string\" && requestId.length > 0) {\n    line.correlation_id = requestId;\n  }\n\n  return line;\n}"
+      }
+    ]
+  }
+}

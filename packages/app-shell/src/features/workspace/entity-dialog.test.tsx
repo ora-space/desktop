@@ -44,6 +44,8 @@ describe("EntityDialog path field", () => {
       worktreeStorage: { kind: "unsupported" },
       windowControls: { kind: "none" },
       locationActions: { kind: "unsupported" },
+      skillMarketplace: { kind: "unsupported" },
+      saveTextFile: vi.fn().mockResolvedValue(false),
     });
 
     await user.click(screen.getByRole("button", { name: /Browse|浏览/ }));
@@ -62,6 +64,8 @@ describe("EntityDialog path field", () => {
       worktreeStorage: { kind: "unsupported" },
       windowControls: { kind: "none" },
       locationActions: { kind: "unsupported" },
+      skillMarketplace: { kind: "unsupported" },
+      saveTextFile: vi.fn().mockResolvedValue(false),
     });
 
     const pathInput = screen.getByLabelText("Path");

@@ -21,6 +21,12 @@ pub struct AddResponse {
     pub staged_paths: Vec<RepoRelativePath>,
 }
 
+/// Carries the worktree whose complete change set should be staged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageAllRequest<'a> {
+    pub worktree: &'a WorktreeHandle,
+}
+
 /// Carries the information needed to create a commit in one worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitRequest<'a> {
@@ -47,30 +53,65 @@ impl<R: GitRunner> Git<R> {
         })
     }
 
+    /// Stages tracked changes, deletions, and untracked files for an explicit task commit.
+    pub fn stage_all(&self, request: StageAllRequest<'_>) -> Result<(), GitlancerError> {
+        self.runner().run(&GitCommand::new(
+            request.worktree.worktree_root().as_path().to_path_buf(),
+            vec![
+                "add".to_string(),
+                "--all".to_string(),
+                "--".to_string(),
+                ".".to_string(),
+            ],
+            GitEnv::default(),
+            GitIntent::Mutating,
+        ))?;
+        Ok(())
+    }
+
     /// Creates one commit and returns typed metadata once the commit parser is implemented.
     pub fn commit(&self, request: CommitRequest<'_>) -> Result<CommitResponse, GitlancerError> {
         let command = build_commit_command(&request);
         let _output = self.runner().run(&command)?;
-        let hash_output = self.runner().run(&GitCommand::new(
-            request.worktree.worktree_root().as_path().to_path_buf(),
-            vec!["rev-parse".to_string(), "HEAD".to_string()],
-            GitEnv::default(),
-            GitIntent::ReadOnly,
-        ))?;
-        let summary_output = self.runner().run(&GitCommand::new(
-            request.worktree.worktree_root().as_path().to_path_buf(),
-            vec![
-                "log".to_string(),
-                "-1".to_string(),
-                "--pretty=%s".to_string(),
-                "HEAD".to_string(),
-            ],
-            GitEnv::default(),
-            GitIntent::ReadOnly,
-        ))?;
-        let metadata = format!("{}\n{}", hash_output.stdout, summary_output.stdout);
+        let hash_output = self
+            .runner()
+            .run(&GitCommand::new(
+                request.worktree.worktree_root().as_path().to_path_buf(),
+                vec!["rev-parse".to_string(), "HEAD".to_string()],
+                GitEnv::default(),
+                GitIntent::ReadOnly,
+            ))
+            .map_err(|source| GitlancerError::CommitMetadataUnavailable {
+                source: Box::new(GitlancerError::Exec(source)),
+            })?;
+        let summary_output = self
+            .runner()
+            .run(&GitCommand::new(
+                request.worktree.worktree_root().as_path().to_path_buf(),
+                vec![
+                    "log".to_string(),
+                    "-1".to_string(),
+                    "--pretty=%s".to_string(),
+                    "HEAD".to_string(),
+                ],
+                GitEnv::default(),
+                GitIntent::ReadOnly,
+            ))
+            .map_err(|source| GitlancerError::CommitMetadataUnavailable {
+                source: Box::new(GitlancerError::Exec(source)),
+            })?;
+        // Keep an explicit empty second line so an intentionally empty summary is still a valid response.
+        let metadata = format!(
+            "{}\n{}\n",
+            hash_output.stdout.trim_end(),
+            summary_output.stdout.trim_end()
+        );
 
-        parse_commit_response(&metadata).map_err(Into::into)
+        parse_commit_response(&metadata)
+            .map_err(GitlancerError::from)
+            .map_err(|source| GitlancerError::CommitMetadataUnavailable {
+                source: Box::new(source),
+            })
     }
 }
 

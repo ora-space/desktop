@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { RemoteContractError, type TaskStatus } from "@ora/contracts";
+import { RemoteContractError, type ProjectBranch, type TaskStatus } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,16 +23,12 @@ import {
   useCreateSession,
   useDeleteSession,
 } from "../../state/hooks/use-workspace-mutations";
+import { useDeleteWorkflowRun, useRenameWorkflowRun } from "../../state/hooks/use-workflow-runs";
 import { useUiStore, type DialogState, type DeleteTarget } from "../../state/stores/ui-store";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { localizeContractError } from "../../i18n/contract-error";
-
-/** Derives a project name from either a Windows or POSIX directory path. */
-export function projectNameFromPath(rootPath: string): string {
-  const original = rootPath.trim();
-  const withoutTrailingSeparators = original.replace(/[\\/]+$/gu, "");
-  return withoutTrailingSeparators.split(/[\\/]/u).filter(Boolean).at(-1) ?? original;
-}
+import { useProjectBranches } from "../../state/hooks/use-project-branches";
+import { projectNameFromPath } from "./workspace-dialogs-utils";
 
 /**
  * Hosts every workspace create/edit/delete dialog.
@@ -65,6 +61,7 @@ function DeleteEntityDialog({ target, onOpenChange }: { target: DeleteTarget | n
   const deleteProject = useDeleteProject();
   const deleteTask = useDeleteTask();
   const deleteSession = useDeleteSession();
+  const deleteWorkflowRun = useDeleteWorkflowRun();
 
   const confirmDelete = async () => {
     if (!target || deleting) return;
@@ -88,6 +85,12 @@ function DeleteEntityDialog({ target, onOpenChange }: { target: DeleteTarget | n
         await deleteTask.mutateAsync({ taskId: target.id });
       }
       if (target.kind === "session") await deleteSession.mutateAsync({ sessionId: target.id });
+      if (target.kind === "workflowRun") {
+        await deleteWorkflowRun.mutateAsync({
+          runId: target.id,
+          projectId: target.projectId,
+        });
+      }
       onOpenChange(false);
     } catch (error) {
       setDeleteError(error instanceof RemoteContractError && error.code === "resource_in_use"
@@ -131,7 +134,10 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
   const createSession = useCreateSession();
+  const renameWorkflowRun = useRenameWorkflowRun();
   const settingsAgentCli = useSettingsStore((state) => state.settings.agentCli);
+  const branchProjectId = dialog.kind === "task" && !dialog.entity ? dialog.projectId : null;
+  const { data: projectBranches = [] } = useProjectBranches(branchProjectId);
   let title: string;
   let description: string | undefined;
   let fields: EntityField[];
@@ -161,6 +167,13 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
     submitLabel = dialog.entity ? t("dialog.saveTask") : t("dialog.createTask");
     fields = [
       { kind: "text", name: "title", label: t("dialog.taskTitle"), value: dialog.entity?.title ?? "" },
+      ...(!dialog.entity ? [{
+        kind: "select" as const,
+        name: "baseBranch",
+        label: t("dialog.baseBranch"),
+        value: preferredBaseBranch(projectBranches),
+        options: projectBranches.map((branch) => ({ label: branch.displayName, value: branch.refName })),
+      }] : []),
       // Status is only meaningful once a task exists; a new task always starts at "todo".
       ...(dialog.entity ? [{ kind: "select" as const, name: "status", label: t("dialog.status"), value: dialog.entity.status, options: [
         { label: t("common.todo"), value: "todo" }, { label: t("common.doing"), value: "doing" }, { label: t("common.done"), value: "done" },
@@ -175,8 +188,26 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
           title: values.title!,
           status: "todo",
           workspaceMode: "worktree",
+          baseBranch: values.baseBranch!,
         });
       }
+    };
+  } else if (dialog.kind === "workflowRun") {
+    title = t("dialog.editWorkflowRun");
+    description = undefined;
+    submitLabel = t("dialog.saveWorkflowRun");
+    fields = [{
+      kind: "text",
+      name: "name",
+      label: t("dialog.workflowRunName"),
+      value: dialog.entity.name,
+      placeholder: t("dialog.workflowRunNamePlaceholder"),
+    }];
+    submit = async (values) => {
+      await renameWorkflowRun.mutateAsync({
+        runId: dialog.entity.id,
+        name: values.name!,
+      });
     };
   } else {
     title = dialog.entity ? t("dialog.editSession") : t("dialog.startSession");
@@ -190,7 +221,17 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
     };
   }
 
-  const dialogKey = `${dialog.kind}-${dialog.entity?.id ?? "new"}`;
+  const dialogKey = dialog.kind === "workflowRun"
+    ? `${dialog.kind}-${dialog.entity.id}`
+    : `${dialog.kind}-${dialog.entity?.id ?? "new"}`;
 
   return <EntityDialog key={dialogKey} open title={title} description={description} submitLabel={submitLabel} fields={fields} onOpenChange={onOpenChange} onSubmit={submit} />;
+}
+
+/** Prefers a fetched conventional primary branch while preserving repositories with custom defaults. */
+function preferredBaseBranch(branches: ProjectBranch[]): string {
+  return branches.find((branch) => branch.name === "main")?.refName
+    ?? branches.find((branch) => branch.name === "master")?.refName
+    ?? branches[0]?.refName
+    ?? "";
 }

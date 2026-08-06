@@ -12,7 +12,9 @@ forwards ordered `data`, `error`, and `end` frames over a Tauri Channel. A priva
 
 The frontend injects `createTauriTransport()` into `createContractsClient`. The transport maps contract operation names to Tauri commands and forwards the original request DTO unchanged. Shared backend failures use the same direct `{ code, params, requestId }` payload as Web, without a public message or outer envelope. Tauri and fetch reuse the same runtime decoder; local Tauri invocation failures have no HTTP status and never invent a request id.
 
-Backend construction immediately attempts supervised `opencode acp`, `nga acp`, and `codeagentcli acp` children in the user's home directory. Sessions share the connection selected by their `agentCli` while retaining their own ACP session id and Task worktree `cwd`. Each CLI retries independently; failures leave the Desktop shell and healthy CLIs available, while operations targeting an unavailable CLI report `agent_runtime_unavailable`. Executable lookup is platform-specific — see [ACP Agent Runtime](agent-runtime.md).
+Task workspace lookup and Spec management are part of that shared contract surface. `get_task_workspace` returns the authoritative task root with an optional branch, while `catalog_specs`, `read_spec`, `resolve_spec_source`, and `update_project_spec_sources` delegate unary work to the shared backend. `watch_specs` uses the same channel framing, cancellation, and exactly-once completion lifecycle as other Desktop streams. The frontend still selects directories through the existing native `PlatformAdapter.selectPath({ kind: "directory" })` path picker; no Spec-specific browser command exists.
+
+Backend construction immediately attempts supervised `opencode acp`, `nga acp`, `codeagentcli acp`, `claude-agent-acp`, and `codex-acp` children in the user's home directory. Sessions share the connection selected by their current `agentCli` while retaining their own ACP session id and Task worktree `cwd`. `switch_session_agent` moves a live conversation to another CLI and `resume_session_history` recovers one whose history writes failed. Each CLI retries independently; failures leave the Desktop shell and healthy CLIs available, while operations targeting an unavailable CLI report `agent_runtime_unavailable`. Executable lookup is platform-specific — see [ACP Agent Runtime](agent-runtime.md).
 
 Beyond the shared contract surface, Desktop registers four platform-only commands with no HTTP counterpart: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`.
 
@@ -24,6 +26,17 @@ Three contract operations are not implemented on Desktop:
 
 No Tauri command exists for them. The contracts transport rejects them with `unsupported_operation` before any IPC call is made, so the exclusion is enforced client-side rather than by a stub command. `ProjectWorkContext` remains outside this extraction; see [Project Work Contexts](project-work-contexts.md).
 
+## Skill imports
+
+Desktop exposes the shared import session lifecycle through four unary Tauri commands:
+`prepare_skill_import`, `get_skill_import`, `commit_skill_import`, and `cancel_skill_import`.
+The frontend sends the system picker's local path inside `PrepareSkillImportRequest`; the Rust
+side reads the folder or archive, so file bytes (up to 200 MiB) are never serialized over Tauri
+IPC. Preparation, preview, conflict decisions, background commit, and result retention behave
+identically to the Web runtime because both adapters call the same `ora-backend` composition.
+
+The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads. Task and project deletion never mutate Git.
+
 ## Persistent Paths
 
 The Tauri identifier is `space.ora.desktop`. Tauri's system `app_data_dir` owns all default runtime state:
@@ -32,6 +45,8 @@ The Tauri identifier is `space.ora.desktop`. Tauri's system `app_data_dir` owns 
 - Configuration: `app_data_dir/config.json`
 - Logs: `app_data_dir/logs/ora.log`
 - Default new-worktree root: `app_data_dir/worktrees`
+- Session history: `app_data_dir/sessions`
+ - Skill packages root: `app_data_dir/atoms/skills`
 
 On first launch, Desktop creates the app data directory, default worktree directory, and a versioned configuration file using an atomic sibling-temporary-file replacement. `config.json` currently holds version `1` and the `worktreeRoot`. Existing malformed, unknown-version, or otherwise invalid configuration is fatal; Desktop does not silently reset it.
 

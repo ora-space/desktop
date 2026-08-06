@@ -1,7 +1,8 @@
-use ora_contracts::{
-    FrontendEndpoint, FrontendPathParam, FrontendQueryParam, FrontendResponseMode,
-    export_typescript_bindings_to, frontend_endpoints,
+use crate::frontend::{
+    FrontendEndpoint, FrontendHttpMethod, FrontendPathParam, FrontendQueryParam,
+    FrontendResponseMode, frontend_endpoints,
 };
+use ora_contracts::export_typescript_bindings_to;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -20,9 +21,10 @@ pub fn run_export_contracts(workspace_root: &Path) -> Result<(), Box<dyn std::er
     remove_stale_typescript_bindings(&contracts_source_directory)?;
     export_typescript_bindings_to(&contracts_source_directory)?;
     append_js_extension_to_exported_imports(&contracts_source_directory)?;
+    let endpoints = frontend_endpoints();
     write_generated_file(
         &contracts_source_directory.join("endpoints.ts"),
-        &render_endpoints_module(frontend_endpoints()),
+        &render_endpoints_module(&endpoints),
     )?;
 
     Ok(())
@@ -275,8 +277,11 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "DeleteProjectResponse"
         | "GetProjectRequest"
         | "GetProjectResponse"
+        | "ListProjectBranchesRequest"
+        | "ListProjectBranchesResponse"
         | "ListProjectsRequest"
         | "ListProjectsResponse"
+        | "ProjectBranch"
         | "UpdateProjectRequest"
         | "UpdateProjectResponse" => "project",
         // projectWorkContext
@@ -286,16 +291,49 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "RenewProjectWorkContextRequest"
         | "RenewProjectWorkContextResponse" => "project-work-context",
         // task
-        "CreateTaskRequest" | "CreateTaskResponse" | "DeleteTaskRequest" | "DeleteTaskResponse"
-        | "GetTaskRequest" | "GetTaskResponse" | "ListTasksRequest" | "ListTasksResponse"
-        | "UpdateTaskRequest" | "UpdateTaskResponse" => "task",
+        "CreateTaskRequest"
+        | "CreateTaskResponse"
+        | "DeleteTaskRequest"
+        | "DeleteTaskResponse"
+        | "GetTaskRequest"
+        | "GetTaskResponse"
+        | "GetTaskWorkspaceRequest"
+        | "GetTaskWorkspaceResponse"
+        | "ListTasksRequest"
+        | "ListTasksResponse"
+        | "TaskWorkspace"
+        | "UpdateTaskRequest"
+        | "UpdateTaskResponse" => "task",
+        // taskDiff
+        "CommitTaskChangesRequest"
+        | "CommitTaskChangesResponse"
+        | "CreateTaskDiffCommentRequest"
+        | "CreateTaskDiffCommentResponse"
+        | "GetTaskDiffRequest"
+        | "GetTaskDiffResponse"
+        | "ListTaskDiffCommentsRequest"
+        | "ListTaskDiffCommentsResponse"
+        | "PushTaskBranchRequest"
+        | "PushTaskBranchResponse"
+        | "ReplyTaskDiffCommentRequest"
+        | "ReplyTaskDiffCommentResponse"
+        | "SetTaskDiffCommentStatusRequest"
+        | "SetTaskDiffCommentStatusResponse"
+        | "TaskDiffScope" => "task_diff",
         // session
-        "CreateSessionRequest"
-        | "CreateSessionResponse"
+        "AttachSessionRequest"
+        | "AttachSessionResponse"
         | "DeleteSessionRequest"
         | "DeleteSessionResponse"
+        | "GetAgentRuntimeStatusRequest"
+        | "GetAgentRuntimeStatusResponse"
         | "GetSessionRequest"
         | "GetSessionResponse"
+        | "SetSessionConfigRequest"
+        | "SetSessionConfigResponse"
+        | "WarmSessionRequest"
+        | "WarmSessionResponse"
+        | "WarmSessionTarget"
         | "LoadSessionRequest"
         | "LoadSessionEvent"
         | "ListSessionsRequest"
@@ -304,10 +342,12 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "PromptSessionEvent"
         | "RespondToPermissionRequest"
         | "RespondToPermissionResponse"
+        | "ResumeSessionHistoryRequest"
+        | "ResumeSessionHistoryResponse"
+        | "SwitchSessionAgentRequest"
+        | "SwitchSessionAgentResponse"
         | "StopSessionRequest"
         | "StopSessionResponse" => "session",
-        // agentRuntime
-        "ListAgentModelsRequest" | "ListAgentModelsResponse" => "session",
         // skill
         "CreateSkillRequest"
         | "CreateSkillResponse"
@@ -319,6 +359,25 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListSkillsResponse"
         | "UpdateSkillRequest"
         | "UpdateSkillResponse" => "skill",
+        "CancelSkillImportRequest"
+        | "CancelSkillImportResponse"
+        | "CommitSkillImportRequest"
+        | "CommitSkillImportResponse"
+        | "GetSkillImportSessionRequest"
+        | "GetSkillImportSessionResponse"
+        | "PrepareSkillImportRequest"
+        | "PrepareSkillImportResponse"
+        | "SkillConflictInfo"
+        | "SkillImportCandidate"
+        | "SkillImportCandidateStatus"
+        | "SkillImportConflictDecision"
+        | "SkillImportDecision"
+        | "SkillImportProgress"
+        | "SkillImportResult"
+        | "SkillImportResultStatus"
+        | "SkillImportSession"
+        | "SkillImportSessionStatus"
+        | "SkillImportSource" => "skill-import",
         // agent
         "CreateAgentRequest"
         | "CreateAgentResponse"
@@ -330,8 +389,79 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListAgentsResponse"
         | "UpdateAgentRequest"
         | "UpdateAgentResponse" => "agent",
+        // agentImport
+        "PrepareAgentImportRequest"
+        | "PrepareAgentImportResponse"
+        | "CommitAgentImportRequest"
+        | "CommitAgentImportResponse" => "agent-import",
+        // workflow
+        "CreateWorkflowRequest"
+        | "CreateWorkflowResponse"
+        | "GetWorkflowRequest"
+        | "GetWorkflowResponse"
+        | "ListWorkflowsRequest"
+        | "ListWorkflowsResponse"
+        | "UpdateWorkflowRequest"
+        | "UpdateWorkflowResponse"
+        | "DeleteWorkflowRequest"
+        | "DeleteWorkflowResponse"
+        | "GetDraftRequest"
+        | "GetDraftResponse"
+        | "UpdateDraftRequest"
+        | "UpdateDraftResponse"
+        | "PublishWorkflowRequest"
+        | "PublishWorkflowResponse"
+        | "RollbackWorkflowRequest"
+        | "RollbackWorkflowResponse"
+        | "ActivateWorkflowRequest"
+        | "ActivateWorkflowResponse"
+        | "ListVersionsRequest"
+        | "ListVersionsResponse"
+        | "GetVersionRequest"
+        | "GetVersionResponse"
+        | "DeleteSnapshotRequest"
+        | "DeleteSnapshotResponse"
+        | "GetWorkflowSnapshotRequest"
+        | "GetWorkflowSnapshotResponse" => "workflow",
+        // workflowRun
+        "WorkflowRunStatus"
+        | "WorkflowNodeStatus"
+        | "WorkflowRun"
+        | "WorkflowNodeRun"
+        | "WorkflowRunSummary"
+        | "CreateWorkflowRunRequest"
+        | "CreateWorkflowRunResponse"
+        | "GetWorkflowRunRequest"
+        | "GetWorkflowRunResponse"
+        | "ListWorkflowRunsRequest"
+        | "ListWorkflowRunsResponse"
+        | "ListWorkflowNodeRunsRequest"
+        | "ListWorkflowNodeRunsResponse"
+        | "ListWorkflowRunsByWorkflowRequest"
+        | "ListWorkflowRunsByWorkflowResponse"
+        | "DeleteWorkflowRunRequest"
+        | "DeleteWorkflowRunResponse" => "workflowRun",
         // fileSystem
-        "ListDirectoryRequest" | "ListDirectoryResponse" => "file-system",
+        "ListDirectoryRequest"
+        | "ListDirectoryResponse"
+        | "ListWorkspaceDirectoryRequest"
+        | "ListWorkspaceDirectoryResponse"
+        | "ReadWorkspaceFileRequest"
+        | "ReadWorkspaceFileResponse"
+        | "SearchWorkspaceRequest"
+        | "SearchWorkspaceResponse"
+        | "WatchWorkspaceRequest"
+        | "WorkspaceFileEventBatch" => "file-system",
+        // spec
+        "GetSpecCatalogRequest"
+        | "SpecCatalogResponse"
+        | "ReadSpecRequest"
+        | "ReadSpecResponse"
+        | "ResolveSpecSourceRequest"
+        | "ResolveSpecSourceResponse"
+        | "UpdateProjectSpecSourcesRequest"
+        | "UpdateProjectSpecSourcesResponse"
+        | "WatchSpecsRequest" => "spec",
         // gitIdentity
         "GetGitIdentityRequest" | "GitIdentityResponse" => "git",
         other => panic!("unknown contract type `{other}`"),
@@ -341,10 +471,10 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
 /// Renders one HTTP method enum value as the wire-level string used by the SDK.
 fn render_http_method(endpoint: &FrontendEndpoint) -> &'static str {
     match endpoint.method {
-        ora_contracts::FrontendHttpMethod::Get => "GET",
-        ora_contracts::FrontendHttpMethod::Post => "POST",
-        ora_contracts::FrontendHttpMethod::Put => "PUT",
-        ora_contracts::FrontendHttpMethod::Delete => "DELETE",
+        FrontendHttpMethod::Get => "GET",
+        FrontendHttpMethod::Post => "POST",
+        FrontendHttpMethod::Put => "PUT",
+        FrontendHttpMethod::Delete => "DELETE",
     }
 }
 
@@ -410,7 +540,7 @@ mod tests {
     use super::{
         append_js_extension_to_relative_specifiers, render_endpoints_module, run_export_contracts,
     };
-    use ora_contracts::frontend_endpoints;
+    use crate::frontend::frontend_endpoints;
     use std::fs;
     use tempfile::TempDir;
 
@@ -438,7 +568,8 @@ mod tests {
     /// Verifies the generated endpoint manifest preserves update-route path metadata.
     #[test]
     fn renders_endpoint_manifest_with_update_path_params() {
-        let module = render_endpoints_module(frontend_endpoints());
+        let endpoints = frontend_endpoints();
+        let module = render_endpoints_module(&endpoints);
 
         assert!(module.contains("updateTask"));
         assert!(module.contains("pathTemplate: \"/api/tasks/{taskId}\""));
@@ -449,7 +580,8 @@ mod tests {
     /// so the hand-written client can rely on literal method/path types.
     #[test]
     fn emits_as_const_satisfies_clauses() {
-        let module = render_endpoints_module(frontend_endpoints());
+        let endpoints = frontend_endpoints();
+        let module = render_endpoints_module(&endpoints);
 
         assert!(module.contains(
             "} as const satisfies Record<EndpointOperation, FrontendEndpointDefinition>;\n"
@@ -480,6 +612,8 @@ mod tests {
             "session.ts",
             "skill.ts",
             "task.ts",
+            "task_diff.ts",
+            "workflow.ts",
         ];
 
         for generated_file in generated_files {

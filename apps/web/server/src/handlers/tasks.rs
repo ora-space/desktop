@@ -4,8 +4,8 @@ use axum::Json;
 use axum::extract::{Path, State};
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
-    GetTaskResponse, ListTasksRequest, ListTasksResponse, TaskStatus, UpdateTaskRequest,
-    UpdateTaskResponse,
+    GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest,
+    ListTasksResponse, TaskStatus, UpdateTaskRequest, UpdateTaskResponse,
 };
 use serde::Deserialize;
 
@@ -50,6 +50,20 @@ pub async fn get_task(
         .map_err(WebApiError::from)
 }
 
+/// Returns the authoritative task workspace used by sessions and directory selection.
+pub async fn get_task_workspace(
+    State(app_state): State<AppState>,
+    Path(path): Path<TaskPath>,
+) -> Result<Json<GetTaskWorkspaceResponse>, WebApiError> {
+    app_state
+        .backend()
+        .get_task_workspace(GetTaskWorkspaceRequest {
+            task_id: path.task_id,
+        })
+        .map(Json)
+        .map_err(WebApiError::from)
+}
+
 /// Lists every visible task by delegating to the application handler.
 pub async fn list_tasks(
     State(app_state): State<AppState>,
@@ -88,6 +102,7 @@ pub async fn delete_task(
         .delete_task(DeleteTaskRequest {
             task_id: path.task_id,
         })
+        .await
         .map(Json)
         .map_err(WebApiError::from)
 }

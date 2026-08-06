@@ -65,12 +65,28 @@ pub struct SkillUploadTooManyFilesParams {
     pub max_files: usize,
 }
 
+/// Carries the configured request-body limit without exposing uploaded file contents.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct SkillUploadTooLargeParams {
+    pub max_bytes: usize,
+}
+
 /// Carries a validated skill name when its destination folder already exists.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "error.ts")]
 pub struct SkillFolderConflictParams {
     pub name: String,
+}
+
+/// Carries the user-selected base branch name when Git cannot resolve it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct TaskBaseBranchNotFoundParams {
+    pub branch_name: String,
 }
 
 /// Enumerates every user-visible Ora failure and its exact interpolation parameters.
@@ -81,8 +97,14 @@ pub enum PublicError {
     InternalError(EmptyErrorParams),
     InvalidRequest(EmptyErrorParams),
     SkillNameBlank(EmptyErrorParams),
+    SkillNameInvalid(EmptyErrorParams),
+    SkillNameTooLong(EmptyErrorParams),
+    SkillDescriptionBlank(EmptyErrorParams),
+    SkillDescriptionTooLarge(EmptyErrorParams),
+    SkillNameConflict(EmptyErrorParams),
     SkillNotFound(EmptyErrorParams),
     AgentNameBlank(EmptyErrorParams),
+    AgentNameConflict(EmptyErrorParams),
     AgentNotFound(EmptyErrorParams),
     ProjectNotFound(EmptyErrorParams),
     ProjectOccupied(EmptyErrorParams),
@@ -90,13 +112,24 @@ pub enum PublicError {
     TaskNotFound(EmptyErrorParams),
     ResourceInUse(EmptyErrorParams),
     WorktreeRequiresGitRepository(EmptyErrorParams),
+    TaskBaseBranchRequired(EmptyErrorParams),
+    TaskBaseBranchNotFound(TaskBaseBranchNotFoundParams),
     WorktreeNotFound(EmptyErrorParams),
+    TaskDiffBaselineUnavailable(EmptyErrorParams),
+    TaskDiffCommitMessageBlank(EmptyErrorParams),
+    TaskDiffTooLarge(EmptyErrorParams),
+    TaskDiffStale(EmptyErrorParams),
+    TaskDiffCommentNotFound(EmptyErrorParams),
+    TaskDiffCommentInvalid(EmptyErrorParams),
+    TaskDiffCommentConflict(EmptyErrorParams),
     SessionNotFound(EmptyErrorParams),
     AgentCliNotFound(EmptyErrorParams),
     AgentRuntimeUnavailable(EmptyErrorParams),
     SessionBusy(EmptyErrorParams),
     SessionStopped(EmptyErrorParams),
     SessionLoadUnsupported(EmptyErrorParams),
+    SessionHistoryDegraded(EmptyErrorParams),
+    SessionAgentUnchanged(EmptyErrorParams),
     PermissionRequestNotPending(EmptyErrorParams),
     PermissionOptionInvalid(EmptyErrorParams),
     PromptEmpty(EmptyErrorParams),
@@ -107,10 +140,15 @@ pub enum PublicError {
     FileSystemPathNotDirectory(EmptyErrorParams),
     FileSystemPathNotFound(EmptyErrorParams),
     FileSystemPathPermissionDenied(EmptyErrorParams),
+    SpecSourceInvalid(EmptyErrorParams),
+    SpecSourceOutsideWorkspace(EmptyErrorParams),
+    SpecSourceWorkspaceRoot(EmptyErrorParams),
+    SpecDocumentNotFound(EmptyErrorParams),
     WorktreeRootNotAbsolute(EmptyErrorParams),
     WorktreeRootNotDirectory(EmptyErrorParams),
     OpenLocationFailed(OpenLocationFailedParams),
     SkillUploadEmpty(EmptyErrorParams),
+    SkillUploadTooLarge(SkillUploadTooLargeParams),
     SkillUploadTooManyFiles(SkillUploadTooManyFilesParams),
     SkillUploadPathInvalid(EmptyErrorParams),
     SkillUploadPathDuplicate(EmptyErrorParams),
@@ -120,6 +158,42 @@ pub enum PublicError {
     SkillManifestDescriptionBlank(EmptyErrorParams),
     SkillManifestNameInvalid(EmptyErrorParams),
     SkillFolderConflict(SkillFolderConflictParams),
+    SkillManifestNotFound(EmptyErrorParams),
+    SkillManifestTooLarge(EmptyErrorParams),
+    TooManySkills(EmptyErrorParams),
+    ArchiveFormatUnsupported(EmptyErrorParams),
+    ArchiveFormatMismatch(EmptyErrorParams),
+    ArchiveCorrupt(EmptyErrorParams),
+    ArchiveEncryptedUnsupported(EmptyErrorParams),
+    ArchiveSpecialEntryUnsupported(EmptyErrorParams),
+    ArchivePathEncodingInvalid(EmptyErrorParams),
+    ArchivePathCaseConflict(EmptyErrorParams),
+    PathSegmentTooLong(EmptyErrorParams),
+    PathTooLong(EmptyErrorParams),
+    PathTooDeep(EmptyErrorParams),
+    ArchiveExpansionRatioExceeded(EmptyErrorParams),
+    ImportPreparationTimeout(EmptyErrorParams),
+    ImportSessionExpired(EmptyErrorParams),
+    ImportSessionCancelled(EmptyErrorParams),
+    ImportSessionCommitInProgress(EmptyErrorParams),
+    ImportSessionAlreadyCommitted(EmptyErrorParams),
+    SkillStorageInconsistent(EmptyErrorParams),
+    WorkflowNameBlank(EmptyErrorParams),
+    WorkflowNotFound(EmptyErrorParams),
+    WorkflowSnapshotNotFound(EmptyErrorParams),
+    WorkflowVersionAlreadyExists(EmptyErrorParams),
+    WorkflowVersionInvalid(EmptyErrorParams),
+    WorkflowVersionReserved(EmptyErrorParams),
+    WorkflowCannotDeleteDraft(EmptyErrorParams),
+    WorkflowCannotDeleteActiveVersion(EmptyErrorParams),
+    WorkflowActiveRuns(EmptyErrorParams),
+    WorkflowCannotRollbackToDraft(EmptyErrorParams),
+    WorkflowCannotActivateDraft(EmptyErrorParams),
+    WorkflowSnapshotInUse(EmptyErrorParams),
+    WorkflowNoPublishedSnapshot(EmptyErrorParams),
+    WorkflowRunCannotUseDraftSnapshot(EmptyErrorParams),
+    WorkflowRunNotFound(EmptyErrorParams),
+    WorkflowRunActive(EmptyErrorParams),
 }
 
 impl PublicError {
@@ -129,8 +203,14 @@ impl PublicError {
             Self::InternalError(_) => "internal_error",
             Self::InvalidRequest(_) => "invalid_request",
             Self::SkillNameBlank(_) => "skill_name_blank",
+            Self::SkillNameInvalid(_) => "skill_name_invalid",
+            Self::SkillNameTooLong(_) => "skill_name_too_long",
+            Self::SkillDescriptionBlank(_) => "skill_description_blank",
+            Self::SkillDescriptionTooLarge(_) => "skill_description_too_large",
+            Self::SkillNameConflict(_) => "skill_name_conflict",
             Self::SkillNotFound(_) => "skill_not_found",
             Self::AgentNameBlank(_) => "agent_name_blank",
+            Self::AgentNameConflict(_) => "agent_name_conflict",
             Self::AgentNotFound(_) => "agent_not_found",
             Self::ProjectNotFound(_) => "project_not_found",
             Self::ProjectOccupied(_) => "project_occupied",
@@ -138,13 +218,24 @@ impl PublicError {
             Self::TaskNotFound(_) => "task_not_found",
             Self::ResourceInUse(_) => "resource_in_use",
             Self::WorktreeRequiresGitRepository(_) => "worktree_requires_git_repository",
+            Self::TaskBaseBranchRequired(_) => "task_base_branch_required",
+            Self::TaskBaseBranchNotFound(_) => "task_base_branch_not_found",
             Self::WorktreeNotFound(_) => "worktree_not_found",
+            Self::TaskDiffBaselineUnavailable(_) => "task_diff_baseline_unavailable",
+            Self::TaskDiffCommitMessageBlank(_) => "task_diff_commit_message_blank",
+            Self::TaskDiffTooLarge(_) => "task_diff_too_large",
+            Self::TaskDiffStale(_) => "task_diff_stale",
+            Self::TaskDiffCommentNotFound(_) => "task_diff_comment_not_found",
+            Self::TaskDiffCommentInvalid(_) => "task_diff_comment_invalid",
+            Self::TaskDiffCommentConflict(_) => "task_diff_comment_conflict",
             Self::SessionNotFound(_) => "session_not_found",
             Self::AgentCliNotFound(_) => "agent_cli_not_found",
             Self::AgentRuntimeUnavailable(_) => "agent_runtime_unavailable",
             Self::SessionBusy(_) => "session_busy",
             Self::SessionStopped(_) => "session_stopped",
             Self::SessionLoadUnsupported(_) => "session_load_unsupported",
+            Self::SessionHistoryDegraded(_) => "session_history_degraded",
+            Self::SessionAgentUnchanged(_) => "session_agent_unchanged",
             Self::PermissionRequestNotPending(_) => "permission_request_not_pending",
             Self::PermissionOptionInvalid(_) => "permission_option_invalid",
             Self::PromptEmpty(_) => "prompt_empty",
@@ -155,10 +246,15 @@ impl PublicError {
             Self::FileSystemPathNotDirectory(_) => "file_system_path_not_directory",
             Self::FileSystemPathNotFound(_) => "file_system_path_not_found",
             Self::FileSystemPathPermissionDenied(_) => "file_system_path_permission_denied",
+            Self::SpecSourceInvalid(_) => "spec_source_invalid",
+            Self::SpecSourceOutsideWorkspace(_) => "spec_source_outside_workspace",
+            Self::SpecSourceWorkspaceRoot(_) => "spec_source_workspace_root",
+            Self::SpecDocumentNotFound(_) => "spec_document_not_found",
             Self::WorktreeRootNotAbsolute(_) => "worktree_root_not_absolute",
             Self::WorktreeRootNotDirectory(_) => "worktree_root_not_directory",
             Self::OpenLocationFailed(_) => "open_location_failed",
             Self::SkillUploadEmpty(_) => "skill_upload_empty",
+            Self::SkillUploadTooLarge(_) => "skill_upload_too_large",
             Self::SkillUploadTooManyFiles(_) => "skill_upload_too_many_files",
             Self::SkillUploadPathInvalid(_) => "skill_upload_path_invalid",
             Self::SkillUploadPathDuplicate(_) => "skill_upload_path_duplicate",
@@ -168,6 +264,42 @@ impl PublicError {
             Self::SkillManifestDescriptionBlank(_) => "skill_manifest_description_blank",
             Self::SkillManifestNameInvalid(_) => "skill_manifest_name_invalid",
             Self::SkillFolderConflict(_) => "skill_folder_conflict",
+            Self::SkillManifestNotFound(_) => "skill_manifest_not_found",
+            Self::SkillManifestTooLarge(_) => "skill_manifest_too_large",
+            Self::TooManySkills(_) => "too_many_skills",
+            Self::ArchiveFormatUnsupported(_) => "archive_format_unsupported",
+            Self::ArchiveFormatMismatch(_) => "archive_format_mismatch",
+            Self::ArchiveCorrupt(_) => "archive_corrupt",
+            Self::ArchiveEncryptedUnsupported(_) => "archive_encrypted_unsupported",
+            Self::ArchiveSpecialEntryUnsupported(_) => "archive_special_entry_unsupported",
+            Self::ArchivePathEncodingInvalid(_) => "archive_path_encoding_invalid",
+            Self::ArchivePathCaseConflict(_) => "archive_path_case_conflict",
+            Self::PathSegmentTooLong(_) => "path_segment_too_long",
+            Self::PathTooLong(_) => "path_too_long",
+            Self::PathTooDeep(_) => "path_too_deep",
+            Self::ArchiveExpansionRatioExceeded(_) => "archive_expansion_ratio_exceeded",
+            Self::ImportPreparationTimeout(_) => "import_preparation_timeout",
+            Self::ImportSessionExpired(_) => "import_session_expired",
+            Self::ImportSessionCancelled(_) => "import_session_cancelled",
+            Self::ImportSessionCommitInProgress(_) => "import_session_commit_in_progress",
+            Self::ImportSessionAlreadyCommitted(_) => "import_session_already_committed",
+            Self::SkillStorageInconsistent(_) => "skill_storage_inconsistent",
+            Self::WorkflowNameBlank(_) => "workflow_name_blank",
+            Self::WorkflowNotFound(_) => "workflow_not_found",
+            Self::WorkflowSnapshotNotFound(_) => "workflow_snapshot_not_found",
+            Self::WorkflowVersionAlreadyExists(_) => "workflow_version_already_exists",
+            Self::WorkflowVersionInvalid(_) => "workflow_version_invalid",
+            Self::WorkflowVersionReserved(_) => "workflow_version_reserved",
+            Self::WorkflowCannotDeleteDraft(_) => "workflow_cannot_delete_draft",
+            Self::WorkflowCannotDeleteActiveVersion(_) => "workflow_cannot_delete_active_version",
+            Self::WorkflowActiveRuns(_) => "workflow_active_runs",
+            Self::WorkflowCannotRollbackToDraft(_) => "workflow_cannot_rollback_to_draft",
+            Self::WorkflowCannotActivateDraft(_) => "workflow_cannot_activate_draft",
+            Self::WorkflowSnapshotInUse(_) => "workflow_snapshot_in_use",
+            Self::WorkflowNoPublishedSnapshot(_) => "workflow_no_published_snapshot",
+            Self::WorkflowRunCannotUseDraftSnapshot(_) => "workflow_run_cannot_use_draft_snapshot",
+            Self::WorkflowRunNotFound(_) => "workflow_run_not_found",
+            Self::WorkflowRunActive(_) => "workflow_run_active",
         }
     }
 }
@@ -189,7 +321,9 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     OpenLocationTarget::export_all(config)?;
     OpenLocationFailedParams::export_all(config)?;
     SkillUploadTooManyFilesParams::export_all(config)?;
+    SkillUploadTooLargeParams::export_all(config)?;
     SkillFolderConflictParams::export_all(config)?;
+    TaskBaseBranchNotFoundParams::export_all(config)?;
     PublicError::export_all(config)?;
     ContractError::export_all(config)?;
     Ok(())
@@ -197,7 +331,9 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContractError, EmptyErrorParams, PublicError, RequestId};
+    use super::{
+        ContractError, EmptyErrorParams, PublicError, RequestId, SkillUploadTooLargeParams,
+    };
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use uuid::uuid;
@@ -214,6 +350,26 @@ mod tests {
             json!({
                 "code": "project_not_found",
                 "params": {},
+                "requestId": "550e8400-e29b-41d4-a716-446655440000",
+            })
+        );
+    }
+
+    /// Verifies upload limits expose only the bounded configuration value.
+    #[test]
+    fn serializes_skill_upload_body_limit() {
+        let error = ContractError {
+            error: PublicError::SkillUploadTooLarge(SkillUploadTooLargeParams {
+                max_bytes: 52_428_800,
+            }),
+            request_id: RequestId::from_uuid(uuid!("550e8400-e29b-41d4-a716-446655440000")),
+        };
+
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            json!({
+                "code": "skill_upload_too_large",
+                "params": { "maxBytes": 52_428_800 },
                 "requestId": "550e8400-e29b-41d4-a716-446655440000",
             })
         );

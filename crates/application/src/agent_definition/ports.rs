@@ -15,6 +15,12 @@ pub trait AgentDefinitionRepository {
         agent_id: &AgentDefinitionId,
     ) -> Result<Option<AgentDefinition>, RepositoryError>;
 
+    /// Loads the first visible configurable agent whose name matches case-insensitively.
+    fn find_agent_definition_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<AgentDefinition>, RepositoryError>;
+
     /// Lists visible configurable agent types in deterministic storage order.
     fn list_agent_definitions(&self) -> Result<Vec<AgentDefinition>, RepositoryError>;
 

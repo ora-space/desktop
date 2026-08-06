@@ -9,7 +9,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "tsc -p tsconfig.json --noEmit && node --import tsx --test tests/*.test.ts"
+    "lint": "tsc -p tsconfig.json --noEmit && eslint src tests",
+    "test": "node ../../scripts/run-with-clean-stderr.mjs \"tsc -p tsconfig.json --noEmit && node --import tsx --test tests/*.test.ts\""
   },
   "dependencies": {
     "@ora/contracts": "workspace:*",

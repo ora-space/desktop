@@ -5,13 +5,13 @@ The public application surface is split across `ora-domain`, `ora-contracts`, `o
 ## Ownership
 
 - `ora-domain` owns schema-backed entities, identifier newtypes, and categorical enums. See [Domain Models](domain-models.md).
-- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Session, Skill, Agent, and Git identity operations, plus the Web-only project work context and filesystem operations.
+- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Spec management, Session, Skill, Skill Import, Agent, Workflow, and Git identity operations, plus the Web-only project work context and filesystem operations.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
-- `ora-contracts` also owns the frontend endpoint manifest for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode.
+- The `xtask` exporter owns the generation-only frontend endpoint catalog for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode. `ora-contracts` keeps the shared HTTP path constants used by server adapters.
 - `ora-contracts` exports TypeScript DTOs into `packages/contracts/src` so frontend packages consume the contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`. See [Frontend Contract SDK](frontend-contract-sdk.md).
 - `ora-application` owns use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports those handlers depend on, and domain-to-contract mapping. It also owns project work context lease timing and occupancy conflicts.
 - `ora-db` implements those ports on SQLite and owns schema reconciliation. See [Database Repositories](database-repositories.md).
-- `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
+- `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, task-diff workspace/baseline resolution, specification target/configuration/filesystem composition, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
 - Transport adapters stay thin: Web handlers and Tauri commands accept contract requests, delegate to the same `Backend`, then map its stable public errors into HTTP or IPC semantics.
 - `ProjectWorkContext` and filesystem browsing are deliberately outside `ora-backend`. The Web server keeps those services composed directly from the repository pool; Desktop's transport reports `unsupported_operation` for those three contract operations.
 
@@ -21,14 +21,25 @@ Contracts are the app-facing protocol, not a projection of the domain. Each enti
 
 - `Project`: `id`, `name`, `rootPath`
 - `Task`: `id`, `projectId`, `title`, `status`, `workspaceMode`
-- `Session`: `id`, `taskId`, `agentCli`, `status`
+- `Session`: `id`, `taskId`, `agentCli`, `status`, `historyState`
 - `Skill` and `Agent`: `id`, `name`, `description`
 - `ProjectWorkContext`: `id`, `surface`, `windowId`, `projectId`, `leaseExpiresAt`
+- `ProjectBranch`: `name`, `refName`, `displayName`
+- Workspace file contracts keep task identity in the request and expose only normalized relative paths: `WorkspaceEntry`, `ReadWorkspaceFileResponse`, `SearchWorkspaceResponse`, and `WorkspaceFileEventBatch`. The server resolves the task's managed workspace; callers never provide a filesystem root.
+- `Workflow`: `id`, `name`, `publishedSnapshotId`
+- `WorkflowSnapshot` (public): `id`, `workflowId`, `version`, `graph`, `createdAt`, `updatedAt`
+- `WorkflowSummary`: `id`, `name`, `publishedVersion`, `createdAt`, `updatedAt`
+- `WorkflowVersion`: `id`, `version`, `createdAt`
+- `WorkflowRun`: `id`, `workflowId`, `snapshotId`, `status`, `state`, `input`, `output`, `error`, `startedAt`, `finishedAt`, `createdAt`, `updatedAt`
+- `WorkflowNodeRun`: `id`, `runId`, `nodeId`, `nodeType`, `sessionId`, `status`, `input`, `output`, `error`, `startedAt`, `finishedAt`, `createdAt`, `updatedAt`
+- `WorkflowRunSummary`: `id`, `name`, `projectId`, `workflowId`, `status`, `startedAt`, `finishedAt`, `createdAt`
 
-Public payloads expose documented business fields only. `createdAt`, `updatedAt`, `isDeleted`, and other internal audit fields never appear. Two exclusions are deliberate:
+Public payloads expose documented business fields only. `isDeleted` and other internal audit fields never appear. Workflow summary timestamps and WorkflowSnapshot `createdAt`/`updatedAt` are explicit exceptions because version history and editor freshness are user-visible lifecycle facts. `createdAt` records when a snapshot was created; `updatedAt` records draft edits and remains `null` for published snapshots. Two exclusions are deliberate:
 
-- Task worktrees are backend-owned, so no contract carries a `worktreeId`, and there are no standalone worktree DTOs or SDK operations. `CreateTaskRequest` takes `projectId`, `title`, `status`, and an optional `workspaceMode`; `UpdateTaskRequest` takes `taskId`, `title`, and `status`. See [Task Worktrees](task-worktrees.md).
+- Task worktrees are backend-owned, so no contract carries a `worktreeId`, and there are no standalone worktree DTOs or SDK operations. `CreateTaskRequest` takes `projectId`, `title`, `status`, and optional `workspaceMode` and `baseBranch` fields; worktree mode requires a base branch. `UpdateTaskRequest` takes `taskId`, `title`, and `status`. See [Task Worktrees](task-worktrees.md).
 - A session's private provider session id is never exposed. It is persisted and used internally for `session/load`, but the public `Session` payload omits it.
+
+Task Diff contracts expose a patch snapshot (`baseCommitId`, `headCommitId`, `diffId`, `patch`) and comments as a tagged `thread`/`reply` union. A thread carries its complete line anchor and status; a reply carries only its parent id. The contract intentionally carries neither filesystem paths nor Git command diagnostics.
 
 Because adapters and generated frontend types bind to `ora-contracts` rather than to domain models, the domain layer can add internal fields or invariants without those details leaking into the protocol.
 
@@ -36,7 +47,7 @@ Because adapters and generated frontend types bind to `ora-contracts` rather tha
 
 Public failures serialize directly as `{ code, params, requestId }`. `RequestId` is UUID-backed, and `PublicError` is a discriminated union with one named parameter shape per code, including explicit empty parameters. The contract exposes neither an internal message nor an outer error envelope.
 
-The backend maps the highest semantic application error exhaustively to both a public error and one transport-neutral classification: `InvalidRequest`, `NotFound`, `Conflict`, or `Internal`. Infrastructure failures become `internal_error` while their Rust `Error::source()` chains remain available for diagnostics outside the serialized contract. Adapters never infer public codes by inspecting source chains or matching error strings.
+The backend maps the highest semantic application error exhaustively to both a public error and one transport-neutral classification: `InvalidRequest`, `PayloadTooLarge`, `NotFound`, `Conflict`, `Unprocessable`, or `Internal`. Task Diff uses `task_diff_commit_message_blank` for blank commit messages, `task_diff_stale` for snapshot races, and `task_diff_too_large` for bounded-patch failures. Infrastructure failures become `internal_error` while their Rust `Error::source()` chains remain available for diagnostics outside the serialized contract. Adapters never infer public codes by inspecting source chains or matching error strings. Skill upload limits and folder conflicts expose only bounded safe parameters such as `maxBytes`, `maxFiles`, and a validated destination name.
 
 ## Handlers
 
@@ -48,19 +59,28 @@ The handler set is intentionally narrower than full CRUD per entity, because som
 
 | Module | Handlers |
 | --- | --- |
-| `project` | create, get, list, update |
+| `project` | create, get, list, list branches, update |
 | `task` | create, get, list, update |
 | `session` | get, list, delete |
-| `skill` | create, get, list, update, delete |
+| `skill` | create, get, list, update, delete, startup reconciliation |
+| `skill_import` | prepare, get, commit, cancel batch sessions |
 | `agent_definition` | create, get, list, update, delete |
 | `project_work_context` | open, renew |
+| `task_diff` | read diff, create/list/reply/update comments, commit, push |
+| `workflow` | create, get, list, update, delete, getDraft, updateDraft, publish, rollback, activate, listVersions, getVersion, deleteSnapshot |
+| `workflow_run` | create, get, list, listNodeRuns, delete |
+| `spec` | list and atomically replace project source overrides |
 | `worktree` | none — ports only |
 
 Notable consequences:
 
 - There is no delete handler for `project` or `task`. Aggregate deletion is a transactional cascade owned by `ora-backend` and `ora-db`, because it has to reject running descendants and update several tables atomically.
-- Session creation, load, prompt, permission response, cancellation, and stop belong to the backend agent runtime, not to `ora-application`. The session module supplies only the persistence-facing reads and soft deletion.
+- `ListProjectBranchesHandler` joins refreshed Git refs with project-owned task and worktree records so an Ora-managed branch keeps its resolvable ref while displaying the owning task title.
+- Session creation, load, prompt, permission response, cancellation, stop, agent switching, and history recording belong to the backend agent runtime, not to `ora-application`. The session module supplies only the persistence-facing reads and soft deletion.
 - `worktree` has no handlers or transport contracts at all. Worktree records are internal metadata coordinated by the task module.
+- `task_diff` owns review use cases but not workspace selection. Backend composition resolves the task's live cwd and supplies the fixed baseline for isolated worktrees or the current `HEAD` for project-root tasks.
+- `workflow` offers a complete CRUD surface including deletion, unlike project and task. Workflow deletion follows the standard handler pattern because it has no running-session constraint; cascade soft-deletion of snapshots is managed entirely within the repository.
+- `workflow_run` deletion carries an active-run guard — a running run, a non-terminal node run, or a running session refuses deletion — and cascades a soft-delete across the run, its node runs, and its task's sessions, worktrees, and task row.
 
 `project_id`, `task_id`, and `worktree_id` are treated as pass-through business identifiers. Create and update handlers do not perform extra cross-entity existence checks before delegating to their repositories; `OpenProjectWorkContextHandler` verifying the requested project is the one deliberate exception, because occupancy has to be evaluated against a real project.
 
@@ -68,15 +88,18 @@ Deletion stays a normal delete use case at the boundary even though the reposito
 
 ## Error propagation and completion logging
 
-Application handlers preserve semantic errors and infrastructure source chains without emitting generic success or propagation-only failure events. Repository adapters likewise do not add another event merely to report the same failure. Web, Tauri, and stream entry seams own the single correlated request-completion event and derive its level from the public classification.
+Application handlers preserve semantic errors and infrastructure source chains without emitting generic success or propagation-only failure events. Repository adapters likewise do not add another event merely to report the same failure. Web, Tauri, and stream entry seams own the single correlated request-completion event and derive its level from the public classification. The task workspace watcher is a Web stream seam: watcher failures are converted to the same `{ code, params, requestId }` contract frame and complete the request lifecycle exactly once.
 
 Bootstrap, migration, state-transition, and secondary-cleanup events remain independent lifecycle facts. Logging initialization, sink selection, and writer lifetimes stay with runtime composition roots. See [Runtime Logging](runtime-logging.md).
 
 ## Slice invariants
 
 - Project roots are immutable after creation; `UpdateProjectHandler` renames only.
-- Session routing — task, provider CLI, and provider session id — is immutable. Lifecycle operations change only `status` and `updated_at`.
+- A session's task is immutable, because it decides the working directory the conversation lives in. Its provider CLI and provider session id are the current binding rather than its identity: `switchSessionAgent` replaces both while the identifier and the recorded history continue. Ordinary lifecycle operations still change only `status` and `updated_at`.
 - `UpdateTaskRequest` cannot change project ownership, and task updates preserve the existing worktree association.
-- Project and Task deletion soft-delete the complete Ora-owned aggregate in one SQLite transaction. A running Session rejects the operation with `resource_in_use`; stopped children are cascaded. These paths never call Git and never delete provider-owned ACP history.
+- Project and Task deletion soft-delete the complete Ora-owned aggregate in one SQLite transaction. A running Session rejects the operation with `resource_in_use`; stopped children are cascaded. These paths never call Git and never delete provider-owned ACP history, but they do remove the session history Ora itself recorded — see [ACP Agent Runtime](agent-runtime.md).
 - Task creation resolves the requested project's Git root at creation time. Deletion changes Ora database records only and deliberately leaves the linked Git worktree and its branch untouched.
+- Worktree task creation fetches `upstream`, or falls back to `origin`, before resolving the selected base ref to an immutable commit. Refreshed remote refs take precedence over stale same-named local branches, while local-only branches remain selectable.
 - Worktree paths are composed only when creating a new worktree. Existing paths are resolved from the persisted branch name and Git's authoritative metadata, never reconstructed from the configured creation root.
+- Isolated task diffs compare against the worktree creation commit; project-root task diffs resolve `HEAD` on every read so external edits appear without mutating a persisted baseline. `diffId` includes the complete patch and rejects comments anchored to an older snapshot.
+- Workspace file paths are validated as relative paths, canonicalized before containment checks, and returned with slash separators. The filesystem crate is read-only, bounds file reads and search output, and reports native watcher changes as cache-invalidating batches. See [Task Workspace Files](task-workspace-files.md).

@@ -1,67 +1,40 @@
 pub mod acp;
 
-mod agent;
-mod error;
-mod file_system;
-mod frontend;
-mod git;
-mod project;
-mod project_work_context;
-mod session;
-mod skill;
-mod task;
+pub mod agent;
+pub mod agent_import;
+pub mod error;
+pub mod file_system;
+pub mod frontend;
+pub mod git;
+pub mod project;
+pub mod project_work_context;
+pub mod session;
+pub mod skill;
+pub mod skill_import;
+pub mod spec;
+pub mod task;
+pub mod task_diff;
+pub mod workflow;
+pub mod workflow_run;
+pub use agent_import::*;
 
-pub use agent::{
-    Agent, CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
-    GetAgentRequest, GetAgentResponse, ListAgentsRequest, ListAgentsResponse, UpdateAgentRequest,
-    UpdateAgentResponse,
-};
-pub use error::{
-    ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget, PublicError,
-    RequestId, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
-};
-pub use file_system::{
-    FileSystemBreadcrumb, FileSystemEntry, FileSystemEntryKind, ListDirectoryRequest,
-    ListDirectoryResponse,
-};
-pub use frontend::{
-    AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, FrontendEndpoint,
-    FrontendHttpMethod, FrontendPathParam, FrontendQueryParam, FrontendResponseMode,
-    GIT_IDENTITY_PATH, PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
-    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_LOAD_PATH, SESSION_PATH,
-    SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH, SESSION_STOP_PATH, SESSIONS_PATH,
-    SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH, frontend_endpoints,
-};
-pub use git::{GetGitIdentityRequest, GitIdentityResponse};
-pub use project::{
-    CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
-    GetProjectRequest, GetProjectResponse, ListProjectsRequest, ListProjectsResponse, Project,
-    UpdateProjectRequest, UpdateProjectResponse,
-};
-pub use project_work_context::{
-    OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, ProjectWorkContext,
-    ProjectWorkContextSurface, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse,
-};
-pub use session::{
-    AgentCli, AgentCliModels, CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest,
-    DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListAgentModelsRequest,
-    ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent,
-    LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
-    RespondToPermissionResponse, Session, SessionPermissionRequest, SessionStatus,
-    StopSessionRequest, StopSessionResponse,
-};
-pub use skill::{
-    CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,
-    GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, Skill,
-    UpdateSkillRequest, UpdateSkillResponse,
-};
+pub use agent::*;
+pub use error::*;
+pub use file_system::*;
+pub use frontend::*;
+pub use git::*;
+pub use project::*;
+pub use project_work_context::*;
+pub use session::*;
+pub use skill::*;
+pub use skill_import::*;
+pub use spec::*;
 use std::path::Path;
-pub use task::{
-    CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
-    GetTaskResponse, ListTasksRequest, ListTasksResponse, Task, TaskStatus, TaskWorkspaceMode,
-    UpdateTaskRequest, UpdateTaskResponse,
-};
+pub use task::*;
+pub use task_diff::*;
 use ts_rs::{Config, ExportError};
+pub use workflow::*;
+pub use workflow_run::*;
 
 /// Exports every contract DTO family into the shared TypeScript package for frontend consumers.
 ///
@@ -71,6 +44,7 @@ pub fn export_typescript_bindings_to(
     output_directory: impl AsRef<Path>,
 ) -> Result<(), ExportError> {
     let config = Config::new().with_out_dir(output_directory.as_ref());
+    agent_import::export(&config)?;
 
     acp::export(&config)?;
     agent::export(&config)?;
@@ -81,7 +55,12 @@ pub fn export_typescript_bindings_to(
     project_work_context::export(&config)?;
     session::export(&config)?;
     skill::export(&config)?;
+    skill_import::export(&config)?;
+    spec::export(&config)?;
     task::export(&config)?;
+    task_diff::export(&config)?;
+    workflow::export(&config)?;
+    workflow_run::export(&config)?;
 
     Ok(())
 }

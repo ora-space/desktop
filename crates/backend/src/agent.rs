@@ -1,12 +1,13 @@
 use crate::clock::SystemClock;
 use ora_application::{
-    ApplicationError, CreateAgentDefinitionHandler, DeleteAgentDefinitionHandler,
-    GetAgentDefinitionHandler, ListAgentDefinitionsHandler, UpdateAgentDefinitionHandler,
-    UuidAgentDefinitionIdGenerator,
+    AgentImportService, ApplicationError, CreateAgentDefinitionHandler,
+    DeleteAgentDefinitionHandler, GetAgentDefinitionHandler, ListAgentDefinitionsHandler,
+    UpdateAgentDefinitionHandler, UuidAgentDefinitionIdGenerator,
 };
 use ora_contracts::{
-    CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
-    GetAgentRequest, GetAgentResponse, ListAgentsRequest, ListAgentsResponse, UpdateAgentRequest,
+    CommitAgentImportRequest, CommitAgentImportResponse, CreateAgentRequest, CreateAgentResponse,
+    DeleteAgentRequest, DeleteAgentResponse, GetAgentRequest, GetAgentResponse, ListAgentsRequest,
+    ListAgentsResponse, PrepareAgentImportRequest, PrepareAgentImportResponse, UpdateAgentRequest,
     UpdateAgentResponse,
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository};
@@ -22,6 +23,11 @@ pub(crate) struct AgentApi {
     list: ListAgentDefinitionsHandler<SqliteAgentDefinitionRepository>,
     update: UpdateAgentDefinitionHandler<SqliteAgentDefinitionRepository, SystemClock>,
     delete: DeleteAgentDefinitionHandler<SqliteAgentDefinitionRepository, SystemClock>,
+    import: AgentImportService<
+        SqliteAgentDefinitionRepository,
+        UuidAgentDefinitionIdGenerator,
+        SystemClock,
+    >,
 }
 
 impl AgentApi {
@@ -38,7 +44,12 @@ impl AgentApi {
             get: GetAgentDefinitionHandler::new(repository.clone()),
             list: ListAgentDefinitionsHandler::new(repository.clone()),
             update: UpdateAgentDefinitionHandler::new(repository.clone(), clock),
-            delete: DeleteAgentDefinitionHandler::new(repository, clock),
+            delete: DeleteAgentDefinitionHandler::new(repository.clone(), clock),
+            import: AgentImportService::new(
+                repository,
+                UuidAgentDefinitionIdGenerator::new(),
+                clock,
+            ),
         }
     }
 
@@ -80,5 +91,19 @@ impl AgentApi {
         request: DeleteAgentRequest,
     ) -> Result<DeleteAgentResponse, ApplicationError> {
         self.delete.handle(request)
+    }
+
+    pub(crate) fn prepare_import(
+        &self,
+        request: PrepareAgentImportRequest,
+    ) -> Result<PrepareAgentImportResponse, ApplicationError> {
+        self.import.prepare(request)
+    }
+
+    pub(crate) fn commit_import(
+        &self,
+        request: CommitAgentImportRequest,
+    ) -> Result<CommitAgentImportResponse, ApplicationError> {
+        self.import.commit(request)
     }
 }

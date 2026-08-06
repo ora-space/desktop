@@ -67,11 +67,13 @@ The RFC 3339 timestamp uses the configured process timezone and includes its UTC
 
 ## Request completion and errors
 
+Long-lived streams, including task workspace watching, mark the response as deferred and emit completion only when the stream ends or reports its typed contract error.
+
 Ora frontend requests receive a canonical UUID v4 at the Web, Tauri, or stream entry seam. The same identifier correlates the request span, public error payload or stream error frame, and completion event; Web also returns it through `X-Request-Id`. Client-provided request identifiers are never canonical.
 
-Each request records at most one completion event with `operation`, `request_id`, `outcome`, and `duration_ms`. Failures additionally record the stable public `error.code` plus the bounded `error.message`, single-line `error.chain`, and `error.chain_depth` produced by `ErrorReport::from_error`. Internal errors use `ERROR`, conflicts use `WARN`, validation and not-found outcomes use `INFO`, and cancellation uses `DEBUG`. Successful health and readiness checks also use `DEBUG`.
+Each request records at most one completion event with `operation`, `request_id`, `outcome`, and `duration_ms`. Failures additionally record the stable public `error.code` plus the build-appropriate `error.message`, `error.chain`, and `error.chain_depth` produced by `ErrorReport::from_error`. Internal errors use `ERROR`, conflicts use `WARN`, validation and not-found outcomes use `INFO`, and cancellation uses `DEBUG`. Successful health and readiness checks also use `DEBUG`.
 
-`ErrorReport` traverses the Rust `Error::source()` chain. It removes control characters, limits individual nodes, total output, and chain depth, marks truncation, and applies precompiled regular expressions to residual secret-like text. Callers must still provide only approved structured fields: absolute paths, full Git arguments or remotes, SQL values, prompts, environment values, credentials, and unbounded stderr are not valid log fields.
+`ErrorReport` traverses the Rust `Error::source()` chain. In debug builds it preserves the complete original chain without redaction, single-line conversion, or length and depth limits so local diagnostics retain all available context. In release builds it removes control characters, limits individual nodes, total output, and chain depth, marks truncation, and applies precompiled regular expressions to residual secret-like text. Callers must still provide only approved structured fields: absolute paths, full Git arguments or remotes, SQL values, prompts, environment values, credentials, and unbounded stderr are not valid release log fields.
 
 If cleanup or rollback also fails, the primary error remains unchanged. The secondary failure is recorded as a separate operation with the same request id and its own bounded error report; it is never attached to the primary source chain. Bootstrap, migration, and state-transition events likewise remain independent lifecycle facts.
 
@@ -89,9 +91,9 @@ Correlation helpers — `runtime_span`, `span_with_correlation`, `span_with_trac
 
 `gitlancer` stays framework-neutral: it defines a `GitlancerLogger` trait and a `logging::register` function backed by a write-once `OnceLock`. After the first registration every read is lock-free, a second `register` call is a no-op that keeps the first logger, and with no logger registered all call sites compile and run with zero side effects.
 
-`CliGitRunner::run` calls `log_command` with `GitCommand::cwd` — the directory the git process will be spawned in, not the host program's working directory — and the full command string, immediately before spawning. After the process exits it calls `log_result` with the elapsed milliseconds, the exit code, and a success flag. A spawn failure (`GitExecError::GitNotFound` or `GitExecError::SpawnFailed`) also reports through `log_result` with failure and a zero duration.
+`CliGitRunner::run` calls `log_command` immediately before spawning and passes the process cwd plus the assembled command to the framework-neutral logger. After the process exits it calls `log_result` with the elapsed milliseconds, the exit code, and a success flag; bounded-output and pipe failures also produce a failed result event. A spawn failure (`GitExecError::GitNotFound` or `GitExecError::SpawnFailed`) reports through `log_result` with failure and a zero duration.
 
-`ora-logging` supplies the bridge. `OraGitlancerLogger` implements the trait by forwarding `log_command` to an `ora_info!` event carrying `cwd` and `command`, and `log_result` to `ora_info!` on success or `ora_error!` on failure, carrying `duration_ms` and `exit_code`. `register_gitlancer_logger()` constructs and registers it in one call.
+`ora-logging` supplies the bridge. `OraGitlancerLogger` projects `log_command` to an `ora_info!` event containing the alphabetic Git subcommand as `operation`. For `git config`, it additionally records the recognized action (`action`), scope (`scope`), and safe `user.*` key (`key`), so identity lookups are distinguishable without exposing values. It still drops absolute cwd and all other arguments, including commit messages, paths, remotes, and credentials. `log_result` emits `ora_info!` on success or `ora_error!` on failure, carrying only `duration_ms` and `exit_code`. `register_gitlancer_logger()` constructs and registers it in one call.
 
 Both runtime roots call `register_gitlancer_logger()` immediately after `init_logging`, so every Git command Ora runs is visible in the structured log.
 

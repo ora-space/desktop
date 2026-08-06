@@ -1,5 +1,8 @@
-use ora_application::ApplicationError;
-use ora_contracts::{ContractError, EmptyErrorParams, PublicError, RequestId};
+use ora_application::{ApplicationError, SkillImportError};
+use ora_contracts::{
+    ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
+    SkillUploadTooManyFilesParams,
+};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -10,8 +13,10 @@ type SharedError = Arc<dyn Error + Send + Sync + 'static>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorClassification {
     InvalidRequest,
+    PayloadTooLarge,
     NotFound,
     Conflict,
+    Unprocessable,
     Internal,
 }
 
@@ -47,6 +52,19 @@ impl BackendError {
             context,
             source,
         )
+    }
+
+    /// Creates an internal failure from an already boxed source-chain boundary.
+    pub fn internal_boxed(
+        context: &'static str,
+        source: Box<dyn Error + Send + Sync + 'static>,
+    ) -> Self {
+        Self {
+            classification: ErrorClassification::Internal,
+            public_error: PublicError::InternalError(EmptyErrorParams {}),
+            context: context.to_string(),
+            source: Some(Arc::from(source)),
+        }
     }
 
     /// Creates a classified semantic failure while retaining a lower-level source.
@@ -105,15 +123,240 @@ impl From<ApplicationError> for BackendError {
                 PublicError::SkillNameBlank(EmptyErrorParams {}),
                 "skill name must not be blank",
             ),
+            ApplicationError::SkillNameInvalid { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::SkillNameInvalid(EmptyErrorParams {}),
+                "skill name is invalid",
+            ),
+            ApplicationError::SkillNameTooLong => (
+                ErrorClassification::InvalidRequest,
+                PublicError::SkillNameTooLong(EmptyErrorParams {}),
+                "skill name is too long",
+            ),
+            ApplicationError::SkillDescriptionBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::SkillDescriptionBlank(EmptyErrorParams {}),
+                "skill description is blank",
+            ),
+            ApplicationError::SkillDescriptionTooLarge => (
+                ErrorClassification::InvalidRequest,
+                PublicError::SkillDescriptionTooLarge(EmptyErrorParams {}),
+                "skill description is too large",
+            ),
+            ApplicationError::SkillNameConflict { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::SkillNameConflict(EmptyErrorParams {}),
+                "skill name already exists",
+            ),
+            ApplicationError::SkillStorageInconsistent { .. } => (
+                ErrorClassification::Internal,
+                PublicError::SkillStorageInconsistent(EmptyErrorParams {}),
+                "skill package storage is inconsistent",
+            ),
+            ApplicationError::SkillImport(error) => {
+                let params = EmptyErrorParams {};
+                match error {
+                    SkillImportError::SkillManifestNotFound => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::SkillManifestNotFound(params),
+                        "skill import manifest was not found",
+                    ),
+                    SkillImportError::TooManySkills { .. } => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::TooManySkills(params),
+                        "skill import has too many manifests",
+                    ),
+                    SkillImportError::TooManyFiles { .. }
+                    | SkillImportError::TooManyEntries { .. } => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::InvalidRequest(params),
+                        "skill import has too many source entries",
+                    ),
+                    SkillImportError::DuplicateSkillNames { .. } => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::InvalidRequest(params),
+                        "skill import has duplicate names",
+                    ),
+                    SkillImportError::ArchiveFormatUnsupported => (
+                        ErrorClassification::InvalidRequest,
+                        PublicError::ArchiveFormatUnsupported(params),
+                        "skill archive format is unsupported",
+                    ),
+                    SkillImportError::ArchiveFormatMismatch => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::ArchiveFormatMismatch(params),
+                        "skill archive format does not match content",
+                    ),
+                    SkillImportError::ArchiveCorrupt => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::ArchiveCorrupt(params),
+                        "skill archive is corrupt",
+                    ),
+                    SkillImportError::ArchiveTooLarge
+                    | SkillImportError::TotalBytesExceeded
+                    | SkillImportError::ArchiveExpansionRatioExceeded => (
+                        ErrorClassification::PayloadTooLarge,
+                        PublicError::ArchiveExpansionRatioExceeded(params),
+                        "skill import exceeds source limits",
+                    ),
+                    SkillImportError::ArchiveEncryptedUnsupported => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::ArchiveEncryptedUnsupported(params),
+                        "encrypted skill archive is unsupported",
+                    ),
+                    SkillImportError::ArchiveSpecialEntryUnsupported => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::ArchiveSpecialEntryUnsupported(params),
+                        "skill archive contains a special entry",
+                    ),
+                    SkillImportError::ArchivePathEncodingInvalid => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::ArchivePathEncodingInvalid(params),
+                        "skill archive path encoding is invalid",
+                    ),
+                    SkillImportError::ArchivePathCaseConflict => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::ArchivePathCaseConflict(params),
+                        "skill source paths conflict",
+                    ),
+                    SkillImportError::PathSegmentTooLong => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::PathSegmentTooLong(params),
+                        "skill source path segment is too long",
+                    ),
+                    SkillImportError::PathTooLong => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::PathTooLong(params),
+                        "skill source path is too long",
+                    ),
+                    SkillImportError::PathTooDeep => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::PathTooDeep(params),
+                        "skill source path is too deep",
+                    ),
+                    SkillImportError::UnsafePath => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::InvalidRequest(params),
+                        "skill source path is unsafe",
+                    ),
+                    SkillImportError::PreparationTimeout => (
+                        ErrorClassification::Unprocessable,
+                        PublicError::ImportPreparationTimeout(params),
+                        "skill import preparation timed out",
+                    ),
+                    SkillImportError::SessionNotFound { .. } | SkillImportError::SessionExpired => {
+                        (
+                            ErrorClassification::NotFound,
+                            PublicError::ImportSessionExpired(params),
+                            "skill import session is unavailable",
+                        )
+                    }
+                    SkillImportError::SessionCancelled => (
+                        ErrorClassification::Conflict,
+                        PublicError::ImportSessionCancelled(params),
+                        "skill import session was cancelled",
+                    ),
+                    SkillImportError::CommitInProgress => (
+                        ErrorClassification::Conflict,
+                        PublicError::ImportSessionCommitInProgress(params),
+                        "skill import commit is in progress",
+                    ),
+                    SkillImportError::AlreadyCommitted => (
+                        ErrorClassification::Conflict,
+                        PublicError::ImportSessionAlreadyCommitted(params),
+                        "skill import session was already committed",
+                    ),
+                    SkillImportError::DecisionMissing { .. } => (
+                        ErrorClassification::InvalidRequest,
+                        PublicError::InvalidRequest(params),
+                        "skill import decisions are incomplete",
+                    ),
+                    SkillImportError::SourceUnavailable { .. }
+                    | SkillImportError::Storage { .. }
+                    | SkillImportError::Repository { .. }
+                    | SkillImportError::Internal { .. } => (
+                        ErrorClassification::Internal,
+                        PublicError::InternalError(params),
+                        "skill import operation failed",
+                    ),
+                }
+            }
             ApplicationError::SkillNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::SkillNotFound(EmptyErrorParams {}),
                 "skill not found",
             ),
+            ApplicationError::SkillUploadEmpty => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadEmpty(EmptyErrorParams {}),
+                "skill upload contained no files",
+            ),
+            ApplicationError::SkillUploadTooManyFiles { max_files } => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
+                    max_files: *max_files,
+                }),
+                "skill upload contains too many files",
+            ),
+            ApplicationError::SkillUploadPathInvalid => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadPathInvalid(EmptyErrorParams {}),
+                "skill upload contains an unsafe path",
+            ),
+            ApplicationError::SkillUploadPathDuplicate => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadPathDuplicate(EmptyErrorParams {}),
+                "skill upload contains a duplicate path",
+            ),
+            ApplicationError::SkillManifestMissing => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestMissing(EmptyErrorParams {}),
+                "skill manifest is missing",
+            ),
+            ApplicationError::SkillManifestInvalid { .. } => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestInvalid(EmptyErrorParams {}),
+                "skill manifest is invalid",
+            ),
+            ApplicationError::SkillManifestNameBlank => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestNameBlank(EmptyErrorParams {}),
+                "skill manifest name is blank",
+            ),
+            ApplicationError::SkillManifestDescriptionBlank => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestDescriptionBlank(EmptyErrorParams {}),
+                "skill manifest description is blank",
+            ),
+            ApplicationError::SkillManifestNameInvalid => (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillManifestNameInvalid(EmptyErrorParams {}),
+                "skill manifest name is invalid",
+            ),
+            ApplicationError::SkillFolderConflict { name } => (
+                ErrorClassification::Conflict,
+                PublicError::SkillFolderConflict(SkillFolderConflictParams { name: name.clone() }),
+                "skill folder already exists",
+            ),
             ApplicationError::AgentDefinitionNameBlank => (
                 ErrorClassification::InvalidRequest,
                 PublicError::AgentNameBlank(EmptyErrorParams {}),
                 "agent definition name must not be blank",
+            ),
+            ApplicationError::AgentDefinitionNameConflict { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::AgentNameConflict(EmptyErrorParams {}),
+                "agent definition name already exists",
+            ),
+            ApplicationError::AgentImportInvalid => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "agent import Markdown is invalid",
+            ),
+            ApplicationError::AgentImportDecisionMissing => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "agent import conflict decision is missing",
             ),
             ApplicationError::AgentDefinitionNotFound { .. } => (
                 ErrorClassification::NotFound,
@@ -130,10 +373,20 @@ impl From<ApplicationError> for BackendError {
                 PublicError::ProjectOccupied(EmptyErrorParams {}),
                 "project is already occupied",
             ),
+            ApplicationError::SpecSourceInvalid => (
+                ErrorClassification::InvalidRequest,
+                PublicError::SpecSourceInvalid(EmptyErrorParams {}),
+                "specification source configuration is invalid",
+            ),
             ApplicationError::ProjectWorkContextNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::ProjectWorkContextNotFound(EmptyErrorParams {}),
                 "project work context not found",
+            ),
+            ApplicationError::ProjectBranchListing { .. } => (
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "project branch listing operation failed",
             ),
             ApplicationError::TaskNotFound { .. } => (
                 ErrorClassification::NotFound,
@@ -145,10 +398,57 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorktreeRequiresGitRepository(EmptyErrorParams {}),
                 "worktree mode requires a Git repository",
             ),
+            ApplicationError::TaskBaseBranchRequired => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskBaseBranchRequired(EmptyErrorParams {}),
+                "worktree mode requires a base branch",
+            ),
+            ApplicationError::TaskBaseBranchNotFound { branch_name } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskBaseBranchNotFound(ora_contracts::TaskBaseBranchNotFoundParams {
+                    branch_name: branch_name.clone(),
+                }),
+                "base branch was not found",
+            ),
             ApplicationError::WorktreeNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::WorktreeNotFound(EmptyErrorParams {}),
                 "worktree not found",
+            ),
+            ApplicationError::TaskDiffBaselineUnavailable => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffBaselineUnavailable(EmptyErrorParams {}),
+                "task diff baseline is unavailable",
+            ),
+            ApplicationError::TaskDiffCommitMessageBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommitMessageBlank(EmptyErrorParams {}),
+                "task diff commit message must not be blank",
+            ),
+            ApplicationError::TaskDiffTooLarge { .. } => (
+                ErrorClassification::PayloadTooLarge,
+                PublicError::TaskDiffTooLarge(EmptyErrorParams {}),
+                "task diff exceeds the response limit",
+            ),
+            ApplicationError::TaskDiffStale => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffStale(EmptyErrorParams {}),
+                "task diff changed before the comment was created",
+            ),
+            ApplicationError::TaskDiffCommentNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::TaskDiffCommentNotFound(EmptyErrorParams {}),
+                "task diff comment not found",
+            ),
+            ApplicationError::TaskDiffCommentInvalid { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommentInvalid(EmptyErrorParams {}),
+                "task diff comment is invalid",
+            ),
+            ApplicationError::TaskDiffCommentConflict { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffCommentConflict(EmptyErrorParams {}),
+                "task diff comment conflicts with stored state",
             ),
             ApplicationError::SessionNotFound { .. } => (
                 ErrorClassification::NotFound,
@@ -156,19 +456,110 @@ impl From<ApplicationError> for BackendError {
                 "session not found",
             ),
             ApplicationError::SkillRepository { .. }
+            | ApplicationError::SkillStorage { .. }
             | ApplicationError::AgentDefinitionRepository { .. }
             | ApplicationError::ProjectRepository { .. }
+            | ApplicationError::SpecSourceRepository { .. }
             | ApplicationError::ProjectWorkContextRepository { .. }
             | ApplicationError::TaskRepository { .. }
             | ApplicationError::TaskWorktreeIdExhausted { .. }
             | ApplicationError::TaskWorktreeRootUnavailable
             | ApplicationError::TaskFilesystem { .. }
             | ApplicationError::TaskWorktreeProvisioner { .. }
+            | ApplicationError::TaskDiff { .. }
+            | ApplicationError::TaskDiffCommentRepository { .. }
             | ApplicationError::WorktreeRepository { .. }
-            | ApplicationError::SessionRepository { .. } => (
+            | ApplicationError::SessionRepository { .. }
+            | ApplicationError::WorkflowRepository { .. }
+            | ApplicationError::WorkflowRunRepository { .. } => (
                 ErrorClassification::Internal,
                 PublicError::InternalError(EmptyErrorParams {}),
                 "application operation failed",
+            ),
+            ApplicationError::WorkflowNameBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowNameBlank(EmptyErrorParams {}),
+                "workflow name must not be blank",
+            ),
+            ApplicationError::WorkflowNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorkflowNotFound(EmptyErrorParams {}),
+                "workflow not found",
+            ),
+            ApplicationError::WorkflowSnapshotNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorkflowSnapshotNotFound(EmptyErrorParams {}),
+                "workflow snapshot not found",
+            ),
+            ApplicationError::WorkflowVersionAlreadyExists { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::WorkflowVersionAlreadyExists(EmptyErrorParams {}),
+                "workflow version already exists",
+            ),
+            ApplicationError::WorkflowVersionInvalid => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowVersionInvalid(EmptyErrorParams {}),
+                "workflow version is invalid",
+            ),
+            ApplicationError::WorkflowVersionReserved => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowVersionReserved(EmptyErrorParams {}),
+                "workflow version 'draft' is reserved",
+            ),
+            ApplicationError::WorkflowCannotDeleteDraft => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotDeleteDraft(EmptyErrorParams {}),
+                "cannot delete the draft workflow snapshot",
+            ),
+            ApplicationError::WorkflowCannotDeleteActiveVersion => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotDeleteActiveVersion(EmptyErrorParams {}),
+                "cannot delete the active workflow version",
+            ),
+            ApplicationError::WorkflowActiveRuns => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowActiveRuns(EmptyErrorParams {}),
+                "cannot delete a workflow with live runs",
+            ),
+            ApplicationError::WorkflowCannotRollbackToDraft => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotRollbackToDraft(EmptyErrorParams {}),
+                "cannot roll back to the draft workflow snapshot",
+            ),
+            ApplicationError::WorkflowCannotActivateDraft => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotActivateDraft(EmptyErrorParams {}),
+                "cannot activate the draft workflow snapshot",
+            ),
+            ApplicationError::WorkflowSnapshotInUse => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowSnapshotInUse(EmptyErrorParams {}),
+                "cannot delete a snapshot referenced by a workflow run",
+            ),
+            ApplicationError::WorkflowSnapshotNotFoundById { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorkflowSnapshotNotFound(EmptyErrorParams {}),
+                "workflow snapshot not found by id",
+            ),
+            ApplicationError::WorkflowNoPublishedSnapshot => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowNoPublishedSnapshot(EmptyErrorParams {}),
+                "workflow has no published snapshot",
+            ),
+            ApplicationError::WorkflowRunCannotUseDraftSnapshot => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunCannotUseDraftSnapshot(EmptyErrorParams {}),
+                "cannot use the draft snapshot for a workflow run",
+            ),
+            ApplicationError::WorkflowRunNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::WorkflowRunNotFound(EmptyErrorParams {}),
+                "workflow run not found",
+            ),
+            ApplicationError::WorkflowRunActive => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunActive(EmptyErrorParams {}),
+                "workflow run is active and cannot be deleted",
             ),
         };
 
@@ -184,11 +575,14 @@ impl From<ApplicationError> for BackendError {
 #[cfg(test)]
 mod tests {
     use super::{BackendError, ErrorClassification};
-    use ora_application::{ApplicationError, RepositoryError};
-    use ora_contracts::{EmptyErrorParams, PublicError};
+    use ora_application::{ApplicationError, RepositoryError, SkillImportError};
+    use ora_contracts::{
+        EmptyErrorParams, PublicError, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
+    };
     use pretty_assertions::assert_eq;
     use std::error::Error;
 
+    /// Verifies non-Git roots retain the stable bad-request contract used by runtime adapters.
     #[test]
     fn maps_semantics_without_inspecting_the_source_chain() {
         let error = BackendError::from(ApplicationError::TaskWorktreeRequiresGitRepository);
@@ -202,6 +596,206 @@ mod tests {
             error.source().map(ToString::to_string),
             Some("worktree mode requires a Git repository".to_string())
         );
+    }
+
+    /// Verifies skill import validation and conflicts expose only bounded typed parameters.
+    #[test]
+    fn maps_skill_import_semantics_to_public_contracts() {
+        let too_many =
+            BackendError::from(ApplicationError::SkillUploadTooManyFiles { max_files: 1000 });
+        let conflict = BackendError::from(ApplicationError::SkillFolderConflict {
+            name: "grilling".to_string(),
+        });
+
+        assert_eq!(
+            (
+                too_many.classification(),
+                too_many.public_error().clone(),
+                conflict.classification(),
+                conflict.public_error().clone(),
+            ),
+            (
+                ErrorClassification::Unprocessable,
+                PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
+                    max_files: 1000,
+                }),
+                ErrorClassification::Conflict,
+                PublicError::SkillFolderConflict(SkillFolderConflictParams {
+                    name: "grilling".to_string(),
+                }),
+            )
+        );
+    }
+
+    /// Verifies wrapped skill import failures map through the main application error projection.
+    #[test]
+    fn maps_wrapped_skill_import_errors() {
+        let error = BackendError::from(ApplicationError::SkillImport(
+            SkillImportError::ArchiveCorrupt,
+        ));
+
+        assert_eq!(
+            (error.classification(), error.public_error().clone()),
+            (
+                ErrorClassification::Unprocessable,
+                PublicError::ArchiveCorrupt(EmptyErrorParams {})
+            )
+        );
+    }
+
+    /// Verifies duplicate Role names remain a public conflict instead of an internal repository error.
+    #[test]
+    fn maps_agent_name_conflicts_to_the_public_contract() {
+        let error = BackendError::from(ApplicationError::AgentDefinitionNameConflict {
+            name: "reviewer".to_string(),
+        });
+
+        assert_eq!(
+            (error.classification(), error.public_error().clone()),
+            (
+                ErrorClassification::Conflict,
+                PublicError::AgentNameConflict(EmptyErrorParams {})
+            )
+        );
+    }
+
+    /// Verifies a blank task commit message is reported as a client-correctable request error.
+    #[test]
+    fn maps_blank_task_commit_messages_to_invalid_request() {
+        let error = BackendError::from(ApplicationError::TaskDiffCommitMessageBlank);
+
+        assert_eq!(
+            (error.classification(), error.public_error().clone()),
+            (
+                ErrorClassification::InvalidRequest,
+                PublicError::TaskDiffCommitMessageBlank(EmptyErrorParams {})
+            )
+        );
+    }
+
+    /// Verifies task-diff infrastructure failures retain their concrete source chain.
+    #[test]
+    fn retains_task_diff_source_chain_through_the_backend_projection() {
+        let application_error = ApplicationError::TaskDiff {
+            source: Box::new(std::io::Error::other("git process failed")),
+        };
+        let backend_error = BackendError::from(application_error);
+
+        assert_eq!(
+            backend_error.source().map(ToString::to_string),
+            Some("task diff operation failed".to_string())
+        );
+        assert_eq!(
+            backend_error
+                .source()
+                .and_then(Error::source)
+                .map(ToString::to_string),
+            Some("git process failed".to_string())
+        );
+    }
+
+    /// Verifies workflow domain failures preserve their distinct public contract codes.
+    #[test]
+    fn maps_workflow_failures_to_distinct_public_errors() {
+        let cases = [
+            (
+                ApplicationError::WorkflowNameBlank,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowNameBlank(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowNotFound {
+                    workflow_id: "workflow-1".to_string(),
+                },
+                ErrorClassification::NotFound,
+                PublicError::WorkflowNotFound(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowSnapshotNotFound {
+                    workflow_id: "workflow-1".to_string(),
+                    version: "v1".to_string(),
+                },
+                ErrorClassification::NotFound,
+                PublicError::WorkflowSnapshotNotFound(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowVersionAlreadyExists {
+                    workflow_id: "workflow-1".to_string(),
+                    version: "v1".to_string(),
+                },
+                ErrorClassification::Conflict,
+                PublicError::WorkflowVersionAlreadyExists(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowVersionInvalid,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowVersionInvalid(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowVersionReserved,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowVersionReserved(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowCannotDeleteDraft,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotDeleteDraft(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowCannotDeleteActiveVersion,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotDeleteActiveVersion(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowActiveRuns,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowActiveRuns(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowCannotRollbackToDraft,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotRollbackToDraft(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowCannotActivateDraft,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowCannotActivateDraft(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowSnapshotInUse,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowSnapshotInUse(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowNoPublishedSnapshot,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowNoPublishedSnapshot(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowRunCannotUseDraftSnapshot,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunCannotUseDraftSnapshot(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowRunNotFound {
+                    run_id: "run-1".to_string(),
+                },
+                ErrorClassification::NotFound,
+                PublicError::WorkflowRunNotFound(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowRunActive,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunActive(EmptyErrorParams {}),
+            ),
+        ];
+
+        for (application_error, classification, public_error) in cases {
+            let backend_error = BackendError::from(application_error);
+
+            assert_eq!(backend_error.classification(), classification);
+            assert_eq!(backend_error.public_error(), &public_error);
+        }
     }
 
     #[test]
@@ -228,6 +822,22 @@ mod tests {
                 "repository operation failed",
                 "database connection closed",
             ]
+        );
+    }
+
+    /// Verifies missing base branches remain actionable and retain their selected ref name.
+    #[test]
+    fn exposes_missing_base_branches_as_a_stable_bad_request() {
+        let error = BackendError::from(ApplicationError::TaskBaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        });
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::TaskBaseBranchNotFound(ora_contracts::TaskBaseBranchNotFoundParams {
+                branch_name: "ghost-branch".to_string(),
+            })
         );
     }
 }

@@ -11,7 +11,6 @@ export interface SettingsPreferences {
   theme: ThemeMode;
   density: InterfaceDensity;
   agentCli: AgentCli;
-  model: string;
   approvalPolicy: ApprovalPolicy;
   terminalAccess: boolean;
   fileWriteAccess: boolean;
@@ -27,7 +26,6 @@ export const DEFAULT_SETTINGS: SettingsPreferences = {
   theme: "system",
   density: "comfortable",
   agentCli: "open_code",
-  model: "",
   approvalPolicy: "trusted",
   terminalAccess: true,
   fileWriteAccess: true,

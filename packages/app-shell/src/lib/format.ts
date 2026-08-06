@@ -6,6 +6,23 @@ export function formatClock(timestamp: number): string {
   });
 }
 
+/**
+ * Formats an ISO timestamp as local H:MM:SS for run node timing.
+ * Invalid input is returned as-is so callers can still show something.
+ */
+export function formatRunClock(iso: string, locale?: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  return new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 /** Formats an epoch-ms timestamp as a short relative label, e.g. "2h ago". */
 export function formatRelativeTime(timestamp: number, now: number): string {
   const elapsed = Math.max(0, now - timestamp);

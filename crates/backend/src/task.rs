@@ -9,7 +9,8 @@ use ora_application::{
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
-    GetTaskResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse,
+    GetTaskResponse, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, TaskWorkspace,
+    UpdateTaskRequest, UpdateTaskResponse,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{
@@ -17,6 +18,7 @@ use ora_db::{
     SqliteTaskRepository, SqliteWorktreeRepository,
 };
 use ora_domain::{Project, ProjectId, TaskId, WorktreeActivity};
+use ora_logging::ora_warn;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -24,6 +26,8 @@ use std::sync::{Arc, RwLock};
 pub(crate) struct TaskApi {
     pool: RepositoryPool,
     worktree_root: Arc<RwLock<PathBuf>>,
+    /// Where cascaded sessions' recorded conversations are removed from.
+    sessions_root: PathBuf,
     get: GetTaskHandler<SqliteTaskRepository>,
     list: ListTasksHandler<SqliteTaskRepository>,
     update: UpdateTaskHandler<SqliteTaskRepository, SystemClock>,
@@ -35,6 +39,7 @@ impl TaskApi {
     pub(crate) fn new(
         pool: RepositoryPool,
         worktree_root: Arc<RwLock<PathBuf>>,
+        sessions_root: PathBuf,
         clock: SystemClock,
     ) -> Self {
         let repository = SqliteTaskRepository::new(pool.clone());
@@ -42,6 +47,7 @@ impl TaskApi {
         Self {
             pool,
             worktree_root,
+            sessions_root,
             get: GetTaskHandler::new(repository.clone()),
             list: ListTasksHandler::new(repository.clone()),
             update: UpdateTaskHandler::new(repository, clock),
@@ -97,14 +103,20 @@ impl TaskApi {
         request: DeleteTaskRequest,
     ) -> Result<DeleteTaskResponse, BackendError> {
         let task_id = TaskId::new(request.task_id);
+        // Collected before the cascade: once the rows are soft-deleted nothing
+        // links their history files back to the task that owned them.
+        let session_ids = crate::session_history::session_ids_for_task(&self.pool, &task_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
             .delete_task(&task_id, self.clock.now_timestamp_millis())
             .map_err(|source| BackendError::internal("task repository operation failed", source))?;
 
         match outcome {
-            CascadeDeleteOutcome::Deleted => Ok(DeleteTaskResponse {
-                task_id: task_id.to_string(),
-            }),
+            CascadeDeleteOutcome::Deleted => {
+                crate::session_history::remove_session_histories(&self.sessions_root, session_ids);
+                Ok(DeleteTaskResponse {
+                    task_id: task_id.to_string(),
+                })
+            }
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
                 ErrorClassification::NotFound,
                 PublicError::TaskNotFound(EmptyErrorParams {}),
@@ -142,6 +154,30 @@ impl TaskApi {
 /// Converts project repository failures encountered during dynamic task routing.
 fn project_repository_error(error: RepositoryError) -> ApplicationError {
     ApplicationError::ProjectRepository { source: error }
+}
+
+/// Lists every visible task belonging to one project.
+///
+/// Read before a cascading project delete, which soft-deletes those rows and
+/// leaves this query with nothing to report afterwards. A failure here yields an
+/// empty list rather than an error: the caller uses it to clean up warm sessions
+/// the deleted project owned, and failing the user's delete over a cleanup query
+/// would be the larger harm.
+pub(crate) fn task_ids_in_project(pool: &RepositoryPool, project_id: &ProjectId) -> Vec<TaskId> {
+    match SqliteTaskRepository::new(pool.clone()).list_tasks() {
+        Ok(tasks) => tasks
+            .into_iter()
+            .filter(|task| &task.project_id == project_id)
+            .map(|task| task.id)
+            .collect(),
+        Err(_) => {
+            ora_warn!(
+                project_id = %project_id,
+                "listing project tasks for warm session cleanup failed",
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// Resolves the task's authoritative execution directory from its selected workspace mode.
@@ -193,10 +229,65 @@ pub(crate) fn resolve_task_cwd(
     Ok(cwd)
 }
 
+/// Resolves the same task root used by agent sessions and reports a branch only for linked worktrees.
+pub(crate) fn get_task_workspace(
+    pool: &RepositoryPool,
+    task_id: &str,
+) -> Result<GetTaskWorkspaceResponse, BackendError> {
+    let task_id = TaskId::new(task_id);
+    let task = SqliteTaskRepository::new(pool.clone())
+        .find_task(&task_id)
+        .map_err(|source| BackendError::internal("task repository operation failed", source))?
+        .ok_or_else(|| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::TaskNotFound(EmptyErrorParams {}),
+                format!("task not found: {task_id}"),
+            )
+        })?;
+    let branch_name = match task.worktree_id {
+        Some(worktree_id) => SqliteWorktreeRepository::new(pool.clone())
+            .find_worktree(&worktree_id)
+            .map_err(task_worktree_unavailable_with)?
+            .filter(|worktree| worktree.activity == WorktreeActivity::Active)
+            .and_then(|worktree| worktree.branch_name),
+        None => None,
+    };
+    let root = resolve_task_cwd(pool, &task_id)?;
+    Ok(GetTaskWorkspaceResponse {
+        workspace: TaskWorkspace {
+            root_path: root.to_string_lossy().into_owned(),
+            branch_name,
+        },
+    })
+}
+
 /// Normalizes a stored project root before it crosses the ACP process boundary.
 ///
 /// Relative project roots remain valid in persisted server configurations, while providers
 /// require a stable absolute working directory after Ora starts them.
+/// Resolves the execution directory for a chat whose Task does not exist yet.
+///
+/// Direct chats create their Task only when the first message is sent, but the
+/// model selector needs a session before that. Those Tasks are always created in
+/// project-root mode, so the project root resolved here matches the directory
+/// the eventual Task resolves to.
+pub(crate) fn resolve_project_cwd(
+    pool: &RepositoryPool,
+    project_id: &ProjectId,
+) -> Result<PathBuf, BackendError> {
+    let project = SqliteProjectRepository::new(pool.clone())
+        .find_project(project_id)
+        .map_err(|_| task_project_root_unavailable())?
+        .ok_or_else(task_project_root_unavailable)?;
+    let cwd = absolute_project_root(PathBuf::from(project.root_path))?;
+    if cwd.is_dir() {
+        Ok(cwd)
+    } else {
+        Err(task_project_root_unavailable())
+    }
+}
+
 fn absolute_project_root(path: PathBuf) -> Result<PathBuf, BackendError> {
     if path.is_absolute() {
         return Ok(path);
@@ -248,8 +339,9 @@ fn task_project_root_unavailable_with(
 
 #[cfg(test)]
 mod tests {
-    use super::{absolute_project_root, resolve_task_cwd};
+    use super::{absolute_project_root, get_task_workspace, resolve_task_cwd};
     use ora_application::{ProjectRepository, TaskRepository};
+    use ora_contracts::{GetTaskWorkspaceResponse, TaskWorkspace};
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteTaskRepository,
         default_migration_catalog,
@@ -294,7 +386,16 @@ mod tests {
 
         assert_eq!(
             resolve_task_cwd(&pool, &TaskId::new("task-1")).expect("resolve project root cwd"),
-            project_root,
+            project_root.clone(),
+        );
+        assert_eq!(
+            get_task_workspace(&pool, "task-1").expect("load project-root workspace"),
+            GetTaskWorkspaceResponse {
+                workspace: TaskWorkspace {
+                    root_path: project_root.to_string_lossy().into_owned(),
+                    branch_name: None,
+                },
+            },
         );
     }
 

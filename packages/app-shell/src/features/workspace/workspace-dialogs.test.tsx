@@ -60,6 +60,7 @@ describe("WorkspaceDialogs project creation", () => {
       projectId: "p1",
       taskId: null,
       sessionId: null,
+      workflowRunId: null,
     });
   });
 });
@@ -68,7 +69,27 @@ describe("WorkspaceDialogs task creation", () => {
   it("creates only worktree tasks and does not offer a workspace-mode selector", async () => {
     const user = userEvent.setup();
     const state = createMockClientState();
-    const client = createMockClient(state);
+    const baseClient = createMockClient(state);
+    let submittedBaseBranch: string | undefined;
+    let branchesLoaded = false;
+    const client: ContractsClient = {
+      ...baseClient,
+      project: {
+        ...baseClient.project,
+        listBranches: async (request, options) => {
+          const response = await baseClient.project.listBranches(request, options);
+          branchesLoaded = true;
+          return response;
+        },
+      },
+      task: {
+        ...baseClient.task,
+        create: async (request, options) => {
+          submittedBaseBranch = request.baseBranch;
+          return baseClient.task.create(request, options);
+        },
+      },
+    };
     const Wrapper = createHookWrapper(client, createTestQueryClient(), createChatStore(client.session));
     useUiStore.getState().setDialog({ kind: "task", projectId: "p1" });
 
@@ -88,6 +109,8 @@ describe("WorkspaceDialogs task creation", () => {
     expect(screen.getByText("Agent 在独立工作树中专注处理一项任务")).not.toBeNull();
     const titleInput = screen.getByLabelText(/任务标题|Task title/);
     expect(titleInput).not.toHaveAttribute("placeholder");
+    expect(screen.getByRole("combobox", { name: /基础分支|Base branch/ })).not.toBeNull();
+    await waitFor(() => expect(branchesLoaded).toBe(true));
     await user.type(titleInput, "Worktree task");
     await user.click(screen.getByRole("button", { name: /创建任务|Create task/ }));
 
@@ -97,7 +120,10 @@ describe("WorkspaceDialogs task creation", () => {
       title: "Worktree task",
       status: "todo",
       workspaceMode: "worktree",
+      type: "default",
+      workflowRunId: null,
     }]));
+    expect(submittedBaseBranch).toBe("origin/main");
   });
 
   it("does not show helper text when editing a worktree task", () => {
@@ -113,6 +139,8 @@ describe("WorkspaceDialogs task creation", () => {
         title: "Existing task",
         status: "todo",
         workspaceMode: "worktree",
+        type: "default",
+        workflowRunId: null,
       },
     });
 
@@ -180,8 +208,8 @@ describe("WorkspaceDialogs project deletion", () => {
     const state = createMockClientState();
     state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
     state.sessions = [
-      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running" },
-      { id: "s2", taskId: "t2", agentCli: "open_code", status: "running" },
+      { id: "s1", taskId: "t1", agentCli: "open_code", status: "running", historyState: { type: "writable" } },
+      { id: "s2", taskId: "t2", agentCli: "open_code", status: "running", historyState: { type: "writable" } },
     ];
     const calls: string[] = [];
     const baseClient = createMockClient(state);
@@ -245,12 +273,15 @@ describe("WorkspaceDialogs task deletion", () => {
       title: "Delete me",
       status: "todo",
       workspaceMode: workspaceMode as TaskWorkspaceMode,
+      type: "default",
+      workflowRunId: null,
     }];
     state.sessions = sessionIds.map((id): Session => ({
       id,
       taskId: "t1",
       agentCli: "open_code",
       status: "running",
+      historyState: { type: "writable" },
     }));
     const calls: string[] = [];
     const baseClient = createMockClient(state);

@@ -1,0 +1,122 @@
+import { useRef, useState, type ReactNode } from "react";
+import { Button } from "@ora/ui";
+import {
+  IconFileDescription,
+  IconFolderOpen,
+  IconRefresh,
+  IconSearch,
+} from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { queryKeys } from "../../state/hooks/query-keys";
+import { SpecsContent, type SpecsContentHandle } from "../specs/specs-view";
+import { WorkspaceFilesView } from "./workspace-files-view";
+
+export type FilesSurface = "explorer" | "search" | "specs";
+
+interface WorkspaceReviewFilesPanelProps {
+  projectId: string;
+  projectRootPath: string;
+  taskId?: string;
+  toolbar?: ReactNode;
+}
+
+/** Hosts task file browsing and the read-only Spec catalog inside one review panel. */
+export function WorkspaceReviewFilesPanel({
+  projectId,
+  projectRootPath,
+  taskId,
+  toolbar,
+}: WorkspaceReviewFilesPanelProps) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const specsOnly = taskId === undefined;
+  const [surface, setSurface] = useState<FilesSurface>(specsOnly ? "specs" : "explorer");
+  const specsRef = useRef<SpecsContentHandle>(null);
+  const [specsRefreshing, setSpecsRefreshing] = useState(false);
+
+  const refreshSpecs = () => void specsRef.current?.refresh();
+  const refreshFiles = () => {
+    if (taskId === undefined) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceFiles(taskId) });
+  };
+
+  return (
+    <section className="flex h-full min-h-0 flex-col bg-background">
+      <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3">
+        {!specsOnly && (
+          <>
+            <Button
+              size="sm"
+              variant={surface === "explorer" ? "secondary" : "ghost"}
+              onClick={() => setSurface("explorer")}
+            >
+              <IconFolderOpen />
+              {t("files.explorer")}
+            </Button>
+            <Button
+              size="sm"
+              variant={surface === "search" ? "secondary" : "ghost"}
+              onClick={() => setSurface("search")}
+            >
+              <IconSearch />
+              {t("files.search")}
+            </Button>
+          </>
+        )}
+        <Button
+          size="sm"
+          variant={surface === "specs" ? "secondary" : "ghost"}
+          onClick={() => {
+            if (surface === "specs") {
+              specsRef.current?.clearSelection();
+              return;
+            }
+            setSurface("specs");
+          }}
+        >
+          <IconFileDescription />
+          {t("specs.specs")}
+        </Button>
+        <div className="flex-1" />
+        {surface === "specs" ? (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={t("specs.refresh")}
+            onClick={refreshSpecs}
+          >
+            <IconRefresh className={specsRefreshing ? "animate-spin" : undefined} />
+          </Button>
+        ) : (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={t("files.refresh")}
+            onClick={refreshFiles}
+          >
+            <IconRefresh />
+          </Button>
+        )}
+        {toolbar}
+      </header>
+      <div className="min-h-0 flex-1">
+        {surface === "specs" ? (
+          <SpecsContent
+            ref={specsRef}
+            projectId={projectId}
+            projectRootPath={projectRootPath}
+            taskId={taskId}
+            onRefreshingChange={setSpecsRefreshing}
+          />
+        ) : (
+          <WorkspaceFilesView
+            taskId={taskId!}
+            surface={surface}
+            hideHeader
+          />
+        )}
+      </div>
+    </section>
+  );
+}

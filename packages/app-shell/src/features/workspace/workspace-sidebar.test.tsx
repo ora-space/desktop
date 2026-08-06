@@ -18,12 +18,13 @@ const USER = { name: "Eric", email: "eric@example.com" };
 // Deliberately not "Ora": the sidebar header renders that as the product mark,
 // so a project of the same name makes every text query ambiguous.
 const PROJECT: Project = { id: "p1", name: "Ora Desktop", rootPath: "/ora" };
-const TASK: Task = { id: "t1", projectId: "p1", title: "Refactor", status: "todo", workspaceMode: "worktree" };
+const TASK: Task = { id: "t1", projectId: "p1", title: "Refactor", status: "todo", workspaceMode: "worktree", type: "default", workflowRunId: null };
 const SESSION: Session = {
   id: "s1",
   taskId: "t1",
   agentCli: "open_code",
   status: "running",
+  historyState: { type: "writable" },
 };
 
 /** Renders the sidebar with the same provider stack AppShell gives it. */
@@ -50,6 +51,8 @@ function renderSidebar(state: MockClientState, chatStore?: ChatStore) {
 /** Builds an idle conversation, overriding only the fields a test cares about. */
 function conversation(overrides: Partial<SessionConversation> = {}): SessionConversation {
   return {
+    configOptions: [],
+    modelChanges: [],
     turns: [],
     availableCommands: [],
     sessionTitle: null,
@@ -107,6 +110,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: TASK.id,
       sessionId: SESSION.id,
+      workflowRunId: null,
     });
     expect(useUiStore.getState().expandedProjects.has(PROJECT.id)).toBe(false);
   });
@@ -125,6 +129,7 @@ describe("WorkspaceSidebar", () => {
       projectId: null,
       taskId: null,
       sessionId: null,
+      workflowRunId: null,
     });
   });
 
@@ -139,6 +144,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: null,
       sessionId: null,
+      workflowRunId: null,
     });
     expect(useUiStore.getState().dialog).toBeNull();
   });
@@ -152,12 +158,15 @@ describe("WorkspaceSidebar", () => {
       title: "Direct chat",
       status: "todo",
       workspaceMode: "project_root",
+      type: "default",
+      workflowRunId: null,
     });
     state.sessions.push({
       id: "s2",
       taskId: "t2",
       agentCli: "open_code",
       status: "running",
+      historyState: { type: "writable" },
     });
     renderSidebar(state);
 
@@ -184,6 +193,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: null,
       sessionId: null,
+      workflowRunId: null,
     });
   });
 
@@ -255,7 +265,7 @@ describe("WorkspaceSidebar", () => {
     state.projects = [PROJECT];
     state.tasks = [
       TASK,
-      { id: "t2", projectId: PROJECT.id, title: "Direct chat", status: "todo", workspaceMode: "project_root" },
+      { id: "t2", projectId: PROJECT.id, title: "Direct chat", status: "todo", workspaceMode: "project_root", type: "default", workflowRunId: null },
     ];
     renderSidebar(state);
 

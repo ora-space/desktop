@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use crate::config::{ProjectConfig, RuntimeConfig};
 use crate::error::WebBootstrapError;
-use crate::service::{FileSystemApi, ProjectWorkContextApi};
+use crate::service::{FileSystemApi, ProjectWorkContextApi, WorkspaceFileApi};
 use ora_application::{
     Clock, OpenProjectWorkContextHandler, ProjectIdGenerator, ProjectRepository, RepositoryError,
     UuidProjectIdGenerator, UuidProjectWorkContextIdGenerator,
@@ -20,6 +20,7 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
         runtime_config.database().path(),
         runtime_config.project().work_dir(),
         runtime_config.file_system().home_directory(),
+        runtime_config.history().sessions_root(),
     )?;
     let pool = backend.repository_pool();
     let clock = SystemClock;
@@ -32,6 +33,7 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
             runtime_config.file_system().home_directory().to_path_buf(),
         )),
         Arc::new(ProjectWorkContextApi::new(pool.clone(), clock)),
+        Arc::new(WorkspaceFileApi::new(resolve_ripgrep_path())),
     ))
 }
 
@@ -46,6 +48,7 @@ pub(crate) fn build_app_state_for_database(
         database_path,
         work_dir,
         project_root.parent().unwrap_or(project_root),
+        &work_dir.with_file_name("sessions"),
     )?;
     let pool = backend.repository_pool();
     let clock = SystemClock;
@@ -56,6 +59,7 @@ pub(crate) fn build_app_state_for_database(
             project_root.parent().unwrap_or(project_root).to_path_buf(),
         )),
         Arc::new(ProjectWorkContextApi::new(pool.clone(), clock)),
+        Arc::new(WorkspaceFileApi::new(resolve_ripgrep_path())),
     ))
 }
 
@@ -118,13 +122,36 @@ fn build_backend(
     database_path: &Path,
     worktree_root: &Path,
     home_directory: &Path,
+    sessions_root: &Path,
 ) -> Result<Backend, WebBootstrapError> {
     Backend::open(BackendPaths {
         database_path: database_path.to_path_buf(),
         worktree_root: worktree_root.to_path_buf(),
         home_directory: home_directory.to_path_buf(),
+        sessions_root: sessions_root.to_path_buf(),
+        skills_root: database_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("atoms")
+            .join("skills"),
+        ripgrep_path: resolve_ripgrep_path(),
     })
     .map_err(web_backend_bootstrap_error)
+}
+
+/// Resolves ripgrep from a development override or the bundled release executable.
+fn resolve_ripgrep_path() -> std::path::PathBuf {
+    if cfg!(debug_assertions) {
+        return std::env::var_os("ORA_RG_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("rg"));
+    }
+
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("rg.exe")
 }
 
 /// Maps shared backend bootstrap failures into the stable Web process error surface.
@@ -134,9 +161,17 @@ fn web_backend_bootstrap_error(error: BackendBootstrapError) -> WebBootstrapErro
             WebBootstrapError::DataDirectoryCreate(source)
         }
         BackendBootstrapError::Database(source) => WebBootstrapError::DatabaseBootstrap(source),
+        BackendBootstrapError::SkillStorage(source) => {
+            WebBootstrapError::SkillStorageReconcile { source }
+        }
         BackendBootstrapError::AgentRuntime(source) => WebBootstrapError::ProjectBootstrap {
             source: Box::new(source),
         },
+        BackendBootstrapError::SkillStorageReconciliation(source) => {
+            WebBootstrapError::ProjectBootstrap {
+                source: Box::new(source),
+            }
+        }
     }
 }
 

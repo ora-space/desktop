@@ -45,7 +45,7 @@ pub trait TaskWorktreeProvisioner {
     fn create_task_worktree(
         &self,
         request: CreateTaskWorktreeRequest,
-    ) -> Result<(), TaskWorktreeProvisionerError>;
+    ) -> Result<CreateTaskWorktreeResponse, TaskWorktreeProvisionerError>;
 
     /// Removes the linked worktree requested by task cleanup flows.
     fn delete_task_worktree(
@@ -58,7 +58,14 @@ pub trait TaskWorktreeProvisioner {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTaskWorktreeRequest {
     pub branch_name: String,
+    pub base_reference_name: String,
     pub worktree_path: PathBuf,
+}
+
+/// Returns the immutable commit from which the task worktree was created.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateTaskWorktreeResponse {
+    pub base_commit_id: String,
 }
 
 /// Describes how task-owned worktree deletion should behave.
@@ -79,16 +86,24 @@ pub struct DeleteTaskWorktreeRequest {
 pub enum TaskWorktreeProvisionerError {
     #[error("worktree mode requires a Git repository")]
     NotARepository,
-    #[error("task worktree operation failed")]
+    #[error("base branch not found: {branch_name}")]
+    BaseBranchNotFound { branch_name: String },
+    #[error("{context}")]
     OperationFailed {
+        context: &'static str,
         #[source]
         source: BoxRepositorySource,
     },
 }
 
 impl TaskWorktreeProvisionerError {
-    pub fn operation_failed(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+    /// Preserves both the failed worktree operation and its infrastructure source chain.
+    pub fn operation_failed(
+        context: &'static str,
+        error: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Self::OperationFailed {
+            context,
             source: Box::new(error),
         }
     }

@@ -5,13 +5,15 @@ import type { Project, Session, Task } from "@ora/contracts";
 export type DialogState =
   | { kind: "project"; entity?: Project }
   | { kind: "task"; projectId: string; entity?: Task }
-  | { kind: "session"; taskId: string; entity?: Session };
+  | { kind: "session"; taskId: string; entity?: Session }
+  | { kind: "workflowRun"; projectId: string; entity: { id: string; name: string } };
 
 /** Shape of the delete-confirmation dialog driven from the workspace tree. */
 export type DeleteTarget =
   | { kind: "project"; id: string; name: string; sessionIds: string[] }
   | { kind: "task"; id: string; name: string; workspaceMode: Task["workspaceMode"]; sessionIds: string[] }
-  | { kind: "session"; id: string; name: string };
+  | { kind: "session"; id: string; name: string }
+  | { kind: "workflowRun"; id: string; name: string; projectId: string };
 
 interface UiState {
   sidebarCollapsed: boolean;

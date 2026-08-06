@@ -1,7 +1,10 @@
 mod commands;
 mod config;
 mod error;
+mod skill_marketplace;
+mod spec_commands;
 mod state;
+mod workspace_files;
 
 use crate::config::DesktopConfigStore;
 use crate::error::DesktopBootstrapError;
@@ -34,6 +37,7 @@ pub fn run() {
             commands::create_project,
             commands::get_project,
             commands::list_projects,
+            commands::list_project_branches,
             commands::update_project,
             commands::delete_project,
             // =============================================================================
@@ -44,21 +48,43 @@ pub fn run() {
             commands::list_tasks,
             commands::update_task,
             commands::delete_task,
+            spec_commands::get_task_workspace,
+            commands::get_task_diff,
+            commands::commit_task_changes,
+            commands::push_task_branch,
+            commands::list_task_diff_comments,
+            commands::create_task_diff_comment,
+            commands::reply_task_diff_comment,
+            commands::set_task_diff_comment_status,
+            // =============================================================================
+            // fileSystem
+            // =============================================================================
+            commands::list_workspace_directory,
+            commands::read_workspace_file,
+            commands::search_workspace,
+            spec_commands::get_spec_catalog,
+            spec_commands::read_spec,
+            spec_commands::resolve_spec_source,
+            spec_commands::update_project_spec_sources,
             // =============================================================================
             // session
             // =============================================================================
-            commands::create_session,
+            commands::warm_session,
+            commands::set_session_config,
+            commands::attach_session,
             commands::get_session,
             commands::list_sessions,
             commands::respond_to_session_permission,
             commands::stop_session,
+            commands::switch_session_agent,
+            commands::resume_session_history,
             commands::delete_session,
             commands::stream_contract,
             commands::cancel_contract_stream,
             // =============================================================================
             // agentRuntime
             // =============================================================================
-            commands::list_agent_models,
+            commands::get_agent_runtime_status,
             // =============================================================================
             // skill
             // =============================================================================
@@ -67,18 +93,51 @@ pub fn run() {
             commands::list_skills,
             commands::update_skill,
             commands::delete_skill,
+            skill_marketplace::open_skill_marketplace,
             // =============================================================================
             // agent
             // =============================================================================
+            commands::prepare_skill_import,
+            commands::get_skill_import,
+            commands::commit_skill_import,
+            commands::cancel_skill_import,
             commands::create_agent,
             commands::get_agent,
             commands::list_agents,
             commands::update_agent,
             commands::delete_agent,
+            commands::prepare_agent_import,
+            commands::commit_agent_import,
             // =============================================================================
             // gitIdentity
             // =============================================================================
             commands::get_git_identity,
+            // =============================================================================
+            // workflow
+            // =============================================================================
+            commands::create_workflow,
+            commands::get_workflow,
+            commands::list_workflows,
+            commands::update_workflow,
+            commands::delete_workflow,
+            commands::get_workflow_draft,
+            commands::update_workflow_draft,
+            commands::publish_workflow,
+            commands::rollback_workflow,
+            commands::activate_workflow,
+            commands::list_workflow_versions,
+            commands::get_workflow_version,
+            commands::delete_workflow_snapshot,
+            commands::get_workflow_snapshot,
+            // =============================================================================
+            // workflowRun
+            // =============================================================================
+            commands::create_workflow_run,
+            commands::get_workflow_run,
+            commands::list_workflow_runs,
+            commands::list_workflow_runs_by_workflow,
+            commands::list_workflow_node_runs,
+            commands::delete_workflow_run,
             // =============================================================================
             // desktop
             // =============================================================================
@@ -86,6 +145,7 @@ pub fn run() {
             commands::set_worktree_root,
             commands::resolve_task_cwd,
             commands::open_location,
+            commands::write_workflow_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -131,6 +191,7 @@ fn bootstrap_desktop(
         timezone_source = "system_timezone",
     );
     register_gitlancer_logger();
+    let ripgrep_path = resolve_ripgrep_path();
     let backend = Backend::open(BackendPaths {
         database_path: app_data_directory.join("ora.sqlite3"),
         worktree_root: config_snapshot.worktree_root().to_path_buf(),
@@ -138,16 +199,41 @@ fn bootstrap_desktop(
             .path()
             .home_dir()
             .map_err(DesktopBootstrapError::AppDataDirectory)?,
+        sessions_root: app_data_directory.join("sessions"),
+        skills_root: app_data_directory.join("atoms").join("skills"),
+        ripgrep_path: ripgrep_path.clone(),
     })?;
+    let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
 
     Ok((
         DesktopState {
             backend,
             config,
+            workspace_files,
             stream_cancellations: Arc::new(Mutex::new(HashMap::new())),
         },
         DesktopRuntimeGuard { _logging: logging },
     ))
+}
+
+/// Resolves ripgrep from a development override or the executable directory in a release build.
+fn resolve_ripgrep_path() -> std::path::PathBuf {
+    if cfg!(debug_assertions) {
+        return std::env::var_os("ORA_RG_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("rg"));
+    }
+
+    let executable_name = if cfg!(target_os = "windows") {
+        "rg.exe"
+    } else {
+        "rg"
+    };
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(executable_name)
 }
 
 /// Carries the startup timezone selected from the operating system and any deferred warning.

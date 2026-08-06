@@ -16,8 +16,9 @@ import {
   IconTestPipe,
   IconTicket,
 } from "@tabler/icons-react";
+import type { AgentCli } from "@ora/contracts";
 import { OpenAiLogo } from "../chat/provider-logos";
-import { ClaudeMark, OpenCodeMark } from "./plugin-marks";
+import { ClaudeMark, CodeAgentCliMark, NgaMark, OpenCodeMark } from "./plugin-marks";
 
 /** A plugin's brand mark. Tabler icons and the hand-drawn marks both satisfy this. */
 export type PluginMark = ComponentType<{ className?: string }>;
@@ -47,10 +48,17 @@ export interface PluginEntry {
   summaryKey: string;
   /** Skill names surfaced in the detail pane; only the first three plugins ship more than one. */
   skills: string[];
+  /**
+   * When set, this entry is one of Ora's own application-scoped CLI runtimes. Its
+   * install state is derived from the live backend detection status (see
+   * `useAgentRuntimeStatus`) instead of the local install/uninstall toggle, and its
+   * card renders read-only.
+   */
+  detectionAgentCli?: AgentCli;
 }
 
-/** Plugins wired into the prototype. Everything else in the catalog is a browse-only placeholder. */
-export const DEFAULT_INSTALLED_PLUGIN_IDS = ["opencode", "claude", "codex"];
+/** No plugin starts pre-installed; the five CLI runtimes report their own detected state instead. */
+export const DEFAULT_INSTALLED_PLUGIN_IDS: string[] = [];
 
 /**
  * The hard-coded plugin marketplace. No backend contract exposes plugins yet, so the
@@ -73,15 +81,52 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-neutral-900 dark:text-neutral-100",
     summaryKey: "settings.plugins.catalog.opencode",
     skills: ["OpenCode", "Terminal"],
+    detectionAgentCli: "open_code",
+  },
+  {
+    id: "nga",
+    name: "NGA",
+    publisher: "Ora Labs",
+    identifier: "ora-space.nga",
+    version: "—",
+    updated: "—",
+    size: "—",
+    collection: "public",
+    featured: true,
+    categoryKey: "settings.plugins.category.coding",
+    capabilityKeys: ["settings.plugins.capability.interactive", "settings.plugins.capability.write", "settings.plugins.capability.terminal"],
+    mark: NgaMark,
+    tone: "text-sky-600 dark:text-sky-400",
+    summaryKey: "settings.plugins.catalog.nga",
+    skills: ["NGA"],
+    detectionAgentCli: "nga",
+  },
+  {
+    id: "codeagentcli",
+    name: "CodeAgentCLI",
+    publisher: "Ora Labs",
+    identifier: "ora-space.codeagentcli",
+    version: "—",
+    updated: "—",
+    size: "—",
+    collection: "public",
+    featured: true,
+    categoryKey: "settings.plugins.category.coding",
+    capabilityKeys: ["settings.plugins.capability.interactive", "settings.plugins.capability.write", "settings.plugins.capability.terminal"],
+    mark: CodeAgentCliMark,
+    tone: "text-orange-600 dark:text-orange-400",
+    summaryKey: "settings.plugins.catalog.codeagentcli",
+    skills: ["CodeAgentCLI"],
+    detectionAgentCli: "code_agent_cli",
   },
   {
     id: "claude",
     name: "Claude Code",
     publisher: "Anthropic",
     identifier: "anthropic.claude-code",
-    version: "2.1.8",
-    updated: "2026-07-21",
-    size: "42.6 MB",
+    version: "—",
+    updated: "—",
+    size: "—",
     collection: "public",
     featured: true,
     categoryKey: "settings.plugins.category.coding",
@@ -90,15 +135,16 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-[#D97757]",
     summaryKey: "settings.plugins.catalog.claude",
     skills: ["Claude Code", "Subagents", "Skills"],
+    detectionAgentCli: "claude",
   },
   {
     id: "codex",
     name: "Codex",
     publisher: "OpenAI",
     identifier: "openai.codex",
-    version: "1.6.0",
-    updated: "2026-07-19",
-    size: "31.2 MB",
+    version: "—",
+    updated: "—",
+    size: "—",
     collection: "public",
     featured: true,
     categoryKey: "settings.plugins.category.coding",
@@ -107,6 +153,7 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-emerald-600 dark:text-emerald-400",
     summaryKey: "settings.plugins.catalog.codex",
     skills: ["Codex", "Code Review"],
+    detectionAgentCli: "codex",
   },
   {
     id: "github",

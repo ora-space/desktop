@@ -3,6 +3,7 @@ mod config;
 mod correlation;
 mod error;
 mod error_report;
+mod fanout;
 mod file_output;
 mod formatter;
 mod gitlancer_bridge;

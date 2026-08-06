@@ -3,8 +3,9 @@ use crate::error::WebApiError;
 use axum::Json;
 use axum::extract::{Path, State};
 use ora_contracts::{
-    CreateAgentRequest, CreateAgentResponse, DeleteAgentRequest, DeleteAgentResponse,
-    GetAgentRequest, GetAgentResponse, ListAgentsRequest, ListAgentsResponse, UpdateAgentRequest,
+    CommitAgentImportRequest, CommitAgentImportResponse, CreateAgentRequest, CreateAgentResponse,
+    DeleteAgentRequest, DeleteAgentResponse, GetAgentRequest, GetAgentResponse, ListAgentsRequest,
+    ListAgentsResponse, PrepareAgentImportRequest, PrepareAgentImportResponse, UpdateAgentRequest,
     UpdateAgentResponse,
 };
 use serde::Deserialize;
@@ -22,6 +23,8 @@ pub struct AgentPath {
 pub struct UpdateAgentBody {
     name: String,
     description: String,
+    #[serde(default)]
+    content: Option<String>,
 }
 
 /// Creates one configurable agent type from its JSON payload.
@@ -73,6 +76,7 @@ pub async fn update_agent(
             agent_id: path.agent_id,
             name: body.name,
             description: body.description,
+            content: body.content,
         })
         .map(Json)
         .map_err(Into::into)
@@ -88,6 +92,30 @@ pub async fn delete_agent(
         .delete_agent(DeleteAgentRequest {
             agent_id: path.agent_id,
         })
+        .map(Json)
+        .map_err(Into::into)
+}
+
+/// Parses and previews one Agent Markdown document before import.
+pub async fn prepare_agent_import(
+    State(app_state): State<AppState>,
+    Json(request): Json<PrepareAgentImportRequest>,
+) -> Result<Json<PrepareAgentImportResponse>, WebApiError> {
+    app_state
+        .backend()
+        .prepare_agent_import(request)
+        .map(Json)
+        .map_err(Into::into)
+}
+
+/// Commits one previously previewed Agent Markdown document with a frozen conflict decision.
+pub async fn commit_agent_import(
+    State(app_state): State<AppState>,
+    Json(request): Json<CommitAgentImportRequest>,
+) -> Result<Json<CommitAgentImportResponse>, WebApiError> {
+    app_state
+        .backend()
+        .commit_agent_import(request)
         .map(Json)
         .map_err(Into::into)
 }

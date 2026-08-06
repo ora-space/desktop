@@ -64,6 +64,11 @@ pub enum WebBootstrapError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+    #[error("failed to reconcile skill storage")]
+    SkillStorageReconcile {
+        #[source]
+        source: ora_application::ApplicationError,
+    },
     #[error(transparent)]
     LoggingInit(#[from] ora_logging::LoggingInitError),
     #[error("failed to bind HTTP listener")]
@@ -78,6 +83,11 @@ pub struct WebApiError {
 }
 
 impl WebApiError {
+    /// Builds a client-correctable upload or source-validation failure without leaking internals.
+    pub fn bad_request(context: &'static str) -> Self {
+        Self::invalid_request(context)
+    }
+
     /// Creates a malformed-input failure without returning parser-generated diagnostics.
     pub fn invalid_request(context: &'static str) -> Self {
         Self::semantic(
@@ -118,6 +128,58 @@ impl WebApiError {
         Self {
             error: BackendError::internal(context, source),
         }
+    }
+
+    /// Transfers the classified failure to a stream that owns its completion lifecycle.
+    pub(crate) fn into_backend_error(self) -> BackendError {
+        self.error
+    }
+}
+
+impl From<ora_fs::WorkspaceFileSystemError> for WebApiError {
+    /// Maps read-only workspace filesystem failures into stable backend classifications.
+    fn from(error: ora_fs::WorkspaceFileSystemError) -> Self {
+        use ora_fs::WorkspaceFileSystemError;
+
+        let (classification, public_error, context) = match &error {
+            WorkspaceFileSystemError::PathNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::FileSystemPathNotFound(EmptyErrorParams {}),
+                "workspace path was not found",
+            ),
+            WorkspaceFileSystemError::PathNotRelative { .. }
+            | WorkspaceFileSystemError::PathOutsideWorkspace { .. }
+            | WorkspaceFileSystemError::NotDirectory { .. }
+            | WorkspaceFileSystemError::NotFile { .. }
+            | WorkspaceFileSystemError::BinaryFile { .. }
+            | WorkspaceFileSystemError::InvalidUtf8 { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "workspace file request is invalid",
+            ),
+            WorkspaceFileSystemError::FileTooLarge { .. }
+            | WorkspaceFileSystemError::SearchOutputTooLarge { .. } => (
+                ErrorClassification::PayloadTooLarge,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "workspace output is too large",
+            ),
+            WorkspaceFileSystemError::SearchTimedOut => (
+                ErrorClassification::Unprocessable,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "workspace search timed out",
+            ),
+            WorkspaceFileSystemError::WorkspaceUnavailable { .. }
+            | WorkspaceFileSystemError::Io { .. }
+            | WorkspaceFileSystemError::SearchToolUnavailable { .. }
+            | WorkspaceFileSystemError::SearchFailed { .. }
+            | WorkspaceFileSystemError::InvalidSearchOutput { .. }
+            | WorkspaceFileSystemError::WatchFailed { .. } => (
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "workspace filesystem operation failed",
+            ),
+        };
+        Self::with_source(classification, public_error, context, error)
     }
 }
 
@@ -204,8 +266,68 @@ pub(crate) struct DeferredCompletion;
 const fn status_for(classification: ErrorClassification) -> StatusCode {
     match classification {
         ErrorClassification::InvalidRequest => StatusCode::BAD_REQUEST,
+        ErrorClassification::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         ErrorClassification::NotFound => StatusCode::NOT_FOUND,
         ErrorClassification::Conflict => StatusCode::CONFLICT,
+        ErrorClassification::Unprocessable => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorClassification::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WebApiError, status_for};
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use ora_application::ApplicationError;
+    use ora_backend::ErrorClassification;
+    use ora_contracts::RequestId;
+    use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
+
+    /// Verifies transport-only upload limits retain their native HTTP status.
+    #[test]
+    fn maps_payload_too_large_classification_to_http_413() {
+        assert_eq!(
+            status_for(ErrorClassification::PayloadTooLarge),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
+
+    /// Verifies missing base branches become HTTP 400 payloads that retain the selected ref name.
+    #[tokio::test]
+    async fn maps_missing_base_branches_to_http_400() {
+        let response = WebApiError::from(ApplicationError::TaskBaseBranchNotFound {
+            branch_name: "ghost-branch".to_string(),
+        })
+        .into_response();
+        let status = response.status();
+        let body = response.into_body();
+        let bytes = match to_bytes(body, usize::MAX).await {
+            Ok(bytes) => bytes,
+            Err(error) => panic!("failed to read response body: {error}"),
+        };
+        let mut actual = match serde_json::from_slice::<Value>(&bytes) {
+            Ok(actual) => actual,
+            Err(error) => panic!("failed to decode JSON body: {error}"),
+        };
+        // The request id is generated per response, so it is validated for shape and
+        // then removed to keep the remaining envelope comparable as a whole object.
+        let request_id = actual
+            .as_object_mut()
+            .and_then(|envelope| envelope.remove("requestId"))
+            .expect("contract error must include requestId");
+        serde_json::from_value::<RequestId>(request_id)
+            .expect("contract error requestId must be a UUID");
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            actual,
+            json!({
+                "code": "task_base_branch_not_found",
+                "params": { "branchName": "ghost-branch" },
+            })
+        );
     }
 }

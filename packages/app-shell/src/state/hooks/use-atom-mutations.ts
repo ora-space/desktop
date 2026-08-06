@@ -8,8 +8,8 @@ export function useCreateAgent() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, description }: { name: string; description: string }) =>
-      client.agent.create({ name, description }).then((response) => response.agent),
+    mutationFn: ({ name, description, content }: { name: string; description: string; content: string }) =>
+      client.agent.create({ name, description, content }).then((response) => response.agent),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents });
     },
@@ -21,8 +21,8 @@ export function useUpdateAgent() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ agent, name, description }: { agent: Agent; name: string; description: string }) =>
-      client.agent.update({ agentId: agent.id, name, description }).then((response) => response.agent),
+    mutationFn: ({ agent, name, description, content }: { agent: Agent; name: string; description: string; content: string }) =>
+      client.agent.update({ agentId: agent.id, name, description, content }).then((response) => response.agent),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents });
     },
@@ -47,8 +47,8 @@ export function useCreateSkill() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, description }: { name: string; description: string }) =>
-      client.skill.create({ name, description }).then((response) => response.skill),
+    mutationFn: ({ name, description, content }: { name: string; description: string; content: string }) =>
+      client.skill.create({ name, description, content }).then((response) => response.skill),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.skills });
     },
@@ -60,8 +60,8 @@ export function useUpdateSkill() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ skill, name, description }: { skill: Skill; name: string; description: string }) =>
-      client.skill.update({ skillId: skill.id, name, description }).then((response) => response.skill),
+    mutationFn: ({ skill, name, description, content }: { skill: Skill; name: string; description: string; content: string }) =>
+      client.skill.update({ skillId: skill.id, name, description, content }).then((response) => response.skill),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.skills });
     },

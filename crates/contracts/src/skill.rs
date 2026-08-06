@@ -11,6 +11,17 @@ pub struct Skill {
     pub description: String,
 }
 
+/// Describes one skill together with the Markdown body from its SKILL.md.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "skill.ts")]
+pub struct SkillDetails {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub content: String,
+}
+
 /// Carries the public fields required to create a skill.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +29,9 @@ pub struct Skill {
 pub struct CreateSkillRequest {
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub content: Option<String>,
 }
 
 /// Returns one created skill.
@@ -41,7 +55,7 @@ pub struct GetSkillRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "skill.ts")]
 pub struct GetSkillResponse {
-    pub skill: Skill,
+    pub skill: SkillDetails,
 }
 
 /// Requests every visible skill in stable storage order.
@@ -66,6 +80,9 @@ pub struct UpdateSkillRequest {
     pub skill_id: String,
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub content: Option<String>,
 }
 
 /// Returns the replacement skill.
@@ -95,6 +112,7 @@ pub struct DeleteSkillResponse {
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     Skill::export(config)?;
+    SkillDetails::export(config)?;
     CreateSkillRequest::export(config)?;
     CreateSkillResponse::export(config)?;
     GetSkillRequest::export(config)?;
@@ -150,8 +168,9 @@ mod tests {
             &CreateSkillRequest {
                 name: skill.name.clone(),
                 description: skill.description.clone(),
+                content: Some("# Instructions".to_string()),
             },
-            json!({ "name": "review", "description": "Reviews implementation changes" }),
+            json!({ "name": "review", "description": "Reviews implementation changes", "content": "# Instructions" }),
         );
         assert_serialized_json(
             &CreateSkillResponse {
@@ -167,9 +186,14 @@ mod tests {
         );
         assert_serialized_json(
             &GetSkillResponse {
-                skill: skill.clone(),
+                skill: super::SkillDetails {
+                    id: skill.id.clone(),
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                    content: "# Instructions".to_string(),
+                },
             },
-            json!({ "skill": { "id": "skill-1", "name": "review", "description": "Reviews implementation changes" } }),
+            json!({ "skill": { "id": "skill-1", "name": "review", "description": "Reviews implementation changes", "content": "# Instructions" } }),
         );
         assert_serialized_json(&ListSkillsRequest {}, json!({}));
         assert_serialized_json(
@@ -183,9 +207,23 @@ mod tests {
                 skill_id: "skill-1".to_string(),
                 name: "code-review".to_string(),
                 description: "Reviews code changes".to_string(),
+                content: Some("Updated instructions".to_string()),
             },
-            json!({ "skillId": "skill-1", "name": "code-review", "description": "Reviews code changes" }),
+            json!({ "skillId": "skill-1", "name": "code-review", "description": "Reviews code changes", "content": "Updated instructions" }),
         );
+        let legacy_create: CreateSkillRequest = serde_json::from_value(json!({
+            "name": "legacy",
+            "description": "Legacy skill"
+        }))
+        .unwrap();
+        assert_eq!(legacy_create.content, None);
+        let legacy_update: UpdateSkillRequest = serde_json::from_value(json!({
+            "skillId": "skill-1",
+            "name": "legacy",
+            "description": "Legacy skill"
+        }))
+        .unwrap();
+        assert_eq!(legacy_update.content, None);
         assert_serialized_json(
             &UpdateSkillResponse {
                 skill: Skill {

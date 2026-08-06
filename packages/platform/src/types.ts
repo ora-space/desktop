@@ -5,6 +5,12 @@ export interface SelectPathOptions {
   initialPath?: string;
 }
 
+/** Defines one user-initiated text-file export without exposing host-specific dialogs. */
+export interface SaveTextFileOptions {
+  defaultFileName: string;
+  content: string;
+}
+
 export type WorktreeStorageCapability =
   | { kind: "unsupported" }
   | {
@@ -61,12 +67,46 @@ export type LocationActionsCapability =
       open(target: LocationTarget, path: string): Promise<void>;
     };
 
+/** A native marketplace integration exposed by Ora Desktop. */
+export type SkillMarketplaceProvider =
+  | "skillHub"
+  | "huaweiAgentCenter"
+  | "webviewCompatibilityTest";
+
+/** Reports the download lifecycle controlled by a provider-specific native marketplace window. */
+export type SkillMarketplaceStatus =
+  | { status: "downloading"; provider: SkillMarketplaceProvider; fileName: string }
+  | {
+      status: "downloaded";
+      provider: SkillMarketplaceProvider;
+      fileName: string;
+      archivePath: string;
+    }
+  | {
+      status: "failed";
+      provider: SkillMarketplaceProvider;
+      stage: "download";
+      code: string;
+      message: string;
+    };
+
+/** Opens a provider-specific native WebView and observes its Ora-owned download lifecycle. */
+export type SkillMarketplaceCapability =
+  | { kind: "unsupported" }
+  | {
+      kind: "supported";
+      open(provider: SkillMarketplaceProvider): Promise<void>;
+      onStatus(listener: (status: SkillMarketplaceStatus) => void): Promise<() => void>;
+    };
+
 /** Abstracts one single-path selection interaction across Web and Tauri hosts. */
 export interface PlatformAdapter {
   readonly worktreeStorage: WorktreeStorageCapability;
   readonly windowControls: WindowControlsCapability;
   readonly locationActions: LocationActionsCapability;
+  readonly skillMarketplace: SkillMarketplaceCapability;
   selectPath(options: SelectPathOptions): Promise<string | null>;
+  saveTextFile(options: SaveTextFileOptions): Promise<boolean>;
 }
 
 export type PlatformLocale = "zh-CN" | "en-US";

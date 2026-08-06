@@ -5,6 +5,7 @@ import {
   PathSelectionInProgressError,
   type PlatformAdapter,
   type PlatformLocale,
+  type SaveTextFileOptions,
   type SelectPathOptions,
 } from "../types";
 import { WebPathPickerHost } from "./web-path-picker-host";
@@ -27,6 +28,8 @@ export class WebPlatformAdapter implements PlatformAdapter, PlatformHostRenderer
   readonly windowControls = { kind: "none" as const };
   // The browser cannot launch native file managers, terminals, or editors.
   readonly locationActions = { kind: "unsupported" as const };
+  // The SkillHub window and its application-owned download directory require Tauri.
+  readonly skillMarketplace = { kind: "unsupported" as const };
   private activeSelection: ActivePathSelection | null = null;
   private listeners = new Set<() => void>();
   private nextRequestId = 1;
@@ -55,6 +58,20 @@ export class WebPlatformAdapter implements PlatformAdapter, PlatformHostRenderer
       this.snapshot = { kind: "selecting", requestId, options };
       this.emitChange();
     });
+  }
+
+  /** Starts a browser download when a native save dialog is unavailable. */
+  async saveTextFile(options: SaveTextFileOptions): Promise<boolean> {
+    if (typeof document === "undefined") {
+      return false;
+    }
+    const url = URL.createObjectURL(new Blob([options.content], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = options.defaultFileName;
+    link.click();
+    URL.revokeObjectURL(url);
+    return true;
   }
 
   /** Returns the stable external-store snapshot consumed by PlatformHost. */

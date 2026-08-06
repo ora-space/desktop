@@ -1,15 +1,27 @@
 use crate::app_state::AppState;
 use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skills, tasks,
+    agents, file_system, git, health, project_work_contexts, projects, sessions, skill_imports,
+    skills, snapshots, specs, task_diffs, tasks, workflow_runs, workflows, workspace_files,
 };
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{get, post};
 use ora_contracts::{
-    AGENT_MODELS_PATH, AGENT_PATH, AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH,
-    PROJECT_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH, PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH,
+    AGENT_IMPORT_COMMIT_PATH, AGENT_IMPORT_PREPARE_PATH, AGENT_PATH, AGENT_RUNTIME_STATUS_PATH,
+    AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH, PROJECT_BRANCHES_PATH,
+    PROJECT_PATH, PROJECT_SPEC_SOURCES_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_ATTACH_PATH, SESSION_CONFIG_PATH,
     SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
-    SESSION_STOP_PATH, SESSIONS_PATH, SKILL_PATH, SKILLS_PATH, TASK_PATH, TASKS_PATH,
+    SESSION_RESUME_HISTORY_PATH, SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSION_WARM_PATH,
+    SESSIONS_PATH, SKILL_IMPORT_COMMIT_PATH, SKILL_IMPORT_PATH, SKILL_IMPORTS_PATH, SKILL_PATH,
+    SKILLS_PATH, SPEC_CATALOG_PATH, SPEC_READ_PATH, SPEC_RESOLVE_SOURCE_PATH, SPEC_WATCH_PATH,
+    TASK_COMMIT_PATH, TASK_DIFF_COMMENT_REPLIES_PATH, TASK_DIFF_COMMENT_STATUS_PATH,
+    TASK_DIFF_COMMENTS_PATH, TASK_DIFF_PATH, TASK_PATH, TASK_PUSH_PATH, TASK_WORKSPACE_PATH,
+    TASKS_PATH, WORKFLOW_ACTIVATE_PATH, WORKFLOW_DRAFT_PATH, WORKFLOW_PATH, WORKFLOW_PUBLISH_PATH,
+    WORKFLOW_ROLLBACK_PATH, WORKFLOW_RUN_NODES_PATH, WORKFLOW_RUN_PATH, WORKFLOW_RUNS_PATH,
+    WORKFLOW_SNAPSHOT_PATH, WORKFLOW_VERSION_PATH, WORKFLOW_VERSIONS_PATH, WORKFLOWS_PATH,
+    WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::PropagateRequestIdLayer;
@@ -35,6 +47,7 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(projects::update_project)
                 .delete(projects::delete_project),
         )
+        .route(PROJECT_BRANCHES_PATH, get(projects::list_project_branches))
         // =============================================================================
         // projectWorkContext
         // =============================================================================
@@ -56,17 +69,49 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(tasks::update_task)
                 .delete(tasks::delete_task),
         )
+        .route(TASK_WORKSPACE_PATH, get(tasks::get_task_workspace))
+        // =============================================================================
+        // spec
+        // =============================================================================
+        .route(SPEC_CATALOG_PATH, post(specs::catalog))
+        .route(SPEC_READ_PATH, post(specs::read))
+        .route(SPEC_RESOLVE_SOURCE_PATH, post(specs::resolve_source))
+        .route(
+            PROJECT_SPEC_SOURCES_PATH,
+            axum::routing::put(specs::update_project_sources),
+        )
+        .route(SPEC_WATCH_PATH, post(specs::watch))
+        // =============================================================================
+        // taskDiff
+        // =============================================================================
+        .route(TASK_DIFF_PATH, get(task_diffs::get_task_diff))
+        .route(TASK_COMMIT_PATH, post(task_diffs::commit_task_changes))
+        .route(TASK_PUSH_PATH, post(task_diffs::push_task_branch))
+        .route(
+            TASK_DIFF_COMMENTS_PATH,
+            post(task_diffs::create_task_diff_comment).get(task_diffs::list_task_diff_comments),
+        )
+        .route(
+            TASK_DIFF_COMMENT_REPLIES_PATH,
+            post(task_diffs::reply_task_diff_comment),
+        )
+        .route(
+            TASK_DIFF_COMMENT_STATUS_PATH,
+            axum::routing::put(task_diffs::set_task_diff_comment_status),
+        )
         // =============================================================================
         // session
         // =============================================================================
-        .route(
-            SESSIONS_PATH,
-            post(sessions::create_session).get(sessions::list_sessions),
-        )
+        // The static warm path is registered before the identifier route so it is
+        // never captured as a session id.
+        .route(SESSION_WARM_PATH, post(sessions::warm_session))
+        .route(SESSIONS_PATH, get(sessions::list_sessions))
         .route(
             SESSION_PATH,
             get(sessions::get_session).delete(sessions::delete_session),
         )
+        .route(SESSION_CONFIG_PATH, post(sessions::set_session_config))
+        .route(SESSION_ATTACH_PATH, post(sessions::attach_session))
         .route(SESSION_LOAD_PATH, post(sessions::load_session))
         .route(SESSION_PROMPT_PATH, post(sessions::prompt_session))
         .route(
@@ -74,10 +119,21 @@ pub fn build_router(app_state: AppState) -> Router {
             post(sessions::respond_to_permission),
         )
         .route(SESSION_STOP_PATH, post(sessions::stop_session))
+        .route(
+            SESSION_SWITCH_AGENT_PATH,
+            post(sessions::switch_session_agent),
+        )
+        .route(
+            SESSION_RESUME_HISTORY_PATH,
+            post(sessions::resume_session_history),
+        )
         // =============================================================================
         // agentRuntime
         // =============================================================================
-        .route(AGENT_MODELS_PATH, get(sessions::list_agent_models))
+        .route(
+            AGENT_RUNTIME_STATUS_PATH,
+            get(sessions::get_agent_runtime_status),
+        )
         // =============================================================================
         // skill
         // =============================================================================
@@ -91,6 +147,7 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(skills::update_skill)
                 .delete(skills::delete_skill),
         )
+        .merge(skill_imports_router())
         // =============================================================================
         // agent
         // =============================================================================
@@ -104,18 +161,92 @@ pub fn build_router(app_state: AppState) -> Router {
                 .put(agents::update_agent)
                 .delete(agents::delete_agent),
         )
+        .route(
+            AGENT_IMPORT_PREPARE_PATH,
+            post(agents::prepare_agent_import),
+        )
+        .route(AGENT_IMPORT_COMMIT_PATH, post(agents::commit_agent_import))
         // =============================================================================
         // fileSystem
         // =============================================================================
         .route(FILE_SYSTEM_DIRECTORY_PATH, get(file_system::list_directory))
+        .route(
+            WORKSPACE_DIRECTORY_PATH,
+            post(workspace_files::list_directory),
+        )
+        .route(WORKSPACE_FILE_PATH, post(workspace_files::read_file))
+        .route(WORKSPACE_SEARCH_PATH, post(workspace_files::search))
+        .route(WORKSPACE_WATCH_PATH, get(workspace_files::watch))
         // =============================================================================
         // gitIdentity
         // =============================================================================
         .route(GIT_IDENTITY_PATH, get(git::get_identity))
+        // =============================================================================
+        // workflow
+        // =============================================================================
+        .route(
+            WORKFLOWS_PATH,
+            post(workflows::create_workflow).get(workflows::list_workflows),
+        )
+        .route(
+            WORKFLOW_PATH,
+            get(workflows::get_workflow)
+                .put(workflows::update_workflow)
+                .delete(workflows::delete_workflow),
+        )
+        .route(
+            WORKFLOW_DRAFT_PATH,
+            get(workflows::get_draft).put(workflows::update_draft),
+        )
+        .route(WORKFLOW_PUBLISH_PATH, post(workflows::publish_workflow))
+        .route(WORKFLOW_ROLLBACK_PATH, post(workflows::rollback_workflow))
+        .route(WORKFLOW_ACTIVATE_PATH, post(workflows::activate_workflow))
+        .route(WORKFLOW_VERSIONS_PATH, get(workflows::list_versions))
+        .route(
+            WORKFLOW_VERSION_PATH,
+            get(workflows::get_version).delete(workflows::delete_snapshot),
+        )
+        .route(
+            WORKFLOW_SNAPSHOT_PATH,
+            get(snapshots::get_workflow_snapshot),
+        )
+        // =============================================================================
+        // workflowRun
+        // =============================================================================
+        .route(
+            WORKFLOW_RUNS_PATH,
+            post(workflow_runs::create_workflow_run).get(workflow_runs::list_workflow_runs),
+        )
+        .route(
+            WORKFLOW_RUN_PATH,
+            get(workflow_runs::get_workflow_run).delete(workflow_runs::delete_workflow_run),
+        )
+        .route(
+            WORKFLOW_RUN_NODES_PATH,
+            get(workflow_runs::list_workflow_node_runs),
+        )
         .with_state(app_state)
         .layer(PropagateRequestIdLayer::new(crate::error::X_REQUEST_ID))
         .layer(middleware::from_fn(crate::error::request_context))
         .layer(CorsLayer::new().expose_headers([crate::error::X_REQUEST_ID]))
+}
+
+/// Builds the import endpoints with room for multipart framing over the 200 MiB file budget.
+fn skill_imports_router() -> Router<AppState> {
+    Router::new()
+        .route(
+            SKILL_IMPORTS_PATH,
+            post(skill_imports::prepare_skill_import),
+        )
+        .route(
+            SKILL_IMPORT_PATH,
+            get(skill_imports::get_skill_import).delete(skill_imports::cancel_skill_import),
+        )
+        .route(
+            SKILL_IMPORT_COMMIT_PATH,
+            post(skill_imports::commit_skill_import),
+        )
+        .layer(DefaultBodyLimit::max(201 * 1024 * 1024))
 }
 
 #[cfg(test)]
@@ -162,25 +293,29 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    /// Verifies model discovery remains successful when every test CLI is unavailable.
+    /// Verifies the static warm route is matched ahead of the session id route.
     ///
-    /// The real intention is to exercise the zero-CLI code path, but that depends on
-    /// the test machine having none of the three CLIs installed. Since developers'
-    /// machines differ, the assertion only validates the response shape (status + a
-    /// `groups` array) rather than asserting an exact empty payload. A proper
-    /// zero-CLI test would require injecting a discovery stub at the handler level.
+    /// `/api/sessions/warm` and `/api/sessions/{sessionId}` overlap, so a
+    /// regression in route order would silently turn every warm request into a
+    /// lookup for a session named "warm". Reaching the handler is the assertion:
+    /// warming itself needs a running agent CLI, which a test machine may lack.
     #[tokio::test]
-    async fn serves_partial_agent_model_results() {
+    async fn routes_warm_requests_past_the_session_identifier_route() {
         let (_temp_dir, _database_path, app) = test_router();
-        let response = request_empty(&app, Method::GET, "/api/agent-models").await;
-        let status = response.status();
-        let body = response_json(response).await;
+        let response = request_json(
+            &app,
+            Method::POST,
+            "/api/sessions/warm",
+            json!({
+                "target": { "type": "projectRoot", "projectId": "missing-project" },
+                "agentCli": "open_code",
+                "clientId": "client-1",
+            }),
+        )
+        .await;
 
-        assert_eq!(status, StatusCode::OK);
-        assert!(
-            body.get("groups").is_some_and(|g| g.is_array()),
-            "response must include a groups array"
-        );
+        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+        assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     /// Verifies readiness stays unavailable until bootstrap marks the state as ready.
@@ -715,6 +850,7 @@ mod tests {
                             "projectId": project_id,
                             "title": "Ship handlers",
                             "status": "todo",
+                            "baseBranch": "main",
                         })
                         .to_string(),
                     ))
@@ -730,6 +866,50 @@ mod tests {
             Some(task_id) => task_id.to_string(),
             None => panic!("response did not include a task id"),
         };
+        let workspace_response = request_empty(
+            &app,
+            Method::GET,
+            &format!("/api/tasks/{task_id}/workspace"),
+        )
+        .await;
+        assert_eq!(workspace_response.status(), StatusCode::OK);
+        let workspace = response_json(workspace_response).await["workspace"].clone();
+        assert_eq!(workspace["branchName"], format!("ora/{}", &task_id[..8]));
+        let worktree_root = std::path::PathBuf::from(
+            workspace["rootPath"]
+                .as_str()
+                .expect("workspace response must include a root"),
+        );
+        let worktree_source = worktree_root.join("docs").join("specs");
+        std::fs::create_dir_all(&worktree_source)
+            .unwrap_or_else(|error| panic!("failed to create worktree Spec source: {error}"));
+        std::fs::write(worktree_source.join("task.md"), "# Task Spec\n")
+            .unwrap_or_else(|error| panic!("failed to write worktree Spec: {error}"));
+        let task_catalog = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/catalog",
+            json!({ "target": { "kind": "task", "taskId": task_id } }),
+        )
+        .await;
+        assert_eq!(task_catalog.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(task_catalog).await["documents"][0]["relativePath"],
+            "docs/specs/task.md"
+        );
+        std::fs::remove_dir_all(worktree_root.join("docs"))
+            .unwrap_or_else(|error| panic!("failed to clean worktree Spec fixture: {error}"));
+        let branch_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/projects/{project_id}/branches"))
+                    .body(Body::empty())
+                    .unwrap_or_else(|error| panic!("failed to build request: {error}")),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("request failed: {error}"));
         let list_response = match app
             .clone()
             .oneshot(
@@ -807,6 +987,25 @@ mod tests {
                 "title": "Ship handlers",
                 "status": "todo",
                 "workspaceMode": "worktree",
+                "type": "default",
+                "workflowRunId": null,
+            })
+        );
+        assert_eq!(
+            response_json(branch_response).await,
+            json!({
+                "branches": [
+                    {
+                        "name": "main",
+                        "refName": "main",
+                        "displayName": "main",
+                    },
+                    {
+                        "name": format!("ora/{}", &task_id[..8]),
+                        "refName": format!("ora/{}", &task_id[..8]),
+                        "displayName": "Ship handlers",
+                    },
+                ],
             })
         );
         assert_eq!(
@@ -819,6 +1018,8 @@ mod tests {
                         "title": "Ship handlers",
                         "status": "todo",
                         "workspaceMode": "worktree",
+                        "type": "default",
+                        "workflowRunId": null,
                     },
                 ],
             })
@@ -832,6 +1033,8 @@ mod tests {
                     "title": "Ship handlers",
                     "status": "todo",
                     "workspaceMode": "worktree",
+                    "type": "default",
+                    "workflowRunId": null,
                 },
             })
         );
@@ -844,6 +1047,8 @@ mod tests {
                     "title": "Ship updated handlers",
                     "status": "doing",
                     "workspaceMode": "worktree",
+                    "type": "default",
+                    "workflowRunId": null,
                 },
             })
         );
@@ -858,6 +1063,199 @@ mod tests {
                 .find_worktree(&WorktreeId::new(worktree_id))
                 .unwrap(),
             None
+        );
+    }
+
+    /// Verifies Spec catalog, guarded reads, source resolution, and project-wide overrides share one HTTP contract.
+    #[tokio::test]
+    async fn serves_spec_management_routes() {
+        let (temp_dir, _database_path, app) = test_router();
+        let project_root = temp_dir.path().join("spec-project");
+        let source_root = project_root.join("docs").join("specs");
+        std::fs::create_dir_all(&source_root)
+            .unwrap_or_else(|error| panic!("failed to create Spec source: {error}"));
+        std::fs::write(source_root.join("design.md"), "# Design\n")
+            .unwrap_or_else(|error| panic!("failed to write Spec fixture: {error}"));
+        let project_id =
+            create_project(&app, "Spec project", &project_root.to_string_lossy()).await;
+        let target = json!({ "kind": "project", "projectId": project_id });
+        let project_root_task = request_json(
+            &app,
+            Method::POST,
+            "/api/tasks",
+            json!({
+                "projectId": project_id,
+                "title": "Read root Specs",
+                "status": "todo",
+                "workspaceMode": "project_root",
+            }),
+        )
+        .await;
+        assert_eq!(project_root_task.status(), StatusCode::OK);
+        let project_root_task_id = response_json(project_root_task).await["task"]["id"]
+            .as_str()
+            .expect("project-root task id")
+            .to_string();
+        let task_workspace = request_empty(
+            &app,
+            Method::GET,
+            &format!("/api/tasks/{project_root_task_id}/workspace"),
+        )
+        .await;
+        assert_eq!(task_workspace.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(task_workspace).await,
+            json!({
+                "workspace": {
+                    "rootPath": project_root,
+                },
+            })
+        );
+
+        let catalog = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/catalog",
+            json!({ "target": target.clone() }),
+        )
+        .await;
+        assert_eq!(catalog.status(), StatusCode::OK);
+        let catalog = response_json(catalog).await;
+        assert_eq!(catalog["truncated"], false);
+        assert_eq!(
+            catalog["documents"][0]["relativePath"],
+            "docs/specs/design.md"
+        );
+        assert_eq!(catalog["documents"][0]["sourceRelativePath"], "docs/specs");
+
+        let task_catalog = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/catalog",
+            json!({ "target": { "kind": "task", "taskId": project_root_task_id } }),
+        )
+        .await;
+        assert_eq!(task_catalog.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(task_catalog).await["documents"][0]["relativePath"],
+            "docs/specs/design.md"
+        );
+
+        let read = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/read",
+            json!({
+                "target": target.clone(),
+                "relativePath": "docs/specs/design.md",
+            }),
+        )
+        .await;
+        assert_eq!(read.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(read).await,
+            json!({
+                "relativePath": "docs/specs/design.md",
+                "content": "# Design\n",
+                "byteSize": 9,
+            })
+        );
+
+        let unauthorized_read = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/read",
+            json!({
+                "target": target.clone(),
+                "relativePath": "README.md",
+            }),
+        )
+        .await;
+        assert_eq!(unauthorized_read.status(), StatusCode::NOT_FOUND);
+        assert_contract_error(
+            &response_json(unauthorized_read).await,
+            "spec_document_not_found",
+        );
+
+        let resolved = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/resolve-source",
+            json!({
+                "target": target.clone(),
+                "absolutePath": source_root,
+            }),
+        )
+        .await;
+        assert_eq!(resolved.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(resolved).await,
+            json!({
+                "relativePath": "docs/specs",
+                "workflow": { "kind": "custom", "name": "Custom" },
+            })
+        );
+
+        let root_source = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/resolve-source",
+            json!({
+                "target": target.clone(),
+                "absolutePath": project_root,
+            }),
+        )
+        .await;
+        assert_eq!(root_source.status(), StatusCode::BAD_REQUEST);
+        assert_contract_error(
+            &response_json(root_source).await,
+            "spec_source_workspace_root",
+        );
+
+        let update = request_json(
+            &app,
+            Method::PUT,
+            &format!("/api/projects/{project_id}/spec-sources"),
+            json!({
+                "sources": [{
+                    "relativePath": "docs/specs",
+                    "workflow": { "kind": "custom", "name": "Custom" },
+                    "visibility": "disabled",
+                }, {
+                    "relativePath": "architecture/missing",
+                    "workflow": { "kind": "custom", "name": " Architecture " },
+                    "visibility": "enabled",
+                }],
+            }),
+        )
+        .await;
+        assert_eq!(update.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(update).await["sources"][0]["visibility"],
+            "disabled"
+        );
+
+        let disabled_catalog = request_json(
+            &app,
+            Method::POST,
+            "/api/specs/catalog",
+            json!({ "target": target }),
+        )
+        .await;
+        assert_eq!(disabled_catalog.status(), StatusCode::OK);
+        let disabled_catalog = response_json(disabled_catalog).await;
+        assert_eq!(disabled_catalog["documents"], json!([]));
+        assert!(
+            disabled_catalog["sources"]
+                .as_array()
+                .is_some_and(|sources| {
+                    sources.iter().any(|source| {
+                        source["relativePath"] == "architecture/missing"
+                            && source["workflow"]
+                                == json!({ "kind": "custom", "name": "Architecture" })
+                            && source["availability"] == "missing"
+                    })
+                })
         );
     }
 
@@ -920,7 +1318,7 @@ mod tests {
             &app,
             Method::POST,
             "/api/skills",
-            json!({ "name": " review / guide ", "description": "Reviews guides" }),
+            json!({ "name": " review-guide ", "description": "Reviews guides", "content": "# Original skill" }),
         )
         .await;
         assert_eq!(skill_create.status(), StatusCode::OK);
@@ -929,10 +1327,14 @@ mod tests {
             .as_str()
             .unwrap_or_else(|| panic!("response did not include a skill id"))
             .to_string();
-        assert_eq!(skill["skill"]["name"], "review / guide");
+        assert_eq!(skill["skill"]["name"], "review-guide");
         let skill_path = format!("/api/skills/{skill_id}");
         let skill_get = request_empty(&app, Method::GET, &skill_path).await;
         assert_eq!(skill_get.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(skill_get).await["skill"]["content"],
+            "# Original skill"
+        );
         let skill_list = request_empty(&app, Method::GET, "/api/skills").await;
         assert_eq!(skill_list.status(), StatusCode::OK);
         let skill_update = request_json(
@@ -947,14 +1349,41 @@ mod tests {
             response_json(skill_update).await,
             json!({ "skill": { "id": skill_id, "name": "reviewer", "description": "Reviews changes" } })
         );
+        let preserved_skill = request_empty(&app, Method::GET, &skill_path).await;
+        assert_eq!(
+            response_json(preserved_skill).await["skill"]["content"],
+            "# Original skill"
+        );
+        let skill_content_update = request_json(
+            &app,
+            Method::PUT,
+            &skill_path,
+            json!({ "name": "reviewer", "description": "Reviews changes", "content": "# Updated skill" }),
+        )
+        .await;
+        assert_eq!(skill_content_update.status(), StatusCode::OK);
+        let updated_skill = request_empty(&app, Method::GET, &skill_path).await;
+        assert_eq!(
+            response_json(updated_skill).await["skill"]["content"],
+            "# Updated skill"
+        );
         let duplicate_skill = request_json(
             &app,
             Method::POST,
             "/api/skills",
-            json!({ "name": "reviewer", "description": "Duplicate" }),
+            json!({ "name": "Reviewer", "description": "Duplicate" }),
         )
         .await;
-        assert_eq!(duplicate_skill.status(), StatusCode::OK);
+        assert_eq!(duplicate_skill.status(), StatusCode::CONFLICT);
+        assert_contract_error(&response_json(duplicate_skill).await, "skill_name_conflict");
+        let invalid_slug = request_json(
+            &app,
+            Method::POST,
+            "/api/skills",
+            json!({ "name": "bad/name", "description": "Invalid" }),
+        )
+        .await;
+        assert_eq!(invalid_slug.status(), StatusCode::BAD_REQUEST);
         let skill_delete = request_empty(&app, Method::DELETE, &skill_path).await;
         assert_eq!(skill_delete.status(), StatusCode::OK);
         assert_eq!(
@@ -977,7 +1406,7 @@ mod tests {
             &app,
             Method::POST,
             "/api/agents",
-            json!({ "name": "opencode", "description": "OpenCode" }),
+            json!({ "name": "opencode", "description": "OpenCode", "content": "# Original agent" }),
         )
         .await;
         assert_eq!(agent_create.status(), StatusCode::OK);
@@ -993,9 +1422,11 @@ mod tests {
                 .status(),
             StatusCode::OK
         );
+        let agent_get = request_empty(&app, Method::GET, &agent_path).await;
+        assert_eq!(agent_get.status(), StatusCode::OK);
         assert_eq!(
-            request_empty(&app, Method::GET, &agent_path).await.status(),
-            StatusCode::OK
+            response_json(agent_get).await["agent"]["content"],
+            "# Original agent"
         );
         let agent_update = request_json(
             &app,
@@ -1005,6 +1436,58 @@ mod tests {
         )
         .await;
         assert_eq!(agent_update.status(), StatusCode::OK);
+        let preserved_agent = request_empty(&app, Method::GET, &agent_path).await;
+        assert_eq!(
+            response_json(preserved_agent).await["agent"]["content"],
+            "# Original agent"
+        );
+        let agent_content_update = request_json(
+            &app,
+            Method::PUT,
+            &agent_path,
+            json!({ "name": "review-agent", "description": "Reviews changes", "content": "# Updated agent" }),
+        )
+        .await;
+        assert_eq!(agent_content_update.status(), StatusCode::OK);
+        let updated_agent = request_empty(&app, Method::GET, &agent_path).await;
+        assert_eq!(
+            response_json(updated_agent).await["agent"]["content"],
+            "# Updated agent"
+        );
+        let duplicate_agent = request_json(
+            &app,
+            Method::POST,
+            "/api/agents",
+            json!({ "name": " Review-Agent ", "description": "Duplicate" }),
+        )
+        .await;
+        assert_eq!(duplicate_agent.status(), StatusCode::CONFLICT);
+        assert_contract_error(&response_json(duplicate_agent).await, "agent_name_conflict");
+        let second_agent = response_json(
+            request_json(
+                &app,
+                Method::POST,
+                "/api/agents",
+                json!({ "name": "writer", "description": "Writes changes" }),
+            )
+            .await,
+        )
+        .await;
+        let second_agent_id = second_agent["agent"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("response did not include a second agent id"));
+        let conflicting_rename = request_json(
+            &app,
+            Method::PUT,
+            &format!("/api/agents/{second_agent_id}"),
+            json!({ "name": "REVIEW-AGENT", "description": "Duplicate" }),
+        )
+        .await;
+        assert_eq!(conflicting_rename.status(), StatusCode::CONFLICT);
+        assert_contract_error(
+            &response_json(conflicting_rename).await,
+            "agent_name_conflict",
+        );
         assert_eq!(
             request_empty(&app, Method::DELETE, &agent_path)
                 .await
@@ -1026,6 +1509,257 @@ mod tests {
             .status(),
             StatusCode::BAD_REQUEST
         );
+    }
+
+    /// Verifies the router supports workflow definition CRUD, publish, versions, and snapshot-by-id.
+    #[tokio::test]
+    async fn serves_workflow_definition_routes() {
+        let (_temp_dir, _database_path, app) = test_router();
+
+        let create_response = request_json(
+            &app,
+            Method::POST,
+            "/api/workflows",
+            json!({
+                "name": "Review flow",
+                "graph": "{\"nodes\":[]}",
+            }),
+        )
+        .await;
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let workflow_id = response_json(create_response).await["workflow"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("response did not include a workflow id"))
+            .to_string();
+        let workflow_path = format!("/api/workflows/{workflow_id}");
+
+        let list_response = request_empty(&app, Method::GET, "/api/workflows").await;
+        assert_eq!(list_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(list_response).await["workflows"][0]["name"],
+            json!("Review flow")
+        );
+
+        let get_response = request_empty(&app, Method::GET, &workflow_path).await;
+        assert_eq!(get_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(get_response).await["workflow"]["name"],
+            json!("Review flow")
+        );
+
+        let draft_path = format!("{workflow_path}/draft");
+        let update_draft = request_json(
+            &app,
+            Method::PUT,
+            &draft_path,
+            json!({ "graph": "{\"nodes\":[{\"id\":\"start\"}]}" }),
+        )
+        .await;
+        assert_eq!(update_draft.status(), StatusCode::OK);
+        let get_draft = request_empty(&app, Method::GET, &draft_path).await;
+        assert_eq!(get_draft.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(get_draft).await["snapshot"]["graph"],
+            json!("{\"nodes\":[{\"id\":\"start\"}]}")
+        );
+
+        let publish_response = request_json(
+            &app,
+            Method::POST,
+            &format!("{workflow_path}/publish"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(publish_response.status(), StatusCode::OK);
+        let published = response_json(publish_response).await;
+        let snapshot_id = published["snapshot"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("publish response did not include a snapshot id"))
+            .to_string();
+        let version = published["snapshot"]["version"]
+            .as_str()
+            .unwrap_or_else(|| panic!("publish response did not include a version"))
+            .to_string();
+
+        let versions_response =
+            request_empty(&app, Method::GET, &format!("{workflow_path}/versions")).await;
+        assert_eq!(versions_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(versions_response).await["versions"][0]["version"],
+            json!(version)
+        );
+
+        let snapshot_response = request_empty(
+            &app,
+            Method::GET,
+            &format!("/api/workflow-snapshots/{snapshot_id}"),
+        )
+        .await;
+        assert_eq!(snapshot_response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(snapshot_response).await["snapshot"]["id"],
+            json!(snapshot_id)
+        );
+    }
+
+    /// Verifies the router supports workflow-run create, list scopes, get, and delete.
+    #[tokio::test]
+    async fn serves_workflow_run_routes() {
+        let (temp_dir, _database_path, app) = test_router();
+        let project_root = temp_dir.path().join("repo").to_string_lossy().to_string();
+        let project_id = create_project(&app, "Run project", &project_root).await;
+
+        let create_workflow = request_json(
+            &app,
+            Method::POST,
+            "/api/workflows",
+            json!({ "name": "Run flow", "graph": "{\"nodes\":[]}" }),
+        )
+        .await;
+        let workflow_id = response_json(create_workflow).await["workflow"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("create workflow response did not include an id"))
+            .to_string();
+        let publish_response = request_json(
+            &app,
+            Method::POST,
+            &format!("/api/workflows/{workflow_id}/publish"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(publish_response.status(), StatusCode::OK);
+
+        let create_run = request_json(
+            &app,
+            Method::POST,
+            "/api/workflow-runs",
+            json!({
+                "projectId": project_id,
+                "workflowId": workflow_id,
+                "name": "First run",
+            }),
+        )
+        .await;
+        assert_eq!(create_run.status(), StatusCode::OK);
+        let run_id = response_json(create_run).await["run"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("create run response did not include an id"))
+            .to_string();
+
+        let by_project = request_empty(
+            &app,
+            Method::GET,
+            &format!("/api/workflow-runs?projectId={project_id}"),
+        )
+        .await;
+        assert_eq!(
+            response_json(by_project).await["runs"][0]["id"],
+            json!(run_id)
+        );
+        let by_workflow = request_empty(
+            &app,
+            Method::GET,
+            &format!("/api/workflow-runs?workflowId={workflow_id}"),
+        )
+        .await;
+        assert_eq!(
+            response_json(by_workflow).await["runs"][0]["id"],
+            json!(run_id)
+        );
+
+        let run_path = format!("/api/workflow-runs/{run_id}");
+        let get_run = request_empty(&app, Method::GET, &run_path).await;
+        assert_eq!(get_run.status(), StatusCode::OK);
+        let run_detail = response_json(get_run).await;
+        assert_eq!(run_detail["name"], json!("First run"));
+        assert!(run_detail["taskId"].as_str().is_some());
+
+        let delete_run = request_empty(&app, Method::DELETE, &run_path).await;
+        assert_eq!(delete_run.status(), StatusCode::OK);
+        assert_eq!(response_json(delete_run).await["runId"], json!(run_id));
+    }
+
+    /// Verifies one Markdown document is sent as JSON, imported, read back, and conflict-skipped.
+    #[tokio::test]
+    async fn imports_agent_markdown_through_json_routes() {
+        let (_temp_dir, _database_path, app) = test_router();
+        let markdown =
+            "---\nname: review-agent\ndescription: Reviews changes\n---\nReview changes.\n";
+
+        let prepare = request_json(
+            &app,
+            Method::POST,
+            "/api/agent-imports/prepare",
+            json!({ "content": markdown }),
+        )
+        .await;
+        assert_eq!(prepare.status(), StatusCode::OK);
+        let candidate = response_json(prepare).await;
+        assert_eq!(candidate["candidate"]["status"], "ready");
+        assert_eq!(candidate["candidate"]["name"], "review-agent");
+        assert_eq!(candidate["candidate"]["existingAgent"], Value::Null);
+
+        let commit = request_json(
+            &app,
+            Method::POST,
+            "/api/agent-imports/commit",
+            json!({
+                "content": markdown,
+                "decision": null,
+                "expectedAgentId": null,
+                "expectedUpdatedAt": null,
+            }),
+        )
+        .await;
+        assert_eq!(commit.status(), StatusCode::OK);
+        let imported = response_json(commit).await;
+        assert_eq!(imported["status"], "imported");
+        let agent_id = imported["agent"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("import response did not include an agent id"));
+        let details = response_json(
+            request_empty(&app, Method::GET, &format!("/api/agents/{agent_id}")).await,
+        )
+        .await;
+        assert_eq!(details["agent"]["content"], "Review changes.");
+
+        let conflict = response_json(
+            request_json(
+                &app,
+                Method::POST,
+                "/api/agent-imports/prepare",
+                json!({ "content": markdown }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(conflict["candidate"]["status"], "conflict");
+        assert_eq!(conflict["candidate"]["existingAgent"]["agentId"], agent_id);
+        let skipped = response_json(
+            request_json(
+                &app,
+                Method::POST,
+                "/api/agent-imports/commit",
+                json!({
+                    "content": markdown,
+                    "decision": "skip",
+                    "expectedAgentId": agent_id,
+                    "expectedUpdatedAt": conflict["candidate"]["existingAgent"]["updatedAt"],
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(skipped, json!({ "status": "skipped", "agent": null }));
+
+        let invalid = request_json(
+            &app,
+            Method::POST,
+            "/api/agent-imports/prepare",
+            json!({ "content": "# Missing frontmatter" }),
+        )
+        .await;
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
     }
 
     /// Sends one JSON request to the router under test.

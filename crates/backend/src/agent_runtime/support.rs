@@ -1,15 +1,16 @@
 use crate::{BackendError, ErrorClassification};
 use ora_acp::AcpClient;
 use ora_contracts::acp::permission::{
-    PermissionOptionId, RequestPermissionOutcome, RequestPermissionResponse,
-    SelectedPermissionOutcome,
+    PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
+    RequestPermissionResponse, SelectedPermissionOutcome,
 };
 use ora_contracts::{
     AgentCli as ContractAgentCli, RespondToPermissionRequest, RespondToPermissionResponse,
-    Session as ContractSession, SessionStatus as ContractSessionStatus,
+    Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
+    SessionStatus as ContractSessionStatus,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_domain::{AgentCli, Session, SessionStatus};
+use ora_domain::{AgentCli, HistoryState, Session, SessionStatus};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::process::ChildStdin;
@@ -45,6 +46,21 @@ pub(super) async fn respond_permission(
     Ok(RespondToPermissionResponse {})
 }
 
+/// Picks the option an unattended approval should select from an agent's offered options.
+///
+/// Prefers `AllowAlways` so later, similar calls in the same turn are also covered; falls back
+/// to `AllowOnce` when the agent did not offer a remembered-choice option.
+pub(super) fn pick_auto_allow_option(options: &[PermissionOption]) -> Option<&PermissionOption> {
+    options
+        .iter()
+        .find(|option| option.kind == PermissionOptionKind::AllowAlways)
+        .or_else(|| {
+            options
+                .iter()
+                .find(|option| option.kind == PermissionOptionKind::AllowOnce)
+        })
+}
+
 /// Maps a private domain session into its frontend-safe view.
 pub(super) fn contract_session(session: Session) -> ContractSession {
     ContractSession {
@@ -55,6 +71,10 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
             SessionStatus::Running => ContractSessionStatus::Running,
             SessionStatus::Stopped => ContractSessionStatus::Stopped,
         },
+        history_state: match session.history_state {
+            HistoryState::Writable => ContractSessionHistoryState::Writable,
+            HistoryState::Degraded { reason } => ContractSessionHistoryState::Degraded { reason },
+        },
     }
 }
 
@@ -64,6 +84,19 @@ pub(super) fn contract_agent_cli(agent_cli: AgentCli) -> ContractAgentCli {
         AgentCli::OpenCode => ContractAgentCli::OpenCode,
         AgentCli::Nga => ContractAgentCli::Nga,
         AgentCli::CodeAgentCli => ContractAgentCli::CodeAgentCli,
+        AgentCli::Claude => ContractAgentCli::Claude,
+        AgentCli::Codex => ContractAgentCli::Codex,
+    }
+}
+
+/// Maps the transport CLI identity into its stable persisted form.
+pub(super) fn domain_agent_cli(agent_cli: ContractAgentCli) -> AgentCli {
+    match agent_cli {
+        ContractAgentCli::OpenCode => AgentCli::OpenCode,
+        ContractAgentCli::Nga => AgentCli::Nga,
+        ContractAgentCli::CodeAgentCli => AgentCli::CodeAgentCli,
+        ContractAgentCli::Claude => AgentCli::Claude,
+        ContractAgentCli::Codex => AgentCli::Codex,
     }
 }
 
@@ -116,6 +149,8 @@ pub(super) fn resolve_agent_cli_path(
         AgentCli::OpenCode => ".opencode",
         AgentCli::Nga => ".nga",
         AgentCli::CodeAgentCli => ".codeagentcli",
+        AgentCli::Claude => ".claude",
+        AgentCli::Codex => ".codex",
     };
     Ok(home_directory
         .join(installation_directory)
@@ -199,10 +234,86 @@ pub(super) fn runtime_internal(code: &'static str, message: impl Into<String>) -
             ErrorClassification::Internal,
             PublicError::AgentRuntimeUnavailable(EmptyErrorParams {}),
         ),
+        "session_history_unreadable" => (
+            ErrorClassification::Conflict,
+            PublicError::SessionHistoryDegraded(EmptyErrorParams {}),
+        ),
         _ => (
             ErrorClassification::Internal,
             PublicError::InternalError(EmptyErrorParams {}),
         ),
     };
     BackendError::new(classification, public_error, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pick_auto_allow_option, runtime_internal};
+    use crate::ErrorClassification;
+    use ora_contracts::acp::permission::{PermissionOption, PermissionOptionKind};
+    use ora_contracts::{EmptyErrorParams, PublicError};
+    use pretty_assertions::assert_eq;
+
+    /// Keeps unreadable session history on the same typed recovery path as a failed write.
+    #[test]
+    fn maps_unreadable_session_history_to_degraded_error() {
+        let error = runtime_internal(
+            "session_history_unreadable",
+            "session history could not be read",
+        );
+
+        assert_eq!(error.classification(), ErrorClassification::Conflict);
+        assert_eq!(
+            error.public_error(),
+            &PublicError::SessionHistoryDegraded(EmptyErrorParams {})
+        );
+    }
+
+    /// Prefers the remembered-choice option so later, similar calls stay unattended too.
+    #[test]
+    fn prefers_allow_always_over_allow_once() {
+        let allow_once =
+            PermissionOption::new("allow-once", "Allow once", PermissionOptionKind::AllowOnce);
+        let allow_always = PermissionOption::new(
+            "allow-always",
+            "Allow always",
+            PermissionOptionKind::AllowAlways,
+        );
+        let options = vec![allow_once, allow_always.clone()];
+
+        assert_eq!(pick_auto_allow_option(&options), Some(&allow_always));
+    }
+
+    /// Falls back to a one-time allow when the agent offered no remembered-choice option.
+    #[test]
+    fn falls_back_to_allow_once_without_allow_always() {
+        let allow_once =
+            PermissionOption::new("allow-once", "Allow once", PermissionOptionKind::AllowOnce);
+        let reject_once = PermissionOption::new(
+            "reject-once",
+            "Reject once",
+            PermissionOptionKind::RejectOnce,
+        );
+        let options = vec![reject_once, allow_once.clone()];
+
+        assert_eq!(pick_auto_allow_option(&options), Some(&allow_once));
+    }
+
+    /// Reports no selectable option when the agent offered only rejections.
+    #[test]
+    fn returns_none_without_any_allow_option() {
+        let reject_once = PermissionOption::new(
+            "reject-once",
+            "Reject once",
+            PermissionOptionKind::RejectOnce,
+        );
+        let reject_always = PermissionOption::new(
+            "reject-always",
+            "Reject always",
+            PermissionOptionKind::RejectAlways,
+        );
+        let options = vec![reject_once, reject_always];
+
+        assert_eq!(pick_auto_allow_option(&options), None);
+    }
 }

@@ -34,7 +34,13 @@ static QUOTED_VALUE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap_or_else(|error| panic!("invalid built-in quoted value pattern: {error}"))
 });
 
-/// Contains the bounded and sanitized representation of a complete in-memory error chain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReportRendering {
+    Unrestricted,
+    Sanitized,
+}
+
+/// Contains a build-appropriate representation of a complete in-memory error chain.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ErrorReport {
     message: String,
@@ -43,21 +49,36 @@ pub struct ErrorReport {
 }
 
 impl ErrorReport {
-    /// Traverses an error chain once and prepares fields safe for structured runtime logging.
+    /// Preserves complete diagnostics in debug builds and sanitizes release-build log fields.
     pub fn from_error(error: &(dyn Error + 'static)) -> Self {
+        let rendering = if cfg!(debug_assertions) {
+            ReportRendering::Unrestricted
+        } else {
+            ReportRendering::Sanitized
+        };
+        Self::render(error, rendering)
+    }
+
+    /// Traverses an error chain using an explicit rendering policy so both modes stay testable.
+    fn render(error: &(dyn Error + 'static), rendering: ReportRendering) -> Self {
         let mut nodes = Vec::new();
         let mut current = Some(error);
         let mut chain_depth = 0;
 
         while let Some(node) = current {
             chain_depth += 1;
-            if nodes.len() < MAX_CHAIN_DEPTH {
-                nodes.push(sanitize_node(&node.to_string()));
+            match rendering {
+                ReportRendering::Unrestricted => nodes.push(node.to_string()),
+                ReportRendering::Sanitized => {
+                    if nodes.len() < MAX_CHAIN_DEPTH {
+                        nodes.push(sanitize_node(&node.to_string()));
+                    }
+                }
             }
             current = node.source();
         }
 
-        if chain_depth > MAX_CHAIN_DEPTH {
+        if rendering == ReportRendering::Sanitized && chain_depth > MAX_CHAIN_DEPTH {
             nodes.push(TRUNCATED.to_string());
         }
 
@@ -65,7 +86,10 @@ impl ErrorReport {
             .first()
             .cloned()
             .unwrap_or_else(|| "unknown error".to_string());
-        let chain = truncate_chars(&nodes.join(" <- "), MAX_CHAIN_CHARS);
+        let chain = match rendering {
+            ReportRendering::Unrestricted => nodes.join(" <- "),
+            ReportRendering::Sanitized => truncate_chars(&nodes.join(" <- "), MAX_CHAIN_CHARS),
+        };
 
         Self {
             message,
@@ -74,12 +98,12 @@ impl ErrorReport {
         }
     }
 
-    /// Returns the sanitized top-level semantic context.
+    /// Returns the top-level semantic context rendered for the active build mode.
     pub fn message(&self) -> &str {
         &self.message
     }
 
-    /// Returns the single-line, root-to-source diagnostic chain.
+    /// Returns the root-to-source diagnostic chain rendered for the active build mode.
     pub fn chain(&self) -> &str {
         &self.chain
     }
@@ -125,7 +149,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::ErrorReport;
+    use super::{ErrorReport, ReportRendering};
     use pretty_assertions::assert_eq;
     use thiserror::Error;
 
@@ -142,12 +166,30 @@ mod tests {
 
     #[test]
     fn renders_a_single_line_chain_and_redacts_secrets() {
-        let report = ErrorReport::from_error(&ContextError { source: RootError });
+        let report = ErrorReport::render(
+            &ContextError { source: RootError },
+            ReportRendering::Sanitized,
+        );
 
         assert_eq!(report.message(), "failed to persist task");
         assert_eq!(
             report.chain(),
             "failed to persist task <- database is locked; token=[REDACTED]"
+        );
+        assert_eq!(report.chain_depth(), 2);
+    }
+
+    #[test]
+    fn preserves_original_error_chain_when_rendering_is_unrestricted() {
+        let report = ErrorReport::render(
+            &ContextError { source: RootError },
+            ReportRendering::Unrestricted,
+        );
+
+        assert_eq!(report.message(), "failed\nto persist task");
+        assert_eq!(
+            report.chain(),
+            "failed\nto persist task <- database is locked; token=super-secret"
         );
         assert_eq!(report.chain_depth(), 2);
     }
@@ -160,7 +202,7 @@ mod tests {
 
     #[test]
     fn redacts_paths_remotes_and_quoted_values() {
-        let report = ErrorReport::from_error(&SensitiveExternalError);
+        let report = ErrorReport::render(&SensitiveExternalError, ReportRendering::Sanitized);
 
         assert!(!report.chain().contains("alice"));
         assert!(!report.chain().contains("example.com"));
@@ -176,9 +218,33 @@ mod tests {
 
     #[test]
     fn marks_oversized_nodes_as_truncated() {
-        let report = ErrorReport::from_error(&LongExternalError);
+        let report = ErrorReport::render(&LongExternalError, ReportRendering::Sanitized);
 
         assert!(report.chain().ends_with("[truncated]"));
         assert!(report.chain().chars().count() <= 512);
+    }
+
+    #[test]
+    fn preserves_oversized_nodes_when_rendering_is_unrestricted() {
+        let report = ErrorReport::render(&LongExternalError, ReportRendering::Unrestricted);
+        let expected = "x".repeat(2_000);
+
+        assert_eq!(report.message(), expected);
+        assert_eq!(report.chain(), expected);
+    }
+
+    #[test]
+    fn uses_build_appropriate_rendering() {
+        let report = ErrorReport::from_error(&ContextError { source: RootError });
+        let rendering = if cfg!(debug_assertions) {
+            ReportRendering::Unrestricted
+        } else {
+            ReportRendering::Sanitized
+        };
+
+        assert_eq!(
+            report,
+            ErrorReport::render(&ContextError { source: RootError }, rendering)
+        );
     }
 }

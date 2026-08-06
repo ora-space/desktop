@@ -116,15 +116,24 @@ where
         &self,
         request: CreateTaskRequest,
     ) -> Result<CreateTaskResponse, ApplicationError> {
+        let base_reference_name = request
+            .base_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+            .ok_or(ApplicationError::TaskBaseBranchRequired)?
+            .to_string();
         self.worktree_provisioner
             .validate_repository()
             .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
         let task_id = self.select_available_task_id()?;
         let branch_name = branch_name_for_task(&task_id);
         let worktree_path = worktree_path_for_task(&self.work_dir, &task_id);
-        self.worktree_provisioner
+        let provisioned_worktree = self
+            .worktree_provisioner
             .create_task_worktree(CreateTaskWorktreeRequest {
                 branch_name: branch_name.clone(),
+                base_reference_name,
                 worktree_path,
             })
             .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
@@ -135,6 +144,14 @@ where
             worktree_id,
             task_id.clone(),
             Some(branch_name.clone()),
+            ora_domain::WorktreeBaseline::recorded(provisioned_worktree.base_commit_id).map_err(
+                |error| ApplicationError::TaskWorktreeProvisioner {
+                    source: crate::TaskWorktreeProvisionerError::operation_failed(
+                        "failed to record task worktree baseline",
+                        error,
+                    ),
+                },
+            )?,
             DomainWorktreeActivity::Active,
             AuditFields::new(now, now, false),
         );
@@ -369,18 +386,22 @@ where
             }
         };
 
-        let task = DomainTask::new(
-            task_id,
-            existing_task.project_id,
-            request.title,
-            map_contract_task_status(request.status),
-            existing_task.worktree_id,
-            AuditFields::new(
+        let task = DomainTask {
+            id: task_id,
+            project_id: existing_task.project_id,
+            title: request.title,
+            status: map_contract_task_status(request.status),
+            // Preserve the task kind and run association: updating a workflow-run task must not
+            // degrade it to a Default task, just as the owned worktree is carried forward.
+            task_type: existing_task.task_type,
+            workflow_run_id: existing_task.workflow_run_id,
+            worktree_id: existing_task.worktree_id,
+            audit_fields: AuditFields::new(
                 existing_task.audit_fields.created_at,
                 self.clock.now_timestamp_millis(),
                 existing_task.audit_fields.is_deleted,
             ),
-        );
+        };
         let task = self
             .repository
             .update_task(task)

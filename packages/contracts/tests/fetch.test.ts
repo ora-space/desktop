@@ -24,6 +24,7 @@ test("resolves paths against an absolute server base", () => {
 test("decodes known, unknown, and malformed remote payloads", () => {
   const requestId = "550e8400-e29b-41d4-a716-446655440000";
   assert.ok(decodeRemoteError({ code: "project_not_found", params: {}, requestId }, 404) instanceof RemoteContractError);
+  assert.ok(decodeRemoteError({ code: "agent_name_conflict", params: {}, requestId }, 409) instanceof RemoteContractError);
   assert.ok(decodeRemoteError({ code: "future_error", params: {}, requestId }, 500) instanceof UnknownRemoteError);
   assert.ok(decodeRemoteError({ code: "project_not_found", params: {} }, 404) instanceof LocalTransportError);
 });
@@ -148,8 +149,8 @@ test("surfaces a typed stream error frame and aborts the underlying fetch lifecy
 
   await assert.rejects(
     async () => {
-      for await (const _event of stream) {
-        assert.fail("error-only stream must not yield data");
+      for await (const event of stream) {
+        assert.fail(`error-only stream yielded data: ${JSON.stringify(event)}`);
       }
     },
     (error: unknown) => error instanceof RemoteContractError && error.code === "session_busy",

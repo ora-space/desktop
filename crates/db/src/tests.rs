@@ -45,13 +45,19 @@ fn bootstraps_empty_database_with_default_catalog() {
             "agents".to_string(),
             "artifacts".to_string(),
             "migrations".to_string(),
+            "project_spec_source_overrides".to_string(),
             "project_work_contexts".to_string(),
             "projects".to_string(),
             "sessions".to_string(),
             "skills".to_string(),
+            "task_diff_comments".to_string(),
             "tasks".to_string(),
             "virtual_entries".to_string(),
             "virtual_folders".to_string(),
+            "workflow_node_runs".to_string(),
+            "workflow_runs".to_string(),
+            "workflow_snapshots".to_string(),
+            "workflows".to_string(),
             "worktrees".to_string(),
         ]
     );
@@ -61,7 +67,51 @@ fn bootstraps_empty_database_with_default_catalog() {
             AppliedMigration::new("0001", 1_700_000_000_000),
             AppliedMigration::new("0002", 1_700_000_000_000),
             AppliedMigration::new("0003", 1_700_000_000_000),
+            AppliedMigration::new("0004", 1_700_000_000_000),
+            AppliedMigration::new("0005", 1_700_000_000_000),
+            AppliedMigration::new("0006", 1_700_000_000_000),
+            AppliedMigration::new("0007", 1_700_000_000_000),
+            AppliedMigration::new("0008", 1_700_000_000_000),
         ]
+    );
+}
+
+/// Verifies the session history column is installed by the catalog and rolled back with it.
+#[test]
+fn manages_session_history_state_column_lifecycle() {
+    let temp_dir = TempDir::new().unwrap();
+    let database_path = temp_dir.path().join("session-history.sqlite3");
+    let catalog = default_migration_catalog().unwrap();
+    let migrations = [
+        "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008",
+    ]
+    .map(|version| {
+        catalog
+            .migration(version)
+            .cloned()
+            .unwrap_or_else(|| panic!("missing migration {version}"))
+    });
+
+    bootstrap_file_database(&database_path, catalog, 1_700_000_000_000);
+
+    let connection = Connection::open(&database_path).unwrap();
+    assert!(
+        load_table_column_names(&connection, "sessions")
+            .contains(&"history_degraded_reason".to_string())
+    );
+    drop(connection);
+
+    let rolled_back = MigrationCatalog::with_target_versions(
+        migrations.to_vec(),
+        vec!["0001", "0002", "0003", "0004"],
+    )
+    .unwrap();
+    bootstrap_file_database(&database_path, rolled_back, 1_700_000_000_100);
+
+    let connection = Connection::open(&database_path).unwrap();
+    assert!(
+        !load_table_column_names(&connection, "sessions")
+            .contains(&"history_degraded_reason".to_string())
     );
 }
 
@@ -71,7 +121,10 @@ fn manages_skill_and_agent_definition_schema_lifecycle() {
     let temp_dir = TempDir::new().unwrap();
     let database_path = temp_dir.path().join("skill-agent.sqlite3");
     let catalog = default_migration_catalog().unwrap();
-    let migrations = ["0001", "0002", "0003"].map(|version| {
+    let migrations = [
+        "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008",
+    ]
+    .map(|version| {
         catalog
             .migration(version)
             .cloned()
@@ -82,16 +135,20 @@ fn manages_skill_and_agent_definition_schema_lifecycle() {
 
     let connection = Connection::open(&database_path).unwrap();
     for table_name in ["skills", "agents"] {
+        let mut expected_columns = vec![
+            "id".to_string(),
+            "name".to_string(),
+            "description".to_string(),
+            "created_at".to_string(),
+            "updated_at".to_string(),
+            "is_deleted".to_string(),
+        ];
+        if table_name == "agents" {
+            expected_columns.push("content".to_string());
+        }
         assert_eq!(
             load_table_column_names(&connection, table_name),
-            vec![
-                "id".to_string(),
-                "name".to_string(),
-                "description".to_string(),
-                "created_at".to_string(),
-                "updated_at".to_string(),
-                "is_deleted".to_string(),
-            ]
+            expected_columns
         );
 
         connection

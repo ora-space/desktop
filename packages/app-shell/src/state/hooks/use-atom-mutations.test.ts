@@ -48,7 +48,7 @@ describe("useCreateAgent", () => {
     const mutation = renderHookWithClient(() => useCreateAgent(), client, agents.queryClient);
 
     await waitFor(() => expect(agents.result.current.isSuccess).toBe(true));
-    mutation.result.current.mutate({ name: "New Agent", description: "desc" });
+    mutation.result.current.mutate({ name: "New Agent", description: "desc", content: "# Agent" });
     await waitFor(() => expect(mutation.result.current.isSuccess).toBe(true));
 
     expect(state.agents).toHaveLength(1);
@@ -67,7 +67,7 @@ describe("useUpdateAgent", () => {
     const mutation = renderHookWithClient(() => useUpdateAgent(), client, agents.queryClient);
 
     await waitFor(() => expect(agents.result.current.isSuccess).toBe(true));
-    mutation.result.current.mutate({ agent: AGENT_A, name: "Renamed", description: "new desc" });
+    mutation.result.current.mutate({ agent: AGENT_A, name: "Renamed", description: "new desc", content: "# Updated agent" });
     await waitFor(() => expect(mutation.result.current.isSuccess).toBe(true));
 
     expect(state.agents[0]).toEqual({ id: "a1", name: "Renamed", description: "new desc" });
@@ -98,7 +98,7 @@ describe("useCreateSkill", () => {
     const mutation = renderHookWithClient(() => useCreateSkill(), client, skills.queryClient);
 
     await waitFor(() => expect(skills.result.current.isSuccess).toBe(true));
-    mutation.result.current.mutate({ name: "New Skill", description: "desc" });
+    mutation.result.current.mutate({ name: "New Skill", description: "desc", content: "# Skill" });
     await waitFor(() => expect(mutation.result.current.isSuccess).toBe(true));
 
     expect(state.skills).toHaveLength(1);
@@ -117,7 +117,7 @@ describe("useUpdateSkill", () => {
     const mutation = renderHookWithClient(() => useUpdateSkill(), client, skills.queryClient);
 
     await waitFor(() => expect(skills.result.current.isSuccess).toBe(true));
-    mutation.result.current.mutate({ skill: SKILL_X, name: "Renamed", description: "new desc" });
+    mutation.result.current.mutate({ skill: SKILL_X, name: "Renamed", description: "new desc", content: "# Updated skill" });
     await waitFor(() => expect(mutation.result.current.isSuccess).toBe(true));
 
     expect(state.skills[0]).toEqual({ id: "sk1", name: "Renamed", description: "new desc" });

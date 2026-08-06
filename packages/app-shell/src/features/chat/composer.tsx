@@ -18,8 +18,10 @@ import {
   type ComposerAction,
   type ComposerActionGroup,
 } from "./composer-actions";
+import { useComposerFileContextStore } from "../../state/stores/composer-file-context-store";
 
 interface ComposerProps {
+  taskId?: string;
   onSend: (text: string, images?: acp.ImageContent[]) => void;
   /**
    * Invoked when Enter (or send) is pressed with an empty input. Used in Spec mode
@@ -60,6 +62,7 @@ const MAX_TOTAL_IMAGE_BYTES = 10 * 1024 * 1024;
  * textarea auto-grows up to a max height.
  */
 export function Composer({
+  taskId,
   onSend,
   onEmptySubmit,
   onStop,
@@ -85,6 +88,35 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const actionOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const actionMenuId = useId();
+  const pendingFileContext = useComposerFileContextStore((state) =>
+    taskId === undefined ? undefined : state.pendingByTask[taskId],
+  );
+  const consumeFileContext = useComposerFileContextStore((state) => state.consumeSelections);
+  const lastInjectedRequestId = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (
+      taskId === undefined
+      || pendingFileContext === undefined
+      || pendingFileContext.id === lastInjectedRequestId.current
+    ) {
+      return;
+    }
+
+    lastInjectedRequestId.current = pendingFileContext.id;
+    const context = [
+      t("chat.selectedFileLines"),
+      ...pendingFileContext.selections.map(({ path, startLine, endLine }) =>
+        `- \`${path}:${startLine === endLine ? startLine : `${startLine}-${endLine}`}\``,
+      ),
+    ].join("\n");
+    setValue((current) => {
+      const prefix = current.trimEnd();
+      return prefix.length === 0 ? `${context}\n\n` : `${prefix}\n\n${context}\n\n`;
+    });
+    consumeFileContext(taskId, pendingFileContext.id);
+    textAreaRef.current?.focus();
+  }, [consumeFileContext, pendingFileContext, t, taskId]);
   const slashQuery = value.match(/^\/([^\s]*)$/)?.[1] ?? null;
   const allActions = useMemo(() => buildComposerActions({
     skills,

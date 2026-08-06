@@ -7,6 +7,7 @@ pub struct AgentDefinition {
     pub id: AgentDefinitionId,
     pub name: String,
     pub description: String,
+    pub content: String,
     pub audit_fields: AuditFields,
 }
 
@@ -16,6 +17,7 @@ impl AgentDefinition {
         id: AgentDefinitionId,
         name: impl Into<String>,
         description: impl Into<String>,
+        content: impl Into<String>,
         audit_fields: AuditFields,
     ) -> Result<Self, DomainModelError> {
         let name = name.into().trim().to_string();
@@ -28,6 +30,7 @@ impl AgentDefinition {
             id,
             name,
             description: description.into(),
+            content: content.into(),
             audit_fields,
         })
     }

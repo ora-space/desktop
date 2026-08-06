@@ -7,9 +7,13 @@ mod project;
 mod project_work_context;
 mod session;
 mod skill;
+mod spec;
 mod task;
+mod task_diff_comment;
 mod virtual_entry;
 mod virtual_folder;
+mod workflow;
+mod workflow_run;
 mod worktree;
 
 #[cfg(test)]
@@ -20,14 +24,28 @@ pub use artifact::Artifact;
 pub use audit_fields::AuditFields;
 pub use error::DomainModelError;
 pub use ids::{
-    AgentDefinitionId, ArtifactId, ProjectId, ProjectWorkContextId, SessionId, SkillId, TaskId,
-    VirtualEntryId, VirtualFolderId, WorktreeId,
+    AgentDefinitionId, ArtifactId, ProjectId, ProjectSpecSourceOverrideId, ProjectWorkContextId,
+    SessionId, SkillId, TaskDiffCommentId, TaskId, VirtualEntryId, VirtualFolderId, WorkflowId,
+    WorkflowNodeRunId, WorkflowRunId, WorkflowSnapshotId, WorktreeId,
 };
 pub use project::Project;
 pub use project_work_context::{ProjectWorkContext, ProjectWorkContextSurface};
-pub use session::{AgentCli, Session, SessionStatus};
-pub use skill::Skill;
-pub use task::{Task, TaskStatus};
+pub use session::{AgentCli, HistoryState, Session, SessionStatus};
+pub use skill::{
+    Skill, SkillDescriptionError, SkillNameError, validate_skill_description, validate_skill_name,
+};
+pub use spec::{ProjectSpecSourceOverride, SpecSourceVisibility, SpecWorkflow};
+pub use task::{Task, TaskStatus, TaskType};
+pub use task_diff_comment::{
+    TaskDiffAnchor, TaskDiffComment, TaskDiffCommentKind, TaskDiffSide, TaskDiffThreadStatus,
+};
 pub use virtual_entry::{VirtualEntry, VirtualEntryKind};
 pub use virtual_folder::VirtualFolder;
-pub use worktree::{Worktree, WorktreeActivity};
+pub use workflow::{
+    CreatedWorkflow, Workflow, WorkflowDetail, WorkflowSnapshot, WorkflowSummary, WorkflowVersion,
+};
+pub use workflow_run::{
+    WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun, WorkflowRunDetail, WorkflowRunStatus,
+    WorkflowRunSummary,
+};
+pub use worktree::{Worktree, WorktreeActivity, WorktreeBaseline};

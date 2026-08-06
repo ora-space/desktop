@@ -25,6 +25,11 @@ interface MarkdownMessageProps {
   streaming?: boolean;
 }
 
+interface MarkdownDocumentProps {
+  content: string;
+  components?: Components;
+}
+
 const LANGUAGE_CLASS_PATTERN = /(?:^|\s)language-([^\s]+)/;
 const markdownRemarkPlugins = [remarkGfm];
 const highlightedCodeCache = new Map<string, Promise<ThemedTokenWithVariants[][] | null>>();
@@ -104,6 +109,21 @@ const markdownComponents: Components = {
   th: ({ children, ...props }) => <th className="bg-muted/55 px-3 py-2 font-medium" {...props}>{children}</th>,
   ul: ({ children, ...props }) => <ul className="my-3 list-disc space-y-1 pl-6 marker:text-muted-foreground" {...props}>{children}</ul>,
 };
+
+/** Renders raw, non-streaming Markdown on the same safe GFM and visual foundation as chat. */
+export function MarkdownDocument({ content, components }: MarkdownDocumentProps) {
+  const mergedComponents = useMemo(
+    () => components === undefined ? markdownComponents : { ...markdownComponents, ...components },
+    [components],
+  );
+  return (
+    <div data-selectable className="min-w-0 break-words text-[15px] leading-[26px] text-foreground">
+      <ReactMarkdown remarkPlugins={markdownRemarkPlugins} components={mergedComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 /** Renders untrusted assistant Markdown without enabling raw HTML execution. */
 export function MarkdownMessage({ content, streaming = false }: MarkdownMessageProps) {

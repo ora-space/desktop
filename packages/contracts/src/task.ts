@@ -8,6 +8,7 @@ export type CreateTaskRequest = {
   title: string;
   status: TaskStatus;
   workspaceMode?: TaskWorkspaceMode;
+  baseBranch?: string;
 };
 
 /**
@@ -36,6 +37,16 @@ export type GetTaskRequest = { taskId: string };
 export type GetTaskResponse = { task: Task };
 
 /**
+ * Requests the active workspace for one task without exposing checkout paths to callers.
+ */
+export type GetTaskWorkspaceRequest = { taskId: string };
+
+/**
+ * Returns one task-owned workspace without exposing repository internals.
+ */
+export type GetTaskWorkspaceResponse = { workspace: TaskWorkspace };
+
+/**
  * Requests the full visible task list.
  */
 export type ListTasksRequest = Record<symbol, never>;
@@ -54,12 +65,24 @@ export type Task = {
   title: string;
   status: TaskStatus;
   workspaceMode: TaskWorkspaceMode;
+  type: TaskType;
+  workflowRunId: string | null;
 };
 
 /**
  * Describes the public task status shared across adapter boundaries.
  */
 export type TaskStatus = "todo" | "doing" | "done";
+
+/**
+ * Selects the task kind so the frontend can distinguish workflow-run tasks from ordinary tasks.
+ */
+export type TaskType = "default" | "workflow";
+
+/**
+ * Describes the absolute checkout root and branch the backend resolved for one task.
+ */
+export type TaskWorkspace = { rootPath: string; branchName?: string };
 
 /**
  * Selects the filesystem context used when a task starts an agent session.

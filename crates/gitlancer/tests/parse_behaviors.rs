@@ -22,6 +22,15 @@ fn parse_commit_response_reads_commit_id_and_summary() {
     );
 }
 
+/// Preserves an intentionally empty commit summary instead of borrowing a later output line.
+#[test]
+fn parse_commit_response_preserves_empty_summary() {
+    let response = parse_commit_response("0123456789abcdef0123456789abcdef01234567\n\n")
+        .expect("parse commit response");
+
+    assert_eq!(response.summary, "");
+}
+
 /// Verifies commit ID parsing trims whitespace and returns the first non-empty line.
 #[test]
 fn parse_commit_id_reads_first_non_empty_line() {

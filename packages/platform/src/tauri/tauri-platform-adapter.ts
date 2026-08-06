@@ -1,15 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   PathSelectionInProgressError,
   type LocationActionsCapability,
   type LocationTarget,
   type PlatformAdapter,
   type SelectPathOptions,
+  type SaveTextFileOptions,
   type WindowControlsCapability,
   type WindowManagerOs,
+  type SkillMarketplaceCapability,
+  type SkillMarketplaceProvider,
+  type SkillMarketplaceStatus,
 } from "../types";
+
+const SKILL_MARKETPLACE_STATUS_EVENT = "skill-marketplace://status";
 
 /**
  * Reads the host OS from the webview user agent.
@@ -105,6 +112,16 @@ export class TauriPlatformAdapter implements PlatformAdapter {
 
   readonly locationActions: LocationActionsCapability = createTauriLocationActions();
 
+  readonly skillMarketplace: SkillMarketplaceCapability = {
+    kind: "supported",
+    open: (provider: SkillMarketplaceProvider) =>
+      invoke("open_skill_marketplace", { request: { provider } }),
+    onStatus: (listener) =>
+      listen<SkillMarketplaceStatus>(SKILL_MARKETPLACE_STATUS_EVENT, (event) => {
+        listener(event.payload);
+      }),
+  };
+
   readonly worktreeStorage = {
     kind: "configurable" as const,
     getRoot: async (): Promise<string> => {
@@ -133,6 +150,28 @@ export class TauriPlatformAdapter implements PlatformAdapter {
         multiple: false,
         defaultPath: options.initialPath,
       });
+    } finally {
+      this.selectionInProgress = false;
+    }
+  }
+
+  /** Opens the native save dialog, then writes the user-selected workflow export. */
+  async saveTextFile(options: SaveTextFileOptions): Promise<boolean> {
+    if (this.selectionInProgress) {
+      throw new PathSelectionInProgressError();
+    }
+
+    this.selectionInProgress = true;
+    try {
+      const path = await save({
+        defaultPath: options.defaultFileName,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (path === null) {
+        return false;
+      }
+      await invoke("write_workflow_export", { request: { path, content: options.content } });
+      return true;
     } finally {
       this.selectionInProgress = false;
     }

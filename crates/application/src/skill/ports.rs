@@ -1,13 +1,16 @@
 use crate::RepositoryError;
 use ora_domain::{Skill, SkillId};
 
-/// Defines persistence operations required by the skill CRUD use cases.
+/// Defines catalog persistence required by skill CRUD and import sessions.
 pub trait SkillRepository {
-    /// Persists a new skill snapshot.
+    /// Persists a new visible skill snapshot.
     fn create_skill(&self, skill: Skill) -> Result<Skill, RepositoryError>;
 
-    /// Loads one visible skill by identifier.
+    /// Loads one visible skill by its stable identifier.
     fn find_skill(&self, skill_id: &SkillId) -> Result<Option<Skill>, RepositoryError>;
+
+    /// Loads one visible skill by an ASCII case-insensitive name.
+    fn find_skill_by_name(&self, name: &str) -> Result<Option<Skill>, RepositoryError>;
 
     /// Lists visible skills in deterministic storage order.
     fn list_skills(&self) -> Result<Vec<Skill>, RepositoryError>;
@@ -23,8 +26,8 @@ pub trait SkillRepository {
     ) -> Result<bool, RepositoryError>;
 }
 
-/// Supplies new skill identifiers for create use cases.
+/// Supplies opaque identifiers for newly created skills.
 pub trait SkillIdGenerator {
-    /// Produces the identifier for a newly created skill.
+    /// Produces an identifier that does not reveal a filesystem path.
     fn generate_skill_id(&self) -> SkillId;
 }

@@ -1,24 +1,15 @@
-/** Supplies the animated outline used by both user and Agent navigation targets. */
+/**
+ * Navigation focus outline shared by full chat and embedded node conversations.
+ *
+ * Uses an inset box-shadow ring instead of an SVG stroke-dash path: percentage SVG
+ * rects plus WAAPI dashoffset were rendering as partial outlines in both surfaces.
+ */
 export function AnchorHighlight() {
   return (
-    <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible text-foreground/80">
-      <rect
-        data-anchor-highlight
-        x="0"
-        y="0"
-        width="100%"
-        height="100%"
-        rx="12"
-        pathLength="1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeDasharray="1"
-        strokeDashoffset="1"
-        opacity="0"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+    <div
+      aria-hidden="true"
+      data-anchor-highlight
+      className="pointer-events-none absolute inset-0 z-10 rounded-[inherit] opacity-0 shadow-[inset_0_0_0_1.5px_color-mix(in_oklch,var(--foreground)_80%,transparent)]"
+    />
   );
 }

@@ -22,6 +22,8 @@ pub struct SkillPath {
 pub struct UpdateSkillBody {
     name: String,
     description: String,
+    #[serde(default)]
+    content: Option<String>,
 }
 
 /// Creates one skill from its JSON payload.
@@ -73,6 +75,7 @@ pub async fn update_skill(
             skill_id: path.skill_id,
             name: body.name,
             description: body.description,
+            content: body.content,
         })
         .map(Json)
         .map_err(Into::into)

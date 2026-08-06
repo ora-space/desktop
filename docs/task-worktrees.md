@@ -9,17 +9,18 @@ A task's filesystem context is backend-owned state. Callers choose a workspace m
 - **`worktree`** — the backend provisions one linked Git worktree owned by the task, persists a `Worktree` record for that checkout, and persists the task with the resulting internal `worktree_id`.
 - **`project_root`** — the task uses the owning project's checkout directly. No Git worktree is created and no worktree record is persisted.
 
-The public `Task` payload exposes `workspaceMode`, not `worktreeId`. `CreateTaskRequest` and `UpdateTaskRequest` accept no worktree identifier, and updates preserve both project ownership and the existing worktree association.
+The public `Task` payload exposes `workspaceMode`, not `worktreeId`. `CreateTaskRequest` and `UpdateTaskRequest` accept no worktree identifier, and updates preserve both project ownership and the existing worktree association. `CreateTaskRequest.baseBranch` is required for worktree mode and omitted for project-root mode.
 
 ## Provisioning a worktree-mode task
 
 `CreateTaskHandler` orchestrates the whole flow behind the `TaskWorktreeProvisioner` port, so no Git type reaches a request or response contract:
 
 1. Validate that the project root is a Git repository. Worktree mode fails explicitly when it is not.
-2. Reserve a task identifier whose short branch prefix does not collide (below).
-3. Derive the branch name and the worktree directory from that identifier.
-4. Create the linked worktree through the provisioner.
-5. Persist the `Worktree` record, then persist the `Task` that owns it.
+2. Refresh the preferred remote and resolve the selected base ref to an immutable commit id.
+3. Reserve a task identifier whose short branch prefix does not collide (below).
+4. Derive the branch name and the worktree directory from that identifier.
+5. Create the linked worktree and its branch at the resolved commit.
+6. Persist the `Worktree` record, then persist the `Task` that owns it.
 
 Branch names use the first **8** characters of the task id as `ora/<prefix>`, while the worktree directory uses the **full** task id under the configured worktree root: `<worktree_root>/<task_id>`.
 
@@ -27,14 +28,21 @@ Because the branch name is shortened, collision checking has to cover both place
 
 `GitTaskWorktreeProvisioner` adapts the typed `gitlancer` runtime to the port. A unit test can substitute a fake provisioner and exercise the complete create flow with no Git repository or filesystem side effects.
 
+## Base selection and display labels
+
+Before listing bases, Gitlancer fetches `upstream` when configured or otherwise `origin`. The selector combines refreshed remote-tracking branches with local-only branches and prefers the remote ref for ordinary branches when both have the same logical name. Existing local `ora/<prefix>` task branches remain local so creating a worktree from an existing Ora worktree does not discard unpushed commits. Resolving the selection refreshes the preferred remote again so ordinary new task branches start at the selected ref's current commit even when another branch is checked out.
+
+The application layer joins the available refs with project-owned task and worktree records. For an `ora/<prefix>` branch it returns the owning task title as `displayName`, while retaining the exact `refName` that Git must resolve. Creating a worktree invalidates that project's branch-list cache so a newly created Ora branch is immediately available as the next task's base.
+
 ## Failure handling
 
 Git and database state must not drift apart, and a partially created workspace is never exposed.
 
 - If linked-worktree creation fails, the handler returns a stable application error and persists no task or worktree row.
+- If the selected base ref no longer exists after refresh, the handler returns `base_branch_not_found` before creating a task branch or worktree.
 - If persistence fails *after* the Git worktree was created, the handler attempts compensating cleanup — soft-deleting whatever record was written and removing the linked worktree with `TaskWorktreeDeletionMode::Force`, so a dirty checkout cannot block the rollback — and then returns the original application error rather than a cleanup error.
 
-The Web runtime maps these into structured HTTP server errors that identify task creation as failed without exposing raw Git command output or filesystem formatting.
+The Web runtime maps these into typed `ContractError` values that identify task creation as failed without exposing raw Git command output or filesystem formatting.
 
 ## Path resolution after creation
 

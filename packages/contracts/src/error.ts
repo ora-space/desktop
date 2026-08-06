@@ -9,8 +9,14 @@ export type ContractError =
     | { "code": "internal_error"; "params": EmptyErrorParams }
     | { "code": "invalid_request"; "params": EmptyErrorParams }
     | { "code": "skill_name_blank"; "params": EmptyErrorParams }
+    | { "code": "skill_name_invalid"; "params": EmptyErrorParams }
+    | { "code": "skill_name_too_long"; "params": EmptyErrorParams }
+    | { "code": "skill_description_blank"; "params": EmptyErrorParams }
+    | { "code": "skill_description_too_large"; "params": EmptyErrorParams }
+    | { "code": "skill_name_conflict"; "params": EmptyErrorParams }
     | { "code": "skill_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_name_blank"; "params": EmptyErrorParams }
+    | { "code": "agent_name_conflict"; "params": EmptyErrorParams }
     | { "code": "agent_not_found"; "params": EmptyErrorParams }
     | { "code": "project_not_found"; "params": EmptyErrorParams }
     | { "code": "project_occupied"; "params": EmptyErrorParams }
@@ -18,13 +24,27 @@ export type ContractError =
     | { "code": "task_not_found"; "params": EmptyErrorParams }
     | { "code": "resource_in_use"; "params": EmptyErrorParams }
     | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
+    | { "code": "task_base_branch_required"; "params": EmptyErrorParams }
+    | {
+      "code": "task_base_branch_not_found";
+      "params": TaskBaseBranchNotFoundParams;
+    }
     | { "code": "worktree_not_found"; "params": EmptyErrorParams }
+    | { "code": "task_diff_baseline_unavailable"; "params": EmptyErrorParams }
+    | { "code": "task_diff_commit_message_blank"; "params": EmptyErrorParams }
+    | { "code": "task_diff_too_large"; "params": EmptyErrorParams }
+    | { "code": "task_diff_stale"; "params": EmptyErrorParams }
+    | { "code": "task_diff_comment_not_found"; "params": EmptyErrorParams }
+    | { "code": "task_diff_comment_invalid"; "params": EmptyErrorParams }
+    | { "code": "task_diff_comment_conflict"; "params": EmptyErrorParams }
     | { "code": "session_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_cli_not_found"; "params": EmptyErrorParams }
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
     | { "code": "session_busy"; "params": EmptyErrorParams }
     | { "code": "session_stopped"; "params": EmptyErrorParams }
     | { "code": "session_load_unsupported"; "params": EmptyErrorParams }
+    | { "code": "session_history_degraded"; "params": EmptyErrorParams }
+    | { "code": "session_agent_unchanged"; "params": EmptyErrorParams }
     | { "code": "permission_request_not_pending"; "params": EmptyErrorParams }
     | { "code": "permission_option_invalid"; "params": EmptyErrorParams }
     | { "code": "prompt_empty"; "params": EmptyErrorParams }
@@ -38,10 +58,15 @@ export type ContractError =
       "code": "file_system_path_permission_denied";
       "params": EmptyErrorParams;
     }
+    | { "code": "spec_source_invalid"; "params": EmptyErrorParams }
+    | { "code": "spec_source_outside_workspace"; "params": EmptyErrorParams }
+    | { "code": "spec_source_workspace_root"; "params": EmptyErrorParams }
+    | { "code": "spec_document_not_found"; "params": EmptyErrorParams }
     | { "code": "worktree_root_not_absolute"; "params": EmptyErrorParams }
     | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
     | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
     | { "code": "skill_upload_empty"; "params": EmptyErrorParams }
+    | { "code": "skill_upload_too_large"; "params": SkillUploadTooLargeParams }
     | {
       "code": "skill_upload_too_many_files";
       "params": SkillUploadTooManyFilesParams;
@@ -54,6 +79,57 @@ export type ContractError =
     | { "code": "skill_manifest_description_blank"; "params": EmptyErrorParams }
     | { "code": "skill_manifest_name_invalid"; "params": EmptyErrorParams }
     | { "code": "skill_folder_conflict"; "params": SkillFolderConflictParams }
+    | { "code": "skill_manifest_not_found"; "params": EmptyErrorParams }
+    | { "code": "skill_manifest_too_large"; "params": EmptyErrorParams }
+    | { "code": "too_many_skills"; "params": EmptyErrorParams }
+    | { "code": "archive_format_unsupported"; "params": EmptyErrorParams }
+    | { "code": "archive_format_mismatch"; "params": EmptyErrorParams }
+    | { "code": "archive_corrupt"; "params": EmptyErrorParams }
+    | { "code": "archive_encrypted_unsupported"; "params": EmptyErrorParams }
+    | {
+      "code": "archive_special_entry_unsupported";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "archive_path_encoding_invalid"; "params": EmptyErrorParams }
+    | { "code": "archive_path_case_conflict"; "params": EmptyErrorParams }
+    | { "code": "path_segment_too_long"; "params": EmptyErrorParams }
+    | { "code": "path_too_long"; "params": EmptyErrorParams }
+    | { "code": "path_too_deep"; "params": EmptyErrorParams }
+    | { "code": "archive_expansion_ratio_exceeded"; "params": EmptyErrorParams }
+    | { "code": "import_preparation_timeout"; "params": EmptyErrorParams }
+    | { "code": "import_session_expired"; "params": EmptyErrorParams }
+    | { "code": "import_session_cancelled"; "params": EmptyErrorParams }
+    | {
+      "code": "import_session_commit_in_progress";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "import_session_already_committed"; "params": EmptyErrorParams }
+    | { "code": "skill_storage_inconsistent"; "params": EmptyErrorParams }
+    | { "code": "workflow_name_blank"; "params": EmptyErrorParams }
+    | { "code": "workflow_not_found"; "params": EmptyErrorParams }
+    | { "code": "workflow_snapshot_not_found"; "params": EmptyErrorParams }
+    | { "code": "workflow_version_already_exists"; "params": EmptyErrorParams }
+    | { "code": "workflow_version_invalid"; "params": EmptyErrorParams }
+    | { "code": "workflow_version_reserved"; "params": EmptyErrorParams }
+    | { "code": "workflow_cannot_delete_draft"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_cannot_delete_active_version";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "workflow_active_runs"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_cannot_rollback_to_draft";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "workflow_cannot_activate_draft"; "params": EmptyErrorParams }
+    | { "code": "workflow_snapshot_in_use"; "params": EmptyErrorParams }
+    | { "code": "workflow_no_published_snapshot"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_run_cannot_use_draft_snapshot";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "workflow_run_not_found"; "params": EmptyErrorParams }
+    | { "code": "workflow_run_active"; "params": EmptyErrorParams }
   );
 
 /**
@@ -78,8 +154,14 @@ export type PublicError =
   | { "code": "internal_error"; "params": EmptyErrorParams }
   | { "code": "invalid_request"; "params": EmptyErrorParams }
   | { "code": "skill_name_blank"; "params": EmptyErrorParams }
+  | { "code": "skill_name_invalid"; "params": EmptyErrorParams }
+  | { "code": "skill_name_too_long"; "params": EmptyErrorParams }
+  | { "code": "skill_description_blank"; "params": EmptyErrorParams }
+  | { "code": "skill_description_too_large"; "params": EmptyErrorParams }
+  | { "code": "skill_name_conflict"; "params": EmptyErrorParams }
   | { "code": "skill_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_name_blank"; "params": EmptyErrorParams }
+  | { "code": "agent_name_conflict"; "params": EmptyErrorParams }
   | { "code": "agent_not_found"; "params": EmptyErrorParams }
   | { "code": "project_not_found"; "params": EmptyErrorParams }
   | { "code": "project_occupied"; "params": EmptyErrorParams }
@@ -87,13 +169,27 @@ export type PublicError =
   | { "code": "task_not_found"; "params": EmptyErrorParams }
   | { "code": "resource_in_use"; "params": EmptyErrorParams }
   | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
+  | { "code": "task_base_branch_required"; "params": EmptyErrorParams }
+  | {
+    "code": "task_base_branch_not_found";
+    "params": TaskBaseBranchNotFoundParams;
+  }
   | { "code": "worktree_not_found"; "params": EmptyErrorParams }
+  | { "code": "task_diff_baseline_unavailable"; "params": EmptyErrorParams }
+  | { "code": "task_diff_commit_message_blank"; "params": EmptyErrorParams }
+  | { "code": "task_diff_too_large"; "params": EmptyErrorParams }
+  | { "code": "task_diff_stale"; "params": EmptyErrorParams }
+  | { "code": "task_diff_comment_not_found"; "params": EmptyErrorParams }
+  | { "code": "task_diff_comment_invalid"; "params": EmptyErrorParams }
+  | { "code": "task_diff_comment_conflict"; "params": EmptyErrorParams }
   | { "code": "session_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_cli_not_found"; "params": EmptyErrorParams }
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
   | { "code": "session_busy"; "params": EmptyErrorParams }
   | { "code": "session_stopped"; "params": EmptyErrorParams }
   | { "code": "session_load_unsupported"; "params": EmptyErrorParams }
+  | { "code": "session_history_degraded"; "params": EmptyErrorParams }
+  | { "code": "session_agent_unchanged"; "params": EmptyErrorParams }
   | { "code": "permission_request_not_pending"; "params": EmptyErrorParams }
   | { "code": "permission_option_invalid"; "params": EmptyErrorParams }
   | { "code": "prompt_empty"; "params": EmptyErrorParams }
@@ -104,10 +200,15 @@ export type PublicError =
   | { "code": "file_system_path_not_directory"; "params": EmptyErrorParams }
   | { "code": "file_system_path_not_found"; "params": EmptyErrorParams }
   | { "code": "file_system_path_permission_denied"; "params": EmptyErrorParams }
+  | { "code": "spec_source_invalid"; "params": EmptyErrorParams }
+  | { "code": "spec_source_outside_workspace"; "params": EmptyErrorParams }
+  | { "code": "spec_source_workspace_root"; "params": EmptyErrorParams }
+  | { "code": "spec_document_not_found"; "params": EmptyErrorParams }
   | { "code": "worktree_root_not_absolute"; "params": EmptyErrorParams }
   | { "code": "worktree_root_not_directory"; "params": EmptyErrorParams }
   | { "code": "open_location_failed"; "params": OpenLocationFailedParams }
   | { "code": "skill_upload_empty"; "params": EmptyErrorParams }
+  | { "code": "skill_upload_too_large"; "params": SkillUploadTooLargeParams }
   | {
     "code": "skill_upload_too_many_files";
     "params": SkillUploadTooManyFilesParams;
@@ -119,7 +220,49 @@ export type PublicError =
   | { "code": "skill_manifest_name_blank"; "params": EmptyErrorParams }
   | { "code": "skill_manifest_description_blank"; "params": EmptyErrorParams }
   | { "code": "skill_manifest_name_invalid"; "params": EmptyErrorParams }
-  | { "code": "skill_folder_conflict"; "params": SkillFolderConflictParams };
+  | { "code": "skill_folder_conflict"; "params": SkillFolderConflictParams }
+  | { "code": "skill_manifest_not_found"; "params": EmptyErrorParams }
+  | { "code": "skill_manifest_too_large"; "params": EmptyErrorParams }
+  | { "code": "too_many_skills"; "params": EmptyErrorParams }
+  | { "code": "archive_format_unsupported"; "params": EmptyErrorParams }
+  | { "code": "archive_format_mismatch"; "params": EmptyErrorParams }
+  | { "code": "archive_corrupt"; "params": EmptyErrorParams }
+  | { "code": "archive_encrypted_unsupported"; "params": EmptyErrorParams }
+  | { "code": "archive_special_entry_unsupported"; "params": EmptyErrorParams }
+  | { "code": "archive_path_encoding_invalid"; "params": EmptyErrorParams }
+  | { "code": "archive_path_case_conflict"; "params": EmptyErrorParams }
+  | { "code": "path_segment_too_long"; "params": EmptyErrorParams }
+  | { "code": "path_too_long"; "params": EmptyErrorParams }
+  | { "code": "path_too_deep"; "params": EmptyErrorParams }
+  | { "code": "archive_expansion_ratio_exceeded"; "params": EmptyErrorParams }
+  | { "code": "import_preparation_timeout"; "params": EmptyErrorParams }
+  | { "code": "import_session_expired"; "params": EmptyErrorParams }
+  | { "code": "import_session_cancelled"; "params": EmptyErrorParams }
+  | { "code": "import_session_commit_in_progress"; "params": EmptyErrorParams }
+  | { "code": "import_session_already_committed"; "params": EmptyErrorParams }
+  | { "code": "skill_storage_inconsistent"; "params": EmptyErrorParams }
+  | { "code": "workflow_name_blank"; "params": EmptyErrorParams }
+  | { "code": "workflow_not_found"; "params": EmptyErrorParams }
+  | { "code": "workflow_snapshot_not_found"; "params": EmptyErrorParams }
+  | { "code": "workflow_version_already_exists"; "params": EmptyErrorParams }
+  | { "code": "workflow_version_invalid"; "params": EmptyErrorParams }
+  | { "code": "workflow_version_reserved"; "params": EmptyErrorParams }
+  | { "code": "workflow_cannot_delete_draft"; "params": EmptyErrorParams }
+  | {
+    "code": "workflow_cannot_delete_active_version";
+    "params": EmptyErrorParams;
+  }
+  | { "code": "workflow_active_runs"; "params": EmptyErrorParams }
+  | { "code": "workflow_cannot_rollback_to_draft"; "params": EmptyErrorParams }
+  | { "code": "workflow_cannot_activate_draft"; "params": EmptyErrorParams }
+  | { "code": "workflow_snapshot_in_use"; "params": EmptyErrorParams }
+  | { "code": "workflow_no_published_snapshot"; "params": EmptyErrorParams }
+  | {
+    "code": "workflow_run_cannot_use_draft_snapshot";
+    "params": EmptyErrorParams;
+  }
+  | { "code": "workflow_run_not_found"; "params": EmptyErrorParams }
+  | { "code": "workflow_run_active"; "params": EmptyErrorParams };
 
 /**
  * Identifies one Ora request across adapters, spans, responses, and completion events.
@@ -132,6 +275,16 @@ export type RequestId = string;
 export type SkillFolderConflictParams = { name: string };
 
 /**
+ * Carries the configured request-body limit without exposing uploaded file contents.
+ */
+export type SkillUploadTooLargeParams = { maxBytes: number };
+
+/**
  * Carries the configured upload limit without exposing uploaded file names.
  */
 export type SkillUploadTooManyFilesParams = { maxFiles: number };
+
+/**
+ * Carries the user-selected base branch name when Git cannot resolve it.
+ */
+export type TaskBaseBranchNotFoundParams = { branchName: string };

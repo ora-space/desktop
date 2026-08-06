@@ -1,0 +1,65 @@
+/* Theater motion — calm, sparse; honor reduced-motion. */
+
+@keyframes theater-live-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--theater-breathe-color, color-mix(in oklch, var(--color-sky-500, #0ea5e9) 16%, transparent));
+  }
+}
+
+@keyframes theater-progress-sheen {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes theater-chip-pop {
+  0% {
+    transform: scale(0.97);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.theater-live-breathe {
+  --theater-breathe-color: color-mix(in oklch, var(--color-sky-500, #0ea5e9) 16%, transparent);
+  animation: theater-live-breathe 2.6s ease-in-out infinite;
+}
+
+.theater-live-breathe-amber {
+  --theater-breathe-color: color-mix(in oklch, var(--color-amber-500, #f59e0b) 18%, transparent);
+  animation: theater-live-breathe 2.6s ease-in-out infinite;
+}
+
+.theater-progress-sheen {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklch, var(--background) 55%, transparent) 45%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: theater-progress-sheen 2s linear infinite;
+}
+
+.theater-chip-pop {
+  animation: theater-chip-pop 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theater-live-breathe,
+  .theater-live-breathe-amber,
+  .theater-progress-sheen,
+  .theater-chip-pop {
+    animation: none;
+  }
+}

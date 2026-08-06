@@ -9,9 +9,9 @@ describe("contract error translations", () => {
   it("covers every generated public code in Chinese and English with valid interpolation", () => {
     for (const option of publicErrorSchema.options) {
       const code = option.shape.code.value;
-      const key = `errors.${code}` as keyof (typeof translationResources)["zh-CN"];
-      const zh = translationResources["zh-CN"][key];
-      const en = translationResources["en-US"][key];
+      const key = `errors.${code}`;
+      const zh = (translationResources["zh-CN"] as Record<string, string | undefined>)[key];
+      const en = (translationResources["en-US"] as Record<string, string | undefined>)[key];
       const paramsShape = (
         option.shape.params as unknown as {
           shape?: Record<string, unknown>;
@@ -24,6 +24,7 @@ describe("contract error translations", () => {
 
       expect(zh, `missing zh-CN translation for ${code}`).toBeTypeOf("string");
       expect(en, `missing en-US translation for ${code}`).toBeTypeOf("string");
+      if (typeof zh !== "string" || typeof en !== "string") continue;
       expect(interpolationFields(zh)).toEqual(interpolationFields(en));
       expect(interpolationFields(zh).every((field) => allowedFields.has(field))).toBe(true);
     }
@@ -34,9 +35,9 @@ describe("contract error translations", () => {
     expect(translationResources["en-US"]["errors.unknown"]).toBeTypeOf("string");
 
     for (const kind of localTransportErrorKinds) {
-      const key = `errors.transport.${kind}` as keyof (typeof translationResources)["zh-CN"];
-      expect(translationResources["zh-CN"][key]).toBeTypeOf("string");
-      expect(translationResources["en-US"][key]).toBeTypeOf("string");
+      const key = `errors.transport.${kind}`;
+      expect((translationResources["zh-CN"] as Record<string, string | undefined>)[key]).toBeTypeOf("string");
+      expect((translationResources["en-US"] as Record<string, string | undefined>)[key]).toBeTypeOf("string");
     }
   });
 });

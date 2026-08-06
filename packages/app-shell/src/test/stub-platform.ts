@@ -13,6 +13,8 @@ export function createStubPlatform(): PlatformAdapter {
     worktreeStorage: { kind: "unsupported" },
     windowControls: { kind: "none" },
     locationActions: { kind: "unsupported" },
+    skillMarketplace: { kind: "unsupported" },
     selectPath: async () => null,
+    saveTextFile: async () => false,
   };
 }

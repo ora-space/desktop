@@ -10,6 +10,7 @@ import {
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ContractsClient } from "@ora/contracts";
 import type { ChatStore } from "@ora/chat";
+import type { WorkflowRuntime } from "@ora/workflow-runtime";
 import {
   PlatformHost,
   PlatformProvider,
@@ -26,16 +27,20 @@ import { AppI18nProvider } from "./i18n/i18n";
 import type { CurrentUser } from "./lib/types";
 import { createAppQueryClient } from "./state/query-client";
 import { useGitIdentityUser } from "./state/hooks/use-git-identity";
+import { useGraphWorkflowRunLiveSync } from "./state/hooks/use-graph-workflow-runs";
 import { useSessionUnreadSync } from "./state/hooks/use-session-unread-sync";
 import { useUiStore } from "./state/stores/ui-store";
 import { startThemeSubscription } from "./state/stores/settings-store";
 import { useTranslation } from "react-i18next";
+import { WorkflowRuntimeProvider } from "./features/workflow-run/workflow-runtime-context";
 
 interface AppShellProps {
   client: ContractsClient;
   chatStore: ChatStore;
   platform: PlatformAdapter;
   user?: CurrentUser;
+  /** Runtime adapter; hosts will inject the generated-contract adapter once available. */
+  workflowRuntime?: WorkflowRuntime;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 320;
@@ -44,13 +49,21 @@ const MAX_SIDEBAR_WIDTH = 480;
 const MIN_WORKSPACE_WIDTH = 480;
 
 /** The main Ora application shell: sidebar + chat view with conversation state. */
-export function AppShell({ client, chatStore, platform, user }: AppShellProps) {
+export function AppShell({
+  client,
+  chatStore,
+  platform,
+  user,
+  workflowRuntime,
+}: AppShellProps) {
   // One client per shell instance so HMR or multiple mounted shells never share cache.
   const [queryClient] = useState(() => createAppQueryClient());
   return (
     <QueryClientProvider client={queryClient}>
       <AppI18nProvider>
-        <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} />
+        <WorkflowRuntimeProvider runtime={workflowRuntime}>
+          <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} />
+        </WorkflowRuntimeProvider>
       </AppI18nProvider>
     </QueryClientProvider>
   );
@@ -62,6 +75,8 @@ function AppShellContent({ client, chatStore, platform, user: injectedUser }: Ap
   useEffect(() => startThemeSubscription(), []);
   // Track which sessions finished a turn while the user was looking elsewhere.
   useSessionUnreadSync(chatStore);
+  // Keep sidebar / workspace run status current as the mock engine advances.
+  useGraphWorkflowRunLiveSync();
 
   // Derive the sidebar user from the host's global Git identity unless a caller
   // (tests, storybook) injects an explicit user to render instead.
