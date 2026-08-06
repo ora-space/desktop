@@ -20,7 +20,6 @@ Transport-neutral Host/Run ports and an in-memory adapter for **graph workflow r
 - No React / Theater / Overview UI (owned by `app-shell` `workflow-run`).
 - No generated-contract adapter yet (Follow-up F2).
 - Not the settings React Flow definition editor.
-- Settings **Test run** still uses `@ora/workflow-mock` `runDemoWorkflow`.
 - No HITL `fail` / `skip` auto-timeout execution; MVP policy is `wait`.
 - No `partial_failed` aggregation — status exists for UI placeholders.
 

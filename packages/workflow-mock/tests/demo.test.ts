@@ -4,7 +4,6 @@ import {
   createMockWorkflows,
   createMockWorkflow,
   parseDemoWorkflow,
-  runDemoWorkflow,
 } from "../src";
 
 describe("workflow demo", () => {
@@ -105,24 +104,6 @@ describe("workflow demo", () => {
     expect(() => parseDemoWorkflow(missingAgentContract)).toThrow(
       "Invalid workflow definition",
     );
-  });
-
-  it("runs the current draft rather than a stored copy", async () => {
-    const workflow = createMockWorkflow("en-US");
-    workflow.name = "Edited draft";
-
-    const result = await runDemoWorkflow(workflow, "Check this", "en-US");
-
-    expect(result).toEqual({
-      status: "success",
-      durationMs: 1_395,
-      output: "Completed a simulated run of \"Edited draft\".\n\nInput: Check this\n\nFound 2 suggestions and no blocking issues.",
-      steps: workflow.nodes.map((node, index) => ({
-        nodeId: node.id,
-        durationMs: 140 + index * 37,
-        summary: `${node.data.title} completed`,
-      })),
-    });
   });
 
   it("includes a seven-stage Agent lifecycle demo with explicit execution contracts", () => {
