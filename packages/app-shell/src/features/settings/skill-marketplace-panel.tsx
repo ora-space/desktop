@@ -1,16 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, toast } from "@ora/ui";
-import { IconExternalLink, IconFolderOpen, IconShoppingBag } from "@tabler/icons-react";
-import { usePlatform, type SkillMarketplaceStatus } from "@ora/platform";
+import { Badge, Button, toast } from "@ora/ui";
+import {
+  IconExternalLink,
+  IconFolderOpen,
+  IconShoppingBag,
+  IconWorld,
+} from "@tabler/icons-react";
+import {
+  usePlatform,
+  type SkillMarketplaceProvider,
+  type SkillMarketplaceStatus,
+} from "@ora/platform";
+import { HuaweiAgentCenterDialog } from "./huawei-agent-center-dialog";
 
-/** Opens SkillHub and keeps the latest native download status visible in the Skills pane. */
+/** Opens provider-specific marketplaces and keeps their latest download status visible. */
 export function SkillMarketplacePanel() {
   const { t } = useTranslation();
   const { locationActions, skillMarketplace } = usePlatform();
   const [status, setStatus] = useState<SkillMarketplaceStatus | null>(null);
-  const [opening, setOpening] = useState(false);
-  const [connectionFailed, setConnectionFailed] = useState(false);
+  const [openingProvider, setOpeningProvider] = useState<SkillMarketplaceProvider | null>(null);
+  const [failedProvider, setFailedProvider] = useState<SkillMarketplaceProvider | null>(null);
+  const [huaweiDialogOpen, setHuaweiDialogOpen] = useState(false);
 
   useEffect(() => {
     if (skillMarketplace.kind !== "supported") return undefined;
@@ -37,7 +48,7 @@ export function SkillMarketplacePanel() {
         else unsubscribe = stop;
       })
       .catch(() => {
-        if (!disposed) setConnectionFailed(true);
+        if (!disposed) setFailedProvider("skillHub");
       });
 
     return () => {
@@ -46,17 +57,18 @@ export function SkillMarketplacePanel() {
     };
   }, [skillMarketplace, t]);
 
-  /** Opens or focuses the native SkillHub window while preventing duplicate button actions. */
-  const openMarketplace = async () => {
+  /** Opens one native marketplace WebView while preventing duplicate actions per surface. */
+  const openMarketplace = async (provider: SkillMarketplaceProvider) => {
     if (skillMarketplace.kind !== "supported") return;
-    setOpening(true);
-    setConnectionFailed(false);
+    setOpeningProvider(provider);
+    setFailedProvider(null);
     try {
-      await skillMarketplace.open();
+      await skillMarketplace.open(provider);
+      if (provider === "huaweiAgentCenter") setHuaweiDialogOpen(false);
     } catch {
-      setConnectionFailed(true);
+      setFailedProvider(provider);
     } finally {
-      setOpening(false);
+      setOpeningProvider(null);
     }
   };
 
@@ -76,43 +88,119 @@ export function SkillMarketplacePanel() {
 
   return (
     <section className="rounded-lg border border-border bg-muted/20 p-4" aria-labelledby="skill-marketplace-title">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
-            <IconShoppingBag className="size-4" aria-hidden="true" />
-          </div>
-          <div className="min-w-0">
-            <h3 id="skill-marketplace-title" className="text-sm font-medium">
-              {t("settings.skills.marketplaceTitle")}
-            </h3>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {t("settings.skills.marketplaceDescription")}
-            </p>
-          </div>
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
+          <IconShoppingBag className="size-4" aria-hidden="true" />
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="shrink-0"
-          disabled={unsupported || opening}
-          onClick={() => void openMarketplace()}
-        >
-          <IconExternalLink aria-hidden="true" />
-          {opening
-            ? t("settings.skills.marketplaceOpening")
-            : t("settings.skills.marketplaceOpen")}
-        </Button>
+        <div className="min-w-0">
+          <h3 id="skill-marketplace-title" className="text-sm font-medium">
+            {t("settings.skills.marketplacesTitle")}
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {t("settings.skills.marketplacesDescription")}
+          </p>
+        </div>
       </div>
 
-      <MarketplaceStatus
-        status={status}
-        unsupported={unsupported}
-        connectionFailed={connectionFailed}
-        canOpenDownloadDirectory={locationActions.kind === "supported"}
-        onOpenDownloadDirectory={openDownloadDirectory}
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <MarketplaceCard
+          icon={IconShoppingBag}
+          title={t("settings.skills.marketplaceTitle")}
+          description={t("settings.skills.marketplaceDescription")}
+          badge={t("settings.skills.marketplacePublicBadge")}
+          action={
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={unsupported || openingProvider !== null}
+              onClick={() => void openMarketplace("skillHub")}
+            >
+              <IconExternalLink aria-hidden="true" />
+              {openingProvider === "skillHub"
+                ? t("settings.skills.marketplaceOpening")
+                : t("settings.skills.marketplaceOpen")}
+            </Button>
+          }
+        >
+          <MarketplaceStatus
+            status={status?.provider === "skillHub" ? status : null}
+            unsupported={unsupported}
+            connectionFailed={failedProvider === "skillHub"}
+            canOpenDownloadDirectory={locationActions.kind === "supported"}
+            onOpenDownloadDirectory={openDownloadDirectory}
+          />
+        </MarketplaceCard>
+
+        <MarketplaceCard
+          icon={IconWorld}
+          title={t("settings.skills.huaweiTitle")}
+          description={t("settings.skills.huaweiDescription")}
+          badge={t("settings.skills.huaweiBadge")}
+          action={
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setHuaweiDialogOpen(true)}
+            >
+              <IconExternalLink aria-hidden="true" />
+              {t("settings.skills.huaweiViewReadiness")}
+            </Button>
+          }
+        />
+      </div>
+
+      <HuaweiAgentCenterDialog
+        open={huaweiDialogOpen}
+        available={!unsupported}
+        opening={openingProvider === "huaweiAgentCenter"}
+        compatibilityTestOpening={openingProvider === "webviewCompatibilityTest"}
+        connectionFailed={failedProvider === "huaweiAgentCenter"}
+        compatibilityTestFailed={failedProvider === "webviewCompatibilityTest"}
+        onOpenChange={setHuaweiDialogOpen}
+        onLaunch={() => void openMarketplace("huaweiAgentCenter")}
+        onLaunchCompatibilityTest={() => void openMarketplace("webviewCompatibilityTest")}
       />
     </section>
+  );
+}
+
+/** Renders one marketplace summary card with a provider-owned action and optional status. */
+function MarketplaceCard({
+  icon: Icon,
+  title,
+  description,
+  badge,
+  action,
+  children,
+}: {
+  icon: typeof IconShoppingBag;
+  title: string;
+  description: string;
+  badge: string;
+  action: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <article className="flex min-h-44 flex-col rounded-lg border border-border bg-background p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/50 text-muted-foreground">
+            <Icon className="size-4" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="text-sm font-medium">{title}</h4>
+              <Badge variant="outline">{badge}</Badge>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+          </div>
+        </div>
+      </div>
+      <div className="mt-auto pt-4">{action}</div>
+      {children}
+    </article>
   );
 }
 

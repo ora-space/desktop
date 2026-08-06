@@ -67,23 +67,35 @@ export type LocationActionsCapability =
       open(target: LocationTarget, path: string): Promise<void>;
     };
 
-/** Reports the download lifecycle controlled by the native SkillHub marketplace window. */
+/** A native marketplace integration exposed by Ora Desktop. */
+export type SkillMarketplaceProvider =
+  | "skillHub"
+  | "huaweiAgentCenter"
+  | "webviewCompatibilityTest";
+
+/** Reports the download lifecycle controlled by a provider-specific native marketplace window. */
 export type SkillMarketplaceStatus =
-  | { status: "downloading"; fileName: string }
-  | { status: "downloaded"; fileName: string; archivePath: string }
+  | { status: "downloading"; provider: SkillMarketplaceProvider; fileName: string }
+  | {
+      status: "downloaded";
+      provider: SkillMarketplaceProvider;
+      fileName: string;
+      archivePath: string;
+    }
   | {
       status: "failed";
+      provider: SkillMarketplaceProvider;
       stage: "download";
       code: string;
       message: string;
     };
 
-/** Opens the native SkillHub window and observes its Ora-owned download lifecycle. */
+/** Opens a provider-specific native WebView and observes its Ora-owned download lifecycle. */
 export type SkillMarketplaceCapability =
   | { kind: "unsupported" }
   | {
       kind: "supported";
-      open(): Promise<void>;
+      open(provider: SkillMarketplaceProvider): Promise<void>;
       onStatus(listener: (status: SkillMarketplaceStatus) => void): Promise<() => void>;
     };
 

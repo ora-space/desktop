@@ -12,6 +12,7 @@ import {
   type WindowControlsCapability,
   type WindowManagerOs,
   type SkillMarketplaceCapability,
+  type SkillMarketplaceProvider,
   type SkillMarketplaceStatus,
 } from "../types";
 
@@ -113,7 +114,8 @@ export class TauriPlatformAdapter implements PlatformAdapter {
 
   readonly skillMarketplace: SkillMarketplaceCapability = {
     kind: "supported",
-    open: () => invoke("open_skill_marketplace"),
+    open: (provider: SkillMarketplaceProvider) =>
+      invoke("open_skill_marketplace", { request: { provider } }),
     onStatus: (listener) =>
       listen<SkillMarketplaceStatus>(SKILL_MARKETPLACE_STATUS_EVENT, (event) => {
         listener(event.payload);

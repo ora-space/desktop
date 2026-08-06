@@ -11,6 +11,7 @@ export {
   type SaveTextFileOptions,
   type SelectPathOptions,
   type SkillMarketplaceCapability,
+  type SkillMarketplaceProvider,
   type SkillMarketplaceStatus,
   type WindowControlsCapability,
   type WindowManagerOs,

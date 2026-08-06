@@ -11,7 +11,7 @@ const DOWNLOAD_DIRECTORY_NAME: &str = "skill-downloads";
 const DEFAULT_ZIP_FILE_NAME: &str = "skill.zip";
 const MAX_FILE_STEM_BYTES: usize = 120;
 
-/// Coordinates collision-free temporary and final paths for SkillHub downloads.
+/// Coordinates collision-free temporary and final paths for marketplace downloads.
 pub(super) struct SkillDownloadCoordinator {
     directory: PathBuf,
     active: Mutex<HashMap<String, DownloadPaths>>,
@@ -134,7 +134,7 @@ impl SkillDownloadCoordinator {
     fn lock_active(&self) -> io::Result<MutexGuard<'_, HashMap<String, DownloadPaths>>> {
         self.active
             .lock()
-            .map_err(|_| io::Error::other("SkillHub download state lock is poisoned"))
+            .map_err(|_| io::Error::other("marketplace download state lock is poisoned"))
     }
 }
 
@@ -288,7 +288,7 @@ mod tests {
     fn creates_the_application_download_directory() {
         let temporary = TempDir::new().expect("create temporary app data directory");
         let coordinator = SkillDownloadCoordinator::new(temporary.path())
-            .expect("create SkillHub download coordinator");
+            .expect("create marketplace download coordinator");
 
         assert_eq!(
             (
@@ -543,7 +543,7 @@ mod tests {
     fn coordinator() -> (TempDir, SkillDownloadCoordinator) {
         let temporary = TempDir::new().expect("create temporary app data directory");
         let coordinator = SkillDownloadCoordinator::new(temporary.path())
-            .expect("create SkillHub download coordinator");
+            .expect("create marketplace download coordinator");
         (temporary, coordinator)
     }
 

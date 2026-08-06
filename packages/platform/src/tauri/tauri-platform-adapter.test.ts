@@ -23,7 +23,7 @@ describe("TauriPlatformAdapter", () => {
     listenMock.mockReset();
   });
 
-  it("opens SkillHub and forwards native download status events", async () => {
+  it("opens provider-specific marketplaces and forwards native download status events", async () => {
     const stop = vi.fn();
     const listener = vi.fn();
     let forwardStatus: ((event: { payload: unknown }) => void) | undefined;
@@ -37,21 +37,25 @@ describe("TauriPlatformAdapter", () => {
       throw new Error("expected Tauri marketplace capability");
     }
 
-    await marketplace.open();
+    await marketplace.open("huaweiAgentCenter");
     const unsubscribe = await marketplace.onStatus(listener);
     forwardStatus?.({
       payload: {
         status: "downloaded",
+        provider: "huaweiAgentCenter",
         fileName: "skill.zip",
         archivePath: "/app-data/skill-downloads/skill.zip",
       },
     });
     unsubscribe();
 
-    expect(invokeMock).toHaveBeenCalledWith("open_skill_marketplace");
+    expect(invokeMock).toHaveBeenCalledWith("open_skill_marketplace", {
+      request: { provider: "huaweiAgentCenter" },
+    });
     expect(listenMock).toHaveBeenCalledWith("skill-marketplace://status", expect.any(Function));
     expect(listener).toHaveBeenCalledWith({
       status: "downloaded",
+      provider: "huaweiAgentCenter",
       fileName: "skill.zip",
       archivePath: "/app-data/skill-downloads/skill.zip",
     });
