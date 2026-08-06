@@ -1,8 +1,8 @@
 mod commands;
 mod config;
 mod error;
-mod spec_commands;
 mod skill_marketplace;
+mod spec_commands;
 mod state;
 mod workspace_files;
 
