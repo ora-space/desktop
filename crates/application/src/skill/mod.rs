@@ -1,25 +1,20 @@
+mod filesystem_storage;
 mod handlers;
 mod id_generator;
-mod import;
-mod local_store;
 mod mapper;
 mod ports;
-mod reconcile;
-mod validation;
+mod storage;
 
-#[cfg(test)]
-mod import_tests;
 #[cfg(test)]
 mod tests;
 
+pub use filesystem_storage::FilesystemSkillStorage;
 pub use handlers::{
     CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ListSkillsHandler, UpdateSkillHandler,
 };
 pub use id_generator::UuidSkillIdGenerator;
-pub use import::{ImportSkillHandler, UploadedSkillFile};
-pub use local_store::LocalSkillPackageStore;
-pub use ports::{
-    SkillIdGenerator, SkillImportCommitError, SkillImportUnitOfWork, SkillPackageStore,
-    SkillPackageStoreError, SkillRepository,
+pub use ports::{SkillIdGenerator, SkillRepository};
+pub use storage::{
+    BACKUP_DIR_NAME, CreateHandle, DeleteHandle, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
+    STAGING_DIR_NAME, SkillStorage, SkillStorageError, SwapHandle, TransactionJournal,
 };
-pub use reconcile::ReconcileSkillStorageHandler;

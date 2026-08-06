@@ -7,9 +7,9 @@ use std::process::ExitStatus;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-const MAX_SEARCH_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
-const MAX_SEARCH_RESULTS: usize = 10_000;
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const MAX_SEARCH_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_SEARCH_RESULTS: usize = 10_000;
+pub(crate) const SEARCH_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Chooses filename discovery or text-content matching.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,7 +144,7 @@ fn search_arguments(query: &str, kind: SearchKind) -> Vec<String> {
 }
 
 /// Reads both pipes concurrently while the process exits so neither pipe can deadlock the child.
-async fn collect_process_output<P, Stdout, Stderr>(
+pub(crate) async fn collect_process_output<P, Stdout, Stderr>(
     process: &P,
     stdout: Stdout,
     stderr: Stderr,
@@ -236,7 +236,10 @@ fn parse_matches(root: &Path, output: &[u8]) -> Result<SearchResults, WorkspaceF
 }
 
 /// Normalizes ripgrep's cwd-relative spelling into the crate's slash-separated representation.
-fn normalize_ripgrep_path(root: &Path, path: &str) -> Result<String, WorkspaceFileSystemError> {
+pub(crate) fn normalize_ripgrep_path(
+    root: &Path,
+    path: &str,
+) -> Result<String, WorkspaceFileSystemError> {
     let path = path.strip_prefix("./").unwrap_or(path);
     relative_string(root, &root.join(PathBuf::from(path)))
 }

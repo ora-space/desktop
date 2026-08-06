@@ -1,4 +1,5 @@
-use crate::skill::SkillPackageStoreError;
+use crate::skill::SkillStorageError;
+use crate::skill_import::SkillImportError;
 use crate::{
     BoxRepositorySource, BranchListingError, RepositoryError, TaskDiffCommentRepositoryError,
     TaskDiffReaderError, TaskWorktreeProvisionerError,
@@ -11,6 +12,16 @@ use thiserror::Error;
 pub enum ApplicationError {
     #[error("skill name must not be blank")]
     SkillNameBlank,
+    #[error("invalid skill name: {name}")]
+    SkillNameInvalid { name: String },
+    #[error("skill name exceeds the single path segment limit")]
+    SkillNameTooLong,
+    #[error("skill description must not be blank")]
+    SkillDescriptionBlank,
+    #[error("skill description exceeds 4096 bytes")]
+    SkillDescriptionTooLarge,
+    #[error("skill name already exists: {name}")]
+    SkillNameConflict { name: String },
     #[error("skill not found: {skill_id}")]
     SkillNotFound { skill_id: String },
     #[error("skill repository operation failed")]
@@ -41,11 +52,15 @@ pub enum ApplicationError {
     SkillManifestNameInvalid,
     #[error("skill folder already exists: {name}")]
     SkillFolderConflict { name: String },
-    #[error("skill package storage operation failed")]
-    SkillPackageStorage {
+    #[error("skill storage is inconsistent for: {name}")]
+    SkillStorageInconsistent { name: String },
+    #[error("skill storage operation failed")]
+    SkillStorage {
         #[source]
-        source: SkillPackageStoreError,
+        source: SkillStorageError,
     },
+    #[error("skill import failed")]
+    SkillImport(#[source] SkillImportError),
     #[error("agent definition name must not be blank")]
     AgentDefinitionNameBlank,
     #[error("agent definition not found: {agent_id}")]
@@ -59,6 +74,13 @@ pub enum ApplicationError {
     ProjectNotFound { project_id: String },
     #[error("project repository operation failed")]
     ProjectRepository {
+        #[source]
+        source: RepositoryError,
+    },
+    #[error("specification source configuration is invalid")]
+    SpecSourceInvalid,
+    #[error("specification source repository operation failed")]
+    SpecSourceRepository {
         #[source]
         source: RepositoryError,
     },
@@ -124,6 +146,8 @@ pub enum ApplicationError {
     TaskDiffCommentNotFound { comment_id: String },
     #[error("invalid task diff comment: {message}")]
     TaskDiffCommentInvalid { message: String },
+    #[error("task diff comment conflicts with stored state: {message}")]
+    TaskDiffCommentConflict { message: String },
     #[error("task diff comment repository operation failed")]
     TaskDiffCommentRepository {
         #[source]
@@ -143,6 +167,56 @@ pub enum ApplicationError {
         #[source]
         source: RepositoryError,
     },
+    #[error("workflow name must not be blank")]
+    WorkflowNameBlank,
+    #[error("workflow not found: {workflow_id}")]
+    WorkflowNotFound { workflow_id: String },
+    #[error("workflow snapshot not found: {workflow_id}/{version}")]
+    WorkflowSnapshotNotFound {
+        workflow_id: String,
+        version: String,
+    },
+    #[error("workflow version already exists: {workflow_id}/{version}")]
+    WorkflowVersionAlreadyExists {
+        workflow_id: String,
+        version: String,
+    },
+    #[error("workflow version is invalid")]
+    WorkflowVersionInvalid,
+    #[error("workflow version 'draft' is reserved")]
+    WorkflowVersionReserved,
+    #[error("cannot delete the draft snapshot")]
+    WorkflowCannotDeleteDraft,
+    #[error("cannot delete the currently active version")]
+    WorkflowCannotDeleteActiveVersion,
+    #[error("cannot delete a workflow with live runs")]
+    WorkflowActiveRuns,
+    #[error("cannot rollback to the draft snapshot")]
+    WorkflowCannotRollbackToDraft,
+    #[error("cannot activate the draft snapshot")]
+    WorkflowCannotActivateDraft,
+    #[error("cannot delete a snapshot referenced by a workflow run")]
+    WorkflowSnapshotInUse,
+    #[error("workflow snapshot not found by id: {snapshot_id}")]
+    WorkflowSnapshotNotFoundById { snapshot_id: String },
+    #[error("workflow has no published snapshot")]
+    WorkflowNoPublishedSnapshot,
+    #[error("cannot use the draft snapshot for a workflow run")]
+    WorkflowRunCannotUseDraftSnapshot,
+    #[error("workflow run not found: {run_id}")]
+    WorkflowRunNotFound { run_id: String },
+    #[error("workflow run is active and cannot be deleted")]
+    WorkflowRunActive,
+    #[error("workflow repository operation failed")]
+    WorkflowRepository {
+        #[source]
+        source: RepositoryError,
+    },
+    #[error("workflow run repository operation failed")]
+    WorkflowRunRepository {
+        #[source]
+        source: RepositoryError,
+    },
 }
 
 impl ApplicationError {
@@ -150,8 +224,32 @@ impl ApplicationError {
     pub(crate) fn from_skill_domain_error(error: DomainModelError) -> Self {
         match error {
             DomainModelError::EmptySkillName => Self::SkillNameBlank,
+            DomainModelError::InvalidSkillName { name } => Self::SkillNameInvalid { name },
+            DomainModelError::SkillNameTooLong => Self::SkillNameTooLong,
+            DomainModelError::EmptySkillDescription => Self::SkillDescriptionBlank,
+            DomainModelError::SkillDescriptionTooLarge => Self::SkillDescriptionTooLarge,
             _ => Self::SkillRepository {
                 source: RepositoryError::new(error),
+            },
+        }
+    }
+
+    /// Converts formal-storage failures into the stable application contract.
+    pub(crate) fn from_skill_storage_error(error: SkillStorageError) -> Self {
+        match error {
+            SkillStorageError::FormalDirectoryMissing { name }
+            | SkillStorageError::FormalDirectoryExists { name } => {
+                Self::SkillStorageInconsistent { name }
+            }
+            source @ SkillStorageError::OperationFailed { .. } => Self::SkillStorage { source },
+        }
+    }
+
+    /// Keeps manifest rewrite failures internal while preserving the formal package invariant.
+    pub(crate) fn from_manifest_error(error: ora_skill_package::ManifestError) -> Self {
+        Self::SkillStorage {
+            source: SkillStorageError::OperationFailed {
+                message: format!("failed to rewrite the skill manifest: {error}"),
             },
         }
     }
@@ -178,6 +276,11 @@ impl ApplicationError {
     /// Maps infrastructure-facing repository failures into stable application errors.
     pub(crate) fn from_project_repository_error(error: RepositoryError) -> Self {
         Self::ProjectRepository { source: error }
+    }
+
+    /// Maps specification source persistence failures into stable application errors.
+    pub(crate) fn from_spec_source_repository_error(error: RepositoryError) -> Self {
+        Self::SpecSourceRepository { source: error }
     }
 
     /// Maps Git-facing branch listing failures into stable application errors.
@@ -235,6 +338,12 @@ impl ApplicationError {
             TaskDiffCommentRepositoryError::OperationFailed(source) => {
                 Self::TaskDiffCommentRepository { source }
             }
+            TaskDiffCommentRepositoryError::Invalid(message) => {
+                Self::TaskDiffCommentInvalid { message }
+            }
+            TaskDiffCommentRepositoryError::Conflict(message) => {
+                Self::TaskDiffCommentConflict { message }
+            }
         }
     }
 
@@ -254,6 +363,26 @@ impl ApplicationError {
     pub(crate) fn from_session_repository_error(error: RepositoryError) -> Self {
         Self::SessionRepository { source: error }
     }
+
+    /// Converts workflow-construction validation failures into application errors.
+    pub(crate) fn from_workflow_domain_error(error: DomainModelError) -> Self {
+        match error {
+            DomainModelError::EmptyWorkflowName => Self::WorkflowNameBlank,
+            _ => Self::WorkflowRepository {
+                source: RepositoryError::new(error),
+            },
+        }
+    }
+
+    /// Maps workflow repository failures into stable application errors.
+    pub(crate) fn from_workflow_repository_error(error: RepositoryError) -> Self {
+        Self::WorkflowRepository { source: error }
+    }
+
+    /// Maps workflow run repository failures into stable application errors.
+    pub(crate) fn from_workflow_run_repository_error(error: RepositoryError) -> Self {
+        Self::WorkflowRunRepository { source: error }
+    }
 }
 
 #[cfg(test)]
@@ -271,9 +400,25 @@ impl PartialEq for ApplicationError {
             | (SkillManifestNameBlank, SkillManifestNameBlank)
             | (SkillManifestDescriptionBlank, SkillManifestDescriptionBlank)
             | (SkillManifestNameInvalid, SkillManifestNameInvalid)
-            | (SkillPackageStorage { .. }, SkillPackageStorage { .. })
+            | (SkillStorage { .. }, SkillStorage { .. })
+            | (SkillImport(_), SkillImport(_))
             | (AgentDefinitionNameBlank, AgentDefinitionNameBlank)
+            | (SpecSourceInvalid, SpecSourceInvalid)
             | (TaskWorktreeRequiresGitRepository, TaskWorktreeRequiresGitRepository)
+            | (TaskWorktreeRootUnavailable, TaskWorktreeRootUnavailable)
+            | (WorkflowNameBlank, WorkflowNameBlank)
+            | (WorkflowVersionInvalid, WorkflowVersionInvalid)
+            | (WorkflowVersionReserved, WorkflowVersionReserved)
+            | (WorkflowCannotDeleteDraft, WorkflowCannotDeleteDraft)
+            | (WorkflowCannotDeleteActiveVersion, WorkflowCannotDeleteActiveVersion)
+            | (WorkflowActiveRuns, WorkflowActiveRuns)
+            | (WorkflowCannotRollbackToDraft, WorkflowCannotRollbackToDraft)
+            | (WorkflowCannotActivateDraft, WorkflowCannotActivateDraft)
+            | (WorkflowSnapshotInUse, WorkflowSnapshotInUse)
+            | (WorkflowNoPublishedSnapshot, WorkflowNoPublishedSnapshot)
+            | (WorkflowRunCannotUseDraftSnapshot, WorkflowRunCannotUseDraftSnapshot)
+            | (WorkflowRunActive, WorkflowRunActive)
+            | (WorkflowRunRepository { .. }, WorkflowRunRepository { .. })
             | (SkillRepository { .. }, SkillRepository { .. })
             | (AgentDefinitionRepository { .. }, AgentDefinitionRepository { .. })
             | (ProjectRepository { .. }, ProjectRepository { .. })
@@ -284,13 +429,25 @@ impl PartialEq for ApplicationError {
             | (TaskDiffStale, TaskDiffStale)
             | (TaskDiffCommitMessageBlank, TaskDiffCommitMessageBlank)
             | (WorktreeRepository { .. }, WorktreeRepository { .. })
-            | (SessionRepository { .. }, SessionRepository { .. }) => true,
+            | (SessionRepository { .. }, SessionRepository { .. })
+            | (WorkflowRepository { .. }, WorkflowRepository { .. })
+            | (TaskFilesystem { .. }, TaskFilesystem { .. }) => true,
             (SkillNotFound { skill_id: left }, SkillNotFound { skill_id: right }) => left == right,
             (
                 SkillUploadTooManyFiles { max_files: left },
                 SkillUploadTooManyFiles { max_files: right },
             ) => left == right,
             (SkillFolderConflict { name: left }, SkillFolderConflict { name: right }) => {
+                left == right
+            }
+            (SkillNameInvalid { name: left }, SkillNameInvalid { name: right })
+            | (SkillNameConflict { name: left }, SkillNameConflict { name: right }) => {
+                left == right
+            }
+            (SkillNameTooLong, SkillNameTooLong)
+            | (SkillDescriptionBlank, SkillDescriptionBlank)
+            | (SkillDescriptionTooLarge, SkillDescriptionTooLarge) => true,
+            (SkillStorageInconsistent { name: left }, SkillStorageInconsistent { name: right }) => {
                 left == right
             }
             (
@@ -317,12 +474,16 @@ impl PartialEq for ApplicationError {
                 TaskBaseBranchNotFound { branch_name: left },
                 TaskBaseBranchNotFound { branch_name: right },
             ) => left == right,
-            (TaskDiff { .. }, TaskDiff { .. })
-            | (TaskDiffCommentRepository { .. }, TaskDiffCommentRepository { .. }) => true,
+            (TaskDiff { .. }, TaskDiff { .. }) => true,
             (
                 TaskDiffCommentInvalid { message: left },
                 TaskDiffCommentInvalid { message: right },
             ) => left == right,
+            (
+                TaskDiffCommentConflict { message: left },
+                TaskDiffCommentConflict { message: right },
+            ) => left == right,
+            (TaskDiffCommentRepository { .. }, TaskDiffCommentRepository { .. }) => true,
             (TaskDiffBaselineUnavailable, TaskDiffBaselineUnavailable) => true,
             (
                 TaskDiffTooLarge {
@@ -342,14 +503,42 @@ impl PartialEq for ApplicationError {
                 TaskWorktreeIdExhausted { attempts: left },
                 TaskWorktreeIdExhausted { attempts: right },
             ) => left == right,
-            (TaskWorktreeRootUnavailable, TaskWorktreeRootUnavailable) => true,
-            (TaskFilesystem { .. }, TaskFilesystem { .. }) => true,
             (WorktreeNotFound { worktree_id: left }, WorktreeNotFound { worktree_id: right }) => {
                 left == right
             }
             (SessionNotFound { session_id: left }, SessionNotFound { session_id: right }) => {
                 left == right
             }
+            (WorkflowNotFound { workflow_id: left }, WorkflowNotFound { workflow_id: right }) => {
+                left == right
+            }
+            (
+                WorkflowSnapshotNotFound {
+                    workflow_id: left_wf,
+                    version: left_v,
+                },
+                WorkflowSnapshotNotFound {
+                    workflow_id: right_wf,
+                    version: right_v,
+                },
+            ) => left_wf == right_wf && left_v == right_v,
+            (
+                WorkflowSnapshotNotFoundById { snapshot_id: left },
+                WorkflowSnapshotNotFoundById { snapshot_id: right },
+            ) => left == right,
+            (WorkflowRunNotFound { run_id: left }, WorkflowRunNotFound { run_id: right }) => {
+                left == right
+            }
+            (
+                WorkflowVersionAlreadyExists {
+                    workflow_id: left_wf,
+                    version: left_v,
+                },
+                WorkflowVersionAlreadyExists {
+                    workflow_id: right_wf,
+                    version: right_v,
+                },
+            ) => left_wf == right_wf && left_v == right_v,
             _ => false,
         }
     }

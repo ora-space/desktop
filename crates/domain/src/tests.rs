@@ -2,8 +2,8 @@ use crate::{
     AgentCli, AgentDefinition, AgentDefinitionId, Artifact, ArtifactId, AuditFields,
     DomainModelError, HistoryState, Project, ProjectId, ProjectWorkContext, ProjectWorkContextId,
     ProjectWorkContextSurface, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId,
-    TaskStatus, VirtualEntry, VirtualEntryId, VirtualEntryKind, VirtualFolder, VirtualFolderId,
-    Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
+    TaskStatus, TaskType, VirtualEntry, VirtualEntryId, VirtualEntryKind, VirtualFolder,
+    VirtualFolderId, Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
 };
 use pretty_assertions::assert_eq;
 
@@ -114,6 +114,8 @@ fn constructs_schema_backed_entities() {
             project_id: ProjectId::new("project-1"),
             title: "Implement domain models".to_string(),
             status: TaskStatus::Doing,
+            task_type: TaskType::Default,
+            workflow_run_id: None,
             worktree_id: Some(WorktreeId::new("worktree-1")),
             audit_fields: audit_fields.clone(),
         }
@@ -222,6 +224,8 @@ fn maps_agent_cli_database_values() {
             "ora-space.opencode",
             "ora-space.nga",
             "ora-space.codeagentcli",
+            "ora-space.claude",
+            "ora-space.codex",
         ]
     );
     assert_eq!(
@@ -229,17 +233,37 @@ fn maps_agent_cli_database_values() {
             "ora-space.opencode",
             "ora-space.nga",
             "ora-space.codeagentcli",
+            "ora-space.claude",
+            "ora-space.codex",
         ]
         .map(AgentCli::from_database_value),
         [
             Ok(AgentCli::OpenCode),
             Ok(AgentCli::Nga),
             Ok(AgentCli::CodeAgentCli),
+            Ok(AgentCli::Claude),
+            Ok(AgentCli::Codex),
         ]
     );
     assert_eq!(
         AgentCli::from_database_value("opencode"),
         Err(DomainModelError::InvalidAgentCli("opencode".to_string()))
+    );
+}
+
+/// Verifies only Ora's own CLIs require the `acp` subcommand; the Claude/Codex
+/// adapter binaries speak ACP directly with no launch arguments.
+#[test]
+fn maps_agent_cli_launch_arguments() {
+    assert_eq!(
+        AgentCli::ALL.map(AgentCli::launch_arguments),
+        [
+            ["acp"].as_slice(),
+            ["acp"].as_slice(),
+            ["acp"].as_slice(),
+            [].as_slice(),
+            [].as_slice(),
+        ]
     );
 }
 

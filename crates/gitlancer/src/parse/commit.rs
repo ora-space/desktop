@@ -4,10 +4,7 @@ use crate::git::commit::CommitResponse;
 
 /// Parses commit metadata from a two-line payload that contains a commit ID followed by a summary.
 pub fn parse_commit_response(stdout: &str) -> Result<CommitResponse, ParseError> {
-    let mut lines = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty());
+    let mut lines = stdout.lines().map(str::trim);
     let commit_id = lines.next().ok_or(ParseError::MissingLine)?;
     let summary = lines.next().ok_or(ParseError::MissingLine)?;
 

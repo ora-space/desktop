@@ -69,6 +69,19 @@ pub(super) fn contract_agent_cli(agent_cli: AgentCli) -> ContractAgentCli {
         AgentCli::OpenCode => ContractAgentCli::OpenCode,
         AgentCli::Nga => ContractAgentCli::Nga,
         AgentCli::CodeAgentCli => ContractAgentCli::CodeAgentCli,
+        AgentCli::Claude => ContractAgentCli::Claude,
+        AgentCli::Codex => ContractAgentCli::Codex,
+    }
+}
+
+/// Maps the transport CLI identity into its stable persisted form.
+pub(super) fn domain_agent_cli(agent_cli: ContractAgentCli) -> AgentCli {
+    match agent_cli {
+        ContractAgentCli::OpenCode => AgentCli::OpenCode,
+        ContractAgentCli::Nga => AgentCli::Nga,
+        ContractAgentCli::CodeAgentCli => AgentCli::CodeAgentCli,
+        ContractAgentCli::Claude => AgentCli::Claude,
+        ContractAgentCli::Codex => AgentCli::Codex,
     }
 }
 
@@ -121,6 +134,8 @@ pub(super) fn resolve_agent_cli_path(
         AgentCli::OpenCode => ".opencode",
         AgentCli::Nga => ".nga",
         AgentCli::CodeAgentCli => ".codeagentcli",
+        AgentCli::Claude => ".claude",
+        AgentCli::Codex => ".codex",
     };
     Ok(home_directory
         .join(installation_directory)

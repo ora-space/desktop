@@ -13,6 +13,7 @@ const SESSION: Session = {
   taskId: "task-1",
   agentCli: "code_agent_cli",
   status: "running",
+  historyState: { type: "writable" },
 };
 
 /** Builds one conversation state with just enough lifecycle data for diff syncing. */
@@ -21,6 +22,8 @@ function conversation(
   toolStatus?: "in_progress" | "completed" | "failed",
 ): SessionConversation {
   return {
+    configOptions: [],
+    modelChanges: [],
     turns: toolStatus === undefined
       ? []
       : [{
@@ -48,9 +51,12 @@ function conversation(
           error: null,
           createdAt: 1,
         }],
+    availableCommands: [],
     isLoaded: true,
     isLoading: false,
     isResponding,
+    sessionTitle: null,
+    sessionUpdatedAt: null,
     pendingPermissions: [],
     error: null,
   };

@@ -17,6 +17,10 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
+    watch: {
+      // Rust rebuilds replace loaded DLLs on Windows, so Vite must not watch Tauri artifacts.
+      ignored: ["**/src-tauri/target/**"],
+    },
     proxy: {
       "/api": {
         target: "http://localhost:21688",

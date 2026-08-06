@@ -6,11 +6,12 @@
 
 - It boots shared structured logging through `ora-logging` and registers the Gitlancer command-logging bridge.
 - It exposes health endpoints for process liveness and runtime readiness.
-- It serves persisted HTTP operations for Project, Task, Session, Skill, Agent, and Git identity through the shared `ora-backend` composition.
+- It serves persisted HTTP operations for Project, Task, Spec sources, Session, Skill, Agent, and Git identity through the shared `ora-backend` composition.
 - It provisions task-owned linked worktrees during creation and leaves Git untouched during deletion.
 - It streams ACP load replay and prompt updates as bounded NDJSON responses.
 - It provides read-only server filesystem listings for the Web platform path picker.
 - It provides a task-scoped, read-only workspace explorer with bounded file reads, ripgrep search, and native refresh events.
+- It exposes the shared project/task Spec catalog, safe Markdown reads, project-wide source configuration, and mounted-only refresh streams.
 - It owns the project work context routes, which are outside `ora-backend`.
 
 ## Data root configuration
@@ -68,7 +69,7 @@ Logging variables are documented in [Runtime Logging](runtime-logging.md).
 
 ## HTTP API
 
-Route paths come from the `ora-contracts` endpoint manifest constants, so a route and its generated client entry cannot drift apart. Path parameters are camelCase.
+Route paths come from shared `ora-contracts` path constants, while the generation-only endpoint catalog in `xtask` references those same constants for the generated client entry. Path parameters are camelCase.
 
 ### project
 
@@ -93,9 +94,11 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 
 ### session
 
-- `POST /api/sessions`
+- `POST /api/sessions/warm`
 - `GET /api/sessions`
 - `GET /api/sessions/{sessionId}`
+- `POST /api/sessions/{sessionId}/config`
+- `POST /api/sessions/{sessionId}/attach`
 - `POST /api/sessions/{sessionId}/load`
 - `POST /api/sessions/{sessionId}/prompt`
 - `POST /api/sessions/{sessionId}/permissions/respond`
@@ -106,16 +109,23 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 
 ### agentRuntime
 
-- `GET /api/agent-models`
+- `GET /api/agent-runtime/status`
 
 ### skill
+
 
 - `POST /api/skills`
 - `GET /api/skills`
 - `GET /api/skills/{skillId}`
 - `PUT /api/skills/{skillId}`
 - `DELETE /api/skills/{skillId}`
-- `POST /api/skills/import`
+
+### skillImport
+
+- `POST /api/skill-imports`
+- `GET /api/skill-imports/{sessionId}`
+- `POST /api/skill-imports/{sessionId}/commit`
+- `DELETE /api/skill-imports/{sessionId}`
 
 ### agent
 
@@ -132,12 +142,23 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 
 ### task workspace files
 
+- `GET /api/tasks/{taskId}/workspace` returns the authoritative root and optional Git branch used by task-scoped directory selection.
 - `POST /api/tasks/{taskId}/files/list` with `{ "path": "src" }` to list one workspace-relative directory
 - `POST /api/tasks/{taskId}/files/read` with `{ "path": "src/main.rs" }` to read one bounded UTF-8 file
 - `POST /api/tasks/{taskId}/files/search` with `{ "query": "needle", "kind": "files" | "content" }` to search filenames or text
 - `GET /api/tasks/{taskId}/files/watch` to stream debounced `WorkspaceFileEventBatch` NDJSON frames
 
 Every task workspace route resolves the active task workspace through `ora-backend`; the client cannot select a root directory. The filesystem service rejects absolute paths, parent traversal, and symlink escapes. File reads are capped at 10 MiB and reject binary or invalid UTF-8 content. Search uses fixed-string matching for content, a 15-second timeout, an 8 MiB output bound, and at most 10,000 results. Watch events are coalesced for 100 ms before a batch is emitted. See [Task Workspace Files](task-workspace-files.md).
+
+### specs
+
+- `POST /api/specs/catalog` returns effective sources, bounded Markdown/MDX documents, and truncation state for a tagged Project or Task target.
+- `POST /api/specs/read` reads one document only after revalidating that it still belongs to an enabled source.
+- `POST /api/specs/resolve-source` converts a directory selected by the platform picker into a safe target-relative source.
+- `PUT /api/projects/{projectId}/spec-sources` atomically replaces the project's source overrides.
+- `POST /api/specs/watch` streams workspace file-event batches for the tagged target.
+
+Spec catalog and read responses never expose an absolute workspace root. Discovery and source configuration are composed by the shared backend, so Web and Desktop retain identical source inference, path containment, persistence, and error semantics. See [Spec Management](spec-management.md).
 
 ### gitIdentity
 
@@ -153,25 +174,23 @@ Project branch responses separate the logical branch name, exact resolvable ref,
 
 ### Agent runtime
 
-Backend construction immediately attempts one supervised `acp` child per supported CLI, rooted at the user's home directory. Executable resolution is platform-specific: on Unix each CLI is read from its fixed per-user directory (`<home>/.opencode/bin/opencode`, `<home>/.nga/bin/nga`, `<home>/.codeagentcli/bin/codeagentcli`); on Windows it is resolved from `PATH` through `where.exe` on every retry generation.
+Backend construction immediately attempts one supervised `acp` child per supported CLI, rooted at the user's home directory. Executable resolution is platform-specific: on Unix each CLI is read from its fixed per-user directory (`<home>/.opencode/bin/opencode`, `<home>/.nga/bin/nga`, `<home>/.codeagentcli/bin/codeagentcli`, `<home>/.claude/bin/claude-agent-acp`, `<home>/.codex/bin/codex-acp`); on Windows it is resolved from `PATH` through `where.exe` on every retry generation.
 
-Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Session create calls `session/new` on the connection selected by `agentCli` and returns the latest available-command catalog announced during setup. Updates emitted before the response reveals the private provider session id are temporarily buffered, then attached to the matching session route. Load calls `session/load` using that private id and the Task worktree `cwd`; the public Session payload never exposes it. The load response streams Ora's own recorded conversation rather than the agent's replay, which is drained and discarded. `POST /api/sessions/{sessionId}/agent` rebinds a live conversation to a different CLI without changing its identifier, and `POST /api/sessions/{sessionId}/history/resume` returns a session whose history writes failed to a writable state. `GET /api/agent-models` concurrently runs each CLI's bounded `models` discovery command and returns only successful groups.
+Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Warming a session calls `session/new` on the connection selected by `agentCli` and keeps it in memory, capturing the configuration options and the available-command catalog the handshake announces; attach persists it against its Task and returns that catalog. Updates emitted before the response reveals the private provider session id are temporarily buffered, then attached to the matching session route. Load calls `session/load` using that private id and the Task worktree `cwd`; the public Session payload never exposes it. The load response streams Ora's own recorded conversation rather than the agent's replay, which is drained and discarded. `POST /api/sessions/{sessionId}/agent` rebinds a live conversation to a different CLI without changing its identifier, and `POST /api/sessions/{sessionId}/history/resume` returns a session whose history writes failed to a writable state. `GET /api/agent-runtime/status` reports each CLI's live ACP handshake status as ready, starting, or unavailable.
 
-Prompt requests carry an ordered ACP content-block list and may combine text, images, audio, and resources. The serialized prompt is limited to 16 MiB. Load and prompt responses use `application/x-ndjson`; each line is one complete frame. Data and control paths are separate, session-update queues are bounded at 256 items, frames are limited to 8 MiB, and overflow terminates the operation rather than dropping updates silently. See [ACP Agent Runtime](agent-runtime.md).
+Warm sessions are keyed partly by the caller's `clientId`, which matters here specifically: one server process serves every browser tab, and sharing a warm session between two tabs would let the first attach take the other's conversation.
+
+Prompt requests carry an ordered ACP content-block list and may combine text, images, audio, and resources. The serialized prompt is limited to 16 MiB. Load and prompt responses use `application/x-ndjson`; each line is one complete frame. Updates, permission requests, and terminating responses share one ordered per-session FIFO bounded at 256 items; connection loss and queue overflow remain separate terminal controls. Frames are limited to 8 MiB, and overflow terminates the operation rather than dropping updates silently. See [ACP Agent Runtime](agent-runtime.md).
 
 Unary requests and streams receive a server-generated canonical request id before entering business logic. Client-provided `X-Request-Id` values are ignored. Every Web response publishes the canonical id through `X-Request-Id`, CORS exposes that header, and a failure body or error frame carries the same id in its direct `{ code, params, requestId }` payload. A stream keeps one id from creation through normal completion, failure, disconnect, or cancellation.
 
-### Skill folder import
+### Skill imports
 
-`POST /api/skills/import` uploads a local skill folder as one `multipart/form-data` request. Each file part carries its skill-root-relative path as the part file name. The request body is capped at 50 MB: oversized uploads return the typed `413` `skill_upload_too_large` error, while uploads over 1000 files return `422`.
+`POST /api/skill-imports?mode=folder|archive` accepts one `multipart/form-data` source. Folder parts carry a validated source-relative path as their filename; archive mode accepts exactly one `.zip`, `.skill`, `.tar.gz`, or `.tgz` part. The adapter streams the upload to OS temporary storage before it calls the shared prepare service, so previewing never touches the database or committed skill packages.
 
-The import is atomic across the filesystem and the database:
+Preparation snapshots and safely scans the source, rejects unsafe paths, links and archive expansion attacks, then returns an opaque session id and every discovered candidate. `GET` renews the prepared session while it is within its idle and absolute lifetime. `POST .../commit` returns `202 Accepted` after it freezes every conflict decision; the background job remains observable via `GET`. `DELETE` cancels only prepared sessions.
 
-- Files stream into `<ORA_DATA_DIR>/atoms/skills/<uuid>.tmp`, where `<uuid>` is the skill's future identifier.
-- Root `SKILL.md` front matter supplies the persisted `name` and `description`; the committed directory uses the validated name.
-- The SQLite row insert, staging-directory promotion, and transaction commit execute as one unit of work. A primary failure keeps its full Rust source chain for the correlated completion log, while any compensating cleanup failure is logged separately without replacing that primary error.
-- Empty uploads, excessive file counts, unsafe or duplicate relative paths, and invalid manifests return typed `422` contract errors. An existing committed directory returns the typed `409` `skill_folder_conflict` error.
-- Deleting a skill also removes its committed directory. Startup reconciliation removes leftover staging directories and committed directories with no visible database row before the backend becomes ready.
+Each created, updated, overwritten, or deleted skill is atomic across its SQLite row and `<ORA_DATA_DIR>/atoms/skills/<name>/` package. The package transaction uses a same-filesystem staging directory and backup, while import sources remain in OS temp because it may be a different filesystem. Startup recovers interrupted package transactions, removes unowned package directories, and refuses to start if a visible row lacks its package or root `SKILL.md`.
 
 ### Project work contexts
 
@@ -210,8 +229,14 @@ Task workspace failures use the same mapping: missing task or workspace path ret
 
 - `task run:web-backend` starts the Rust HTTP backend on its default port.
 - `task run:web-frontend` starts Vite with the fetch contracts transport and expects the backend to run separately.
+- `task run:web-proto` starts Vite with an isolated in-memory `ContractsClient` and never calls `/api/*`.
+- Running `pnpm --filter @ora/web-client dev` directly also defaults to the in-memory client.
 
-The Web frontend always uses the fetch contracts transport and talks to the Rust HTTP backend, in both development and production builds.
+Development defaults to `mock`; production builds default to `fetch`. Set
+`VITE_ORA_CONTRACT_TRANSPORT` explicitly to `mock` or `fetch` when overriding
+that behavior. Mock records live only for the current page lifetime and reset
+on refresh; the explicit fetch mode remains the integration path for the Rust
+HTTP backend.
 
 Long-lived task workspace watch responses defer completion until an end or error frame so the request id, error payload, and log event remain correlated. This keeps the watcher aligned with the ACP stream lifecycle and prevents an early success event followed by a duplicate failure event.
 

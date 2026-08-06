@@ -21,6 +21,13 @@ pub enum GitlancerError {
     #[error("filesystem operation failed: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Preserves the fact that a commit succeeded when its follow-up metadata read failed.
+    #[error("commit succeeded but reading commit metadata failed: {source}")]
+    CommitMetadataUnavailable {
+        #[source]
+        source: Box<GitlancerError>,
+    },
+
     /// Returned when a generated patch exceeds the API's bounded response budget.
     #[error("task diff is too large: {byte_count} bytes exceeds {max_byte_count} bytes")]
     DiffTooLarge {

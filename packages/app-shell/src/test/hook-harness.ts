@@ -5,6 +5,9 @@ import type { ContractsClient } from "@ora/contracts";
 import { createChatStore, type ChatStore } from "@ora/chat";
 import { ContractsClientContext } from "../contracts-client-context";
 import { ChatStoreContext } from "../chat-store-context";
+import type { WorkflowRuntime } from "@ora/workflow-runtime";
+import { createMemoryWorkflowRuntime } from "@ora/workflow-runtime/memory";
+import { WorkflowRuntimeProvider } from "../features/workflow-run/workflow-runtime-context";
 
 /** Builds a QueryClient with retries disabled so tests fail fast on transport errors. */
 export function createTestQueryClient(): QueryClient {
@@ -16,20 +19,27 @@ export function createTestQueryClient(): QueryClient {
   });
 }
 
-/** Wraps children with QueryClient + ContractsClient providers for hook tests. */
+/** Wraps children with QueryClient + ContractsClient + workflow runtime providers. */
 export function createHookWrapper(
   client: ContractsClient,
   queryClient: QueryClient,
   chatStore: ChatStore,
+  runtime: WorkflowRuntime = createMemoryWorkflowRuntime(),
 ) {
   return function Wrapper({ children }: { children: ReactNode }) {
     return createElement(
       QueryClientProvider,
       { client: queryClient },
       createElement(
-        ContractsClientContext.Provider,
-        { value: client },
-        createElement(ChatStoreContext.Provider, { value: chatStore }, children),
+        WorkflowRuntimeProvider,
+        {
+          runtime,
+          children: createElement(
+          ContractsClientContext.Provider,
+          { value: client },
+          createElement(ChatStoreContext.Provider, { value: chatStore }, children),
+          ),
+        },
       ),
     );
   };
@@ -41,7 +51,10 @@ export function renderHookWithClient<TResult>(
   client: ContractsClient,
   queryClient: QueryClient = createTestQueryClient(),
   chatStore: ChatStore = createChatStore(client.session),
+  runtime: WorkflowRuntime = createMemoryWorkflowRuntime(),
 ): RenderHookResult<TResult, TResult> & { queryClient: QueryClient } {
-  const result = renderHook(hook, { wrapper: createHookWrapper(client, queryClient, chatStore) });
+  const result = renderHook(hook, {
+    wrapper: createHookWrapper(client, queryClient, chatStore, runtime),
+  });
   return { ...result, queryClient };
 }

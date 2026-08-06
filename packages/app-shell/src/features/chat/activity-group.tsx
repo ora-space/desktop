@@ -17,8 +17,8 @@ import { useTranslation } from "react-i18next";
 import type { ChatThought, ChatToolCall, ChatTurnStatus } from "@ora/chat";
 import {
   StreamingThoughtReveal,
-  useStreamingThoughtRevealStart,
 } from "./streaming-thought-reveal";
+import { useStreamingThoughtRevealStart } from "./use-streaming-thought-reveal-start";
 import { ToolCallBlock } from "./tool-call-block";
 
 export type ActivityItem = ChatThought | ChatToolCall;

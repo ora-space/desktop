@@ -7,12 +7,14 @@ use axum::http::{HeaderValue, Response, header};
 use futures_util::stream;
 use ora_backend::{BackendError, SessionEventStream};
 use ora_contracts::{
-    AgentCli, ContractError, CreateSessionRequest, CreateSessionResponse, DeleteSessionRequest,
-    DeleteSessionResponse, EmptyErrorParams, GetSessionRequest, GetSessionResponse,
-    ListAgentModelsRequest, ListAgentModelsResponse, ListSessionsRequest, ListSessionsResponse,
-    LoadSessionRequest, PromptSessionRequest, PublicError, RespondToPermissionRequest,
-    RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse,
+    AgentCli, AttachSessionRequest, AttachSessionResponse, ContractError, DeleteSessionRequest,
+    DeleteSessionResponse, EmptyErrorParams, GetAgentRuntimeStatusRequest,
+    GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest,
+    ListSessionsResponse, LoadSessionRequest, PromptSessionRequest, PublicError,
+    RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest,
+    ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse,
     StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
+    WarmSessionRequest, WarmSessionResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -39,11 +41,27 @@ pub struct RespondToPermissionBody {
     option_id: String,
 }
 
-/// Carries the target CLI while the path owns the Ora session identifier.
+/// Carries the target CLI and claiming client while the path owns the Ora session identifier.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwitchSessionAgentBody {
     agent_cli: AgentCli,
+    client_id: String,
+}
+
+/// Carries one configuration change while the path owns the Ora session identifier.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSessionConfigBody {
+    config_id: String,
+    value: String,
+}
+
+/// Carries the owning Task while the path owns the warm session identifier.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachSessionBody {
+    task_id: String,
 }
 
 #[derive(Serialize)]
@@ -54,27 +72,61 @@ enum StreamFrame<Event> {
     End,
 }
 
-/// Creates one provider-backed session after the ACP setup handshake succeeds.
-pub async fn create_session(
+/// Returns the warm provider session backing one chat surface.
+pub async fn warm_session(
     State(app_state): State<AppState>,
-    Json(request): Json<CreateSessionRequest>,
-) -> Result<Json<CreateSessionResponse>, WebApiError> {
+    Json(request): Json<WarmSessionRequest>,
+) -> Result<Json<WarmSessionResponse>, WebApiError> {
     app_state
         .backend()
-        .create_session(request)
+        .warm_session(request)
         .await
         .map(Json)
         .map_err(WebApiError::from)
 }
 
-/// Lists models grouped by every CLI whose discovery command succeeds.
-pub async fn list_agent_models(
+/// Applies one configuration option to a warm or persisted session.
+pub async fn set_session_config(
     State(app_state): State<AppState>,
-) -> Result<Json<ListAgentModelsResponse>, WebApiError> {
+    Path(path): Path<SessionPath>,
+    Json(body): Json<SetSessionConfigBody>,
+) -> Result<Json<SetSessionConfigResponse>, WebApiError> {
     app_state
         .backend()
-        .list_agent_models(ListAgentModelsRequest {})
+        .set_session_config(SetSessionConfigRequest {
+            session_id: path.session_id,
+            config_id: body.config_id,
+            value: body.value,
+        })
         .await
+        .map(Json)
+        .map_err(WebApiError::from)
+}
+
+/// Persists one warm session against the Task that now owns it.
+pub async fn attach_session(
+    State(app_state): State<AppState>,
+    Path(path): Path<SessionPath>,
+    Json(body): Json<AttachSessionBody>,
+) -> Result<Json<AttachSessionResponse>, WebApiError> {
+    app_state
+        .backend()
+        .attach_session(AttachSessionRequest {
+            session_id: path.session_id,
+            task_id: body.task_id,
+        })
+        .await
+        .map(Json)
+        .map_err(WebApiError::from)
+}
+
+/// Reports the live detection status of every application-scoped CLI runtime.
+pub async fn get_agent_runtime_status(
+    State(app_state): State<AppState>,
+) -> Result<Json<GetAgentRuntimeStatusResponse>, WebApiError> {
+    app_state
+        .backend()
+        .get_agent_runtime_status(GetAgentRuntimeStatusRequest {})
         .map(Json)
         .map_err(WebApiError::from)
 }
@@ -180,6 +232,7 @@ pub async fn switch_session_agent(
         .switch_session_agent(SwitchSessionAgentRequest {
             session_id: path.session_id,
             agent_cli: body.agent_cli,
+            client_id: body.client_id,
         })
         .await
         .map(Json)

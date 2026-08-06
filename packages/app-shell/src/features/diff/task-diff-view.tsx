@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Decoration,
@@ -8,7 +8,6 @@ import {
   type ChangeData,
   type FileData,
   type GutterOptions,
-  type HunkData,
 } from "react-diff-view";
 import "react-diff-view/style/index.css";
 import "./task-diff-view.css";
@@ -52,11 +51,14 @@ import {
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { useContractsClient } from "../../contracts-client-context";
+import { localizeContractError } from "../../i18n/contract-error";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useTaskDiff, useTaskDiffComments } from "../../state/hooks/use-task-diff";
 import { buildCollapsedDiffSegments } from "./task-diff-collapse";
 import { countChanges, parseTaskDiffPatch } from "./task-diff-data";
-import { diffFilePath, TaskDiffFileTree } from "./task-diff-file-tree";
+import { createCommentAnchor } from "./task-diff-comment-anchor";
+import { diffFilePath } from "./task-diff-file-tree-utils";
+import { TaskDiffFileTree } from "./task-diff-file-tree";
 import { TaskGitActions } from "./task-git-actions";
 
 interface TaskDiffViewProps {
@@ -109,15 +111,16 @@ export function TaskDiffView({
     () => diffQuery.data === undefined ? [] : parseTaskDiffPatch(diffQuery.data.patch),
     [diffQuery.data],
   );
+  const filePaths = useMemo(() => files.map(diffFilePath), [files]);
   const stats = useMemo(() => countChanges(files), [files]);
   const changedFilesLabel = t("diff.changedFilesLabel", {
     defaultValue: i18n.resolvedLanguage === "en-US" ? "changed files" : "个变更文件",
   });
-  const activeFilePath = files.length === 0
+  const activeFilePath = filePaths.length === 0
     ? ""
-    : files.some((file) => diffFilePath(file) === selectedFilePath)
+    : filePaths.some((path) => path === selectedFilePath)
       ? selectedFilePath!
-      : diffFilePath(files[0]!);
+      : filePaths[0]!;
 
   /** Selects a changed file and aligns its first line with the top of the Diff viewport. */
   const selectFile = useCallback((path: string, behavior: ScrollBehavior = "smooth") => {
@@ -136,15 +139,15 @@ export function TaskDiffView({
   useEffect(() => {
     if (fileRequest === undefined || files.length === 0) return;
     const requestedPath = normalizeDiffPath(fileRequest.path);
-    const matchingPath = files
-      .map(diffFilePath)
-      .find((path) => {
+    const matchingPath = filePaths.find((path) => {
         const normalizedPath = normalizeDiffPath(path);
         return requestedPath === normalizedPath
           || requestedPath.endsWith(`/${normalizedPath}`);
       });
-    if (matchingPath !== undefined) selectFile(matchingPath, "auto");
-  }, [fileRequest, files, selectFile]);
+    if (matchingPath === undefined) return;
+    const frame = requestAnimationFrame(() => selectFile(matchingPath, "auto"));
+    return () => cancelAnimationFrame(frame);
+  }, [fileRequest, filePaths, files.length, selectFile]);
 
   useEffect(() => {
     const panel = fileTreePanelRef.current;
@@ -155,35 +158,41 @@ export function TaskDiffView({
 
   useEffect(() => {
     const root = scrollContainerRef.current;
-    if (root === null || files.length === 0) return;
+    if (root === null || filePaths.length === 0) return;
+    let frame: number | null = null;
     const updateActiveFile = () => {
-      const paths = files.map(diffFilePath);
-      if (root.scrollHeight - root.scrollTop - root.clientHeight <= 2) {
-        setSelectedFilePath(paths.at(-1)!);
-        return;
-      }
-
-      const rootTop = root.getBoundingClientRect().top;
-      let activePath = paths[0]!;
-      for (const path of paths) {
-        const element = fileElementsRef.current.get(path);
-        if (element === undefined || element.getBoundingClientRect().top > rootTop + 48) break;
-        activePath = path;
-      }
-      setSelectedFilePath(activePath);
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        let activePath = filePaths[0]!;
+        if (root.scrollHeight - root.scrollTop - root.clientHeight <= 2) {
+          activePath = filePaths.at(-1)!;
+        } else {
+          const rootTop = root.getBoundingClientRect().top;
+          for (const path of filePaths) {
+            const element = fileElementsRef.current.get(path);
+            if (element === undefined || element.getBoundingClientRect().top > rootTop + 48) break;
+            activePath = path;
+          }
+        }
+        setSelectedFilePath((currentPath) => currentPath === activePath ? currentPath : activePath);
+      });
     };
 
     updateActiveFile();
     root.addEventListener("scroll", updateActiveFile, { passive: true });
-    return () => root.removeEventListener("scroll", updateActiveFile);
-  }, [files]);
+    return () => {
+      root.removeEventListener("scroll", updateActiveFile);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [filePaths]);
 
   const refreshDiscussions = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.taskDiffComments(taskId) });
 
   const createComment = useMutation({
-    mutationFn: ({ anchor, body }: { anchor: TaskDiffCommentAnchor; body: string }) =>
-      client.task.createDiffComment({ taskId, anchor, body }),
+    mutationFn: ({ scope, anchor, body }: { scope: TaskDiffScope; anchor: TaskDiffCommentAnchor; body: string }) =>
+      client.task.createDiffComment({ taskId, scope, anchor, body }),
     onSuccess: async () => {
       setSelectedAnchor(null);
       await refreshDiscussions();
@@ -209,7 +218,6 @@ export function TaskDiffView({
       await queryClient.invalidateQueries({ queryKey: queryKeys.taskDiffs(taskId) });
     },
   });
-
   const pushBranch = useMutation({
     mutationFn: () => client.task.pushBranch({ taskId }),
     onSuccess: (response) => {
@@ -220,7 +228,6 @@ export function TaskDiffView({
       }));
     },
   });
-
   const commitAndPush = async () => {
     const message = commitMessage.trim();
     if (message === "") return;
@@ -229,6 +236,42 @@ export function TaskDiffView({
     await commitChanges.mutateAsync(message);
     await pushBranch.mutateAsync();
   };
+  const diff = diffQuery.data;
+  const comments = useMemo(() => commentsQuery.data ?? [], [commentsQuery.data]);
+  const diffId = diff?.diffId;
+  const currentComments = useMemo(() => {
+    if (scope !== "branch" || diffId === undefined) return [];
+    return comments.filter(
+      (comment) => comment.kind.kind === "reply"
+        || comment.kind.anchor.diffId === diffId,
+    );
+  }, [comments, diffId, scope]);
+  const commentIndex = useMemo(() => buildDiffCommentIndex(currentComments), [currentComments]);
+  const outdatedThreads = useMemo(
+    () => scope !== "branch" || diffId === undefined
+      ? []
+      : comments.filter(
+        (comment) => comment.kind.kind === "thread"
+          && comment.kind.anchor.diffId !== diffId,
+      ),
+    [comments, diffId, scope],
+  );
+  const handleSelectAnchor = useCallback((selection: SelectedAnchor | null) => {
+    createComment.reset();
+    setSelectedAnchor(selection);
+  }, [createComment]);
+  const handleCreateComment = useCallback(
+    (anchor: TaskDiffCommentAnchor, body: string) => createComment.mutateAsync({ scope, anchor, body }),
+    [createComment, scope],
+  );
+  const handleReply = useCallback(
+    (commentId: string, body: string) => replyComment.mutateAsync({ commentId, body }),
+    [replyComment],
+  );
+  const handleSetStatus = useCallback(
+    (commentId: string, status: TaskDiffThreadStatus) => setCommentStatus.mutateAsync({ commentId, status }),
+    [setCommentStatus],
+  );
 
   const gitActions = (
     <TaskGitActions
@@ -274,29 +317,19 @@ export function TaskDiffView({
     return (
       <DiffMessage
         title={t("diff.loadError")}
-        detail={error instanceof Error ? error.message : t("diff.requestFailed")}
+        detail={localizeContractError(error, t)}
         action={<Button size="sm" variant="outline" onClick={() => void refresh()}><IconRefresh />{t("diff.retry")}</Button>}
       />
     );
   }
 
-  const diff = diffQuery.data;
   if (diff === undefined) return null;
 
-  const comments = commentsQuery.data ?? [];
   const mutationError = commitChanges.error
     ?? pushBranch.error
     ?? createComment.error
     ?? replyComment.error
     ?? setCommentStatus.error;
-  const currentComments = scope === "branch" ? comments.filter(
-    (comment) => comment.kind.kind === "reply"
-      || comment.kind.anchor.diffId === diff.diffId,
-  ) : [];
-  const outdatedThreads = scope === "branch" ? comments.filter(
-    (comment) => comment.kind.kind === "thread"
-      && comment.kind.anchor.diffId !== diff.diffId,
-  ) : [];
 
   return (
     <section
@@ -364,7 +397,7 @@ export function TaskDiffView({
       )}
       {mutationError !== null && (
         <div role="alert" className="border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-          {mutationError instanceof Error ? mutationError.message : t("diff.reviewFailed")}
+          {localizeContractError(mutationError, t)}
         </div>
       )}
       {gitNotice !== null && (
@@ -405,22 +438,21 @@ export function TaskDiffView({
                         data-diff-path={path}
                         className="scroll-mt-0"
                       >
-                        <TaskDiffFile
+                        <TaskDiffFileViewport
                           file={file}
                           fileIndex={fileIndex}
                           viewType={viewType}
                           diffId={diff.diffId}
-                          comments={currentComments}
+                          commentIndex={commentIndex}
                           reviewEnabled={scope === "branch"}
                           selectedAnchor={selectedAnchor}
-                          onSelectAnchor={(selection) => {
-                            createComment.reset();
-                            setSelectedAnchor(selection);
-                          }}
-                          onCreateComment={(anchor, body) => createComment.mutateAsync({ anchor, body })}
-                          onReply={(commentId, body) => replyComment.mutateAsync({ commentId, body })}
-                          onSetStatus={(commentId, status) => setCommentStatus.mutateAsync({ commentId, status })}
+                          onSelectAnchor={handleSelectAnchor}
+                          onCreateComment={handleCreateComment}
+                          onReply={handleReply}
+                          onSetStatus={handleSetStatus}
                           mutationPending={createComment.isPending || replyComment.isPending || setCommentStatus.isPending}
+                          rootRef={scrollContainerRef}
+                          forceRender={activeFilePath === path}
                         />
                       </div>
                     );
@@ -518,7 +550,7 @@ function PushBranchDialog({
           <AlertDialogTitle>{t("diff.pushDialogTitle")}</AlertDialogTitle>
           <AlertDialogDescription>{t("diff.pushDialogDescription")}</AlertDialogDescription>
         </AlertDialogHeader>
-        {error !== null && <p className="text-xs text-destructive">{error.message}</p>}
+        {error !== null && <p className="text-xs text-destructive">{localizeContractError(error, t)}</p>}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>{t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction disabled={pending} onClick={() => void onPush()}>
@@ -535,7 +567,7 @@ interface TaskDiffFileProps {
   fileIndex: number;
   viewType: TaskDiffViewType;
   diffId: string;
-  comments: TaskDiffComment[];
+  commentIndex: DiffCommentIndex;
   reviewEnabled: boolean;
   selectedAnchor: SelectedAnchor | null;
   onSelectAnchor: (selection: SelectedAnchor | null) => void;
@@ -545,13 +577,38 @@ interface TaskDiffFileProps {
   mutationPending: boolean;
 }
 
+interface DiffCommentIndex {
+  threadsByAnchor: Map<string, TaskDiffComment[]>;
+  repliesByParent: Map<string, TaskDiffComment[]>;
+}
+
+/** Builds lookup tables so each diff line does not scan every review comment. */
+function buildDiffCommentIndex(comments: TaskDiffComment[]): DiffCommentIndex {
+  const threadsByAnchor = new Map<string, TaskDiffComment[]>();
+  const repliesByParent = new Map<string, TaskDiffComment[]>();
+  for (const comment of comments) {
+    if (comment.kind.kind === "reply") {
+      const replies = repliesByParent.get(comment.kind.parentCommentId) ?? [];
+      replies.push(comment);
+      repliesByParent.set(comment.kind.parentCommentId, replies);
+      continue;
+    }
+
+    const key = `${comment.kind.anchor.path}:${comment.kind.anchor.startLine}`;
+    const threads = threadsByAnchor.get(key) ?? [];
+    threads.push(comment);
+    threadsByAnchor.set(key, threads);
+  }
+  return { threadsByAnchor, repliesByParent };
+}
+
 /** Renders one parsed patch file and injects review widgets below matching lines. */
 function TaskDiffFile({
   file,
   fileIndex,
   viewType,
   diffId,
-  comments,
+  commentIndex,
   reviewEnabled,
   selectedAnchor,
   onSelectAnchor,
@@ -563,30 +620,30 @@ function TaskDiffFile({
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(true);
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(() => new Set());
-  const fileStats = countChanges([file]);
+  const fileStats = useMemo(() => countChanges([file]), [file]);
   const renderSegments = useMemo(
     () => buildCollapsedDiffSegments(file.hunks, expandedBlocks),
     [expandedBlocks, file.hunks],
   );
-  const threads = comments.filter((comment) => comment.kind.kind === "thread");
-  const replies = comments.filter((comment) => comment.kind.kind === "reply");
   const selectedChangeKey = selectedAnchor?.changeKey.startsWith(`${fileIndex}:`)
     ? selectedAnchor.changeKey.slice(`${fileIndex}:`.length)
     : null;
 
-  const widgets = Object.fromEntries(
+  const widgets = useMemo(() => Object.fromEntries(
     file.hunks.flatMap((hunk) =>
       hunk.changes.flatMap((change) => {
         const changeKey = getChangeKey(change);
         const oldLine = lineNumberFor(change, "old");
         const newLine = lineNumberFor(change, "new");
-        const matchingThreads = threads.filter((thread) => {
-          if (thread.kind.kind !== "thread") return false;
-          const { anchor } = thread.kind;
-          const expectedPath = anchor.side === "old" ? file.oldPath : file.newPath;
-          const expectedLine = anchor.side === "old" ? oldLine : newLine;
-          return anchor.path === expectedPath && anchor.startLine === expectedLine;
-        });
+        const oldThreads = oldLine === null
+          ? []
+          : commentIndex.threadsByAnchor.get(`${file.oldPath}:${oldLine}`) ?? [];
+        const newThreads = newLine === null
+          ? []
+          : commentIndex.threadsByAnchor.get(`${file.newPath}:${newLine}`) ?? [];
+        const matchingThreads = file.oldPath === file.newPath && oldLine === newLine
+          ? oldThreads
+          : [...oldThreads, ...newThreads];
         const isSelected = selectedChangeKey === changeKey;
         if (matchingThreads.length === 0 && !isSelected) return [];
 
@@ -596,9 +653,7 @@ function TaskDiffFile({
               <DiffThread
                 key={thread.id}
                 thread={thread}
-                replies={replies.filter(
-                  (reply) => reply.kind.kind === "reply" && reply.kind.parentCommentId === thread.id,
-                )}
+                replies={commentIndex.repliesByParent.get(thread.id) ?? []}
                 onReply={onReply}
                 onSetStatus={onSetStatus}
                 disabled={mutationPending}
@@ -616,9 +671,9 @@ function TaskDiffFile({
         )] as const];
       }),
     ),
-  );
+  ), [commentIndex, file, mutationPending, onCreateComment, onReply, onSelectAnchor, onSetStatus, selectedAnchor, selectedChangeKey]);
 
-  const selectLine = ({ change, side }: { change: ChangeData | null; side?: TaskDiffSide }) => {
+  const selectLine = useCallback(({ change, side }: { change: ChangeData | null; side?: TaskDiffSide }) => {
     if (!reviewEnabled || change === null) return;
     const resolvedSide = resolveSide(change, side);
     const lineNumber = lineNumberFor(change, resolvedSide);
@@ -630,7 +685,8 @@ function TaskDiffFile({
       changeKey: `${fileIndex}:${getChangeKey(change)}`,
       anchor: createCommentAnchor(file, hunk, change, resolvedSide, diffId),
     });
-  };
+  }, [diffId, file, fileIndex, onSelectAnchor, reviewEnabled]);
+  const gutterEvents = useMemo(() => ({ onClick: selectLine }), [selectLine]);
 
   return (
     <article className="bg-background">
@@ -682,7 +738,7 @@ function TaskDiffFile({
             hunks={file.hunks}
             widgets={widgets}
             selectedChanges={selectedChangeKey === null ? [] : [selectedChangeKey]}
-            gutterEvents={{ onClick: selectLine }}
+            gutterEvents={gutterEvents}
             renderGutter={viewType === "unified" ? renderSingleLineNumber : undefined}
             optimizeSelection
           >
@@ -719,6 +775,90 @@ function TaskDiffFile({
         </div>
       ))}
     </article>
+  );
+}
+
+/** Compares one file's inputs while ignoring selection changes that belong to other files. */
+function areTaskDiffFilePropsEqual(
+  previous: TaskDiffFileProps,
+  next: TaskDiffFileProps,
+): boolean {
+  const previousSelection = previous.selectedAnchor?.changeKey.startsWith(`${previous.fileIndex}:`)
+    ? previous.selectedAnchor
+    : null;
+  const nextSelection = next.selectedAnchor?.changeKey.startsWith(`${next.fileIndex}:`)
+    ? next.selectedAnchor
+    : null;
+  return previous.file === next.file
+    && previous.fileIndex === next.fileIndex
+    && previous.viewType === next.viewType
+    && previous.diffId === next.diffId
+    && previous.commentIndex === next.commentIndex
+    && previous.reviewEnabled === next.reviewEnabled
+    && previous.onSelectAnchor === next.onSelectAnchor
+    && previous.onCreateComment === next.onCreateComment
+    && previous.onReply === next.onReply
+    && previous.onSetStatus === next.onSetStatus
+    && previous.mutationPending === next.mutationPending
+    && previousSelection === nextSelection;
+}
+
+const MemoizedTaskDiffFile = memo(TaskDiffFile, areTaskDiffFilePropsEqual);
+
+interface TaskDiffFileViewportProps extends TaskDiffFileProps {
+  rootRef: RefObject<HTMLDivElement | null>;
+  forceRender: boolean;
+}
+
+/** Mounts nearby diff files on demand so large patches do not create one large DOM tree at once. */
+function TaskDiffFileViewport({
+  rootRef,
+  forceRender,
+  file,
+  ...fileProps
+}: TaskDiffFileViewportProps) {
+  const elementRef = useRef<HTMLDivElement | null>(null);
+  const supportsIntersectionObserver = typeof IntersectionObserver !== "undefined";
+  const [isNearViewport, setIsNearViewport] = useState(
+    () => forceRender || !supportsIntersectionObserver,
+  );
+  const shouldRender = forceRender || isNearViewport;
+  const estimatedHeight = useMemo(
+    () => Math.max(
+      72,
+      48 + file.hunks.reduce((total, hunk) => total + hunk.changes.length, 0) * 24,
+    ),
+    [file.hunks],
+  );
+
+  useEffect(() => {
+    if (shouldRender) return;
+
+    const element = elementRef.current;
+    const root = rootRef.current;
+    if (element === null || root === null) {
+      const frame = requestAnimationFrame(() => setIsNearViewport(true));
+      return () => cancelAnimationFrame(frame);
+    }
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return;
+      setIsNearViewport(true);
+      observer.disconnect();
+    }, { root, rootMargin: "1200px 0px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [rootRef, shouldRender]);
+
+  return (
+    <div
+      ref={elementRef}
+      className="ora-diff-file-viewport"
+      style={shouldRender ? undefined : { minHeight: estimatedHeight }}
+      aria-busy={!shouldRender}
+    >
+      {shouldRender ? <MemoizedTaskDiffFile file={file} {...fileProps} /> : null}
+    </div>
   );
 }
 
@@ -908,32 +1048,6 @@ function renderSingleLineNumber({
 }: GutterOptions) {
   if (change.type === "normal" && side === "old") return null;
   return wrapInAnchor(renderDefault());
-}
-
-/** Builds the exact single-line anchor shape validated by the backend patch parser. */
-export function createCommentAnchor(
-  file: FileData,
-  hunk: HunkData,
-  change: ChangeData,
-  side: TaskDiffSide,
-  diffId: string,
-): TaskDiffCommentAnchor {
-  const lineNumber = lineNumberFor(change, side);
-  if (lineNumber === null) {
-    throw new Error(`change ${getChangeKey(change)} does not exist on the ${side} side`);
-  }
-
-  return {
-    diffId,
-    path: side === "old" ? file.oldPath : file.newPath,
-    side,
-    startLine: lineNumber,
-    endLine: lineNumber,
-    hunkHeader: hunk.content,
-    // gitdiff-parser retains the CR from CRLF patches, while Rust `str::lines`
-    // deliberately removes it before validating the source line.
-    lineContent: change.content.replace(/\r$/, ""),
-  };
 }
 
 /** Chooses the source side represented by a clicked diff cell. */

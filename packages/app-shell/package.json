@@ -9,16 +9,21 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "lint": "tsc -p tsconfig.json --noEmit && eslint src",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@ora/chat": "workspace:*",
     "@ora/contracts": "workspace:*",
     "@ora/platform": "workspace:*",
     "@ora/ui": "workspace:*",
+    "@ora/workflow-mock": "workspace:*",
+    "@ora/workflow-runtime": "workspace:*",
     "@tabler/icons-react": "^3.44.0",
     "@tanstack/react-query": "^5.101.2",
+    "@xyflow/react": "^12.11.2",
     "diff": "^8.0.4",
     "i18next": "^25.8.13",
     "react-diff-view": "^3.3.3",

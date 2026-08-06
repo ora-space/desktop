@@ -14,5 +14,6 @@ export function createStubPlatform(): PlatformAdapter {
     windowControls: { kind: "none" },
     locationActions: { kind: "unsupported" },
     selectPath: async () => null,
+    saveTextFile: async () => false,
   };
 }

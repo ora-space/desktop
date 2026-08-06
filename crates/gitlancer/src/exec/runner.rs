@@ -1,10 +1,9 @@
 use std::io::{ErrorKind, Read};
 use std::process::{Command, Stdio};
 use std::sync::{
-    Arc,
+    Arc, Condvar, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::Duration;
 use std::time::Instant;
 
 use crate::error::GitExecError;
@@ -114,12 +113,31 @@ fn run_cli(
     let stderr = child.stderr.take().expect("piped stderr must be available");
     let (stdout_limit, stderr_limit) = limits.unwrap_or((usize::MAX, usize::MAX));
     let output_exceeded = Arc::new(AtomicBool::new(false));
+    let reader_state = Arc::new((Mutex::new(ReaderState::default()), Condvar::new()));
     let stdout_exceeded = Arc::clone(&output_exceeded);
     let stderr_exceeded = Arc::clone(&output_exceeded);
-    let stdout_reader =
-        std::thread::spawn(move || read_bounded(stdout, stdout_limit, stdout_exceeded));
-    let stderr_reader =
-        std::thread::spawn(move || read_bounded(stderr, stderr_limit, stderr_exceeded));
+    let stdout_reader = std::thread::spawn({
+        let reader_state = Arc::clone(&reader_state);
+        move || {
+            let result = read_bounded(stdout, stdout_limit, stdout_exceeded, {
+                let reader_state = Arc::clone(&reader_state);
+                move || signal_output_exceeded(&reader_state)
+            });
+            signal_reader_finished(&reader_state);
+            result
+        }
+    });
+    let stderr_reader = std::thread::spawn({
+        let reader_state = Arc::clone(&reader_state);
+        move || {
+            let result = read_bounded(stderr, stderr_limit, stderr_exceeded, {
+                let reader_state = Arc::clone(&reader_state);
+                move || signal_output_exceeded(&reader_state)
+            });
+            signal_reader_finished(&reader_state);
+            result
+        }
+    });
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
@@ -133,11 +151,18 @@ fn run_cli(
                 });
             }
         }
-        if output_exceeded.load(Ordering::Acquire) {
+        let (state_lock, state_changed) = &*reader_state;
+        let state = state_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.output_exceeded || state.completed_readers == 2 {
+            drop(state);
             // Once either stream exceeds its budget, killing Git bounds CPU and I/O as well as memory.
             // Git can exit between `try_wait` and `kill`; waiting still reaps it and lets the
             // bounded readers return the more useful `OutputTooLarge` error in that race.
-            let _termination_result = child.kill();
+            if output_exceeded.load(Ordering::Acquire) {
+                let _termination_result = child.kill();
+            }
             break child
                 .wait()
                 .map_err(|source| GitExecError::OutputReadFailed {
@@ -145,7 +170,9 @@ fn run_cli(
                     source,
                 });
         }
-        std::thread::sleep(Duration::from_millis(2));
+        let _state = state_changed
+            .wait(state)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
     };
     let stdout_result = join_bounded_reader(stdout_reader, "stdout", stdout_limit);
     let stderr_result = join_bounded_reader(stderr_reader, "stderr", stderr_limit);
@@ -190,11 +217,39 @@ fn run_cli(
     })
 }
 
+/// Tracks output-reader completion so process waiting can sleep without polling.
+#[derive(Default)]
+struct ReaderState {
+    output_exceeded: bool,
+    completed_readers: usize,
+}
+
+/// Wakes the process waiter as soon as either output stream exceeds its budget.
+fn signal_output_exceeded(reader_state: &Arc<(Mutex<ReaderState>, Condvar)>) {
+    let (state_lock, state_changed) = &**reader_state;
+    let mut state = state_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.output_exceeded = true;
+    state_changed.notify_one();
+}
+
+/// Wakes the process waiter when one output stream reaches EOF or a read fails.
+fn signal_reader_finished(reader_state: &Arc<(Mutex<ReaderState>, Condvar)>) {
+    let (state_lock, state_changed) = &**reader_state;
+    let mut state = state_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.completed_readers += 1;
+    state_changed.notify_one();
+}
+
 /// Reads one pipe without retaining bytes beyond its limit while continuing to drain the child.
 fn read_bounded(
     mut reader: impl Read,
     limit: usize,
     output_exceeded: Arc<AtomicBool>,
+    on_output_exceeded: impl Fn(),
 ) -> Result<(Vec<u8>, bool), std::io::Error> {
     let mut captured = Vec::new();
     let mut buffer = [0_u8; 8192];
@@ -207,9 +262,13 @@ fn read_bounded(
         let remaining = limit.saturating_sub(captured.len());
         let retained = remaining.min(read);
         captured.extend_from_slice(&buffer[..retained]);
-        truncated |= retained < read;
-        if truncated {
+        if retained < read {
+            let first_exceeded = !truncated;
+            truncated = true;
             output_exceeded.store(true, Ordering::Release);
+            if first_exceeded {
+                on_output_exceeded();
+            }
         }
     }
     Ok((captured, truncated))
@@ -260,7 +319,13 @@ mod tests {
     #[test]
     fn bounds_captured_output() {
         assert_eq!(
-            read_bounded("abcdef".as_bytes(), 3, Arc::new(AtomicBool::new(false))).unwrap(),
+            read_bounded(
+                "abcdef".as_bytes(),
+                3,
+                Arc::new(AtomicBool::new(false)),
+                || {},
+            )
+            .unwrap(),
             (b"abc".to_vec(), true)
         );
     }

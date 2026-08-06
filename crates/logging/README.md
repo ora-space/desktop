@@ -9,8 +9,9 @@
 - Events are formatted as one JSON object per line with stable top-level timestamp, level, target, message, method, span, trace, and request fields; business and error fields are grouped consistently.
 - `ora_trace!`, `ora_debug!`, `ora_info!`, `ora_warn!`, and `ora_error!` attach the current method name and preserve the shared event shape.
 - Correlation helpers create spans whose trace and request identifiers propagate into nested events.
-- `ErrorReport::from_error` renders a bounded, single-line, redacted `Error::source()` chain for the
-  single request-completion event emitted by runtime seams.
+- `ErrorReport::from_error` preserves the complete original `Error::source()` chain in debug builds
+  and renders a bounded, single-line, redacted chain in release builds for the single
+  request-completion event emitted by runtime seams.
 - `clock` exposes local time and offsets from the IANA timezone fixed during startup.
 
 ## Boundaries

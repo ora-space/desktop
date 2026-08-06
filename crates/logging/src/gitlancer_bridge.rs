@@ -7,7 +7,14 @@ pub struct OraGitlancerLogger;
 
 impl GitlancerLogger for OraGitlancerLogger {
     fn log_command(&self, _cwd: &Path, command: &str) {
-        crate::ora_info!(message = "git command", operation = git_operation(command),);
+        let details = git_command_details(command);
+        crate::ora_info!(
+            message = "git command",
+            operation = details.operation,
+            action = details.action,
+            scope = details.scope,
+            key = details.key,
+        );
     }
 
     fn log_result(&self, duration_ms: u64, success: bool, exit_code: Option<i32>) {
@@ -27,17 +34,53 @@ impl GitlancerLogger for OraGitlancerLogger {
     }
 }
 
-/// Extracts the stable Git subcommand without logging user-controlled arguments or paths.
-fn git_operation(command: &str) -> &str {
-    command
-        .split_whitespace()
-        .nth(1)
+/// Contains the bounded, non-sensitive fields that explain a Git command's intent.
+struct GitCommandDetails<'a> {
+    operation: &'a str,
+    action: Option<&'a str>,
+    scope: Option<&'a str>,
+    key: Option<&'a str>,
+}
+
+/// Extracts stable Git intent while excluding user-controlled arguments, paths, and values.
+fn git_command_details(command: &str) -> GitCommandDetails<'_> {
+    let arguments = command.split_whitespace().skip(1).collect::<Vec<_>>();
+    let operation = arguments
+        .first()
+        .copied()
         .filter(|operation| {
             operation
                 .chars()
                 .all(|character| character.is_ascii_alphabetic())
         })
-        .unwrap_or("unknown")
+        .unwrap_or("unknown");
+
+    if operation != "config" {
+        return GitCommandDetails {
+            operation,
+            action: None,
+            scope: None,
+            key: None,
+        };
+    }
+
+    GitCommandDetails {
+        operation,
+        action: arguments
+            .iter()
+            .copied()
+            .find(|argument| matches!(*argument, "--get" | "--list" | "--unset" | "--add")),
+        scope: arguments
+            .iter()
+            .copied()
+            .find(|argument| matches!(*argument, "--global" | "--local" | "--system")),
+        key: arguments.iter().copied().find(|key| {
+            key.starts_with("user.")
+                && key.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || character == '.' || character == '-'
+                })
+        }),
+    }
 }
 
 /// Registers `OraGitlancerLogger` as the process-wide gitlancer logger.
@@ -63,7 +106,7 @@ mod tests {
     use super::OraGitlancerLogger;
 
     #[test]
-    fn log_command_emits_only_the_safe_git_operation() {
+    fn log_command_emits_safe_config_intent() {
         let buffer = SharedBuffer::default();
         let (dispatch, _guard) = build_dispatch(
             &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
@@ -74,7 +117,7 @@ mod tests {
         with_default(&dispatch, || {
             OraGitlancerLogger.log_command(
                 std::path::Path::new("/repo/project"),
-                "git commit -m \"token=secret\"",
+                "git config --global --get user.name",
             );
         });
 
@@ -87,7 +130,19 @@ mod tests {
         );
         assert_eq!(
             events[0]["context"]["operation"],
-            Value::String("commit".to_string())
+            Value::String("config".to_string())
+        );
+        assert_eq!(
+            events[0]["context"]["action"],
+            Value::String("--get".to_string())
+        );
+        assert_eq!(
+            events[0]["context"]["scope"],
+            Value::String("--global".to_string())
+        );
+        assert_eq!(
+            events[0]["context"]["key"],
+            Value::String("user.name".to_string())
         );
     }
 

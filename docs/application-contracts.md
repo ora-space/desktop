@@ -5,13 +5,13 @@ The public application surface is split across `ora-domain`, `ora-contracts`, `o
 ## Ownership
 
 - `ora-domain` owns schema-backed entities, identifier newtypes, and categorical enums. See [Domain Models](domain-models.md).
-- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Session, Skill, Agent, and Git identity operations, plus the Web-only project work context and filesystem operations.
+- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Spec management, Session, Skill, Skill Import, Agent, Workflow, and Git identity operations, plus the Web-only project work context and filesystem operations.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
-- `ora-contracts` also owns the frontend endpoint manifest for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode.
+- The `xtask` exporter owns the generation-only frontend endpoint catalog for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode. `ora-contracts` keeps the shared HTTP path constants used by server adapters.
 - `ora-contracts` exports TypeScript DTOs into `packages/contracts/src` so frontend packages consume the contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`. See [Frontend Contract SDK](frontend-contract-sdk.md).
 - `ora-application` owns use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports those handlers depend on, and domain-to-contract mapping. It also owns project work context lease timing and occupancy conflicts.
 - `ora-db` implements those ports on SQLite and owns schema reconciliation. See [Database Repositories](database-repositories.md).
-- `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, task-diff workspace/baseline resolution, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
+- `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, task-diff workspace/baseline resolution, specification target/configuration/filesystem composition, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
 - Transport adapters stay thin: Web handlers and Tauri commands accept contract requests, delegate to the same `Backend`, then map its stable public errors into HTTP or IPC semantics.
 - `ProjectWorkContext` and filesystem browsing are deliberately outside `ora-backend`. The Web server keeps those services composed directly from the repository pool; Desktop's transport reports `unsupported_operation` for those three contract operations.
 
@@ -26,8 +26,15 @@ Contracts are the app-facing protocol, not a projection of the domain. Each enti
 - `ProjectWorkContext`: `id`, `surface`, `windowId`, `projectId`, `leaseExpiresAt`
 - `ProjectBranch`: `name`, `refName`, `displayName`
 - Workspace file contracts keep task identity in the request and expose only normalized relative paths: `WorkspaceEntry`, `ReadWorkspaceFileResponse`, `SearchWorkspaceResponse`, and `WorkspaceFileEventBatch`. The server resolves the task's managed workspace; callers never provide a filesystem root.
+- `Workflow`: `id`, `name`, `publishedSnapshotId`
+- `WorkflowSnapshot` (public): `id`, `workflowId`, `version`, `graph`, `createdAt`, `updatedAt`
+- `WorkflowSummary`: `id`, `name`, `publishedVersion`, `createdAt`, `updatedAt`
+- `WorkflowVersion`: `id`, `version`, `createdAt`
+- `WorkflowRun`: `id`, `workflowId`, `snapshotId`, `status`, `state`, `input`, `output`, `error`, `startedAt`, `finishedAt`, `createdAt`, `updatedAt`
+- `WorkflowNodeRun`: `id`, `runId`, `nodeId`, `nodeType`, `sessionId`, `status`, `input`, `output`, `error`, `startedAt`, `finishedAt`, `createdAt`, `updatedAt`
+- `WorkflowRunSummary`: `id`, `name`, `projectId`, `workflowId`, `status`, `startedAt`, `finishedAt`, `createdAt`
 
-Public payloads expose documented business fields only. `createdAt`, `updatedAt`, `isDeleted`, and other internal audit fields never appear. Two exclusions are deliberate:
+Public payloads expose documented business fields only. `isDeleted` and other internal audit fields never appear. Workflow summary timestamps and WorkflowSnapshot `createdAt`/`updatedAt` are explicit exceptions because version history and editor freshness are user-visible lifecycle facts. `createdAt` records when a snapshot was created; `updatedAt` records draft edits and remains `null` for published snapshots. Two exclusions are deliberate:
 
 - Task worktrees are backend-owned, so no contract carries a `worktreeId`, and there are no standalone worktree DTOs or SDK operations. `CreateTaskRequest` takes `projectId`, `title`, `status`, and optional `workspaceMode` and `baseBranch` fields; worktree mode requires a base branch. `UpdateTaskRequest` takes `taskId`, `title`, and `status`. See [Task Worktrees](task-worktrees.md).
 - A session's private provider session id is never exposed. It is persisted and used internally for `session/load`, but the public `Session` payload omits it.
@@ -55,10 +62,14 @@ The handler set is intentionally narrower than full CRUD per entity, because som
 | `project` | create, get, list, list branches, update |
 | `task` | create, get, list, update |
 | `session` | get, list, delete |
-| `skill` | create, get, list, update, delete, import, startup reconciliation |
+| `skill` | create, get, list, update, delete, startup reconciliation |
+| `skill_import` | prepare, get, commit, cancel batch sessions |
 | `agent_definition` | create, get, list, update, delete |
 | `project_work_context` | open, renew |
 | `task_diff` | read diff, create/list/reply/update comments, commit, push |
+| `workflow` | create, get, list, update, delete, getDraft, updateDraft, publish, rollback, activate, listVersions, getVersion, deleteSnapshot |
+| `workflow_run` | create, get, list, listNodeRuns, delete |
+| `spec` | list and atomically replace project source overrides |
 | `worktree` | none — ports only |
 
 Notable consequences:
@@ -68,6 +79,8 @@ Notable consequences:
 - Session creation, load, prompt, permission response, cancellation, stop, agent switching, and history recording belong to the backend agent runtime, not to `ora-application`. The session module supplies only the persistence-facing reads and soft deletion.
 - `worktree` has no handlers or transport contracts at all. Worktree records are internal metadata coordinated by the task module.
 - `task_diff` owns review use cases but not workspace selection. Backend composition resolves the task's live cwd and supplies the fixed baseline for isolated worktrees or the current `HEAD` for project-root tasks.
+- `workflow` offers a complete CRUD surface including deletion, unlike project and task. Workflow deletion follows the standard handler pattern because it has no running-session constraint; cascade soft-deletion of snapshots is managed entirely within the repository.
+- `workflow_run` deletion carries an active-run guard — a running run, a non-terminal node run, or a running session refuses deletion — and cascades a soft-delete across the run, its node runs, and its task's sessions, worktrees, and task row.
 
 `project_id`, `task_id`, and `worktree_id` are treated as pass-through business identifiers. Create and update handlers do not perform extra cross-entity existence checks before delegating to their repositories; `OpenProjectWorkContextHandler` verifying the requested project is the one deliberate exception, because occupancy has to be evaluated against a real project.
 

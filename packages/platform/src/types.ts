@@ -5,6 +5,12 @@ export interface SelectPathOptions {
   initialPath?: string;
 }
 
+/** Defines one user-initiated text-file export without exposing host-specific dialogs. */
+export interface SaveTextFileOptions {
+  defaultFileName: string;
+  content: string;
+}
+
 export type WorktreeStorageCapability =
   | { kind: "unsupported" }
   | {
@@ -67,6 +73,7 @@ export interface PlatformAdapter {
   readonly windowControls: WindowControlsCapability;
   readonly locationActions: LocationActionsCapability;
   selectPath(options: SelectPathOptions): Promise<string | null>;
+  saveTextFile(options: SaveTextFileOptions): Promise<boolean>;
 }
 
 export type PlatformLocale = "zh-CN" | "en-US";

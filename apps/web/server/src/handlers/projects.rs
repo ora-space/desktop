@@ -100,6 +100,7 @@ pub async fn delete_project(
         .delete_project(DeleteProjectRequest {
             project_id: path.project_id,
         })
+        .await
         .map(Json)
         .map_err(WebApiError::from)
 }

@@ -1,0 +1,770 @@
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  IconCheck,
+  IconLayoutSidebarRightCollapse,
+  IconChevronDown,
+  IconLoader2,
+  IconPlus,
+  IconSettings,
+  IconTrash,
+} from "@tabler/icons-react";
+import type { AgentCli } from "@ora/contracts";
+import {
+  Button,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  Input,
+  Label,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Switch,
+  Textarea,
+} from "@ora/ui";
+import {
+  type WorkflowAgentConfig,
+  type WorkflowAgentModel,
+  type WorkflowNodeData,
+  type WorkflowCapabilities,
+} from "@ora/workflow-mock";
+import type { Node } from "@xyflow/react";
+import { AGENT_CLI_LABELS, AGENT_CLI_ORDER } from "../chat/model-catalog";
+import { ProviderLogo } from "../chat/provider-logos";
+import type { WorkflowAgentCliStatus } from "../../state/hooks/use-workflow-agent-models";
+import { getNodeMetadata } from "./workflow-node-metadata";
+
+interface WorkflowInspectorProps {
+  node: Node<WorkflowNodeData, "workflow"> | null;
+  capabilities: WorkflowCapabilities;
+  agentModelsLoading?: boolean;
+  agentModelsError?: boolean;
+  onRetryAgentModels?: () => void;
+  modelsByCli?: ReadonlyMap<AgentCli, WorkflowAgentModel[]>;
+  cliStatus?: Readonly<Record<AgentCli, WorkflowAgentCliStatus>>;
+  agentCatalogsLoading?: boolean;
+  agentCatalogsError?: boolean;
+  onRetryAgentCatalogs?: () => void;
+  onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
+  onDelete: (nodeId: string) => void;
+  onCloseNode: () => void;
+}
+
+/** Right-rail editor for the selected workflow node (definition only). */
+export function WorkflowInspector(props: WorkflowInspectorProps) {
+  if (props.node === null) {
+    return <WorkflowInspectorEmpty />;
+  }
+  return (
+    <WorkflowNodeInspector
+      node={props.node}
+      capabilities={props.capabilities}
+      agentModelsLoading={props.agentModelsLoading ?? false}
+      agentModelsError={props.agentModelsError ?? false}
+      onRetryAgentModels={props.onRetryAgentModels}
+      modelsByCli={props.modelsByCli}
+      cliStatus={props.cliStatus}
+      agentCatalogsLoading={props.agentCatalogsLoading ?? false}
+      agentCatalogsError={props.agentCatalogsError ?? false}
+      onRetryAgentCatalogs={props.onRetryAgentCatalogs}
+      onUpdate={props.onUpdate}
+      onDelete={props.onDelete}
+      onClose={props.onCloseNode}
+    />
+  );
+}
+
+/** Shown when the inspector is open but no node is selected. */
+function WorkflowInspectorEmpty() {
+  const { t } = useTranslation();
+  return (
+    <aside className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden border-l border-border bg-background">
+      <div className="border-b border-border px-4 py-3">
+        <h3 className="text-xs font-semibold">{t("settings.workflow.configuration")}</h3>
+        <p className="mt-1 text-[11px] text-muted-foreground">{t("settings.workflow.selectNodeHint")}</p>
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+        <span className="mb-3 flex size-10 items-center justify-center rounded-xl bg-muted">
+          <IconSettings className="size-5 text-muted-foreground" />
+        </span>
+        <p className="text-xs font-medium">{t("settings.workflow.noSelection")}</p>
+        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+          {t("settings.workflow.noSelectionHint")}
+        </p>
+      </div>
+    </aside>
+  );
+}
+
+/** Edits a node in place with visible labels and progressive, kind-specific fields. */
+function WorkflowNodeInspector({
+  node,
+  capabilities,
+  agentModelsLoading,
+  agentModelsError,
+  onRetryAgentModels,
+  modelsByCli,
+  cliStatus,
+  agentCatalogsLoading,
+  agentCatalogsError,
+  onRetryAgentCatalogs,
+  onUpdate,
+  onDelete,
+  onClose,
+}: {
+  node: Node<WorkflowNodeData, "workflow">;
+  capabilities: WorkflowCapabilities;
+  agentModelsLoading: boolean;
+  agentModelsError: boolean;
+  onRetryAgentModels?: () => void;
+  modelsByCli?: ReadonlyMap<AgentCli, WorkflowAgentModel[]>;
+  cliStatus?: Readonly<Record<AgentCli, WorkflowAgentCliStatus>>;
+  agentCatalogsLoading: boolean;
+  agentCatalogsError: boolean;
+  onRetryAgentCatalogs?: () => void;
+  onUpdate: (node: Node<WorkflowNodeData, "workflow">) => void;
+  onDelete: (nodeId: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const metadata = getNodeMetadata(node.data.kind);
+  const nodeType = capabilities.nodeTypes.find((candidate) => candidate.kind === node.data.kind);
+  if (nodeType === undefined) {
+    throw new Error(`Missing workflow capability for node kind "${node.data.kind}"`);
+  }
+  const Icon = metadata.icon;
+  const agentConfig = node.data.agentConfig;
+  return (
+    <aside
+      data-workflow-inspector=""
+      className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden border-l border-border bg-background"
+    >
+      <div className="flex min-w-0 items-center gap-2.5 border-b border-border px-4 py-3">
+        <span className={`flex size-8 items-center justify-center rounded-lg ${metadata.tone}`}>
+          <Icon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-xs font-semibold">{node.data.title}</h3>
+          <p className="text-[10px] text-muted-foreground">
+            {t("settings.workflow.nodeSuffix", { type: nodeType.label })}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0"
+          aria-label={t("settings.workflow.closeConfiguration")}
+          onClick={onClose}
+        >
+          <IconLayoutSidebarRightCollapse />
+        </Button>
+      </div>
+      <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto p-4">
+        <InspectorField label={t("settings.workflow.field.name")} htmlFor="workflow-node-title">
+          <Input
+            id="workflow-node-title"
+            value={node.data.title}
+            onChange={(event) => onUpdate({
+              ...node,
+              data: { ...node.data, title: event.target.value },
+            })}
+          />
+        </InspectorField>
+        <InspectorField label={t("settings.workflow.field.description")} htmlFor="workflow-node-description">
+          <>
+            <Input
+              id="workflow-node-description"
+              value={node.data.description}
+              maxLength={20}
+              onChange={(event) => onUpdate({
+                ...node,
+                data: { ...node.data, description: event.target.value.slice(0, 20) },
+              })}
+            />
+            <p className="text-right text-[10px] text-muted-foreground" aria-live="polite">
+              {t("settings.workflow.characterCount", {
+                count: node.data.description.length,
+                max: 20,
+              })}
+            </p>
+          </>
+        </InspectorField>
+        {nodeType.configFields.includes("model") && (
+          <InspectorField label={t("settings.workflow.field.model")} htmlFor="workflow-node-model">
+            <Select
+              value={node.data.model ?? capabilities.defaultModel}
+              onValueChange={(model) => {
+                if (model !== null) {
+                  onUpdate({ ...node, data: { ...node.data, model } });
+                }
+              }}
+            >
+              <SelectTrigger id="workflow-node-model" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {capabilities.models.map((model) => (
+                  <SelectItem key={model.value} value={model.value}>
+                    {model.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </InspectorField>
+        )}
+        {nodeType.configFields.includes("tool") && (
+          <InspectorField label={t("settings.workflow.field.tool")} htmlFor="workflow-node-tool">
+            <Select
+              value={node.data.tool ?? capabilities.defaultTool}
+              onValueChange={(tool) => {
+                if (tool !== null) {
+                  onUpdate({ ...node, data: { ...node.data, tool } });
+                }
+              }}
+            >
+              <SelectTrigger id="workflow-node-tool" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {capabilities.tools.map((tool) => (
+                  <SelectItem key={tool.value} value={tool.value}>
+                    {tool.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </InspectorField>
+        )}
+        {nodeType.configFields.includes("condition") && (
+          <InspectorField label={t("settings.workflow.field.condition")} htmlFor="workflow-node-condition">
+            <Input
+              id="workflow-node-condition"
+              value={node.data.condition ?? ""}
+              onChange={(event) =>
+                onUpdate({
+                  ...node,
+                  data: { ...node.data, condition: event.target.value },
+                })
+              }
+            />
+          </InspectorField>
+        )}
+        {nodeType.configFields.includes("agent") && agentConfig !== undefined && (
+          <AgentConfigurationFields
+            config={agentConfig}
+            capabilities={capabilities}
+            modelsLoading={agentModelsLoading}
+            modelsError={agentModelsError}
+            onRetryModels={onRetryAgentModels}
+            modelsByCli={modelsByCli}
+            cliStatus={cliStatus}
+            catalogsLoading={agentCatalogsLoading}
+            catalogsError={agentCatalogsError}
+            onRetryCatalogs={onRetryAgentCatalogs}
+            onChange={(config) => onUpdate({
+              ...node,
+              data: { ...node.data, agentConfig: config },
+            })}
+          />
+        )}
+        {nodeType.configFields.includes("instruction") && (
+          <InspectorField label={t("settings.workflow.field.instruction")} htmlFor="workflow-node-instruction">
+            <Textarea
+              id="workflow-node-instruction"
+              className="min-h-32 resize-none text-xs leading-5"
+              value={node.data.instruction ?? ""}
+              onChange={(event) =>
+                onUpdate({
+                  ...node,
+                  data: { ...node.data, instruction: event.target.value },
+                })
+              }
+            />
+          </InspectorField>
+        )}
+      </div>
+      <div className="border-t border-border p-3">
+        <Button
+          variant="ghost"
+          className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive"
+          onClick={() => onDelete(node.id)}
+          disabled={node.data.kind === "start"}
+        >
+          <IconTrash />
+          {t("settings.workflow.deleteNode")}
+        </Button>
+      </div>
+    </aside>
+  );
+}
+
+/** Edits the structured Agent contract without conflating it with a free-form prompt field. */
+function AgentConfigurationFields({
+  config,
+  capabilities,
+  modelsLoading,
+  modelsError,
+  onRetryModels,
+  modelsByCli,
+  cliStatus,
+  catalogsLoading,
+  catalogsError,
+  onRetryCatalogs,
+  onChange,
+}: {
+  config: WorkflowAgentConfig;
+  capabilities: WorkflowCapabilities;
+  modelsLoading: boolean;
+  modelsError: boolean;
+  onRetryModels?: () => void;
+  modelsByCli?: ReadonlyMap<AgentCli, WorkflowAgentModel[]>;
+  cliStatus?: Readonly<Record<AgentCli, WorkflowAgentCliStatus>>;
+  catalogsLoading: boolean;
+  catalogsError: boolean;
+  onRetryCatalogs?: () => void;
+  onChange: (config: WorkflowAgentConfig) => void;
+}) {
+  const { t } = useTranslation();
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [rolePickerOpen, setRolePickerOpen] = useState(false);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const currentAgentCli = config.executor.agentCli as AgentCli;
+  const configuredModel = capabilities.agentModels.find(
+    (model) => model.agentCli === config.executor.agentCli
+      && model.modelId === config.executor.modelId,
+  );
+  const selectedModel = configuredModel ?? {
+    agentCli: config.executor.agentCli,
+    modelId: config.executor.modelId,
+    label: `${AGENT_CLI_LABELS[config.executor.agentCli as AgentCli]} · ${config.executor.modelId}`,
+  };
+  const modelsForSelectedCli = modelsByCli?.get(currentAgentCli)
+    ?? capabilities.agentModels.filter((model) => model.agentCli === currentAgentCli);
+  const selectedCliStatus = cliStatus?.[currentAgentCli];
+  // Model discovery is per-CLI: the selected CLI is loading, so the model
+  // group below is still on its way rather than genuinely empty.
+  const selectedCliLoading = modelsLoading || selectedCliStatus?.isLoading === true;
+  // A node always shows its model name; when the executor is not backed by a
+  // discovered model (e.g. a CLI that failed to report one) the full
+  // `CLI · model` pair is shown instead so the agent pick stays legible.
+  const selectedModelName = configuredModel === undefined
+    ? selectedModel.label
+    : workflowModelDisplayName(selectedModel);
+  const configuredSkillIds = new Set(config.skills.map((skill) => skill.skillId));
+  const availableSkills = capabilities.skills.filter((skill) =>
+    !configuredSkillIds.has(skill.value),
+  );
+  const enabledSkillCount = config.skills.filter((skill) => skill.enabled).length;
+  const configuredRole = capabilities.roles.find((role) => role.value === config.roleId);
+  const selectedRole = configuredRole ?? { value: config.roleId, label: config.roleId };
+  const selectableRoles = configuredRole === undefined
+    ? [selectedRole, ...capabilities.roles]
+    : capabilities.roles;
+
+  /** Adds a new Skill in its enabled state, preserving configuration order. */
+  function addSkill(skillId: string): void {
+    onChange({
+      ...config,
+      skills: [...config.skills, { skillId, enabled: true }],
+    });
+    setSkillPickerOpen(false);
+  }
+
+  /** Updates only the enabled state of a configured Skill. */
+  function setSkillEnabled(skillId: string, enabled: boolean): void {
+    onChange({
+      ...config,
+      skills: config.skills.map((skill) =>
+        skill.skillId === skillId ? { ...skill, enabled } : skill),
+    });
+  }
+
+  /** Removes a configured Skill without affecting the remaining selection order. */
+  function removeSkill(skillId: string): void {
+    onChange({
+      ...config,
+      skills: config.skills.filter((skill) => skill.skillId !== skillId),
+    });
+  }
+
+  /**
+   * Switches the node onto another Agent CLI. Keeps the current model id when
+   * that CLI offers it; otherwise falls back to the first discovered model so
+   * the executor pair stays catalog-backed. A CLI with no discovered models
+   * keeps the current id rather than inventing one — the model group then
+   * shows the empty state and the pick stays visible (never reverted).
+   */
+  function selectAgentCli(agentCli: AgentCli): void {
+    if (agentCli === config.executor.agentCli) {
+      return;
+    }
+    const models = modelsByCli?.get(agentCli)
+      ?? capabilities.agentModels.filter((model) => model.agentCli === agentCli);
+    const kept = models.find((model) => model.modelId === config.executor.modelId);
+    onChange({
+      ...config,
+      executor: {
+        agentCli,
+        modelId: kept?.modelId ?? models[0]?.modelId ?? config.executor.modelId,
+      },
+    });
+  }
+
+  return (
+    <>
+      <InspectorField label={t("settings.workflow.field.agentModel")} htmlFor="workflow-agent-model">
+        <Popover open={modelPickerOpen} onOpenChange={setModelPickerOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                id="workflow-agent-model"
+                type="button"
+                variant="outline"
+                className="h-9 w-full min-w-0 shrink justify-between overflow-hidden px-3 font-normal"
+                disabled={capabilities.agentModels.length === 0 && !selectedCliLoading}
+                aria-label={t("settings.workflow.field.agentModel")}
+              />
+            }
+          >
+            <span className="flex w-full min-w-0 items-center justify-between gap-2">
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left">
+                <ProviderLogo
+                  agentCli={currentAgentCli}
+                  className="size-3.5 shrink-0"
+                />
+                <span className="min-w-0 truncate">{selectedModelName}</span>
+              </span>
+              {selectedCliLoading ? (
+                <IconLoader2
+                  data-testid="workflow-agent-model-loading"
+                  className="size-3.5 shrink-0 animate-spin opacity-50"
+                  aria-hidden="true"
+                />
+              ) : (
+                <IconChevronDown
+                  data-testid="workflow-agent-model-chevron"
+                  className="size-3.5 shrink-0 opacity-50"
+                />
+              )}
+            </span>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-56 p-0">
+            <Command>
+              <CommandInput
+                aria-label={t("settings.workflow.searchAvailableAgentModels")}
+                placeholder={t("settings.workflow.searchAvailableAgentModels")}
+                className="text-sm"
+              />
+              <CommandList className="max-h-72">
+                <CommandEmpty className="py-6 text-center text-xs">
+                  <div className="space-y-2">
+                    <p>
+                      {modelsLoading
+                        ? t("chat.modelSelector.loading")
+                        : t("settings.workflow.noAvailableAgentModels")}
+                    </p>
+                    {modelsError && onRetryModels !== undefined && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={onRetryModels}
+                      >
+                        {t("common.retry")}
+                      </Button>
+                    )}
+                  </div>
+                </CommandEmpty>
+                <CommandGroup
+                  heading={t("chat.modelSelector.agent")}
+                  className="**:[[cmdk-group-heading]]:font-normal"
+                >
+                  {AGENT_CLI_ORDER.map((agentCli) => {
+                    const cliLoading = cliStatus?.[agentCli]?.isLoading === true;
+                    return (
+                      <CommandItem
+                        key={agentCli}
+                        value={`${AGENT_CLI_LABELS[agentCli]} agent`}
+                        className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
+                        onSelect={() => selectAgentCli(agentCli)}
+                      >
+                        <ProviderLogo agentCli={agentCli} className="size-3.5" />
+                        {AGENT_CLI_LABELS[agentCli]}
+                        {cliLoading ? (
+                          <IconLoader2 className="ml-auto size-3.5 shrink-0 animate-spin opacity-50" />
+                        ) : agentCli === currentAgentCli ? (
+                          <IconCheck className="ml-auto size-4" />
+                        ) : null}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+                <CommandGroup
+                  heading={t("chat.modelSelector.model")}
+                  className="**:[[cmdk-group-heading]]:font-normal"
+                >
+                  {modelsForSelectedCli.length === 0 ? (
+                    <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                      {t(
+                        selectedCliLoading
+                          ? "chat.modelSelector.loading"
+                          : "settings.workflow.noAvailableAgentModels",
+                      )}
+                    </p>
+                  ) : (
+                    modelsForSelectedCli.map((model) => {
+                      const name = workflowModelDisplayName(model);
+                      return (
+                        <CommandItem
+                          key={`${model.agentCli}:${model.modelId}`}
+                          value={`${name} ${model.modelId}`}
+                          className="gap-1.5 rounded-sm px-2 py-1.5 text-xs whitespace-normal"
+                          onSelect={() => {
+                            onChange({
+                              ...config,
+                              executor: {
+                                agentCli: model.agentCli,
+                                modelId: model.modelId,
+                              },
+                            });
+                            setModelPickerOpen(false);
+                          }}
+                        >
+                          {name}
+                          {model.modelId === config.executor.modelId && (
+                            <IconCheck className="ml-auto size-4 shrink-0" />
+                          )}
+                        </CommandItem>
+                      );
+                    })
+                  )}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </InspectorField>
+      <InspectorField label={t("settings.workflow.field.role")} htmlFor="workflow-agent-role">
+        <Popover open={rolePickerOpen} onOpenChange={setRolePickerOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                id="workflow-agent-role"
+                type="button"
+                variant="outline"
+                className="h-9 w-full min-w-0 shrink justify-between overflow-hidden px-3 font-normal"
+                disabled={catalogsLoading && selectableRoles.length === 0}
+                aria-label={t("settings.workflow.field.role")}
+              />
+            }
+          >
+            <span className="flex w-full min-w-0 items-center justify-between gap-2">
+              <span className="min-w-0 flex-1 truncate text-left">{selectedRole.label}</span>
+              <IconChevronDown
+                data-testid="workflow-agent-role-chevron"
+                className="size-3.5 shrink-0 opacity-50"
+              />
+            </span>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-80 p-0">
+            <Command>
+              <CommandInput
+                aria-label={t("settings.workflow.searchAvailableRoles")}
+                placeholder={t("settings.workflow.searchAvailableRoles")}
+                className="text-sm"
+              />
+              <CommandList className="max-h-60">
+                <CommandEmpty className="py-6 text-center text-xs">
+                  <div className="space-y-2">
+                    <p>
+                      {catalogsLoading
+                        ? t("settings.roles.loading")
+                        : t("settings.workflow.noAvailableRoles")}
+                    </p>
+                    {catalogsError && onRetryCatalogs !== undefined && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={onRetryCatalogs}
+                      >
+                        {t("common.retry")}
+                      </Button>
+                    )}
+                  </div>
+                </CommandEmpty>
+                <CommandGroup>
+                  {selectableRoles.map((role) => (
+                    <CommandItem
+                      key={role.value}
+                      value={`${role.label} ${role.value}`}
+                      onSelect={() => {
+                        onChange({ ...config, roleId: role.value });
+                        setRolePickerOpen(false);
+                      }}
+                    >
+                      {role.label}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </InspectorField>
+      <fieldset className="min-w-0 space-y-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <legend className="min-w-0 text-[11px] font-medium">
+            {t("settings.workflow.field.skills")}
+          </legend>
+          <div className="flex shrink-0 items-center gap-1">
+            <span className="whitespace-nowrap text-[10px] text-muted-foreground">
+              {t("settings.workflow.enabledSkillCount", {
+                enabled: enabledSkillCount,
+                total: config.skills.length,
+              })}
+            </span>
+            <Popover open={skillPickerOpen} onOpenChange={setSkillPickerOpen}>
+              <PopoverTrigger
+                render={
+                  <Button
+                    id="workflow-add-skill"
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={catalogsLoading && capabilities.skills.length === 0}
+                    aria-label={t("settings.workflow.addSkill")}
+                  />
+                }
+              >
+                <IconPlus />
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 p-0">
+                <Command>
+                  <CommandInput
+                    aria-label={t("settings.workflow.searchAvailableSkills")}
+                    placeholder={t("settings.workflow.searchAvailableSkills")}
+                    className="text-sm"
+                  />
+                  <CommandList className="max-h-60">
+                    <CommandEmpty className="py-6 text-center text-xs">
+                      <div className="space-y-2">
+                        <p>
+                          {catalogsLoading
+                            ? t("settings.skills.loading")
+                            : t("settings.workflow.noAvailableSkills")}
+                        </p>
+                        {catalogsError && onRetryCatalogs !== undefined && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={onRetryCatalogs}
+                          >
+                            {t("common.retry")}
+                          </Button>
+                        )}
+                      </div>
+                    </CommandEmpty>
+                    <CommandGroup>
+                      {availableSkills.map((skill) => (
+                        <CommandItem
+                          key={skill.value}
+                          value={`${skill.label} ${skill.value}`}
+                          onSelect={() => addSkill(skill.value)}
+                        >
+                          {skill.label}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+        <div className="min-w-0 divide-y overflow-hidden rounded-md border border-border">
+          {config.skills.map((configuredSkill) => {
+            const skill = capabilities.skills.find(
+              (candidate) => candidate.value === configuredSkill.skillId,
+            ) ?? { value: configuredSkill.skillId, label: configuredSkill.skillId };
+            return (
+              <div
+                key={configuredSkill.skillId}
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-2.5 py-2"
+              >
+                <span className="min-w-0 truncate text-xs">{skill.label}</span>
+                <Switch
+                  size="sm"
+                  className="shrink-0 data-checked:bg-blue-600 hover:data-checked:bg-blue-700"
+                  checked={configuredSkill.enabled}
+                  aria-label={t("settings.workflow.toggleSkill", { name: skill.label })}
+                  onCheckedChange={(enabled) => setSkillEnabled(configuredSkill.skillId, enabled)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={t("settings.workflow.removeSkill", { name: skill.label })}
+                  onClick={() => removeSkill(configuredSkill.skillId)}
+                >
+                  <IconTrash />
+                </Button>
+              </div>
+            );
+          })}
+          {config.skills.length === 0 && (
+            <p className="px-2.5 py-3 text-xs text-muted-foreground">
+              {t("settings.workflow.noConfiguredSkills")}
+            </p>
+          )}
+        </div>
+      </fieldset>
+      <InspectorField label={t("settings.workflow.field.prompt")} htmlFor="workflow-agent-prompt">
+        <Textarea
+          id="workflow-agent-prompt"
+          className="min-h-32 resize-none text-xs leading-5"
+          value={config.prompt}
+          onChange={(event) => onChange({ ...config, prompt: event.target.value })}
+        />
+      </InspectorField>
+    </>
+  );
+}
+
+/** Keeps field labels visible and consistently spaced for scanning and accessibility. */
+function InspectorField({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <Label htmlFor={htmlFor} className="text-[11px]">{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Catalog labels are stored as `CLI · model` for legacy flat pickers; the
+ * two-section menu shows the model name alone, matching chat.
+ */
+function workflowModelDisplayName(model: WorkflowAgentModel): string {
+  const prefix = `${AGENT_CLI_LABELS[model.agentCli as AgentCli]} · `;
+  return model.label.startsWith(prefix) ? model.label.slice(prefix.length) : model.label;
+}

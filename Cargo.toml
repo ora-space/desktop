@@ -14,6 +14,7 @@ members = [
     "crates/process",
     "crates/pty",
     "crates/scheduler",
+    "crates/skill-package",
     "xtask",
 ]
 exclude = ["apps/desktop/src-tauri"]
@@ -42,6 +43,7 @@ ora-logging = { path = "crates/logging" }
 ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
 ora-scheduler = { path = "crates/scheduler" }
+ora-skill-package = { path = "crates/skill-package" }
 
 # External
 chrono = "0.4"
@@ -49,6 +51,7 @@ chrono-tz = "0.10"
 cron = "0.12"
 derive_more = "2"
 futures = "0.3"
+flate2 = "1"
 futures-util = { version = "0.3", features = ["sink"] }
 gray_matter = { version = "0.3", default-features = false, features = ["yaml"] }
 libc = "0.2"
@@ -62,6 +65,8 @@ rusqlite = "0.37"
 serde = "1.0"
 serde_json = "1.0"
 serde_with = { version = "3" }
+serde_yaml = "0.9"
+tar = "0.4"
 tempfile = "3"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
@@ -73,7 +78,9 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
 tower-http = { version = "0.6", features = ["cors", "request-id"] }
 ts-rs = "12.0"
 uuid = { version = "1", features = ["serde", "v4"] }
+unicode-normalization = "0.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading"] }
+zip = { version = "2", features = ["aes-crypto"] }
 
 [workspace.lints]
 rust = {}

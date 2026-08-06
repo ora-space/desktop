@@ -1,8 +1,15 @@
 export {
+  currentModel,
+  currentValueName,
+  findModelOption,
+  selectableValues,
+} from "./model-option.js";
+export {
   createChatStore,
   type ChatContent,
   type ChatMessage,
   type ChatMessageRole,
+  type ChatModelChange,
   type ChatPlan,
   type ChatThought,
   type ChatToolCall,

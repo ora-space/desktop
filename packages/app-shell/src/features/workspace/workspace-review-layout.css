@@ -1,0 +1,35 @@
+@keyframes ora-review-side-panel-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ora-review-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ora-review-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+
+@keyframes ora-review-overlay-in {
+  from { opacity: 0; transform: translateX(18px) scale(0.985); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes ora-review-overlay-out {
+  from { opacity: 1; transform: translateX(0) scale(1); }
+  to { opacity: 0; transform: translateX(14px) scale(0.988); }
+}
+
+.ora-review-side-panel { animation: ora-review-side-panel-in 190ms cubic-bezier(0.22, 1, 0.36, 1); }
+.ora-review-backdrop { animation: ora-review-backdrop-in 180ms ease-out; }
+.ora-review-backdrop.is-closing { animation: ora-review-backdrop-out 180ms ease-in forwards; }
+.ora-review-overlay {
+  transform-origin: right center;
+  animation: ora-review-overlay-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.ora-review-overlay.is-closing { animation: ora-review-overlay-out 180ms cubic-bezier(0.4, 0, 1, 1) forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ora-review-side-panel,
+  .ora-review-backdrop,
+  .ora-review-backdrop.is-closing,
+  .ora-review-overlay,
+  .ora-review-overlay.is-closing { animation-duration: 1ms; }
+}

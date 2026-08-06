@@ -1,5 +1,7 @@
 import type {
+  acp,
   Agent,
+  AgentCli,
   ContractsClient,
   Project,
   Session,
@@ -15,11 +17,41 @@ export interface MockClientState {
   sessions: Session[];
   agents: Agent[];
   skills: Skill[];
+  /** Warm sessions handed out but not yet attached, keyed by session id. */
+  warmSessions: Map<string, AgentCli>;
+  /** What every warm and persisted session reports as its configuration. */
+  configOptions: acp.SessionConfigOption[];
+  /**
+   * Per-CLI warm-session config overrides for tests. A CLI mapped to `null`
+   * reports no model catalog (warm failed); a CLI mapped to an array uses
+   * those options instead of the shared `configOptions`.
+   */
+  warmModelsByCli?: Partial<Record<AgentCli, acp.SessionConfigOption[] | null>>;
 }
 
 /** Creates a fresh in-memory mock state with no records. */
 export function createMockClientState(): MockClientState {
-  return { projects: [], tasks: [], sessions: [], agents: [], skills: [] };
+  return {
+    projects: [],
+    tasks: [],
+    sessions: [],
+    agents: [],
+    skills: [],
+    warmSessions: new Map(),
+    configOptions: [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "opencode/big-pickle",
+        options: [
+          { value: "opencode/big-pickle", name: "Big Pickle" },
+          { value: "opencode/small-pickle", name: "Small Pickle" },
+        ],
+      },
+    ],
+  };
 }
 
 function nextId(prefix: string, count: number): string {
@@ -70,6 +102,8 @@ export function createMockClient(state: MockClientState): ContractsClient {
           title: req.title,
           status: req.status as TaskStatus,
           workspaceMode: req.workspaceMode ?? "worktree",
+          type: "default",
+          workflowRunId: null,
         };
         state.tasks.push(task);
         return { task };
@@ -122,19 +156,53 @@ export function createMockClient(state: MockClientState): ContractsClient {
     session: {
       list: async () => ({ sessions: [...state.sessions] }),
       get: async (req) => ({ session: state.sessions.find((s) => s.id === req.sessionId)! }),
-      create: async (req) => {
-        const session: Session = {
-          id: nextId("s", state.sessions.length),
-          taskId: req.taskId,
-          agentCli: req.agentCli,
-          status: "running",
+      warm: async (req) => {
+        const sessionId = nextId("s", state.sessions.length + state.warmSessions.size);
+        state.warmSessions.set(sessionId, req.agentCli);
+        const perCli = state.warmModelsByCli?.[req.agentCli];
+        return {
+          sessionId,
+          // A CLI mapped to null reports an empty catalog, which is how the
+          // contract expresses "no models" after a failed warm handshake.
+          configOptions: perCli === undefined ? state.configOptions : (perCli ?? []),
         };
+      },
+      setConfig: async () => ({ configOptions: state.configOptions }),
+      attach: async (req) => {
+        const session: Session = {
+          id: req.sessionId,
+          taskId: req.taskId,
+          agentCli: state.warmSessions.get(req.sessionId) ?? "open_code",
+          status: "running",
+          historyState: { type: "writable" },
+        };
+        state.warmSessions.delete(req.sessionId);
         state.sessions.push(session);
         return { session, availableCommands: [] };
+      },
+      switchAgent: async (req) => {
+        const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
+        session.agentCli = req.agentCli;
+        return { session, availableCommands: [], configOptions: state.configOptions };
+      },
+      resumeHistory: async (req) => {
+        const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
+        session.historyState = { type: "writable" };
+        return { session };
       },
       load: async function* () { yield { type: "completed" as const }; },
       prompt: async function* () { yield { type: "completed" as const, stopReason: "end_turn" as const }; },
       respondToPermission: async () => ({}),
+      switchAgent: async (req) => {
+        const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
+        session.agentCli = req.agentCli;
+        return { session, availableCommands: [] };
+      },
+      resumeHistory: async (req) => {
+        const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
+        session.historyState = { type: "writable" };
+        return { session };
+      },
       stop: async (req) => {
         const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
         session.status = "stopped";
@@ -147,11 +215,11 @@ export function createMockClient(state: MockClientState): ContractsClient {
       },
     },
     agentRuntime: {
-      listModels: async () => ({
-        groups: [
-          { agentCli: "open_code", models: ["opencode/big-pickle", "opencode/small-pickle"] },
-          { agentCli: "nga", models: ["nga/default"] },
-          { agentCli: "code_agent_cli", models: ["codeagentcli/default"] },
+      getStatus: async () => ({
+        statuses: [
+          { agentCli: "open_code", status: "ready" },
+          { agentCli: "nga", status: "ready" },
+          { agentCli: "code_agent_cli", status: "ready" },
         ],
       }),
     },
@@ -197,6 +265,21 @@ export function createMockClient(state: MockClientState): ContractsClient {
         return { skillId: req.skillId };
       },
     },
+    skillImport: {
+      prepare: async () => {
+        throw new Error("skillImport.prepare not implemented in mock");
+      },
+      get: async () => {
+        throw new Error("skillImport.get not implemented in mock");
+      },
+      commit: async () => {
+        throw new Error("skillImport.commit not implemented in mock");
+      },
+      cancel: async (request) => ({
+        sessionId: request.sessionId,
+        cancelled: true,
+      }),
+    },
     fileSystem: {
       listDirectory: async (request) => ({
         currentPath: request.path ?? "/home/test",
@@ -215,6 +298,47 @@ export function createMockClient(state: MockClientState): ContractsClient {
       watchWorkspace: () => (async function* () {
         yield* [];
       })(),
+    },
+    spec: {
+      catalog: async () => ({ sources: [], documents: [], truncated: false }),
+      read: async (request) => ({
+        relativePath: request.relativePath,
+        content: "",
+        byteSize: 0,
+      }),
+      resolveSource: async () => ({
+        relativePath: "docs/specs",
+        workflow: { kind: "custom", name: "Custom" },
+      }),
+      updateProjectSources: async (request) => ({ sources: request.sources }),
+      watch: () => (async function* () {
+        yield* [];
+      })(),
+    },
+    gitIdentity: {
+      get: async () => ({ name: "Test User", email: "test@ora.local" }),
+    },
+    workflow: {
+      create: async () => { throw new Error("workflow not implemented in mock"); },
+      get: async () => { throw new Error("workflow not implemented in mock"); },
+      list: async () => { throw new Error("workflow not implemented in mock"); },
+      update: async () => { throw new Error("workflow not implemented in mock"); },
+      delete: async () => { throw new Error("workflow not implemented in mock"); },
+      getDraft: async () => { throw new Error("workflow not implemented in mock"); },
+      updateDraft: async () => { throw new Error("workflow not implemented in mock"); },
+      publish: async () => { throw new Error("workflow not implemented in mock"); },
+      rollback: async () => { throw new Error("workflow not implemented in mock"); },
+      activate: async () => { throw new Error("workflow not implemented in mock"); },
+      listVersions: async () => { throw new Error("workflow not implemented in mock"); },
+      getVersion: async () => { throw new Error("workflow not implemented in mock"); },
+      deleteSnapshot: async () => { throw new Error("workflow not implemented in mock"); },
+    },
+    workflowRun: {
+      create: async () => { throw new Error("workflowRun not implemented in mock"); },
+      get: async () => { throw new Error("workflowRun not implemented in mock"); },
+      list: async () => { throw new Error("workflowRun not implemented in mock"); },
+      listNodeRuns: async () => { throw new Error("workflowRun not implemented in mock"); },
+      delete: async () => { throw new Error("workflowRun not implemented in mock"); },
     },
   };
 }

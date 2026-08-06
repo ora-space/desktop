@@ -7,10 +7,18 @@ pub enum AgentCli {
     OpenCode,
     Nga,
     CodeAgentCli,
+    Claude,
+    Codex,
 }
 
 impl AgentCli {
-    pub const ALL: [Self; 3] = [Self::OpenCode, Self::Nga, Self::CodeAgentCli];
+    pub const ALL: [Self; 5] = [
+        Self::OpenCode,
+        Self::Nga,
+        Self::CodeAgentCli,
+        Self::Claude,
+        Self::Codex,
+    ];
 
     /// Returns the namespaced text persisted independently of enum declaration order.
     pub fn database_value(self) -> &'static str {
@@ -18,6 +26,8 @@ impl AgentCli {
             Self::OpenCode => "ora-space.opencode",
             Self::Nga => "ora-space.nga",
             Self::CodeAgentCli => "ora-space.codeagentcli",
+            Self::Claude => "ora-space.claude",
+            Self::Codex => "ora-space.codex",
         }
     }
 
@@ -27,6 +37,8 @@ impl AgentCli {
             "ora-space.opencode" => Ok(Self::OpenCode),
             "ora-space.nga" => Ok(Self::Nga),
             "ora-space.codeagentcli" => Ok(Self::CodeAgentCli),
+            "ora-space.claude" => Ok(Self::Claude),
+            "ora-space.codex" => Ok(Self::Codex),
             _ => Err(DomainModelError::InvalidAgentCli(value.to_string())),
         }
     }
@@ -37,6 +49,21 @@ impl AgentCli {
             Self::OpenCode => "opencode",
             Self::Nga => "nga",
             Self::CodeAgentCli => "codeagentcli",
+            Self::Claude => "claude-agent-acp",
+            Self::Codex => "codex-acp",
+        }
+    }
+
+    /// Returns the child process arguments used to start ACP over stdio.
+    ///
+    /// Ora's own CLIs (OpenCode, Nga, CodeAgentCli) expose ACP behind an `acp`
+    /// subcommand. Claude Code and Codex are instead fronted by dedicated
+    /// `claude-agent-acp`/`codex-acp` adapter binaries, which speak ACP directly
+    /// with no subcommand.
+    pub fn launch_arguments(self) -> &'static [&'static str] {
+        match self {
+            Self::OpenCode | Self::Nga | Self::CodeAgentCli => &["acp"],
+            Self::Claude | Self::Codex => &[],
         }
     }
 }

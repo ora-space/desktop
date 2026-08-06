@@ -9,6 +9,8 @@ import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store"
 /** Builds an idle conversation, overriding only the fields a test drives. */
 function conversation(overrides: Partial<SessionConversation> = {}): SessionConversation {
   return {
+    configOptions: [],
+    modelChanges: [],
     turns: [],
     availableCommands: [],
     sessionTitle: null,

@@ -4,11 +4,14 @@ mod project;
 mod project_work_context;
 mod repository_error;
 mod session;
+mod skill;
+mod skill_import;
+mod spec;
 mod task;
 mod task_diff;
+mod workflow;
+mod workflow_run;
 mod worktree;
-
-mod skill;
 
 pub use agent_definition::{
     AgentDefinitionIdGenerator, AgentDefinitionRepository, CreateAgentDefinitionHandler,
@@ -31,10 +34,20 @@ pub use session::{
     SessionRepository, UuidSessionIdGenerator,
 };
 pub use skill::{
-    CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ImportSkillHandler, ListSkillsHandler,
-    LocalSkillPackageStore, ReconcileSkillStorageHandler, SkillIdGenerator, SkillImportCommitError,
-    SkillImportUnitOfWork, SkillPackageStore, SkillPackageStoreError, SkillRepository,
-    UpdateSkillHandler, UploadedSkillFile, UuidSkillIdGenerator,
+    BACKUP_DIR_NAME, CreateHandle, CreateSkillHandler, DeleteHandle, DeleteSkillHandler,
+    FilesystemSkillStorage, GetSkillHandler, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
+    ListSkillsHandler, STAGING_DIR_NAME, SkillIdGenerator, SkillRepository, SkillStorage,
+    SkillStorageError, SwapHandle, TransactionJournal, UpdateSkillHandler, UuidSkillIdGenerator,
+};
+pub use skill_import::{
+    DuplicateSkillName, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportError,
+    SkillImportIdGenerator, SkillImportProgressEvent, SkillImportProgressPublisher,
+    SkillImportService, UuidSkillImportIdGenerator,
+};
+pub use spec::{
+    ListProjectSpecSourceOverridesHandler, ProjectSpecSourceOverrideIdGenerator,
+    ProjectSpecSourceOverrideRepository, UpdateProjectSpecSourcesHandler,
+    UuidProjectSpecSourceOverrideIdGenerator,
 };
 pub use task::{
     CreateTaskHandler, CreateTaskWorktreeRequest, CreateTaskWorktreeResponse,
@@ -44,11 +57,24 @@ pub use task::{
 };
 pub use task_diff::{
     CommitTaskChangesHandler, CommitTaskGitRequest, CreateTaskDiffCommentHandler,
-    GetTaskDiffHandler, GitTaskDiffReader, GitTaskGitWriter, ListTaskDiffCommentsHandler,
-    PushTaskBranchHandler, PushTaskGitRequest, ReadTaskDiffRequest, ReadTaskDiffScope,
-    ReplyTaskDiffCommentHandler, SetTaskDiffCommentStatusHandler, TaskDiffCommentIdGenerator,
-    TaskDiffCommentRepository, TaskDiffCommentRepositoryError, TaskDiffReader, TaskDiffReaderError,
-    TaskDiffSnapshot, TaskGitCommit, TaskGitPush, TaskGitWriter, TaskGitWriterError,
-    UuidTaskDiffCommentIdGenerator, task_diff_id,
+    GitTaskDiffReader, GitTaskGitWriter, ListTaskDiffCommentsHandler, PushTaskBranchHandler,
+    PushTaskGitRequest, ReadTaskDiffRequest, ReadTaskDiffScope, ReplyTaskDiffCommentHandler,
+    SetTaskDiffCommentStatusHandler, TaskDiffCommentIdGenerator, TaskDiffCommentRepository,
+    TaskDiffCommentRepositoryError, TaskDiffReader, TaskDiffReaderError, TaskDiffSnapshot,
+    TaskGitCommit, TaskGitPush, TaskGitWriter, TaskGitWriterError, UuidTaskDiffCommentIdGenerator,
+    task_diff_id,
+};
+pub use workflow::{
+    ActivateVersionResult, ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler,
+    DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult, GetDraftHandler,
+    GetVersionHandler, GetWorkflowHandler, ListVersionsHandler, ListWorkflowsHandler,
+    PublishSnapshotResult, PublishWorkflowHandler, RollbackDraftResult, RollbackWorkflowHandler,
+    UpdateDraftHandler, UpdateDraftResult, UpdateWorkflowHandler, UpdateWorkflowResult,
+    UuidWorkflowIdGenerator, WorkflowIdGenerator, WorkflowRepository,
+};
+pub use workflow_run::{
+    CreateWorkflowRunHandler, DeleteWorkflowRunHandler, DeleteWorkflowRunResult,
+    GetWorkflowRunHandler, ListWorkflowNodeRunsHandler, ListWorkflowRunsHandler,
+    UuidWorkflowRunIdGenerator, WorkflowRunIdGenerator, WorkflowRunRepository,
 };
 pub use worktree::{UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository};

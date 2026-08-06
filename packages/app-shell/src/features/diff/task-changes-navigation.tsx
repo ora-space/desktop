@@ -1,10 +1,5 @@
-import { createContext, useContext, type ReactNode } from "react";
-
-interface TaskChangesNavigation {
-  openFile: (path: string) => void;
-}
-
-const TaskChangesNavigationContext = createContext<TaskChangesNavigation | null>(null);
+import { type ReactNode } from "react";
+import { TaskChangesNavigationContext } from "./task-changes-navigation-context";
 
 interface TaskChangesNavigationProviderProps {
   children: ReactNode;
@@ -21,9 +16,4 @@ export function TaskChangesNavigationProvider({
       {children}
     </TaskChangesNavigationContext.Provider>
   );
-}
-
-/** Returns the nearest task Changes navigator when the conversation belongs to a task. */
-export function useTaskChangesNavigation(): TaskChangesNavigation | null {
-  return useContext(TaskChangesNavigationContext);
 }

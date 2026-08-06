@@ -4,7 +4,7 @@ import {
   buildDiffFileTree,
   diffFilePath,
   filterDiffFiles,
-} from "./task-diff-file-tree";
+} from "./task-diff-file-tree-utils";
 
 const PATCH = [
   "diff --git a/packages/app/src/main.ts b/packages/app/src/main.ts",

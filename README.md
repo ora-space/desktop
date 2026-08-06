@@ -10,6 +10,7 @@ Ora is an IDE for AI agents. The Rust backend lives in `crates/`, the two runtim
 - [Domain Models](docs/domain-models.md) — entities, identifier newtypes, and categorical enums
 - [Frontend Contract SDK](docs/frontend-contract-sdk.md) — Rust-owned endpoint manifest, generation workflow, and transports
 - [Gitlancer Architecture](docs/gitlancer-architecture.md) — typed Git CLI runtime
+- [Workflow](docs/workflow.md) — definition management, draft/publish lifecycle, versioned snapshots, and run CRUD
 
 ## Runtime Docs
 

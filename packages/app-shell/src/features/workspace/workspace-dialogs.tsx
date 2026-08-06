@@ -23,17 +23,12 @@ import {
   useCreateSession,
   useDeleteSession,
 } from "../../state/hooks/use-workspace-mutations";
+import { useDeleteGraphWorkflowRun, useRenameGraphWorkflowRun } from "../../state/hooks/use-graph-workflow-runs";
 import { useUiStore, type DialogState, type DeleteTarget } from "../../state/stores/ui-store";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { localizeContractError } from "../../i18n/contract-error";
 import { useProjectBranches } from "../../state/hooks/use-project-branches";
-
-/** Derives a project name from either a Windows or POSIX directory path. */
-export function projectNameFromPath(rootPath: string): string {
-  const original = rootPath.trim();
-  const withoutTrailingSeparators = original.replace(/[\\/]+$/gu, "");
-  return withoutTrailingSeparators.split(/[\\/]/u).filter(Boolean).at(-1) ?? original;
-}
+import { projectNameFromPath } from "./workspace-dialogs-utils";
 
 /**
  * Hosts every workspace create/edit/delete dialog.
@@ -66,6 +61,7 @@ function DeleteEntityDialog({ target, onOpenChange }: { target: DeleteTarget | n
   const deleteProject = useDeleteProject();
   const deleteTask = useDeleteTask();
   const deleteSession = useDeleteSession();
+  const deleteWorkflowRun = useDeleteGraphWorkflowRun();
 
   const confirmDelete = async () => {
     if (!target || deleting) return;
@@ -89,6 +85,12 @@ function DeleteEntityDialog({ target, onOpenChange }: { target: DeleteTarget | n
         await deleteTask.mutateAsync({ taskId: target.id });
       }
       if (target.kind === "session") await deleteSession.mutateAsync({ sessionId: target.id });
+      if (target.kind === "workflowRun") {
+        await deleteWorkflowRun.mutateAsync({
+          runId: target.id,
+          projectId: target.projectId,
+        });
+      }
       onOpenChange(false);
     } catch (error) {
       setDeleteError(error instanceof RemoteContractError && error.code === "resource_in_use"
@@ -132,6 +134,7 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
   const createSession = useCreateSession();
+  const renameWorkflowRun = useRenameGraphWorkflowRun();
   const settingsAgentCli = useSettingsStore((state) => state.settings.agentCli);
   const branchProjectId = dialog.kind === "task" && !dialog.entity ? dialog.projectId : null;
   const { data: projectBranches = [] } = useProjectBranches(branchProjectId);
@@ -189,6 +192,23 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
         });
       }
     };
+  } else if (dialog.kind === "workflowRun") {
+    title = t("dialog.editWorkflowRun");
+    description = undefined;
+    submitLabel = t("dialog.saveWorkflowRun");
+    fields = [{
+      kind: "text",
+      name: "name",
+      label: t("dialog.workflowRunName"),
+      value: dialog.entity.name,
+      placeholder: t("dialog.workflowRunNamePlaceholder"),
+    }];
+    submit = async (values) => {
+      await renameWorkflowRun.mutateAsync({
+        runId: dialog.entity.id,
+        name: values.name!,
+      });
+    };
   } else {
     title = dialog.entity ? t("dialog.editSession") : t("dialog.startSession");
     description = t("dialog.sessionDescription");
@@ -201,7 +221,9 @@ function WorkspaceEntityDialog({ dialog, onOpenChange }: { dialog: DialogState; 
     };
   }
 
-  const dialogKey = `${dialog.kind}-${dialog.entity?.id ?? "new"}`;
+  const dialogKey = dialog.kind === "workflowRun"
+    ? `${dialog.kind}-${dialog.entity.id}`
+    : `${dialog.kind}-${dialog.entity?.id ?? "new"}`;
 
   return <EntityDialog key={dialogKey} open title={title} description={description} submitLabel={submitLabel} fields={fields} onOpenChange={onOpenChange} onSubmit={submit} />;
 }

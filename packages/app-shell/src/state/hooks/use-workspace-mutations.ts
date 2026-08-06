@@ -2,11 +2,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AgentCli,
   Project,
+  Session,
   Task,
   TaskStatus,
   TaskWorkspaceMode,
 } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
+import { clientId } from "../client-id";
 import { queryKeys } from "./query-keys";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { useUiStore } from "../stores/ui-store";
@@ -162,7 +164,13 @@ export function useDeleteTask() {
   });
 }
 
-/** Creates a session under a task and selects it once the server confirms the id. */
+/**
+ * Starts an additional session under an existing task and selects it.
+ *
+ * A provider session is warmed and then persisted in one step because there is
+ * no chat surface here to warm it in advance; the model can still be changed
+ * from the composer once the session is selected.
+ */
 export function useCreateSession() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -173,11 +181,22 @@ export function useCreateSession() {
       agentCli,
     }: {
       taskId: string;
-      agentCli: string;
+      agentCli: AgentCli;
     }) => {
-      return client.session
-        .create({ taskId, agentCli: agentCli as AgentCli })
-        .then((response) => response.session);
+      const warmed = await client.session.warm({
+        target: { type: "task", taskId },
+        agentCli,
+        clientId: clientId(),
+      });
+      const response = await client.session.attach({
+        sessionId: warmed.sessionId,
+        taskId,
+      });
+      queryClient.removeQueries({
+        queryKey: queryKeys.warmSession({ type: "task", taskId }, agentCli),
+      });
+      chatStore.getState().setConfigOptions(response.session.id, warmed.configOptions);
+      return response.session;
     },
     onSuccess: (session) => {
       // A just-created provider session has no history to replay. Register an
@@ -200,20 +219,25 @@ export function useCreateSession() {
 }
 
 /**
- * Moves a live conversation onto a different agent CLI.
+ * Returns a session whose history stopped being writable to a usable state.
  *
- * The session keeps its identity and its recorded history; only the agent behind
- * it changes. The new agent starts with no context, so the backend prepends the
- * recorded transcript to the next prompt rather than replaying anything now —
- * which is why this leaves the local conversation untouched.
+ * Everything else a degraded session can do is blocked until this succeeds —
+ * prompting and switching agent both refuse — so the refreshed session is
+ * pushed into the list rather than only invalidated, letting the surface that
+ * offered the retry stop offering it without waiting for a refetch.
  */
-export function useSwitchSessionAgent() {
+export function useResumeSessionHistory() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ sessionId, agentCli }: { sessionId: string; agentCli: AgentCli }) =>
-      client.session.switchAgent({ sessionId, agentCli }),
-    onSuccess: () => {
+    mutationFn: ({ sessionId }: { sessionId: string }) =>
+      client.session.resumeHistory({ sessionId }).then((response) => response.session),
+    onSuccess: (session) => {
+      queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
+        (current ?? []).map((candidate) =>
+          candidate.id === session.id ? session : candidate,
+        ),
+      );
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     },
   });

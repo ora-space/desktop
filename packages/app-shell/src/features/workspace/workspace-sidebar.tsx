@@ -13,6 +13,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  toast,
 } from "@ora/ui";
 import {
   IconChevronDown,
@@ -25,7 +26,9 @@ import {
   IconLayoutSidebarLeftCollapse,
   IconMessageCircle,
   IconPencil,
+  IconPlayerStop,
   IconPlus,
+  IconRoute,
   IconSearch,
   IconSquareRoundedPlus,
   IconTrash,
@@ -37,6 +40,7 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
+import { useGraphWorkflowRuns, useCancelGraphWorkflowRun } from "../../state/hooks/use-graph-workflow-runs";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useUnreadSessionsStore } from "../../state/stores/unread-sessions-store";
@@ -44,6 +48,7 @@ import { OraMark } from "../../components/ora-mark";
 import { AgentActivityDots } from "../../components/agent-activity-dots";
 import { DragRegion } from "../../components/drag-region";
 import { useChatStore } from "../../chat-store-context";
+import type { GraphWorkflowRunStatus } from "@ora/workflow-runtime";
 import { agentCliLabel } from "./agent-cli";
 
 interface WorkspaceSidebarProps {
@@ -74,6 +79,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   const selectProject = useWorkspaceSelectionStore((s) => s.selectProject);
   const selectTask = useWorkspaceSelectionStore((s) => s.selectTask);
   const selectSession = useWorkspaceSelectionStore((s) => s.selectSession);
+  const selectWorkflowRun = useWorkspaceSelectionStore((s) => s.selectWorkflowRun);
   const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
 
   const expandedProjects = useUiStore((s) => s.expandedProjects);
@@ -223,7 +229,11 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
               <div key={project.id}>
                 <TreeRow
                   depth={0}
-                  active={selection.projectId === project.id && selection.taskId === null}
+                  active={
+                    selection.projectId === project.id
+                    && selection.taskId === null
+                    && selection.workflowRunId === null
+                  }
                   icon={<IconFolder className="size-[18px] text-muted-foreground" />}
                   label={project.name}
                   expanded={projectOpen}
@@ -247,6 +257,26 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                   )}
                 />
                 <TreeBranch expanded={projectOpen}>
+                  <ProjectWorkflowRunRows
+                    projectId={project.id}
+                    activeRunId={
+                      selection.projectId === project.id
+                        ? selection.workflowRunId
+                        : null
+                    }
+                    onSelectRun={(runId) => selectWorkflowRun(runId, project.id)}
+                    onEditRun={(run) => setDialog({
+                      kind: "workflowRun",
+                      projectId: project.id,
+                      entity: { id: run.id, name: run.name },
+                    })}
+                    onDeleteRun={(run) => setDeleteTarget({
+                      kind: "workflowRun",
+                      id: run.id,
+                      name: run.name,
+                      projectId: project.id,
+                    })}
+                  />
                   {projectTasks.map((task) => {
                     const taskSessions = sessions.filter((session) => session.taskId === task.id);
                     const taskOpen = expandedTasks.has(task.id) || Boolean(needle);
@@ -409,7 +439,8 @@ interface TreeRowProps {
   onClick: () => void;
   /** Optional primary command shown beside the overflow menu on hover. */
   action?: React.ReactNode;
-  menu: React.ReactNode;
+  /** Optional overflow menu; graph-run rows omit CRUD until later steps. */
+  menu?: React.ReactNode;
 }
 
 /** Keeps every tree level aligned while preserving a stable row width for actions. */
@@ -430,7 +461,13 @@ function TreeRow({ depth, active, icon, label, meta, expanded, onClick, action, 
             : <IconChevronRight className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />)}
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-        {meta && <span className="truncate text-[11px] text-muted-foreground">{meta}</span>}
+        {meta && (
+          <span
+            className={`truncate text-[11px] ${active ? "text-sidebar-accent-foreground/80" : "text-amber-700 dark:text-amber-300"}`}
+          >
+            {meta}
+          </span>
+        )}
       </button>
       <div className="mr-1 flex items-center opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">
         {menu}
@@ -463,6 +500,89 @@ function NewSessionButton({ onClick }: { onClick: () => void }) {
     >
       <IconPlus />
     </Button>
+  );
+}
+
+/** Status dot color for sidebar GraphWorkflowRun rows. */
+function runStatusClass(status: GraphWorkflowRunStatus): string {
+  switch (status) {
+    case "running":
+      return "bg-sky-500";
+    case "awaiting_input":
+      return "bg-amber-500";
+    case "succeeded":
+      return "bg-emerald-500";
+    case "failed":
+    case "partial_failed":
+      return "bg-rose-500";
+    case "cancelled":
+      return "bg-zinc-400";
+    case "pending":
+      return "bg-amber-400";
+  }
+}
+
+/** Per-project run list so each row can call useGraphWorkflowRuns without hook-in-loop. */
+function ProjectWorkflowRunRows({
+  projectId,
+  activeRunId,
+  onSelectRun,
+  onEditRun,
+  onDeleteRun,
+}: {
+  projectId: string;
+  activeRunId: string | null;
+  onSelectRun: (runId: string) => void;
+  onEditRun: (run: { id: string; name: string }) => void;
+  onDeleteRun: (run: { id: string; name: string }) => void;
+}) {
+  const { t } = useTranslation();
+  const runsQuery = useGraphWorkflowRuns(projectId);
+  const cancelRun = useCancelGraphWorkflowRun();
+  const runs = runsQuery.data ?? [];
+  return (
+    <>
+      {runs.map((run) => {
+        const canCancel =
+          run.status === "pending"
+          || run.status === "running"
+          || run.status === "awaiting_input";
+        return (
+          <TreeRow
+            key={run.id}
+            depth={1}
+            active={activeRunId === run.id}
+            icon={(
+              <span className="relative flex size-[18px] items-center justify-center">
+                <IconRoute className="size-4 text-muted-foreground" aria-hidden />
+                <span
+                  className={`absolute -right-0.5 -top-0.5 size-1.5 rounded-full ${runStatusClass(run.status)}`}
+                  aria-label={t(`workflowRun.status.${run.status}`)}
+                />
+              </span>
+            )}
+            label={run.name}
+            meta={run.status === "awaiting_input"
+              ? t("workflowRun.hitl.sidebarBadge")
+              : undefined}
+            onClick={() => onSelectRun(run.id)}
+            menu={(
+              <EntityMenu
+                onEdit={() => onEditRun({ id: run.id, name: run.name })}
+                onCancel={canCancel
+                  ? () => {
+                    cancelRun.mutate({ runId: run.id }, {
+                      onError: () => toast.error(t("workflowRun.cancelFailed")),
+                    });
+                  }
+                  : undefined}
+                onDelete={() => onDeleteRun({ id: run.id, name: run.name })}
+              />
+            )}
+          />
+        );
+      })}
+    </>
   );
 }
 
@@ -519,7 +639,15 @@ function NewDirectChatButton({ onClick }: { onClick: () => void }) {
 }
 
 /** Provides contextual CRUD commands without making every tree row visually noisy. */
-function EntityMenu({ onEdit, onDelete }: { onEdit?: () => void; onDelete: () => void }) {
+function EntityMenu({
+  onEdit,
+  onCancel,
+  onDelete,
+}: {
+  onEdit?: () => void;
+  onCancel?: () => void;
+  onDelete: () => void;
+}) {
   const { t } = useTranslation();
   return (
     <DropdownMenu>
@@ -528,6 +656,12 @@ function EntityMenu({ onEdit, onDelete }: { onEdit?: () => void; onDelete: () =>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {onEdit && <DropdownMenuItem onClick={onEdit}><IconPencil />{t("common.edit")}</DropdownMenuItem>}
+        {onCancel && (
+          <DropdownMenuItem onClick={onCancel}>
+            <IconPlayerStop />
+            {t("workflowRun.cancelAction")}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem variant="destructive" onClick={onDelete}><IconTrash />{t("common.delete")}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

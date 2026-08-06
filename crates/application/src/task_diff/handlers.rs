@@ -7,79 +7,16 @@ use super::ports::{
 use crate::{ApplicationError, Clock, TaskRepository, WorktreeRepository};
 use ora_contracts::{
     CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest,
-    CreateTaskDiffCommentResponse, GetTaskDiffRequest, GetTaskDiffResponse,
-    ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse, PushTaskBranchRequest,
-    PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse,
-    SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse, TaskDiffScope,
+    CreateTaskDiffCommentResponse, ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse,
+    PushTaskBranchRequest, PushTaskBranchResponse, ReplyTaskDiffCommentRequest,
+    ReplyTaskDiffCommentResponse, SetTaskDiffCommentStatusRequest,
+    SetTaskDiffCommentStatusResponse, TaskDiffScope,
 };
 use ora_domain::{
     AuditFields, Task, TaskDiffAnchor, TaskDiffComment, TaskDiffCommentId, TaskDiffCommentKind,
     TaskDiffThreadStatus, TaskId, Worktree,
 };
 use std::path::{Component, Path, PathBuf};
-
-/// Computes the complete task worktree diff without exposing filesystem paths to callers.
-pub struct GetTaskDiffHandler<TaskRepositoryPort, WorktreeRepositoryPort, DiffReader> {
-    task_repository: TaskRepositoryPort,
-    worktree_repository: WorktreeRepositoryPort,
-    diff_reader: DiffReader,
-    work_dir: PathBuf,
-}
-
-impl<TaskRepositoryPort, WorktreeRepositoryPort, DiffReader>
-    GetTaskDiffHandler<TaskRepositoryPort, WorktreeRepositoryPort, DiffReader>
-{
-    /// Builds a task diff handler from persistence, Git, and backend path dependencies.
-    pub fn new(
-        task_repository: TaskRepositoryPort,
-        worktree_repository: WorktreeRepositoryPort,
-        diff_reader: DiffReader,
-        work_dir: PathBuf,
-    ) -> Self {
-        Self {
-            task_repository,
-            worktree_repository,
-            diff_reader,
-            work_dir,
-        }
-    }
-}
-
-impl<TaskRepositoryPort, WorktreeRepositoryPort, DiffReader>
-    GetTaskDiffHandler<TaskRepositoryPort, WorktreeRepositoryPort, DiffReader>
-where
-    TaskRepositoryPort: TaskRepository,
-    WorktreeRepositoryPort: WorktreeRepository,
-    DiffReader: TaskDiffReader,
-{
-    /// Returns a standard unified patch against the immutable task baseline.
-    pub fn handle(
-        &self,
-        request: GetTaskDiffRequest,
-    ) -> Result<GetTaskDiffResponse, ApplicationError> {
-        let task_id = TaskId::new(request.task_id);
-        let (task, worktree) =
-            load_task_worktree(&self.task_repository, &self.worktree_repository, &task_id)?;
-        let base_commit_id = recorded_baseline(&worktree)?;
-
-        let snapshot = self
-            .diff_reader
-            .read_task_diff(ReadTaskDiffRequest {
-                worktree_path: self.work_dir.join(task.id.as_ref()),
-                base_commit_id: base_commit_id.to_string(),
-                scope: map_diff_scope(request.scope),
-            })
-            .map_err(ApplicationError::from_task_diff_reader_error)?;
-        let diff_id = task_diff_id(base_commit_id, &snapshot.head_commit_id, &snapshot.patch);
-
-        Ok(GetTaskDiffResponse {
-            base_commit_id: base_commit_id.to_string(),
-            head_commit_id: snapshot.head_commit_id,
-            diff_id,
-            patch: snapshot.patch,
-        })
-    }
-}
 
 /// Lists persisted root discussions and replies for one visible task.
 pub struct ListTaskDiffCommentsHandler<TaskRepositoryPort, CommentRepository> {
@@ -138,7 +75,7 @@ pub struct CreateTaskDiffCommentHandler<
     comment_repository: CommentRepository,
     comment_id_generator: CommentIdGenerator,
     clock: ClockSource,
-    work_dir: PathBuf,
+    worktree_path: PathBuf,
 }
 
 impl<
@@ -166,7 +103,7 @@ impl<
         comment_repository: CommentRepository,
         comment_id_generator: CommentIdGenerator,
         clock: ClockSource,
-        work_dir: PathBuf,
+        worktree_path: PathBuf,
     ) -> Self {
         Self {
             task_repository,
@@ -175,7 +112,7 @@ impl<
             comment_repository,
             comment_id_generator,
             clock,
-            work_dir,
+            worktree_path,
         }
     }
 }
@@ -210,7 +147,7 @@ where
         request: CreateTaskDiffCommentRequest,
     ) -> Result<CreateTaskDiffCommentResponse, ApplicationError> {
         let task_id = TaskId::new(request.task_id);
-        let (task, worktree) =
+        let (_task, worktree) =
             load_task_worktree(&self.task_repository, &self.worktree_repository, &task_id)?;
         let base_commit_id = recorded_baseline(&worktree)?;
         validate_comment_body(&request.body)?;
@@ -223,9 +160,14 @@ where
         let snapshot = self
             .diff_reader
             .read_task_diff(ReadTaskDiffRequest {
-                worktree_path: self.work_dir.join(task.id.as_ref()),
+                worktree_path: self.worktree_path.clone(),
                 base_commit_id: base_commit_id.to_string(),
-                scope: ReadTaskDiffScope::Branch,
+                scope: match request.scope {
+                    TaskDiffScope::Branch => ReadTaskDiffScope::Branch,
+                    TaskDiffScope::Unstaged => ReadTaskDiffScope::Unstaged,
+                    TaskDiffScope::Staged => ReadTaskDiffScope::Staged,
+                    TaskDiffScope::Committed => ReadTaskDiffScope::Committed,
+                },
             })
             .map_err(ApplicationError::from_task_diff_reader_error)?;
         let current_diff_id =
@@ -268,22 +210,12 @@ where
     }
 }
 
-/// Maps the public selector into the application port vocabulary.
-fn map_diff_scope(scope: TaskDiffScope) -> ReadTaskDiffScope {
-    match scope {
-        TaskDiffScope::Branch => ReadTaskDiffScope::Branch,
-        TaskDiffScope::Unstaged => ReadTaskDiffScope::Unstaged,
-        TaskDiffScope::Staged => ReadTaskDiffScope::Staged,
-        TaskDiffScope::Committed => ReadTaskDiffScope::Committed,
-    }
-}
-
 /// Commits the complete change set from one persisted task worktree.
 pub struct CommitTaskChangesHandler<TaskRepositoryPort, WorktreeRepositoryPort, GitWriter> {
     task_repository: TaskRepositoryPort,
     worktree_repository: WorktreeRepositoryPort,
     git_writer: GitWriter,
-    work_dir: PathBuf,
+    worktree_path: PathBuf,
 }
 
 impl<TaskRepositoryPort, WorktreeRepositoryPort, GitWriter>
@@ -294,13 +226,13 @@ impl<TaskRepositoryPort, WorktreeRepositoryPort, GitWriter>
         task_repository: TaskRepositoryPort,
         worktree_repository: WorktreeRepositoryPort,
         git_writer: GitWriter,
-        work_dir: PathBuf,
+        worktree_path: PathBuf,
     ) -> Self {
         Self {
             task_repository,
             worktree_repository,
             git_writer,
-            work_dir,
+            worktree_path,
         }
     }
 }
@@ -322,13 +254,13 @@ where
             return Err(ApplicationError::TaskDiffCommitMessageBlank);
         }
         let task_id = TaskId::new(request.task_id);
-        let (task, worktree) =
+        let (_task, worktree) =
             load_task_worktree(&self.task_repository, &self.worktree_repository, &task_id)?;
         let branch_name = recorded_branch(&worktree)?;
         let commit = self
             .git_writer
             .commit_changes(CommitTaskGitRequest {
-                worktree_path: self.work_dir.join(task.id.as_ref()),
+                worktree_path: self.worktree_path.clone(),
                 expected_branch_name: branch_name.to_string(),
                 message: message.to_string(),
             })
@@ -346,7 +278,7 @@ pub struct PushTaskBranchHandler<TaskRepositoryPort, WorktreeRepositoryPort, Git
     task_repository: TaskRepositoryPort,
     worktree_repository: WorktreeRepositoryPort,
     git_writer: GitWriter,
-    work_dir: PathBuf,
+    worktree_path: PathBuf,
 }
 
 impl<TaskRepositoryPort, WorktreeRepositoryPort, GitWriter>
@@ -357,13 +289,13 @@ impl<TaskRepositoryPort, WorktreeRepositoryPort, GitWriter>
         task_repository: TaskRepositoryPort,
         worktree_repository: WorktreeRepositoryPort,
         git_writer: GitWriter,
-        work_dir: PathBuf,
+        worktree_path: PathBuf,
     ) -> Self {
         Self {
             task_repository,
             worktree_repository,
             git_writer,
-            work_dir,
+            worktree_path,
         }
     }
 }
@@ -381,13 +313,13 @@ where
         request: PushTaskBranchRequest,
     ) -> Result<PushTaskBranchResponse, ApplicationError> {
         let task_id = TaskId::new(request.task_id);
-        let (task, worktree) =
+        let (_task, worktree) =
             load_task_worktree(&self.task_repository, &self.worktree_repository, &task_id)?;
         let branch_name = recorded_branch(&worktree)?;
         let push = self
             .git_writer
             .push_branch(PushTaskGitRequest {
-                worktree_path: self.work_dir.join(task.id.as_ref()),
+                worktree_path: self.worktree_path.clone(),
                 expected_branch_name: branch_name.to_string(),
             })
             .map_err(task_git_writer_error)?;
@@ -568,7 +500,9 @@ where
                 });
             }
         }
-        comment.audit_fields.updated_at = self.clock.now_timestamp_millis();
+        comment
+            .audit_fields
+            .touch(self.clock.now_timestamp_millis());
         let comment = self
             .comment_repository
             .update_comment(comment)

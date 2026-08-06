@@ -8,6 +8,7 @@ export {
   type PathSelectionKind,
   type PlatformAdapter,
   type PlatformLocale,
+  type SaveTextFileOptions,
   type SelectPathOptions,
   type WindowControlsCapability,
   type WindowManagerOs,

@@ -1,7 +1,8 @@
 use super::Migration;
 
 const UP_STATEMENTS: &[&str] = &[r#"
-ALTER TABLE worktrees ADD COLUMN base_commit_id TEXT;
+ALTER TABLE worktrees ADD COLUMN base_commit_id TEXT
+    CHECK (base_commit_id IS NULL OR base_commit_id <> '');
 
 CREATE TABLE task_diff_comments (
     id TEXT PRIMARY KEY,

@@ -34,8 +34,8 @@ describe("useCreateTask", () => {
 
     expect(state.tasks[0]?.workspaceMode).toBe(workspaceMode);
     expect(useWorkspaceSelectionStore.getState().selection).toEqual(workspaceMode === "worktree"
-      ? { projectId: "p1", taskId: "t1", sessionId: null }
-      : { projectId: "p1", taskId: null, sessionId: null });
+      ? { projectId: "p1", taskId: "t1", sessionId: null, workflowRunId: null }
+      : { projectId: "p1", taskId: null, sessionId: null, workflowRunId: null });
   });
 
   it("invalidates project branches after creating a worktree", async () => {
