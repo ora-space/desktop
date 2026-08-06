@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import type { WarmSessionTarget } from "@ora/contracts";
+import type { AgentCli, WarmSessionTarget } from "@ora/contracts";
 import { findModelOption, selectableValues } from "@ora/chat";
 import type { WorkflowAgentModel } from "@ora/workflow-mock";
 import { useContractsClient } from "../../contracts-client-context";
@@ -10,9 +10,19 @@ import { clientId } from "../client-id";
 import { queryKeys } from "./query-keys";
 import { useProjects } from "./use-projects";
 
+/** Per-CLI discovery state so the inspector can show a spinner or retry per row. */
+export interface WorkflowAgentCliStatus {
+  isLoading: boolean;
+  isError: boolean;
+}
+
 /** Discovered Agent CLI × model pairs for workflow node configuration. */
 export interface WorkflowAgentModelsCatalog {
   agentModels: WorkflowAgentModel[];
+  /** Models grouped by CLI, mirroring the two-section picker in chat. */
+  modelsByCli: ReadonlyMap<AgentCli, WorkflowAgentModel[]>;
+  /** Loading/error state for every configured CLI, keyed by CLI. */
+  cliStatus: Readonly<Record<AgentCli, WorkflowAgentCliStatus>>;
   isLoading: boolean;
   isError: boolean;
   refetch: () => void;
@@ -78,6 +88,36 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
     return models;
   }, [codeAgentOptions, ngaOptions, openCodeOptions]);
 
+  const modelsByCli = useMemo(() => {
+    const byCli = new Map<AgentCli, WorkflowAgentModel[]>();
+    for (const model of agentModels) {
+      const cli = model.agentCli as AgentCli;
+      const existing = byCli.get(cli);
+      if (existing === undefined) {
+        byCli.set(cli, [model]);
+      } else {
+        existing.push(model);
+      }
+    }
+    return byCli;
+  }, [agentModels]);
+
+  const cliStatus = useMemo(
+    () => Object.fromEntries(
+      AGENT_CLI_ORDER.map((agentCli, index) => {
+        const query = warmQueries[index];
+        return [
+          agentCli,
+          {
+            isLoading: query?.isPending === true,
+            isError: query?.isError === true,
+          },
+        ];
+      }),
+    ) as Readonly<Record<AgentCli, WorkflowAgentCliStatus>>,
+    [warmQueries],
+  );
+
   const isLoading = projectsPending
     || (target !== null && warmQueries.some((query) => query.isPending || query.isFetching));
   const isError = target !== null
@@ -87,6 +127,8 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
 
   return {
     agentModels,
+    modelsByCli,
+    cliStatus,
     isLoading,
     isError,
     refetch: () => {

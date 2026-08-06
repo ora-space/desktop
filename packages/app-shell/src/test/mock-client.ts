@@ -21,6 +21,12 @@ export interface MockClientState {
   warmSessions: Map<string, AgentCli>;
   /** What every warm and persisted session reports as its configuration. */
   configOptions: acp.SessionConfigOption[];
+  /**
+   * Per-CLI warm-session config overrides for tests. A CLI mapped to `null`
+   * reports no model catalog (warm failed); a CLI mapped to an array uses
+   * those options instead of the shared `configOptions`.
+   */
+  warmModelsByCli?: Partial<Record<AgentCli, acp.SessionConfigOption[] | null>>;
 }
 
 /** Creates a fresh in-memory mock state with no records. */
@@ -153,7 +159,13 @@ export function createMockClient(state: MockClientState): ContractsClient {
       warm: async (req) => {
         const sessionId = nextId("s", state.sessions.length + state.warmSessions.size);
         state.warmSessions.set(sessionId, req.agentCli);
-        return { sessionId, configOptions: state.configOptions };
+        const perCli = state.warmModelsByCli?.[req.agentCli];
+        return {
+          sessionId,
+          // A CLI mapped to null reports an empty catalog, which is how the
+          // contract expresses "no models" after a failed warm handshake.
+          configOptions: perCli === undefined ? state.configOptions : (perCli ?? []),
+        };
       },
       setConfig: async () => ({ configOptions: state.configOptions }),
       attach: async (req) => {

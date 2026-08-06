@@ -4,6 +4,7 @@ import {
   IconCheck,
   IconLayoutSidebarRightCollapse,
   IconChevronDown,
+  IconLoader2,
   IconPlus,
   IconSettings,
   IconTrash,
@@ -39,6 +40,7 @@ import {
 import type { Node } from "@xyflow/react";
 import { AGENT_CLI_LABELS, AGENT_CLI_ORDER } from "../chat/model-catalog";
 import { ProviderLogo } from "../chat/provider-logos";
+import type { WorkflowAgentCliStatus } from "../../state/hooks/use-workflow-agent-models";
 import { getNodeMetadata } from "./workflow-node-metadata";
 
 interface WorkflowInspectorProps {
@@ -47,6 +49,8 @@ interface WorkflowInspectorProps {
   agentModelsLoading?: boolean;
   agentModelsError?: boolean;
   onRetryAgentModels?: () => void;
+  modelsByCli?: ReadonlyMap<AgentCli, WorkflowAgentModel[]>;
+  cliStatus?: Readonly<Record<AgentCli, WorkflowAgentCliStatus>>;
   agentCatalogsLoading?: boolean;
   agentCatalogsError?: boolean;
   onRetryAgentCatalogs?: () => void;
@@ -67,6 +71,8 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
       agentModelsLoading={props.agentModelsLoading ?? false}
       agentModelsError={props.agentModelsError ?? false}
       onRetryAgentModels={props.onRetryAgentModels}
+      modelsByCli={props.modelsByCli}
+      cliStatus={props.cliStatus}
       agentCatalogsLoading={props.agentCatalogsLoading ?? false}
       agentCatalogsError={props.agentCatalogsError ?? false}
       onRetryAgentCatalogs={props.onRetryAgentCatalogs}
@@ -106,6 +112,8 @@ function WorkflowNodeInspector({
   agentModelsLoading,
   agentModelsError,
   onRetryAgentModels,
+  modelsByCli,
+  cliStatus,
   agentCatalogsLoading,
   agentCatalogsError,
   onRetryAgentCatalogs,
@@ -118,6 +126,8 @@ function WorkflowNodeInspector({
   agentModelsLoading: boolean;
   agentModelsError: boolean;
   onRetryAgentModels?: () => void;
+  modelsByCli?: ReadonlyMap<AgentCli, WorkflowAgentModel[]>;
+  cliStatus?: Readonly<Record<AgentCli, WorkflowAgentCliStatus>>;
   agentCatalogsLoading: boolean;
   agentCatalogsError: boolean;
   onRetryAgentCatalogs?: () => void;
@@ -255,6 +265,8 @@ function WorkflowNodeInspector({
             modelsLoading={agentModelsLoading}
             modelsError={agentModelsError}
             onRetryModels={onRetryAgentModels}
+            modelsByCli={modelsByCli}
+            cliStatus={cliStatus}
             catalogsLoading={agentCatalogsLoading}
             catalogsError={agentCatalogsError}
             onRetryCatalogs={onRetryAgentCatalogs}
@@ -302,6 +314,8 @@ function AgentConfigurationFields({
   modelsLoading,
   modelsError,
   onRetryModels,
+  modelsByCli,
+  cliStatus,
   catalogsLoading,
   catalogsError,
   onRetryCatalogs,
@@ -312,6 +326,8 @@ function AgentConfigurationFields({
   modelsLoading: boolean;
   modelsError: boolean;
   onRetryModels?: () => void;
+  modelsByCli?: ReadonlyMap<AgentCli, WorkflowAgentModel[]>;
+  cliStatus?: Readonly<Record<AgentCli, WorkflowAgentCliStatus>>;
   catalogsLoading: boolean;
   catalogsError: boolean;
   onRetryCatalogs?: () => void;
@@ -321,6 +337,7 @@ function AgentConfigurationFields({
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const currentAgentCli = config.executor.agentCli as AgentCli;
   const configuredModel = capabilities.agentModels.find(
     (model) => model.agentCli === config.executor.agentCli
       && model.modelId === config.executor.modelId,
@@ -330,13 +347,18 @@ function AgentConfigurationFields({
     modelId: config.executor.modelId,
     label: `${AGENT_CLI_LABELS[config.executor.agentCli as AgentCli]} · ${config.executor.modelId}`,
   };
-  const modelsForSelectedCli = capabilities.agentModels.filter(
-    (model) => model.agentCli === config.executor.agentCli,
-  );
-  const selectableModelsForCli = configuredModel === undefined
-    ? [selectedModel, ...modelsForSelectedCli]
-    : modelsForSelectedCli;
-  const selectedModelName = workflowModelDisplayName(selectedModel);
+  const modelsForSelectedCli = modelsByCli?.get(currentAgentCli)
+    ?? capabilities.agentModels.filter((model) => model.agentCli === currentAgentCli);
+  const selectedCliStatus = cliStatus?.[currentAgentCli];
+  // Model discovery is per-CLI: the selected CLI is loading, so the model
+  // group below is still on its way rather than genuinely empty.
+  const selectedCliLoading = modelsLoading || selectedCliStatus?.isLoading === true;
+  // A node always shows its model name; when the executor is not backed by a
+  // discovered model (e.g. a CLI that failed to report one) the full
+  // `CLI · model` pair is shown instead so the agent pick stays legible.
+  const selectedModelName = configuredModel === undefined
+    ? selectedModel.label
+    : workflowModelDisplayName(selectedModel);
   const configuredSkillIds = new Set(config.skills.map((skill) => skill.skillId));
   const availableSkills = capabilities.skills.filter((skill) =>
     !configuredSkillIds.has(skill.value),
@@ -377,13 +399,16 @@ function AgentConfigurationFields({
   /**
    * Switches the node onto another Agent CLI. Keeps the current model id when
    * that CLI offers it; otherwise falls back to the first discovered model so
-   * the executor pair stays catalog-backed.
+   * the executor pair stays catalog-backed. A CLI with no discovered models
+   * keeps the current id rather than inventing one — the model group then
+   * shows the empty state and the pick stays visible (never reverted).
    */
   function selectAgentCli(agentCli: AgentCli): void {
     if (agentCli === config.executor.agentCli) {
       return;
     }
-    const models = capabilities.agentModels.filter((model) => model.agentCli === agentCli);
+    const models = modelsByCli?.get(agentCli)
+      ?? capabilities.agentModels.filter((model) => model.agentCli === agentCli);
     const kept = models.find((model) => model.modelId === config.executor.modelId);
     onChange({
       ...config,
@@ -405,7 +430,7 @@ function AgentConfigurationFields({
                 type="button"
                 variant="outline"
                 className="h-9 w-full min-w-0 shrink justify-between overflow-hidden px-3 font-normal"
-                disabled={modelsLoading || capabilities.agentModels.length === 0}
+                disabled={capabilities.agentModels.length === 0 && !selectedCliLoading}
                 aria-label={t("settings.workflow.field.agentModel")}
               />
             }
@@ -413,15 +438,23 @@ function AgentConfigurationFields({
             <span className="flex w-full min-w-0 items-center justify-between gap-2">
               <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left">
                 <ProviderLogo
-                  agentCli={config.executor.agentCli as AgentCli}
+                  agentCli={currentAgentCli}
                   className="size-3.5 shrink-0"
                 />
                 <span className="min-w-0 truncate">{selectedModelName}</span>
               </span>
-              <IconChevronDown
-                data-testid="workflow-agent-model-chevron"
-                className="size-3.5 shrink-0 opacity-50"
-              />
+              {selectedCliLoading ? (
+                <IconLoader2
+                  data-testid="workflow-agent-model-loading"
+                  className="size-3.5 shrink-0 animate-spin opacity-50"
+                  aria-hidden="true"
+                />
+              ) : (
+                <IconChevronDown
+                  data-testid="workflow-agent-model-chevron"
+                  className="size-3.5 shrink-0 opacity-50"
+                />
+              )}
             </span>
           </PopoverTrigger>
           <PopoverContent align="start" className="w-56 p-0">
@@ -455,35 +488,40 @@ function AgentConfigurationFields({
                   heading={t("chat.modelSelector.agent")}
                   className="**:[[cmdk-group-heading]]:font-normal"
                 >
-                  {AGENT_CLI_ORDER.map((agentCli) => (
-                    <CommandItem
-                      key={agentCli}
-                      value={`${AGENT_CLI_LABELS[agentCli]} agent`}
-                      className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
-                      onSelect={() => selectAgentCli(agentCli)}
-                    >
-                      <ProviderLogo agentCli={agentCli} className="size-3.5" />
-                      {AGENT_CLI_LABELS[agentCli]}
-                      {agentCli === config.executor.agentCli && (
-                        <IconCheck className="ml-auto size-4" />
-                      )}
-                    </CommandItem>
-                  ))}
+                  {AGENT_CLI_ORDER.map((agentCli) => {
+                    const cliLoading = cliStatus?.[agentCli]?.isLoading === true;
+                    return (
+                      <CommandItem
+                        key={agentCli}
+                        value={`${AGENT_CLI_LABELS[agentCli]} agent`}
+                        className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
+                        onSelect={() => selectAgentCli(agentCli)}
+                      >
+                        <ProviderLogo agentCli={agentCli} className="size-3.5" />
+                        {AGENT_CLI_LABELS[agentCli]}
+                        {cliLoading ? (
+                          <IconLoader2 className="ml-auto size-3.5 shrink-0 animate-spin opacity-50" />
+                        ) : agentCli === currentAgentCli ? (
+                          <IconCheck className="ml-auto size-4" />
+                        ) : null}
+                      </CommandItem>
+                    );
+                  })}
                 </CommandGroup>
                 <CommandGroup
                   heading={t("chat.modelSelector.model")}
                   className="**:[[cmdk-group-heading]]:font-normal"
                 >
-                  {selectableModelsForCli.length === 0 ? (
+                  {modelsForSelectedCli.length === 0 ? (
                     <p className="px-2 py-4 text-center text-xs text-muted-foreground">
                       {t(
-                        modelsLoading
+                        selectedCliLoading
                           ? "chat.modelSelector.loading"
-                          : "chat.modelSelector.empty",
+                          : "settings.workflow.noAvailableAgentModels",
                       )}
                     </p>
                   ) : (
-                    selectableModelsForCli.map((model) => {
+                    modelsForSelectedCli.map((model) => {
                       const name = workflowModelDisplayName(model);
                       return (
                         <CommandItem

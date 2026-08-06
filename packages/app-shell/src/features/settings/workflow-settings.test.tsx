@@ -7,13 +7,15 @@ import { PlatformProvider } from "@ora/platform";
 import { appI18n } from "../../i18n/i18n-instance";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createHookWrapper, createTestQueryClient } from "../../test/hook-harness";
-import { createMockClient, createMockClientState } from "../../test/mock-client";
+import { createMockClient, createMockClientState, type MockClientState } from "../../test/mock-client";
 import { createStubPlatform } from "../../test/stub-platform";
 import { WorkflowSettings } from "./workflow-settings";
 
 /** Shell providers required by Deploy-to-project (runtime + react-query). */
-function renderSettings(ui: ReactElement = <WorkflowSettings />): RenderResult {
-  const state = createMockClientState();
+function renderSettings(
+  ui: ReactElement = <WorkflowSettings />,
+  state: MockClientState = createMockClientState(),
+): RenderResult {
   // Discovery needs a project cwd so warmSession can report real model catalogs.
   state.projects = [{ id: "p1", name: "Demo", rootPath: "/demo" }];
   // Keep workflow inspector tests deterministic by seeding the backend catalogs
@@ -480,7 +482,7 @@ describe("WorkflowSettings", () => {
     });
     const configuredParameters = within(reviewNode).getByLabelText("配置参数");
     expect(configuredParameters).toHaveTextContent("角色审查员");
-    expect(configuredParameters).toHaveTextContent("open_code · opencode/big-pickle");
+    expect(configuredParameters).toHaveTextContent("code_agent_cli · opencode/big-pickle");
     expect(configuredParameters).toHaveTextContent("Skillsopenspec-verify-change");
     expect(configuredParameters).not.toHaveTextContent("按严重程度整理问题，并给出定位与修复建议。");
   });
@@ -527,6 +529,45 @@ describe("WorkflowSettings", () => {
     await user.type(roleSearch, "测试");
     await user.click(screen.getByRole("option", { name: "测试员" }));
     expect(screen.getByLabelText("角色")).toHaveTextContent("测试员");
+  });
+
+  it("keeps a manually switched Agent CLI when that CLI reports no models", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.agents = [
+      { id: "Architect", name: "架构师", description: "role" },
+      { id: "Planner", name: "规划师", description: "role" },
+      { id: "Researcher", name: "研究员", description: "role" },
+      { id: "Implementer", name: "实施者", description: "role" },
+      { id: "Reviewer", name: "审查员", description: "role" },
+      { id: "Tester", name: "测试员", description: "role" },
+      { id: "Debugger", name: "调试员", description: "role" },
+      { id: "Documentation Agent", name: "文档专员", description: "role" },
+    ];
+    state.skills = [
+      { id: "openspec-verify-change", name: "openspec-verify-change", description: "skill" },
+    ];
+    // NGA exists as a CLI but its warm session reports no model catalog, so
+    // picking it must keep the node on NGA instead of snapping back to the
+    // first CLI with discovered models.
+    state.warmModelsByCli = { nga: null };
+    renderSettings(<WorkflowSettings />, state);
+
+    const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
+    await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
+
+    const modelSelect = screen.getByLabelText("Agent 模型");
+    await waitFor(() => expect(modelSelect).toBeEnabled());
+    await user.click(modelSelect);
+    await user.click(screen.getByRole("option", { name: /NGA/ }));
+
+    expect(screen.getByLabelText("Agent 模型")).toHaveTextContent(/NGA/);
+    expect(screen.getByText("没有可用 Agent 模型")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(screen.getByLabelText("Agent 模型")).toHaveTextContent(/NGA/);
+    });
   });
 
   it("uses the backend catalog for a newly added Agent model", async () => {

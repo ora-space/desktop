@@ -183,26 +183,29 @@ function WorkflowSettingsContent({
   const [libraryVisualWidth, setLibraryVisualWidth] = useState(initialLibraryWidth);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
   // Demo fixtures predate backend discovery. Derive a normalized view that
-  // replaces only unavailable executors so every rendered selection is backed
-  // by a real option, without mutating the editable draft in an effect.
+  // keeps the chosen Agent CLI — so a user pick is never silently reverted —
+  // and replaces only unavailable model ids. Without a discovered model for
+  // that CLI the pair stays as-is so the node remains visible and editable.
   const normalizedWorkflows = useMemo(() => {
     if (capabilitiesOverride !== undefined || agentModels.length === 0) {
       return workflows;
     }
-    const defaultExecutor = agentModels[0]!;
     return workflows.map((workflow) => ({
       ...workflow,
       nodes: workflow.nodes.map((node) => {
         if (
           node.data.kind !== "agent"
           || node.data.agentConfig === undefined
-          || agentModels.some((model) =>
-            model.agentCli === node.data.agentConfig!.executor.agentCli
-            && model.modelId === node.data.agentConfig!.executor.modelId,
-          )
         ) {
           return node;
         }
+        const { agentCli, modelId } = node.data.agentConfig.executor;
+        if (agentModels.some((model) =>
+          model.agentCli === agentCli && model.modelId === modelId,
+        )) {
+          return node;
+        }
+        const modelForCli = agentModels.find((model) => model.agentCli === agentCli);
         return {
           ...node,
           data: {
@@ -210,8 +213,8 @@ function WorkflowSettingsContent({
             agentConfig: {
               ...node.data.agentConfig,
               executor: {
-                agentCli: defaultExecutor.agentCli,
-                modelId: defaultExecutor.modelId,
+                agentCli,
+                modelId: modelForCli?.modelId ?? modelId,
               },
             },
           },
@@ -766,6 +769,8 @@ function WorkflowSettingsContent({
                 agentModelsLoading={agentModelsLoading}
                 agentModelsError={agentModelsError}
                 onRetryAgentModels={agentModelsCatalog.refetch}
+                modelsByCli={agentModelsCatalog.modelsByCli}
+                cliStatus={agentModelsCatalog.cliStatus}
                 agentCatalogsLoading={agentCatalogsLoading}
                 agentCatalogsError={agentCatalogsError}
                 onRetryAgentCatalogs={() => {
