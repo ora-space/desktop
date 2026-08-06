@@ -180,8 +180,8 @@ tasks:
       - task: run:prepare
       - cargo run --bin ora_web_server
 
-  run:logdy:
-    desc: Follow Ora's daily logs in the local Logdy UI
+  log:backend:
+    desc: Follow Ora backend's daily logs in the local Logdy UI
     preconditions:
       - sh: command -v logdy >/dev/null 2>&1
         msg: "Logdy is not available on PATH. Provide Logdy before running this task."
@@ -206,3 +206,26 @@ tasks:
         logdy follow --full-read "$@" --ui-ip 127.0.0.1 --port {{.PORT | default "8080"}} --no-analytics --no-updates --config logdy.config.json
         {{end}}
 
+  log:desktop:
+    desc: Follow Ora Desktop's daily logs in the local Logdy UI
+    preconditions:
+      - sh: command -v logdy >/dev/null 2>&1
+        msg: "Logdy is not available on PATH. Provide Logdy before running this task."
+      - sh: '{{if eq OS "windows"}}command -v pwsh >/dev/null 2>&1{{else}}true{{end}}'
+        msg: "PowerShell 7 is required to follow log files reliably on Windows. Install pwsh and ensure it is available on PATH."
+    cmds:
+      - |
+        {{if eq OS "windows"}}
+        # Logdy 0.17.1 can miss NTFS append notifications, so let PowerShell own the file watch.
+        pwsh -NoProfile -Command '
+          $logs = @(Get-ChildItem -Path "~/AppData/Roaming/space.ora.desktop/logs/ora.log.*" -File | Sort-Object Name)
+          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          Get-Content -LiteralPath $logs[-1].FullName -Encoding UTF8 -Wait | ForEach-Object {
+            [Console]::Out.WriteLine($_)
+            [Console]::Out.Flush()
+          }
+        ' | logdy --ui-ip 127.0.0.1 --port {{.PORT | default "8080"}} --no-analytics --no-updates --config logdy.config.json
+        {{else}}
+        set -- .data/logs/ora.log.*
+        logdy follow --full-read "$@" --ui-ip 127.0.0.1 --port {{.PORT | default "8080"}} --no-analytics --no-updates --config logdy.config.json
+        {{end}}
