@@ -7,7 +7,6 @@ use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
 use super::*;
 use ora_acp::AcpClient;
-use ora_contracts::SessionPermissionRequest;
 use ora_contracts::acp::common::SessionId as AcpSessionId;
 use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
 use ora_contracts::acp::notification::CancelNotification;
@@ -456,13 +455,34 @@ impl RuntimeActor {
                         .map(|option| option.option_id.to_string())
                         .collect::<Vec<_>>();
                     ora_debug!(session_id = %self.session.id, tool_call = ?permission.request.tool_call, option_count = option_ids.len(), request_id = %public_id, "permission requested");
+                    // Ora has no user-configurable approval policy yet, so every request is
+                    // granted through the same `respond_permission` path a real user's choice
+                    // would take, instead of being left pending for
+                    // `RuntimeCommand::RespondToPermission`. A future policy can gate this
+                    // auto-response and leave the request in `permissions` for the frontend to
+                    // answer instead.
+                    let auto_option_id = pick_auto_allow_option(&permission.request.options)
+                        .map(|option| option.option_id.to_string());
                     permissions.insert(public_id.clone(), (permission.request_id, option_ids));
-                    let event = PromptSessionEvent::PermissionRequest(SessionPermissionRequest {
-                        permission_request_id: public_id,
-                        tool_call: permission.request.tool_call,
-                        options: permission.request.options,
-                    });
-                    if events.try_send(Ok(event)).is_err() {
+                    let Some(option_id) = auto_option_id else {
+                        ora_warn!(session_id = %self.session.id, request_id = %public_id, "permission request offered no allow option");
+                        self.end_turn(StopReason::Cancelled);
+                        self.cancel(&client, &permissions).await;
+                        self.isolate_channel(channel).await;
+                        return;
+                    };
+                    let auto_response = respond_permission(
+                        &client,
+                        RespondToPermissionRequest {
+                            session_id: self.session.id.to_string(),
+                            permission_request_id: public_id,
+                            option_id,
+                        },
+                        &mut permissions,
+                    )
+                    .await;
+                    if let Err(error) = auto_response {
+                        ora_warn!(session_id = %self.session.id, error = %error, "failed to auto-allow permission request");
                         self.end_turn(StopReason::Cancelled);
                         self.cancel(&client, &permissions).await;
                         self.isolate_channel(channel).await;

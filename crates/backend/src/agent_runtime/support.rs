@@ -1,8 +1,8 @@
 use crate::{BackendError, ErrorClassification};
 use ora_acp::AcpClient;
 use ora_contracts::acp::permission::{
-    PermissionOptionId, RequestPermissionOutcome, RequestPermissionResponse,
-    SelectedPermissionOutcome,
+    PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
+    RequestPermissionResponse, SelectedPermissionOutcome,
 };
 use ora_contracts::{
     AgentCli as ContractAgentCli, RespondToPermissionRequest, RespondToPermissionResponse,
@@ -44,6 +44,21 @@ pub(super) async fn respond_permission(
         .await
         .map_err(map_acp_error)?;
     Ok(RespondToPermissionResponse {})
+}
+
+/// Picks the option an unattended approval should select from an agent's offered options.
+///
+/// Prefers `AllowAlways` so later, similar calls in the same turn are also covered; falls back
+/// to `AllowOnce` when the agent did not offer a remembered-choice option.
+pub(super) fn pick_auto_allow_option(options: &[PermissionOption]) -> Option<&PermissionOption> {
+    options
+        .iter()
+        .find(|option| option.kind == PermissionOptionKind::AllowAlways)
+        .or_else(|| {
+            options
+                .iter()
+                .find(|option| option.kind == PermissionOptionKind::AllowOnce)
+        })
 }
 
 /// Maps a private domain session into its frontend-safe view.
@@ -233,8 +248,9 @@ pub(super) fn runtime_internal(code: &'static str, message: impl Into<String>) -
 
 #[cfg(test)]
 mod tests {
-    use super::runtime_internal;
+    use super::{pick_auto_allow_option, runtime_internal};
     use crate::ErrorClassification;
+    use ora_contracts::acp::permission::{PermissionOption, PermissionOptionKind};
     use ora_contracts::{EmptyErrorParams, PublicError};
     use pretty_assertions::assert_eq;
 
@@ -251,5 +267,53 @@ mod tests {
             error.public_error(),
             &PublicError::SessionHistoryDegraded(EmptyErrorParams {})
         );
+    }
+
+    /// Prefers the remembered-choice option so later, similar calls stay unattended too.
+    #[test]
+    fn prefers_allow_always_over_allow_once() {
+        let allow_once =
+            PermissionOption::new("allow-once", "Allow once", PermissionOptionKind::AllowOnce);
+        let allow_always = PermissionOption::new(
+            "allow-always",
+            "Allow always",
+            PermissionOptionKind::AllowAlways,
+        );
+        let options = vec![allow_once, allow_always.clone()];
+
+        assert_eq!(pick_auto_allow_option(&options), Some(&allow_always));
+    }
+
+    /// Falls back to a one-time allow when the agent offered no remembered-choice option.
+    #[test]
+    fn falls_back_to_allow_once_without_allow_always() {
+        let allow_once =
+            PermissionOption::new("allow-once", "Allow once", PermissionOptionKind::AllowOnce);
+        let reject_once = PermissionOption::new(
+            "reject-once",
+            "Reject once",
+            PermissionOptionKind::RejectOnce,
+        );
+        let options = vec![reject_once, allow_once.clone()];
+
+        assert_eq!(pick_auto_allow_option(&options), Some(&allow_once));
+    }
+
+    /// Reports no selectable option when the agent offered only rejections.
+    #[test]
+    fn returns_none_without_any_allow_option() {
+        let reject_once = PermissionOption::new(
+            "reject-once",
+            "Reject once",
+            PermissionOptionKind::RejectOnce,
+        );
+        let reject_always = PermissionOption::new(
+            "reject-always",
+            "Reject always",
+            PermissionOptionKind::RejectAlways,
+        );
+        let options = vec![reject_once, reject_always];
+
+        assert_eq!(pick_auto_allow_option(&options), None);
     }
 }
