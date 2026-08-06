@@ -110,7 +110,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: TASK.id,
       sessionId: SESSION.id,
-    workflowRunId: null,
+      workflowRunId: null,
     });
     expect(useUiStore.getState().expandedProjects.has(PROJECT.id)).toBe(false);
   });
@@ -129,7 +129,7 @@ describe("WorkspaceSidebar", () => {
       projectId: null,
       taskId: null,
       sessionId: null,
-    workflowRunId: null,
+      workflowRunId: null,
     });
   });
 
@@ -144,7 +144,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: null,
       sessionId: null,
-    workflowRunId: null,
+      workflowRunId: null,
     });
     expect(useUiStore.getState().dialog).toBeNull();
   });
@@ -193,7 +193,7 @@ describe("WorkspaceSidebar", () => {
       projectId: PROJECT.id,
       taskId: null,
       sessionId: null,
-    workflowRunId: null,
+      workflowRunId: null,
     });
   });
 

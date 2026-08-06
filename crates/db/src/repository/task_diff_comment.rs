@@ -248,9 +248,7 @@ fn comment_repository_error_from_database(
         crate::DatabaseError::Sqlite(rusqlite::Error::SqliteFailure(code, message))
             if code.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
-            let detail = message
-                .map(|message| message.to_string())
-                .unwrap_or_else(|| "sqlite constraint violation".to_string());
+            let detail = message.unwrap_or_else(|| "sqlite constraint violation".to_string());
             let message = format!("task diff comment constraint violated: {detail}");
             if matches!(code.extended_code, 1555 | 2067) {
                 TaskDiffCommentRepositoryError::Conflict(message)
