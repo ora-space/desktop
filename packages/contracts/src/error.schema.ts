@@ -276,6 +276,9 @@ export const contractErrorSchema = z.object({
         "code": z.literal("workflow_version_already_exists"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("workflow_version_invalid"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("workflow_version_reserved"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -285,10 +288,28 @@ export const contractErrorSchema = z.object({
         "code": z.literal("workflow_cannot_delete_active_version"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("workflow_active_runs"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("workflow_cannot_rollback_to_draft"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("workflow_cannot_activate_draft"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_snapshot_in_use"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_no_published_snapshot"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_run_cannot_use_draft_snapshot"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_run_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_run_active"),
         "params": emptyErrorParamsSchema
     })]));
 
@@ -539,6 +560,9 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("workflow_version_already_exists"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("workflow_version_invalid"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("workflow_version_reserved"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -548,9 +572,27 @@ export const publicErrorSchema = z.union([z.object({
         "code": z.literal("workflow_cannot_delete_active_version"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("workflow_active_runs"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("workflow_cannot_rollback_to_draft"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("workflow_cannot_activate_draft"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_snapshot_in_use"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_no_published_snapshot"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_run_cannot_use_draft_snapshot"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_run_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_run_active"),
         "params": emptyErrorParamsSchema
     })]);

@@ -65,12 +65,19 @@ export type Task = {
   title: string;
   status: TaskStatus;
   workspaceMode: TaskWorkspaceMode;
+  type: TaskType;
+  workflowRunId: string | null;
 };
 
 /**
  * Describes the public task status shared across adapter boundaries.
  */
 export type TaskStatus = "todo" | "doing" | "done";
+
+/**
+ * Selects the task kind so the frontend can distinguish workflow-run tasks from ordinary tasks.
+ */
+export type TaskType = "default" | "workflow";
 
 /**
  * Describes the absolute checkout root and branch the backend resolved for one task.

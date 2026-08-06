@@ -162,7 +162,7 @@ export function SettingsDialog() {
           </aside>
 
           {category === "workflow" ? (
-            <div className="min-h-0 overflow-hidden">
+            <div className="min-h-0 min-w-0 overflow-hidden">
               <WorkflowSettings />
             </div>
           ) : (

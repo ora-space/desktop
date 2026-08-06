@@ -110,11 +110,20 @@ export type ContractError =
       "code": "workflow_cannot_delete_active_version";
       "params": EmptyErrorParams;
     }
+    | { "code": "workflow_active_runs"; "params": EmptyErrorParams }
     | {
       "code": "workflow_cannot_rollback_to_draft";
       "params": EmptyErrorParams;
     }
     | { "code": "workflow_cannot_activate_draft"; "params": EmptyErrorParams }
+    | { "code": "workflow_snapshot_in_use"; "params": EmptyErrorParams }
+    | { "code": "workflow_no_published_snapshot"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_run_cannot_use_draft_snapshot";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "workflow_run_not_found"; "params": EmptyErrorParams }
+    | { "code": "workflow_run_active"; "params": EmptyErrorParams }
   );
 
 /**
@@ -231,8 +240,17 @@ export type PublicError =
     "code": "workflow_cannot_delete_active_version";
     "params": EmptyErrorParams;
   }
+  | { "code": "workflow_active_runs"; "params": EmptyErrorParams }
   | { "code": "workflow_cannot_rollback_to_draft"; "params": EmptyErrorParams }
-  | { "code": "workflow_cannot_activate_draft"; "params": EmptyErrorParams };
+  | { "code": "workflow_cannot_activate_draft"; "params": EmptyErrorParams }
+  | { "code": "workflow_snapshot_in_use"; "params": EmptyErrorParams }
+  | { "code": "workflow_no_published_snapshot"; "params": EmptyErrorParams }
+  | {
+    "code": "workflow_run_cannot_use_draft_snapshot";
+    "params": EmptyErrorParams;
+  }
+  | { "code": "workflow_run_not_found"; "params": EmptyErrorParams }
+  | { "code": "workflow_run_active"; "params": EmptyErrorParams };
 
 /**
  * Identifies one Ora request across adapters, spans, responses, and completion events.

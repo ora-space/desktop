@@ -10,6 +10,7 @@ import type { CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillIm
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
 import type { CommitTaskChangesRequest, CommitTaskChangesResponse, CreateTaskDiffCommentRequest, CreateTaskDiffCommentResponse, GetTaskDiffRequest, GetTaskDiffResponse, ListTaskDiffCommentsRequest, ListTaskDiffCommentsResponse, PushTaskBranchRequest, PushTaskBranchResponse, ReplyTaskDiffCommentRequest, ReplyTaskDiffCommentResponse, SetTaskDiffCommentStatusRequest, SetTaskDiffCommentStatusResponse } from "./task_diff.js";
 import type { ActivateWorkflowRequest, ActivateWorkflowResponse, CreateWorkflowRequest, CreateWorkflowResponse, DeleteSnapshotRequest, DeleteSnapshotResponse, DeleteWorkflowRequest, DeleteWorkflowResponse, GetDraftRequest, GetDraftResponse, GetVersionRequest, GetVersionResponse, GetWorkflowRequest, GetWorkflowResponse, ListVersionsRequest, ListVersionsResponse, ListWorkflowsRequest, ListWorkflowsResponse, PublishWorkflowRequest, PublishWorkflowResponse, RollbackWorkflowRequest, RollbackWorkflowResponse, UpdateDraftRequest, UpdateDraftResponse, UpdateWorkflowRequest, UpdateWorkflowResponse } from "./workflow.js";
+import type { CreateWorkflowRunRequest, CreateWorkflowRunResponse, DeleteWorkflowRunRequest, DeleteWorkflowRunResponse, GetWorkflowRunRequest, GetWorkflowRunResponse, ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse } from "./workflowRun.js";
 import type { HttpMethod } from "./transport.js";
 
 export type EndpointPathParam = {
@@ -103,6 +104,11 @@ export type RequestByOperation = {
   listVersions: ListVersionsRequest;
   getVersion: GetVersionRequest;
   deleteSnapshot: DeleteSnapshotRequest;
+  createWorkflowRun: CreateWorkflowRunRequest;
+  getWorkflowRun: GetWorkflowRunRequest;
+  listWorkflowRuns: ListWorkflowRunsRequest;
+  listWorkflowNodeRuns: ListWorkflowNodeRunsRequest;
+  deleteWorkflowRun: DeleteWorkflowRunRequest;
 };
 
 export type ResponseByOperation = {
@@ -172,6 +178,11 @@ export type ResponseByOperation = {
   listVersions: ListVersionsResponse;
   getVersion: GetVersionResponse;
   deleteSnapshot: DeleteSnapshotResponse;
+  createWorkflowRun: CreateWorkflowRunResponse;
+  getWorkflowRun: GetWorkflowRunResponse;
+  listWorkflowRuns: ListWorkflowRunsResponse;
+  listWorkflowNodeRuns: ListWorkflowNodeRunsResponse;
+  deleteWorkflowRun: DeleteWorkflowRunResponse;
 };
 
 export type EndpointOperation = keyof RequestByOperation;
@@ -1032,6 +1043,71 @@ export const endpoints = {
     responseType: "DeleteSnapshotResponse",
     responseMode: "unary",
     pathParams: [{ rustFieldName: "workflow_id", wireName: "workflowId" }, { rustFieldName: "version", wireName: "version" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  createWorkflowRun: {
+    operationName: "createWorkflowRun",
+    namespace: "workflowRun",
+    memberName: "create",
+    method: "POST",
+    pathTemplate: "/api/workflow-runs",
+    requestType: "CreateWorkflowRunRequest",
+    responseType: "CreateWorkflowRunResponse",
+    responseMode: "unary",
+    pathParams: [],
+    queryParams: [],
+    hasJsonBody: true,
+  },
+  getWorkflowRun: {
+    operationName: "getWorkflowRun",
+    namespace: "workflowRun",
+    memberName: "get",
+    method: "GET",
+    pathTemplate: "/api/workflow-runs/{runId}",
+    requestType: "GetWorkflowRunRequest",
+    responseType: "GetWorkflowRunResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "run_id", wireName: "runId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  listWorkflowRuns: {
+    operationName: "listWorkflowRuns",
+    namespace: "workflowRun",
+    memberName: "list",
+    method: "GET",
+    pathTemplate: "/api/workflow-runs",
+    requestType: "ListWorkflowRunsRequest",
+    responseType: "ListWorkflowRunsResponse",
+    responseMode: "unary",
+    pathParams: [],
+    queryParams: [{ rustFieldName: "project_id", wireName: "projectId" }],
+    hasJsonBody: false,
+  },
+  listWorkflowNodeRuns: {
+    operationName: "listWorkflowNodeRuns",
+    namespace: "workflowRun",
+    memberName: "listNodeRuns",
+    method: "GET",
+    pathTemplate: "/api/workflow-runs/{runId}/nodes",
+    requestType: "ListWorkflowNodeRunsRequest",
+    responseType: "ListWorkflowNodeRunsResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "run_id", wireName: "runId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  deleteWorkflowRun: {
+    operationName: "deleteWorkflowRun",
+    namespace: "workflowRun",
+    memberName: "delete",
+    method: "DELETE",
+    pathTemplate: "/api/workflow-runs/{runId}",
+    requestType: "DeleteWorkflowRunRequest",
+    responseType: "DeleteWorkflowRunResponse",
+    responseMode: "unary",
+    pathParams: [{ rustFieldName: "run_id", wireName: "runId" }],
     queryParams: [],
     hasJsonBody: false,
   },

@@ -84,11 +84,6 @@ const MOCK_AGENT_SKILLS: WorkflowChoice[] = [
   "code-defect-scan",
 ].map((value) => ({ value, label: value }));
 
-/** Resolves a persisted role identifier to the label used by the mock configuration UI. */
-export function getMockWorkflowRoleLabel(roleId: string): string {
-  return MOCK_AGENT_ROLES.find((role) => role.value === roleId)?.label ?? roleId;
-}
-
 /**
  * Returns prototype workflow capabilities, optionally using models discovered
  * by the backend while retaining local Role and Skill catalogs until their

@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next";
-import { getMockWorkflowRoleLabel, type WorkflowNodeData } from "@ora/workflow-mock";
+import { type WorkflowNodeData } from "@ora/workflow-mock";
+import { useAgents } from "../../../state/hooks/use-agents";
+import { useSkills } from "../../../state/hooks/use-skills";
 
 interface NodeParameter {
   label: string;
@@ -9,7 +11,11 @@ interface NodeParameter {
 /** Displays the persisted node configuration without introducing card-level editing controls. */
 export function WorkflowNodeParameterSummary({ data }: { data: WorkflowNodeData }) {
   const { t } = useTranslation();
-  const parameters = configuredParameters(data, t);
+  const agentsQuery = useAgents();
+  const skillsQuery = useSkills();
+  const agentNameById = new Map((agentsQuery.data ?? []).map((agent) => [agent.id, agent.name]));
+  const skillNameById = new Map((skillsQuery.data ?? []).map((skill) => [skill.id, skill.name]));
+  const parameters = configuredParameters(data, t, agentNameById, skillNameById);
 
   if (parameters.length === 0) {
     return null;
@@ -45,16 +51,18 @@ export function WorkflowNodeParameterSummary({ data }: { data: WorkflowNodeData 
 function configuredParameters(
   data: WorkflowNodeData,
   t: (key: string) => string,
+  agentNameById: ReadonlyMap<string, string>,
+  skillNameById: ReadonlyMap<string, string>,
 ): NodeParameter[] {
   const parameters: NodeParameter[] = [];
   if (data.kind === "agent" && data.agentConfig !== undefined) {
     const enabledSkills = data.agentConfig.skills
       .filter((skill) => skill.enabled)
-      .map((skill) => skill.skillId);
+      .map((skill) => skillNameById.get(skill.skillId) ?? skill.skillId);
     parameters.push(
       {
         label: t("settings.workflow.field.role"),
-        values: [getMockWorkflowRoleLabel(data.agentConfig.roleId)],
+        values: [agentNameById.get(data.agentConfig.roleId) ?? data.agentConfig.roleId],
       },
       {
         label: t("settings.workflow.field.agentModel"),

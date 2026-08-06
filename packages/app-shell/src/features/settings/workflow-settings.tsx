@@ -40,6 +40,9 @@ import {
   type WorkflowNodeKind,
 } from "@ora/workflow-mock";
 import { usePlatform } from "@ora/platform";
+import { useAgents } from "../../state/hooks/use-agents";
+import { useSkills } from "../../state/hooks/use-skills";
+import { useWorkflowAgentModels } from "../../state/hooks/use-workflow-agent-models";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowManager } from "./workflow-manager";
@@ -101,16 +104,60 @@ function WorkflowSettingsContent({
 }: WorkflowSettingsProps) {
   const { i18n, t } = useTranslation();
   const platform = usePlatform();
+  const agentsQuery = useAgents();
+  const skillsQuery = useSkills();
+  const agentModelsCatalog = useWorkflowAgentModels();
   const { deleteElements, toObject } = useReactFlow<Node<WorkflowNodeData, "workflow">, Edge>();
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
-  // Model discovery moved off listModels (removed upstream); demo capabilities
-  // keep the editor selectable while real session config owns live catalogs.
-  const capabilities = useMemo(
-    () => capabilitiesOverride ?? createMockWorkflowCapabilities(locale),
-    [capabilitiesOverride, locale],
-  );
+  /**
+   * Uses backend-managed Agent/Skill catalogs and warm-session model discovery
+   * for node configuration while preserving demo-only tool catalogs.
+   */
+  const capabilities = useMemo(() => {
+    if (capabilitiesOverride !== undefined) {
+      return capabilitiesOverride;
+    }
+    const baseCapabilities = createMockWorkflowCapabilities(locale);
+    const roles = (agentsQuery.data ?? []).map((agent) => ({
+      value: agent.id,
+      label: agent.name,
+    }));
+    const skills = (skillsQuery.data ?? []).map((skill) => ({
+      value: skill.id,
+      label: skill.name,
+    }));
+    const agentModels = agentModelsCatalog.agentModels;
+    const defaultExecutor = agentModels[0];
+    return {
+      ...baseCapabilities,
+      agentModels,
+      roles,
+      skills,
+      defaultAgentConfig: {
+        ...baseCapabilities.defaultAgentConfig,
+        ...(defaultExecutor === undefined
+          ? {}
+          : {
+            executor: {
+              agentCli: defaultExecutor.agentCli,
+              modelId: defaultExecutor.modelId,
+            },
+          }),
+        roleId: roles[0]?.value ?? baseCapabilities.defaultAgentConfig.roleId,
+      },
+    };
+  }, [
+    agentModelsCatalog.agentModels,
+    agentsQuery.data,
+    capabilitiesOverride,
+    locale,
+    skillsQuery.data,
+  ]);
   const agentModels = capabilities.agentModels;
-  const agentModelsLoading = false;
+  const agentModelsLoading = capabilitiesOverride === undefined && agentModelsCatalog.isLoading;
+  const agentModelsError = capabilitiesOverride === undefined && agentModelsCatalog.isError;
+  const agentCatalogsLoading = agentsQuery.isPending || skillsQuery.isPending;
+  const agentCatalogsError = agentsQuery.error !== null || skillsQuery.error !== null;
   const [workflows, setWorkflows] = useState<DemoWorkflow[]>(() =>
     createMockWorkflows(locale),
   );
@@ -505,7 +552,7 @@ function WorkflowSettingsContent({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col bg-background"
+      className="flex h-full min-h-0 w-full min-w-0 flex-col bg-background"
       onKeyDown={(event) => {
         if (
           event.key === "Escape"
@@ -691,7 +738,7 @@ function WorkflowSettingsContent({
           >
             <div
               aria-hidden={inspectorCollapsed}
-              className="flex min-h-0 flex-1"
+              className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden"
               style={{
                 opacity: Math.max(
                   0,
@@ -707,6 +754,14 @@ function WorkflowSettingsContent({
                 node={selectedNode}
                 capabilities={capabilities}
                 agentModelsLoading={agentModelsLoading}
+                agentModelsError={agentModelsError}
+                onRetryAgentModels={agentModelsCatalog.refetch}
+                agentCatalogsLoading={agentCatalogsLoading}
+                agentCatalogsError={agentCatalogsError}
+                onRetryAgentCatalogs={() => {
+                  void agentsQuery.refetch();
+                  void skillsQuery.refetch();
+                }}
                 onUpdate={(updatedNode) =>
                   updateWorkflow((current) => ({
                     ...current,

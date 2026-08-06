@@ -13,7 +13,42 @@ import { WorkflowSettings } from "./workflow-settings";
 
 /** Shell providers required by Deploy-to-project (runtime + react-query). */
 function renderSettings(ui: ReactElement = <WorkflowSettings />): RenderResult {
-  const client = createMockClient(createMockClientState());
+  const state = createMockClientState();
+  // Discovery needs a project cwd so warmSession can report real model catalogs.
+  state.projects = [{ id: "p1", name: "Demo", rootPath: "/demo" }];
+  // Keep workflow inspector tests deterministic by seeding the backend catalogs
+  // consumed by role/skill selectors and node parameter summaries.
+  state.agents = [
+    { id: "Architect", name: "架构师", description: "role" },
+    { id: "Planner", name: "规划师", description: "role" },
+    { id: "Researcher", name: "研究员", description: "role" },
+    { id: "Implementer", name: "实施者", description: "role" },
+    { id: "Reviewer", name: "审查员", description: "role" },
+    { id: "Tester", name: "测试员", description: "role" },
+    { id: "Debugger", name: "调试员", description: "role" },
+    { id: "Documentation Agent", name: "文档专员", description: "role" },
+  ];
+  state.skills = [
+    { id: "openspec-verify-change", name: "openspec-verify-change", description: "skill" },
+    { id: "openspec-archive-change", name: "openspec-archive-change", description: "skill" },
+    { id: "openspec-explore", name: "openspec-explore", description: "skill" },
+    { id: "cdase:sfmea_review", name: "cdase:sfmea_review", description: "skill" },
+  ];
+  state.configOptions = [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "opencode/big-pickle",
+      options: [
+        { value: "opencode/big-pickle", name: "Big Pickle" },
+        { value: "opencode/small-pickle", name: "Small Pickle" },
+        { value: "deepseek/deepseek-v4-pro", name: "deepseek/deepseek-v4-pro" },
+      ],
+    },
+  ];
+  const client = createMockClient(state);
   const Wrapper = createHookWrapper(
     client,
     createTestQueryClient(),
@@ -441,9 +476,7 @@ describe("WorkflowSettings", () => {
     expect(screen.queryByLabelText("项目权限")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("输出契约")).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByLabelText("Agent 模型")).toHaveTextContent(
-        "OpenCode · opencode/big-pickle",
-      );
+      expect(screen.getByLabelText("Agent 模型")).toHaveTextContent(/Big Pickle/i);
     });
     const configuredParameters = within(reviewNode).getByLabelText("配置参数");
     expect(configuredParameters).toHaveTextContent("角色审查员");
@@ -477,14 +510,16 @@ describe("WorkflowSettings", () => {
     const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
     await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
 
-    await user.click(screen.getByLabelText("Agent 模型"));
+    const modelSelect = screen.getByLabelText("Agent 模型");
+    await waitFor(() => expect(modelSelect).toBeEnabled());
+    await user.click(modelSelect);
     const modelSearch = screen.getByLabelText("搜索可用 Agent 模型");
-    await user.type(modelSearch, "big-pickle");
+    await user.type(modelSearch, "deepseek");
     await user.click(await screen.findByRole("option", {
-      name: "OpenCode · opencode/big-pickle",
+      name: /deepseek\/deepseek-v4-pro/,
     }));
     expect(screen.getByLabelText("Agent 模型")).toHaveTextContent(
-      "OpenCode · opencode/big-pickle",
+      "deepseek/deepseek-v4-pro",
     );
 
     await user.click(screen.getByLabelText("角色"));
@@ -536,6 +571,25 @@ describe("WorkflowSettings", () => {
       name: "移除 openspec-archive-change",
     }));
     expect(screen.queryByText("openspec-archive-change")).not.toBeInTheDocument();
+  });
+
+  it("keeps skill controls visible in narrow inspector layouts", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
+    await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
+
+    const modelTrigger = screen.getByLabelText("Agent 模型");
+    const roleTrigger = screen.getByLabelText("角色");
+    expect(modelTrigger).toHaveClass("min-w-0", "shrink", "overflow-hidden");
+    expect(roleTrigger).toHaveClass("min-w-0", "shrink", "overflow-hidden");
+    expect(within(modelTrigger).getByTestId("workflow-agent-model-chevron")).toBeInTheDocument();
+    expect(within(roleTrigger).getByTestId("workflow-agent-role-chevron")).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "添加 Skill" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "启用或禁用 openspec-verify-change" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "移除 openspec-verify-change" })).toBeInTheDocument();
   });
 
   it("routes inspector deletion through the shared React Flow store", async () => {
