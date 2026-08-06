@@ -14,7 +14,7 @@ The layers are intentionally narrow:
 - `apps/web/server/src/service/workspace_file.rs` maps filesystem results to `ora-contracts` values.
 - `apps/web/server/src/handlers/workspace_files.rs` owns HTTP extraction, task-root resolution, NDJSON framing, and request lifecycle completion.
 - `apps/desktop/src-tauri/src/workspace_files.rs` maps the same filesystem results to Tauri commands and preserves typed lifecycle errors across IPC.
-- `packages/app-shell/src/features/files` owns the file tree, viewer, search UI, cache invalidation, and line-selection handoff to the composer.
+- `packages/app-shell/src/features/files` owns the file tree, viewer, search UI, cache invalidation, and line-selection handoff to the composer. The same Files panel hosts the Specs sub-view (`workspace-review-files-panel`); Spec catalog/viewer behavior is documented in [Specification management](spec-management.md).
 
 ## HTTP operations
 

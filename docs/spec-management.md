@@ -70,8 +70,10 @@ localizer.
 1. Select a project to review its root checkout, or select a task to review that task's authoritative
    project-root/linked-worktree directory.
 2. Open **Files** from the review controls, then switch to the **Specs** sub-view when reviewing
-   specification documents. Choose a document from the workflow-grouped tree, filter by filename/path,
-   and switch between rendered Markdown and line-numbered source when needed.
+   specification documents. Specs opens with an empty viewer and does not restore or auto-open a
+   previous document; choose an entry from the workflow-grouped tree, filter by filename/path, and
+   switch between rendered Markdown and line-numbered source when needed. Clicking **Specs** again
+   while already on that sub-view clears the current selection.
 3. Open the source dialog from **Manage sources** to enable or disable default or
    discovered sources. Use **Add directory** for an arbitrary project-relative source, then choose
    OpenSpec, Superpowers, or a named custom workflow.
