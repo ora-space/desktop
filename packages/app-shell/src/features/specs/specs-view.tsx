@@ -32,6 +32,7 @@ import { SpecTree } from "./spec-tree";
 export interface SpecsContentHandle {
   refresh: () => Promise<void>;
   isRefreshing: boolean;
+  clearSelection: () => void;
 }
 
 interface SpecsContentProps {
@@ -75,10 +76,12 @@ export const SpecsContent = forwardRef<SpecsContentHandle, SpecsContentProps>(fu
     return all.filter((document) => document.relativePath.toLowerCase().includes(debouncedFilter));
   }, [catalogQuery.data?.documents, debouncedFilter]);
 
+  // Keep an explicit empty viewer until the user picks a tree entry; never auto-open the
+  // first catalog document, which felt like restoring a previously opened Spec.
   useEffect(() => {
     const all = catalogQuery.data?.documents ?? [];
-    if (selectedPath === null || !all.some((document) => document.relativePath === selectedPath)) {
-      setSelectedPath(all[0]?.relativePath ?? null);
+    if (selectedPath !== null && !all.some((document) => document.relativePath === selectedPath)) {
+      setSelectedPath(null);
     }
   }, [catalogQuery.data?.documents, selectedPath]);
 
@@ -161,7 +164,11 @@ export const SpecsContent = forwardRef<SpecsContentHandle, SpecsContentProps>(fu
     onRefreshingChange?.(isRefreshing);
   }, [isRefreshing, onRefreshingChange]);
 
-  useImperativeHandle(ref, () => ({ refresh, isRefreshing }), [refresh, isRefreshing]);
+  useImperativeHandle(ref, () => ({
+    refresh,
+    isRefreshing,
+    clearSelection: () => setSelectedPath(null),
+  }), [isRefreshing, refresh]);
 
   const workspaceRootPath = taskId === undefined ? projectRootPath : workspaceQuery.data?.rootPath;
 

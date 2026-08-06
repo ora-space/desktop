@@ -71,7 +71,13 @@ export function WorkspaceReviewFilesPanel({
         <Button
           size="sm"
           variant={surface === "specs" ? "secondary" : "ghost"}
-          onClick={() => setSurface("specs")}
+          onClick={() => {
+            if (surface === "specs") {
+              specsRef.current?.clearSelection();
+              return;
+            }
+            setSurface("specs");
+          }}
         >
           <IconFileDescription />
           {t("specs.specs")}

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PlatformProvider } from "@ora/platform";
 import type { ResolveSpecSourceResponse, SpecCatalogResponse } from "@ora/contracts";
@@ -98,6 +98,11 @@ describe("SpecsContent", () => {
       client,
     );
 
+    expect(await screen.findByText(/选择一个 Spec 文档|Select a Spec document/)).toBeInTheDocument();
+    expect(client.spec.read).not.toHaveBeenCalled();
+
+    await user.click(await screen.findByRole("button", { name: "specs" }));
+    await user.click(await screen.findByRole("button", { name: "design.md" }));
     expect(await screen.findByRole("heading", { name: "Design" })).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
     await user.click(screen.getByRole("link", { name: "Plan" }));
@@ -107,7 +112,9 @@ describe("SpecsContent", () => {
       expect.any(Object),
     );
 
-    await user.type(screen.getByPlaceholderText(/按文件名或路径筛选|Filter by file name or path/), "design.md");
+    fireEvent.change(screen.getByPlaceholderText(/按文件名或路径筛选|Filter by file name or path/), {
+      target: { value: "design.md" },
+    });
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "plan.mdx" })).not.toBeInTheDocument();
     });

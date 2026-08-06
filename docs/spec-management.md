@@ -48,8 +48,10 @@ Task Files opens on Explorer by default; project Files opens on Specs by default
 review does not expose a worktree file explorer.
 
 The Specs sub-view places read-only content on the left and the grouped source tree on the right. It
-supports a 200 ms filename/path filter, safe GFM preview, the existing line-numbered Shiki source
-viewer, manual refresh, and mounted-only watching. Raw HTML and MDX JSX are not executed, local
+starts without an automatic document selection; the viewer stays empty until the user picks a tree
+entry, and clicking Specs again while already on Specs clears the current selection. It supports a
+200 ms filename/path filter, safe GFM preview, the existing line-numbered Shiki source viewer,
+manual refresh, and mounted-only watching. Raw HTML and MDX JSX are not executed, local
 images are blocked, and only catalog-member relative Markdown links navigate inside the panel.
 
 Spec source configuration is available only while the Specs sub-view is active: the **Manage sources**
