@@ -16,6 +16,41 @@ pub enum AgentCli {
     OpenCode,
     Nga,
     CodeAgentCli,
+    Claude,
+    Codex,
+}
+
+/// Describes the live ACP handshake state of one application-scoped CLI runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub enum AgentCliStatus {
+    Ready,
+    Starting,
+    Unavailable,
+}
+
+/// Pairs one CLI identity with its current runtime detection status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct AgentCliRuntimeStatus {
+    pub agent_cli: AgentCli,
+    pub status: AgentCliStatus,
+}
+
+/// Requests the live detection status of every application-scoped CLI runtime.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct GetAgentRuntimeStatusRequest {}
+
+/// Returns the live detection status of every application-scoped CLI runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct GetAgentRuntimeStatusResponse {
+    pub statuses: Vec<AgentCliRuntimeStatus>,
 }
 
 /// Describes whether a persisted session is registered on its shared CLI connection.
@@ -284,15 +319,29 @@ pub struct StopSessionResponse {
 pub struct SwitchSessionAgentRequest {
     pub session_id: String,
     pub agent_cli: AgentCli,
+    /// Identifies the client surface whose warm session this switch claims.
+    ///
+    /// The provider session the new CLI runs on is the one this client already
+    /// warmed while its picker was showing that CLI's models, and warm entries
+    /// are keyed by client. Carrying the same value here is what makes the
+    /// switch claim that entry — including any model chosen on it — rather than
+    /// build a second session the user never configured.
+    pub client_id: String,
 }
 
 /// Returns the session rebound to its new CLI.
+///
+/// The new CLI reports its own commands and configuration during the handshake
+/// that the switch performs, so both travel back with the rebound session. A
+/// client that only heard about the session would otherwise keep offering the
+/// previous CLI's models, which the new one cannot honour.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct SwitchSessionAgentResponse {
     pub session: Session,
     pub available_commands: Vec<AvailableCommand>,
+    pub config_options: Vec<SessionConfigOption>,
 }
 
 /// Returns a session whose history writes failed to a writable state.
@@ -333,6 +382,10 @@ pub struct DeleteSessionResponse {
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentCli::export(config)?;
+    AgentCliStatus::export(config)?;
+    AgentCliRuntimeStatus::export(config)?;
+    GetAgentRuntimeStatusRequest::export(config)?;
+    GetAgentRuntimeStatusResponse::export(config)?;
     SessionStatus::export(config)?;
     SessionHistoryState::export(config)?;
     Session::export(config)?;

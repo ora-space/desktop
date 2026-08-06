@@ -20,7 +20,9 @@ import { useWarmSession } from "../../state/hooks/use-warm-session";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
-import { useSettingsStore } from "../../state/stores/settings-store";
+import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
+import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
+import { clientId } from "../../state/client-id";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import {
   buildWorkflowReminder,
@@ -35,23 +37,19 @@ import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
 import { ChatView } from "../chat/chat-view";
 import { ComposerContextBar } from "../chat/composer-context-bar";
+import { SessionHistoryBanner } from "../chat/session-history-banner";
 import { WorkflowStepper } from "../workflow/workflow-stepper";
 import { useWorkflowDetection } from "../workflow/use-workflow-detection";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
 import { agentCliLabel } from "./agent-cli";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
+import { directChatTitle } from "./workspace-view-utils";
 import { TaskChangesLayout } from "../diff/task-changes-layout";
 import { useTaskDiffLiveSync } from "../../state/hooks/use-task-diff-live-sync";
 
 interface WorkspaceViewProps {
   userName: string;
-}
-
-/** Builds a compact direct-chat title from the first message without splitting Unicode characters. */
-export function directChatTitle(text: string): string {
-  const normalized = text.trim().replace(/\s+/gu, " ");
-  return Array.from(normalized).slice(0, 10).join("");
 }
 
 /** Inserts a freshly-created entity into query data before the invalidation refetch completes. */
@@ -77,7 +75,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
-  const settingsAgentCli = useSettingsStore((s) => s.settings.agentCli);
+  // Resolved the same way the picker shows it, so the session warmed here is
+  // the one the composer and model picker are actually pointing at — a stale
+  // read would warm a different agent than what is on screen.
+  const targetAgentCli = useTargetAgentCli(selection);
 
   const chatStore = useChatStore();
   useTaskDiffLiveSync(chatStore, sessions);
@@ -85,7 +86,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const queryClient = useQueryClient();
   // Opens the provider session for this surface before anything is sent, so the
   // model picker has real options and the send path skips the agent handshake.
-  const { sessionId: warmSessionId } = useWarmSession(selection, settingsAgentCli);
+  const { sessionId: warmSessionId } = useWarmSession(selection, targetAgentCli);
 
   const project = projects.find((item) => item.id === selection.projectId);
   const task = tasks.find((item) => item.id === selection.taskId);
@@ -136,8 +137,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     conversation?.error,
     conversation?.isLoaded,
     conversation?.isLoading,
-    session?.id,
-    session?.status,
+    session,
     sessionsQuery,
   ]);
 
@@ -160,10 +160,46 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       useWorkspaceSelectionStore.getState().selection,
     );
     if (session) {
+      // A move the picker recorded is paid for here rather than when it was
+      // chosen: rebinding tears the current agent's connection down, which at
+      // click time could have been mid-reply. Running it inside `prepare` means
+      // a CLI that refuses the move fails the send it was part of, leaving the
+      // message and the pending pick intact to retry.
+      const pendingSwitch = usePendingAgentStore.getState().switches[session.id];
+      const prepare =
+        pendingSwitch === undefined
+          ? undefined
+          : async () => {
+              const response = await client.session.switchAgent({
+                sessionId: session.id,
+                agentCli: pendingSwitch,
+                clientId: clientId(),
+              });
+              usePendingAgentStore.getState().clearPendingSwitch(session.id);
+              // The claim consumed the warm entry, so this surface must warm a
+              // fresh one rather than keep an id the backend no longer knows.
+              queryClient.removeQueries({
+                queryKey: queryKeys.warmSession(
+                  { type: "task", taskId: session.taskId },
+                  pendingSwitch,
+                ),
+              });
+              queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) =>
+                upsertById(current, response.session),
+              );
+              // Recorded against the session being moved, not the warm one, so
+              // the transcript is marked where the move actually takes effect.
+              chatStore.getState().adoptSwitchedAgent(session.id, response.configOptions);
+              return { availableCommands: response.availableCommands };
+            };
       try {
-        await chatStore
-          .getState()
-          .sendMessage({ oraSessionId: session.id, text: displayText, agentText, images });
+        await chatStore.getState().sendMessage({
+          oraSessionId: session.id,
+          text: displayText,
+          agentText,
+          images,
+          prepare,
+        });
       } finally {
         // Connection failures can stop the provider process, so refresh the persisted
         // lifecycle snapshot after every finite prompt without polling idle sessions.
@@ -232,13 +268,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             queryClient.removeQueries({
               queryKey: queryKeys.warmSession(
                 { type: "task", taskId: attachedTaskId },
-                settingsAgentCli,
+                targetAgentCli,
               ),
             });
             queryClient.removeQueries({
               queryKey: queryKeys.warmSession(
                 { type: "projectRoot", projectId },
-                settingsAgentCli,
+                targetAgentCli,
               ),
             });
           }
@@ -352,6 +388,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           />
           <WindowControls />
         </div>
+        <SessionHistoryBanner session={session} />
         <TaskChangesLayout taskId={task?.id}>
           <ChatView
             taskId={task?.id}

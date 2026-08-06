@@ -300,7 +300,7 @@ function PrivacySettings({ settings, onUpdate, onClearHistory }: { settings: Set
     return () => {
       active = false;
     };
-  }, [worktreeStorage]);
+  }, [t, worktreeStorage]);
 
   async function changeWorktreeRoot(): Promise<void> {
     if (worktreeStorage.kind !== "configurable") {

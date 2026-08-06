@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../../i18n/i18n-instance";
 import { WorkspaceFileViewer } from "./workspace-file-viewer";
@@ -11,7 +11,7 @@ describe("WorkspaceFileViewer", () => {
     expect(utf8ByteColumnToStringIndex("α main", 4)).toBe(2);
   });
 
-  it("scrolls to and highlights the exact selected search match", () => {
+  it("scrolls to and highlights the exact selected search match", async () => {
     const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
 
     render(
@@ -22,6 +22,7 @@ describe("WorkspaceFileViewer", () => {
       />,
     );
 
+    await waitFor(() => expect(screen.getByText("main")).toBeInTheDocument());
     expect(screen.getByText("main").tagName).toBe("MARK");
     expect(screen.getByText("main").closest("[aria-current=location]")).not.toBeNull();
     expect(scrollIntoView).toHaveBeenCalledWith({
@@ -30,7 +31,7 @@ describe("WorkspaceFileViewer", () => {
     });
   });
 
-  it("enables horizontal scrolling for long source lines", () => {
+  it("enables horizontal scrolling for long source lines", async () => {
     const { container } = render(
       <WorkspaceFileViewer
         content={"a".repeat(300)}
@@ -39,12 +40,12 @@ describe("WorkspaceFileViewer", () => {
       />,
     );
 
-    expect(container.querySelector(
+    await waitFor(() => expect(container.querySelector(
       '[data-slot="scroll-area"][data-scrollbars="both"]',
-    )).not.toBeNull();
+    )).not.toBeNull());
   });
 
-  it("switches large files to plain text mode", () => {
+  it("switches large files to plain text mode", async () => {
     const { container } = render(
       <WorkspaceFileViewer
         content={"a".repeat(512 * 1024 + 1)}
@@ -53,10 +54,10 @@ describe("WorkspaceFileViewer", () => {
       />,
     );
 
-    expect(container.querySelector("[data-large-file-notice]")).not.toBeNull();
+    await waitFor(() => expect(container.querySelector("[data-large-file-notice]")).not.toBeNull());
   });
 
-  it("selects a line range with a line click followed by shift-click", () => {
+  it("selects a line range with a line click followed by shift-click", async () => {
     const { container } = render(
       <WorkspaceFileViewer
         content={"one\ntwo\nthree\nfour"}
@@ -65,6 +66,7 @@ describe("WorkspaceFileViewer", () => {
       />,
     );
 
+    await waitFor(() => expect(screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 2 }) })).toBeInTheDocument());
     const start = screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 2 }) });
     const end = screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 4 }) });
     fireEvent.click(start);
@@ -77,7 +79,7 @@ describe("WorkspaceFileViewer", () => {
     expect(rows[3]).toHaveClass("bg-sky-500/10");
   });
 
-  it("selects a line range with a left-button drag over line numbers", () => {
+  it("selects a line range with a left-button drag over line numbers", async () => {
     const { container } = render(
       <WorkspaceFileViewer
         content={"one\ntwo\nthree\nfour"}
@@ -86,6 +88,7 @@ describe("WorkspaceFileViewer", () => {
       />,
     );
 
+    await waitFor(() => expect(screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 2 }) })).toBeInTheDocument());
     const start = screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 2 }) });
     const end = screen.getByRole("button", { name: appI18n.t("files.selectLine", { line: 4 }) });
     fireEvent.mouseDown(start, { button: 0 });

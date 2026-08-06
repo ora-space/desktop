@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "lint": "tsc -p tsconfig.json --noEmit && eslint src tests",
     "test": "tsc -p tsconfig.json --noEmit && node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {

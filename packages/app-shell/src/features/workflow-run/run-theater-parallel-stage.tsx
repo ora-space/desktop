@@ -11,7 +11,7 @@ import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
 import { resolveParallelDragSwitch } from "./parallel-drag";
 import { RunTheaterActCard } from "./run-theater-act-card";
-import { isNodeWorking } from "./run-status-mark";
+import { isNodeWorking } from "./run-status-style";
 import type {
   GraphWorkflowNodeState,
   WorkflowNodeData,
@@ -78,13 +78,22 @@ export function RunTheaterParallelStage({
   const canGoNext = committedIndex < acts.length - 1 && slideIndex === null;
   const dragProgress = Math.max(-1, Math.min(1, dragX / 140));
 
-  useEffect(() => {
-    // External focus (path rail) caught up —drop any stale local slide index.
+  // External focus (path rail) caught up —drop any stale local slide index.
+  // Tracked through the documented render-adjust pattern instead of an effect.
+  const [previousFocusState, setPreviousFocusState] = useState({
+    committedIndex,
+    slideIndex,
+  });
+  if (
+    previousFocusState.committedIndex !== committedIndex
+    || previousFocusState.slideIndex !== slideIndex
+  ) {
+    setPreviousFocusState({ committedIndex, slideIndex });
     if (slideIndex !== null && committedIndex === slideIndex) {
       setSlideIndex(null);
       setDragX(0);
     }
-  }, [committedIndex, slideIndex]);
+  }
 
   useEffect(() => () => {
     if (slideTimerRef.current !== null) {

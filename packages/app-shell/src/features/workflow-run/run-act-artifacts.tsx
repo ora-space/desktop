@@ -76,16 +76,24 @@ function ActArtifactItem({
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" : undefined;
   const [open, setOpen] = useState(reveal);
   const [animate, setAnimate] = useState(reveal);
+  // React's documented "adjusting state when a prop changes" pattern: hoist the
+  // reveal transition out of an effect so it does not cascade a render.
+  const [previousReveal, setPreviousReveal] = useState(reveal);
+  if (reveal !== previousReveal) {
+    setPreviousReveal(reveal);
+    if (reveal) {
+      setOpen(true);
+      setAnimate(true);
+    }
+  }
 
   useEffect(() => {
-    if (!reveal) {
+    if (!animate) {
       return;
     }
-    setOpen(true);
-    setAnimate(true);
     const timer = window.setTimeout(() => setAnimate(false), 420);
     return () => window.clearTimeout(timer);
-  }, [reveal, artifact.id]);
+  }, [animate]);
 
   return (
     <div

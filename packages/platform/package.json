@@ -11,7 +11,7 @@
     "./tauri": "./src/tauri/index.ts"
   },
   "scripts": {
-    "lint": "eslint src",
+    "lint": "tsc -p tsconfig.json --noEmit && eslint src",
     "test": "vitest run",
     "test:watch": "vitest"
   },

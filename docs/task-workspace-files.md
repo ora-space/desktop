@@ -44,4 +44,4 @@ The watcher follows the shared stream lifecycle used by ACP session streams. It 
 
 ## Contract generation
 
-Rust contracts live in `crates/contracts/src/file_system.rs` and export to `packages/contracts/src/file-system.ts`. Endpoint metadata in `crates/contracts/src/frontend.rs` marks the watcher as a stream operation, which keeps the generated fetch client aligned with the NDJSON transport. Regenerate the TypeScript contract package with `task export-contracts` after changing these Rust types.
+Rust contracts live in `crates/contracts/src/file_system.rs` and export to `packages/contracts/src/file-system.ts`. Generation-only endpoint metadata in `xtask/src/frontend/namespaces/file_system.rs` marks the watcher as a stream operation, which keeps the generated fetch client aligned with the NDJSON transport. Regenerate the TypeScript contract package with `task export-contracts` after changing these Rust types.

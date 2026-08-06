@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 /// enforceable at the one moment it can be exceeded: creating another session.
 /// A deadline would need a timer to be honest, and would charge a user who
 /// steps away and returns a full rebuild for no benefit.
-const MAX_LIVE_ENTRIES: usize = 8;
+const MAX_LIVE_ENTRIES: usize = 16;
 /// How many entries — live or cold — the pool remembers at once.
 ///
 /// Cold entries hold only an identifier and the options the user picked, so this
@@ -87,6 +87,18 @@ struct WarmEntry {
     reserved: bool,
 }
 
+/// What a caller must build when nothing usable sits behind an entry.
+///
+/// Shared by both ways a key is resolved so the two cannot drift on what a
+/// handshake needs. `replay` carries the options the user had already chosen so
+/// a rebuilt session comes back configured the way they left it.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct CreatePlan {
+    pub session_id: SessionId,
+    pub cwd: PathBuf,
+    pub replay: Vec<(SessionConfigId, SessionConfigOptionValue)>,
+}
+
 /// What the caller must do to satisfy a warm-session request.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum WarmDecision {
@@ -97,14 +109,22 @@ pub(super) enum WarmDecision {
         config_options: Vec<SessionConfigOption>,
     },
     /// A provider session must be created, after which `commit_created` records it.
-    ///
-    /// `replay` carries the options the user had already chosen so a rebuilt
-    /// session comes back configured the way they left it.
-    Create {
-        session_id: SessionId,
-        cwd: PathBuf,
-        replay: Vec<(SessionConfigId, SessionConfigOptionValue)>,
-    },
+    Create(CreatePlan),
+}
+
+/// What the caller must do to claim a warm session addressed by key.
+///
+/// Distinct from [`WarmDecision`] because claiming reserves what it resolves:
+/// the caller is taking the provider session, not reading it. There is
+/// deliberately no "unavailable" outcome — resolution skips reserved entries, so
+/// whatever it lands on can always be reserved.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum ClaimDecision {
+    /// The entry was live and is now reserved for this caller.
+    Held(AttachedWarm),
+    /// The caller performs the handshake and installs it with
+    /// `replace_and_reserve`, which reserves the entry in the same step.
+    Create(CreatePlan),
 }
 
 /// A provider session that is no longer referenced and should be released.
@@ -116,13 +136,21 @@ pub(super) struct ReleasedSession {
 }
 
 /// A warm session promoted out of the pool to become a persisted Ora session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct AttachedWarm {
     pub session_id: SessionId,
     pub agent_cli: AgentCli,
     pub agent_session_id: String,
     pub cwd: PathBuf,
     pub available_commands: Vec<AvailableCommand>,
+    /// What the provider session being handed over currently offers.
+    ///
+    /// Carried because a caller that rebinds an existing Ora session has no
+    /// other source for it: ACP reports configuration only while creating or
+    /// loading a session, and the handshake that produced this one may have
+    /// happened long before the claim. Attaching ignores it — that client read
+    /// the same list from its own warm response.
+    pub config_options: Vec<SessionConfigOption>,
 }
 
 /// Everything one completed `session/new` handshake produced.
@@ -134,7 +162,7 @@ pub(super) struct CreatedProvider {
 }
 
 /// What one attach attempt found when reserving a warm session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum Reservation {
     /// The warm session was live and is now held for this attach.
     Held(AttachedWarm),
@@ -196,14 +224,75 @@ impl WarmPool {
         now: i64,
         next_session_id: impl FnOnce() -> SessionId,
     ) -> (WarmDecision, Option<ReleasedSession>) {
+        let (index, released) = self.resolve(key, cwd, generation, now, next_session_id);
+        let decision = match &self.entries[index].live {
+            Some(live) => WarmDecision::Ready {
+                session_id: self.entries[index].session_id.clone(),
+                agent_session_id: live.agent_session_id.clone(),
+                config_options: self.entries[index].config_options.clone(),
+            },
+            None => WarmDecision::Create(self.create_plan(index)),
+        };
+        (decision, released)
+    }
+
+    /// Resolves a key and reserves what it resolves to, in one critical section.
+    ///
+    /// This is `lookup` for a caller that is taking the provider session rather
+    /// than reading it, and doing both here is the point: a caller that looked up
+    /// an entry and then reserved it separately would leave a window in which
+    /// another claim could take the session out from under it.
+    ///
+    /// Reserving always succeeds because `resolve` skips reserved entries — a key
+    /// whose entry is already being claimed resolves to a fresh one instead. That
+    /// is what keeps a second caller from failing rather than simply getting its
+    /// own session, and it is why there is no "unavailable" outcome here.
+    pub(super) fn lookup_and_reserve(
+        &mut self,
+        key: &WarmKey,
+        cwd: &Path,
+        generation: u64,
+        now: i64,
+        next_session_id: impl FnOnce() -> SessionId,
+    ) -> (ClaimDecision, Option<ReleasedSession>) {
+        let (index, released) = self.resolve(key, cwd, generation, now, next_session_id);
+        let entry = &self.entries[index];
+        let Some(live) = entry.live.as_ref() else {
+            return (ClaimDecision::Create(self.create_plan(index)), released);
+        };
+        let attached = AttachedWarm {
+            session_id: entry.session_id.clone(),
+            agent_cli: entry.key.agent_cli,
+            agent_session_id: live.agent_session_id.clone(),
+            cwd: entry.cwd.clone(),
+            available_commands: entry.available_commands.clone(),
+            config_options: entry.config_options.clone(),
+        };
+        self.entries[index].reserved = true;
+        (ClaimDecision::Held(attached), released)
+    }
+
+    /// Finds the entry that should serve one key, creating a cold one if none does.
+    ///
+    /// Reserved entries are skipped rather than shared, so a key whose entry is
+    /// mid-claim resolves to a new one instead of handing two callers the same
+    /// provider session. Any session retired on the way — by a moved directory or
+    /// a connection rollover — is reported for the caller to release.
+    fn resolve(
+        &mut self,
+        key: &WarmKey,
+        cwd: &Path,
+        generation: u64,
+        now: i64,
+        next_session_id: impl FnOnce() -> SessionId,
+    ) -> (usize, Option<ReleasedSession>) {
         let Some(index) = self
             .entries
             .iter()
             .position(|entry| &entry.key == key && !entry.reserved)
         else {
-            let session_id = next_session_id();
             self.entries.push(WarmEntry {
-                session_id: session_id.clone(),
+                session_id: next_session_id(),
                 key: key.clone(),
                 cwd: cwd.to_path_buf(),
                 live: None,
@@ -213,14 +302,7 @@ impl WarmPool {
                 last_used_at: now,
                 reserved: false,
             });
-            return (
-                WarmDecision::Create {
-                    session_id,
-                    cwd: cwd.to_path_buf(),
-                    replay: Vec::new(),
-                },
-                None,
-            );
+            return (self.entries.len() - 1, None);
         };
 
         self.entries[index].last_used_at = now;
@@ -232,24 +314,13 @@ impl WarmPool {
 
         if cwd_changed || stale_generation {
             let released = self.release_live(index);
-            self.entries[index].cwd = cwd.to_path_buf();
             // A directory change makes the recorded options meaningless only if
             // the agent reports different ones; keeping them lets the replay
             // restore the user's pick and the agent correct it if it cannot.
-            return (self.create_decision(index), released);
+            self.entries[index].cwd = cwd.to_path_buf();
+            return (index, released);
         }
-
-        match &self.entries[index].live {
-            Some(live) => (
-                WarmDecision::Ready {
-                    session_id: self.entries[index].session_id.clone(),
-                    agent_session_id: live.agent_session_id.clone(),
-                    config_options: self.entries[index].config_options.clone(),
-                },
-                None,
-            ),
-            None => (self.create_decision(index), None),
-        }
+        (index, None)
     }
 
     /// Records the provider session produced for a `Create` decision.
@@ -359,6 +430,7 @@ impl WarmPool {
             agent_session_id: live.agent_session_id.clone(),
             cwd: entry.cwd.clone(),
             available_commands: entry.available_commands.clone(),
+            config_options: entry.config_options.clone(),
         };
         self.entries[index].reserved = true;
         Reservation::Held(attached)
@@ -533,10 +605,10 @@ impl WarmPool {
         released
     }
 
-    /// Builds the create decision for an entry, carrying its recorded choices.
-    fn create_decision(&self, index: usize) -> WarmDecision {
+    /// Builds what an entry needs handshaken, carrying its recorded choices.
+    fn create_plan(&self, index: usize) -> CreatePlan {
         let entry = &self.entries[index];
-        WarmDecision::Create {
+        CreatePlan {
             session_id: entry.session_id.clone(),
             cwd: entry.cwd.clone(),
             replay: entry.desired_config.clone().into_iter().collect(),
@@ -571,8 +643,9 @@ pub(super) struct RebuildPlan {
 #[cfg(test)]
 mod tests {
     use super::{
-        AttachedWarm, ConfigTarget, CreatedProvider, Install, MAX_ENTRIES, MAX_LIVE_ENTRIES,
-        RebuildPlan, ReleasedSession, Reservation, WarmDecision, WarmKey, WarmPool,
+        AttachedWarm, ClaimDecision, ConfigTarget, CreatePlan, CreatedProvider, Install,
+        MAX_ENTRIES, MAX_LIVE_ENTRIES, RebuildPlan, ReleasedSession, Reservation, WarmDecision,
+        WarmKey, WarmPool,
     };
     use ora_contracts::WarmSessionTarget;
     use ora_contracts::acp::session_config_options::{
@@ -610,7 +683,7 @@ mod tests {
     /// Creates one live warm session and returns its Ora session id.
     fn warm(pool: &mut WarmPool, key: &WarmKey, cwd: &Path, now: i64, id: &str) -> SessionId {
         let (decision, _) = pool.lookup(key, cwd, GENERATION, now, || SessionId::new(id));
-        let WarmDecision::Create { session_id, .. } = decision else {
+        let WarmDecision::Create(CreatePlan { session_id, .. }) = decision else {
             panic!("expected a create decision for a cold key");
         };
         pool.commit_created(
@@ -673,11 +746,11 @@ mod tests {
         assert_eq!(
             (decision, released),
             (
-                WarmDecision::Create {
+                WarmDecision::Create(CreatePlan {
                     session_id: SessionId::new("session-2"),
                     cwd: PathBuf::from("/repo"),
                     replay: vec![],
-                },
+                }),
                 None,
             )
         );
@@ -698,11 +771,11 @@ mod tests {
         assert_eq!(
             (decision, released),
             (
-                WarmDecision::Create {
+                WarmDecision::Create(CreatePlan {
                     session_id,
                     cwd: PathBuf::from("/repo/new"),
                     replay: vec![],
-                },
+                }),
                 Some(ReleasedSession {
                     agent_cli: AgentCli::OpenCode,
                     agent_session_id: "agent-session-1".to_string(),
@@ -727,11 +800,11 @@ mod tests {
         assert_eq!(
             (decision, released),
             (
-                WarmDecision::Create {
+                WarmDecision::Create(CreatePlan {
                     session_id,
                     cwd: PathBuf::from("/repo"),
                     replay: vec![],
-                },
+                }),
                 None,
             )
         );
@@ -757,11 +830,11 @@ mod tests {
 
         assert_eq!(
             decision,
-            WarmDecision::Create {
+            WarmDecision::Create(CreatePlan {
                 session_id,
                 cwd: PathBuf::from("/repo"),
                 replay: vec![("model".into(), SessionConfigOptionValue::value_id("smart"),)],
-            }
+            })
         );
     }
 
@@ -1040,12 +1113,13 @@ mod tests {
                     agent_session_id: "agent-session-1".to_string(),
                     cwd: PathBuf::from("/repo"),
                     available_commands: vec![],
+                    config_options: model_options("fast"),
                 }),
-                WarmDecision::Create {
+                WarmDecision::Create(CreatePlan {
                     session_id: SessionId::new("session-2"),
                     cwd: PathBuf::from("/repo"),
                     replay: vec![],
-                },
+                }),
             )
         );
     }
@@ -1062,6 +1136,101 @@ mod tests {
         assert_eq!(
             pool.reserve_for_attach(&session_id, Path::new("/repo")),
             Reservation::Unavailable
+        );
+    }
+
+    /// Verifies claiming a live key reserves it in the same step and reports
+    /// what that provider session offers — the only place a caller rebinding an
+    /// existing session can learn the incoming agent's model list.
+    #[test]
+    fn reserves_a_live_entry_when_claiming_by_key() {
+        let mut pool = WarmPool::default();
+        let key = key("task-1", "client-1");
+        let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
+
+        let (decision, released) =
+            pool.lookup_and_reserve(&key, Path::new("/repo"), GENERATION, 5, || {
+                SessionId::new("unused")
+            });
+
+        assert_eq!(
+            (
+                decision,
+                released,
+                pool.rebuild_plan(&SessionId::new("unused"))
+            ),
+            (
+                ClaimDecision::Held(AttachedWarm {
+                    session_id,
+                    agent_cli: AgentCli::OpenCode,
+                    agent_session_id: "agent-session-1".to_string(),
+                    cwd: PathBuf::from("/repo"),
+                    available_commands: vec![],
+                    config_options: model_options("fast"),
+                }),
+                None,
+                // Nothing was minted: the live entry served the claim.
+                None,
+            )
+        );
+    }
+
+    /// Verifies a claim whose entry is already being attached resolves to a
+    /// fresh one rather than failing. Switching a session onto a CLI must not
+    /// depend on whether an unrelated surface under the same Task is mid-attach.
+    #[test]
+    fn claims_a_fresh_entry_when_the_key_is_already_reserved() {
+        let mut pool = WarmPool::default();
+        let key = key("task-1", "client-1");
+        let reserved = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
+        pool.reserve_for_attach(&reserved, Path::new("/repo"));
+
+        let (decision, released) =
+            pool.lookup_and_reserve(&key, Path::new("/repo"), GENERATION, 5, || {
+                SessionId::new("session-2")
+            });
+
+        assert_eq!(
+            (decision, released),
+            (
+                ClaimDecision::Create(CreatePlan {
+                    session_id: SessionId::new("session-2"),
+                    cwd: PathBuf::from("/repo"),
+                    replay: vec![],
+                }),
+                None,
+            )
+        );
+    }
+
+    /// Verifies a claim whose provider session died with its connection reports
+    /// the rebuild carrying the user's recorded choice, so a model picked for
+    /// the incoming agent survives the handshake the claim has to pay for.
+    #[test]
+    fn carries_recorded_choices_when_claiming_a_cold_entry() {
+        let mut pool = WarmPool::default();
+        let key = key("task-1", "client-1");
+        let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
+        pool.record_config(
+            &session_id,
+            "model".into(),
+            SessionConfigOptionValue::value_id("smart"),
+            Some(model_options("smart")),
+        );
+        pool.invalidate_generation(AgentCli::OpenCode, GENERATION + 1);
+
+        let (decision, _) =
+            pool.lookup_and_reserve(&key, Path::new("/repo"), GENERATION + 1, 5, || {
+                SessionId::new("unused")
+            });
+
+        assert_eq!(
+            decision,
+            ClaimDecision::Create(CreatePlan {
+                session_id,
+                cwd: PathBuf::from("/repo"),
+                replay: vec![("model".into(), SessionConfigOptionValue::value_id("smart"))],
+            })
         );
     }
 
@@ -1156,6 +1325,7 @@ mod tests {
                     agent_session_id: "agent-session-1".to_string(),
                     cwd: PathBuf::from("/repo/old"),
                     available_commands: vec![],
+                    config_options: model_options("fast"),
                 }),
             )
         );
@@ -1209,6 +1379,7 @@ mod tests {
                 agent_session_id: "agent-session-1".to_string(),
                 cwd: PathBuf::from("/repo"),
                 available_commands: vec![],
+                config_options: model_options("fast"),
             })
         );
     }

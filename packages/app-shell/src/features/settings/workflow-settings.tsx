@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   addEdge,
@@ -85,7 +85,9 @@ function uniqueGraphId(prefix: string, existingIds: Iterable<string>): {
 
 /** Produces a portable filename while retaining the workflow name for the save dialog. */
 function workflowExportFileName(name: string): string {
-  const safeName = name.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").trim();
+  // `\p{Cc}` is the Unicode Control category; property escapes keep control
+  // characters out of the regex literal so no-control-regex stays satisfied.
+  const safeName = name.replace(/[<>:"/\\|?*\p{Cc}]/gu, " ").trim();
   return `${safeName === "" ? "workflow" : safeName}.reactflow.json`;
 }
 
@@ -180,12 +182,15 @@ function WorkflowSettingsContent({
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [libraryVisualWidth, setLibraryVisualWidth] = useState(initialLibraryWidth);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
-  useEffect(() => {
+  // Demo fixtures predate backend discovery. Derive a normalized view that
+  // replaces only unavailable executors so every rendered selection is backed
+  // by a real option, without mutating the editable draft in an effect.
+  const normalizedWorkflows = useMemo(() => {
     if (capabilitiesOverride !== undefined || agentModels.length === 0) {
-      return;
+      return workflows;
     }
     const defaultExecutor = agentModels[0]!;
-    setWorkflows((current) => current.map((workflow) => ({
+    return workflows.map((workflow) => ({
       ...workflow,
       nodes: workflow.nodes.map((node) => {
         if (
@@ -198,8 +203,6 @@ function WorkflowSettingsContent({
         ) {
           return node;
         }
-        // Demo fixtures predate backend discovery. Replace only unavailable
-        // executors so every rendered selection is backed by a real option.
         return {
           ...node,
           data: {
@@ -214,11 +217,11 @@ function WorkflowSettingsContent({
           },
         };
       }),
-    })));
-  }, [agentModels, capabilitiesOverride]);
+    }));
+  }, [agentModels, capabilitiesOverride, workflows]);
   const workflow = useMemo(
-    () => workflows.find((candidate) => candidate.id === selectedWorkflowId) ?? null,
-    [selectedWorkflowId, workflows],
+    () => normalizedWorkflows.find((candidate) => candidate.id === selectedWorkflowId) ?? null,
+    [normalizedWorkflows, selectedWorkflowId],
   );
   const displayedWorkflow = useMemo(
     () => previewedVersion === null || workflow === null
@@ -226,14 +229,19 @@ function WorkflowSettingsContent({
       : { ...workflow, ...previewedVersion.graph },
     [previewedVersion, workflow],
   );
-  useEffect(() => {
+  // React's documented "adjusting state when a prop changes" pattern: track the
+  // previous workflows identity and repair the selection only when the list
+  // reference changes, so a deleted workflow cannot leave a dead editor state.
+  const [previousWorkflows, setPreviousWorkflows] = useState(workflows);
+  if (previousWorkflows !== workflows) {
+    setPreviousWorkflows(workflows);
     if (
       workflows.length > 0
       && !workflows.some((candidate) => candidate.id === selectedWorkflowId)
     ) {
       setSelectedWorkflowId(workflows[0].id);
     }
-  }, [selectedWorkflowId, workflows]);
+  }
 
   const selectedNode = useMemo(
     () => previewedVersion === null
@@ -242,14 +250,6 @@ function WorkflowSettingsContent({
     [previewedVersion, workflow],
   );
   const inspectorAvailable = selectedNode !== null;
-
-  useEffect(() => {
-    if (inspectorAvailable) {
-      expandInspector();
-    } else {
-      animateInspectorTo(0);
-    }
-  }, [inspectorAvailable]);
 
   useEffect(
     () => () => {
@@ -283,8 +283,38 @@ function WorkflowSettingsContent({
     animateLibraryTo(libraryWidthRef.current);
   }
 
+  /** Moves the library to a stable width with the shared panel motion behavior. */
+  const animateLibraryTo = useCallback(
+    (targetWidth: number, onComplete?: () => void): void => {
+      animateWorkflowPanel({
+        animationRef: libraryAnimationRef,
+        duration: WORKFLOW_PANEL_SETTLE_DURATION,
+        onCollapsed: () => setLibraryCollapsed(true),
+        onComplete,
+        panel: libraryPanelRef.current,
+        targetWidth,
+      });
+    },
+    [],
+  );
+
+  /** Moves the inspector to a stable width with the shared panel motion behavior. */
+  const animateInspectorTo = useCallback(
+    (targetWidth: number, onComplete?: () => void): void => {
+      animateWorkflowPanel({
+        animationRef: inspectorAnimationRef,
+        duration: WORKFLOW_PANEL_SETTLE_DURATION,
+        onCollapsed: () => setInspectorCollapsed(true),
+        onComplete,
+        panel: inspectorPanelRef.current,
+        targetWidth,
+      });
+    },
+    [],
+  );
+
   /** Opens the contextual inspector and yields library space first on narrow editors. */
-  function expandInspector(): void {
+  const expandInspector = useCallback((): void => {
     if (
       (editorLayoutRef.current?.getBoundingClientRect().width ?? Number.POSITIVE_INFINITY)
       < NARROW_WORKFLOW_EDITOR_WIDTH
@@ -297,7 +327,17 @@ function WorkflowSettingsContent({
     }
     setInspectorCollapsed(false);
     animateInspectorTo(inspectorWidthRef.current);
-  }
+  }, [animateInspectorTo, animateLibraryTo]);
+
+  // Opening the inspector when a node gains context (and collapsing it when it
+  // loses context) is an imperative panel animation, keyed on selection only.
+  useEffect(() => {
+    if (inspectorAvailable) {
+      expandInspector();
+    } else {
+      animateInspectorTo(0);
+    }
+  }, [animateInspectorTo, expandInspector, inspectorAvailable]);
 
   /** Clears node context and collapses the inspector without affecting workflow edits. */
   function closeNodeInspector(): void {
@@ -306,36 +346,6 @@ function WorkflowSettingsContent({
       nodes: current.nodes.map((node) => ({ ...node, selected: false })),
     }));
     animateInspectorTo(0);
-  }
-
-  /** Moves the library to a stable width with the shared panel motion behavior. */
-  function animateLibraryTo(
-    targetWidth: number,
-    onComplete?: () => void,
-  ): void {
-    animateWorkflowPanel({
-      animationRef: libraryAnimationRef,
-      duration: WORKFLOW_PANEL_SETTLE_DURATION,
-      onCollapsed: () => setLibraryCollapsed(true),
-      onComplete,
-      panel: libraryPanelRef.current,
-      targetWidth,
-    });
-  }
-
-  /** Moves the inspector to a stable width with the shared panel motion behavior. */
-  function animateInspectorTo(
-    targetWidth: number,
-    onComplete?: () => void,
-  ): void {
-    animateWorkflowPanel({
-      animationRef: inspectorAnimationRef,
-      duration: WORKFLOW_PANEL_SETTLE_DURATION,
-      onCollapsed: () => setInspectorCollapsed(true),
-      onComplete,
-      panel: inspectorPanelRef.current,
-      targetWidth,
-    });
   }
 
   /** Snaps an undersized library only after release so direct dragging stays linear. */

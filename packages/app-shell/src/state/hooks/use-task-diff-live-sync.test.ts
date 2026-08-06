@@ -24,9 +24,6 @@ function conversation(
   return {
     configOptions: [],
     modelChanges: [],
-    availableCommands: [],
-    sessionTitle: null,
-    sessionUpdatedAt: null,
     turns: toolStatus === undefined
       ? []
       : [{
@@ -54,9 +51,12 @@ function conversation(
           error: null,
           createdAt: 1,
         }],
+    availableCommands: [],
     isLoaded: true,
     isLoading: false,
     isResponding,
+    sessionTitle: null,
+    sessionUpdatedAt: null,
     pendingPermissions: [],
     error: null,
   };

@@ -599,6 +599,58 @@ test("marks the thread where the answering model changed", async () => {
   ]);
 });
 
+test("marks an agent move before the message that carried it", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
+
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+  await store.getState().sendMessage({ oraSessionId: "ora-1", text: "first" });
+  // The move is performed by the send that carries it, so the turn is already in
+  // the thread when the incoming agent's options arrive.
+  await store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "second",
+    prepare: async () => {
+      store.getState().adoptSwitchedAgent("ora-1", modelOptions("smart"));
+      return { availableCommands: [] };
+    },
+  });
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.modelChanges, [
+    // Before turn 1 — the second message — rather than after the exchange it began.
+    { id: "local-5", afterTurnCount: 1, modelName: "Smart", createdAt: 42 },
+  ]);
+});
+
+test("leaves an agent move unmarked when nothing has been exchanged yet", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => events<PromptSessionEvent>([{ type: "completed", stopReason: "end_turn" }]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  let nextId = 0;
+  const store = createChatStore(client, { createId: () => `local-${++nextId}`, now: () => 42 });
+
+  store.getState().setConfigOptions("ora-1", modelOptions("fast"));
+  await store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "first",
+    prepare: async () => {
+      store.getState().adoptSwitchedAgent("ora-1", modelOptions("smart"));
+      return { availableCommands: [] };
+    },
+  });
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.modelChanges, []);
+});
+
 test("keeps one marker per point in the thread while the model is cycled", async () => {
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),

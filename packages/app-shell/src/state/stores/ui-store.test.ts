@@ -65,6 +65,8 @@ describe("useUiStore", () => {
       title: "Refactor",
       status: "todo",
       workspaceMode: "worktree",
+      type: "default",
+      workflowRunId: null,
     };
     const session: Session = {
       id: "s1",

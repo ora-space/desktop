@@ -15,8 +15,8 @@ import {
 } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { WorkflowNodeCardShell } from "../workflow-node-chrome";
-import { RunStatusBadge, isNodeWorking } from "./run-status-mark";
-import { runStatusTone } from "./run-status-style";
+import { RunStatusBadge } from "./run-status-mark";
+import { isNodeWorking, runStatusTone } from "./run-status-style";
 import type {
   GraphWorkflowNodeState,
   WorkflowNodeData,

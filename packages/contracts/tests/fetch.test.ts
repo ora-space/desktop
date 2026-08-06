@@ -148,8 +148,8 @@ test("surfaces a typed stream error frame and aborts the underlying fetch lifecy
 
   await assert.rejects(
     async () => {
-      for await (const _event of stream) {
-        assert.fail("error-only stream must not yield data");
+      for await (const event of stream) {
+        assert.fail(`error-only stream yielded data: ${JSON.stringify(event)}`);
       }
     },
     (error: unknown) => error instanceof RemoteContractError && error.code === "session_busy",

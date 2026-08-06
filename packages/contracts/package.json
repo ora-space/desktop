@@ -6,6 +6,7 @@
   "scripts": {
     "generate:error-schema": "ts-to-zod src/error.ts src/error.schema.ts",
     "clean:test": "node -e \"require('node:fs').rmSync('.test-dist',{recursive:true,force:true})\"",
+    "lint": "tsc -p tsconfig.json --noEmit && eslint src tests",
     "test": "pnpm run clean:test && tsc -p tsconfig.json && node --test .test-dist/tests/*.test.js"
   },
   "dependencies": {

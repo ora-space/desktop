@@ -806,6 +806,18 @@ fn to_contract_change(change: ora_fs::WorkspaceChange) -> WorkspaceFileChange {
 }
 
 // =============================================================================
+// agentRuntime
+// =============================================================================
+
+backend_command!(
+    get_agent_runtime_status,
+    GetAgentRuntimeStatusRequest,
+    GetAgentRuntimeStatusResponse,
+    get_agent_runtime_status,
+    "Reports the live detection status of every application-scoped CLI runtime through the shared Backend."
+);
+
+// =============================================================================
 // skill
 // =============================================================================
 

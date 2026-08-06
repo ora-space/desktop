@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useWorkflowRuntime } from "../../features/workflow-run/workflow-runtime-context";
+import { useWorkflowRuntime } from "../../features/workflow-run/use-workflow-runtime";
 import type {
   GraphWorkflowRun,
   HitlRequest,
@@ -301,9 +301,14 @@ export function useGraphWorkflowRunLive(
 ) {
   const runtime = useWorkflowRuntime();
   const queryClient = useQueryClient();
-  const [revealedId, setRevealedId] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<{
+    runId: string;
+    artifactId: string;
+  } | null>(null);
   const handlersRef = useRef(handlers);
-  handlersRef.current = handlers;
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
 
   const query = useQuery<LiveSnapshotIndexed | null>({
     queryKey: queryKeys.workflowArtifacts(runId ?? ""),
@@ -320,12 +325,10 @@ export function useGraphWorkflowRunLive(
     staleTime: Number.POSITIVE_INFINITY,
   });
   const snapshotRef = useRef(query.data);
-  snapshotRef.current = query.data;
-  const hasSnapshot = query.data !== undefined && query.data !== null;
-
   useEffect(() => {
-    setRevealedId(null);
-  }, [runId]);
+    snapshotRef.current = query.data;
+  }, [query.data]);
+  const hasSnapshot = query.data !== undefined && query.data !== null;
 
   useEffect(() => {
     if (runId == null || runId === "" || !hasSnapshot) {
@@ -351,7 +354,7 @@ export function useGraphWorkflowRunLive(
             };
           },
         );
-        setRevealedId(artifact.id);
+        setRevealed({ runId, artifactId: artifact.id });
         return;
       }
       if (event.type === "node_conversation_item_upserted") {
@@ -417,6 +420,7 @@ export function useGraphWorkflowRunLive(
   }, [runtime, queryClient, runId, hasSnapshot]);
   const conversation = query.data?.conversation ?? [];
   const conversationByNodeId = query.data?.conversationByNodeId ?? new Map<string, WorkflowNodeConversationItem[]>();
+  const revealedId = revealed !== null && revealed.runId === runId ? revealed.artifactId : null;
 
   return {
     ...query,

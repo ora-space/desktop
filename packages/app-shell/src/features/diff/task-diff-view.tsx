@@ -8,7 +8,6 @@ import {
   type ChangeData,
   type FileData,
   type GutterOptions,
-  type HunkData,
 } from "react-diff-view";
 import "react-diff-view/style/index.css";
 import "./task-diff-view.css";
@@ -59,11 +58,14 @@ import {
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { useContractsClient } from "../../contracts-client-context";
+import { localizeContractError } from "../../i18n/contract-error";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { useTaskDiff, useTaskDiffComments } from "../../state/hooks/use-task-diff";
 import { buildCollapsedDiffSegments } from "./task-diff-collapse";
 import { countChanges, parseTaskDiffPatch } from "./task-diff-data";
-import { diffFilePath, TaskDiffFileTree } from "./task-diff-file-tree";
+import { createCommentAnchor } from "./task-diff-comment-anchor";
+import { diffFilePath } from "./task-diff-file-tree-utils";
+import { TaskDiffFileTree } from "./task-diff-file-tree";
 
 interface TaskDiffViewProps {
   taskId: string;
@@ -145,7 +147,9 @@ export function TaskDiffView({
         return requestedPath === normalizedPath
           || requestedPath.endsWith(`/${normalizedPath}`);
       });
-    if (matchingPath !== undefined) selectFile(matchingPath, "auto");
+    if (matchingPath === undefined) return;
+    const frame = requestAnimationFrame(() => selectFile(matchingPath, "auto"));
+    return () => cancelAnimationFrame(frame);
   }, [fileRequest, filePaths, files.length, selectFile]);
 
   useEffect(() => {
@@ -190,8 +194,8 @@ export function TaskDiffView({
     queryClient.invalidateQueries({ queryKey: queryKeys.taskDiffComments(taskId) });
 
   const createComment = useMutation({
-    mutationFn: ({ anchor, body }: { anchor: TaskDiffCommentAnchor; body: string }) =>
-      client.task.createDiffComment({ taskId, anchor, body }),
+    mutationFn: ({ scope, anchor, body }: { scope: TaskDiffScope; anchor: TaskDiffCommentAnchor; body: string }) =>
+      client.task.createDiffComment({ taskId, scope, anchor, body }),
     onSuccess: async () => {
       setSelectedAnchor(null);
       await refreshDiscussions();
@@ -252,8 +256,8 @@ export function TaskDiffView({
     setSelectedAnchor(selection);
   }, [createComment]);
   const handleCreateComment = useCallback(
-    (anchor: TaskDiffCommentAnchor, body: string) => createComment.mutateAsync({ anchor, body }),
-    [createComment],
+    (anchor: TaskDiffCommentAnchor, body: string) => createComment.mutateAsync({ scope, anchor, body }),
+    [createComment, scope],
   );
   const handleReply = useCallback(
     (commentId: string, body: string) => replyComment.mutateAsync({ commentId, body }),
@@ -312,7 +316,7 @@ export function TaskDiffView({
     return (
       <DiffMessage
         title={t("diff.loadError")}
-        detail={error instanceof Error ? error.message : t("diff.requestFailed")}
+        detail={localizeContractError(error, t)}
         action={<Button size="sm" variant="outline" onClick={() => void refresh()}><IconRefresh />{t("diff.retry")}</Button>}
       />
     );
@@ -392,7 +396,7 @@ export function TaskDiffView({
       )}
       {mutationError !== null && (
         <div role="alert" className="border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-          {mutationError instanceof Error ? mutationError.message : t("diff.reviewFailed")}
+          {localizeContractError(mutationError, t)}
         </div>
       )}
       {gitNotice !== null && (
@@ -568,7 +572,7 @@ function CommitChangesDialog({
           disabled={pending}
           className="resize-none"
         />
-        {error !== null && <p className="text-xs text-destructive">{error.message}</p>}
+        {error !== null && <p className="text-xs text-destructive">{localizeContractError(error, t)}</p>}
         <DialogFooter>
           <Button variant="ghost" disabled={pending} onClick={() => onOpenChange(false)}>
             {t("common.cancel")}
@@ -609,7 +613,7 @@ function PushBranchDialog({
           <AlertDialogTitle>{t("diff.pushDialogTitle")}</AlertDialogTitle>
           <AlertDialogDescription>{t("diff.pushDialogDescription")}</AlertDialogDescription>
         </AlertDialogHeader>
-        {error !== null && <p className="text-xs text-destructive">{error.message}</p>}
+        {error !== null && <p className="text-xs text-destructive">{localizeContractError(error, t)}</p>}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>{t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction disabled={pending} onClick={() => void onPush()}>
@@ -1094,32 +1098,6 @@ function renderSingleLineNumber({
 }: GutterOptions) {
   if (change.type === "normal" && side === "old") return null;
   return wrapInAnchor(renderDefault());
-}
-
-/** Builds the exact single-line anchor shape validated by the backend patch parser. */
-export function createCommentAnchor(
-  file: FileData,
-  hunk: HunkData,
-  change: ChangeData,
-  side: TaskDiffSide,
-  diffId: string,
-): TaskDiffCommentAnchor {
-  const lineNumber = lineNumberFor(change, side);
-  if (lineNumber === null) {
-    throw new Error(`change ${getChangeKey(change)} does not exist on the ${side} side`);
-  }
-
-  return {
-    diffId,
-    path: side === "old" ? file.oldPath : file.newPath,
-    side,
-    startLine: lineNumber,
-    endLine: lineNumber,
-    hunkHeader: hunk.content,
-    // gitdiff-parser retains the CR from CRLF patches, while Rust `str::lines`
-    // deliberately removes it before validating the source line.
-    lineContent: change.content.replace(/\r$/, ""),
-  };
 }
 
 /** Chooses the source side represented by a clicked diff cell. */

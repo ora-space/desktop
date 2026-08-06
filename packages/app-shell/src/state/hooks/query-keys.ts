@@ -24,6 +24,7 @@ export const queryKeys = {
   workflowRun: (runId: string) => ["workflowRun", runId] as const,
   /** Artifacts produced by one graph workflow run. */
   workflowArtifacts: (runId: string) => ["workflowArtifacts", runId] as const,
+  agentRuntimeStatus: ["agentRuntimeStatus"] as const,
   taskWorkspace: (taskId: string) => ["task-workspace", taskId] as const,
   taskDiffs: (taskId: string) => ["task-diff", taskId] as const,
   taskDiff: (taskId: string, scope: TaskDiffScope) => ["task-diff", taskId, scope] as const,

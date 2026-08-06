@@ -25,8 +25,12 @@ describe("useSettingsStore", () => {
   });
 
   it("merges a partial patch into settings", () => {
-    useSettingsStore.getState().updateSettings({ theme: "dark" });
-    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, theme: "dark" });
+    useSettingsStore.getState().updateSettings({ theme: "dark", commandTimeout: "60" });
+    expect(useSettingsStore.getState().settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      theme: "dark",
+      commandTimeout: "60",
+    });
   });
 
   it("resets settings back to defaults", () => {

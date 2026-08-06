@@ -120,6 +120,8 @@ describe("WorkspaceDialogs task creation", () => {
       title: "Worktree task",
       status: "todo",
       workspaceMode: "worktree",
+      type: "default",
+      workflowRunId: null,
     }]));
     expect(submittedBaseBranch).toBe("origin/main");
   });
@@ -137,6 +139,8 @@ describe("WorkspaceDialogs task creation", () => {
         title: "Existing task",
         status: "todo",
         workspaceMode: "worktree",
+        type: "default",
+        workflowRunId: null,
       },
     });
 
@@ -269,6 +273,8 @@ describe("WorkspaceDialogs task deletion", () => {
       title: "Delete me",
       status: "todo",
       workspaceMode: workspaceMode as TaskWorkspaceMode,
+      type: "default",
+      workflowRunId: null,
     }];
     state.sessions = sessionIds.map((id): Session => ({
       id,

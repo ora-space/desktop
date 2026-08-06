@@ -8,8 +8,8 @@ use super::collect_setup_commands;
 use super::connection::ConnectionSupervisors;
 use super::support::{map_acp_error, runtime_internal};
 use super::warm_pool::{
-    ConfigTarget, CreatedProvider, Install, RebuildPlan, ReleasedSession, Reservation,
-    WarmDecision, WarmKey, WarmPool,
+    ClaimDecision, ConfigTarget, CreatePlan, CreatedProvider, Install, RebuildPlan,
+    ReleasedSession, Reservation, WarmDecision, WarmKey, WarmPool,
 };
 use crate::BackendError;
 use crate::clock::SystemClock;
@@ -56,12 +56,18 @@ pub(super) struct WarmSessions {
     clock: SystemClock,
 }
 
-/// A warm session ready to be persisted as an Ora session.
+/// A warm session ready to be bound to an Ora session.
 pub(super) struct WarmAttachment {
     pub agent_cli: AgentCli,
     pub agent_session_id: String,
     pub cwd: PathBuf,
     pub available_commands: Vec<AvailableCommand>,
+    /// What this provider session currently offers to configure.
+    ///
+    /// Needed by a caller that rebinds an existing Ora session: ACP reports
+    /// configuration only while creating or loading a session, so the claim is
+    /// the last point at which the incoming agent's model list can be learned.
+    pub config_options: Vec<SessionConfigOption>,
 }
 
 /// A warm session held for one attach attempt, returned to the pool on drop.
@@ -177,11 +183,11 @@ impl WarmSessions {
                 config_options,
                 ..
             } => Ok((session_id, config_options)),
-            WarmDecision::Create {
+            WarmDecision::Create(CreatePlan {
                 session_id,
                 cwd,
                 replay,
-            } => {
+            }) => {
                 let CreatedProvider {
                     agent_session_id,
                     config_options,
@@ -300,6 +306,7 @@ impl WarmSessions {
                         agent_session_id: attached.agent_session_id,
                         cwd: attached.cwd,
                         available_commands: attached.available_commands,
+                        config_options: attached.config_options,
                     },
                 ));
             }
@@ -322,7 +329,7 @@ impl WarmSessions {
             cwd.to_path_buf(),
             CreatedProvider {
                 agent_session_id: created.agent_session_id.clone(),
-                config_options,
+                config_options: config_options.clone(),
                 available_commands: created.available_commands.clone(),
             },
             connection.generation,
@@ -349,9 +356,110 @@ impl WarmSessions {
                 agent_session_id: created.agent_session_id,
                 cwd: cwd.to_path_buf(),
                 available_commands: created.available_commands,
+                config_options,
             },
         );
         self.release(superseded).await;
+        Ok(reservation)
+    }
+
+    /// Claims the warm session backing one chat surface, addressed by its key.
+    ///
+    /// This is [`WarmSessions::take`] for a caller that has no warm identifier to
+    /// name. Rebinding an existing conversation onto another CLI wants the
+    /// session this client already warmed while its picker was showing that
+    /// CLI's models — including any model chosen on it — but the identifier of
+    /// that session is the pool's own, never handed back by the client. Naming it
+    /// by key instead is what lets the picker and the rebind meet.
+    ///
+    /// Resolving and reserving happen in one critical section, so no other claim
+    /// can take the session in between. And because resolution skips reserved
+    /// entries, a key whose session is being attached, was evicted, or was
+    /// already consumed resolves to a fresh entry that is handshaken here: the
+    /// caller never fails merely because what it warmed earlier is gone.
+    pub(super) async fn claim(
+        &self,
+        key: WarmKey,
+        cwd: &Path,
+    ) -> Result<WarmReservation<'_>, BackendError> {
+        let gate = self.gate(&key);
+        let _guard = gate.lock().await;
+
+        let connection = self.connections.for_agent(key.agent_cli).current()?;
+        let now = self.clock.now_timestamp_millis();
+        let (decision, released) =
+            lock_pool(&self.pool).lookup_and_reserve(&key, cwd, connection.generation, now, || {
+                UuidSessionIdGenerator::new().generate_session_id()
+            });
+        self.release(released).await;
+
+        let CreatePlan {
+            session_id,
+            cwd,
+            replay,
+        } = match decision {
+            ClaimDecision::Held(attached) => {
+                return Ok(WarmReservation::new(
+                    &self.pool,
+                    attached.session_id,
+                    WarmAttachment {
+                        agent_cli: attached.agent_cli,
+                        agent_session_id: attached.agent_session_id,
+                        cwd: attached.cwd,
+                        available_commands: attached.available_commands,
+                        config_options: attached.config_options,
+                    },
+                ));
+            }
+            ClaimDecision::Create(plan) => plan,
+        };
+
+        let created = self.create(key.agent_cli, &cwd).await?;
+        let config_options = self
+            .replay(
+                key.agent_cli,
+                &created.agent_session_id,
+                replay,
+                created.config_options,
+            )
+            .await;
+        let installed = lock_pool(&self.pool).replace_and_reserve(
+            &session_id,
+            cwd.clone(),
+            CreatedProvider {
+                agent_session_id: created.agent_session_id.clone(),
+                config_options: config_options.clone(),
+                available_commands: created.available_commands.clone(),
+            },
+            connection.generation,
+            self.clock.now_timestamp_millis(),
+        );
+        let Install::Accepted(superseded) = installed else {
+            // An attach reserved the entry during the handshake above, so the
+            // session just created belongs to nobody.
+            self.release(Some(ReleasedSession {
+                agent_cli: key.agent_cli,
+                agent_session_id: created.agent_session_id,
+                generation: connection.generation,
+            }))
+            .await;
+            return Err(attach_in_flight());
+        };
+        // Built before the releases below, which are the last `.await`s a caller
+        // can be dropped at while this entry is already reserved.
+        let reservation = WarmReservation::new(
+            &self.pool,
+            session_id,
+            WarmAttachment {
+                agent_cli: key.agent_cli,
+                agent_session_id: created.agent_session_id,
+                cwd,
+                available_commands: created.available_commands,
+                config_options,
+            },
+        );
+        self.release(superseded).await;
+        self.sweep().await;
         Ok(reservation)
     }
 
@@ -600,6 +708,7 @@ mod tests {
             agent_session_id: "agent-session-1".to_string(),
             cwd: PathBuf::from("/repo"),
             available_commands: Vec::new(),
+            config_options: Vec::new(),
         }
     }
 
@@ -624,6 +733,7 @@ mod tests {
                 agent_session_id: "agent-session-1".to_string(),
                 cwd: PathBuf::from("/repo"),
                 available_commands: vec![],
+                config_options: vec![],
             })
         );
     }

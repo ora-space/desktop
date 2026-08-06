@@ -88,17 +88,22 @@ pub enum TaskWorktreeProvisionerError {
     NotARepository,
     #[error("base branch not found: {branch_name}")]
     BaseBranchNotFound { branch_name: String },
-    #[error("task worktree operation failed")]
+    #[error("{context}")]
     OperationFailed {
+        context: &'static str,
         #[source]
         source: BoxRepositorySource,
     },
 }
 
 impl TaskWorktreeProvisionerError {
-    /// Wraps a provisioning failure without flattening its diagnostic source chain.
-    pub fn operation_failed(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+    /// Preserves both the failed worktree operation and its infrastructure source chain.
+    pub fn operation_failed(
+        context: &'static str,
+        error: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Self::OperationFailed {
+            context,
             source: Box::new(error),
         }
     }

@@ -14,9 +14,11 @@ import { IconCheck, IconChevronDown, IconLoader2 } from "@tabler/icons-react";
 import { useChatStore } from "../../chat-store-context";
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useSessions } from "../../state/hooks/use-sessions";
 import { useSetSessionConfig } from "../../state/hooks/use-session-config";
-import { useWarmSession } from "../../state/hooks/use-warm-session";
-import { useSwitchSessionAgent } from "../../state/hooks/use-workspace-mutations";
+import { useWarmSession, warmTargetKey } from "../../state/hooks/use-warm-session";
+import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
+import { usePendingAgentStore, usePendingSwitch } from "../../state/stores/pending-agent-store";
 import { currentValueName, findModelOption, selectableValues } from "@ora/chat";
 import { AGENT_CLI_LABELS, AGENT_CLI_ORDER } from "./model-catalog";
 import { ProviderLogo } from "./provider-logos";
@@ -32,21 +34,43 @@ import { ProviderLogo } from "./provider-logos";
  * With a session selected, choosing a different CLI moves that conversation onto
  * it rather than only changing the default for the next one. Ora owns the
  * transcript, so the thread survives the move: the backend hands it to the new
- * agent with the user's next message.
+ * agent with the user's next message. The move is *recorded* here and performed
+ * by that message — clicking cannot rebind immediately without tearing down an
+ * agent that may still be mid-reply. What the click does start is warming the
+ * incoming CLI, which is how the models below can be replaced by its own before
+ * anything is committed. Choosing a CLI therefore leaves the menu open: picking
+ * one of those models is the other half of the same decision.
  */
 export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
   const { t } = useTranslation();
-  const agentCli = useSettingsStore((state) => state.settings.agentCli);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
   const selection = useWorkspaceSelectionStore((state) => state.selection);
   const chatStore = useChatStore();
   const setSessionConfig = useSetSessionConfig();
-  const switchAgent = useSwitchSessionAgent();
+  const { data: sessions = [] } = useSessions();
+
+  // Having a binding is what makes a session persisted, and only a persisted one
+  // can be rebound; a warm session has no row to move.
+  const isPersisted = sessions.some((session) => session.id === selection.sessionId);
+  const targetKey = warmTargetKey(selection);
+  const setPickedForTarget = usePendingAgentStore((state) => state.setPendingAgent);
+  const setPendingSwitch = usePendingAgentStore((state) => state.setPendingSwitch);
+  const pendingSwitch = usePendingSwitch(selection.sessionId);
+  // Resolved centrally so this and the composer cannot disagree: they share one
+  // warm-session query key, and the CLI is part of that key.
+  const agentCli = useTargetAgentCli(selection);
 
   // Shares the workspace's warm-session query key, so this is a cache read
   // rather than a second provider session.
   const warmSession = useWarmSession(selection, agentCli);
-  const activeSessionId = selection.sessionId ?? warmSession.sessionId;
+  // A warm session, when there is one, always describes the CLI on screen —
+  // including the one a pending move is heading for, whose models and model
+  // choice live on it rather than on the session being moved. While that
+  // handshake is still running there is nothing to read: naming the bound
+  // session here instead would advertise the outgoing agent's model as the
+  // incoming agent's.
+  const activeSessionId =
+    warmSession.sessionId ?? (pendingSwitch === undefined ? selection.sessionId : null);
   // Selected narrowly rather than as one conversation object, so a streaming
   // turn does not re-render the picker on every token.
   const configOptions = useStore(chatStore, (state) =>
@@ -66,10 +90,11 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
   // Replay is its own case: it seeds the conversation with empty options first,
   // which would otherwise read as a settled answer while the stream is still
   // running. A surface that never started warming, or whose handshake failed,
-  // is not loading and still reports empty.
+  // is not loading and still reports empty. A pending move reads as loading for
+  // the same reason: it has no session to name until the incoming CLI answers.
   const isLoadingModels =
     activeSessionId === null
-      ? warmSession.isOpening
+      ? warmSession.isOpening || pendingSwitch !== undefined
       : configOptions === undefined || isReplayingHistory;
 
   const activeLabel = modelOption
@@ -77,14 +102,25 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
     : t(isLoadingModels ? "chat.modelSelector.loading" : "chat.modelSelector.placeholder");
 
   /**
-   * A persisted session is moved onto the chosen CLI rather than left behind;
-   * a warm one only needs the new default, which re-warms it against that CLI.
+   * A persisted session records a move onto the chosen CLI, to be performed by
+   * the next message sent into it; a not-yet-started chat records the pick
+   * against its own target instead, so it survives navigating away and back
+   * without touching any other chat.
+   *
+   * Either way the shared default also moves, so the next chat surface no one
+   * has touched yet still opens on whatever the user picked most recently, and
+   * either way the CLI's own models arrive from a handshake that has not
+   * happened yet — this only points the surface at it. The list below settles
+   * when that answers, which is why the menu is still open to see it.
    */
   const selectAgent = (candidate: AgentCli) => {
+    if (candidate === agentCli) return;
     updateSettings({ agentCli: candidate });
-    if (selection.sessionId !== null && candidate !== agentCli) {
-      switchAgent.mutate({ sessionId: selection.sessionId, agentCli: candidate });
+    if (isPersisted && selection.sessionId !== null) {
+      setPendingSwitch(selection.sessionId, candidate);
+      return;
     }
+    if (targetKey !== null) setPickedForTarget(targetKey, candidate);
   };
 
   const selectModel = (value: string) => {
@@ -119,7 +155,7 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
           </span>
         </span>
         <span className="whitespace-nowrap">{activeLabel}</span>
-        {setSessionConfig.isPending || switchAgent.isPending || isLoadingModels
+        {setSessionConfig.isPending || isLoadingModels
           ? <IconLoader2 className="size-3 shrink-0 animate-spin opacity-50" aria-hidden="true" />
           : <IconChevronDown className="size-3 shrink-0 opacity-50" aria-hidden="true" />}
       </DropdownMenuTrigger>
@@ -132,6 +168,9 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
             <DropdownMenuItem
               key={candidate}
               className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
+              // Choosing a CLI is only half the choice: its models replace the
+              // group below and the user still has to pick one from them.
+              closeOnClick={false}
               onClick={() => selectAgent(candidate)}
             >
               <ProviderLogo agentCli={candidate} className="size-3.5" />

@@ -36,6 +36,12 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+// jsdom does not implement the Web Animations API; Base UI's ScrollArea checks
+// it after mount before recalculating scrollbar geometry.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
+
 // crypto.randomUUID is used by mock-data; jsdom provides it in modern Node, but
 // keep a stable fallback so tests are deterministic across environments.
 if (!globalThis.crypto) {
@@ -43,4 +49,3 @@ if (!globalThis.crypto) {
     randomUUID: () => `test-${Math.random().toString(36).slice(2)}`,
   } as Crypto;
 }
-

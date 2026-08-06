@@ -1,7 +1,8 @@
-use ora_contracts::{
-    FrontendEndpoint, FrontendPathParam, FrontendQueryParam, FrontendResponseMode,
-    export_typescript_bindings_to, frontend_endpoints,
+use crate::frontend::{
+    FrontendEndpoint, FrontendHttpMethod, FrontendPathParam, FrontendQueryParam,
+    FrontendResponseMode, frontend_endpoints,
 };
+use ora_contracts::export_typescript_bindings_to;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -20,9 +21,10 @@ pub fn run_export_contracts(workspace_root: &Path) -> Result<(), Box<dyn std::er
     remove_stale_typescript_bindings(&contracts_source_directory)?;
     export_typescript_bindings_to(&contracts_source_directory)?;
     append_js_extension_to_exported_imports(&contracts_source_directory)?;
+    let endpoints = frontend_endpoints();
     write_generated_file(
         &contracts_source_directory.join("endpoints.ts"),
-        &render_endpoints_module(frontend_endpoints()),
+        &render_endpoints_module(&endpoints),
     )?;
 
     Ok(())
@@ -323,6 +325,8 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "AttachSessionResponse"
         | "DeleteSessionRequest"
         | "DeleteSessionResponse"
+        | "GetAgentRuntimeStatusRequest"
+        | "GetAgentRuntimeStatusResponse"
         | "GetSessionRequest"
         | "GetSessionResponse"
         | "SetSessionConfigRequest"
@@ -448,10 +452,10 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
 /// Renders one HTTP method enum value as the wire-level string used by the SDK.
 fn render_http_method(endpoint: &FrontendEndpoint) -> &'static str {
     match endpoint.method {
-        ora_contracts::FrontendHttpMethod::Get => "GET",
-        ora_contracts::FrontendHttpMethod::Post => "POST",
-        ora_contracts::FrontendHttpMethod::Put => "PUT",
-        ora_contracts::FrontendHttpMethod::Delete => "DELETE",
+        FrontendHttpMethod::Get => "GET",
+        FrontendHttpMethod::Post => "POST",
+        FrontendHttpMethod::Put => "PUT",
+        FrontendHttpMethod::Delete => "DELETE",
     }
 }
 
@@ -517,7 +521,7 @@ mod tests {
     use super::{
         append_js_extension_to_relative_specifiers, render_endpoints_module, run_export_contracts,
     };
-    use ora_contracts::frontend_endpoints;
+    use crate::frontend::frontend_endpoints;
     use std::fs;
     use tempfile::TempDir;
 
@@ -545,7 +549,8 @@ mod tests {
     /// Verifies the generated endpoint manifest preserves update-route path metadata.
     #[test]
     fn renders_endpoint_manifest_with_update_path_params() {
-        let module = render_endpoints_module(frontend_endpoints());
+        let endpoints = frontend_endpoints();
+        let module = render_endpoints_module(&endpoints);
 
         assert!(module.contains("updateTask"));
         assert!(module.contains("pathTemplate: \"/api/tasks/{taskId}\""));
@@ -556,7 +561,8 @@ mod tests {
     /// so the hand-written client can rely on literal method/path types.
     #[test]
     fn emits_as_const_satisfies_clauses() {
-        let module = render_endpoints_module(frontend_endpoints());
+        let endpoints = frontend_endpoints();
+        let module = render_endpoints_module(&endpoints);
 
         assert!(module.contains(
             "} as const satisfies Record<EndpointOperation, FrontendEndpointDefinition>;\n"

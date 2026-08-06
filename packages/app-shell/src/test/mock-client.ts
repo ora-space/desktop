@@ -96,6 +96,8 @@ export function createMockClient(state: MockClientState): ContractsClient {
           title: req.title,
           status: req.status as TaskStatus,
           workspaceMode: req.workspaceMode ?? "worktree",
+          type: "default",
+          workflowRunId: null,
         };
         state.tasks.push(task);
         return { task };
@@ -169,7 +171,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
       switchAgent: async (req) => {
         const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
         session.agentCli = req.agentCli;
-        return { session, availableCommands: [] };
+        return { session, availableCommands: [], configOptions: state.configOptions };
       },
       resumeHistory: async (req) => {
         const session = state.sessions.find((candidate) => candidate.id === req.sessionId)!;
@@ -189,6 +191,15 @@ export function createMockClient(state: MockClientState): ContractsClient {
         if (idx >= 0) state.sessions.splice(idx, 1);
         return { sessionId: req.sessionId };
       },
+    },
+    agentRuntime: {
+      getStatus: async () => ({
+        statuses: [
+          { agentCli: "open_code", status: "ready" },
+          { agentCli: "nga", status: "ready" },
+          { agentCli: "code_agent_cli", status: "ready" },
+        ],
+      }),
     },
     agent: {
       list: async () => ({ agents: [...state.agents] }),
@@ -232,6 +243,21 @@ export function createMockClient(state: MockClientState): ContractsClient {
         return { skillId: req.skillId };
       },
     },
+    skillImport: {
+      prepare: async () => {
+        throw new Error("skillImport.prepare not implemented in mock");
+      },
+      get: async () => {
+        throw new Error("skillImport.get not implemented in mock");
+      },
+      commit: async () => {
+        throw new Error("skillImport.commit not implemented in mock");
+      },
+      cancel: async (request) => ({
+        sessionId: request.sessionId,
+        cancelled: true,
+      }),
+    },
     fileSystem: {
       listDirectory: async (request) => ({
         currentPath: request.path ?? "/home/test",
@@ -251,23 +277,30 @@ export function createMockClient(state: MockClientState): ContractsClient {
         yield* [];
       })(),
     },
-    skillImport: {
-      prepare: async () => {
-        throw new Error("skillImport.prepare not implemented in mock");
-      },
-      get: async () => {
-        throw new Error("skillImport.get not implemented in mock");
-      },
-      commit: async () => {
-        throw new Error("skillImport.commit not implemented in mock");
-      },
-      cancel: async (request) => ({
-        sessionId: request.sessionId,
-        cancelled: true,
-      }),
-    },
     gitIdentity: {
       get: async () => ({ name: "Test User", email: "test@ora.local" }),
+    },
+    workflow: {
+      create: async () => { throw new Error("workflow not implemented in mock"); },
+      get: async () => { throw new Error("workflow not implemented in mock"); },
+      list: async () => { throw new Error("workflow not implemented in mock"); },
+      update: async () => { throw new Error("workflow not implemented in mock"); },
+      delete: async () => { throw new Error("workflow not implemented in mock"); },
+      getDraft: async () => { throw new Error("workflow not implemented in mock"); },
+      updateDraft: async () => { throw new Error("workflow not implemented in mock"); },
+      publish: async () => { throw new Error("workflow not implemented in mock"); },
+      rollback: async () => { throw new Error("workflow not implemented in mock"); },
+      activate: async () => { throw new Error("workflow not implemented in mock"); },
+      listVersions: async () => { throw new Error("workflow not implemented in mock"); },
+      getVersion: async () => { throw new Error("workflow not implemented in mock"); },
+      deleteSnapshot: async () => { throw new Error("workflow not implemented in mock"); },
+    },
+    workflowRun: {
+      create: async () => { throw new Error("workflowRun not implemented in mock"); },
+      get: async () => { throw new Error("workflowRun not implemented in mock"); },
+      list: async () => { throw new Error("workflowRun not implemented in mock"); },
+      listNodeRuns: async () => { throw new Error("workflowRun not implemented in mock"); },
+      delete: async () => { throw new Error("workflowRun not implemented in mock"); },
     },
   };
 }

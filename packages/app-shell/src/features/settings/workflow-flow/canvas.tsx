@@ -166,7 +166,7 @@ function WorkflowCanvasInner({
 }: WorkflowCanvasProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLDivElement>(null);
-  const connectionDraftRef = useRef<ConnectionDraft | null>(null);
+  const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
   const connectionCandidateFrameRef = useRef<number | null>(null);
   const connectionCandidatePointRef = useRef<XYPosition | null>(null);
   const connectionCandidateNodeIdRef = useRef<string | null>(null);
@@ -200,17 +200,16 @@ function WorkflowCanvasInner({
 
   const connectionState = useMemo(
     () => {
-      const draft = connectionDraftRef.current;
       return {
         connectionCandidateEndpoint: connectionCandidateNodeId === null
           ? null
-          : draft?.kind === "new"
+          : connectionDraft?.kind === "new"
             ? "target" as const
-            : draft?.endpoint ?? null,
+            : connectionDraft?.endpoint ?? null,
         connectionCandidateNodeId,
       };
     },
-    [connectionCandidateNodeId],
+    [connectionCandidateNodeId, connectionDraft],
   );
 
   useEffect(() => () => {
@@ -241,7 +240,7 @@ function WorkflowCanvasInner({
       connectionCandidateFrameRef.current = null;
     }
     connectionCandidatePointRef.current = null;
-    connectionDraftRef.current = null;
+    setConnectionDraft(null);
     reconnectingEdgeIdRef.current = null;
     commitConnectionCandidate(null);
   }
@@ -253,7 +252,7 @@ function WorkflowCanvasInner({
   function updateConnectionCandidate(
     event: ReactPointerEvent<HTMLDivElement>,
   ): void {
-    if (connectionDraftRef.current === null) {
+    if (connectionDraft === null) {
       return;
     }
     connectionCandidatePointRef.current = {
@@ -265,7 +264,7 @@ function WorkflowCanvasInner({
     }
     connectionCandidateFrameRef.current = requestAnimationFrame(() => {
       connectionCandidateFrameRef.current = null;
-      const draft = connectionDraftRef.current;
+      const draft = connectionDraft;
       const point = connectionCandidatePointRef.current;
       if (draft === null || point === null) {
         return;
@@ -289,10 +288,10 @@ function WorkflowCanvasInner({
       && params.nodeId !== null
       && params.handleType === "source"
     ) {
-      connectionDraftRef.current = {
+      setConnectionDraft({
         kind: "new",
         source: params.nodeId,
-      };
+      });
     }
   }
 
@@ -301,7 +300,7 @@ function WorkflowCanvasInner({
     event: MouseEvent | TouchEvent,
     connectionState: FinalConnectionState,
   ): void {
-    const draft = connectionDraftRef.current;
+    const draft = connectionDraft;
     // A reconnect has its own end callback. Clearing it from this generic
     // callback makes the later reconnect end look like a cancelled gesture.
     if (draft?.kind !== "new") {
@@ -330,7 +329,7 @@ function WorkflowCanvasInner({
     _handleType: HandleType,
     connectionState: FinalConnectionState,
   ): void {
-    const draft = connectionDraftRef.current;
+    const draft = connectionDraft;
     const point = connectionEndClientPoint(event);
     if (
       connectionState.isValid !== true
@@ -460,7 +459,7 @@ function WorkflowCanvasInner({
             onConnectEnd={finishNewConnection}
             onReconnectStart={(_event, edge, handleType) => {
               reconnectingEdgeIdRef.current = edge.id;
-              connectionDraftRef.current = {
+              setConnectionDraft({
                 kind: "reconnect",
                 edgeId: edge.id,
                 // React Flow reports the fixed opposite handle here: dragging
@@ -468,7 +467,7 @@ function WorkflowCanvasInner({
                 endpoint: handleType === "target" ? "source" : "target",
                 source: edge.source,
                 target: edge.target,
-              };
+              });
             }}
             onReconnect={onReconnect}
             onReconnectEnd={finishReconnect}

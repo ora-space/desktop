@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
@@ -23,6 +23,8 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import type { AgentCliStatus } from "@ora/contracts";
+import { useAgentRuntimeStatus } from "../../state/hooks/use-agent-runtime-status";
 import {
   DEFAULT_INSTALLED_PLUGIN_IDS,
   PLUGIN_CATALOG,
@@ -47,8 +49,10 @@ const MAX_INSTALLED_TILES = 7;
 
 /**
  * The plugin marketplace pane: an installed strip, a public/personal browse grid and a
- * per-plugin detail page. Nothing here talks to the backend — the catalog is hard-coded
- * and install state lives in component state, so installs reset when settings close.
+ * per-plugin detail page. The catalog is hard-coded and most plugins' install state lives
+ * in component state, so installs reset when settings close. The three CLI plugins
+ * (OpenCode, NGA, CodeAgentCLI) are the exception: their install state is read live from
+ * the backend's ACP handshake status and is always read-only in this pane.
  */
 export function PluginsSettings() {
   const { t } = useTranslation();
@@ -59,15 +63,39 @@ export function PluginsSettings() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [managing, setManaging] = useState(false);
   const [disabledIds, setDisabledIds] = useState<string[]>([]);
+  const { data: agentRuntimeStatuses } = useAgentRuntimeStatus();
 
-  const toggleInstall = (id: string) => setInstalledIds((ids) => (
-    ids.includes(id) ? ids.filter((current) => current !== id) : [...ids, id]
-  ));
+  // The three CLI plugins never read from `installedIds`: their card is installed exactly
+  // when the backend's live ACP handshake for that CLI is ready. Every other plugin keeps
+  // the manual, non-persisted install toggle.
+  const detectionStatusByPluginId = useMemo(() => {
+    const statuses = new Map<string, AgentCliStatus>();
+    for (const plugin of PLUGIN_CATALOG) {
+      if (!plugin.detectionAgentCli) continue;
+      const match = agentRuntimeStatuses?.find((status) => status.agentCli === plugin.detectionAgentCli);
+      statuses.set(plugin.id, match?.status ?? "starting");
+    }
+    return statuses;
+  }, [agentRuntimeStatuses]);
+
+  const isInstalled = useCallback((plugin: PluginEntry) => (
+    plugin.detectionAgentCli
+      ? detectionStatusByPluginId.get(plugin.id) === "ready"
+      : installedIds.includes(plugin.id)
+  ), [detectionStatusByPluginId, installedIds]);
+
+  const toggleInstall = (id: string) => {
+    if (findPlugin(id)?.detectionAgentCli) return;
+    setInstalledIds((ids) => (ids.includes(id) ? ids.filter((current) => current !== id) : [...ids, id]));
+  };
   const toggleEnabled = (id: string) => setDisabledIds((ids) => (
     ids.includes(id) ? ids.filter((current) => current !== id) : [...ids, id]
   ));
 
-  const installed = useMemo(() => PLUGIN_CATALOG.filter((plugin) => installedIds.includes(plugin.id)), [installedIds]);
+  const installed = useMemo(
+    () => PLUGIN_CATALOG.filter(isInstalled),
+    [isInstalled],
+  );
 
   const needle = query.trim().toLowerCase();
   const visible = useMemo(() => PLUGIN_CATALOG.filter((plugin) => plugin.collection === collection
@@ -81,8 +109,10 @@ export function PluginsSettings() {
     return (
       <PluginDetail
         plugin={openPlugin}
-        installed={installedIds.includes(openPlugin.id)}
+        installed={isInstalled(openPlugin)}
+        enabled={!disabledIds.includes(openPlugin.id)}
         onBack={() => setOpenId(null)}
+        onToggleEnabled={() => toggleEnabled(openPlugin.id)}
         onToggleInstall={() => toggleInstall(openPlugin.id)}
       />
     );
@@ -106,7 +136,7 @@ export function PluginsSettings() {
   const featured = visible.filter((plugin) => plugin.featured);
   const rest = visible.filter((plugin) => !plugin.featured);
   const collapsible = rest.length > NAMED_IN_SHOW_MORE;
-  const grid = { installedIds, onOpen: setOpenId, onToggleInstall: toggleInstall };
+  const grid = { installedIds, detectionStatusByPluginId, onOpen: setOpenId, onToggleInstall: toggleInstall };
 
   return (
     <div className="space-y-6">
@@ -265,23 +295,27 @@ function InstalledOverflowTile({ hidden, total, onOpen }: { hidden: number; tota
 }
 
 /** Two-column browse grid shared by the featured, expanded and search result sections. */
-function PluginGrid({ items, installedIds, onOpen, onToggleInstall }: {
+function PluginGrid({ items, installedIds, detectionStatusByPluginId, onOpen, onToggleInstall }: {
   items: PluginEntry[];
   installedIds: string[];
+  detectionStatusByPluginId: Map<string, AgentCliStatus>;
   onOpen: (id: string) => void;
   onToggleInstall: (id: string) => void;
 }) {
   return (
     <div className="grid gap-x-6 sm:grid-cols-2">
-      {items.map((plugin) => (
-        <PluginCard
-          key={plugin.id}
-          plugin={plugin}
-          installed={installedIds.includes(plugin.id)}
-          onOpen={() => onOpen(plugin.id)}
-          onToggleInstall={() => onToggleInstall(plugin.id)}
-        />
-      ))}
+      {items.map((plugin) => {
+        const detectionStatus = detectionStatusByPluginId.get(plugin.id);
+        return (
+          <PluginCard
+            key={plugin.id}
+            plugin={plugin}
+            installed={detectionStatus ? detectionStatus === "ready" : installedIds.includes(plugin.id)}
+            onOpen={() => onOpen(plugin.id)}
+            onToggleInstall={() => onToggleInstall(plugin.id)}
+          />
+        );
+      })}
     </div>
   );
 }

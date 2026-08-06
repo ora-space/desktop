@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { IconChevronRight, IconFileDiff } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurn } from "@ora/chat";
-import { useTaskChangesNavigation } from "../diff/task-changes-navigation";
+import { useTaskChangesNavigation } from "../diff/task-changes-navigation-context";
 import { collectTurnDiffFiles } from "./turn-diff-files";
 
 interface TurnDiffSummaryProps {

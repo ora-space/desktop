@@ -20,6 +20,7 @@ import {
   IconDots,
   IconDownload,
   IconExternalLink,
+  IconPlayerPause,
   IconPlayerPlay,
   IconTrash,
 } from "@tabler/icons-react";
@@ -46,10 +47,12 @@ const RESOURCE_KEYS = [
  * the skills it contributes, a details section and a VS Code-style info table. Every
  * value is read from the hard-coded catalog; the skill switches are local-only.
  */
-export function PluginDetail({ plugin, installed, onBack, onToggleInstall }: {
+export function PluginDetail({ plugin, installed, enabled, onBack, onToggleEnabled, onToggleInstall }: {
   plugin: PluginEntry;
   installed: boolean;
+  enabled: boolean;
   onBack: () => void;
+  onToggleEnabled: () => void;
   onToggleInstall: () => void;
 }) {
   const { i18n, t } = useTranslation();
@@ -60,7 +63,11 @@ export function PluginDetail({ plugin, installed, onBack, onToggleInstall }: {
   ));
 
   const summary = t(plugin.summaryKey);
-  const updated = new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium" }).format(new Date(plugin.updated));
+  // Detection-driven CLI plugins carry no real catalog metadata, so `updated` is the
+  // literal placeholder "—" rather than a formattable date.
+  const updated = plugin.updated === "—"
+    ? plugin.updated
+    : new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium" }).format(new Date(plugin.updated));
 
   return (
     <div className="space-y-6">
@@ -94,7 +101,10 @@ export function PluginDetail({ plugin, installed, onBack, onToggleInstall }: {
                     <DropdownMenuItem variant="destructive" onClick={onToggleInstall}><IconTrash />{t("settings.plugins.uninstall")}</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <Button><IconPlayerPlay />{t("settings.plugins.tryNow")}</Button>
+                <Button variant={enabled ? "outline" : "default"} onClick={onToggleEnabled}>
+                  {enabled ? <IconPlayerPause /> : <IconPlayerPlay />}
+                  {t(enabled ? "settings.plugins.disable" : "settings.plugins.enable")}
+                </Button>
               </>
             )
             : <Button variant="outline" onClick={onToggleInstall}><IconDownload />{t("settings.plugins.install")}</Button>}

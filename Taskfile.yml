@@ -73,10 +73,12 @@ tasks:
     desc: Run linters on all frontend packages
     silent: true
     cmds:
+      - pnpm --filter @ora/contracts lint
       - pnpm --filter @ora/web-client lint
+      - pnpm --filter @ora/chat lint
       - pnpm --filter @ora/platform lint
       - pnpm --filter @ora/workflow-runtime typecheck
-      - pnpm --filter @ora/app-shell typecheck
+      - pnpm --filter @ora/app-shell lint
 
   lint:desktop:
     desc: Run linters for the Desktop TypeScript package and Tauri Rust workspace
@@ -107,11 +109,6 @@ tasks:
       - pnpm --filter @ora/platform test
       - pnpm --filter @ora/workflow-runtime test
       - pnpm --filter @ora/app-shell test
-
-  test:frontend:watch:
-    desc: Re-run app-shell tests on file change
-    cmds:
-      - pnpm --filter @ora/app-shell test:watch
 
   test:backend:
     desc: Run Rust crate test suites

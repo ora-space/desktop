@@ -7,8 +7,8 @@ import {
 import { formatRunClock } from "../../lib/format";
 import { WorkflowNodeCardShell } from "../workflow-node-chrome";
 import { RunActSessionDock, type ActSessionDockTone } from "./run-act-session-dock";
-import { RunStatusBadge, isNodeWorking } from "./run-status-mark";
-import { runStatusTone } from "./run-status-style";
+import { RunStatusBadge } from "./run-status-mark";
+import { isNodeWorking, runStatusTone } from "./run-status-style";
 import { RunNodeConversation } from "./run-node-conversation";
 import type {
   GraphWorkflowNodeState,

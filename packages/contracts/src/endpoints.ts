@@ -4,7 +4,7 @@ import type { ListDirectoryRequest, ListDirectoryResponse, ListWorkspaceDirector
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { OpenProjectWorkContextRequest, OpenProjectWorkContextResponse, RenewProjectWorkContextRequest, RenewProjectWorkContextResponse } from "./project-work-context.js";
-import type { AttachSessionRequest, AttachSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
+import type { AttachSessionRequest, AttachSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
 import type { CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest, CommitSkillImportResponse, GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest, PrepareSkillImportResponse } from "./skill-import.js";
 import type { CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest, GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest, ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse } from "./task.js";
@@ -71,6 +71,7 @@ export type RequestByOperation = {
   switchSessionAgent: SwitchSessionAgentRequest;
   resumeSessionHistory: ResumeSessionHistoryRequest;
   deleteSession: DeleteSessionRequest;
+  getAgentRuntimeStatus: GetAgentRuntimeStatusRequest;
   createSkill: CreateSkillRequest;
   getSkill: GetSkillRequest;
   listSkills: ListSkillsRequest;
@@ -145,6 +146,7 @@ export type ResponseByOperation = {
   switchSessionAgent: SwitchSessionAgentResponse;
   resumeSessionHistory: ResumeSessionHistoryResponse;
   deleteSession: DeleteSessionResponse;
+  getAgentRuntimeStatus: GetAgentRuntimeStatusResponse;
   createSkill: CreateSkillResponse;
   getSkill: GetSkillResponse;
   listSkills: ListSkillsResponse;
@@ -614,6 +616,19 @@ export const endpoints = {
     responseType: "DeleteSessionResponse",
     responseMode: "unary",
     pathParams: [{ rustFieldName: "session_id", wireName: "sessionId" }],
+    queryParams: [],
+    hasJsonBody: false,
+  },
+  getAgentRuntimeStatus: {
+    operationName: "getAgentRuntimeStatus",
+    namespace: "agentRuntime",
+    memberName: "getStatus",
+    method: "GET",
+    pathTemplate: "/api/agent-runtime/status",
+    requestType: "GetAgentRuntimeStatusRequest",
+    responseType: "GetAgentRuntimeStatusResponse",
+    responseMode: "unary",
+    pathParams: [],
     queryParams: [],
     hasJsonBody: false,
   },

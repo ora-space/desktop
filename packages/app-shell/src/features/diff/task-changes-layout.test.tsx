@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createStubPlatform } from "../../test/stub-platform";
 import { TaskChangesLayout } from "./task-changes-layout";
-import { useTaskChangesNavigation } from "./task-changes-navigation";
+import { useTaskChangesNavigation } from "./task-changes-navigation-context";
 
 vi.mock("./task-diff-view", () => ({
   TaskDiffView: ({

@@ -68,7 +68,7 @@ Logging variables are documented in [Runtime Logging](runtime-logging.md).
 
 ## HTTP API
 
-Route paths come from the `ora-contracts` endpoint manifest constants, so a route and its generated client entry cannot drift apart. Path parameters are camelCase.
+Route paths come from shared `ora-contracts` path constants, while the generation-only endpoint catalog in `xtask` references those same constants for the generated client entry. Path parameters are camelCase.
 
 ### project
 
@@ -105,6 +105,10 @@ Route paths come from the `ora-contracts` endpoint manifest constants, so a rout
 - `POST /api/sessions/{sessionId}/agent`
 - `POST /api/sessions/{sessionId}/history/resume`
 - `DELETE /api/sessions/{sessionId}`
+
+### agentRuntime
+
+- `GET /api/agent-runtime/status`
 
 ### skill
 
@@ -158,9 +162,9 @@ Project branch responses separate the logical branch name, exact resolvable ref,
 
 ### Agent runtime
 
-Backend construction immediately attempts one supervised `acp` child per supported CLI, rooted at the user's home directory. Executable resolution is platform-specific: on Unix each CLI is read from its fixed per-user directory (`<home>/.opencode/bin/opencode`, `<home>/.nga/bin/nga`, `<home>/.codeagentcli/bin/codeagentcli`); on Windows it is resolved from `PATH` through `where.exe` on every retry generation.
+Backend construction immediately attempts one supervised `acp` child per supported CLI, rooted at the user's home directory. Executable resolution is platform-specific: on Unix each CLI is read from its fixed per-user directory (`<home>/.opencode/bin/opencode`, `<home>/.nga/bin/nga`, `<home>/.codeagentcli/bin/codeagentcli`, `<home>/.claude/bin/claude-agent-acp`, `<home>/.codex/bin/codex-acp`); on Windows it is resolved from `PATH` through `where.exe` on every retry generation.
 
-Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Warming a session calls `session/new` on the connection selected by `agentCli` and keeps it in memory, capturing the configuration options and the available-command catalog the handshake announces; attach persists it against its Task and returns that catalog. Updates emitted before the response reveals the private provider session id are temporarily buffered, then attached to the matching session route. Load calls `session/load` using that private id and the Task worktree `cwd`; the public Session payload never exposes it. The load response streams Ora's own recorded conversation rather than the agent's replay, which is drained and discarded. `POST /api/sessions/{sessionId}/agent` rebinds a live conversation to a different CLI without changing its identifier, and `POST /api/sessions/{sessionId}/history/resume` returns a session whose history writes failed to a writable state.
+Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Warming a session calls `session/new` on the connection selected by `agentCli` and keeps it in memory, capturing the configuration options and the available-command catalog the handshake announces; attach persists it against its Task and returns that catalog. Updates emitted before the response reveals the private provider session id are temporarily buffered, then attached to the matching session route. Load calls `session/load` using that private id and the Task worktree `cwd`; the public Session payload never exposes it. The load response streams Ora's own recorded conversation rather than the agent's replay, which is drained and discarded. `POST /api/sessions/{sessionId}/agent` rebinds a live conversation to a different CLI without changing its identifier, and `POST /api/sessions/{sessionId}/history/resume` returns a session whose history writes failed to a writable state. `GET /api/agent-runtime/status` reports each CLI's live ACP handshake status as ready, starting, or unavailable.
 
 Warm sessions are keyed partly by the caller's `clientId`, which matters here specifically: one server process serves every browser tab, and sharing a warm session between two tabs would let the first attach take the other's conversation.
 

@@ -131,36 +131,35 @@ export function RunHitlComposer({
     setInternalDrafts(next);
   }
 
-  const [localError, setLocalError] = useState<string | null>(null);
-  const values = request === null
-    ? {}
-    : drafts[request.id] ?? initialValues(request.schema.fields);
-
-  useEffect(() => {
+  // Derive the gate-aligned draft projection instead of writing it back in an
+  // effect: seed entries for newly opened gates and drop entries for closed
+  // ones, while keeping user edits in `drafts` untouched until the next write.
+  const effectiveDrafts = useMemo(() => {
     const next = { ...drafts };
-    let changed = false;
     for (const gate of gates) {
       if (next[gate.request.id] === undefined) {
         next[gate.request.id] = initialValues(gate.request.schema.fields);
-        changed = true;
       }
     }
     for (const id of Object.keys(next)) {
       if (!gates.some((gate) => gate.request.id === id)) {
         delete next[id];
-        changed = true;
       }
     }
-    if (changed) {
-      replaceDrafts(next);
-    }
-    // Intentionally sync when the open-gate set changes, not on every draft keystroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- drafts read for merge only
-  }, [gates]);
+    return next;
+  }, [drafts, gates]);
 
-  useEffect(() => {
+  const [localError, setLocalError] = useState<string | null>(null);
+  // Reset per-gate validation state through the documented render-adjust pattern
+  // rather than a state-syncing effect.
+  const [previousRequestId, setPreviousRequestId] = useState(request?.id);
+  if (request?.id !== previousRequestId) {
+    setPreviousRequestId(request?.id);
     setLocalError(null);
-  }, [request?.id]);
+  }
+  const values = request === null
+    ? {}
+    : effectiveDrafts[request.id] ?? initialValues(request.schema.fields);
 
   // Focus once when the surface opens or the active gate changes —not per keystroke.
   useEffect(() => {
@@ -176,7 +175,7 @@ export function RunHitlComposer({
     el.focus({ preventScroll: true });
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  }, [expanded, request?.id, primaryTextField?.name]);
+  }, [expanded, request, primaryTextField]);
 
   if (request === null) {
     return null;
@@ -184,8 +183,8 @@ export function RunHitlComposer({
 
   function setField(name: string, value: string): void {
     replaceDrafts({
-      ...drafts,
-      [request.id]: { ...(drafts[request.id] ?? values), [name]: value },
+      ...effectiveDrafts,
+      [request.id]: { ...(effectiveDrafts[request.id] ?? values), [name]: value },
     });
     setLocalError(null);
   }
@@ -216,7 +215,7 @@ export function RunHitlComposer({
 
   function onSelectOption(fieldName: string, optionValue: string): void {
     const next = { ...values, [fieldName]: optionValue };
-    replaceDrafts({ ...drafts, [request.id]: next });
+    replaceDrafts({ ...effectiveDrafts, [request.id]: next });
     setLocalError(null);
     if (!choiceOnly || gateBusy) {
       return;

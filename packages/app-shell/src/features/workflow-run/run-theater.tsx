@@ -9,7 +9,7 @@ import { RunTheaterActCard } from "./run-theater-act-card";
 import { RunTheaterParallelStage } from "./run-theater-parallel-stage";
 import { RunTheaterPathRail } from "./run-theater-path-rail";
 import { resolveTheaterFocus } from "./run-focus";
-import { isNodeWorking } from "./run-status-mark";
+import { isNodeWorking } from "./run-status-style";
 import { isTerminalRunStatus } from "./run-status-style";
 import {
   animateOverlayWidth,
@@ -300,7 +300,10 @@ export function RunTheater({
     if (!openInspectorOnMount) {
       return;
     }
-    openInspector();
+    // Defer one frame so the rail animates in after first paint instead of
+    // mutating panel state synchronously within the mount effect.
+    const frame = window.requestAnimationFrame(() => openInspector());
+    return () => window.cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, []);
 

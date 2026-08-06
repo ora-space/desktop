@@ -16,7 +16,7 @@ import {
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import { WorkflowNodeCardShell } from "../../workflow-node-chrome";
-import { useWorkflowConnectionState } from "./connection-state";
+import { useWorkflowConnectionState } from "./use-connection-state";
 import { WorkflowNodeParameterSummary } from "./node-parameter-summary";
 
 /** Renders one workflow card with left/right handles styled for the settings editor. */

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { localizeContractError } from "../../i18n/contract-error";
 import { useSubmitGraphWorkflowHitl } from "../../state/hooks/use-graph-workflow-runs";
 import { RunHitlComposer } from "./run-hitl-composer";
 import {
@@ -38,26 +40,24 @@ export function useTheaterHitl({
   onFocusNode,
 }: UseTheaterHitlParams): TheaterHitlController {
   const submitHitl = useSubmitGraphWorkflowHitl();
+  const { t } = useTranslation();
   const [hitlExpanded, setHitlExpanded] = useState(false);
   const [selectedHitlId, setSelectedHitlId] = useState<string | null>(null);
   const [hitlDrafts, setHitlDrafts] = useState<Record<string, Record<string, string>>>(
     {},
   );
-  const hitlSignatureRef = useRef<string>("");
   const hitlEngageTimerRef = useRef<number | null>(null);
-  const prevFocusHitlRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (hitlEngageTimerRef.current !== null) {
-      window.clearTimeout(hitlEngageTimerRef.current);
-      hitlEngageTimerRef.current = null;
-    }
-    hitlSignatureRef.current = "";
-    prevFocusHitlRef.current = null;
+  // Theater runs swap underneath this hook, so HITL-local state (selection,
+  // expansion, drafts) is reset through the documented render-adjust pattern
+  // rather than a state-syncing effect.
+  const [previousRunId, setPreviousRunId] = useState(run.id);
+  if (previousRunId !== run.id) {
+    setPreviousRunId(run.id);
     setSelectedHitlId(null);
     setHitlExpanded(false);
     setHitlDrafts({});
-  }, [run.id]);
+  }
 
   const openHitls = useMemo(() => listOpenHitls(run), [run]);
   const nodeTitleById = useMemo(
@@ -99,36 +99,42 @@ export function useTheaterHitl({
     return openHitls[0] ?? null;
   }, [openHitls, focusNodeId, run, selectedHitlId, primaryId]);
 
-  useEffect(() => {
-    const signature = openHitls.map((item) => item.id).sort().join("|");
-    if (signature === "") {
-      hitlSignatureRef.current = "";
-      if (hitlEngageTimerRef.current !== null) {
-        window.clearTimeout(hitlEngageTimerRef.current);
-        hitlEngageTimerRef.current = null;
-      }
+  const hitlSignature = useMemo(
+    () => openHitls.map((item) => item.id).sort().join("|"),
+    [openHitls],
+  );
+  // Reconcile selection with the open gate set. A run swap counts as a fresh
+  // gate set even when the signature is coincidentally identical, so the first
+  // gate is picked and auto-expansion follows the stage position.
+  const [previousSignature, setPreviousSignature] = useState("");
+  if (previousSignature !== hitlSignature || previousRunId !== run.id) {
+    const fresh = previousRunId !== run.id || previousSignature === "";
+    setPreviousSignature(hitlSignature);
+    if (hitlSignature === "") {
       setSelectedHitlId(null);
       setHitlExpanded(false);
       setHitlDrafts({});
-      return;
-    }
-    if (hitlSignatureRef.current === "") {
-      hitlSignatureRef.current = signature;
+    } else if (fresh) {
       setSelectedHitlId(openHitls[0]?.id ?? null);
       // Only auto-expand when the stage is already on a waiting act. If the
       // reader is on another card, keep the under-stage prompt collapsed.
       const stageOnWaitingGate = primaryId !== null
         && openHitls.some((item) => item.nodeId === primaryId);
       setHitlExpanded(stageOnWaitingGate);
-      return;
+    } else if (selectedHitlId === null
+      || !openHitls.some((item) => item.id === selectedHitlId)) {
+      setSelectedHitlId(openHitls[0]?.id ?? null);
     }
-    if (hitlSignatureRef.current !== signature) {
-      hitlSignatureRef.current = signature;
-      if (selectedHitlId === null || !openHitls.some((item) => item.id === selectedHitlId)) {
-        setSelectedHitlId(openHitls[0]?.id ?? null);
-      }
+  }
+
+  // A pending engage timer is only valid while its run/gate set is current;
+  // drop it when either changes. Pure ref bookkeeping, so it stays an effect.
+  useEffect(() => {
+    if (hitlEngageTimerRef.current !== null) {
+      window.clearTimeout(hitlEngageTimerRef.current);
+      hitlEngageTimerRef.current = null;
     }
-  }, [openHitls, selectedHitlId, primaryId]);
+  }, [run.id, hitlSignature]);
 
   useEffect(() => () => {
     if (hitlEngageTimerRef.current !== null) {
@@ -136,27 +142,25 @@ export function useTheaterHitl({
     }
   }, []);
 
-  useEffect(() => {
-    if (focusNodeId === null) {
-      prevFocusHitlRef.current = null;
-      return;
-    }
-    const gate = openHitls.find((item) => item.nodeId === focusNodeId);
-    const focusChanged = prevFocusHitlRef.current !== focusNodeId;
-    prevFocusHitlRef.current = focusNodeId;
-    if (gate === undefined) {
-      // Browsing a non-waiting act — collapse to the under-stage compact prompt
-      // so autofocus / engage cannot yank focus back onto the open gate.
-      if (focusChanged) {
+  // Move selection to the gate under the focused act and expand the composer
+  // there; browsing a non-waiting act collapses it. Keyed on focus changes via
+  // the render-adjust pattern.
+  const [previousFocusNodeId, setPreviousFocusNodeId] = useState<string | null>(null);
+  if (previousFocusNodeId !== focusNodeId) {
+    setPreviousFocusNodeId(focusNodeId);
+    if (focusNodeId !== null) {
+      const gate = openHitls.find((item) => item.nodeId === focusNodeId);
+      if (gate !== undefined) {
+        setSelectedHitlId(gate.id);
+        setHitlExpanded(true);
+      } else {
+        // Browsing a non-waiting act — collapse to the under-stage compact
+        // prompt so autofocus / engage cannot yank focus back onto the open
+        // gate.
         setHitlExpanded(false);
       }
-      return;
     }
-    setSelectedHitlId(gate.id);
-    if (focusChanged) {
-      setHitlExpanded(true);
-    }
-  }, [focusNodeId, openHitls]);
+  }
 
   function expandHitlForRequest(requestId: string): void {
     if (hitlEngageTimerRef.current !== null) {
@@ -213,6 +217,9 @@ export function useTheaterHitl({
     const selectedRequest = gates.some((gate) => gate.request.id === selectedHitl.id)
       ? selectedHitl
       : gates[0]!.request;
+    const submitError = submitHitl.error !== null
+      ? localizeContractError(submitHitl.error, t)
+      : null;
     return (
       <RunHitlComposer
         layout={embedded ? "embedded" : "overlay"}
@@ -243,9 +250,7 @@ export function useTheaterHitl({
         submittingRequestId={submitHitl.isPending
           ? (submitHitl.variables?.requestId ?? selectedRequest.id)
           : null}
-        submitError={submitHitl.error instanceof Error
-          ? submitHitl.error.message
-          : null}
+        submitError={submitError}
         accessory={accessory}
         onSubmit={async (payload) => {
           try {

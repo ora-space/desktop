@@ -135,6 +135,8 @@ export function createMemoryContractsClient(
           title: request.title,
           status: request.status as TaskStatus,
           workspaceMode: request.workspaceMode ?? "worktree",
+          type: "default",
+          workflowRunId: null,
         };
         state.tasks.push(task);
         return { task: structuredClone(task) };
@@ -227,7 +229,11 @@ export function createMemoryContractsClient(
           agentCli: request.agentCli,
         };
         state.sessions[index] = session;
-        return { session: structuredClone(session), availableCommands: [] };
+        return {
+          session: structuredClone(session),
+          availableCommands: [],
+          configOptions: structuredClone(state.configOptions),
+        };
       },
       resumeHistory: async (request) => {
         const index = requireRecordIndex(state.sessions, request.sessionId, "session");
@@ -344,6 +350,39 @@ export function createMemoryContractsClient(
     },
     gitIdentity: {
       get: async () => ({ name: "Prototype User", email: "prototype@ora.local" }),
+    },
+    agentRuntime: {
+      getStatus: async () => ({
+        statuses: [
+          { agentCli: "open_code", status: "ready" },
+          { agentCli: "nga", status: "ready" },
+          { agentCli: "code_agent_cli", status: "ready" },
+          { agentCli: "claude", status: "ready" },
+          { agentCli: "codex", status: "ready" },
+        ],
+      }),
+    },
+    workflow: {
+      create: async () => { throw new Error("workflow not implemented in memory client"); },
+      get: async () => { throw new Error("workflow not implemented in memory client"); },
+      list: async () => { throw new Error("workflow not implemented in memory client"); },
+      update: async () => { throw new Error("workflow not implemented in memory client"); },
+      delete: async () => { throw new Error("workflow not implemented in memory client"); },
+      getDraft: async () => { throw new Error("workflow not implemented in memory client"); },
+      updateDraft: async () => { throw new Error("workflow not implemented in memory client"); },
+      publish: async () => { throw new Error("workflow not implemented in memory client"); },
+      rollback: async () => { throw new Error("workflow not implemented in memory client"); },
+      activate: async () => { throw new Error("workflow not implemented in memory client"); },
+      listVersions: async () => { throw new Error("workflow not implemented in memory client"); },
+      getVersion: async () => { throw new Error("workflow not implemented in memory client"); },
+      deleteSnapshot: async () => { throw new Error("workflow not implemented in memory client"); },
+    },
+    workflowRun: {
+      create: async () => { throw new Error("workflowRun not implemented in memory client"); },
+      get: async () => { throw new Error("workflowRun not implemented in memory client"); },
+      list: async () => { throw new Error("workflowRun not implemented in memory client"); },
+      listNodeRuns: async () => { throw new Error("workflowRun not implemented in memory client"); },
+      delete: async () => { throw new Error("workflowRun not implemented in memory client"); },
     },
   };
 }

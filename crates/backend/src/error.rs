@@ -298,6 +298,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::TaskDiffCommentInvalid(EmptyErrorParams {}),
                 "task diff comment is invalid",
             ),
+            ApplicationError::TaskDiffCommentConflict { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::TaskDiffCommentConflict(EmptyErrorParams {}),
+                "task diff comment conflicts with stored state",
+            ),
             ApplicationError::SessionNotFound { .. } => (
                 ErrorClassification::NotFound,
                 PublicError::SessionNotFound(EmptyErrorParams {}),

@@ -326,6 +326,15 @@ test("omits standalone worktree operations from generated contracts", () => {
   assert.equal("deleteWorktree" in client, false);
 });
 
+test("exposes every generated endpoint in its declared namespace", () => {
+  const client = createContractsClient(recordingTransport([], {}));
+  const clientRecord = client as unknown as Record<string, Record<string, unknown>>;
+
+  for (const endpoint of Object.values(endpoints)) {
+    assert.equal(typeof clientRecord[endpoint.namespace]?.[endpoint.memberName], "function");
+  }
+});
+
 test("forwards call options through every unary client operation", async () => {
   const controller = new AbortController();
   let observedSignal: AbortSignal | undefined;

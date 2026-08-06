@@ -59,6 +59,28 @@ describe("createTauriTransport", () => {
     expect(invoke).toHaveBeenCalledWith("get_task_diff", { request });
   });
 
+  // Session operations the backend implements but the map omitted read back as
+  // "this platform cannot do that", which is indistinguishable from a
+  // deliberate exclusion — so the routes are asserted rather than assumed.
+  it.each([
+    ["switchSessionAgent", "switch_session_agent", { sessionId: "s1", agentCli: "claude" }],
+    ["resumeSessionHistory", "resume_session_history", { sessionId: "s1" }],
+  ] as const)("routes %s to its desktop command", async (operationName, command, request) => {
+    const invoke = vi.fn().mockResolvedValue({});
+    const transport = createTauriTransport(invoke, () => ({ onmessage: () => undefined }));
+
+    await transport.send({
+      operationName,
+      request,
+      method: "POST",
+      path: `/api/sessions/${request.sessionId}`,
+      body: request,
+      headers: {},
+    });
+
+    expect(invoke).toHaveBeenCalledWith(command, { request });
+  });
+
   it("rejects explicitly unsupported operations before invoking Rust", async () => {
     const invoke = vi.fn();
     const transport = createTauriTransport(invoke, () => ({ onmessage: () => undefined }));

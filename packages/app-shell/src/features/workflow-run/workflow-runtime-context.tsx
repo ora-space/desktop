@@ -1,9 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { WorkflowRuntime } from "@ora/workflow-runtime";
 import { createMemoryWorkflowRuntime } from "@ora/workflow-runtime/memory";
-
-const WorkflowRuntimeContext = createContext<WorkflowRuntime | null>(null);
+import { WorkflowRuntimeContext } from "./use-workflow-runtime";
 
 interface WorkflowRuntimeProviderProps {
   children: ReactNode;
@@ -43,13 +42,4 @@ export function WorkflowRuntimeProvider({
       {children}
     </WorkflowRuntimeContext.Provider>
   );
-}
-
-/** Active workflow runtime (host mounts + graph runs). */
-export function useWorkflowRuntime(): WorkflowRuntime {
-  const runtime = useContext(WorkflowRuntimeContext);
-  if (runtime === null) {
-    throw new Error("useWorkflowRuntime requires WorkflowRuntimeProvider");
-  }
-  return runtime;
 }

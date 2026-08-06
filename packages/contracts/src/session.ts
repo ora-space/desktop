@@ -10,7 +10,25 @@ import type { ToolCallUpdate } from "./acp/tool_call.js";
 /**
  * Identifies the shared CLI runtime selected for a provider-backed session.
  */
-export type AgentCli = "open_code" | "nga" | "code_agent_cli";
+export type AgentCli =
+  | "open_code"
+  | "nga"
+  | "code_agent_cli"
+  | "claude"
+  | "codex";
+
+/**
+ * Pairs one CLI identity with its current runtime detection status.
+ */
+export type AgentCliRuntimeStatus = {
+  agentCli: AgentCli;
+  status: AgentCliStatus;
+};
+
+/**
+ * Describes the live ACP handshake state of one application-scoped CLI runtime.
+ */
+export type AgentCliStatus = "ready" | "starting" | "unavailable";
 
 /**
  * Binds one warm session to its owning Task and persists the Ora record.
@@ -34,6 +52,18 @@ export type DeleteSessionRequest = { sessionId: string };
  * Returns the removed Ora session identifier without deleting provider history.
  */
 export type DeleteSessionResponse = { sessionId: string };
+
+/**
+ * Requests the live detection status of every application-scoped CLI runtime.
+ */
+export type GetAgentRuntimeStatusRequest = Record<symbol, never>;
+
+/**
+ * Returns the live detection status of every application-scoped CLI runtime.
+ */
+export type GetAgentRuntimeStatusResponse = {
+  statuses: Array<AgentCliRuntimeStatus>;
+};
 
 /**
  * Identifies which session to fetch.
@@ -198,14 +228,30 @@ export type StopSessionResponse = { session: Session };
 export type SwitchSessionAgentRequest = {
   sessionId: string;
   agentCli: AgentCli;
+  /**
+   * Identifies the client surface whose warm session this switch claims.
+   *
+   * The provider session the new CLI runs on is the one this client already
+   * warmed while its picker was showing that CLI's models, and warm entries
+   * are keyed by client. Carrying the same value here is what makes the
+   * switch claim that entry — including any model chosen on it — rather than
+   * build a second session the user never configured.
+   */
+  clientId: string;
 };
 
 /**
  * Returns the session rebound to its new CLI.
+ *
+ * The new CLI reports its own commands and configuration during the handshake
+ * that the switch performs, so both travel back with the rebound session. A
+ * client that only heard about the session would otherwise keep offering the
+ * previous CLI's models, which the new one cannot honour.
  */
 export type SwitchSessionAgentResponse = {
   session: Session;
   availableCommands: Array<AvailableCommand>;
+  configOptions: Array<SessionConfigOption>;
 };
 
 /**

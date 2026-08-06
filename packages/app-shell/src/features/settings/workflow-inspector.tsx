@@ -328,7 +328,7 @@ function AgentConfigurationFields({
   const selectedModel = configuredModel ?? {
     agentCli: config.executor.agentCli,
     modelId: config.executor.modelId,
-    label: `${AGENT_CLI_LABELS[config.executor.agentCli]} · ${config.executor.modelId}`,
+    label: `${AGENT_CLI_LABELS[config.executor.agentCli as AgentCli]} · ${config.executor.modelId}`,
   };
   const modelsForSelectedCli = capabilities.agentModels.filter(
     (model) => model.agentCli === config.executor.agentCli,
@@ -413,7 +413,7 @@ function AgentConfigurationFields({
             <span className="flex w-full min-w-0 items-center justify-between gap-2">
               <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left">
                 <ProviderLogo
-                  agentCli={config.executor.agentCli}
+                  agentCli={config.executor.agentCli as AgentCli}
                   className="size-3.5 shrink-0"
                 />
                 <span className="min-w-0 truncate">{selectedModelName}</span>
@@ -727,6 +727,6 @@ function InspectorField({
  * two-section menu shows the model name alone, matching chat.
  */
 function workflowModelDisplayName(model: WorkflowAgentModel): string {
-  const prefix = `${AGENT_CLI_LABELS[model.agentCli]} · `;
+  const prefix = `${AGENT_CLI_LABELS[model.agentCli as AgentCli]} · `;
   return model.label.startsWith(prefix) ? model.label.slice(prefix.length) : model.label;
 }

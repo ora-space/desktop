@@ -7,7 +7,7 @@ import {
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_WIDTH,
 } from "@ora/workflow-mock";
-import { useWorkflowConnectionState } from "./connection-state";
+import { useWorkflowConnectionState } from "./use-connection-state";
 
 /** Uses the same soft curve for a connection preview as for a committed edge. */
 export function WorkflowConnectionLine({

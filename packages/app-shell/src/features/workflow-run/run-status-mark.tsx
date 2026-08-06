@@ -8,7 +8,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { Badge, cn } from "@ora/ui";
-import { runStatusTone } from "./run-status-style";
+import { isNodeWorking, runStatusTone } from "./run-status-style";
 import type {
   GraphWorkflowNodeStatus,
   GraphWorkflowRunStatus,
@@ -16,11 +16,6 @@ import type {
 import "./theater-motion.css";
 
 type Status = GraphWorkflowRunStatus | GraphWorkflowNodeStatus;
-
-/** Node is actively executing or blocked on HITL—the only spinner-worthy states. */
-export function isNodeWorking(status: Status): boolean {
-  return status === "running" || status === "awaiting_input";
-}
 
 type TerminalStatus = Extract<
   Status,

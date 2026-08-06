@@ -119,12 +119,17 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     },
   });
 
-  // Reset local chrome when switching runs; mode is primed once below.
-  useEffect(() => {
+  // Reset local chrome when switching runs; mode is primed once below. State
+  // resets follow the render-adjust pattern; the live-pin sample is ref-only.
+  const [previousRunId, setPreviousRunId] = useState(runId);
+  if (previousRunId !== runId) {
+    setPreviousRunId(runId);
     setFocusNodeId(null);
     setConversationNodeId(null);
     setStopOpen(false);
     setOpenInspectorOnTheaterEnter(false);
+  }
+  useEffect(() => {
     focusStatusSampleRef.current = null;
   }, [runId]);
 
@@ -146,12 +151,9 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const stageFocusNodeId = resolveStageFocusNodeId(conversationNodeId, focusNodeId);
 
   // If anything drifted focus while a session is open, snap it back.
-  useEffect(() => {
-    if (conversationNodeId === null || focusNodeId === conversationNodeId) {
-      return;
-    }
+  if (conversationNodeId !== null && focusNodeId !== conversationNodeId) {
     setFocusNodeId(conversationNodeId);
-  }, [conversationNodeId, focusNodeId]);
+  }
 
   // Live pin release: only when the focused act itself just left live -> terminal.
   // History pins stay; an open node session is also sticky.
@@ -230,21 +232,15 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
 
   // Prime view once per selected run: pending/terminal -> Overview, live -> Theater.
   // Later status ticks must not steal Overview if the user chose it mid-run.
-  const primedRunIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (run === null || run.id !== runId) {
-      return;
-    }
-    if (primedRunIdRef.current === runId) {
-      return;
-    }
-    primedRunIdRef.current = runId;
+  const [primedRunId, setPrimedRunId] = useState<string | null>(null);
+  if (run !== null && run.id === runId && primedRunId !== runId) {
+    setPrimedRunId(runId);
     if (run.status === "running" || run.status === "awaiting_input") {
       setViewMode("theater");
     } else {
       setViewMode("overview");
     }
-  }, [run, runId]);
+  }
 
   // Esc from Theater returns to Overview.
   useEffect(() => {
@@ -271,11 +267,9 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
 
   // If the run finishes while the stop dialog is open, dismiss it so Confirm
   // (which preventDefault + early-returns when !canStop) cannot leave a stuck modal.
-  useEffect(() => {
-    if (stopOpen && !canStop && !cancelRun.isPending) {
-      setStopOpen(false);
-    }
-  }, [stopOpen, canStop, cancelRun.isPending]);
+  if (stopOpen && !canStop && !cancelRun.isPending) {
+    setStopOpen(false);
+  }
 
   function focusNode(nodeId: string): void {
     // Explicit path / carousel picks leave the session dock.

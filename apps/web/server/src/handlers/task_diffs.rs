@@ -37,6 +37,7 @@ pub struct TaskDiffCommentPath {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTaskDiffCommentBody {
+    scope: TaskDiffScope,
     anchor: TaskDiffCommentAnchor,
     body: String,
 }
@@ -131,6 +132,7 @@ pub async fn create_task_diff_comment(
     run_blocking(move || {
         backend.create_task_diff_comment(CreateTaskDiffCommentRequest {
             task_id: path.task_id,
+            scope: body.scope,
             anchor: body.anchor,
             body: body.body,
         })

@@ -71,6 +71,15 @@ export interface ChatState {
    */
   setConfigOptions(oraSessionId: string, configOptions: acp.SessionConfigOption[]): void;
   /**
+   * Adopts the options of an agent this session has just been rebound onto.
+   *
+   * Separate from `setConfigOptions` only in where it marks the transcript. A
+   * move is performed by the message that carries it, so that message is already
+   * in the thread and is the first the incoming agent answers — the mark belongs
+   * before it rather than after the whole exchange.
+   */
+  adoptSwitchedAgent(oraSessionId: string, configOptions: acp.SessionConfigOption[]): void;
+  /**
    * Applies one configuration selection — in practice the model — to a session.
    *
    * The agent's reply is authoritative rather than the requested value: an agent
@@ -150,7 +159,28 @@ export function createChatStore(
 
     setConfigOptions: (oraSessionId, configOptions) => {
       updateConversation(set, oraSessionId, (conversation) =>
-        withConfigOptions(conversation, configOptions, createId, now()),
+        withConfigOptions(
+          conversation,
+          configOptions,
+          createId,
+          now(),
+          conversation.turns.length,
+        ),
+      );
+    },
+
+    adoptSwitchedAgent: (oraSessionId, configOptions) => {
+      updateConversation(set, oraSessionId, (conversation) =>
+        withConfigOptions(
+          conversation,
+          configOptions,
+          createId,
+          now(),
+          // The turn that carries the move is already on screen and is the first
+          // one the incoming agent answers, so the mark belongs before it rather
+          // than after the exchange it introduced.
+          Math.max(conversation.turns.length - 1, 0),
+        ),
       );
     },
 
@@ -162,7 +192,13 @@ export function createChatStore(
           value,
         });
         updateConversation(set, oraSessionId, (conversation) => ({
-          ...withConfigOptions(conversation, configOptions, createId, now()),
+          ...withConfigOptions(
+            conversation,
+            configOptions,
+            createId,
+            now(),
+            conversation.turns.length,
+          ),
           error: null,
         }));
       } catch (error) {
@@ -892,17 +928,30 @@ function clearPendingPermissions(set: ChatStore["setState"], oraSessionId: strin
   }));
 }
 
-/** Adopts one reported option set, marking the transcript if it switched models. */
+/**
+ * Adopts one reported option set, marking the transcript if it switched models.
+ *
+ * `afterTurnCount` is where the mark belongs, which is not always the end of the
+ * thread: options reported for the turn currently being sent describe a change
+ * that takes effect *before* it, so the caller decides rather than this.
+ */
 function withConfigOptions(
   conversation: SessionConversation,
   configOptions: acp.SessionConfigOption[],
   createId: () => string,
   timestamp: number,
+  afterTurnCount: number,
 ): SessionConversation {
   return {
     ...conversation,
     configOptions,
-    modelChanges: recordModelChange(conversation, configOptions, createId, timestamp),
+    modelChanges: recordModelChange(
+      conversation,
+      configOptions,
+      createId,
+      timestamp,
+      afterTurnCount,
+    ),
   };
 }
 
@@ -910,16 +959,18 @@ function withConfigOptions(
  * Records a model switch in the transcript when one actually happened.
  *
  * Deliberately silent in three cases. There is nothing to divide before the
- * first turn, so choosing a model on an empty chat leaves no mark. The first
- * options a session reports establish the baseline rather than change it. And
- * repeated switches at the same point in the thread collapse into one line, so
- * cycling through the menu does not stack up dividers.
+ * first turn, so choosing a model on an empty chat — or moving agent before
+ * anything has been exchanged — leaves no mark. The first options a session
+ * reports establish the baseline rather than change it. And repeated switches at
+ * the same point in the thread collapse into one line, so cycling through the
+ * menu does not stack up dividers.
  */
 function recordModelChange(
   conversation: SessionConversation,
   configOptions: acp.SessionConfigOption[],
   createId: () => string,
   timestamp: number,
+  afterTurnCount: number,
 ): ChatModelChange[] {
   const previous = currentModel(conversation.configOptions);
   const next = currentModel(configOptions);
@@ -927,13 +978,13 @@ function recordModelChange(
     previous === null
     || next === null
     || previous.value === next.value
-    || conversation.turns.length === 0
+    || afterTurnCount === 0
   ) {
     return conversation.modelChanges;
   }
   const change: ChatModelChange = {
     id: createId(),
-    afterTurnCount: conversation.turns.length,
+    afterTurnCount,
     modelName: next.name,
     createdAt: timestamp,
   };

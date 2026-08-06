@@ -155,7 +155,10 @@ where
             Some(branch_name.clone()),
             WorktreeBaseline::recorded(provisioned.base_commit_id).map_err(|error| {
                 ApplicationError::TaskWorktreeProvisioner {
-                    source: crate::TaskWorktreeProvisionerError::operation_failed(error),
+                    source: crate::TaskWorktreeProvisionerError::operation_failed(
+                        "failed to record workflow run worktree baseline",
+                        error,
+                    ),
                 }
             })?,
             WorktreeActivity::Active,

@@ -139,6 +139,8 @@ pub enum ApplicationError {
     TaskDiffCommentNotFound { comment_id: String },
     #[error("invalid task diff comment: {message}")]
     TaskDiffCommentInvalid { message: String },
+    #[error("task diff comment conflicts with stored state: {message}")]
+    TaskDiffCommentConflict { message: String },
     #[error("task diff comment repository operation failed")]
     TaskDiffCommentRepository {
         #[source]
@@ -324,6 +326,12 @@ impl ApplicationError {
             TaskDiffCommentRepositoryError::OperationFailed(source) => {
                 Self::TaskDiffCommentRepository { source }
             }
+            TaskDiffCommentRepositoryError::Invalid(message) => {
+                Self::TaskDiffCommentInvalid { message }
+            }
+            TaskDiffCommentRepositoryError::Conflict(message) => {
+                Self::TaskDiffCommentConflict { message }
+            }
         }
     }
 
@@ -453,12 +461,16 @@ impl PartialEq for ApplicationError {
                 TaskBaseBranchNotFound { branch_name: left },
                 TaskBaseBranchNotFound { branch_name: right },
             ) => left == right,
-            (TaskDiff { .. }, TaskDiff { .. })
-            | (TaskDiffCommentRepository { .. }, TaskDiffCommentRepository { .. }) => true,
+            (TaskDiff { .. }, TaskDiff { .. }) => true,
             (
                 TaskDiffCommentInvalid { message: left },
                 TaskDiffCommentInvalid { message: right },
             ) => left == right,
+            (
+                TaskDiffCommentConflict { message: left },
+                TaskDiffCommentConflict { message: right },
+            ) => left == right,
+            (TaskDiffCommentRepository { .. }, TaskDiffCommentRepository { .. }) => true,
             (TaskDiffBaselineUnavailable, TaskDiffBaselineUnavailable) => true,
             (
                 TaskDiffTooLarge {

@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseDiff } from "react-diff-view";
-import {
-  createCommentAnchor,
-} from "./task-diff-view";
+import { createCommentAnchor } from "./task-diff-comment-anchor";
 import { countChanges, parseTaskDiffPatch } from "./task-diff-data";
 
 const PATCH = [

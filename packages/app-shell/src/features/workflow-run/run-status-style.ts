@@ -1,5 +1,10 @@
 import type { GraphWorkflowNodeStatus, GraphWorkflowRunStatus } from "@ora/workflow-runtime";
 
+/** Node is actively executing or blocked on HITL—the only spinner-worthy states. */
+export function isNodeWorking(status: GraphWorkflowRunStatus | GraphWorkflowNodeStatus): boolean {
+  return status === "running" || status === "awaiting_input";
+}
+
 /** Run-level terminal statuses (not node-level skipped). */
 export function isTerminalRunStatus(status: GraphWorkflowRunStatus): boolean {
   return (

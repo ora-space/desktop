@@ -1,10 +1,10 @@
 # Frontend Contract SDK
 
-`@ora/contracts` is the frontend's only view of the backend API. Rust owns the endpoint catalog and the DTO shapes; TypeScript owns the client and the transports.
+`@ora/contracts` is the frontend's only view of the backend API. Rust owns the DTO shapes and shared HTTP paths; TypeScript owns the client and the transports.
 
-## Rust-owned endpoint metadata
+## Generation-only endpoint metadata
 
-`ora-contracts` declares every frontend-facing HTTP operation as a `FrontendEndpoint`, exposed through `frontend_endpoints()`. Each entry carries:
+The `xtask` crate declares every frontend-facing HTTP operation as a `FrontendEndpoint` in namespace-scoped catalog modules. Its internal `frontend_endpoints()` function flattens those modules only while `cargo xtask export-contracts` renders the generated manifest. Each entry carries:
 
 - `operation_name` — the flat wire-level identifier (`createTask`)
 - `namespace` and `member_name` — where the operation sits on the generated client (`client.task.create`)
@@ -34,7 +34,7 @@ Both carry a do-not-edit header. Everything else in the package — `client.ts`,
 
 `createContractsClient(transport)` returns a namespaced client whose shape is derived from the generated manifest: `ContractsClient` maps each endpoint's `namespace`/`memberName` pair into a nested object type. Because `createContractsClient` returns an object literal checked against that derived type, adding a route in Rust and regenerating without updating `client.ts` fails `tsc` with a missing-property error. The hand-written client stays in compile-time lockstep with Rust.
 
-Namespaces are `project`, `projectWorkContext`, `task`, `session`, `agentRuntime`, `skill`, `agent`, `fileSystem`, and `gitIdentity`.
+Namespaces are `project`, `projectWorkContext`, `task`, `session`, `agentRuntime`, `skill`, `skillImport`, `agent`, `fileSystem`, `gitIdentity`, `workflow`, and `workflowRun`.
 
 For each call the client builds the URL from the endpoint's path parameters, appends declared query parameters, serializes the remaining fields as a JSON body when `hasJsonBody` is set, and then delegates execution to the injected transport. It hard-codes no runtime: the same client works in a browser, in Tauri, or in a test.
 

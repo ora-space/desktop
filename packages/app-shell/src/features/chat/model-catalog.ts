@@ -10,7 +10,15 @@ export const AGENT_CLI_LABELS: Record<AgentCli, string> = {
   open_code: "OpenCode",
   nga: "NGA",
   code_agent_cli: "CodeAgentCLI",
+  claude: "Claude Code",
+  codex: "Codex",
 };
 
 /** The order CLIs are offered in, independent of which one is active. */
-export const AGENT_CLI_ORDER: AgentCli[] = ["open_code", "nga", "code_agent_cli"];
+export const AGENT_CLI_ORDER: AgentCli[] = [
+  "open_code",
+  "nga",
+  "code_agent_cli",
+  "claude",
+  "codex",
+];

@@ -28,13 +28,7 @@ import { useUiStore, type DialogState, type DeleteTarget } from "../../state/sto
 import { useSettingsStore } from "../../state/stores/settings-store";
 import { localizeContractError } from "../../i18n/contract-error";
 import { useProjectBranches } from "../../state/hooks/use-project-branches";
-
-/** Derives a project name from either a Windows or POSIX directory path. */
-export function projectNameFromPath(rootPath: string): string {
-  const original = rootPath.trim();
-  const withoutTrailingSeparators = original.replace(/[\\/]+$/gu, "");
-  return withoutTrailingSeparators.split(/[\\/]/u).filter(Boolean).at(-1) ?? original;
-}
+import { projectNameFromPath } from "./workspace-dialogs-utils";
 
 /**
  * Hosts every workspace create/edit/delete dialog.
