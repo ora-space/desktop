@@ -246,6 +246,43 @@
   border-width: 1px;
 }
 
+.ora-diff-toolbar {
+  container-type: inline-size;
+  container-name: diff-toolbar;
+}
+
+@container diff-toolbar (max-width: 520px) {
+  .ora-diff-toolbar__summary-label,
+  .ora-diff-toolbar__scope-label,
+  .ora-diff-toolbar__commit-label,
+  .ora-diff-toolbar__view-label {
+    display: none;
+  }
+
+  .ora-diff-toolbar__commit-trigger {
+    gap: 0.25rem;
+    padding-inline: 0.5rem;
+  }
+
+  .ora-diff-toolbar__scope-trigger {
+    width: 2rem !important;
+    justify-content: center;
+    padding-inline: 0.25rem;
+  }
+}
+
+@container diff-toolbar (max-width: 360px) {
+  .ora-diff-toolbar__view-controls {
+    display: none;
+  }
+}
+
+@container diff-toolbar (max-width: 300px) {
+  .ora-diff-toolbar__scope-group {
+    display: none;
+  }
+}
+
 @keyframes ora-diff-progress {
   from {
     transform: translateX(-110%);

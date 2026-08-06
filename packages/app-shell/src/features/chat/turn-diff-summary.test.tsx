@@ -91,6 +91,28 @@ describe("turn diff summary", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("collapses and reopens the changed file list from its summary header", async () => {
+    const user = userEvent.setup();
+    render(
+      <AppI18nProvider>
+        <TurnDiffSummary
+          turn={turn([
+            editTool("edit-1", "src/main.ts", "const value = 1;\n", "const value = 2;\n"),
+          ])}
+        />
+      </AppI18nProvider>,
+    );
+
+    const fileButton = () => screen.queryByRole("button", { name: /src\/main\.ts/ });
+    expect(fileButton()).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /收起变更文件列表|Collapse changed files/ }));
+    expect(fileButton()).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /展开变更文件列表|Expand changed files/ }));
+    expect(fileButton()).toBeInTheDocument();
+  });
+
   it("shows a full-content OpenCode write when the adapter omits ACP diff content", async () => {
     const user = userEvent.setup();
     const openFile = vi.fn();

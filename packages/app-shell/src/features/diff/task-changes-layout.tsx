@@ -79,7 +79,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
     <div
       role="group"
       aria-label={t("diff.changes")}
-      className="flex h-8 shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-background/95 p-0.5 shadow-sm backdrop-blur"
+      className="ora-diff-toolbar__view-group flex h-8 shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-background/95 p-0.5 shadow-sm backdrop-blur"
     >
       {open && (
         <>
@@ -135,7 +135,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
         }}
       >
         <IconGitBranch />
-        {t("diff.changes")}
+        <span className="ora-diff-toolbar__view-label">{t("diff.changes")}</span>
       </Button>
       <Button
         size="sm"
@@ -151,7 +151,7 @@ export function TaskChangesLayout({ taskId, children }: TaskChangesLayoutProps) 
         }}
       >
         <IconFolderOpen />
-        {t("files.files")}
+        <span className="ora-diff-toolbar__view-label">{t("files.files")}</span>
       </Button>
     </div>
   );

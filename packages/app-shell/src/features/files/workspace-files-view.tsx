@@ -178,15 +178,16 @@ export function WorkspaceFilesView({ taskId, toolbar }: WorkspaceFilesViewProps)
           {t("files.search")}
         </Button>
         <div className="flex-1" />
-        {toolbar}
         <Button
           size="icon-sm"
           variant="ghost"
+          className="shrink-0"
           aria-label={t("files.refresh")}
           onClick={() => void refresh()}
         >
           <IconRefresh />
         </Button>
+        {toolbar}
       </header>
 
       <div className="min-h-0 flex-1">

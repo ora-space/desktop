@@ -30,12 +30,6 @@ import {
   AlertDialogTitle,
   Badge,
   Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -52,7 +46,6 @@ import {
   IconCode,
   IconFileDiff,
   IconGitBranch,
-  IconGitCommit,
   IconMessageCircle,
   IconRefresh,
   IconUpload,
@@ -64,6 +57,7 @@ import { useTaskDiff, useTaskDiffComments } from "../../state/hooks/use-task-dif
 import { buildCollapsedDiffSegments } from "./task-diff-collapse";
 import { countChanges, parseTaskDiffPatch } from "./task-diff-data";
 import { diffFilePath, TaskDiffFileTree } from "./task-diff-file-tree";
+import { TaskGitActions } from "./task-git-actions";
 
 interface TaskDiffViewProps {
   taskId: string;
@@ -95,11 +89,11 @@ export function TaskDiffView({
   toolbar,
   onFileTreeOpenChange,
 }: TaskDiffViewProps) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
   const client = useContractsClient();
   const queryClient = useQueryClient();
   const [scope, setScope] = useState<TaskDiffScope>("branch");
-  const [commitOpen, setCommitOpen] = useState(false);
+  const [gitActionsOpen, setGitActionsOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [pushOpen, setPushOpen] = useState(false);
   const [gitNotice, setGitNotice] = useState<string | null>(null);
@@ -116,6 +110,9 @@ export function TaskDiffView({
     [diffQuery.data],
   );
   const stats = useMemo(() => countChanges(files), [files]);
+  const changedFilesLabel = t("diff.changedFilesLabel", {
+    defaultValue: i18n.resolvedLanguage === "en-US" ? "changed files" : "个变更文件",
+  });
   const activeFilePath = files.length === 0
     ? ""
     : files.some((file) => diffFilePath(file) === selectedFilePath)
@@ -205,13 +202,14 @@ export function TaskDiffView({
   const commitChanges = useMutation({
     mutationFn: (message: string) => client.task.commitChanges({ taskId, message }),
     onSuccess: async (response) => {
-      setCommitOpen(false);
+      setGitActionsOpen(false);
       setCommitMessage("");
       setGitNotice(t("diff.commitSucceeded", { summary: response.summary }));
       setScope("committed");
       await queryClient.invalidateQueries({ queryKey: queryKeys.taskDiffs(taskId) });
     },
   });
+
   const pushBranch = useMutation({
     mutationFn: () => client.task.pushBranch({ taskId }),
     onSuccess: (response) => {
@@ -223,38 +221,43 @@ export function TaskDiffView({
     },
   });
 
+  const commitAndPush = async () => {
+    const message = commitMessage.trim();
+    if (message === "") return;
+    pushBranch.reset();
+    setGitNotice(null);
+    await commitChanges.mutateAsync(message);
+    await pushBranch.mutateAsync();
+  };
+
   const gitActions = (
-    <div className="flex h-8 items-center gap-0.5 rounded-lg border border-border/70 bg-background p-0.5 shadow-xs">
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-7 px-2.5"
-        disabled={commitChanges.isPending || pushBranch.isPending}
-        onClick={() => {
+    <TaskGitActions
+      open={gitActionsOpen}
+      message={commitMessage}
+      additions={stats.additions}
+      deletions={stats.deletions}
+      pending={commitChanges.isPending || pushBranch.isPending}
+      onOpenChange={(open) => {
+        if (open) {
           commitChanges.reset();
-          setGitNotice(null);
-          setCommitOpen(true);
-        }}
-      >
-        <IconGitCommit />
-        {t("diff.commit")}
-      </Button>
-      <span className="h-4 w-px bg-border/70" aria-hidden="true" />
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-7 px-2.5"
-        disabled={commitChanges.isPending || pushBranch.isPending}
-        onClick={() => {
           pushBranch.reset();
           setGitNotice(null);
-          setPushOpen(true);
-        }}
-      >
-        <IconUpload />
-        {t("diff.push")}
-      </Button>
-    </div>
+        }
+        setGitActionsOpen(open);
+      }}
+      onMessageChange={setCommitMessage}
+      onCommit={() => {
+        setGitNotice(null);
+        void commitChanges.mutateAsync(commitMessage.trim());
+      }}
+      onCommitAndPush={() => void commitAndPush()}
+      onPush={() => {
+        pushBranch.reset();
+        setGitNotice(null);
+        setGitActionsOpen(false);
+        setPushOpen(true);
+      }}
+    />
   );
 
   const refresh = async () => {
@@ -302,15 +305,16 @@ export function TaskDiffView({
       aria-busy={diffQuery.isFetching}
     >
       <header
-        className="flex min-h-12 shrink-0 flex-nowrap items-center gap-2 overflow-x-auto border-b border-border px-3 py-2 sm:px-4"
+        className="ora-diff-toolbar flex min-h-12 min-w-0 shrink-0 flex-nowrap items-center gap-2 overflow-hidden border-b border-border px-3 py-2 sm:px-4"
       >
-        <div className="flex min-w-0 items-center gap-2">
-          <IconCode className="size-4 text-muted-foreground" />
-          <span className="text-xs font-semibold">{t("diff.changedFiles", { count: files.length })}</span>
+        <div className="ora-diff-toolbar__summary flex shrink-0 items-center gap-2 whitespace-nowrap">
+          <span className="text-xs font-semibold">{files.length}</span>
+          <span className="ora-diff-toolbar__summary-label text-xs font-semibold">{changedFilesLabel}</span>
           <span className="text-xs font-medium text-emerald-600">+{stats.additions}</span>
           <span className="text-xs font-medium text-red-600">−{stats.deletions}</span>
         </div>
-        <div className="flex h-8 items-center gap-0.5 rounded-lg bg-muted/50 p-0.5">
+        {gitActions}
+        <div className="ora-diff-toolbar__scope-group flex h-8 shrink-0 items-center gap-0.5 rounded-lg bg-muted/50 p-0.5">
           <Select
             value={scope}
             onValueChange={(value) => {
@@ -320,11 +324,11 @@ export function TaskDiffView({
             }}
           >
             <SelectTrigger
-              className="h-7 w-28 border-0 bg-transparent px-2 text-xs shadow-none hover:bg-background/70"
+              className="ora-diff-toolbar__scope-trigger h-7 w-20 gap-0.5 border-0 bg-transparent px-1 text-xs shadow-none hover:bg-background/70"
               aria-label={t("diff.scope")}
             >
               <IconGitBranch className="size-3.5 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate text-left">
+              <span className="ora-diff-toolbar__scope-label min-w-0 flex-1 truncate text-left">
                 {t(`diff.scope${scope[0]!.toUpperCase()}${scope.slice(1)}`)}
               </span>
             </SelectTrigger>
@@ -339,7 +343,7 @@ export function TaskDiffView({
           <Button
             size="icon-sm"
             variant="ghost"
-            className="size-7"
+            className="ora-diff-toolbar__refresh size-7"
             aria-label={t("diff.refresh")}
             onClick={() => void refresh()}
           >
@@ -347,8 +351,7 @@ export function TaskDiffView({
           </Button>
         </div>
         <div className="flex-1" />
-        {gitActions}
-        {toolbar}
+        <div className="ora-diff-toolbar__view-controls shrink-0">{toolbar}</div>
       </header>
       {diffQuery.isFetching && (
         <div
@@ -475,15 +478,6 @@ export function TaskDiffView({
           </ResizablePanelGroup>
         )}
       </div>
-      <CommitChangesDialog
-        open={commitOpen}
-        message={commitMessage}
-        pending={commitChanges.isPending}
-        error={commitChanges.error}
-        onOpenChange={setCommitOpen}
-        onMessageChange={setCommitMessage}
-        onCommit={() => commitChanges.mutateAsync(commitMessage)}
-      />
       <PushBranchDialog
         open={pushOpen}
         pending={pushBranch.isPending}
@@ -498,61 +492,6 @@ export function TaskDiffView({
 /** Normalizes provider and Git path styles before matching a chat file to the task patch. */
 function normalizeDiffPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.?\//, "");
-}
-
-interface CommitChangesDialogProps {
-  open: boolean;
-  message: string;
-  pending: boolean;
-  error: Error | null;
-  onOpenChange: (open: boolean) => void;
-  onMessageChange: (message: string) => void;
-  onCommit: () => Promise<unknown>;
-}
-
-/** Collects an explicit commit message before staging and committing task changes. */
-function CommitChangesDialog({
-  open,
-  message,
-  pending,
-  error,
-  onOpenChange,
-  onMessageChange,
-  onCommit,
-}: CommitChangesDialogProps) {
-  const { t } = useTranslation();
-  return (
-    <Dialog open={open} onOpenChange={(nextOpen) => !pending && onOpenChange(nextOpen)}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t("diff.commitDialogTitle")}</DialogTitle>
-          <DialogDescription>{t("diff.commitDialogDescription")}</DialogDescription>
-        </DialogHeader>
-        <Textarea
-          autoFocus
-          rows={3}
-          value={message}
-          onChange={(event) => onMessageChange(event.target.value)}
-          placeholder={t("diff.commitMessagePlaceholder")}
-          aria-label={t("diff.commitMessage")}
-          disabled={pending}
-          className="resize-none"
-        />
-        {error !== null && <p className="text-xs text-destructive">{error.message}</p>}
-        <DialogFooter>
-          <Button variant="ghost" disabled={pending} onClick={() => onOpenChange(false)}>
-            {t("common.cancel")}
-          </Button>
-          <Button
-            disabled={pending || message.trim() === ""}
-            onClick={() => void onCommit()}
-          >
-            <IconGitCommit />{pending ? t("diff.committing") : t("diff.commit")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 interface PushBranchDialogProps {
@@ -622,6 +561,7 @@ function TaskDiffFile({
   mutationPending,
 }: TaskDiffFileProps) {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(true);
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(() => new Set());
   const fileStats = countChanges([file]);
   const renderSegments = useMemo(
@@ -694,21 +634,33 @@ function TaskDiffFile({
 
   return (
     <article className="bg-background">
-      <header className="sticky top-0 z-10 flex min-h-10 items-center gap-2 border-b border-border/60 bg-background/95 px-2 py-2 backdrop-blur">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-violet-500/12 text-violet-700 ring-1 ring-inset ring-violet-500/15 dark:text-violet-300">
-          <IconFileDiff className="size-3.5" />
-        </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={displayPath(file)}>
-          {displayPath(file)}
-        </span>
-        <span className="shrink-0 text-xs tabular-nums text-emerald-600">
-          +{fileStats.additions}
-        </span>
-        <span className="shrink-0 text-xs tabular-nums text-red-600">
-          −{fileStats.deletions}
-        </span>
+      <header className="sticky top-0 z-10 border-b border-border/60 bg-background/95 backdrop-blur">
+        <button
+          type="button"
+          className="flex min-h-10 w-full items-center gap-2 px-2 py-2 text-left outline-none transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          aria-expanded={expanded}
+          aria-label={t(expanded ? "diff.collapseFile" : "diff.expandFile", { path: displayPath(file) })}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <IconChevronDown
+            className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`}
+            aria-hidden="true"
+          />
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-violet-500/12 text-violet-700 ring-1 ring-inset ring-violet-500/15 dark:text-violet-300">
+            <IconFileDiff className="size-3.5" />
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-xs" title={displayPath(file)}>
+            {displayPath(file)}
+          </span>
+          <span className="shrink-0 text-xs tabular-nums text-emerald-600">
+            +{fileStats.additions}
+          </span>
+          <span className="shrink-0 text-xs tabular-nums text-red-600">
+            −{fileStats.deletions}
+          </span>
+        </button>
       </header>
-      {file.hunks.length === 0 ? (
+      {expanded && (file.hunks.length === 0 ? (
         <div className="px-4 py-8 text-center text-xs text-muted-foreground">
           {file.isBinary ? t("diff.binary") : t("diff.metadataOnly")}
         </div>
@@ -765,7 +717,7 @@ function TaskDiffFile({
             )}
           </Diff>
         </div>
-      )}
+      ))}
     </article>
   );
 }
