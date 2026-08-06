@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 import { IconArrowUp, IconLoader2, IconPhoto, IconPlayerStop, IconPlus, IconX } from "@tabler/icons-react";
 import { Button, Textarea } from "@ora/ui";
@@ -86,6 +86,11 @@ export function Composer({
   const composerRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
+  const leftControlsRef = useRef<HTMLDivElement>(null);
+  const rightControlsRef = useRef<HTMLDivElement>(null);
+  const fullRightControlsWidthRef = useRef<number | null>(null);
+  const [showModelSelector, setShowModelSelector] = useState(true);
   const actionOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const actionMenuId = useId();
   const pendingFileContext = useComposerFileContextStore((state) =>
@@ -256,6 +261,51 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value]);
 
+  // Hide the model picker only when the footer cannot fit both control groups.
+  // The stored width lets the check continue to work after the picker is hidden.
+  useLayoutEffect(() => {
+    const footer = footerRef.current;
+    const leftControls = leftControlsRef.current;
+    const rightControls = rightControlsRef.current;
+    if (!footer || !leftControls || !rightControls) return;
+
+    const updateModelVisibility = () => {
+      const footerWidth = footer.clientWidth;
+      const rightControlsWidth = rightControls.getBoundingClientRect().width;
+      if (footerWidth === 0 || rightControlsWidth === 0) return;
+
+      if (showModelSelector) {
+        fullRightControlsWidthRef.current = rightControlsWidth;
+      }
+
+      const requiredRightWidth = showModelSelector
+        ? rightControlsWidth
+        : fullRightControlsWidthRef.current;
+      if (requiredRightWidth === null) return;
+
+      const leftControlsRect = leftControls.getBoundingClientRect();
+      const rightControlsRect = rightControls.getBoundingClientRect();
+      const footerGap = Number.parseFloat(getComputedStyle(footer).columnGap) || 0;
+      const leftControlsWidth = Math.max(leftControls.scrollWidth, leftControlsRect.width);
+      const doesOverflow =
+        leftControls.scrollWidth > leftControls.clientWidth + 1
+        || leftControlsRect.right > rightControlsRect.left + 1;
+      const doesNotFit = leftControlsWidth + footerGap + requiredRightWidth > footerWidth + 1;
+      const nextVisibility = !doesOverflow && !doesNotFit;
+
+      setShowModelSelector((current) => current === nextVisibility ? current : nextVisibility);
+    };
+
+    updateModelVisibility();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(updateModelVisibility);
+    observer.observe(footer);
+    observer.observe(leftControls);
+    observer.observe(rightControls);
+    return () => observer.disconnect();
+  }, [showModelSelector]);
+
   useEffect(() => {
     if (!showActionMenu) return;
     const safeIndex = Math.min(selectedActionIndex, visibleActions.length - 1);
@@ -344,8 +394,8 @@ export function Composer({
           // fill would read as a grey block floating inside the card.
           className="min-h-14 max-h-[200px] resize-none rounded-none border-0 bg-transparent px-2 py-1 text-[15px] leading-6 shadow-none focus-visible:ring-0 disabled:bg-transparent"
         />
-        <div className="flex min-h-8 items-center justify-between gap-2 pt-0.5">
-          <div className="flex min-w-0 items-center gap-1">
+        <div ref={footerRef} className="flex min-h-8 items-center justify-between gap-2 pt-0.5">
+          <div ref={leftControlsRef} className="flex min-w-0 items-center gap-1">
             <input
               ref={fileInputRef}
               type="file"
@@ -380,8 +430,8 @@ export function Composer({
             <PermissionSelector disabled={disabled} />
             <WorkflowToggle disabled={disabled} />
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <ModelSelector disabled={disabled} />
+          <div ref={rightControlsRef} className="flex shrink-0 items-center gap-2">
+            {showModelSelector && <ModelSelector disabled={disabled} />}
             <Button
               size="icon"
               // A live turn always stops on click, whether it is still starting up
