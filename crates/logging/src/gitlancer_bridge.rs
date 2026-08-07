@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn log_command_emits_safe_config_intent() {
         let buffer = SharedBuffer::default();
-        let (dispatch, _guard) = build_dispatch(
+        let (dispatch, guard) = build_dispatch(
             &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
             buffer.make_writer(),
         )
@@ -120,6 +120,8 @@ mod tests {
                 "git config --global --get user.name",
             );
         });
+        drop(dispatch);
+        drop(guard);
 
         let events = buffer.json_lines();
         assert_eq!(events.len(), 1);
@@ -149,7 +151,7 @@ mod tests {
     #[test]
     fn log_result_emits_info_on_success() {
         let buffer = SharedBuffer::default();
-        let (dispatch, _guard) = build_dispatch(
+        let (dispatch, guard) = build_dispatch(
             &LoggingConfig::new(LogLevel::Info, LogOutput::Stdout, chrono_tz::UTC),
             buffer.make_writer(),
         )
@@ -158,6 +160,8 @@ mod tests {
         with_default(&dispatch, || {
             OraGitlancerLogger.log_result(42, true, Some(0));
         });
+        drop(dispatch);
+        drop(guard);
 
         let events = buffer.json_lines();
         assert_eq!(events.len(), 1);
@@ -171,7 +175,7 @@ mod tests {
     #[test]
     fn log_result_emits_error_on_failure() {
         let buffer = SharedBuffer::default();
-        let (dispatch, _guard) = build_dispatch(
+        let (dispatch, guard) = build_dispatch(
             &LoggingConfig::new(LogLevel::Error, LogOutput::Stdout, chrono_tz::UTC),
             buffer.make_writer(),
         )
@@ -180,6 +184,8 @@ mod tests {
         with_default(&dispatch, || {
             OraGitlancerLogger.log_result(0, false, Some(1));
         });
+        drop(dispatch);
+        drop(guard);
 
         let events = buffer.json_lines();
         assert_eq!(events.len(), 1);
@@ -224,6 +230,20 @@ mod tests {
             SharedBufferHandle {
                 bytes: self.bytes.clone(),
             }
+        }
+    }
+
+    /// Appends formatted log bytes directly into the shared buffer for non-blocking sink tests.
+    impl Write for SharedBufferWriter {
+        /// Appends one formatted chunk to the shared in-memory capture buffer.
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        /// Completes the in-memory write contract without additional synchronization.
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
         }
     }
 
