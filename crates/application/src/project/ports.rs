@@ -3,17 +3,17 @@ use ora_domain::{Project, ProjectId};
 use std::path::Path;
 use thiserror::Error;
 
-/// Describes one logical branch and the exact local or remote-tracking ref Git should resolve.
+/// Describes one logical branch and the exact local ref Git should resolve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchReference {
     pub name: String,
     pub ref_name: String,
 }
 
-/// Supplies refreshed Git branches without coupling project use cases to a Git implementation.
+/// Supplies local Git branches without coupling project use cases to a Git implementation.
 ///
-/// Implementations are expected to return resolvable ref names and to apply their own
-/// freshness policy before exposing branches to the application layer.
+/// Implementations are expected to return resolvable local ref names without changing
+/// repository state while exposing branches to the application layer.
 pub trait BranchLister {
     /// Lists selectable branch references for the repository rooted at the supplied path.
     fn list_branches(

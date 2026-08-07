@@ -145,7 +145,7 @@ impl ProjectApi {
     }
 }
 
-/// Adapts Gitlancer's refreshed worktree bases to the application branch-listing port.
+/// Adapts Gitlancer's local worktree bases to the application branch-listing port.
 #[derive(Debug, Clone, Copy)]
 struct GitBranchLister;
 

@@ -57,7 +57,7 @@ where
     WorktreeRepositoryPort: WorktreeRepository,
     BranchListerPort: BranchLister,
 {
-    /// Lists refreshed branch refs and replaces Ora-managed branch labels with task titles.
+    /// Lists local branch refs and replaces Ora-managed branch labels with task titles.
     pub fn handle(
         &self,
         request: ListProjectBranchesRequest,

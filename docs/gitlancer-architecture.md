@@ -38,7 +38,7 @@ It exists so upper layers can inject a fake runner in tests, record commands for
 
 Exposes the typed use cases Ora calls directly — repository discovery, worktree discovery and lifecycle, branch read and lifecycle, add/commit, diff, push, status, and global identity. Each takes a typed request and returns a typed response, which keeps option growth manageable and produces better call boundaries for agent orchestration.
 
-Worktree-base discovery is a separate branch read path because it has network semantics: it fetches `upstream`, or falls back to `origin`, then combines remote-tracking refs with local-only branches while preferring the refreshed remote ref for duplicate logical names.
+Worktree-base discovery is a separate local branch read path because worktree selection must not have network or repository-state side effects.
 
 ### `parse`
 
@@ -95,7 +95,7 @@ Three resolution paths exist:
 
 - `list_branches` returns each local branch as a `BranchName`.
 - `diff` returns a full-context unified patch for branch, unstaged, staged, or committed scopes. Untracked files are rendered without changing the caller's index, and output is bounded before it enters application memory.
-- `list_worktree_bases` fetches the preferred remote and returns remote-only plus local-only bases as `WorktreeBase` values. `resolve_worktree_base_commit` refreshes again, validates the selected ref, and resolves it to an immutable `CommitId`.
+- `list_worktree_bases` returns local `refs/heads` bases as `WorktreeBase` values. `resolve_worktree_base_commit` resolves the selected local ref directly to an immutable `CommitId`.
 - `status` returns one `StatusEntry` per porcelain-v2 record, from `git status --porcelain=v2 -z`.
 - `commit` returns the resulting `HEAD` commit id and the latest commit summary.
 - `push_branch` publishes the checked-out branch to `origin` with `GitIntent::Network` and prompts disabled.
@@ -178,7 +178,7 @@ Command telemetry is opt-in through `gitlancer::logging::register`; `ora-logging
 gitlancer relies on stable machine-readable outputs:
 
 - `git worktree list --porcelain` — repository discovery, worktree listing, and worktree resolution
-- `git for-each-ref` plus `git remote` and `git fetch` — refreshed worktree-base discovery across local and preferred-remote refs
+- `git for-each-ref refs/heads` — local worktree-base discovery without remote or repository-state side effects
 - `git rev-parse <ref>^{commit}` — immutable worktree-base resolution
 - `git status --porcelain=v2 -z` — status entries
 - `git rev-parse HEAD` and `git log -1 --pretty=%s` — commit id and summary after a commit
@@ -217,4 +217,4 @@ gitlancer is tested at three levels:
 2. Fake-runner tests for command assembly and option handling.
 3. Real Git integration tests for multi-worktree scenarios.
 
-Priority integration scenarios: open a repository from a nested directory, list main and linked worktrees, discover and resolve refreshed remote worktree bases, create branches and worktrees at explicit commits, add and commit from a linked worktree, detect worktree mismatch, parse `status --porcelain=v2 -z`, and handle linked-worktree `.git` indirection correctly.
+Priority integration scenarios: open a repository from a nested directory, list main and linked worktrees, discover and resolve local worktree bases, create branches and worktrees at explicit commits, add and commit from a linked worktree, detect worktree mismatch, parse `status --porcelain=v2 -z`, and handle linked-worktree `.git` indirection correctly.

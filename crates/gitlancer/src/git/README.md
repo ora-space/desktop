@@ -7,7 +7,7 @@ This module exposes the operations callers perform through `Git<R: GitRunner>` a
 - Repository operations discover a Git root, open an already validated repository, and list its worktrees.
 - Worktree operations resolve by path or branch and create or delete linked worktrees with explicit deletion modes.
 - Branch operations list, validate, create, and delete local branches with checked or forced semantics.
-- Worktree-base operations refresh the preferred remote, combine it with local refs, and resolve a selected base to an immutable commit.
+- Worktree-base operations list local refs and resolve a selected base to an immutable commit without network or repository-state side effects.
 - Diff operations produce standard unified patches for branch, unstaged, staged, and committed scopes, including untracked files without modifying the caller's index.
 - Commit operations stage `RepoRelativePath` values, create commits without GPG signing, and return typed commit metadata.
 - Push operations publish the verified checked-out branch to its default remote without enabling credential prompts.

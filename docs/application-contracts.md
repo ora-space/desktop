@@ -75,7 +75,7 @@ The handler set is intentionally narrower than full CRUD per entity, because som
 Notable consequences:
 
 - There is no delete handler for `project` or `task`. Aggregate deletion is a transactional cascade owned by `ora-backend` and `ora-db`, because it has to reject running descendants and update several tables atomically.
-- `ListProjectBranchesHandler` joins refreshed Git refs with project-owned task and worktree records so an Ora-managed branch keeps its resolvable ref while displaying the owning task title.
+- `ListProjectBranchesHandler` joins local Git refs with project-owned task and worktree records so an Ora-managed branch keeps its resolvable ref while displaying the owning task title.
 - Session creation, load, prompt, permission response, cancellation, stop, agent switching, and history recording belong to the backend agent runtime, not to `ora-application`. The session module supplies only the persistence-facing reads and soft deletion.
 - `worktree` has no handlers or transport contracts at all. Worktree records are internal metadata coordinated by the task module.
 - `task_diff` owns review use cases but not workspace selection. Backend composition resolves the task's live cwd and supplies the fixed baseline for isolated worktrees or the current `HEAD` for project-root tasks.
@@ -99,7 +99,7 @@ Bootstrap, migration, state-transition, and secondary-cleanup events remain inde
 - `UpdateTaskRequest` cannot change project ownership, and task updates preserve the existing worktree association.
 - Project and Task deletion soft-delete the complete Ora-owned aggregate in one SQLite transaction. A running Session rejects the operation with `resource_in_use`; stopped children are cascaded. These paths never call Git and never delete provider-owned ACP history, but they do remove the session history Ora itself recorded — see [ACP Agent Runtime](agent-runtime.md).
 - Task creation resolves the requested project's Git root at creation time. Deletion changes Ora database records only and deliberately leaves the linked Git worktree and its branch untouched.
-- Worktree task creation fetches `upstream`, or falls back to `origin`, before resolving the selected base ref to an immutable commit. Refreshed remote refs take precedence over stale same-named local branches, while local-only branches remain selectable.
+- Worktree task creation resolves the selected local base ref to an immutable commit. Branch listing and creation do not fetch or merge remote-tracking refs.
 - Worktree paths are composed only when creating a new worktree. Existing paths are resolved from the persisted branch name and Git's authoritative metadata, never reconstructed from the configured creation root.
 - Isolated task diffs compare against the worktree creation commit; project-root task diffs resolve `HEAD` on every read so external edits appear without mutating a persisted baseline. `diffId` includes the complete patch and rejects comments anchored to an older snapshot.
 - Workspace file paths are validated as relative paths, canonicalized before containment checks, and returned with slash separators. The filesystem crate is read-only, bounds file reads and search output, and reports native watcher changes as cache-invalidating batches. See [Task Workspace Files](task-workspace-files.md).

@@ -66,7 +66,7 @@ pub struct ListProjectBranchesRequest {
     pub project_id: String,
 }
 
-/// Returns refreshed remote branches plus local-only branches that can seed a new worktree.
+/// Returns local branches that can seed a new worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "project.ts")]

@@ -1,241 +1,125 @@
-use std::collections::BTreeMap;
-
 use crate::domain::refs::{BranchName, CommitId};
 use crate::domain::repo::Repository;
-use crate::error::{DomainError, GitlancerError};
+use crate::error::{DomainError, GitExecError, GitlancerError};
 use crate::exec::command::{GitCommand, GitIntent};
 use crate::exec::env::GitEnv;
 use crate::exec::runner::GitRunner;
 use crate::git::Git;
 
-const UPSTREAM_REMOTE: &str = "upstream";
-const ORIGIN_REMOTE: &str = "origin";
-
-/// Identifies a selectable worktree base without conflating its display name with its Git ref.
+/// Identifies a selectable local branch without conflating its display name with its Git ref.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorktreeBase {
-    Local {
-        branch_name: BranchName,
-    },
-    Remote {
-        remote_name: String,
-        branch_name: BranchName,
-    },
+    Local { branch_name: BranchName },
 }
 
 impl WorktreeBase {
-    /// Returns the logical branch name shared by local and remote-tracking refs.
+    /// Returns the branch name shown to callers and used when resolving the local ref.
     pub fn branch_name(&self) -> &BranchName {
         match self {
-            Self::Local { branch_name } | Self::Remote { branch_name, .. } => branch_name,
+            Self::Local { branch_name } => branch_name,
         }
     }
 
-    /// Returns the unambiguous ref spelling that Git should resolve for this base.
+    /// Returns the local ref spelling that Git should resolve for this base.
     pub fn reference_name(&self) -> String {
-        match self {
-            Self::Local { branch_name } => branch_name.as_str().to_string(),
-            Self::Remote {
-                remote_name,
-                branch_name,
-            } => format!("{remote_name}/{}", branch_name.as_str()),
-        }
+        self.branch_name().as_str().to_string()
     }
 }
 
-/// Carries the repository whose current local and preferred-remote bases should be listed.
+/// Carries the repository whose local branch bases should be listed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListWorktreeBasesRequest<'a> {
     pub repository: &'a Repository,
 }
 
-/// Returns one preferred ref per logical branch name so callers never see stale local duplicates.
+/// Returns the local branch refs available as worktree bases.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListWorktreeBasesResponse {
     pub bases: Vec<WorktreeBase>,
 }
 
-/// Carries the exact worktree-base ref that should be refreshed and resolved.
+/// Carries the selected local branch ref that should be resolved to an immutable commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveWorktreeBaseCommitRequest<'a> {
     pub repository: &'a Repository,
     pub reference_name: &'a BranchName,
 }
 
-/// Returns the immutable commit referenced by a freshly refreshed worktree base.
+/// Returns the immutable commit referenced by a local worktree base.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveWorktreeBaseCommitResponse {
     pub commit_id: CommitId,
 }
 
 impl<R: GitRunner> Git<R> {
-    /// Fetches the preferred remote and merges its branches with local-only branches.
+    /// Lists only local branch refs so opening the selector never changes repository state or needs a network.
     pub fn list_worktree_bases(
         &self,
         request: ListWorktreeBasesRequest<'_>,
     ) -> Result<ListWorktreeBasesResponse, GitlancerError> {
-        let remote_name = self.preferred_base_remote(request.repository)?;
-        if let Some(remote_name) = remote_name.as_deref() {
-            self.fetch_base_remote(request.repository, remote_name)?;
-        }
-
-        let output = self.runner().run(&build_list_worktree_bases_command(
-            request.repository,
-            remote_name.as_deref(),
-        ))?;
-        let bases = parse_worktree_bases(&output.stdout, remote_name.as_deref());
+        let output = self
+            .runner()
+            .run(&build_list_worktree_bases_command(request.repository))?;
+        let bases = parse_worktree_bases(&output.stdout);
 
         Ok(ListWorktreeBasesResponse { bases })
     }
 
-    /// Refreshes selectable refs again at creation time before resolving the requested base.
+    /// Resolves the selected local branch directly without refreshing or merging remote refs.
     pub fn resolve_worktree_base_commit(
         &self,
         request: ResolveWorktreeBaseCommitRequest<'_>,
     ) -> Result<ResolveWorktreeBaseCommitResponse, GitlancerError> {
-        let bases = self.list_worktree_bases(ListWorktreeBasesRequest {
-            repository: request.repository,
-        })?;
-        if !bases
-            .bases
-            .iter()
-            .any(|base| base.reference_name() == request.reference_name.as_str())
-        {
-            return Err(GitlancerError::Domain(DomainError::BranchNotFound {
-                repo: request.repository.root().as_path().to_path_buf(),
-                branch: request.reference_name.as_str().to_string(),
-            }));
-        }
-
-        let output = self.runner().run(&GitCommand::new(
-            request.repository.root().as_path().to_path_buf(),
-            vec![
-                "rev-parse".to_string(),
-                format!("{}^{{commit}}", request.reference_name.as_str()),
-            ],
-            GitEnv::default(),
-            GitIntent::ReadOnly,
-        ))?;
+        let output = self
+            .runner()
+            .run(&GitCommand::new(
+                request.repository.root().as_path().to_path_buf(),
+                vec![
+                    "rev-parse".to_string(),
+                    format!("{}^{{commit}}", request.reference_name.as_str()),
+                ],
+                GitEnv::default(),
+                GitIntent::ReadOnly,
+            ))
+            .map_err(|error| match error {
+                GitExecError::NonZeroExit { .. } => {
+                    GitlancerError::Domain(DomainError::BranchNotFound {
+                        repo: request.repository.root().as_path().to_path_buf(),
+                        branch: request.reference_name.as_str().to_string(),
+                    })
+                }
+                other => GitlancerError::Exec(other),
+            })?;
         let commit_id = crate::parse::commit::parse_commit_id(&output.stdout)?;
 
         Ok(ResolveWorktreeBaseCommitResponse { commit_id })
     }
-
-    /// Selects the canonical collaboration remote without guessing among arbitrary remotes.
-    fn preferred_base_remote(
-        &self,
-        repository: &Repository,
-    ) -> Result<Option<String>, GitlancerError> {
-        let output = self.runner().run(&GitCommand::new(
-            repository.root().as_path().to_path_buf(),
-            vec!["remote".to_string()],
-            GitEnv::default(),
-            GitIntent::ReadOnly,
-        ))?;
-        let remotes = output
-            .stdout
-            .lines()
-            .map(str::trim)
-            .filter(|remote| !remote.is_empty())
-            .collect::<Vec<_>>();
-
-        Ok(if remotes.contains(&UPSTREAM_REMOTE) {
-            Some(UPSTREAM_REMOTE.to_string())
-        } else if remotes.contains(&ORIGIN_REMOTE) {
-            Some(ORIGIN_REMOTE.to_string())
-        } else {
-            None
-        })
-    }
-
-    /// Updates remote-tracking refs before they are exposed as worktree bases.
-    fn fetch_base_remote(
-        &self,
-        repository: &Repository,
-        remote_name: &str,
-    ) -> Result<(), GitlancerError> {
-        self.runner().run(&GitCommand::new(
-            repository.root().as_path().to_path_buf(),
-            vec![
-                "fetch".to_string(),
-                "--prune".to_string(),
-                remote_name.to_string(),
-            ],
-            GitEnv::default(),
-            GitIntent::Network,
-        ))?;
-        Ok(())
-    }
 }
 
-/// Builds one ref query whose fully qualified output preserves local-versus-remote identity.
-fn build_list_worktree_bases_command(
-    repository: &Repository,
-    remote_name: Option<&str>,
-) -> GitCommand {
-    let mut args = vec![
-        "for-each-ref".to_string(),
-        "--format=%(refname)".to_string(),
-        "refs/heads".to_string(),
-    ];
-    if let Some(remote_name) = remote_name {
-        args.push(format!("refs/remotes/{remote_name}"));
-    }
-
+/// Builds the read-only ref query used to enumerate local worktree bases.
+fn build_list_worktree_bases_command(repository: &Repository) -> GitCommand {
     GitCommand::new(
         repository.root().as_path().to_path_buf(),
-        args,
+        vec![
+            "for-each-ref".to_string(),
+            "--format=%(refname:short)".to_string(),
+            "refs/heads".to_string(),
+        ],
         GitEnv::default(),
         GitIntent::ReadOnly,
     )
 }
 
-/// Parses refs into one logical branch map while preserving local Ora task branches.
-///
-/// Remote refs are preferred for ordinary branches because fetching is the freshness
-/// boundary. Ora-managed task branches are the exception: an existing worktree may
-/// contain local commits that have not been pushed, so replacing that ref with its
-/// remote-tracking counterpart would make “branch from this worktree” silently lose work.
-fn parse_worktree_bases(stdout: &str, remote_name: Option<&str>) -> Vec<WorktreeBase> {
-    let remote_prefix = remote_name.map(|remote_name| format!("refs/remotes/{remote_name}/"));
-    let mut bases = BTreeMap::<String, WorktreeBase>::new();
-
-    for reference in stdout
+/// Converts Git's short local branch output into typed worktree bases.
+fn parse_worktree_bases(stdout: &str) -> Vec<WorktreeBase> {
+    stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-    {
-        if let Some(branch_name) = reference.strip_prefix("refs/heads/") {
-            bases
-                .entry(branch_name.to_string())
-                .or_insert_with(|| WorktreeBase::Local {
-                    branch_name: BranchName::new(branch_name),
-                });
-            continue;
-        }
-
-        if let (Some(remote_name), Some(remote_prefix)) = (remote_name, remote_prefix.as_deref())
-            && let Some(branch_name) = reference.strip_prefix(remote_prefix)
-            && branch_name != "HEAD"
-        {
-            if branch_name.starts_with("ora/")
-                && matches!(bases.get(branch_name), Some(WorktreeBase::Local { .. }))
-            {
-                continue;
-            }
-
-            // A fetched remote-tracking ref is authoritative for ordinary new worktree bases.
-            bases.insert(
-                branch_name.to_string(),
-                WorktreeBase::Remote {
-                    remote_name: remote_name.to_string(),
-                    branch_name: BranchName::new(branch_name),
-                },
-            );
-        }
-    }
-
-    bases.into_values().collect()
+        .map(|branch_name| WorktreeBase::Local {
+            branch_name: BranchName::new(branch_name),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -257,7 +141,7 @@ mod tests {
     use crate::git::Git;
     use crate::{GitEnv, GitExecError};
 
-    /// Captures command order while returning deterministic Git outputs.
+    /// Captures commands while returning deterministic Git outputs.
     #[derive(Debug, Default)]
     struct TestRunner {
         outputs: RefCell<Vec<GitOutput>>,
@@ -273,7 +157,7 @@ mod tests {
             }
         }
 
-        /// Returns all commands issued by the tested operation.
+        /// Returns every command issued by the tested operation.
         fn recorded_commands(&self) -> Vec<GitCommand> {
             self.commands.borrow().clone()
         }
@@ -301,163 +185,57 @@ mod tests {
         GitOutput::new(Some(0), stdout.to_string(), String::new(), 0)
     }
 
-    /// Verifies upstream is fetched and its refs replace stale local duplicates.
+    /// Verifies branch listing reads only local heads and never probes or updates a remote.
     #[test]
-    fn list_worktree_bases_prefers_fetched_upstream_refs() {
+    fn list_worktree_bases_lists_only_local_refs() {
         let repository = repository_fixture();
-        let git = Git::new(TestRunner::new(vec![
-            output("origin\nupstream\n"),
-            output(""),
-            output(
-                "refs/heads/local-only\nrefs/heads/main\nrefs/remotes/upstream/HEAD\nrefs/remotes/upstream/frontend\nrefs/remotes/upstream/main\n",
-            ),
-        ]));
+        let git = Git::new(TestRunner::new(vec![output("main\nfeature/runtime\n")]));
 
         let response = git
             .list_worktree_bases(ListWorktreeBasesRequest {
                 repository: &repository,
             })
-            .expect("list worktree bases");
+            .expect("list local worktree bases");
 
         assert_eq!(
             response.bases,
             vec![
-                WorktreeBase::Remote {
-                    remote_name: "upstream".to_string(),
-                    branch_name: BranchName::new("frontend"),
+                WorktreeBase::Local {
+                    branch_name: BranchName::new("main"),
                 },
                 WorktreeBase::Local {
-                    branch_name: BranchName::new("local-only"),
-                },
-                WorktreeBase::Remote {
-                    remote_name: "upstream".to_string(),
-                    branch_name: BranchName::new("main"),
+                    branch_name: BranchName::new("feature/runtime"),
                 },
             ]
         );
         assert_eq!(
             git.runner().recorded_commands(),
-            vec![
-                GitCommand::new(
-                    repository.root().as_path().to_path_buf(),
-                    vec!["remote".to_string()],
-                    GitEnv::default(),
-                    GitIntent::ReadOnly,
-                ),
-                GitCommand::new(
-                    repository.root().as_path().to_path_buf(),
-                    vec![
-                        "fetch".to_string(),
-                        "--prune".to_string(),
-                        "upstream".to_string(),
-                    ],
-                    GitEnv::default(),
-                    GitIntent::Network,
-                ),
-                build_list_worktree_bases_command(&repository, Some("upstream")),
-            ]
+            vec![build_list_worktree_bases_command(&repository)]
         );
     }
 
-    /// Verifies origin is used when the repository has no upstream remote.
+    /// Verifies creation-time resolution directly reads the selected local ref with one Git command.
     #[test]
-    fn list_worktree_bases_falls_back_to_origin() {
+    fn resolve_worktree_base_commit_reads_the_selected_local_ref() {
         let repository = repository_fixture();
-        let git = Git::new(TestRunner::new(vec![
-            output("fork\norigin\n"),
-            output(""),
-            output("refs/remotes/origin/feature/runtime\n"),
-        ]));
-
-        let response = git
-            .list_worktree_bases(ListWorktreeBasesRequest {
-                repository: &repository,
-            })
-            .expect("list worktree bases");
-
-        assert_eq!(
-            response.bases,
-            vec![WorktreeBase::Remote {
-                remote_name: "origin".to_string(),
-                branch_name: BranchName::new("feature/runtime"),
-            }]
-        );
-        assert_eq!(git.runner().recorded_commands()[1].args[2], "origin");
-    }
-
-    /// Verifies repositories without a canonical remote keep their local branches usable.
-    #[test]
-    fn list_worktree_bases_supports_local_only_repositories() {
-        let repository = repository_fixture();
-        let git = Git::new(TestRunner::new(vec![
-            output("backup\n"),
-            output("refs/heads/main\n"),
-        ]));
-
-        let response = git
-            .list_worktree_bases(ListWorktreeBasesRequest {
-                repository: &repository,
-            })
-            .expect("list worktree bases");
-
-        assert_eq!(
-            response.bases,
-            vec![WorktreeBase::Local {
-                branch_name: BranchName::new("main"),
-            }]
-        );
-        assert_eq!(
-            git.runner().recorded_commands()[1],
-            build_list_worktree_bases_command(&repository, None)
-        );
-    }
-
-    /// Verifies an existing Ora worktree keeps its local tip instead of a stale remote tip.
-    #[test]
-    fn list_worktree_bases_preserves_local_ora_task_branches() {
-        let bases = super::parse_worktree_bases(
-            "refs/heads/ora/task-branch\nrefs/remotes/upstream/ora/task-branch\n",
-            Some("upstream"),
-        );
-
-        assert_eq!(
-            bases,
-            vec![WorktreeBase::Local {
-                branch_name: BranchName::new("ora/task-branch"),
-            }]
-        );
-    }
-
-    /// Verifies creation-time resolution fetches again and resolves the exact remote ref.
-    #[test]
-    fn resolve_worktree_base_commit_refreshes_the_selected_remote_ref() {
-        let repository = repository_fixture();
-        let git = Git::new(TestRunner::new(vec![
-            output("upstream\n"),
-            output(""),
-            output("refs/heads/main\nrefs/remotes/upstream/main\n"),
-            output("0123456789abcdef\n"),
-        ]));
+        let git = Git::new(TestRunner::new(vec![output("0123456789abcdef\n")]));
 
         let response = git
             .resolve_worktree_base_commit(ResolveWorktreeBaseCommitRequest {
                 repository: &repository,
-                reference_name: &BranchName::new("upstream/main"),
+                reference_name: &BranchName::new("main"),
             })
-            .expect("resolve refreshed worktree base");
+            .expect("resolve local worktree base");
 
         assert_eq!(response.commit_id, CommitId::new("0123456789abcdef"));
         assert_eq!(
-            git.runner().recorded_commands()[3],
-            GitCommand::new(
+            git.runner().recorded_commands(),
+            vec![GitCommand::new(
                 repository.root().as_path().to_path_buf(),
-                vec![
-                    "rev-parse".to_string(),
-                    "upstream/main^{commit}".to_string(),
-                ],
+                vec!["rev-parse".to_string(), "main^{commit}".to_string()],
                 GitEnv::default(),
                 GitIntent::ReadOnly,
-            )
+            )]
         );
     }
 }

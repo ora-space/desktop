@@ -36,7 +36,7 @@ export type GetProjectResponse = { project: Project };
 export type ListProjectBranchesRequest = { projectId: string };
 
 /**
- * Returns refreshed remote branches plus local-only branches that can seed a new worktree.
+ * Returns local branches that can seed a new worktree.
  */
 export type ListProjectBranchesResponse = { branches: Array<ProjectBranch> };
 
