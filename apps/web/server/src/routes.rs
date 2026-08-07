@@ -1,7 +1,8 @@
 use crate::app_state::AppState;
 use crate::handlers::{
-    agents, file_system, git, health, project_work_contexts, projects, sessions, skill_imports,
-    skills, snapshots, specs, task_diffs, tasks, workflow_runs, workflows, workspace_files,
+    agents, file_system, git, health, project_files, project_work_contexts, projects, repositories,
+    sessions, skill_imports, skills, snapshots, specs, task_diffs, tasks, workflow_runs, workflows,
+    workspace_files,
 };
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -10,9 +11,15 @@ use axum::routing::{get, post};
 use ora_contracts::{
     AGENT_IMPORT_COMMIT_PATH, AGENT_IMPORT_PREPARE_PATH, AGENT_PATH, AGENT_RUNTIME_STATUS_PATH,
     AGENTS_PATH, FILE_SYSTEM_DIRECTORY_PATH, GIT_IDENTITY_PATH, PROJECT_BRANCHES_PATH,
-    PROJECT_PATH, PROJECT_SPEC_SOURCES_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
-    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, SESSION_ATTACH_PATH, SESSION_CONFIG_PATH,
-    SESSION_LOAD_PATH, SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
+    PROJECT_DIRECTORY_PATH, PROJECT_FILE_PATH, PROJECT_PATH, PROJECT_SEARCH_PATH,
+    PROJECT_SPEC_SOURCES_PATH, PROJECT_WATCH_PATH, PROJECT_WORK_CONTEXT_OPEN_PATH,
+    PROJECT_WORK_CONTEXT_RENEW_PATH, PROJECTS_PATH, REPOSITORY_BRANCH_CHECKOUT_PATH,
+    REPOSITORY_BRANCH_CREATE_PATH, REPOSITORY_COMMIT_CHANGES_PATH, REPOSITORY_COMMIT_DIFF_PATH,
+    REPOSITORY_COMMIT_PATH, REPOSITORY_CONFLICT_RESOLVE_PATH, REPOSITORY_FETCH_PATH,
+    REPOSITORY_PULL_PATH, REPOSITORY_PUSH_PATH, REPOSITORY_SNAPSHOT_PATH,
+    REPOSITORY_STAGE_CHANGES_PATH, REPOSITORY_SYNC_PATH, REPOSITORY_UNSTAGE_CHANGES_PATH,
+    REPOSITORY_WORKING_TREE_DIFF_PATH, SESSION_ATTACH_PATH, SESSION_CONFIG_PATH, SESSION_LOAD_PATH,
+    SESSION_PATH, SESSION_PERMISSION_RESPONSE_PATH, SESSION_PROMPT_PATH,
     SESSION_RESUME_HISTORY_PATH, SESSION_STOP_PATH, SESSION_SWITCH_AGENT_PATH, SESSION_WARM_PATH,
     SESSIONS_PATH, SKILL_IMPORT_COMMIT_PATH, SKILL_IMPORT_PATH, SKILL_IMPORTS_PATH, SKILL_PATH,
     SKILLS_PATH, SPEC_CATALOG_PATH, SPEC_READ_PATH, SPEC_RESOLVE_SOURCE_PATH, SPEC_WATCH_PATH,
@@ -48,6 +55,47 @@ pub fn build_router(app_state: AppState) -> Router {
                 .delete(projects::delete_project),
         )
         .route(PROJECT_BRANCHES_PATH, get(projects::list_project_branches))
+        // =============================================================================
+        // repository
+        // =============================================================================
+        .route(REPOSITORY_SNAPSHOT_PATH, get(repositories::get_snapshot))
+        .route(REPOSITORY_COMMIT_PATH, get(repositories::get_commit))
+        .route(
+            REPOSITORY_COMMIT_DIFF_PATH,
+            get(repositories::get_commit_diff),
+        )
+        .route(
+            REPOSITORY_WORKING_TREE_DIFF_PATH,
+            get(repositories::get_working_tree_diff),
+        )
+        .route(
+            REPOSITORY_BRANCH_CREATE_PATH,
+            post(repositories::create_branch),
+        )
+        .route(
+            REPOSITORY_BRANCH_CHECKOUT_PATH,
+            post(repositories::checkout_branch),
+        )
+        .route(REPOSITORY_FETCH_PATH, post(repositories::fetch))
+        .route(REPOSITORY_PULL_PATH, post(repositories::pull))
+        .route(REPOSITORY_SYNC_PATH, post(repositories::resolve_sync))
+        .route(
+            REPOSITORY_CONFLICT_RESOLVE_PATH,
+            post(repositories::resolve_conflict),
+        )
+        .route(REPOSITORY_PUSH_PATH, post(repositories::push_branch))
+        .route(
+            REPOSITORY_STAGE_CHANGES_PATH,
+            post(repositories::stage_changes),
+        )
+        .route(
+            REPOSITORY_UNSTAGE_CHANGES_PATH,
+            post(repositories::unstage_changes),
+        )
+        .route(
+            REPOSITORY_COMMIT_CHANGES_PATH,
+            post(repositories::commit_changes),
+        )
         // =============================================================================
         // projectWorkContext
         // =============================================================================
@@ -177,6 +225,10 @@ pub fn build_router(app_state: AppState) -> Router {
         .route(WORKSPACE_FILE_PATH, post(workspace_files::read_file))
         .route(WORKSPACE_SEARCH_PATH, post(workspace_files::search))
         .route(WORKSPACE_WATCH_PATH, get(workspace_files::watch))
+        .route(PROJECT_DIRECTORY_PATH, post(project_files::list_directory))
+        .route(PROJECT_FILE_PATH, post(project_files::read_file))
+        .route(PROJECT_SEARCH_PATH, post(project_files::search))
+        .route(PROJECT_WATCH_PATH, get(project_files::watch))
         // =============================================================================
         // gitIdentity
         // =============================================================================

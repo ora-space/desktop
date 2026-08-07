@@ -210,6 +210,109 @@ pub async fn delete_project(
 }
 
 // =============================================================================
+// repository
+// =============================================================================
+
+backend_command!(
+    get_repository_snapshot,
+    GetRepositorySnapshotRequest,
+    GetRepositorySnapshotResponse,
+    get_repository_snapshot,
+    "Reads one repository graph snapshot through the shared Backend."
+);
+backend_command!(
+    get_repository_commit,
+    GetRepositoryCommitRequest,
+    GetRepositoryCommitResponse,
+    get_repository_commit,
+    "Reads one repository commit through the shared Backend."
+);
+backend_command!(
+    get_repository_commit_diff,
+    GetRepositoryCommitDiffRequest,
+    GetRepositoryCommitDiffResponse,
+    get_repository_commit_diff,
+    "Reads a historical repository commit patch through the shared Backend."
+);
+backend_command!(
+    get_repository_working_tree_diff,
+    GetRepositoryWorkingTreeDiffRequest,
+    GetRepositoryWorkingTreeDiffResponse,
+    get_repository_working_tree_diff,
+    "Reads the main repository working tree diff through the shared Backend."
+);
+backend_command!(
+    create_repository_branch,
+    CreateRepositoryBranchRequest,
+    CreateRepositoryBranchResponse,
+    create_repository_branch,
+    "Creates a local repository branch through the shared Backend."
+);
+backend_command!(
+    checkout_repository_branch,
+    CheckoutRepositoryBranchRequest,
+    CheckoutRepositoryBranchResponse,
+    checkout_repository_branch,
+    "Checks out a local repository branch through the shared Backend."
+);
+backend_command!(
+    fetch_repository,
+    FetchRepositoryRequest,
+    FetchRepositoryResponse,
+    fetch_repository,
+    "Fetches repository remotes through the shared Backend."
+);
+backend_command!(
+    pull_repository,
+    PullRepositoryRequest,
+    PullRepositoryResponse,
+    pull_repository,
+    "Pulls and integrates the repository main branch through the shared Backend."
+);
+backend_command!(
+    resolve_repository_sync,
+    ResolveRepositorySyncRequest,
+    ResolveRepositorySyncResponse,
+    resolve_repository_sync,
+    "Continues or aborts an active repository merge or rebase through the shared Backend."
+);
+backend_command!(
+    resolve_repository_conflict,
+    ResolveRepositoryConflictRequest,
+    ResolveRepositoryConflictResponse,
+    resolve_repository_conflict,
+    "Selects and stages one side of a repository conflict through the shared Backend."
+);
+backend_command!(
+    push_repository_branch,
+    PushRepositoryBranchRequest,
+    PushRepositoryBranchResponse,
+    push_repository_branch,
+    "Pushes the repository main branch through the shared Backend."
+);
+backend_command!(
+    stage_repository_changes,
+    StageRepositoryChangesRequest,
+    StageRepositoryChangesResponse,
+    stage_repository_changes,
+    "Stages selected repository changes through the shared Backend."
+);
+backend_command!(
+    unstage_repository_changes,
+    UnstageRepositoryChangesRequest,
+    UnstageRepositoryChangesResponse,
+    unstage_repository_changes,
+    "Unstages selected repository changes through the shared Backend."
+);
+backend_command!(
+    commit_repository_changes,
+    CommitRepositoryChangesRequest,
+    CommitRepositoryChangesResponse,
+    commit_repository_changes,
+    "Commits staged repository changes through the shared Backend."
+);
+
+// =============================================================================
 // task
 // =============================================================================
 
@@ -326,6 +429,22 @@ pub async fn list_workspace_directory(
     .await
 }
 
+/// Lists one immediate directory in the selected project's main checkout.
+#[tauri::command]
+pub async fn list_project_directory(
+    state: State<'_, DesktopState>,
+    request: ListProjectDirectoryRequest,
+) -> Result<ListProjectDirectoryResponse, CommandError> {
+    run_workspace_backend(
+        "list_project_directory",
+        state.backend.clone(),
+        state.workspace_files.clone(),
+        request,
+        list_project_directory_backend,
+    )
+    .await
+}
+
 /// Reads one bounded UTF-8 file in the selected task workspace.
 #[tauri::command]
 pub async fn read_workspace_file(
@@ -338,6 +457,22 @@ pub async fn read_workspace_file(
         state.workspace_files.clone(),
         request,
         read_workspace_file_backend,
+    )
+    .await
+}
+
+/// Reads one bounded UTF-8 file in the selected project's main checkout.
+#[tauri::command]
+pub async fn read_project_file(
+    state: State<'_, DesktopState>,
+    request: ReadProjectFileRequest,
+) -> Result<ReadProjectFileResponse, CommandError> {
+    run_workspace_backend(
+        "read_project_file",
+        state.backend.clone(),
+        state.workspace_files.clone(),
+        request,
+        read_project_file_backend,
     )
     .await
 }
@@ -367,6 +502,33 @@ pub async fn search_workspace(
     .await
 }
 
+/// Searches the selected project checkout with bounded ripgrep output.
+#[tauri::command]
+pub async fn search_project(
+    state: State<'_, DesktopState>,
+    request: SearchProjectRequest,
+) -> Result<SearchProjectResponse, CommandError> {
+    let backend = state.backend.clone();
+    let workspace_files = state.workspace_files.clone();
+    let project_id = request.project_id;
+    let query = request.query;
+    let kind = request.kind;
+    run_async_backend("search_project", async move {
+        let root = tauri::async_runtime::spawn_blocking(move || {
+            backend.resolve_project_root(&project_id)
+        })
+        .await
+        .map_err(|source| {
+            BackendError::internal("Desktop project root resolution failed", source)
+        })??;
+        workspace_files
+            .search_project(&root, &query, kind)
+            .await
+            .map_err(workspace_file_backend_error)
+    })
+    .await
+}
+
 /// Resolves a task workspace and lists the requested relative directory.
 fn list_workspace_directory_backend(
     backend: &Backend,
@@ -384,6 +546,23 @@ fn list_workspace_directory_backend(
         .map_err(workspace_file_backend_error)
 }
 
+/// Resolves a project checkout and lists the requested relative directory.
+fn list_project_directory_backend(
+    backend: &Backend,
+    workspace_files: &WorkspaceFileApi,
+    request: ListProjectDirectoryRequest,
+) -> Result<ListProjectDirectoryResponse, BackendError> {
+    let root = backend.resolve_project_root(&request.project_id)?;
+    let path = request
+        .path
+        .as_deref()
+        .map(Path::new)
+        .unwrap_or_else(|| Path::new(""));
+    workspace_files
+        .list_project_directory(&root, path)
+        .map_err(workspace_file_backend_error)
+}
+
 /// Resolves a task workspace and reads the requested relative file.
 fn read_workspace_file_backend(
     backend: &Backend,
@@ -393,6 +572,18 @@ fn read_workspace_file_backend(
     let root = backend.resolve_task_cwd(&request.task_id)?;
     workspace_files
         .read_file(&root, Path::new(&request.path))
+        .map_err(workspace_file_backend_error)
+}
+
+/// Resolves a project checkout and reads the requested relative file.
+fn read_project_file_backend(
+    backend: &Backend,
+    workspace_files: &WorkspaceFileApi,
+    request: ReadProjectFileRequest,
+) -> Result<ReadProjectFileResponse, BackendError> {
+    let root = backend.resolve_project_root(&request.project_id)?;
+    workspace_files
+        .read_project_file(&root, Path::new(&request.path))
         .map_err(workspace_file_backend_error)
 }
 
@@ -633,6 +824,58 @@ pub async fn stream_contract(
             )
             .await;
         }
+        "watchProject" => {
+            let request =
+                serde_json::from_value::<WatchProjectRequest>(request).map_err(|source| {
+                    CommandError::from_backend_with_lifecycle(
+                        BackendError::internal("failed to decode stream request", source),
+                        &lifecycle,
+                    )
+                })?;
+            let project_id = request.project_id;
+            let backend = state.backend.clone();
+            let root = tauri::async_runtime::spawn_blocking(move || {
+                backend.resolve_project_root(&project_id)
+            })
+            .await
+            .map_err(|source| {
+                CommandError::from_backend_with_lifecycle(
+                    BackendError::internal("Desktop project root resolution failed", source),
+                    &lifecycle,
+                )
+            })?
+            .map_err(|error| CommandError::from_backend_with_lifecycle(error, &lifecycle))?;
+            let workspace_files = state.workspace_files.clone();
+            let watcher =
+                tauri::async_runtime::spawn_blocking(move || workspace_files.watch(&root))
+                    .await
+                    .map_err(|source| {
+                        CommandError::from_backend_with_lifecycle(
+                            BackendError::internal(
+                                "Desktop project watcher setup failed",
+                                source,
+                            ),
+                            &lifecycle,
+                        )
+                    })?
+                    .map_err(|error| {
+                        CommandError::from_backend_with_lifecycle(
+                            workspace_file_backend_error(error),
+                            &lifecycle,
+                        )
+                    })?;
+            register_contract_stream(&state, &stream_call_id, &cancellation)
+                .map_err(|error| CommandError::from_backend_with_lifecycle(error, &lifecycle))?;
+            let registry = state.stream_cancellations.clone();
+            tauri::async_runtime::spawn(forward_workspace_watch(
+                watcher,
+                cancellation,
+                stream_call_id,
+                registry,
+                on_event,
+                lifecycle,
+            ));
+        }
         _ => {
             return Err(CommandError::from_backend_with_lifecycle(
                 BackendError::new(
@@ -645,6 +888,89 @@ pub async fn stream_contract(
         }
     }
     Ok(())
+}
+
+/// Forwards debounced native workspace changes until the Desktop stream is cancelled.
+pub(crate) async fn forward_workspace_watch(
+    watcher: ora_fs::WorkspaceWatcher,
+    cancellation: CancellationToken,
+    stream_call_id: String,
+    registry: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, CancellationToken>>,
+    >,
+    on_event: Channel<serde_json::Value>,
+    lifecycle: RequestLifecycle,
+) {
+    let watch_cancellation = cancellation.clone();
+    let terminal_channel = on_event.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        while !watch_cancellation.is_cancelled() {
+            match watcher.receive_batch(Duration::from_millis(100)) {
+                Ok(Some(changes)) if !changes.is_empty() => {
+                    let data = WorkspaceFileEventBatch {
+                        changes: changes.into_iter().map(to_contract_change).collect(),
+                    };
+                    if on_event
+                        .send(serde_json::json!({ "type": "data", "data": data }))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(Some(_)) | Ok(None) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok::<(), ora_fs::WorkspaceFileSystemError>(())
+    })
+    .await;
+
+    if cancellation.is_cancelled() {
+        lifecycle.complete_cancellation();
+    } else {
+        match result {
+            Ok(Ok(())) => {
+                lifecycle.complete_success();
+                let _ = terminal_channel.send(serde_json::json!({ "type": "end" }));
+            }
+            Ok(Err(error)) => {
+                let backend_error = workspace_file_backend_error(error);
+                lifecycle.complete_failure(&backend_error);
+                let _ = terminal_channel.send(serde_json::json!({
+                    "type": "error",
+                    "error": backend_error.contract_error(lifecycle.request_id()),
+                }));
+            }
+            Err(error) => {
+                let backend_error =
+                    BackendError::internal("Desktop workspace watcher failed", error);
+                lifecycle.complete_failure(&backend_error);
+                let _ = terminal_channel.send(serde_json::json!({
+                    "type": "error",
+                    "error": backend_error.contract_error(lifecycle.request_id()),
+                }));
+            }
+        }
+    }
+    if let Ok(mut registrations) = registry.lock() {
+        registrations.remove(&stream_call_id);
+    }
+}
+
+/// Converts native watcher events to the shared file-change contract.
+fn to_contract_change(change: ora_fs::WorkspaceChange) -> WorkspaceFileChange {
+    match change.kind {
+        ora_fs::WorkspaceChangeKind::Created => WorkspaceFileChange::Created { path: change.path },
+        ora_fs::WorkspaceChangeKind::Modified => {
+            WorkspaceFileChange::Modified { path: change.path }
+        }
+        ora_fs::WorkspaceChangeKind::Removed => WorkspaceFileChange::Removed { path: change.path },
+        ora_fs::WorkspaceChangeKind::Renamed { from } => WorkspaceFileChange::Renamed {
+            from,
+            path: change.path,
+        },
+        ora_fs::WorkspaceChangeKind::RescanRequired => WorkspaceFileChange::RescanRequired,
+    }
 }
 
 /// Registers a successfully-created stream and rejects duplicate private call identifiers.
@@ -730,89 +1056,6 @@ async fn forward_contract_stream<Event>(
     }
     if let Ok(mut registrations) = registry.lock() {
         registrations.remove(&stream_call_id);
-    }
-}
-
-/// Forwards debounced native workspace changes until the Desktop stream is cancelled.
-pub(crate) async fn forward_workspace_watch(
-    watcher: ora_fs::WorkspaceWatcher,
-    cancellation: CancellationToken,
-    stream_call_id: String,
-    registry: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<String, CancellationToken>>,
-    >,
-    on_event: Channel<serde_json::Value>,
-    lifecycle: RequestLifecycle,
-) {
-    let watch_cancellation = cancellation.clone();
-    let terminal_channel = on_event.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        while !watch_cancellation.is_cancelled() {
-            match watcher.receive_batch(Duration::from_millis(100)) {
-                Ok(Some(changes)) if !changes.is_empty() => {
-                    let data = WorkspaceFileEventBatch {
-                        changes: changes.into_iter().map(to_contract_change).collect(),
-                    };
-                    if on_event
-                        .send(serde_json::json!({ "type": "data", "data": data }))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Ok(Some(_)) | Ok(None) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        Ok::<(), ora_fs::WorkspaceFileSystemError>(())
-    })
-    .await;
-
-    if cancellation.is_cancelled() {
-        lifecycle.complete_cancellation();
-    } else {
-        match result {
-            Ok(Ok(())) => {
-                lifecycle.complete_success();
-                let _ = terminal_channel.send(serde_json::json!({ "type": "end" }));
-            }
-            Ok(Err(error)) => {
-                let backend_error = workspace_file_backend_error(error);
-                lifecycle.complete_failure(&backend_error);
-                let _ = terminal_channel.send(serde_json::json!({
-                    "type": "error",
-                    "error": backend_error.contract_error(lifecycle.request_id()),
-                }));
-            }
-            Err(error) => {
-                let backend_error =
-                    BackendError::internal("Desktop workspace watcher failed", error);
-                lifecycle.complete_failure(&backend_error);
-                let _ = terminal_channel.send(serde_json::json!({
-                    "type": "error",
-                    "error": backend_error.contract_error(lifecycle.request_id()),
-                }));
-            }
-        }
-    }
-    if let Ok(mut registrations) = registry.lock() {
-        registrations.remove(&stream_call_id);
-    }
-}
-
-/// Converts native watcher events to the shared file-change contract.
-fn to_contract_change(change: ora_fs::WorkspaceChange) -> WorkspaceFileChange {
-    match change.kind {
-        ora_fs::WorkspaceChangeKind::Created => WorkspaceFileChange::Created { path: change.path },
-        ora_fs::WorkspaceChangeKind::Modified => {
-            WorkspaceFileChange::Modified { path: change.path }
-        }
-        ora_fs::WorkspaceChangeKind::Removed => WorkspaceFileChange::Removed { path: change.path },
-        ora_fs::WorkspaceChangeKind::Renamed { from } => WorkspaceFileChange::Renamed {
-            from,
-            path: change.path,
-        },
-        ora_fs::WorkspaceChangeKind::RescanRequired => WorkspaceFileChange::RescanRequired,
     }
 }
 

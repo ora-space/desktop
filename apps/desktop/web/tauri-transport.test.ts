@@ -114,6 +114,191 @@ describe("createTauriTransport", () => {
     });
   });
 
+  it("maps repository graph reads to the dedicated desktop commands", async () => {
+    const response = {
+      snapshot: {
+        projectId: "project-1",
+        rootPath: "D:/repo",
+        headCommitId: "abc123",
+        currentBranch: "main",
+        references: [],
+        commits: [],
+        remoteStatus: {
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+        },
+        syncOperation: null,
+        workingTree: {
+          changedFiles: 0,
+          stagedFiles: 0,
+          unstagedFiles: 0,
+          untrackedFiles: 0,
+          conflictedFiles: 0,
+          files: [],
+        },
+      },
+    };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+
+    await expect(transport.send({
+      operationName: "getRepositorySnapshot",
+      request: { projectId: "project-1" },
+      method: "GET",
+      path: "/api/projects/project-1/repository/snapshot",
+      body: undefined,
+      headers: {},
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("get_repository_snapshot", {
+      request: { projectId: "project-1" },
+    });
+
+    await expect(transport.send({
+      operationName: "getRepositoryCommit",
+      request: { projectId: "project-1", commitId: "abc123" },
+      method: "GET",
+      path: "/api/projects/project-1/repository/commits/abc123",
+      body: undefined,
+      headers: {},
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("get_repository_commit", {
+      request: { projectId: "project-1", commitId: "abc123" },
+    });
+
+    await expect(transport.send({
+      operationName: "getRepositoryWorkingTreeDiff",
+      request: { projectId: "project-1" },
+      method: "GET",
+      path: "/api/projects/project-1/repository/working-tree-diff",
+      body: undefined,
+      headers: {},
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("get_repository_working_tree_diff", {
+      request: { projectId: "project-1" },
+    });
+
+    await expect(transport.send({
+      operationName: "createRepositoryBranch",
+      request: { projectId: "project-1", branchName: "feature/runtime" },
+      method: "POST",
+      path: "/api/projects/project-1/repository/branches",
+      body: { branchName: "feature/runtime" },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("create_repository_branch", {
+      request: { projectId: "project-1", branchName: "feature/runtime" },
+    });
+
+    await expect(transport.send({
+      operationName: "checkoutRepositoryBranch",
+      request: { projectId: "project-1", branchName: "feature/runtime" },
+      method: "POST",
+      path: "/api/projects/project-1/repository/checkout",
+      body: { branchName: "feature/runtime" },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("checkout_repository_branch", {
+      request: { projectId: "project-1", branchName: "feature/runtime" },
+    });
+
+    await expect(transport.send({
+      operationName: "fetchRepository",
+      request: { projectId: "project-1" },
+      method: "POST",
+      path: "/api/projects/project-1/repository/fetch",
+      body: undefined,
+      headers: {},
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("fetch_repository", {
+      request: { projectId: "project-1" },
+    });
+
+    await expect(transport.send({
+      operationName: "pullRepository",
+      request: { projectId: "project-1", strategy: "fastForwardOnly" },
+      method: "POST",
+      path: "/api/projects/project-1/repository/pull",
+      body: { strategy: "fastForwardOnly" },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("pull_repository", {
+      request: { projectId: "project-1", strategy: "fastForwardOnly" },
+    });
+
+    await expect(transport.send({
+      operationName: "resolveRepositorySync",
+      request: { projectId: "project-1", action: "continue" },
+      method: "POST",
+      path: "/api/projects/project-1/repository/sync",
+      body: { action: "continue" },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("resolve_repository_sync", {
+      request: { projectId: "project-1", action: "continue" },
+    });
+
+    await expect(transport.send({
+      operationName: "resolveRepositoryConflict",
+      request: { projectId: "project-1", path: "README.md", side: "ours" },
+      method: "POST",
+      path: "/api/projects/project-1/repository/conflicts/resolve",
+      body: { path: "README.md", side: "ours" },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("resolve_repository_conflict", {
+      request: { projectId: "project-1", path: "README.md", side: "ours" },
+    });
+
+    await expect(transport.send({
+      operationName: "pushRepositoryBranch",
+      request: { projectId: "project-1" },
+      method: "POST",
+      path: "/api/projects/project-1/repository/push",
+      body: undefined,
+      headers: {},
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("push_repository_branch", {
+      request: { projectId: "project-1" },
+    });
+
+    await expect(transport.send({
+      operationName: "stageRepositoryChanges",
+      request: { projectId: "project-1", selection: { kind: "paths", paths: ["README.md"] } },
+      method: "POST",
+      path: "/api/projects/project-1/repository/changes/stage",
+      body: { selection: { kind: "paths", paths: ["README.md"] } },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("stage_repository_changes", {
+      request: { projectId: "project-1", selection: { kind: "paths", paths: ["README.md"] } },
+    });
+
+    await expect(transport.send({
+      operationName: "unstageRepositoryChanges",
+      request: { projectId: "project-1", selection: { kind: "all" } },
+      method: "POST",
+      path: "/api/projects/project-1/repository/changes/unstage",
+      body: { selection: { kind: "all" } },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("unstage_repository_changes", {
+      request: { projectId: "project-1", selection: { kind: "all" } },
+    });
+
+    await expect(transport.send({
+      operationName: "commitRepositoryChanges",
+      request: { projectId: "project-1", message: "commit changes" },
+      method: "POST",
+      path: "/api/projects/project-1/repository/commit",
+      body: { message: "commit changes" },
+      headers: { "content-type": "application/json" },
+    })).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("commit_repository_changes", {
+      request: { projectId: "project-1", message: "commit changes" },
+    });
+  });
+
   it("rejects explicitly unsupported operations before invoking Rust", async () => {
     const invoke = vi.fn();
     const transport = createTauriTransport(invoke, () => ({ onmessage: () => undefined }));

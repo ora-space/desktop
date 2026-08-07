@@ -27,7 +27,12 @@ const unsupportedOperations = {
 } as const satisfies Partial<Record<EndpointOperation, true>>;
 
 type UnsupportedTauriOperation = keyof typeof unsupportedOperations;
-type TauriStreamOperation = "loadSession" | "promptSession" | "watchSpecs" | "watchWorkspace";
+type TauriStreamOperation =
+  | "loadSession"
+  | "promptSession"
+  | "watchSpecs"
+  | "watchWorkspace"
+  | "watchProject";
 type SupportedTauriOperation = Exclude<
   EndpointOperation,
   UnsupportedTauriOperation | TauriStreamOperation
@@ -43,6 +48,24 @@ const tauriCommands = {
   listProjectBranches: "list_project_branches",
   updateProject: "update_project",
   deleteProject: "delete_project",
+
+  // =============================================================================
+  // repository
+  // =============================================================================
+  getRepositorySnapshot: "get_repository_snapshot",
+  getRepositoryCommit: "get_repository_commit",
+  getRepositoryCommitDiff: "get_repository_commit_diff",
+  getRepositoryWorkingTreeDiff: "get_repository_working_tree_diff",
+  createRepositoryBranch: "create_repository_branch",
+  checkoutRepositoryBranch: "checkout_repository_branch",
+  fetchRepository: "fetch_repository",
+  pullRepository: "pull_repository",
+  resolveRepositorySync: "resolve_repository_sync",
+  resolveRepositoryConflict: "resolve_repository_conflict",
+  pushRepositoryBranch: "push_repository_branch",
+  stageRepositoryChanges: "stage_repository_changes",
+  unstageRepositoryChanges: "unstage_repository_changes",
+  commitRepositoryChanges: "commit_repository_changes",
 
   // =============================================================================
   // task
@@ -62,8 +85,35 @@ const tauriCommands = {
   setTaskDiffCommentStatus: "set_task_diff_comment_status",
 
   // =============================================================================
+  // workflow
+  // =============================================================================
+  createWorkflow: "create_workflow",
+  getWorkflow: "get_workflow",
+  listWorkflows: "list_workflows",
+  updateWorkflow: "update_workflow",
+  deleteWorkflow: "delete_workflow",
+  getDraft: "get_workflow_draft",
+  updateDraft: "update_workflow_draft",
+  publishWorkflow: "publish_workflow",
+  rollbackWorkflow: "rollback_workflow",
+  activateWorkflow: "activate_workflow",
+  listVersions: "list_workflow_versions",
+  getVersion: "get_workflow_version",
+  deleteSnapshot: "delete_workflow_snapshot",
+  getWorkflowSnapshot: "get_workflow_snapshot",
+  createWorkflowRun: "create_workflow_run",
+  getWorkflowRun: "get_workflow_run",
+  listWorkflowRuns: "list_workflow_runs",
+  listWorkflowRunsByWorkflow: "list_workflow_runs_by_workflow",
+  listWorkflowNodeRuns: "list_workflow_node_runs",
+  deleteWorkflowRun: "delete_workflow_run",
+
+  // =============================================================================
   // fileSystem
   // =============================================================================
+  listProjectDirectory: "list_project_directory",
+  readProjectFile: "read_project_file",
+  searchProject: "search_project",
   listWorkspaceDirectory: "list_workspace_directory",
   readWorkspaceFile: "read_workspace_file",
   searchWorkspace: "search_workspace",
@@ -192,7 +242,11 @@ export function createTauriTransport(
 
 /** Identifies operations that must use the shared Tauri channel stream command. */
 function isTauriStreamOperation(operation: EndpointOperation): operation is TauriStreamOperation {
-  return operation === "loadSession" || operation === "promptSession" || operation === "watchSpecs" || operation === "watchWorkspace";
+  return operation === "loadSession"
+    || operation === "promptSession"
+    || operation === "watchSpecs"
+    || operation === "watchWorkspace"
+    || operation === "watchProject";
 }
 
 /** Starts one private channel stream and cancels its backend registration on every early exit. */

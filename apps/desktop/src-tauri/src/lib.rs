@@ -41,6 +41,23 @@ pub fn run() {
             commands::update_project,
             commands::delete_project,
             // =============================================================================
+            // repository
+            // =============================================================================
+            commands::get_repository_snapshot,
+            commands::get_repository_commit,
+            commands::get_repository_commit_diff,
+            commands::get_repository_working_tree_diff,
+            commands::create_repository_branch,
+            commands::checkout_repository_branch,
+            commands::fetch_repository,
+            commands::pull_repository,
+            commands::resolve_repository_sync,
+            commands::resolve_repository_conflict,
+            commands::push_repository_branch,
+            commands::stage_repository_changes,
+            commands::unstage_repository_changes,
+            commands::commit_repository_changes,
+            // =============================================================================
             // task
             // =============================================================================
             commands::create_task,
@@ -66,6 +83,9 @@ pub fn run() {
             spec_commands::read_spec,
             spec_commands::resolve_spec_source,
             spec_commands::update_project_spec_sources,
+            commands::list_project_directory,
+            commands::read_project_file,
+            commands::search_project,
             // =============================================================================
             // session
             // =============================================================================
@@ -291,7 +311,9 @@ fn desktop_logging_config(
         NonZeroUsize::new(3).unwrap_or(NonZeroUsize::MIN),
     );
     let output = if cfg!(debug_assertions) {
-        LogOutput::StdoutAndFile(file)
+        // Development runs must remain usable in restricted environments where AppData is not
+        // writable; the Tauri dev command already keeps stdout visible for diagnostics.
+        LogOutput::Stdout
     } else {
         LogOutput::File(file)
     };

@@ -1,6 +1,7 @@
 use ora_backend::{BackendError, ErrorClassification};
 use ora_contracts::{
-    EmptyErrorParams, ListWorkspaceDirectoryResponse, PublicError, ReadWorkspaceFileResponse,
+    EmptyErrorParams, ListProjectDirectoryResponse, ListWorkspaceDirectoryResponse, PublicError,
+    ReadProjectFileResponse, ReadWorkspaceFileResponse, SearchProjectResponse,
     SearchWorkspaceResponse, WorkspaceEntry, WorkspaceEntryKind, WorkspaceSearchKind,
     WorkspaceSearchResult,
 };
@@ -48,6 +49,31 @@ impl WorkspaceFileApi {
         })
     }
 
+    /// Lists one immediate directory in a project's main checkout.
+    pub(crate) fn list_project_directory(
+        &self,
+        root: &Path,
+        path: &Path,
+    ) -> Result<ListProjectDirectoryResponse, WorkspaceFileSystemError> {
+        let listing = self.file_system.list_directory(root, path)?;
+        Ok(ListProjectDirectoryResponse {
+            path: listing.path,
+            entries: listing
+                .entries
+                .into_iter()
+                .map(|entry| WorkspaceEntry {
+                    name: entry.name,
+                    path: entry.path,
+                    kind: match entry.kind {
+                        DirectoryEntryKind::File => WorkspaceEntryKind::File,
+                        DirectoryEntryKind::Directory => WorkspaceEntryKind::Directory,
+                    },
+                    is_symbolic_link: entry.is_symbolic_link,
+                })
+                .collect(),
+        })
+    }
+
     /// Reads one bounded UTF-8 file from the task workspace.
     pub(crate) fn read_file(
         &self,
@@ -56,6 +82,21 @@ impl WorkspaceFileApi {
     ) -> Result<ReadWorkspaceFileResponse, WorkspaceFileSystemError> {
         let file = self.file_system.read_file(root, path)?;
         Ok(ReadWorkspaceFileResponse {
+            path: file.path,
+            content: file.content,
+            version: file.version,
+            size_bytes: u32::try_from(file.size_bytes).unwrap_or(u32::MAX),
+        })
+    }
+
+    /// Reads one bounded UTF-8 file from a project's main checkout.
+    pub(crate) fn read_project_file(
+        &self,
+        root: &Path,
+        path: &Path,
+    ) -> Result<ReadProjectFileResponse, WorkspaceFileSystemError> {
+        let file = self.file_system.read_file(root, path)?;
+        Ok(ReadProjectFileResponse {
             path: file.path,
             content: file.content,
             version: file.version,
@@ -82,6 +123,43 @@ impl WorkspaceFileApi {
             )
             .await?;
         Ok(SearchWorkspaceResponse {
+            results: search
+                .results
+                .into_iter()
+                .map(|result| match result {
+                    SearchResult::File { path } => WorkspaceSearchResult::File { path },
+                    SearchResult::Match(found) => WorkspaceSearchResult::Match {
+                        path: found.path,
+                        line: u32::try_from(found.line).unwrap_or(u32::MAX),
+                        column: u32::try_from(found.column).unwrap_or(u32::MAX),
+                        matched_text: found.matched_text,
+                        preview: found.preview,
+                    },
+                })
+                .collect(),
+            truncated: search.truncated,
+        })
+    }
+
+    /// Searches a project's main checkout with the bundled ripgrep executable.
+    pub(crate) async fn search_project(
+        &self,
+        root: &Path,
+        query: &str,
+        kind: WorkspaceSearchKind,
+    ) -> Result<SearchProjectResponse, WorkspaceFileSystemError> {
+        let search = self
+            .file_system
+            .search(
+                root,
+                query,
+                match kind {
+                    WorkspaceSearchKind::Files => SearchKind::Files,
+                    WorkspaceSearchKind::Content => SearchKind::Content,
+                },
+            )
+            .await?;
+        Ok(SearchProjectResponse {
             results: search
                 .results
                 .into_iter()
