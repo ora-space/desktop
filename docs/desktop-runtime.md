@@ -6,15 +6,17 @@
 
 Desktop constructs one cloneable `ora-backend::Backend`. A shared command wrapper assigns a canonical
 request id, opens the request span, invokes unary business logic, projects any backend error, and
-records at most one completion event. Session load and prompt operations use `stream_contract`, which
+records at most one completion event. Session load, prompt, and `watchAppEvents` operations use `stream_contract`, which
 forwards ordered `data`, `error`, and `end` frames over a Tauri Channel. A private call id allows an
 `AbortSignal` to cancel only that stream, while one separate request id correlates the complete stream.
 
 The frontend injects `createTauriTransport()` into `createContractsClient`. The transport maps contract operation names to Tauri commands and forwards the original request DTO unchanged. Shared backend failures use the same direct `{ code, params, requestId }` payload as Web, without a public message or outer envelope. Tauri and fetch reuse the same runtime decoder; local Tauri invocation failures have no HTTP status and never invent a request id.
 
-Task workspace lookup and Spec management are part of that shared contract surface. `get_task_workspace` returns the authoritative task root with an optional branch, while `catalog_specs`, `read_spec`, `resolve_spec_source`, and `update_project_spec_sources` delegate unary work to the shared backend. `watch_specs` uses the same channel framing, cancellation, and exactly-once completion lifecycle as other Desktop streams. The frontend still selects directories through the existing native `PlatformAdapter.selectPath({ kind: "directory" })` path picker; no Spec-specific browser command exists.
+Task workspace lookup and Spec management are part of that shared contract surface. `get_task_workspace` returns the authoritative task root with an optional branch, while `catalog_specs`, `read_spec`, `resolve_spec_source`, and `update_project_spec_sources` delegate unary work to the shared backend. `watch_specs` and `watchAppEvents` use the same channel framing, cancellation, and exactly-once completion lifecycle as other Desktop streams. The frontend still selects directories through the existing native `PlatformAdapter.selectPath({ kind: "directory" })` path picker; no Spec-specific browser command exists.
 
 Backend construction immediately attempts supervised `opencode acp`, `nga acp`, `codeagentcli acp`, `claude-agent-acp`, and `codex-acp` children in the user's home directory. Sessions share the connection selected by their current `agentCli` while retaining their own ACP session id and Task worktree `cwd`. `switch_session_agent` moves a live conversation to another CLI and `resume_session_history` recovers one whose history writes failed. Each CLI retries independently; failures leave the Desktop shell and healthy CLIs available, while operations targeting an unavailable CLI report `agent_runtime_unavailable`. Executable lookup is platform-specific — see [ACP Agent Runtime](agent-runtime.md).
+
+The Desktop App Shell waits for the `Ready` frame before mounting normal queries and watchers. Its in-memory `clientInstanceId` owns the single application-event stream; another main window receives `multiple_clients_unsupported` and can only take ownership after the active stream is gone and the user presses the retry action. The stream carries best-effort session-title invalidations rather than persisted events.
 
 Beyond the shared contract surface, Desktop registers four platform-only commands with no HTTP counterpart: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`.
 

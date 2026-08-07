@@ -24,6 +24,7 @@ pub const TASK_DIFF_COMMENT_REPLIES_PATH: &str =
 pub const TASK_DIFF_COMMENT_STATUS_PATH: &str =
     "/api/tasks/{taskId}/diff/comments/{commentId}/status";
 pub const SESSIONS_PATH: &str = "/api/sessions";
+pub const APP_EVENT_WATCH_PATH: &str = "/api/app-events/watch";
 pub const SESSION_PATH: &str = "/api/sessions/{sessionId}";
 pub const SESSION_LOAD_PATH: &str = "/api/sessions/{sessionId}/load";
 pub const SESSION_PROMPT_PATH: &str = "/api/sessions/{sessionId}/prompt";

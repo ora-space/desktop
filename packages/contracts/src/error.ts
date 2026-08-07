@@ -45,6 +45,7 @@ export type ContractError =
     | { "code": "session_load_unsupported"; "params": EmptyErrorParams }
     | { "code": "session_history_degraded"; "params": EmptyErrorParams }
     | { "code": "session_agent_unchanged"; "params": EmptyErrorParams }
+    | { "code": "multiple_clients_unsupported"; "params": EmptyErrorParams }
     | { "code": "permission_request_not_pending"; "params": EmptyErrorParams }
     | { "code": "permission_option_invalid"; "params": EmptyErrorParams }
     | { "code": "prompt_empty"; "params": EmptyErrorParams }
@@ -190,6 +191,7 @@ export type PublicError =
   | { "code": "session_load_unsupported"; "params": EmptyErrorParams }
   | { "code": "session_history_degraded"; "params": EmptyErrorParams }
   | { "code": "session_agent_unchanged"; "params": EmptyErrorParams }
+  | { "code": "multiple_clients_unsupported"; "params": EmptyErrorParams }
   | { "code": "permission_request_not_pending"; "params": EmptyErrorParams }
   | { "code": "permission_option_invalid"; "params": EmptyErrorParams }
   | { "code": "prompt_empty"; "params": EmptyErrorParams }

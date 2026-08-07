@@ -7,8 +7,9 @@ use super::RuntimeCommand;
 /// Owns one finite business-event stream and cancels its operation when consumption stops early.
 pub struct SessionEventStream<Event> {
     receiver: mpsc::Receiver<Result<Event, BackendError>>,
-    commands: mpsc::UnboundedSender<RuntimeCommand>,
-    operation_id: u64,
+    commands: Option<mpsc::UnboundedSender<RuntimeCommand>>,
+    operation_id: Option<u64>,
+    cleanup: Option<Box<dyn FnOnce() + Send + 'static>>,
     completed: bool,
 }
 
@@ -21,8 +22,26 @@ impl<Event> SessionEventStream<Event> {
     ) -> Self {
         Self {
             receiver,
-            commands,
-            operation_id,
+            commands: Some(commands),
+            operation_id: Some(operation_id),
+            cleanup: None,
+            completed: false,
+        }
+    }
+
+    /// Builds a stream owned by a non-actor publisher, such as the application event hub.
+    pub(crate) fn with_cleanup<F>(
+        receiver: mpsc::Receiver<Result<Event, BackendError>>,
+        cleanup: F,
+    ) -> Self
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        Self {
+            receiver,
+            commands: None,
+            operation_id: None,
+            cleanup: Some(Box::new(cleanup)),
             completed: false,
         }
     }
@@ -39,14 +58,19 @@ impl<Event> SessionEventStream<Event> {
 
 impl<Event> Drop for SessionEventStream<Event> {
     fn drop(&mut self) {
-        if !self.completed {
+        if !self.completed && self.commands.is_some() {
             ora_debug!(
-                operation_id = self.operation_id,
+                operation_id = self.operation_id.unwrap_or_default(),
                 "stream dropped, sending cancel"
             );
-            let _ = self.commands.send(RuntimeCommand::Cancel {
-                operation_id: self.operation_id,
-            });
+            if let (Some(commands), Some(operation_id)) =
+                (self.commands.as_ref(), self.operation_id)
+            {
+                let _ = commands.send(RuntimeCommand::Cancel { operation_id });
+            }
+        }
+        if let Some(cleanup) = self.cleanup.take() {
+            cleanup();
         }
     }
 }

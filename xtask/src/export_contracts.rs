@@ -270,6 +270,8 @@ fn collect_contract_type_imports(
 /// Maps one exported contract type name to the TypeScript module that contains it.
 fn contract_module_for_type(type_name: &str) -> &'static str {
     match type_name {
+        // appEvents
+        "AppEvent" | "WatchAppEventsRequest" => "app_event",
         // project
         "CreateProjectRequest"
         | "CreateProjectResponse"

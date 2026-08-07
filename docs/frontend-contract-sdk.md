@@ -34,7 +34,7 @@ Both carry a do-not-edit header. Everything else in the package — `client.ts`,
 
 `createContractsClient(transport)` returns a namespaced client whose shape is derived from the generated manifest: `ContractsClient` maps each endpoint's `namespace`/`memberName` pair into a nested object type. Because `createContractsClient` returns an object literal checked against that derived type, adding a route in Rust and regenerating without updating `client.ts` fails `tsc` with a missing-property error. The hand-written client stays in compile-time lockstep with Rust.
 
-Namespaces are `project`, `projectWorkContext`, `task`, `session`, `agentRuntime`, `skill`, `skillImport`, `agent`, `fileSystem`, `gitIdentity`, `spec`, `workflow`, and `workflowRun`. The `spec` namespace keeps unary catalog/read/configuration calls and its workspace-event stream behind one target-tagged API.
+Namespaces are `project`, `projectWorkContext`, `task`, `session`, `appEvents`, `agentRuntime`, `skill`, `skillImport`, `agent`, `fileSystem`, `gitIdentity`, `spec`, `workflow`, and `workflowRun`. The `appEvents` namespace exposes `client.appEvents.watch({ clientInstanceId })`; the stream begins with `Ready`, then carries best-effort invalidations such as `SessionTitleUpdated`. The `spec` namespace keeps unary catalog/read/configuration calls and its workspace-event stream behind one target-tagged API.
 
 For each call the client builds the URL from the endpoint's path parameters, appends declared query parameters, serializes the remaining fields as a JSON body when `hasJsonBody` is set, and then delegates execution to the injected transport. It hard-codes no runtime: the same client works in a browser, in Tauri, or in a test.
 
@@ -44,9 +44,11 @@ Every `ContractTransportRequest` also carries the original complete request DTO 
 
 `ContractTransport` has two methods, `send` and `stream`, both accepting an optional `AbortSignal` through `ContractCallOptions`. Streams are cold and single-use — a second iteration of the same `AsyncIterable` throws `stream_already_consumed`.
 
-**Browser** — `@ora/contracts/fetch` exports `createFetchTransport`. `baseUrl` is the server base, not a pre-expanded API prefix. Non-success unary responses and stream error frames are decoded through the shared `decodeRemoteError` boundary. Remote Web errors may retain the HTTP status; local failures do not fabricate remote metadata. Streaming reads newline-delimited `data`, `error`, and `end` frames with an 8 MiB frame limit.
+**Browser** — `@ora/contracts/fetch` exports `createFetchTransport`. `baseUrl` is the server base, not a pre-expanded API prefix. Non-success unary responses and stream error frames are decoded through the shared `decodeRemoteError` boundary. Remote Web errors may retain the HTTP status; local failures do not fabricate remote metadata. Streaming reads newline-delimited `data`, `error`, and `end` frames with an 8 MiB frame limit. The `watchAppEvents` response may also contain transport-only blank heartbeat lines; the decoder ignores them.
 
 **Desktop** — `apps/desktop/web` exports `createTauriTransport`, injected as `createContractsClient(createTauriTransport())`. It maps operation names to snake-case Tauri commands and drives streams over a Tauri Channel using the same private frame shape. Unary failures and stream error frames use the same decoder as Web. Desktop rejects `openProjectWorkContext`, `renewProjectWorkContext`, and `listDirectory` with the local `unsupported_operation` kind before invoking a command.
+
+`watchAppEvents` is a best-effort invalidation stream, not a replayable event log. It uses the in-memory `clientInstanceId` only for the single active-client lease; it is independent from the `sessionStorage` `clientId` used by warm sessions. A `multiple_clients_unsupported` error is stable and is handled by the App Shell before normal queries are mounted.
 
 ## Public errors and localization
 

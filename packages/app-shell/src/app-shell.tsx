@@ -34,6 +34,8 @@ import { useUiStore } from "./state/stores/ui-store";
 import { startThemeSubscription } from "./state/stores/settings-store";
 import { useTranslation } from "react-i18next";
 import { WorkflowRuntimeProvider } from "./features/workflow-run/workflow-runtime-context";
+import { AppEventGate } from "./state/app-event-gate";
+export { AppEventGate } from "./state/app-event-gate";
 
 interface AppShellProps {
   client: ContractsClient;
@@ -62,9 +64,11 @@ export function AppShell({
   return (
     <QueryClientProvider client={queryClient}>
       <AppI18nProvider>
-        <WorkflowRuntimeProvider runtime={workflowRuntime}>
-          <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} />
-        </WorkflowRuntimeProvider>
+        <AppEventGate client={client}>
+          <WorkflowRuntimeProvider runtime={workflowRuntime}>
+            <AppShellContent client={client} chatStore={chatStore} platform={platform} user={user} />
+          </WorkflowRuntimeProvider>
+        </AppEventGate>
       </AppI18nProvider>
     </QueryClientProvider>
   );

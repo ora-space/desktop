@@ -566,6 +566,31 @@ pub async fn stream_contract(
                 lifecycle,
             ));
         }
+        "watchAppEvents" => {
+            let request =
+                serde_json::from_value::<WatchAppEventsRequest>(request).map_err(|source| {
+                    CommandError::from_backend_with_lifecycle(
+                        BackendError::internal("failed to decode stream request", source),
+                        &lifecycle,
+                    )
+                })?;
+            let stream = state
+                .backend
+                .watch_app_events(request)
+                .await
+                .map_err(|error| CommandError::from_backend_with_lifecycle(error, &lifecycle))?;
+            register_contract_stream(&state, &stream_call_id, &cancellation)
+                .map_err(|error| CommandError::from_backend_with_lifecycle(error, &lifecycle))?;
+            let registry = state.stream_cancellations.clone();
+            tauri::async_runtime::spawn(forward_contract_stream(
+                stream,
+                cancellation,
+                stream_call_id,
+                registry,
+                on_event,
+                lifecycle,
+            ));
+        }
         "watchWorkspace" => {
             let request =
                 serde_json::from_value::<WatchWorkspaceRequest>(request).map_err(|source| {

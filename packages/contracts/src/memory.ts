@@ -1,6 +1,7 @@
 import type * as acp from "./acp/index.js";
 import type { Agent } from "./agent.js";
 import type { AgentCli } from "./session.js";
+import type { AppEvent } from "./app_event.js";
 import type { ContractsClient } from "./client.js";
 import type { InstalledPlugin } from "./plugin.js";
 import type { Project } from "./project.js";
@@ -280,6 +281,22 @@ export function createMemoryContractsClient(
       delete: async (request) => {
         removeRecord(state.sessions, request.sessionId);
         return { sessionId: request.sessionId };
+      },
+    },
+    appEvents: {
+      watch: async function* (_request, options): AsyncGenerator<AppEvent> {
+        yield { type: "ready" };
+        // Keep the prototype stream alive like the real backend; the App Shell owns
+        // its lifetime through AbortSignal when it unmounts or reconnects.
+        await new Promise<void>((resolve) => {
+          const signal = options?.signal;
+          if (signal === undefined) return;
+          if (signal.aborted) {
+            resolve();
+            return;
+          }
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
       },
     },
     agent: {

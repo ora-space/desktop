@@ -1,4 +1,5 @@
 pub mod acp;
+pub mod app_event;
 
 pub mod agent;
 pub mod agent_import;
@@ -18,6 +19,7 @@ pub mod task_diff;
 pub mod workflow;
 pub mod workflow_run;
 pub use agent_import::*;
+pub use app_event::*;
 
 pub use agent::*;
 pub use error::*;
@@ -49,6 +51,7 @@ pub fn export_typescript_bindings_to(
     agent_import::export(&config)?;
 
     acp::export(&config)?;
+    app_event::export(&config)?;
     agent::export(&config)?;
     error::export(&config)?;
     file_system::export(&config)?;

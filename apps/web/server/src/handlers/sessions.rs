@@ -14,7 +14,7 @@ use ora_contracts::{
     RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest,
     ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse,
     StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse,
-    WarmSessionRequest, WarmSessionResponse,
+    WarmSessionRequest, WarmSessionResponse, WatchAppEventsRequest,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -156,6 +156,19 @@ pub async fn list_sessions(
         .map_err(WebApiError::from)
 }
 
+/// Watches application invalidations using the shared NDJSON contract stream.
+pub async fn watch_app_events(
+    State(app_state): State<AppState>,
+    Json(request): Json<WatchAppEventsRequest>,
+) -> Result<Response<Body>, WebApiError> {
+    let events = app_state
+        .backend()
+        .watch_app_events(request)
+        .await
+        .map_err(WebApiError::from)?;
+    Ok(stream_response_with_heartbeat(events))
+}
+
 /// Streams ACP history replay as private NDJSON transport frames.
 pub async fn load_session(
     State(app_state): State<AppState>,
@@ -274,14 +287,49 @@ fn stream_response<Event>(events: SessionEventStream<Event>) -> Response<Body>
 where
     Event: Serialize + Send + 'static,
 {
+    stream_response_inner(events, None)
+}
+
+/// Converts an application event receiver into NDJSON frames with transport-only heartbeats.
+fn stream_response_with_heartbeat<Event>(events: SessionEventStream<Event>) -> Response<Body>
+where
+    Event: Serialize + Send + 'static,
+{
+    stream_response_inner(events, Some(std::time::Duration::from_secs(15)))
+}
+
+/// Builds one NDJSON response and optionally emits empty-line heartbeats while it is idle.
+fn stream_response_inner<Event>(
+    events: SessionEventStream<Event>,
+    heartbeat_period: Option<std::time::Duration>,
+) -> Response<Body>
+where
+    Event: Serialize + Send + 'static,
+{
     let lifecycle = current_lifecycle();
+    let heartbeat = heartbeat_period
+        .map(|period| tokio::time::interval_at(tokio::time::Instant::now() + period, period));
     let body_stream = stream::unfold(
-        (events, false, lifecycle),
-        |(mut events, ended, lifecycle)| async move {
+        (events, false, lifecycle, heartbeat),
+        |(mut events, ended, lifecycle, mut heartbeat)| async move {
             if ended {
                 return None;
             }
-            let (frame, next_ended) = match events.recv().await {
+            let next_event = match heartbeat.as_mut() {
+                Some(interval) => tokio::select! {
+                    biased;
+                    event = events.recv() => Some(event),
+                    _ = interval.tick() => None,
+                },
+                None => Some(events.recv().await),
+            };
+            let Some(event) = next_event else {
+                return Some((
+                    Ok::<Bytes, Infallible>(Bytes::from_static(b"\n")),
+                    (events, false, lifecycle, heartbeat),
+                ));
+            };
+            let (frame, next_ended) = match event {
                 Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
                 Some(Err(error)) => {
                     lifecycle.complete_failure(&error);
@@ -311,7 +359,7 @@ where
             bytes.push(b'\n');
             Some((
                 Ok::<Bytes, Infallible>(Bytes::from(bytes)),
-                (events, next_ended, lifecycle),
+                (events, next_ended, lifecycle, heartbeat),
             ))
         },
     );

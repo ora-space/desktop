@@ -144,9 +144,8 @@ impl FrontendEndpoint {
     /// Returns the transport mode explicitly owned by the Rust endpoint catalog.
     pub(crate) fn response_mode(&self) -> FrontendResponseMode {
         match self.operation_name {
-            "loadSession" | "promptSession" | "watchWorkspace" | "watchSpecs" => {
-                FrontendResponseMode::Stream
-            }
+            "loadSession" | "promptSession" | "watchWorkspace" | "watchSpecs"
+            | "watchAppEvents" => FrontendResponseMode::Stream,
             _ => FrontendResponseMode::Unary,
         }
     }

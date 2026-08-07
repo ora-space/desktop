@@ -27,7 +27,7 @@ const unsupportedOperations = {
 } as const satisfies Partial<Record<EndpointOperation, true>>;
 
 type UnsupportedTauriOperation = keyof typeof unsupportedOperations;
-type TauriStreamOperation = "loadSession" | "promptSession" | "watchSpecs" | "watchWorkspace";
+type TauriStreamOperation = "loadSession" | "promptSession" | "watchAppEvents" | "watchSpecs" | "watchWorkspace";
 type SupportedTauriOperation = Exclude<
   EndpointOperation,
   UnsupportedTauriOperation | TauriStreamOperation
@@ -197,7 +197,7 @@ export function createTauriTransport(
 
 /** Identifies operations that must use the shared Tauri channel stream command. */
 function isTauriStreamOperation(operation: EndpointOperation): operation is TauriStreamOperation {
-  return operation === "loadSession" || operation === "promptSession" || operation === "watchSpecs" || operation === "watchWorkspace";
+  return operation === "loadSession" || operation === "promptSession" || operation === "watchAppEvents" || operation === "watchSpecs" || operation === "watchWorkspace";
 }
 
 /** Starts one private channel stream and cancels its backend registration on every early exit. */

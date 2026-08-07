@@ -9,6 +9,7 @@
 - It serves persisted HTTP operations for Project, Task, Spec sources, Session, Skill, Agent, and Git identity through the shared `ora-backend` composition.
 - It provisions task-owned linked worktrees during creation and leaves Git untouched during deletion.
 - It streams ACP load replay and prompt updates as bounded NDJSON responses.
+- It exposes the best-effort `watchAppEvents` NDJSON stream used to gate the App Shell and invalidate persisted session queries.
 - It provides read-only server filesystem listings for the Web platform path picker.
 - It provides a task-scoped, read-only workspace explorer with bounded file reads, ripgrep search, and native refresh events.
 - It exposes the shared project/task Spec catalog, safe Markdown reads, project-wide source configuration, and mounted-only refresh streams.
@@ -106,6 +107,12 @@ Route paths come from shared `ora-contracts` path constants, while the generatio
 - `POST /api/sessions/{sessionId}/agent`
 - `POST /api/sessions/{sessionId}/history/resume`
 - `DELETE /api/sessions/{sessionId}`
+
+### appEvents
+
+- `POST /api/app-events/watch` with `{ "clientInstanceId": "..." }`
+
+The first data frame is `Ready`. During an idle connection the Web adapter may write blank NDJSON lines as transport-only heartbeats; they are not application events. One backend process grants the stream to one active client instance. A second instance receives `multiple_clients_unsupported`, and a disconnected stream releases the lease. Events are not persisted or replayed, so clients refetch sessions after initial subscription, stream loss, lag, or queue overflow.
 
 ### agentRuntime
 

@@ -250,6 +250,20 @@ export function createMockClient(state: MockClientState): ContractsClient {
         return { sessionId: req.sessionId };
       },
     },
+    appEvents: {
+      watch: async function* (_request, options) {
+        yield { type: "ready" as const };
+        await new Promise<void>((resolve) => {
+          const signal = options?.signal;
+          if (signal === undefined) return;
+          if (signal.aborted) {
+            resolve();
+            return;
+          }
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      },
+    },
     agentRuntime: {
       getStatus: async () => ({
         statuses: [

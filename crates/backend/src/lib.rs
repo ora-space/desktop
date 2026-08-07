@@ -1,5 +1,6 @@
 mod agent;
 mod agent_runtime;
+mod app_event;
 mod bootstrap;
 mod clock;
 mod error;
@@ -17,6 +18,7 @@ mod workflow;
 mod workflow_run;
 
 pub use agent_runtime::SessionEventStream;
+pub use app_event::AppEventHub;
 pub use bootstrap::{Backend, BackendBootstrapError, BackendPaths};
 pub use error::{BackendError, ErrorClassification};
 pub use request_lifecycle::{RequestIdGenerator, RequestLifecycle, UuidRequestIdGenerator};

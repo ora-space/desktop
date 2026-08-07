@@ -1,5 +1,6 @@
 use crate::agent::AgentApi;
 use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
+use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
 use crate::project::ProjectApi;
@@ -68,6 +69,7 @@ pub struct Backend {
     spec: Arc<SpecApi>,
     workflow: Arc<WorkflowApi>,
     workflow_run: Arc<WorkflowRunApi>,
+    app_events: Arc<AppEventHub>,
 }
 
 impl Backend {
@@ -89,6 +91,7 @@ impl Backend {
         crate::skill_reconciliation::cleanup_import_temp_sessions()
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
+        let app_events = Arc::new(AppEventHub::new());
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let sessions_root = paths.sessions_root;
         let agent_runtime = AgentRuntimeManager::new(
@@ -119,6 +122,7 @@ impl Backend {
                 worktree_root.clone(),
                 clock,
             )),
+            app_events,
             pool,
             worktree_root,
         })
@@ -429,6 +433,14 @@ impl Backend {
         request: LoadSessionRequest,
     ) -> Result<SessionEventStream<LoadSessionEvent>, BackendError> {
         self.agent_runtime.load_session(request).await
+    }
+
+    /// Opens the application event stream after acquiring the backend's client lease.
+    pub async fn watch_app_events(
+        &self,
+        request: WatchAppEventsRequest,
+    ) -> Result<SessionEventStream<AppEvent>, BackendError> {
+        self.app_events.subscribe(request.client_instance_id)
     }
 
     /// Streams one structured ACP prompt turn for a running session.

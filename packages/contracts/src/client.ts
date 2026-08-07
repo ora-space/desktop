@@ -110,6 +110,10 @@ export function createContractsClient(
       delete: (request, options) =>
         executeOperation("deleteSession", request, transport, options),
     },
+    appEvents: {
+      watch: (request, options) =>
+        executeStreamOperation("watchAppEvents", request, transport, options),
+    },
     agentRuntime: {
       getStatus: (request, options) =>
         executeOperation("getAgentRuntimeStatus", request, transport, options),
