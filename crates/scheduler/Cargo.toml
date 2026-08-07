@@ -15,8 +15,11 @@ ora-logging = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 cron = { workspace = true }
-futures = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
-tokio-util = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
