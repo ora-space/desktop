@@ -78,7 +78,9 @@ Keep these stacks separate — shared chrome only where noted.
 - Does not persist definitions in `@ora/workflow-mock` (that package stays
   session-demo + validation).
 - Does not own OpenSpec Spec-mode state.
-- Does not call Rust/contracts workflow APIs yet (F2 HTTP/NDJSON later).
+- Does not own Task Diff rendering (reuses `WorkspaceReviewLayout` /
+  `TaskDiffView` from chat); only supplies the run-task `taskId` context.
+- Does not implement session-scoped Diff for Theater stage mode yet.
 - Does not reuse settings `WorkflowCanvas` (no catalog / reconnect / delete).
 - Does not implement HITL timeout (always waits for submit; `HitlTimeoutPolicy`
   enum reserved for later).
@@ -101,6 +103,12 @@ Keep these stacks separate — shared chrome only where noted.
   run, select that run, and close settings. Kickoff input belongs in the main
   workspace UI later (`create` / path policy already accept `kickoffInput`).
 - Selection: `useWorkspaceSelectionStore.selectWorkflowRun`.
+- **Changes / Diff**: the run workspace wraps Theater and Overview in the same
+  `WorkspaceReviewLayout` used by chat. Scope is the run-task worktree
+  (`GetWorkflowRunResponse.taskId` → `TaskDiffView`), i.e. all file changes for
+  the run — not a single node session. Stage-scoped Diff is deferred until a
+  session-level Git Diff API (or turn-level filter) exists; `nodeStates.sessionId`
+  is projected for that follow-up.
 - Lists: react-query via `queryKeys.workflowMounts` /
   `workflowMountsByDefinition` / `workflowRuns`.
 - Runtime: `WorkflowRuntimeProvider` in `AppShell` injects

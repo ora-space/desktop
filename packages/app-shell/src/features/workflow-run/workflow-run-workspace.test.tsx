@@ -1,0 +1,134 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createChatStore } from "@ora/chat";
+import { PlatformProvider } from "@ora/platform";
+import { createMemoryWorkflowRuntime } from "@ora/workflow-runtime/memory";
+import {
+  createHookWrapper,
+  createTestQueryClient,
+} from "../../test/hook-harness";
+import { createMockClient, createMockClientState } from "../../test/mock-client";
+import { createStubPlatform } from "../../test/stub-platform";
+import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { WorkflowRunWorkspace } from "./workflow-run-workspace";
+
+vi.mock("../diff/task-diff-view", () => ({
+  TaskDiffView: ({ toolbar }: { toolbar?: ReactNode }) => (
+    <section aria-label="Task diff">
+      <header data-diff-toolbar>{toolbar}</header>
+    </section>
+  ),
+}));
+
+vi.mock("../files/workspace-review-files-panel", () => ({
+  WorkspaceReviewFilesPanel: ({ toolbar }: { toolbar?: ReactNode }) => (
+    <section aria-label="Files panel">{toolbar}</section>
+  ),
+}));
+
+const GRAPH = JSON.stringify({
+  nodes: [
+    {
+      id: "start",
+      type: "workflow",
+      position: { x: 0, y: 0 },
+      data: { kind: "start", title: "开始", description: "" },
+    },
+  ],
+  edges: [],
+  viewport: { x: 32, y: 32, zoom: 1 },
+  description: "",
+});
+
+describe("WorkflowRunWorkspace Changes", () => {
+  beforeEach(() => {
+    useWorkspaceSelectionStore.setState({
+      selection: {
+        projectId: "p1",
+        taskId: null,
+        sessionId: null,
+        workflowRunId: "run-1",
+      },
+    });
+  });
+
+  it("exposes the run-task Changes panel once the worktree task id is loaded", async () => {
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Demo", rootPath: "/demo" }];
+    state.workflows = [{
+      workflow: {
+        id: "workflow-a",
+        name: "审查流程",
+        publishedSnapshotId: "snap-1",
+        createdAt: 1n,
+        updatedAt: 1n,
+      },
+      draft: {
+        id: "draft-1",
+        workflowId: "workflow-a",
+        version: "draft",
+        graph: GRAPH,
+        createdAt: 1n,
+        updatedAt: 1n,
+      },
+      published: [{
+        id: "snap-1",
+        workflowId: "workflow-a",
+        version: "v1",
+        graph: GRAPH,
+        createdAt: 1n,
+        updatedAt: null,
+      }],
+    }];
+    state.workflowRuns = [{
+      id: "run-1",
+      projectId: "p1",
+      workflowId: "workflow-a",
+      snapshotId: "snap-1",
+      name: "审查流程 1",
+      status: "pending",
+      taskId: "task-run-1",
+      createdAt: 1n,
+      updatedAt: 1n,
+    }];
+    state.tasks = [{
+      id: "task-run-1",
+      projectId: "p1",
+      title: "审查流程 1",
+      status: "todo",
+      workspaceMode: "worktree",
+      type: "workflow",
+      workflowRunId: "run-1",
+    }];
+
+    const client = createMockClient(state);
+    const runtime = createMemoryWorkflowRuntime();
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const user = userEvent.setup();
+
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <Wrapper>
+          <WorkflowRunWorkspace runId="run-1" />
+        </Wrapper>
+      </PlatformProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("审查流程 1")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /变更|Changes/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /变更|Changes/ }));
+    expect(screen.getByRole("region", { name: "Task diff" })).toBeInTheDocument();
+
+    runtime.dispose();
+  });
+});

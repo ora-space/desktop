@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { createMockClient, createMockClientState, type MockClientState } from "../../test/mock-client";
-import { buildDisplayRun, useDeleteWorkflowRun, useRenameWorkflowRun, useWorkflowRunsByProject } from "./use-workflow-runs";
+import { buildDisplayRun, useDeleteWorkflowRun, useRealWorkflowRun, useRenameWorkflowRun, useWorkflowRunsByProject } from "./use-workflow-runs";
 
 /** Seeds one persisted run and its run-task for hook tests. */
 function seededState(): MockClientState {
@@ -88,6 +88,23 @@ describe("buildDisplayRun", () => {
     expect(display.nodeStates.explore.startedAt).toBe(new Date(2).toISOString());
   });
 
+  it("projects node session ids for future stage-scoped Diff", () => {
+    const withSession = {
+      ...detail,
+      nodes: [{
+        nodeId: "explore",
+        status: "running",
+        startedAt: 2n,
+        finishedAt: null,
+        error: null,
+        output: null,
+        sessionId: "session-explore",
+      }],
+    };
+    const display = buildDisplayRun(withSession, GRAPH);
+    expect(display.nodeStates.explore.sessionId).toBe("session-explore");
+  });
+
   it("derives awaiting_input node state from a pending node-run", () => {
     const pendingDetail = {
       ...detail,
@@ -95,6 +112,44 @@ describe("buildDisplayRun", () => {
     };
     const display = buildDisplayRun(pendingDetail, GRAPH);
     expect(display.nodeStates.explore.status).toBe("awaiting_input");
+  });
+});
+
+describe("useRealWorkflowRun", () => {
+  it("returns the display run together with the run-task id", async () => {
+    const state = seededState();
+    state.projects = [{ id: "p1", name: "Demo", rootPath: "/demo" }];
+    state.workflows = [{
+      workflow: {
+        id: "workflow-a",
+        name: "审查流程",
+        publishedSnapshotId: "snap-1",
+        createdAt: 1n,
+        updatedAt: 1n,
+      },
+      draft: {
+        id: "draft-1",
+        workflowId: "workflow-a",
+        version: "draft",
+        graph: GRAPH,
+        createdAt: 1n,
+        updatedAt: 1n,
+      },
+      published: [{
+        id: "snap-1",
+        workflowId: "workflow-a",
+        version: "v1",
+        graph: GRAPH,
+        createdAt: 1n,
+        updatedAt: null,
+      }],
+    }];
+    const client = createMockClient(state);
+    const { result } = renderHookWithClient(() => useRealWorkflowRun("run-1"), client);
+    await vi.waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.taskId).toBe("t1");
+    expect(result.current.data?.run.id).toBe("run-1");
+    expect(result.current.data?.run.name).toBe("审查流程 1");
   });
 });
 

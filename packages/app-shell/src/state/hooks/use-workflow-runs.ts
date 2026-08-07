@@ -98,28 +98,46 @@ export function useRenameWorkflowRun() {
  *
  * The backend run is lean (no name, graph, or node state), so the adapter composes the run
  * detail with its frozen snapshot graph and node-runs to satisfy the Theater/Overview canvas.
+ * `taskId` is the run-task that owns the Git worktree used by Task Diff.
  */
 export function useRealWorkflowRun(runId: string | null | undefined) {
   const client = useContractsClient();
   return useQuery({
     queryKey: runDetailKey(runId ?? ""),
-    queryFn: async () => {
+    queryFn: async (): Promise<RealWorkflowRunDetail> => {
       const detail = await client.workflowRun.get({ runId: runId! });
       const { snapshot } = await client.workflow.getSnapshot({
         snapshotId: detail.run.snapshotId,
       });
-      return buildDisplayRun(detail, snapshot.graph);
+      return {
+        run: buildDisplayRun(detail, snapshot.graph),
+        taskId: detail.taskId,
+      };
     },
     enabled: runId != null && runId !== "",
   });
 }
+
+/** Persisted run detail plus the run-task id used for worktree Diff / Files. */
+export type RealWorkflowRunDetail = {
+  run: GraphWorkflowRun;
+  taskId: string;
+};
 
 /** Projects a persisted run detail onto the Theater/Overview display model. */
 export function buildDisplayRun(
   detail: {
     run: { id: string; workflowId: string; status: string; state: string | null; startedAt: bigint | null; finishedAt: bigint | null; createdAt: bigint; updatedAt: bigint };
     name: string;
-    nodes: Array<{ nodeId: string; status: string; startedAt: bigint | null; finishedAt: bigint | null; error: string | null; output: string | null }>;
+    nodes: Array<{
+      nodeId: string;
+      status: string;
+      startedAt: bigint | null;
+      finishedAt: bigint | null;
+      error: string | null;
+      output: string | null;
+      sessionId?: string | null;
+    }>;
   },
   graph: string,
 ): GraphWorkflowRun {
@@ -142,6 +160,9 @@ export function buildDisplayRun(
       status: projectNodeStatus(
         nodeRun as { status: "pending" | "running" | "succeeded" | "failed" | "cancelled" } | null,
       ),
+      ...(nodeRun?.sessionId != null && nodeRun.sessionId !== ""
+        ? { sessionId: nodeRun.sessionId }
+        : {}),
       ...(nodeRun?.startedAt != null ? { startedAt: toIso(nodeRun.startedAt) } : {}),
       ...(nodeRun?.finishedAt != null ? { finishedAt: toIso(nodeRun.finishedAt) } : {}),
       ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),

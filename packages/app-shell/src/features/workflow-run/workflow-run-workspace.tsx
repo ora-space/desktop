@@ -31,6 +31,7 @@ import {
   useStartGraphWorkflowRun,
 } from "../../state/hooks/use-graph-workflow-runs";
 import { useRealWorkflowRun } from "../../state/hooks/use-workflow-runs";
+import { useProjects } from "../../state/hooks/use-projects";
 import {
   resolveStageFocusNodeId,
   resolveTheaterFocus,
@@ -43,6 +44,10 @@ import { RunTheater } from "./run-theater";
 import { RunStatusBadge } from "./run-status-mark";
 import { isTerminalRunStatus, runStatusTone } from "./run-status-style";
 import type { WorkflowRunViewMode } from "./run-view-mode";
+import {
+  WorkspaceReviewLayout,
+  type WorkspaceReviewContext,
+} from "../workspace/workspace-review-layout";
 
 interface WorkflowRunWorkspaceProps {
   runId: string;
@@ -57,8 +62,12 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const selectWorkflowRun = useWorkspaceSelectionStore((s) => s.selectWorkflowRun);
+  const projectId = useWorkspaceSelectionStore((s) => s.selection.projectId);
+  const projectsQuery = useProjects();
+  const project = projectsQuery.data?.find((item) => item.id === projectId);
   const runQuery = useRealWorkflowRun(runId);
-  const run = runQuery.data ?? null;
+  const run = runQuery.data?.run ?? null;
+  const runTaskId = runQuery.data?.taskId ?? null;
   const startRun = useStartGraphWorkflowRun();
   const cancelRun = useCancelGraphWorkflowRun();
   const rerun = useRerunGraphWorkflowRun();
@@ -264,6 +273,18 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const canRunAgain = run !== null && isTerminalRunStatus(run.status);
   const runTone = run !== null ? runStatusTone(run.status) : null;
   const actionBusy = startRun.isPending || cancelRun.isPending || rerun.isPending;
+
+  // Run-task worktree Diff / Files — same surface as chat Task Changes.
+  const reviewContext: WorkspaceReviewContext = runTaskId !== null
+      && projectId !== null
+      && project !== undefined
+    ? {
+      kind: "task",
+      taskId: runTaskId,
+      projectId,
+      projectRootPath: project.rootPath,
+    }
+    : { kind: "none" };
 
   // If the run finishes while the stop dialog is open, dismiss it so Confirm
   // (which preventDefault + early-returns when !canStop) cannot leave a stuck modal.
@@ -494,33 +515,39 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             {t("workflowRun.missing")}
           </div>
         )
-        : viewMode === "theater"
-        ? (
-          <RunTheater
-            run={run}
-            focusNodeId={stageFocusNodeId}
-            onFocusNode={focusNode}
-            onClearFocus={clearPathFocus}
-            artifacts={artifactsQuery.artifacts}
-            conversationByNodeId={artifactsQuery.conversationByNodeId}
-            revealedArtifactId={artifactsQuery.revealedId}
-            openInspectorOnMount={openInspectorOnTheaterEnter}
-            sessionConversationNodeId={conversationNodeId}
-            onSessionConversationNodeIdChange={setSessionConversationNodeId}
-            onShowOverview={() => {
-              setOpenInspectorOnTheaterEnter(false);
-              setViewMode("overview");
-            }}
-          />
-        )
         : (
-          <RunOverviewCanvas
-            run={run}
-            focusedNodeId={stageFocusNodeId}
-            onFocusNode={focusNodeFromOverview}
-            artifacts={artifactsQuery.artifacts}
-            fitRequestKey={overviewFitRequestKey}
-          />
+          <WorkspaceReviewLayout context={reviewContext}>
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {viewMode === "theater"
+                ? (
+                  <RunTheater
+                    run={run}
+                    focusNodeId={stageFocusNodeId}
+                    onFocusNode={focusNode}
+                    onClearFocus={clearPathFocus}
+                    artifacts={artifactsQuery.artifacts}
+                    conversationByNodeId={artifactsQuery.conversationByNodeId}
+                    revealedArtifactId={artifactsQuery.revealedId}
+                    openInspectorOnMount={openInspectorOnTheaterEnter}
+                    sessionConversationNodeId={conversationNodeId}
+                    onSessionConversationNodeIdChange={setSessionConversationNodeId}
+                    onShowOverview={() => {
+                      setOpenInspectorOnTheaterEnter(false);
+                      setViewMode("overview");
+                    }}
+                  />
+                )
+                : (
+                  <RunOverviewCanvas
+                    run={run}
+                    focusedNodeId={stageFocusNodeId}
+                    onFocusNode={focusNodeFromOverview}
+                    artifacts={artifactsQuery.artifacts}
+                    fitRequestKey={overviewFitRequestKey}
+                  />
+                )}
+            </div>
+          </WorkspaceReviewLayout>
         )}
 
       <AlertDialog open={stopOpen} onOpenChange={setStopOpen}>
