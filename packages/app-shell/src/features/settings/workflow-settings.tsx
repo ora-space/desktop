@@ -75,9 +75,9 @@ import {
 import { WorkflowDraftSaveStatusLabel } from "./workflow-draft-save-status";
 import { useWorkflowDraftAutosave } from "./use-workflow-draft-autosave";
 import {
-  animateWorkflowPanel,
-  cancelWorkflowPanelAnimation,
-} from "./workflow-panel-motion";
+  animatePanelWidth as animateWorkflowPanel,
+  cancelPanelWidthAnimation as cancelWorkflowPanelAnimation,
+} from "../../lib/panel-motion";
 import { DeployWorkflowButton } from "../workflow-run/deploy-to-project-dialog";
 
 const DEFAULT_WORKFLOW_LIBRARY_WIDTH = 220;
