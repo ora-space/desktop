@@ -50,6 +50,9 @@ import {
   type WorkspaceReviewContext,
 } from "../workspace/workspace-review-layout";
 
+/** Below this width, Overview → Theater skips auto-opening the act inspector. */
+const NARROW_THEATER_INSPECTOR_AUTO_OPEN_WIDTH = 1_000;
+
 interface WorkflowRunWorkspaceProps {
   runId: string;
 }
@@ -82,8 +85,11 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const [openInspectorOnTheaterEnter, setOpenInspectorOnTheaterEnter] = useState(
     false,
   );
+  /** True while Changes/Files review panel is open (side or expanded). */
+  const [reviewPanelOpen, setReviewPanelOpen] = useState(false);
   /** Re-fit Overview when the header control is activated (including while already there). */
   const [overviewFitRequestKey, setOverviewFitRequestKey] = useState(0);
+  const stageAreaRef = useRef<HTMLDivElement | null>(null);
 
   /** Same-node status edge: live pin just finished -> resume auto-follow. */
   const focusStatusSampleRef = useRef<TheaterFocusStatusSample | null>(null);
@@ -138,6 +144,8 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     setConversationNodeId(null);
     setStopOpen(false);
     setOpenInspectorOnTheaterEnter(false);
+    setReviewPanelOpen(false);
+    setReviewCloseRequestId(0);
   }
   useEffect(() => {
     focusStatusSampleRef.current = null;
@@ -305,8 +313,12 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     setConversationNodeId(null);
     setFocusNodeId(nodeId);
     const waiting = run !== null && run.nodeStates[nodeId]?.status === "awaiting_input";
+    const stageWidth = stageAreaRef.current?.getBoundingClientRect().width
+      ?? Number.POSITIVE_INFINITY;
+    // Narrow stages cannot host the act card and inspector without crushing the card.
+    const wideEnoughForInspector = stageWidth >= NARROW_THEATER_INSPECTOR_AUTO_OPEN_WIDTH;
     enterTheater({
-      openInspector: !waiting,
+      openInspector: !waiting && wideEnoughForInspector,
     });
   }
 
@@ -522,8 +534,12 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
           </div>
         )
         : (
-          <WorkspaceReviewLayout context={reviewContext}>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <WorkspaceReviewLayout
+            key={runId}
+            context={reviewContext}
+            onOpenChange={setReviewPanelOpen}
+          >
+            <div ref={stageAreaRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
               {viewMode === "theater"
                 ? (
                   <RunTheater
@@ -535,6 +551,10 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
                     conversationByNodeId={artifactsQuery.conversationByNodeId}
                     revealedArtifactId={artifactsQuery.revealedId}
                     openInspectorOnMount={openInspectorOnTheaterEnter}
+                    onOpenInspectorOnMountConsumed={() => {
+                      setOpenInspectorOnTheaterEnter(false);
+                    }}
+                    reviewPanelOpen={reviewPanelOpen}
                     sessionConversationNodeId={conversationNodeId}
                     onSessionConversationNodeIdChange={setSessionConversationNodeId}
                     onShowOverview={() => {

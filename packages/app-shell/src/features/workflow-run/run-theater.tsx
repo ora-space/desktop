@@ -39,8 +39,16 @@ interface RunTheaterProps {
   artifacts: WorkflowArtifact[];
   conversationByNodeId: Map<string, WorkflowNodeConversationItem[]>;
   revealedArtifactId: string | null;
-  /** Opens the companion rail once on mount (e.g. Overview → Theater via node click). */
+  /** Opens the companion rail once when seeded (Overview → Theater enter). */
   openInspectorOnMount?: boolean;
+  /** Clears the one-shot mount flag after the rail has been requested (or skipped). */
+  onOpenInspectorOnMountConsumed?: () => void;
+  /**
+   * When Changes/Files is open, suppress *automatic* inspector opens (seeded
+   * mount, artifact reveal). Intentional act clicks still open the rail so
+   * Diff and the inspector can coexist on the stage.
+   */
+  reviewPanelOpen?: boolean;
   /** Result act CTA — return to Overview path map. */
   onShowOverview: () => void;
   /** Which node's session dock is open — lifted across Overview remounts. */
@@ -62,6 +70,8 @@ export function RunTheater({
   conversationByNodeId,
   revealedArtifactId,
   openInspectorOnMount = false,
+  onOpenInspectorOnMountConsumed,
+  reviewPanelOpen = false,
   onShowOverview,
   sessionConversationNodeId = null,
   onSessionConversationNodeIdChange,
@@ -76,6 +86,8 @@ export function RunTheater({
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
   const pathScrollOpenSigRef = useRef<string>("");
   const pathRailRef = useRef<HTMLDivElement | null>(null);
+  const reviewPanelOpenRef = useRef(reviewPanelOpen);
+  reviewPanelOpenRef.current = reviewPanelOpen;
 
   const focus = useMemo(
     () => resolveTheaterFocus(run, focusNodeId),
@@ -212,7 +224,14 @@ export function RunTheater({
     }
   }
 
-  function openInspector(): void {
+  /**
+   * Opens the act inspector. Automatic triggers stay quiet while Diff/Files is
+   * open; user clicks always open so the rail can sit beside an open Diff.
+   */
+  function openInspector(reason: "automatic" | "user"): void {
+    if (reason === "automatic" && reviewPanelOpenRef.current) {
+      return;
+    }
     if (hitlExpanded) {
       collapseHitl();
     }
@@ -246,6 +265,20 @@ export function RunTheater({
     closeInspector();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [hitlExpanded]);
+
+  // Seeded open from Overview → Theater. Skipped (and retried) while Diff/Files
+  // owns the workspace so opening Changes does not auto-pop the rail.
+  useEffect(() => {
+    if (!openInspectorOnMount || reviewPanelOpen) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      openInspector("automatic");
+      onOpenInspectorOnMountConsumed?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [openInspectorOnMount, reviewPanelOpen]);
 
   function settleInspectorAfterUserResize(): void {
     const width = inspectorCurrentWidthRef.current;
@@ -295,17 +328,6 @@ export function RunTheater({
     settleInspectorAfterUserResize();
   }
 
-  useEffect(() => {
-    if (!openInspectorOnMount) {
-      return;
-    }
-    // Defer one frame so the rail animates in after first paint instead of
-    // mutating panel state synchronously within the mount effect.
-    const frame = window.requestAnimationFrame(() => openInspector());
-    return () => window.cancelAnimationFrame(frame);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
-  }, []);
-
   // Artifact reveal: open the rail only when the stage just moved onto the
   // producing act. If we were already there, skip — re-tweening the inspector
   // collapses HITL and flashes the card for no navigation benefit.
@@ -328,7 +350,7 @@ export function RunTheater({
     if (previousPrimary === artifact.nodeId) {
       return;
     }
-    openInspector();
+    openInspector("automatic");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [
     revealedArtifactId,
@@ -382,7 +404,7 @@ export function RunTheater({
                         if (recent !== null) {
                           onFocusNode(recent.nodeId);
                         }
-                        openInspector();
+                        openInspector("user");
                       }
                       : undefined}
                   />
@@ -394,7 +416,7 @@ export function RunTheater({
                       acts={parallelActs}
                       primaryId={primaryId!}
                       onFocusNode={onFocusNode}
-                      onOpenInspector={openInspector}
+                      onOpenInspector={() => openInspector("user")}
                       sessionConversationNodeId={sessionConversationNodeId}
                       onSessionConversationNodeIdChange={onSessionConversationNodeIdChange}
                       primaryInteraction={primaryHasHitl
@@ -428,7 +450,7 @@ export function RunTheater({
                         );
                       }}
                       variant="stage"
-                      onSelect={openInspector}
+                      onSelect={() => openInspector("user")}
                       interaction={primaryHasHitl
                         ? ({ accessory }) => renderHitlComposer(accessory ?? undefined)
                         : undefined}

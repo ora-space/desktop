@@ -25,12 +25,18 @@ export type WorkspaceReviewContext =
 interface WorkspaceReviewLayoutProps {
   context: WorkspaceReviewContext;
   children: ReactNode;
+  /** Fires when the side/expanded review panel opens or closes (not on expand-only). */
+  onOpenChange?: (open: boolean) => void;
 }
 
 type ReviewPanel = "changes" | "files";
 
 /** Hosts every workspace review surface while preserving Ora's established panel interaction. */
-export function WorkspaceReviewLayout({ context, children }: WorkspaceReviewLayoutProps) {
+export function WorkspaceReviewLayout({
+  context,
+  children,
+  onOpenChange,
+}: WorkspaceReviewLayoutProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -42,23 +48,38 @@ export function WorkspaceReviewLayout({ context, children }: WorkspaceReviewLayo
   const [previousContextKind, setPreviousContextKind] = useState(context.kind);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRequestSequence = useRef(0);
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
   const taskId = context.kind === "task" ? context.taskId : undefined;
   const contextKey = context.kind === "none" ? "none" : context.kind === "project" ? `project:${context.projectId}` : `task:${context.taskId}`;
+
+  const setReviewOpen = useCallback((next: boolean) => {
+    setOpen((current) => {
+      if (current === next) {
+        return current;
+      }
+      onOpenChangeRef.current?.(next);
+      return next;
+    });
+  }, []);
 
   const close = useCallback(() => {
     if (closeTimer.current !== null) clearTimeout(closeTimer.current);
     closeTimer.current = null;
-    setOpen(false);
+    setReviewOpen(false);
     setExpanded(false);
     setClosing(false);
     setViewType("unified");
-  }, []);
+  }, [setReviewOpen]);
 
   // React permits guarded render-time adjustment for state that is directly tied to
   // a prop. Closing here prevents one frame of stale review UI without an effect loop.
   if (context.kind !== previousContextKind) {
     setPreviousContextKind(context.kind);
     if (context.kind === "none") {
+      if (open) {
+        onOpenChangeRef.current?.(false);
+      }
       setOpen(false);
       setExpanded(false);
       setClosing(false);
@@ -71,8 +92,8 @@ export function WorkspaceReviewLayout({ context, children }: WorkspaceReviewLayo
     fileRequestSequence.current += 1;
     setFileRequest({ path, requestId: fileRequestSequence.current });
     setPanel("changes");
-    setOpen(true);
-  }, [taskId]);
+    setReviewOpen(true);
+  }, [setReviewOpen, taskId]);
 
   const toggleExpanded = () => {
     if (!expanded) {
@@ -93,7 +114,7 @@ export function WorkspaceReviewLayout({ context, children }: WorkspaceReviewLayo
     if (open && panel === next) close();
     else {
       setPanel(next);
-      setOpen(true);
+      setReviewOpen(true);
     }
   };
 

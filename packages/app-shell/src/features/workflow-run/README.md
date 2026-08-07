@@ -127,8 +127,13 @@ Keep these stacks separate — shared chrome only where noted.
   emitted during setup are replayed instead of being lost or overwriting cache.
   Sidebar supports cancel (keep row) and delete (cancel then remove).
 - View toggle: Theater ↔ Overview. Overview node click returns to Theater
-  focused on that node and opens the act inspector. Header Theater toggle
-  does not force the rail open. Clicking Overview again while already there
+  focused on that node and opens the act inspector when the stage area is
+  wide enough (≥1000px); narrow windows skip the auto-open so the act card
+  stays readable. Header Theater toggle does not force the rail open.
+  Opening Changes/Files does not auto-open the act inspector (and seeded
+  Overview → Theater opens wait until Diff is closed). Clicking an act card
+  while Diff is open still opens the inspector beside Diff — they are not
+  mutually exclusive. Clicking Overview again while already there
   re-runs `fitView` and re-enables resize auto-fit after a manual pan/zoom.
   While Overview stays open, pane/window resize debounces a `fitView` so the
   graph stays framed — until the user pans or zooms, which pauses auto-fit.

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PlatformProvider } from "@ora/platform";
 import type { ReactNode } from "react";
@@ -192,5 +192,31 @@ describe("WorkspaceReviewLayout", () => {
     );
     expect(screen.queryByRole("region", { name: "Task diff" })).not.toBeInTheDocument();
     expect(screen.getByText("Project")).toBeInTheDocument();
+  });
+
+  it("notifies when the review panel opens or closes", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <WorkspaceReviewLayout context={taskContext} onOpenChange={onOpenChange}>
+            <main>Workspace</main>
+          </WorkspaceReviewLayout>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+
+    await user.click(
+      within(screen.getByRole("group", { name: /工作区审查面板|Workspace review panels/ }))
+        .getByRole("button", { name: /^变更$|^Changes$/ }),
+    );
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+
+    await user.click(
+      within(screen.getByRole("group", { name: /工作区审查面板|Workspace review panels/ }))
+        .getByRole("button", { name: /^变更$|^Changes$/ }),
+    );
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
