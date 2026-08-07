@@ -47,6 +47,9 @@ React Flow–based canvas for the session-only settings workflow demo.
 
 - The parent applies React Flow `NodeChange` and `EdgeChange` events directly
   with `applyNodeChanges` and `applyEdgeChanges`.
+- Node clicks reopen a collapsed inspector when the clicked node is still
+  selected (drag-collapse leaves selection intact, so selection alone cannot
+  drive the reopen).
 - React Flow owns selection semantics and performs node/edge deletion through
   `deleteElements`, including removal of incident edges.
 - Executable fields use React Flow's supported `node.data` extension point.

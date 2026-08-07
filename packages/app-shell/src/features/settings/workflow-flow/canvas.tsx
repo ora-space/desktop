@@ -455,6 +455,13 @@ function WorkflowCanvasInner({
             isValidConnection={isValidConnection}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
+            onNodeClick={() => {
+              // Selection alone cannot reopen the rail: drag-collapse keeps the
+              // node selected, so a same-node click is a no-op for React Flow.
+              if (inspectorCollapsed && inspectorAvailable) {
+                onExpandInspector();
+              }
+            }}
             onConnectStart={(_event, params) => {
               startConnection(params);
             }}

@@ -348,6 +348,26 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("reopens node configuration when clicking the still-selected node after collapse", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const startNode = await screen.findByLabelText("开始节点: 开始");
+    const flowNode = startNode.closest(".react-flow__node") ?? startNode;
+
+    await user.click(flowNode);
+    await user.click(screen.getByRole("button", { name: "展开工作流列表" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "展开节点配置" })).toBeInTheDocument();
+    });
+
+    await user.click(flowNode);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "收起节点配置" })).toBeInTheDocument();
+    });
+  });
+
   it("closes node configuration with its button or Escape", async () => {
     const user = userEvent.setup();
     renderSettings();
@@ -760,11 +780,16 @@ describe("WorkflowSettings", () => {
     const openId = state.workflows[0]?.workflow.id;
     expect(openId).toBeDefined();
 
+    await waitFor(() => {
+      expect(screen.getByText(/已实时保存 最近修改时间：/)).toBeInTheDocument();
+    });
+
     fireEvent.change(nameInput, { target: { value: "自动保存草稿" } });
 
     await waitFor(() => {
       const record = state.workflows.find((item) => item.workflow.id === openId);
       expect(record?.workflow.name).toBe("自动保存草稿");
+      expect(screen.getByText(/已实时保存 最近修改时间：/)).toBeInTheDocument();
     }, { timeout: 3_000 });
   });
 

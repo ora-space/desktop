@@ -72,6 +72,7 @@ import {
   useWorkflowLibrary,
   useWorkflowVersions,
 } from "./workflow-definitions";
+import { WorkflowDraftSaveStatusLabel } from "./workflow-draft-save-status";
 import { useWorkflowDraftAutosave } from "./use-workflow-draft-autosave";
 import {
   animateWorkflowPanel,
@@ -1020,6 +1021,12 @@ function WorkflowSettingsContent({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {workflow !== null && previewedVersion === null && (
+            <WorkflowDraftSaveStatusLabel
+              status={autosave.status}
+              draftUpdatedAt={draftUpdatedAt}
+            />
+          )}
           <Button
             variant="outline"
             size="sm"
