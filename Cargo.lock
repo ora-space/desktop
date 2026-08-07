@@ -1687,6 +1687,7 @@ dependencies = [
 name = "ora-backend"
 version = "0.0.0"
 dependencies = [
+ "chrono-tz",
  "gitlancer",
  "ora-acp",
  "ora-application",
@@ -1697,6 +1698,7 @@ dependencies = [
  "ora-history",
  "ora-logging",
  "ora-process",
+ "ora-scheduler",
  "pretty_assertions",
  "serde",
  "serde_json",

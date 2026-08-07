@@ -220,6 +220,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           taskId: req.taskId,
           agentCli: state.warmSessions.get(req.sessionId) ?? "open_code",
           status: "running",
+          title: null,
           historyState: { type: "writable" },
         };
         state.warmSessions.delete(req.sessionId);

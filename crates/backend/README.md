@@ -5,7 +5,8 @@
 ## Responsibilities
 
 - `Backend::open` creates required directories, bootstraps and migrates SQLite, reconciles imported skill packages, constructs APIs, and starts the [agent runtime](src/agent_runtime/README.md).
-- `Backend::open` also owns one `AppEventHub`. It exposes the hub through the transport adapters as a best-effort invalidation stream; the hub does not depend on Axum or Tauri.
+- `Backend::open` also owns one `AppEventHub`. It exposes the hub through the transport adapters as a best-effort invalidation stream and injects only its internal publisher into session actors; the hub does not depend on Axum or Tauri.
+- The shared `ora-scheduler::Scheduler` owns actor-facing delayed work. Scheduler tasks enqueue internal commands, while actors remain the only code that calls ACP or writes session state.
 - Project, task, skill CRUD, atomic skill-folder import, and agent operations delegate to `ora-application`; aggregate deletion uses transactional database cascades.
 - `TaskDiffApi` composes the task-diff handlers with SQLite and Gitlancer. It resolves the agent's live task cwd, uses `HEAD` as the moving baseline for project-root tasks, and uses the persisted creation commit for isolated worktrees.
 - `SpecApi` composes target resolution, project-wide source overrides, bounded ripgrep discovery, safe Markdown reads, and watcher-root resolution. Web and Tauri remain transport-only adapters.

@@ -154,6 +154,10 @@ export type Session = {
   id: string;
   taskId: string;
   /**
+   * The persisted display title, or `null` until the first acquisition succeeds.
+   */
+  title: string | null;
+  /**
    * The CLI this conversation currently runs on, which switching replaces.
    */
   agentCli: AgentCli;

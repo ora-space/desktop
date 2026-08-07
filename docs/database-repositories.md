@@ -40,7 +40,7 @@ File-backed parent directories are not created here. The composition root prepar
 - `list_*` returns only rows whose `is_deleted` flag is unset.
 - `soft_delete_*` sets the flag, refreshes `updated_at`, and reports whether one visible entity was affected, which is how handlers distinguish a real delete from a not-found.
 
-`create_*` and `update_*` are full-snapshot replacement operations: the repository stores the domain value it was given and returns what is now persisted, without adding transport data or re-deriving fields.
+`create_*` operations persist the domain value they are given and return what is now stored. Session mutation is intentionally not a full-snapshot replacement: `update_session_title`, `update_session_status`, `update_session_binding`, and `update_session_history_state` each update only the columns owned by that business intent and use `RETURNING` to return the latest complete `Session`. `update_session_title` takes a validated `&SessionTitle`; it cannot clear a title through an ambiguous `Option` argument. The database column remains nullable only for sessions that have not acquired a title. This prevents an actor or connection supervisor holding an older snapshot from overwriting an unrelated title or lifecycle change.
 
 `project_work_contexts` is the exception. It has no `is_deleted` column; expired rows are removed by an explicit delete, and active-ownership queries filter on `lease_expires_at` instead. See [Project Work Contexts](project-work-contexts.md).
 
@@ -53,7 +53,7 @@ File-backed parent directories are not created here. The composition root prepar
 Repositories map SQLite columns onto the current `ora-domain` shapes, including audit fields and enum-backed columns:
 
 - `tasks.status` becomes `TaskStatus`; `tasks.worktree_id` becomes `Option<WorktreeId>`.
-- `sessions.status` becomes `SessionStatus`; `sessions.agent_cli` text becomes `AgentCli` through the namespaced persisted value; the nullable `sessions.history_degraded_reason` becomes `HistoryState`, where absence means writable.
+- `sessions.status` becomes `SessionStatus`; `sessions.agent_cli` text becomes `AgentCli` through the namespaced persisted value; nullable `sessions.title` becomes `Option<SessionTitle>` after domain validation; the nullable `sessions.history_degraded_reason` becomes `HistoryState`, where absence means writable.
 - `worktrees.is_active` becomes `WorktreeActivity`; `worktrees.branch_name` stays optional.
 - `project_work_contexts.surface` text becomes `ProjectWorkContextSurface`.
 - `task_diff_comments` maps root-thread columns and reply columns into the mutually exclusive `TaskDiffCommentKind` enum. Visible comments are returned in `(created_at, id)` order; malformed rows fail rather than being coerced.

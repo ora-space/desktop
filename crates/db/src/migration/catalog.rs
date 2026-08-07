@@ -10,6 +10,7 @@ use super::schema_v0005;
 use super::schema_v0006;
 use super::schema_v0007;
 use super::schema_v0008;
+use super::schema_v0009;
 
 /// Captures one versioned migration and the SQL needed to move schema state up or down.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -110,6 +111,7 @@ pub fn default_migration_catalog() -> Result<MigrationCatalog, DatabaseError> {
         schema_v0006::migration(),
         schema_v0007::migration(),
         schema_v0008::migration(),
+        schema_v0009::migration(),
     ])
 }
 

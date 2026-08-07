@@ -6,6 +6,7 @@ mod ids;
 mod project;
 mod project_work_context;
 mod session;
+mod session_title;
 mod skill;
 mod spec;
 mod task;
@@ -31,6 +32,7 @@ pub use ids::{
 pub use project::Project;
 pub use project_work_context::{ProjectWorkContext, ProjectWorkContextSurface};
 pub use session::{AgentCli, HistoryState, Session, SessionStatus};
+pub use session_title::{MAX_SESSION_TITLE_CHARS, SessionTitle, SessionTitleError};
 pub use skill::{
     Skill, SkillDescriptionError, SkillNameError, validate_skill_description, validate_skill_name,
 };

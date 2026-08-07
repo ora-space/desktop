@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::SessionTitleError;
+
 /// Enumerates domain-model conversion failures that adapters must handle explicitly.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DomainModelError {
@@ -23,6 +25,8 @@ pub enum DomainModelError {
     InvalidSessionStatus(i64),
     #[error("invalid agent CLI value: {0}")]
     InvalidAgentCli(String),
+    #[error("invalid session title: {0}")]
+    InvalidSessionTitle(#[from] SessionTitleError),
     #[error("skill name must not be blank")]
     EmptySkillName,
     #[error("invalid skill name: {name}")]

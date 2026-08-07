@@ -15,6 +15,7 @@ use ora_application::ApplicationError;
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
+use ora_scheduler::Scheduler;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -31,6 +32,8 @@ pub struct BackendPaths {
     pub skills_root: PathBuf,
     /// Bundled ripgrep executable used by shared specification discovery.
     pub ripgrep_path: PathBuf,
+    /// IANA timezone used by backend-owned cron and delayed work.
+    pub timezone: chrono_tz::Tz,
 }
 
 /// Reports failures that prevent the shared backend from opening persistent state.
@@ -92,6 +95,7 @@ impl Backend {
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let app_events = Arc::new(AppEventHub::new());
+        let scheduler = Scheduler::new(paths.timezone);
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let sessions_root = paths.sessions_root;
         let agent_runtime = AgentRuntimeManager::new(
@@ -99,6 +103,8 @@ impl Backend {
             paths.home_directory,
             sessions_root.clone(),
             clock,
+            scheduler,
+            app_events.publisher(),
         )
         .map_err(BackendBootstrapError::AgentRuntime)?;
 
@@ -866,6 +872,7 @@ mod tests {
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
+            timezone: chrono_tz::UTC,
         })
         .expect("open shared backend");
 
@@ -983,6 +990,7 @@ mod tests {
             sessions_root: temporary.path().join("sessions"),
             skills_root: skills_root.clone(),
             ripgrep_path: std::path::PathBuf::from("rg"),
+            timezone: chrono_tz::UTC,
         })
         .expect("open shared backend");
 
@@ -1029,6 +1037,7 @@ mod tests {
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
+            timezone: chrono_tz::UTC,
         })
         .expect("open shared backend");
         let project = backend

@@ -38,6 +38,8 @@ pub(super) struct RuntimeConnection {
     pub client: AcpClient<ChildStdin>,
     pub generation: u64,
     pub load_session_supported: bool,
+    /// Whether the agent advertises the bounded fallback used for first-title acquisition.
+    pub list_session_supported: bool,
     pub close_session_supported: bool,
     /// Whether the agent advertises `session/delete`.
     ///
@@ -145,7 +147,7 @@ impl ConnectionSupervisor {
     }
 
     /// Starts one application-scoped CLI supervisor independently of the caller's runtime.
-    fn start(
+    pub(super) fn start(
         agent_cli: AgentCli,
         pool: RepositoryPool,
         home_directory: PathBuf,
@@ -300,6 +302,7 @@ struct SharedProcess {
     client: AcpClient<ChildStdin>,
     inbound: mpsc::UnboundedReceiver<AcpInboundEvent>,
     load_session_supported: bool,
+    list_session_supported: bool,
     close_session_supported: bool,
     delete_session_supported: bool,
 }
@@ -329,6 +332,7 @@ async fn run_supervisor(context: SupervisorContext) {
                     client: process.client.clone(),
                     generation,
                     load_session_supported: process.load_session_supported,
+                    list_session_supported: process.list_session_supported,
                     close_session_supported: process.close_session_supported,
                     delete_session_supported: process.delete_session_supported,
                 };
@@ -505,6 +509,11 @@ async fn spawn_initialized_process(
         client,
         inbound,
         load_session_supported: response.agent_capabilities.load_session,
+        list_session_supported: response
+            .agent_capabilities
+            .session_capabilities
+            .list
+            .is_some(),
         close_session_supported: response
             .agent_capabilities
             .session_capabilities
@@ -526,8 +535,10 @@ fn mark_running_sessions_stopped(pool: &RepositoryPool, clock: SystemClock, agen
     };
     for session in sessions {
         if session.agent_cli == agent_cli && session.status == SessionStatus::Running {
-            let _ = repository.update_session(
-                session.with_status(SessionStatus::Stopped, clock.now_timestamp_millis()),
+            let _ = repository.update_session_status(
+                &session.id,
+                SessionStatus::Stopped,
+                clock.now_timestamp_millis(),
             );
         }
     }

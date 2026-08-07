@@ -15,6 +15,18 @@
 - Connection loss fails that CLI's in-flight operations, marks only its registered Sessions Stopped, terminates and reaps the old process tree, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - The `initialize` handshake advertises the client's session config-option capability. Agents withhold configuration options from clients that do not, so the model selector depends on it. Boolean options stay undeclared because Ora renders only id-valued selectors.
 
+### First session title acquisition
+
+A newly attached Session owns a runtime-only title window. It accepts valid `session_info_update` titles immediately, even before the first prompt completes. The first prompt only starts the fallback window when it ends with `EndTurn`, `MaxTokens`, or `MaxTurnRequests`; refusal, cancellation, request failure, and connection failure do not consume that eligibility.
+
+- If initialization advertises `session/list`, the actor schedules attempts three and ten seconds after the eligible prompt. Each request is sent only while the actor is idle, uses the provider session id to select the matching entry, and has a five-second timeout.
+- If `session/list` is not advertised, no list request is sent; the actor remains open to push titles until the ten-second boundary, then locks.
+- Push and list titles share the same `SessionTitle` validation and persistence path. The last valid title whose database write succeeds wins. A duplicate title does not write or publish an event; blank, null, and overlong values are ignored.
+- Scheduler callbacks enqueue actor commands only. A prompt, load, stop, switch, delete, queue failure, connection loss, or actor termination closes or preempts the window, so title polling never delays user work. A `TitleUpdate` received while a list request is in flight is handled and the request continues; a late `Cancel` belonging to a completed prompt is ignored. The acquisition state is not stored in SQLite and is disabled when an existing Session is restored.
+- After a successful title-only database update, the actor publishes `AppEvent::SessionTitleUpdated { session_id }`. The event is an invalidation hint, not a log; the frontend refetches the authoritative `Session.title`.
+
+Actor-owned scheduler callbacks keep only a weak command sender. Once deletion, switching, or manager shutdown releases the last external sender, the actor command receiver closes and the actor releases its connection, recorder, repository, and scheduler clones. This is also why scheduler callbacks upgrade their sender at execution time rather than keeping a hidden actor-owning clone.
+
 ## Warm Sessions
 
 ACP reports a session's configuration options — the model selector among them — only in the reply to `session/new` or `session/load`. A model therefore cannot be chosen until a session exists, so opening a chat surface creates one ahead of the first prompt.
@@ -95,6 +107,8 @@ History replay is the one stream that applies backpressure instead of failing fa
 | Load and prompt inactivity deadline | 30 s, reset by each session update |
 | Cancellation settlement grace | 5 s |
 | Connection retry backoff | 250 ms, doubling to a 30 s cap |
+| Session-list title request | 5 s per attempt |
+| First-title fallback window | 3 s and 10 s after the first eligible prompt |
 | Session update and event queue depth | 256 items |
 | JSON-RPC frame size | 8 MiB |
 | Serialized structured prompt size | 16 MiB |

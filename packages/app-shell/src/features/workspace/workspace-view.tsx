@@ -42,7 +42,6 @@ import { WorkflowStepper } from "../workflow/workflow-stepper";
 import { useWorkflowDetection } from "../workflow/use-workflow-detection";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
-import { agentCliLabel } from "./agent-cli";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
 import { directChatTitle } from "./workspace-view-utils";
 import { WorkspaceReviewLayout, type WorkspaceReviewContext } from "./workspace-review-layout";
@@ -518,7 +517,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             {session && (
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium tracking-[-0.01em]">
-                  {conversation?.sessionTitle ?? agentCliLabel(session.agentCli)}
+                  {session.title ?? t("sidebar.newSession")}
                 </p>
                 {project && task && (
                   <p className="truncate text-[11px] text-muted-foreground">

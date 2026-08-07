@@ -66,6 +66,7 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
     ContractSession {
         id: session.id.to_string(),
         task_id: session.task_id.to_string(),
+        title: session.title.map(|title| title.as_str().to_owned()),
         agent_cli: contract_agent_cli(session.agent_cli),
         status: match session.status {
             SessionStatus::Running => ContractSessionStatus::Running,

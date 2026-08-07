@@ -72,18 +72,19 @@ fn bootstraps_empty_database_with_default_catalog() {
             AppliedMigration::new("0006", 1_700_000_000_000),
             AppliedMigration::new("0007", 1_700_000_000_000),
             AppliedMigration::new("0008", 1_700_000_000_000),
+            AppliedMigration::new("0009", 1_700_000_000_000),
         ]
     );
 }
 
-/// Verifies the session history column is installed by the catalog and rolled back with it.
+/// Verifies session lifecycle and display-title columns are installed and rolled back predictably.
 #[test]
-fn manages_session_history_state_column_lifecycle() {
+fn manages_session_columns_lifecycle() {
     let temp_dir = TempDir::new().unwrap();
     let database_path = temp_dir.path().join("session-history.sqlite3");
     let catalog = default_migration_catalog().unwrap();
     let migrations = [
-        "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008",
+        "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009",
     ]
     .map(|version| {
         catalog
@@ -99,6 +100,7 @@ fn manages_session_history_state_column_lifecycle() {
         load_table_column_names(&connection, "sessions")
             .contains(&"history_degraded_reason".to_string())
     );
+    assert!(load_table_column_names(&connection, "sessions").contains(&"title".to_string()));
     drop(connection);
 
     let rolled_back = MigrationCatalog::with_target_versions(
@@ -113,6 +115,7 @@ fn manages_session_history_state_column_lifecycle() {
         !load_table_column_names(&connection, "sessions")
             .contains(&"history_degraded_reason".to_string())
     );
+    assert!(!load_table_column_names(&connection, "sessions").contains(&"title".to_string()));
 }
 
 /// Verifies the catalog creates ID-keyed schema without name indexes and removes it during rollback.
@@ -122,7 +125,7 @@ fn manages_skill_and_agent_definition_schema_lifecycle() {
     let database_path = temp_dir.path().join("skill-agent.sqlite3");
     let catalog = default_migration_catalog().unwrap();
     let migrations = [
-        "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008",
+        "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009",
     ]
     .map(|version| {
         catalog

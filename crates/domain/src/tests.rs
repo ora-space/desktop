@@ -171,6 +171,7 @@ fn constructs_schema_backed_entities() {
             task_id: TaskId::new("task-1"),
             agent_cli: AgentCli::OpenCode,
             agent_session_id: "agent-session-1".to_string(),
+            title: None,
             status: SessionStatus::Running,
             history_state: HistoryState::Writable,
             audit_fields: audit_fields.clone(),

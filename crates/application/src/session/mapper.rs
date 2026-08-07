@@ -12,6 +12,7 @@ pub(crate) fn map_session(session: DomainSession) -> ContractSession {
     ContractSession {
         id: session.id.to_string(),
         task_id: session.task_id.to_string(),
+        title: session.title.map(|title| title.as_str().to_owned()),
         agent_cli: match session.agent_cli {
             ora_domain::AgentCli::OpenCode => ContractAgentCli::OpenCode,
             ora_domain::AgentCli::Nga => ContractAgentCli::Nga,

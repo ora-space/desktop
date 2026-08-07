@@ -237,6 +237,7 @@ export function createMemoryContractsClient(
           taskId: request.taskId,
           agentCli: state.warmSessions.get(request.sessionId) ?? "open_code",
           status: "running",
+          title: null,
           historyState: { type: "writable" },
         };
         state.warmSessions.delete(request.sessionId);

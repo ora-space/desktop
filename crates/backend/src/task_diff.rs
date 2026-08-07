@@ -376,6 +376,7 @@ mod tests {
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
+            timezone: chrono_tz::UTC,
         })
         .expect("open shared backend")
     }

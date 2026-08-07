@@ -1,4 +1,5 @@
 use super::RuntimeActor;
+use super::RuntimeCommand;
 use super::routing::{SessionChannel, SessionEvent};
 use crate::BackendError;
 use ora_acp::AcpClient;
@@ -7,10 +8,14 @@ use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermission
 use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 
-/// Drains an idle session's event FIFO so stale traffic cannot cross into a later turn.
+/// Drains an idle session's event FIFO while preserving title updates for the actor.
+///
+/// Idle traffic must not leak into the next prompt, but dropping `SessionInfoUpdate` here would
+/// lose a push title that arrived after attach and before the first eligible prompt.
 pub(super) async fn drain_idle_events(
     client: &AcpClient<ChildStdin>,
     events: &mut mpsc::Receiver<SessionEvent>,
+    title_updates: &mpsc::WeakUnboundedSender<RuntimeCommand>,
 ) {
     // Bound the synchronous snapshot so a noisy provider cannot keep an idle actor
     // from returning to its command loop forever.
@@ -19,6 +24,13 @@ pub(super) async fn drain_idle_events(
         let Ok(event) = events.try_recv() else {
             break;
         };
+        if let SessionEvent::Update(update) = &event
+            && let Some(title_updates) = title_updates.upgrade()
+        {
+            let _ = title_updates.send(RuntimeCommand::TitleUpdate {
+                update: update.update.clone(),
+            });
+        }
         settle_idle_event(client, event).await;
     }
 }
@@ -52,6 +64,7 @@ where
     loop {
         match channel.events.recv().await {
             Some(SessionEvent::Update(update)) => {
+                actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);
                 let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
@@ -93,6 +106,7 @@ pub(super) async fn drain_queued_prompt_events(
         };
         match event {
             SessionEvent::Update(update) => {
+                actor.observe_session_update(&update.update);
                 let outcome = actor.recorder.record_update(&update.update);
                 actor.settle_record(outcome);
                 let _ = events.try_send(Ok(PromptSessionEvent::SessionUpdate {
@@ -114,6 +128,7 @@ pub(super) async fn drain_queued_prompt_events(
 
 /// Drains an abandoned session request until its own response arrives or the route closes.
 pub(super) async fn settle_abandoned_session_response<Response>(
+    actor: &mut RuntimeActor,
     channel: &mut SessionChannel,
     client: &AcpClient<ChildStdin>,
     pending: ora_acp::PendingSessionRequest<Response>,
@@ -123,7 +138,7 @@ where
 {
     loop {
         match channel.events.recv().await {
-            Some(SessionEvent::Update(_)) => {}
+            Some(SessionEvent::Update(update)) => actor.observe_session_update(&update.update),
             Some(SessionEvent::Permission(permission)) => {
                 let _ = client
                     .respond(

@@ -86,6 +86,8 @@ pub enum SessionHistoryState {
 pub struct Session {
     pub id: String,
     pub task_id: String,
+    /// The persisted display title, or `null` until the first acquisition succeeds.
+    pub title: Option<String>,
     /// The CLI this conversation currently runs on, which switching replaces.
     pub agent_cli: AgentCli,
     pub status: SessionStatus,

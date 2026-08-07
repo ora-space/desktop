@@ -24,6 +24,7 @@ const SESSION: Session = {
   taskId: "t1",
   agentCli: "open_code",
   status: "running",
+  title: null,
   historyState: { type: "writable" },
 };
 
@@ -94,8 +95,12 @@ beforeEach(() => {
  * reach at that moment.
  */
 function treeRow(label: string): HTMLElement | null {
-  return screen.queryByRole("button", { name: new RegExp(label) });
+  return screen
+    .queryAllByRole("button", { name: new RegExp(label) })
+    .find((element) => element.classList.contains("h-full")) ?? null;
 }
+
+const NEW_SESSION_LABEL = "新建会话|New session";
 
 describe("WorkspaceSidebar", () => {
   it("only toggles project expansion when the project row is clicked", async () => {
@@ -166,6 +171,7 @@ describe("WorkspaceSidebar", () => {
       taskId: "t2",
       agentCli: "open_code",
       status: "running",
+      title: null,
       historyState: { type: "writable" },
     });
     renderSidebar(state);
@@ -216,11 +222,11 @@ describe("WorkspaceSidebar", () => {
     const user = userEvent.setup();
     renderSidebar(workspaceWithOneSession());
 
-    await waitFor(() => expect(treeRow("OpenCode")).not.toBeNull());
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
 
     await user.click(screen.getByText(TASK.title));
 
-    expect(treeRow("OpenCode")).toBeNull();
+    expect(treeRow(NEW_SESSION_LABEL)).toBeNull();
     expect(useUiStore.getState().expandedTasks.has(TASK.id)).toBe(false);
   });
 
@@ -256,7 +262,7 @@ describe("WorkspaceSidebar", () => {
     // SESSION.status is "running" - the process is up - yet no turn is in flight.
     renderSidebar(workspaceWithOneSession());
 
-    await waitFor(() => expect(treeRow("OpenCode")).not.toBeNull());
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
     expect(workingIndicator()).toBeNull();
   });
 
@@ -274,23 +280,43 @@ describe("WorkspaceSidebar", () => {
     expect(screen.getByLabelText(/Git 工作树任务|Git worktree task/)).not.toBeNull();
   });
 
-  it("uses the agent-provided session title as the session row label", async () => {
+  it("uses the persisted session title and ignores chat metadata for the row label", async () => {
+    const state = workspaceWithOneSession();
+    state.sessions = [{ ...SESSION, title: "Review auth flow" }];
     const store = createChatStore(createMockClient(createMockClientState()).session);
-    const { chatStore } = renderSidebar(workspaceWithOneSession(), store);
-    await waitFor(() => expect(treeRow("OpenCode")).not.toBeNull());
+    const { chatStore } = renderSidebar(state, store);
 
     act(() => chatStore.setState({
-      conversations: { [SESSION.id]: conversation({ sessionTitle: "Review auth flow" }) },
+      conversations: { [SESSION.id]: conversation({ sessionTitle: "Stale chat metadata" }) },
     }));
 
     await waitFor(() => expect(treeRow("Review auth flow")).not.toBeNull());
-    expect(treeRow("OpenCode")).toBeNull();
+    expect(treeRow("Stale chat metadata")).toBeNull();
+  });
+
+  it("searches persisted titles but not agent labels or the localized fallback", async () => {
+    const user = userEvent.setup();
+    const state = workspaceWithOneSession();
+    state.sessions = [{ ...SESSION, title: "Review auth flow" }];
+    renderSidebar(state);
+
+    const search = screen.getByPlaceholderText(/搜索工作区|Search workspace/);
+    await user.type(search, "Review auth flow");
+    await waitFor(() => expect(treeRow("Review auth flow")).not.toBeNull());
+
+    await user.clear(search);
+    await user.type(search, "OpenCode");
+    await waitFor(() => expect(screen.getByText(/未找到项目|No projects found/)).not.toBeNull());
+
+    await user.clear(search);
+    await user.type(search, NEW_SESSION_LABEL.split("|")[0]!);
+    await waitFor(() => expect(screen.getByText(/未找到项目|No projects found/)).not.toBeNull());
   });
 
   it("shows the working indicator only while the session is responding", async () => {
     const store = createChatStore(createMockClient(createMockClientState()).session);
     const { chatStore } = renderSidebar(workspaceWithOneSession(), store);
-    await waitFor(() => expect(treeRow("OpenCode")).not.toBeNull());
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
 
     act(() => chatStore.setState({
       conversations: { [SESSION.id]: conversation({ isResponding: true }) },
@@ -310,7 +336,7 @@ describe("WorkspaceSidebar", () => {
     useUnreadSessionsStore.setState({ unread: new Set([SESSION.id]) });
     renderSidebar(workspaceWithOneSession());
 
-    await waitFor(() => expect(treeRow("OpenCode")).not.toBeNull());
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
     expect(unreadMark()).not.toBeNull();
     // The working animation is a distinct, higher-priority state.
     expect(workingIndicator()).toBeNull();
@@ -320,7 +346,7 @@ describe("WorkspaceSidebar", () => {
     useUnreadSessionsStore.setState({ unread: new Set([SESSION.id]) });
     const store = createChatStore(createMockClient(createMockClientState()).session);
     const { chatStore } = renderSidebar(workspaceWithOneSession(), store);
-    await waitFor(() => expect(treeRow("OpenCode")).not.toBeNull());
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
 
     act(() => chatStore.setState({
       conversations: { [SESSION.id]: conversation({ isResponding: true }) },

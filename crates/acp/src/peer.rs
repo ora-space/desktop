@@ -54,6 +54,39 @@ pub struct SessionResponse {
     response: PendingResponse,
 }
 
+/// Retires a direct request when its waiting future is cancelled or times out.
+///
+/// Direct responses bypass the ordered session-event stream, but they still need a bounded
+/// tombstone after cancellation so a late provider response is ignored rather than treated as an
+/// unknown correlation id. Keeping this guard inside `request` makes every caller cancellation
+/// safe without exposing correlation bookkeeping in the public API.
+struct DirectRequestRegistration {
+    request_id: RequestId,
+    pending: Arc<Mutex<PendingRequests>>,
+    unregister_on_drop: bool,
+}
+
+impl DirectRequestRegistration {
+    /// Stops Drop cleanup after the reader has already consumed the correlation entry.
+    fn complete(&mut self) {
+        self.unregister_on_drop = false;
+    }
+
+    /// Removes a request that failed before a valid response could be produced.
+    fn remove(&mut self) {
+        lock_pending(&self.pending).remove_active(&self.request_id);
+        self.unregister_on_drop = false;
+    }
+}
+
+impl Drop for DirectRequestRegistration {
+    fn drop(&mut self) {
+        if self.unregister_on_drop {
+            lock_pending(&self.pending).abandon(&self.request_id);
+        }
+    }
+}
+
 impl SessionResponse {
     /// Identifies the provider session that owns this response.
     pub fn session_id(&self) -> &SessionId {
@@ -177,6 +210,11 @@ where
         let (response_sender, response_receiver) = oneshot::channel();
         lock_pending(&self.pending)
             .insert(request_id.clone(), PendingRequest::Direct(response_sender));
+        let mut registration = DirectRequestRegistration {
+            request_id: request_id.clone(),
+            pending: Arc::clone(&self.pending),
+            unregister_on_drop: true,
+        };
         let frame = json!({
             "jsonrpc": "2.0",
             "id": request_id,
@@ -184,12 +222,15 @@ where
             "params": params,
         });
         if let Err(error) = self.write_frame(&frame).await {
-            lock_pending(&self.pending).remove_active(&request_id);
+            registration.remove();
             return Err(error);
         }
         let response = response_receiver
             .await
             .map_err(|_| AcpError::StreamClosed)?;
+        // The reader removes direct requests before delivering their response through the
+        // oneshot, so Drop must not turn a successfully correlated request into a tombstone.
+        registration.complete();
         match response {
             Ok(result) => serde_json::from_value(result)
                 .map_err(|error| AcpError::InvalidResponse(error.to_string())),
@@ -884,6 +925,82 @@ mod tests {
             AcpInboundEvent::PermissionRequest(_)
             | AcpInboundEvent::SessionResponse(_)
             | AcpInboundEvent::Fatal(_) => panic!("expected session update after dropped request"),
+        }
+    }
+
+    /// Verifies cancelling a direct request retires its id and keeps later traffic readable.
+    #[tokio::test]
+    async fn dropping_a_direct_request_future_unregisters_it() {
+        let (ora_stream, agent_stream) = duplex(16 * 1024);
+        let (ora_reader, ora_writer) = split(ora_stream);
+        let (agent_reader, mut agent_writer) = split(agent_stream);
+        let mut agent_reader = BufReader::new(agent_reader);
+        let mut peer = AcpPeer::spawn(ora_reader, ora_writer);
+        let client = peer.client.clone();
+        let request = tokio::spawn(async move {
+            client
+                .request::<_, Value>("session/list", &json!({ "cwd": "/workspace" }))
+                .await
+        });
+
+        let mut outbound = String::new();
+        agent_reader
+            .read_line(&mut outbound)
+            .await
+            .expect("read direct request");
+        let outbound: Value = serde_json::from_str(outbound.trim()).expect("parse direct request");
+        request.abort();
+        let _ = request.await;
+
+        agent_writer
+            .write_all(
+                format!(
+                    "{}\n",
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": outbound["id"],
+                        "result": { "sessions": [] },
+                    })
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("write abandoned direct response");
+        agent_writer
+            .write_all(
+                format!(
+                    "{}\n",
+                    json!({
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": SessionNotification::new(
+                            "session-1",
+                            SessionUpdate::SessionInfoUpdate(
+                                SessionInfoUpdate::new().title("Still connected"),
+                            ),
+                        ),
+                    })
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("write follow-up update");
+
+        match peer.next_event().await.expect("receive follow-up update") {
+            AcpInboundEvent::SessionUpdate(update) => assert_eq!(
+                update,
+                SessionNotification::new(
+                    "session-1",
+                    SessionUpdate::SessionInfoUpdate(
+                        SessionInfoUpdate::new().title("Still connected"),
+                    ),
+                )
+            ),
+            AcpInboundEvent::PermissionRequest(_)
+            | AcpInboundEvent::SessionResponse(_)
+            | AcpInboundEvent::Fatal(_) => {
+                panic!("expected update after abandoned direct response")
+            }
         }
     }
 

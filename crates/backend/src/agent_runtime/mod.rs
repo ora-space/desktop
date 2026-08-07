@@ -7,12 +7,15 @@ mod routing;
 mod scheduling;
 mod stream;
 mod support;
+mod title_acquisition;
 mod warm;
 mod warm_pool;
 
+use crate::app_event::AppEventPublisher;
 use history::{RecordOutcome, SessionRecorder};
 pub use stream::SessionEventStream;
 use support::*;
+use title_acquisition::TitleAcquisition;
 
 use crate::clock::SystemClock;
 use crate::task::{resolve_project_cwd, resolve_task_cwd};
@@ -39,6 +42,7 @@ use ora_domain::{
 };
 use ora_history::{binding_needs_handoff, read_session_history};
 use ora_logging::{ora_debug, ora_warn};
+use ora_scheduler::Scheduler;
 use routing::{SessionChannel, SessionEvent};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -70,6 +74,8 @@ struct ManagerInner {
     sessions_root: PathBuf,
     warm: WarmSessions,
     clock: SystemClock,
+    scheduler: Scheduler,
+    app_events: AppEventPublisher,
 }
 
 #[derive(Clone)]
@@ -99,6 +105,15 @@ pub(super) enum RuntimeCommand {
     Cancel {
         operation_id: u64,
     },
+    PreemptTitlePolling {
+        response: oneshot::Sender<()>,
+    },
+    TitlePoll {
+        attempt: title_acquisition::PollAttempt,
+    },
+    TitleUpdate {
+        update: SessionUpdate,
+    },
 }
 
 struct RuntimeActor {
@@ -117,6 +132,12 @@ struct RuntimeActor {
     /// from the record when the actor opens and cleared once a prompt carries the
     /// transcript across.
     handoff_pending: bool,
+    scheduler: Scheduler,
+    app_events: AppEventPublisher,
+    title_acquisition: TitleAcquisition,
+    command_sender: mpsc::WeakUnboundedSender<RuntimeCommand>,
+    #[cfg(test)]
+    exit_probe: Option<oneshot::Sender<()>>,
 }
 
 /// One session's opened recorder together with what reading its file revealed.
@@ -137,6 +158,8 @@ impl AgentRuntimeManager {
         home_directory: PathBuf,
         sessions_root: PathBuf,
         clock: SystemClock,
+        scheduler: Scheduler,
+        app_events: AppEventPublisher,
     ) -> Result<Self, BackendError> {
         reconcile_running_sessions(&pool, clock)?;
         let connections = ConnectionSupervisors::start(pool.clone(), home_directory, clock);
@@ -150,6 +173,8 @@ impl AgentRuntimeManager {
                 connections,
                 sessions_root,
                 clock,
+                scheduler,
+                app_events,
             }),
         })
     }
@@ -220,10 +245,18 @@ impl AgentRuntimeManager {
         {
             return result.map(|config_options| SetSessionConfigResponse { config_options });
         }
-        // Not warm, so this is a persisted session whose actor owns its stream;
-        // option changes are addressed by provider session id and do not need to
-        // queue behind whatever that actor is currently doing.
+        // Not warm, so this is a persisted session whose actor owns its stream.
         let session = self.find_session(&request.session_id)?;
+        if let Some(handle) = self.lookup_actor(&session.id)? {
+            let (response, acknowledged) = oneshot::channel();
+            handle
+                .commands
+                .send(RuntimeCommand::PreemptTitlePolling { response })
+                .map_err(|_error| runtime_unavailable())?;
+            acknowledged.await.map_err(|_error| runtime_unavailable())?;
+        }
+        // The provider request remains direct because it is independent of the actor's
+        // serialized prompt/load stream; only the title-polling attempt needs preemption.
         let config_options = warm::request_config_option(
             &self.inner.connections,
             session.agent_cli,
@@ -291,13 +324,18 @@ impl AgentRuntimeManager {
                 None => opened.recorder.record_meta(&session, &session_cwd),
             };
             let session = self.settle_record(session, outcome);
+            let title_acquisition =
+                TitleAcquisition::awaiting_first_prompt(channel.connection.list_session_supported);
             self.insert_actor(
                 session.clone(),
-                session_cwd,
-                supervisor,
-                Some(channel),
-                opened.recorder,
-                /*handoff_pending*/ false,
+                ActorSetup {
+                    cwd: session_cwd,
+                    connection: supervisor,
+                    channel: Some(channel),
+                    recorder: opened.recorder,
+                    handoff_pending: false,
+                    title_acquisition,
+                },
             )?;
             Ok::<_, BackendError>(AttachSessionResponse {
                 session: contract_session(session),
@@ -378,13 +416,15 @@ impl AgentRuntimeManager {
                 .await?;
             self.insert_actor(
                 session.clone(),
-                cwd,
-                supervisor,
-                Some(channel),
-                recorder,
-                // The new agent knows nothing; the next prompt carries the transcript.
-                /*handoff_pending*/
-                true,
+                ActorSetup {
+                    cwd,
+                    connection: supervisor,
+                    channel: Some(channel),
+                    recorder,
+                    // The new agent knows nothing; the next prompt carries the transcript.
+                    handoff_pending: true,
+                    title_acquisition: TitleAcquisition::locked(),
+                },
             )?;
             Ok::<_, BackendError>(SwitchSessionAgentResponse {
                 session: contract_session(session),
@@ -418,12 +458,12 @@ impl AgentRuntimeManager {
         self.actors_write()?.remove(session_id);
 
         let now = self.inner.clock.now_timestamp_millis();
-        let session = self
-            .find_session(session_id.as_ref())?
-            .with_binding(target, agent_session_id.to_string(), now)
-            .with_status(SessionStatus::Running, now);
-        SqliteSessionRepository::new(self.inner.pool.clone())
-            .update_session(session.clone())
+        let repository = SqliteSessionRepository::new(self.inner.pool.clone());
+        repository
+            .update_session_binding(session_id, target, agent_session_id, now)
+            .map_err(|source| BackendError::internal("failed to rebind agent session", source))?;
+        let session = repository
+            .update_session_status(session_id, SessionStatus::Running, now)
             .map_err(|source| BackendError::internal("failed to rebind agent session", source))?;
         ora_debug!(
             session_id = %session.id,
@@ -483,11 +523,12 @@ impl AgentRuntimeManager {
             ));
         }
         let now = self.inner.clock.now_timestamp_millis();
-        let session = self
-            .find_session(&request.session_id)?
-            .with_history_state(HistoryState::Writable, now);
-        SqliteSessionRepository::new(self.inner.pool.clone())
-            .update_session(session.clone())
+        let session = SqliteSessionRepository::new(self.inner.pool.clone())
+            .update_session_history_state(
+                &SessionId::new(request.session_id.clone()),
+                &HistoryState::Writable,
+                now,
+            )
             .map_err(|source| BackendError::internal("failed to resume session history", source))?;
         Ok(ResumeSessionHistoryResponse {
             session: contract_session(session),
@@ -554,8 +595,11 @@ impl AgentRuntimeManager {
         };
         let now = self.inner.clock.now_timestamp_millis();
         let degraded = session.with_history_state(HistoryState::Degraded { reason }, now);
-        match SqliteSessionRepository::new(self.inner.pool.clone()).update_session(degraded.clone())
-        {
+        match SqliteSessionRepository::new(self.inner.pool.clone()).update_session_history_state(
+            &degraded.id,
+            &degraded.history_state,
+            now,
+        ) {
             Ok(stored) => stored,
             Err(error) => {
                 ora_warn!(error = %error, "failed to persist degraded session history state");
@@ -759,11 +803,14 @@ impl AgentRuntimeManager {
         let handoff_pending = opened.handoff_pending;
         self.insert_actor(
             session,
-            cwd,
-            connection,
-            None,
-            opened.recorder,
-            handoff_pending,
+            ActorSetup {
+                cwd,
+                connection,
+                channel: None,
+                recorder: opened.recorder,
+                handoff_pending,
+                title_acquisition: TitleAcquisition::disabled(),
+            },
         )
     }
 
@@ -783,31 +830,35 @@ impl AgentRuntimeManager {
     fn insert_actor(
         &self,
         session: Session,
-        cwd: PathBuf,
-        connection: ConnectionSupervisor,
-        channel: Option<SessionChannel>,
-        recorder: SessionRecorder,
-        handoff_pending: bool,
+        setup: ActorSetup,
     ) -> Result<RuntimeActorHandle, BackendError> {
         let mut actors = self.actors_write()?;
         if let Some(handle) = actors.get(&session.id) {
             return Ok(handle.clone());
         }
         let (commands, receiver) = mpsc::unbounded_channel();
-        let handle = RuntimeActorHandle { commands };
+        let handle = RuntimeActorHandle {
+            commands: commands.clone(),
+        };
         actors.insert(session.id.clone(), handle.clone());
         tokio::spawn(
             RuntimeActor {
                 session,
-                cwd,
+                cwd: setup.cwd,
                 repository: SqliteSessionRepository::new(self.inner.pool.clone()),
                 clock: self.inner.clock,
-                connection,
-                channel,
+                connection: setup.connection,
+                channel: setup.channel,
                 commands: receiver,
-                recorder,
+                recorder: setup.recorder,
                 sessions_root: self.inner.sessions_root.clone(),
-                handoff_pending,
+                handoff_pending: setup.handoff_pending,
+                scheduler: self.inner.scheduler.clone(),
+                app_events: self.inner.app_events.clone(),
+                title_acquisition: setup.title_acquisition,
+                command_sender: commands.downgrade(),
+                #[cfg(test)]
+                exit_probe: None,
             }
             .run(),
         );
@@ -824,6 +875,16 @@ impl AgentRuntimeManager {
             .write()
             .map_err(|_poisoned| runtime_unavailable())
     }
+}
+
+/// Groups the provider and persistence state needed to start one session actor.
+struct ActorSetup {
+    cwd: PathBuf,
+    connection: ConnectionSupervisor,
+    channel: Option<SessionChannel>,
+    recorder: SessionRecorder,
+    handoff_pending: bool,
+    title_acquisition: TitleAcquisition,
 }
 
 /// Builds the refusal returned while a session's history cannot be extended.
@@ -847,8 +908,10 @@ fn reconcile_running_sessions(
     {
         if session.status == SessionStatus::Running {
             repository
-                .update_session(
-                    session.with_status(SessionStatus::Stopped, clock.now_timestamp_millis()),
+                .update_session_status(
+                    &session.id,
+                    SessionStatus::Stopped,
+                    clock.now_timestamp_millis(),
                 )
                 .map_err(|source| BackendError::internal("failed to reconcile sessions", source))?;
         }

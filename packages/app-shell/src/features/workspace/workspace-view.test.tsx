@@ -57,6 +57,7 @@ describe("WorkspaceView", () => {
         taskId: "t1",
         agentCli: "open_code",
         status: "running",
+        title: null,
         historyState: { type: "writable" },
       },
     ];
@@ -111,6 +112,7 @@ describe("WorkspaceView", () => {
         taskId: "t1",
         agentCli: "open_code",
         status: "running",
+        title: null,
         historyState: { type: "writable" },
       },
     ];
@@ -365,6 +367,7 @@ describe("WorkspaceView", () => {
           taskId: "t1",
           agentCli: "open_code",
           status: "running",
+          title: null,
           historyState: { type: "writable" },
         },
       ]);
@@ -895,6 +898,7 @@ describe("WorkspaceView", () => {
         taskId: "t1",
         agentCli: "open_code",
         status: "running",
+        title: null,
         historyState: { type: "writable" },
       },
     ];
@@ -1058,6 +1062,7 @@ describe("WorkspaceView", () => {
         taskId: "t1",
         agentCli: "open_code",
         status: "running",
+        title: null,
         historyState: { type: "writable" },
       },
     ];
@@ -1207,6 +1212,7 @@ describe("WorkspaceView", () => {
         taskId: "t1",
         agentCli: "open_code",
         status: "running",
+        title: null,
         historyState: { type: "degraded", reason: "no space left on device" },
       },
     ];

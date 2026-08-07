@@ -14,10 +14,11 @@ use ora_application::{
 use ora_domain::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, HistoryState, Project, ProjectId,
     ProjectSpecSourceOverride, ProjectSpecSourceOverrideId, ProjectWorkContext,
-    ProjectWorkContextId, ProjectWorkContextSurface, Session, SessionId, SessionStatus, Skill,
-    SkillId, SpecSourceVisibility, SpecWorkflow, Task, TaskId, TaskStatus, Workflow, WorkflowId,
-    WorkflowRun, WorkflowRunDetail, WorkflowRunId, WorkflowRunStatus, WorkflowRunSummary,
-    WorkflowSnapshot, WorkflowSnapshotId, Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
+    ProjectWorkContextId, ProjectWorkContextSurface, Session, SessionId, SessionStatus,
+    SessionTitle, Skill, SkillId, SpecSourceVisibility, SpecWorkflow, Task, TaskId, TaskStatus,
+    Workflow, WorkflowId, WorkflowRun, WorkflowRunDetail, WorkflowRunId, WorkflowRunStatus,
+    WorkflowRunSummary, WorkflowSnapshot, WorkflowSnapshotId, Worktree, WorktreeActivity,
+    WorktreeBaseline, WorktreeId,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -1469,7 +1470,9 @@ fn session_repository_supports_crud_and_soft_delete() {
     );
 
     assert_eq!(
-        repository.update_session(updated_session.clone()).unwrap(),
+        repository
+            .update_session_status(&updated_session.id, updated_session.status, /*now*/ 22,)
+            .unwrap(),
         updated_session.clone()
     );
     assert_eq!(
@@ -1484,6 +1487,49 @@ fn session_repository_supports_crud_and_soft_delete() {
     );
     assert_eq!(repository.find_session(&updated_session.id).unwrap(), None);
     assert_eq!(repository.list_sessions().unwrap(), Vec::<Session>::new());
+}
+
+/// Verifies each session mutation preserves fields owned by the other independent operations.
+#[test]
+fn session_repository_updates_do_not_overwrite_unrelated_columns() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    insert_cascade_fixture(&pool, SessionStatus::Stopped);
+    let repository = SqliteSessionRepository::new(pool);
+    let session_id = SessionId::new("session-1");
+    let title = SessionTitle::parse("Generated title").unwrap();
+    let existing = repository
+        .find_session(&session_id)
+        .unwrap()
+        .expect("fixture session");
+
+    let titled = repository
+        .update_session_title(&session_id, &title, /*now*/ 40)
+        .unwrap();
+    let mut expected_titled = existing.clone();
+    expected_titled.title = Some(title.clone());
+    expected_titled.audit_fields.updated_at = 40;
+    assert_eq!(titled, expected_titled);
+
+    let rebound = repository
+        .update_session_binding(&session_id, AgentCli::Nga, "provider-2", /*now*/ 41)
+        .unwrap();
+    let expected_rebound = expected_titled.with_binding(AgentCli::Nga, "provider-2", 41);
+    assert_eq!(rebound, expected_rebound);
+
+    let running = repository
+        .update_session_status(&session_id, SessionStatus::Running, /*now*/ 42)
+        .unwrap();
+    let expected_running = expected_rebound.with_status(SessionStatus::Running, 42);
+    assert_eq!(running, expected_running);
+
+    let degraded = HistoryState::Degraded {
+        reason: "recording failed".to_string(),
+    };
+    let history_updated = repository
+        .update_session_history_state(&session_id, &degraded, /*now*/ 43)
+        .unwrap();
+    let expected_history_updated = expected_running.with_history_state(degraded, 43);
+    assert_eq!(history_updated, expected_history_updated);
 }
 
 /// Verifies switching agents rewrites the provider binding while the conversation keeps its identity.
@@ -1502,7 +1548,17 @@ fn session_repository_rebinds_a_session_to_another_agent_cli() {
             .clone()
             .with_binding(AgentCli::Nga, "provider-2", /*updated_at*/ 40);
 
-    assert_eq!(repository.update_session(rebound.clone()).unwrap(), rebound);
+    assert_eq!(
+        repository
+            .update_session_binding(
+                &rebound.id,
+                rebound.agent_cli,
+                &rebound.agent_session_id,
+                /*now*/ 40,
+            )
+            .unwrap(),
+        rebound
+    );
     assert_eq!(
         repository.find_session(&rebound.id).unwrap(),
         Some(rebound.clone())
@@ -1530,14 +1586,18 @@ fn session_repository_round_trips_history_state() {
         },
         /*updated_at*/ 40,
     );
-    repository.update_session(degraded.clone()).unwrap();
+    repository
+        .update_session_history_state(&degraded.id, &degraded.history_state, /*now*/ 40)
+        .unwrap();
     assert_eq!(
         repository.find_session(&degraded.id).unwrap(),
         Some(degraded.clone())
     );
 
     let recovered = degraded.with_history_state(HistoryState::Writable, /*updated_at*/ 50);
-    repository.update_session(recovered.clone()).unwrap();
+    repository
+        .update_session_history_state(&recovered.id, &recovered.history_state, /*now*/ 50)
+        .unwrap();
 
     assert_eq!(
         repository.find_session(&recovered.id).unwrap(),

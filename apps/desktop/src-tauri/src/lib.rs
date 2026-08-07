@@ -207,6 +207,7 @@ fn bootstrap_desktop(
         sessions_root: app_data_directory.join("sessions"),
         skills_root: app_data_directory.join("atoms").join("skills"),
         ripgrep_path: ripgrep_path.clone(),
+        timezone: resolved_timezone.timezone,
     })?;
     let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
     let plugin_data_directory = desktop_plugin_data_directory(&app_data_directory);

@@ -1,5 +1,5 @@
 use crate::RepositoryError;
-use ora_domain::{Session, SessionId};
+use ora_domain::{AgentCli, HistoryState, Session, SessionId, SessionStatus, SessionTitle};
 
 /// Supplies application-owned persistence operations for session CRUD use cases.
 ///
@@ -15,8 +15,38 @@ pub trait SessionRepository {
     /// Lists every visible session in storage order.
     fn list_sessions(&self) -> Result<Vec<Session>, RepositoryError>;
 
-    /// Persists a session replacement produced by the application layer.
-    fn update_session(&self, session: Session) -> Result<Session, RepositoryError>;
+    /// Updates only the durable display title and returns the complete current row.
+    fn update_session_title(
+        &self,
+        session_id: &SessionId,
+        title: &SessionTitle,
+        now: i64,
+    ) -> Result<Session, RepositoryError>;
+
+    /// Updates only lifecycle status and returns the complete current row.
+    fn update_session_status(
+        &self,
+        session_id: &SessionId,
+        status: SessionStatus,
+        now: i64,
+    ) -> Result<Session, RepositoryError>;
+
+    /// Updates only provider binding and returns the complete current row.
+    fn update_session_binding(
+        &self,
+        session_id: &SessionId,
+        agent_cli: AgentCli,
+        agent_session_id: &str,
+        now: i64,
+    ) -> Result<Session, RepositoryError>;
+
+    /// Updates only history state and returns the complete current row.
+    fn update_session_history_state(
+        &self,
+        session_id: &SessionId,
+        history_state: &HistoryState,
+        now: i64,
+    ) -> Result<Session, RepositoryError>;
 
     /// Marks a session deleted and returns whether a visible session was affected.
     fn soft_delete_session(

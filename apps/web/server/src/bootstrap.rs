@@ -23,6 +23,7 @@ pub fn build_app_state(runtime_config: &RuntimeConfig) -> Result<AppState, WebBo
         runtime_config.project().work_dir(),
         runtime_config.file_system().home_directory(),
         runtime_config.history().sessions_root(),
+        runtime_config.logging().timezone,
     )?;
     let pool = backend.repository_pool();
     let clock = SystemClock;
@@ -59,6 +60,7 @@ pub(crate) fn build_app_state_for_database(
         work_dir,
         project_root.parent().unwrap_or(project_root),
         &work_dir.with_file_name("sessions"),
+        chrono_tz::UTC,
     )?;
     let pool = backend.repository_pool();
     let clock = SystemClock;
@@ -149,6 +151,7 @@ fn build_backend(
     worktree_root: &Path,
     home_directory: &Path,
     sessions_root: &Path,
+    timezone: chrono_tz::Tz,
 ) -> Result<Backend, WebBootstrapError> {
     Backend::open(BackendPaths {
         database_path: database_path.to_path_buf(),
@@ -161,6 +164,7 @@ fn build_backend(
             .join("atoms")
             .join("skills"),
         ripgrep_path: resolve_ripgrep_path(),
+        timezone,
     })
     .map_err(web_backend_bootstrap_error)
 }

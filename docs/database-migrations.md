@@ -20,8 +20,10 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 | `0005` | `sessions.history_degraded_reason` |
 | `0006` | `workflows`, `workflow_snapshots` with a partial unique index for visible `(workflow_id, version)` pairs and foreign key from snapshots to workflows; later extended with `workflow_runs`, `workflow_node_runs`, and `tasks.type`/`workflow_run_id` (unique partial index for the run-task association) |
 | `0007` | `project_spec_source_overrides` and its active project/path unique index |
+| `0008` | `agents.content` for persisted agent definitions |
+| `0009` | nullable `sessions.title` for the persisted display name |
 
-`default_migration_catalog()` returns all seven with every version as the active target.
+`default_migration_catalog()` returns all nine with every version as the active target.
 
 ## Reconciliation model
 
@@ -42,6 +44,7 @@ Migration `0004` is additive for existing databases: it adds the nullable worktr
 Migration `0005` is additive as well: it adds the nullable `sessions.history_degraded_reason` column, and its rollback only drops that column. On-disk conversation history lives outside SQLite, so neither direction touches recorded transcripts.
 
 Migration `0006` adds workflow definitions/snapshots, workflow runs/node runs, and the task `type`/`workflow_run_id` association columns. Migration `0007` stores audited project-level Spec source decisions. Database checks make custom workflow names mandatory and forbid custom names on built-in workflows; the partial unique index applies only to active rows so replacements can retain soft-deleted history.
+Migration `0008` stores the optional agent definition content. Migration `0009` adds the nullable `sessions.title` column; the acquisition window and its locked state are intentionally not persisted, so rollback only removes the title column.
 
 ## Operational logging
 

@@ -21,10 +21,12 @@ ora-fs = { workspace = true }
 ora-history = { workspace = true }
 ora-logging = { workspace = true }
 ora-process = { workspace = true }
+ora-scheduler = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+chrono-tz = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "rt", "sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }

@@ -5,7 +5,10 @@ use super::events::{
 use super::handoff::prompt_for_agent;
 use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
+use super::title_acquisition::PollAttempt;
 use super::*;
+#[path = "title_polling.rs"]
+mod title_polling;
 use ora_acp::AcpClient;
 use ora_contracts::acp::common::SessionId as AcpSessionId;
 use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
@@ -39,11 +42,17 @@ impl RuntimeActor {
     /// Serializes operations for one logical session while the shared connection remains concurrent.
     pub(super) async fn run(mut self) {
         loop {
+            let command_sender = self.command_sender.clone();
             let command = match self.channel.as_mut() {
                 Some(channel) => {
                     // Residual events belong to the previous provider turn. Consume the current
                     // queue snapshot before accepting a new command so they cannot cross turns.
-                    drain_idle_events(&channel.connection.client, &mut channel.events).await;
+                    drain_idle_events(
+                        &channel.connection.client,
+                        &mut channel.events,
+                        &command_sender,
+                    )
+                    .await;
                     if let Ok(control) = channel.controls.try_recv() {
                         self.handle_idle_control(Some(control)).await;
                         continue;
@@ -58,6 +67,7 @@ impl RuntimeActor {
                             drain_idle_events(
                                 &channel.connection.client,
                                 &mut channel.events,
+                                &command_sender,
                             )
                             .await;
                             command
@@ -67,6 +77,13 @@ impl RuntimeActor {
                                 self.mark_stopped();
                                 continue;
                             };
+                            if let SessionEvent::Update(update) = &event
+                                && let Some(command_sender) = command_sender.upgrade()
+                            {
+                                let _ = command_sender.send(RuntimeCommand::TitleUpdate {
+                                    update: update.update.clone(),
+                                });
+                            }
                             super::events::settle_idle_event(&channel.connection.client, event).await;
                             continue;
                         }
@@ -109,12 +126,22 @@ impl RuntimeActor {
                     let _ = response.send(Err(permission_not_pending()));
                 }
                 RuntimeCommand::Stop { response } => {
+                    self.title_acquisition.close();
                     self.unload().await;
                     let _ = response.send(Ok(StopSessionResponse {
                         session: contract_session(self.session.clone()),
                     }));
                 }
                 RuntimeCommand::Cancel { .. } => {}
+                RuntimeCommand::PreemptTitlePolling { response } => {
+                    let _ = response.send(());
+                }
+                RuntimeCommand::TitlePoll { attempt } => {
+                    self.run_title_poll(attempt).await;
+                }
+                RuntimeCommand::TitleUpdate { update } => {
+                    self.observe_session_update(&update);
+                }
             }
         }
     }
@@ -126,14 +153,17 @@ impl RuntimeActor {
         events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
     ) {
         self.unload().await;
-        let running = self
-            .session
-            .clone()
-            .with_status(SessionStatus::Running, self.clock.now_timestamp_millis());
-        if self.repository.update_session(running.clone()).is_err() {
-            let _ = events.try_send(Err(session_not_found(self.session.id.as_ref())));
-            return;
-        }
+        let running = match self.repository.update_session_status(
+            &self.session.id,
+            SessionStatus::Running,
+            self.clock.now_timestamp_millis(),
+        ) {
+            Ok(session) => session,
+            Err(_) => {
+                let _ = events.try_send(Err(session_not_found(self.session.id.as_ref())));
+                return;
+            }
+        };
         self.session = running;
         let channel = match self
             .connection
@@ -217,7 +247,8 @@ impl RuntimeActor {
                 }
             };
             match input {
-                ActiveInput::Event(SessionEvent::Update(_)) => {
+                ActiveInput::Event(SessionEvent::Update(update)) => {
+                    self.observe_session_update(&update.update);
                     // The agent is reciting history Ora already owns. Draining it keeps the
                     // queue clear and proves the provider is still working.
                     deadline
@@ -306,7 +337,7 @@ impl RuntimeActor {
                     self.cancel(&client, &HashMap::new()).await;
                     let _ = timeout(
                         CANCELLATION_GRACE,
-                        settle_abandoned_session_response(&mut channel, &client, pending),
+                        settle_abandoned_session_response(self, &mut channel, &client, pending),
                     )
                     .await;
                     self.isolate_channel(channel).await;
@@ -328,7 +359,24 @@ impl RuntimeActor {
                 ActiveInput::Command(RuntimeCommand::RespondToPermission { response, .. }) => {
                     let _ = response.send(Err(permission_not_pending()));
                 }
+                ActiveInput::Command(RuntimeCommand::PreemptTitlePolling { response }) => {
+                    let _ = response.send(());
+                }
                 ActiveInput::Command(RuntimeCommand::Cancel { .. }) => {}
+                ActiveInput::Command(RuntimeCommand::TitlePoll {
+                    attempt: PollAttempt::First,
+                }) => {
+                    self.title_acquisition.finish_attempt(PollAttempt::First);
+                }
+                ActiveInput::Command(RuntimeCommand::TitlePoll {
+                    attempt: PollAttempt::Final,
+                }) => {
+                    self.title_acquisition.finish_attempt(PollAttempt::Final);
+                    self.title_acquisition.close();
+                }
+                ActiveInput::Command(RuntimeCommand::TitleUpdate { update }) => {
+                    self.observe_session_update(&update);
+                }
                 ActiveInput::CommandsClosed => {
                     self.cancel(&client, &HashMap::new()).await;
                     self.isolate_channel(channel).await;
@@ -351,7 +399,7 @@ impl RuntimeActor {
         let client = channel.connection.client.clone();
         // Catch events that arrived after the previous operation ended but before this command
         // was accepted. Setup updates in `pending_updates` are intentional and stay separate.
-        drain_idle_events(&client, &mut channel.events).await;
+        drain_idle_events(&client, &mut channel.events, &self.command_sender).await;
         if let Ok(control) = channel.controls.try_recv() {
             match control {
                 SessionControl::QueueOverflow => {
@@ -369,6 +417,7 @@ impl RuntimeActor {
             }
         }
         while let Some(notification) = channel.pending_updates.pop_front() {
+            self.observe_session_update(&notification.update);
             if events
                 .try_send(Ok(PromptSessionEvent::SessionUpdate {
                     update: notification.update,
@@ -432,12 +481,12 @@ impl RuntimeActor {
                 ActiveInput::Event(SessionEvent::Update(update)) => {
                     // Record before forwarding: a client that drops mid-turn must not also cost
                     // the durable record of what the provider produced.
-                    let outcome = self.recorder.record_update(&update.update);
+                    self.observe_session_update(&update.update);
+                    let update = update.update;
+                    let outcome = self.recorder.record_update(&update);
                     self.settle_record(outcome);
                     if events
-                        .try_send(Ok(PromptSessionEvent::SessionUpdate {
-                            update: update.update,
-                        }))
+                        .try_send(Ok(PromptSessionEvent::SessionUpdate { update }))
                         .is_err()
                     {
                         self.end_turn(StopReason::Cancelled);
@@ -497,6 +546,7 @@ impl RuntimeActor {
                         Ok(response) => {
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
                             self.end_turn(response.stop_reason);
+                            self.maybe_start_title_acquisition(response.stop_reason);
                             if events
                                 .try_send(Ok(PromptSessionEvent::Completed {
                                     stop_reason: response.stop_reason,
@@ -582,7 +632,24 @@ impl RuntimeActor {
                 ) => {
                     let _ = accepted.send(Err(session_busy()));
                 }
+                ActiveInput::Command(RuntimeCommand::PreemptTitlePolling { response }) => {
+                    let _ = response.send(());
+                }
                 ActiveInput::Command(RuntimeCommand::Cancel { .. }) => {}
+                ActiveInput::Command(RuntimeCommand::TitlePoll {
+                    attempt: PollAttempt::First,
+                }) => {
+                    self.title_acquisition.finish_attempt(PollAttempt::First);
+                }
+                ActiveInput::Command(RuntimeCommand::TitlePoll {
+                    attempt: PollAttempt::Final,
+                }) => {
+                    self.title_acquisition.finish_attempt(PollAttempt::Final);
+                    self.title_acquisition.close();
+                }
+                ActiveInput::Command(RuntimeCommand::TitleUpdate { update }) => {
+                    self.observe_session_update(&update);
+                }
                 ActiveInput::CommandsClosed => {
                     self.cancel(&client, &permissions).await;
                     self.end_turn(StopReason::Cancelled);
@@ -609,9 +676,7 @@ impl RuntimeActor {
             path = %self.recorder.path().display(),
             "session history stopped recording",
         );
-        self.persist_session(|session, now| {
-            session.with_history_state(HistoryState::Degraded { reason }, now)
-        });
+        self.persist_session_history_state(HistoryState::Degraded { reason });
     }
 
     /// Streams Ora's recorded conversation to a client that asked to load it.
@@ -660,7 +725,10 @@ impl RuntimeActor {
     /// Handles controls arriving while a registered session has no active operation.
     async fn handle_idle_control(&mut self, control: Option<SessionControl>) {
         match control {
-            Some(SessionControl::QueueOverflow) => self.unload().await,
+            Some(SessionControl::QueueOverflow) => {
+                self.title_acquisition.close();
+                self.unload().await;
+            }
             Some(SessionControl::ConnectionLost(_)) | None => self.mark_stopped(),
         }
     }
@@ -691,9 +759,10 @@ impl RuntimeActor {
     /// Closes only this live ACP registration and preserves provider-owned history.
     async fn unload(&mut self) {
         if let Some(channel) = self.channel.take() {
-            self.isolate_channel(channel).await;
+            self.close_provider_session(&channel).await;
+            self.persist_session_status(SessionStatus::Stopped);
         } else {
-            self.mark_stopped();
+            self.persist_session_status(SessionStatus::Stopped);
         }
     }
 
@@ -702,6 +771,7 @@ impl RuntimeActor {
     /// Used only when the manager retires this actor, because it owns the row's
     /// next state and this actor's view of it is already out of date.
     async fn release(&mut self) {
+        self.title_acquisition.close();
         if let Some(channel) = self.channel.take() {
             self.close_provider_session(&channel).await;
         }
@@ -709,6 +779,7 @@ impl RuntimeActor {
 
     /// Detaches one routed session while leaving the shared CLI process available.
     async fn isolate_channel(&mut self, channel: SessionChannel) {
+        self.title_acquisition.close();
         self.close_provider_session(&channel).await;
         self.mark_stopped();
     }
@@ -753,26 +824,128 @@ impl RuntimeActor {
     /// Persists a stopped state after the provider session is detached or becomes unusable.
     fn mark_stopped(&mut self) {
         self.channel = None;
-        self.persist_session(|session, now| session.with_status(SessionStatus::Stopped, now));
+        self.title_acquisition.close();
+        self.persist_session_status(SessionStatus::Stopped);
         ora_debug!(session_id = %self.session.id, "session marked stopped");
     }
 
-    /// Applies one change to the stored session, refreshing the row first.
-    ///
-    /// The actor holds the snapshot it was built from, but switching agents and
-    /// resuming history both rewrite fields it never learns about. Writing that
-    /// snapshot back would silently revert them, so a lifecycle update reads the
-    /// current row and changes only what it means to change.
-    fn persist_session(&mut self, change: impl FnOnce(Session, i64) -> Session) {
-        let now = self.clock.now_timestamp_millis();
-        let current = self
-            .repository
-            .find_session(&self.session.id)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| self.session.clone());
-        self.session = change(current, now);
-        let _ = self.repository.update_session(self.session.clone());
+    /// Persists lifecycle status and refreshes the actor snapshot from the single-column result.
+    fn persist_session_status(&mut self, status: SessionStatus) {
+        match self.repository.update_session_status(
+            &self.session.id,
+            status,
+            self.clock.now_timestamp_millis(),
+        ) {
+            Ok(session) => self.session = session,
+            Err(error) => ora_warn!(
+                session_id = %self.session.id,
+                error = %error,
+                "failed to persist session lifecycle status",
+            ),
+        }
+    }
+
+    /// Persists history state without allowing an older actor snapshot to overwrite title fields.
+    fn persist_session_history_state(&mut self, history_state: HistoryState) {
+        match self.repository.update_session_history_state(
+            &self.session.id,
+            &history_state,
+            self.clock.now_timestamp_millis(),
+        ) {
+            Ok(session) => self.session = session,
+            Err(error) => ora_warn!(
+                session_id = %self.session.id,
+                error = %error,
+                "failed to persist session history state",
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for RuntimeActor {
+    /// Signals the test harness after the actor has released all of its dependencies.
+    fn drop(&mut self) {
+        if let Some(exit_probe) = self.exit_probe.take() {
+            let _ = exit_probe.send(());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_runtime::connection::ConnectionSupervisor;
+    use crate::agent_runtime::title_acquisition::TitleAcquisition;
+    use crate::app_event::AppEventHub;
+    use crate::clock::SystemClock;
+    use ora_db::{DatabaseLocation, RepositoryPool};
+    use ora_domain::{AgentCli, AuditFields, SessionId, SessionStatus, TaskId};
+    use ora_scheduler::Scheduler;
+    use std::time::Duration;
+    use tempfile::TempDir;
+    use tokio::sync::{mpsc, oneshot};
+    use tokio::time::timeout;
+
+    /// Verifies dropping the manager's last sender lets the actor task terminate and release its dependencies.
+    #[tokio::test]
+    async fn actor_exits_after_command_sender_is_dropped() {
+        let temporary = TempDir::new().expect("create actor test directory");
+        let pool = RepositoryPool::new(&DatabaseLocation::path(
+            temporary.path().join("test.sqlite"),
+        ))
+        .expect("create repository pool");
+        let scheduler = Scheduler::new(chrono_tz::UTC);
+        let connection = ConnectionSupervisor::start(
+            AgentCli::Codex,
+            pool.clone(),
+            temporary.path().to_path_buf(),
+            SystemClock,
+        );
+        let recorder = super::super::history::SessionRecorder::open(
+            &temporary.path().join("sessions"),
+            "session-1",
+            0,
+            &ora_domain::HistoryState::Writable,
+        )
+        .expect("open actor recorder");
+        let session = ora_domain::Session::new(
+            SessionId::new("session-1"),
+            TaskId::new("task-1"),
+            AgentCli::Codex,
+            "provider-session-1",
+            SessionStatus::Stopped,
+            AuditFields::new(0, 0, false),
+        );
+        let (commands, command_receiver) = mpsc::unbounded_channel();
+        let command_sender = commands.downgrade();
+        let (exit_sender, exit) = oneshot::channel();
+        let actor = RuntimeActor {
+            session,
+            cwd: temporary.path().to_path_buf(),
+            repository: ora_db::SqliteSessionRepository::new(pool),
+            clock: SystemClock,
+            connection,
+            channel: None,
+            commands: command_receiver,
+            recorder,
+            sessions_root: temporary.path().join("sessions"),
+            handoff_pending: false,
+            scheduler: scheduler.clone(),
+            app_events: AppEventHub::new().publisher(),
+            title_acquisition: TitleAcquisition::disabled(),
+            command_sender,
+            exit_probe: Some(exit_sender),
+        };
+        let actor_task = tokio::spawn(actor.run());
+
+        drop(commands);
+        timeout(Duration::from_secs(1), exit)
+            .await
+            .expect("actor should drop after its command channel closes")
+            .expect("actor drop probe should remain connected");
+        actor_task.await.expect("actor task should exit cleanly");
+        scheduler.shutdown().await;
     }
 }
 

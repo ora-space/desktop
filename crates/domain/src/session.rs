@@ -144,6 +144,7 @@ pub struct Session {
     pub task_id: TaskId,
     pub agent_cli: AgentCli,
     pub agent_session_id: String,
+    pub title: Option<crate::SessionTitle>,
     pub status: SessionStatus,
     pub history_state: HistoryState,
     pub audit_fields: AuditFields,
@@ -167,6 +168,7 @@ impl Session {
             task_id,
             agent_cli,
             agent_session_id: agent_session_id.into(),
+            title: None,
             status,
             history_state: HistoryState::Writable,
             audit_fields,
@@ -177,6 +179,12 @@ impl Session {
     pub fn with_status(mut self, status: SessionStatus, updated_at: i64) -> Self {
         self.status = status;
         self.audit_fields.updated_at = updated_at;
+        self
+    }
+
+    /// Replaces the persisted display title without changing audit timestamps during restoration.
+    pub fn with_title(mut self, title: Option<crate::SessionTitle>) -> Self {
+        self.title = title;
         self
     }
 

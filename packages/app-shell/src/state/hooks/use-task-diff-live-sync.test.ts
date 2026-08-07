@@ -13,6 +13,7 @@ const SESSION: Session = {
   taskId: "task-1",
   agentCli: "code_agent_cli",
   status: "running",
+  title: null,
   historyState: { type: "writable" },
 };
 

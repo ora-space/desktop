@@ -56,6 +56,7 @@ describe("useSessions", () => {
         taskId: "t1",
         agentCli: "open_code",
         status: "running",
+        title: null,
         historyState: { type: "writable" },
       },
     ];
@@ -68,6 +69,7 @@ describe("useSessions", () => {
         taskId: "t1",
         agentCli: "open_code",
         status: "running",
+        title: null,
         historyState: { type: "writable" },
       },
     ]);

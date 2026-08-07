@@ -9,6 +9,7 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 - Sessions targeting the same CLI share its process and connection; sessions targeting different CLIs or different actors can progress concurrently.
 - Prompts preserve the public ACP `ContentBlock` sequence, so one turn can contain text, images, audio, and linked or embedded resources instead of being reduced to plain text.
 - Model discovery runs each CLI's bounded command independently and returns only successful groups.
+- A newly attached session has a non-persisted title-acquisition window. It accepts valid ACP `session_info_update` titles from attach onward and, after the first eligible prompt (`EndTurn`, `MaxTokens`, or `MaxTurnRequests`), schedules bounded `session/list` fallbacks at three and ten seconds when the CLI advertises that capability. Restored sessions start with acquisition disabled.
 
 ## Flow control and failure isolation
 
@@ -20,6 +21,7 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 - A load or prompt completes only after consuming its matching response fence. This keeps updates that precede the response in the same operation and prevents tail events from leaking into the next prompt.
 - Routes are generation-bound. Updates from old connections or unloaded sessions are discarded as stale.
 - Opening a session route also registers its provider-to-Ora identity mapping, so ACP frame traces correlate on the stable Ora session id.
+- Title-list polling is actor-owned low-priority work: scheduler tasks only enqueue internal commands, the actor performs the ACP request when idle, and a new user operation can preempt it. Each list request has a five-second cap; the final attempt closes the window regardless of its result. `TitleUpdate` does not terminate an in-flight list request, while stale prompt-stream `Cancel` commands are ignored. Slow consumers cannot block the session actor or the application-event publisher.
 
 ## Lifecycle boundaries
 
@@ -30,6 +32,8 @@ Every provider session this module binds is obtained from the warm pool, which a
 Prompt validation rejects an empty content-block sequence or one containing only blank text blocks. The serialized ACP prompt payload is limited to 16 MiB before it reaches the provider.
 
 Cancellation sends `session/cancel` and waits for bounded settlement. Explicit stop may call `session/close` when supported, unloads routing, and retains provider history. A failed history write moves the session into a degraded state and refuses later prompts until history is resumed. Switching creates the new provider session before releasing the old binding, then injects the recorded transcript into the next prompt. Deletion removes Ora's stopped record and its Ora-owned history after serialized unload; it does not delete provider history.
+
+Session titles are validated as the domain `SessionTitle` value object, persisted through a title-only repository operation taking `&SessionTitle`, and published through `AppEventHub` only after a successful database commit. The event contains only the Ora session id; clients refetch the authoritative `Session.title`. Title acquisition is never restored after process restart, agent switch, explicit stop, connection loss, or actor termination, and a late provider update cannot change a locked title.
 
 Supervisors retry failed providers independently with capped backoff and reap the old process tree before replacement. Ora remains available when one or all providers are unavailable.
 

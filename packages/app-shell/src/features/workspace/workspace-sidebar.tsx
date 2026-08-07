@@ -48,7 +48,6 @@ import { AgentActivityDots } from "../../components/agent-activity-dots";
 import { DragRegion } from "../../components/drag-region";
 import { useChatStore } from "../../chat-store-context";
 import type { GraphWorkflowRunStatus } from "@ora/workflow-runtime";
-import { agentCliLabel } from "./agent-cli";
 
 interface WorkspaceSidebarProps {
   user: CurrentUser;
@@ -100,7 +99,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     return project.name.toLowerCase().includes(needle)
       || projectTasks.some((task) => task.title.toLowerCase().includes(needle)
         || sessions.some((session) => session.taskId === task.id
-          && agentCliLabel(session.agentCli).toLowerCase().includes(needle)));
+          && session.title?.toLowerCase().includes(needle)));
   }), [needle, projects, sessions, tasks]);
 
   // Expand the initial workspace tree once while preserving later manual collapse choices.
@@ -295,7 +294,9 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                           icon={directSession && conversations[directSession.id]?.pendingPermissions.length
                             ? <IconAlertTriangle className="size-[18px] text-amber-500" aria-label={t("sidebar.permissionRequired")} />
                             : <IconMessageCircle className="size-4 text-muted-foreground" aria-label={t("sidebar.directChatTask")} />}
-                          label={task.title}
+                          label={directSession
+                            ? directSession.title ?? t("sidebar.newSession")
+                            : task.title}
                           onClick={() => directSession
                             ? selectSession(directSession.id, task.id, project.id)
                             : selectTask(task.id, task.projectId)}
@@ -355,14 +356,14 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                                   : unread.has(session.id)
                                     ? <UnreadDot label={t("sidebar.unread")} />
                                     : null}
-                              label={conversations[session.id]?.sessionTitle ?? agentCliLabel(session.agentCli)}
+                              label={session.title ?? t("sidebar.newSession")}
                               onClick={() => selectSession(session.id, task.id, project.id)}
                               menu={(
                                 <EntityMenu
                                   onDelete={() => setDeleteTarget({
                                     kind: "session",
                                     id: session.id,
-                                    name: conversations[session.id]?.sessionTitle ?? agentCliLabel(session.agentCli),
+                                    name: session.title ?? t("sidebar.newSession"),
                                   })}
                                 />
                               )}
