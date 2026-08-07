@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - `init_logging` installs the subscriber from an explicit `LoggingConfig`, initializes the immutable process timezone, and returns a `LoggingGuard` that keeps non-blocking writers (stdout and/or file) alive.
-- Stdout and file sinks use a lossy non-blocking writer so emission never blocks callers; `LoggingGuard::dropped_lines` exposes how many lines were discarded when a channel was full, and dropping the guard prints a one-line stderr summary when that count is non-zero.
+- Stdout and file sinks use a non-blocking, non-lossy writer: routine IO runs on a background worker, and a full channel exerts backpressure on callers instead of dropping lines, so log integrity wins under extreme sink stalls.
 - Output modes support stdout, daily rotating files, or both, with retention cleanup for matching file series.
 - Events are formatted as one JSON object per line with stable top-level timestamp, level, target, message, method, span, trace, and request fields; business and error fields are grouped consistently.
 - `ora_trace!`, `ora_debug!`, `ora_info!`, `ora_warn!`, and `ora_error!` attach the current method name and preserve the shared event shape.

@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use tracing::Dispatch;
-use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
+use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::layer;
 use tracing_subscriber::prelude::*;
@@ -36,8 +36,9 @@ where
 
     match &config.output {
         LogOutput::Stdout => {
-            // Match the file sink: move stdout writes off the calling thread so a slow pipe
-            // cannot stall Tokio workers that emit tracing events.
+            // Move stdout writes off the calling thread so a slow pipe cannot routinely stall
+            // Tokio workers that emit tracing events. Prefer backpressure over dropping when
+            // the queue is full so log integrity wins under sustained sink stalls.
             let prepared_stdout = prepare_stdout_output(stdout_writer);
             let subscriber = tracing_subscriber::registry()
                 .with(CorrelationLayer)
@@ -51,10 +52,7 @@ where
 
             Ok((
                 Dispatch::new(subscriber),
-                LoggingGuard::new(
-                    vec![prepared_stdout.guard],
-                    vec![prepared_stdout.drop_counter],
-                ),
+                LoggingGuard::new(vec![prepared_stdout.guard]),
             ))
         }
         LogOutput::File(file_config) => {
@@ -71,10 +69,7 @@ where
 
             Ok((
                 Dispatch::new(subscriber),
-                LoggingGuard::new(
-                    vec![prepared_output.guard],
-                    vec![prepared_output.drop_counter],
-                ),
+                LoggingGuard::new(vec![prepared_output.guard]),
             ))
         }
         LogOutput::StdoutAndFile(file_config) => {
@@ -96,39 +91,30 @@ where
 
             Ok((
                 Dispatch::new(subscriber),
-                LoggingGuard::new(
-                    vec![prepared_stdout.guard, prepared_output.guard],
-                    vec![prepared_stdout.drop_counter, prepared_output.drop_counter],
-                ),
+                LoggingGuard::new(vec![prepared_stdout.guard, prepared_output.guard]),
             ))
         }
     }
 }
 
-/// Prepared stdout non-blocking writer state, including the drop counter callers must retain.
+/// Prepared stdout non-blocking writer state that callers must retain via `LoggingGuard`.
 struct PreparedStdoutOutput {
     writer: NonBlocking,
     guard: WorkerGuard,
-    drop_counter: ErrorCounter,
 }
 
-/// Creates an explicitly lossy non-blocking writer so stdout backpressure cannot stall async workers.
+/// Creates a non-lossy non-blocking writer so routine stdout IO stays off caller threads.
 fn prepare_stdout_output<W>(stdout_writer: W) -> PreparedStdoutOutput
 where
     W: Write + Send + 'static,
 {
-    // lossy(true) matches the file sink: prefer dropping under sustained backpressure over
-    // blocking the caller, and keep drops observable through ErrorCounter.
+    // Prefer backpressure over dropping when the queue is full: Ora prioritizes log integrity
+    // over never blocking under extreme sink stalls. Normal log volume stays far below capacity.
     let (writer, guard) = NonBlockingBuilder::default()
-        .lossy(/*is_lossy*/ true)
+        .lossy(/*is_lossy*/ false)
         .finish(stdout_writer);
-    let drop_counter = writer.error_counter();
 
-    PreparedStdoutOutput {
-        writer,
-        guard,
-        drop_counter,
-    }
+    PreparedStdoutOutput { writer, guard }
 }
 
 /// Maps the public level enum into the tracing filter used by every active sink.

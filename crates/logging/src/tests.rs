@@ -267,63 +267,10 @@ fn selects_file_only_sink_behavior() {
     drop(dispatch);
 
     assert_eq!(guard.has_worker_guard(), true);
-    assert_eq!(guard.dropped_lines(), 0);
     drop(guard);
 
     assert_eq!(stdout.json_lines(), Vec::<Value>::new());
     assert_eq!(read_rotated_log_lines(temp_dir.path(), "ora.log").len(), 1);
-}
-
-/// Verifies the guard surfaces lossy file-sink drops instead of leaving them only in an unread counter.
-#[test]
-fn exposes_lossy_file_sink_dropped_line_counts() {
-    use std::io::Write;
-    use std::sync::mpsc;
-    use std::time::Duration;
-    use tracing_appender::non_blocking::NonBlockingBuilder;
-
-    /// Blocks the appender worker so the non-blocking channel fills and becomes lossy.
-    struct StallWriter {
-        tx: mpsc::SyncSender<Vec<u8>>,
-    }
-
-    impl Write for StallWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.tx
-                .send(buf.to_vec())
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    let (tx, rx) = mpsc::sync_channel(0);
-    let (mut writer, worker_guard) = NonBlockingBuilder::default()
-        .buffered_lines_limit(1)
-        .lossy(/*is_lossy*/ true)
-        .finish(StallWriter { tx });
-    let drop_counter = writer.error_counter();
-
-    // Keep writing until the lossy channel reports at least one dropped line.
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while drop_counter.dropped_lines() == 0 {
-        assert_eq!(
-            deadline > std::time::Instant::now(),
-            true,
-            "timed out waiting for lossy drops"
-        );
-        writer.write_all(b"overflow\n").unwrap();
-    }
-
-    let guard = crate::LoggingGuard::new(vec![worker_guard], vec![drop_counter]);
-    assert_eq!(guard.has_worker_guard(), true);
-    assert_eq!(guard.dropped_lines() > 0, true);
-
-    drop(rx);
-    drop(guard);
 }
 
 /// Verifies combined logging emits each event to stdout and the rotating file sink with the same envelope.
@@ -352,7 +299,6 @@ fn selects_stdout_and_file_sink_behavior() {
     drop(dispatch);
 
     assert_eq!(guard.has_worker_guard(), true);
-    assert_eq!(guard.dropped_lines(), 0);
     drop(guard);
 
     let stdout_events = stdout.json_lines();

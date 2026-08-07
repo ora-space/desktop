@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use time::{Date, macros::format_description};
-use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
+use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 
 use crate::{FileLoggingConfig, FileSystemAction, LoggingInitError, RotationPolicy};
 
@@ -11,13 +11,12 @@ use crate::{FileLoggingConfig, FileSystemAction, LoggingInitError, RotationPolic
 pub(crate) struct PreparedFileOutput {
     pub(crate) writer: NonBlocking,
     pub(crate) guard: WorkerGuard,
-    pub(crate) drop_counter: ErrorCounter,
 }
 
 /// Creates the rotating file writer and applies retention cleanup before the sink starts writing.
 ///
-/// The writer is intentionally lossy: a full channel drops lines instead of blocking callers.
-/// Callers must retain `drop_counter` (via `LoggingGuard`) so those drops stay observable.
+/// The writer is non-blocking and non-lossy: routine IO runs on a background worker, and a full
+/// channel exerts backpressure on callers instead of dropping lines.
 pub(crate) fn prepare_file_output(
     config: &FileLoggingConfig,
 ) -> Result<PreparedFileOutput, LoggingInitError> {
@@ -30,17 +29,12 @@ pub(crate) fn prepare_file_output(
             tracing_appender::rolling::daily(active_path.directory(), active_path.file_name())
         }
     };
-    // Prefer dropping under write pressure over stalling request/UI threads; observe via ErrorCounter.
+    // Prefer backpressure over dropping when the queue is full so file logs stay complete.
     let (writer, guard) = NonBlockingBuilder::default()
-        .lossy(/*is_lossy*/ true)
+        .lossy(/*is_lossy*/ false)
         .finish(appender);
-    let drop_counter = writer.error_counter();
 
-    Ok(PreparedFileOutput {
-        writer,
-        guard,
-        drop_counter,
-    })
+    Ok(PreparedFileOutput { writer, guard })
 }
 
 /// Creates the parent directory tree when file-backed logging targets a nested location.
