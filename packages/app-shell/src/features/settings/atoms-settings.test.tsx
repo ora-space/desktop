@@ -85,8 +85,11 @@ describe("atom settings content", () => {
 
     const importButton = await screen.findByRole("button", { name: "导入 Skill" });
     const newButton = screen.getByRole("button", { name: "新建 Skill" });
+    const skillList = screen.getByRole("list", { name: "Skills" });
     expect(importButton).toHaveClass("border");
     expect(newButton).toHaveClass("border");
+    expect(skillList).toHaveClass("md:grid-cols-2");
+    expect(await within(skillList).findAllByRole("listitem")).toHaveLength(1);
 
     await user.click(await screen.findByRole("button", { name: "编辑" }));
     const content = await screen.findByLabelText("内容");

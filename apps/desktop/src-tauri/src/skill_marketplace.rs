@@ -22,7 +22,6 @@ const MARKETPLACE_PROFILE_DIRECTORY: &str = "marketplace-profiles";
 enum SkillMarketplaceProvider {
     SkillHub,
     HuaweiAgentCenter,
-    WebviewCompatibilityTest,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,17 +71,6 @@ impl SkillMarketplaceProvider {
                 // Keep the first validation inside Huawei's DNS boundary so it can discover the
                 // exact hosts without allowing an arbitrary external redirect.
                 navigation_policy: MarketplaceNavigationPolicy::HuaweiInternal,
-            },
-            Self::WebviewCompatibilityTest => MarketplaceDefinition {
-                provider: self,
-                entry_url: "https://github.com/marketplace",
-                window_label: "webview-compatibility-test",
-                window_title: "WebView Compatibility Test — GitHub Marketplace",
-                profile_directory: "webview-compatibility-test",
-                navigation_policy: MarketplaceNavigationPolicy::ExactHosts(&[
-                    "github.com",
-                    "www.github.com",
-                ]),
             },
         }
     }
@@ -414,24 +402,6 @@ mod tests {
                 "https://ai.edevops.huawei.com/mcp/projects",
                 "https://sso.huawei.com/login",
                 "https://huawei.com/callback",
-            ]
-            .map(parse_url)
-            .map(|url| policy.allows(&url)),
-            [true, true, true],
-        );
-    }
-
-    /// Verifies the public compatibility target can navigate through its marketplace and login.
-    #[test]
-    fn allows_webview_compatibility_test_navigation() {
-        let policy = SkillMarketplaceProvider::WebviewCompatibilityTest
-            .definition()
-            .navigation_policy;
-        assert_eq!(
-            [
-                "https://github.com/marketplace",
-                "https://github.com/login",
-                "https://www.github.com/marketplace",
             ]
             .map(parse_url)
             .map(|url| policy.allows(&url)),

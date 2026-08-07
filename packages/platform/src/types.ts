@@ -70,8 +70,7 @@ export type LocationActionsCapability =
 /** A native marketplace integration exposed by Ora Desktop. */
 export type SkillMarketplaceProvider =
   | "skillHub"
-  | "huaweiAgentCenter"
-  | "webviewCompatibilityTest";
+  | "huaweiAgentCenter";
 
 /** Reports the download lifecycle controlled by a provider-specific native marketplace window. */
 export type SkillMarketplaceStatus =

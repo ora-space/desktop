@@ -12,7 +12,6 @@ import {
   type SkillMarketplaceProvider,
   type SkillMarketplaceStatus,
 } from "@ora/platform";
-import { HuaweiAgentCenterDialog } from "./huawei-agent-center-dialog";
 
 /** Opens provider-specific marketplaces and keeps their latest download status visible. */
 export function SkillMarketplacePanel() {
@@ -21,7 +20,6 @@ export function SkillMarketplacePanel() {
   const [status, setStatus] = useState<SkillMarketplaceStatus | null>(null);
   const [openingProvider, setOpeningProvider] = useState<SkillMarketplaceProvider | null>(null);
   const [failedProvider, setFailedProvider] = useState<SkillMarketplaceProvider | null>(null);
-  const [huaweiDialogOpen, setHuaweiDialogOpen] = useState(false);
 
   useEffect(() => {
     if (skillMarketplace.kind !== "supported") return undefined;
@@ -46,7 +44,7 @@ export function SkillMarketplacePanel() {
       disposed = true;
       unsubscribe?.();
     };
-  }, [skillMarketplace, t]);
+  }, [skillMarketplace]);
 
   /** Opens one native marketplace WebView while preventing duplicate actions per surface. */
   const openMarketplace = async (provider: SkillMarketplaceProvider) => {
@@ -55,7 +53,6 @@ export function SkillMarketplacePanel() {
     setFailedProvider(null);
     try {
       await skillMarketplace.open(provider);
-      if (provider === "huaweiAgentCenter") setHuaweiDialogOpen(false);
     } catch {
       setFailedProvider(provider);
     } finally {
@@ -133,26 +130,25 @@ export function SkillMarketplacePanel() {
               type="button"
               variant="secondary"
               size="sm"
-              onClick={() => setHuaweiDialogOpen(true)}
+              disabled={unsupported || openingProvider !== null}
+              onClick={() => void openMarketplace("huaweiAgentCenter")}
             >
               <IconExternalLink aria-hidden="true" />
-              {t("settings.skills.huaweiViewReadiness")}
+              {openingProvider === "huaweiAgentCenter"
+                ? t("settings.skills.marketplaceOpening")
+                : t("settings.skills.huaweiOpen")}
             </Button>
           }
-        />
+        >
+          <MarketplaceStatus
+            status={status?.provider === "huaweiAgentCenter" ? status : null}
+            unsupported={unsupported}
+            connectionFailed={failedProvider === "huaweiAgentCenter"}
+            canOpenDownloadDirectory={locationActions.kind === "supported"}
+            onOpenDownloadDirectory={openDownloadDirectory}
+          />
+        </MarketplaceCard>
       </div>
-
-      <HuaweiAgentCenterDialog
-        open={huaweiDialogOpen}
-        available={!unsupported}
-        opening={openingProvider === "huaweiAgentCenter"}
-        compatibilityTestOpening={openingProvider === "webviewCompatibilityTest"}
-        connectionFailed={failedProvider === "huaweiAgentCenter"}
-        compatibilityTestFailed={failedProvider === "webviewCompatibilityTest"}
-        onOpenChange={setHuaweiDialogOpen}
-        onLaunch={() => void openMarketplace("huaweiAgentCenter")}
-        onLaunchCompatibilityTest={() => void openMarketplace("webviewCompatibilityTest")}
-      />
     </section>
   );
 }

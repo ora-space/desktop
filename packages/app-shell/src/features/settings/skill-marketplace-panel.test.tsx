@@ -98,7 +98,7 @@ describe("SkillMarketplacePanel", () => {
     expect(screen.queryByText(/Saved to|保存位置/)).not.toBeInTheDocument();
   });
 
-  it("shows the Huawei readiness guide and launches its prepared native provider", async () => {
+  it("opens the Huawei provider directly without an intermediate dialog", async () => {
     const user = userEvent.setup();
     const open = vi.fn().mockResolvedValue(undefined);
     renderMarketplace({
@@ -111,39 +111,18 @@ describe("SkillMarketplacePanel", () => {
       name: /打开内网 Skill Market|Open internal Skill Market/,
     }));
 
-    expect(screen.getByRole("dialog")).toHaveTextContent(/Huawei Agent Center/);
-    expect(screen.getByText(/公开等效测试|Public compatibility test/)).toBeVisible();
-    expect(screen.getByText(/后续接入工作|Remaining integration work/)).toBeVisible();
-    expect(screen.getByText(/Windows 内网测试指引|Windows internal test guide/)).toBeVisible();
-
-    await user.click(screen.getByRole("button", {
-      name: /打开 GitHub 等效测试|Open GitHub compatibility test/,
-    }));
-    expect(open).toHaveBeenCalledWith("webviewCompatibilityTest");
-
-    await user.click(screen.getByRole("button", {
-      name: /在内网启动 Agent Center|Launch Agent Center on internal network/,
-    }));
-
     expect(open).toHaveBeenCalledWith("huaweiAgentCenter");
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("keeps native launch actions disabled on unsupported hosts", async () => {
-    const user = userEvent.setup();
+  it("keeps native launch actions disabled on unsupported hosts", () => {
     renderMarketplace({ kind: "unsupported" });
 
     expect(screen.getByRole("button", { name: /打开技能市场|Open marketplace/ })).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent(/仅在 Ora 桌面端可用|Ora Desktop only/);
-
-    await user.click(screen.getByRole("button", {
+    expect(screen.getAllByRole("status")).toHaveLength(2);
+    expect(screen.getAllByRole("status")[0]).toHaveTextContent(/仅在 Ora 桌面端可用|Ora Desktop only/);
+    expect(screen.getByRole("button", {
       name: /打开内网 Skill Market|Open internal Skill Market/,
-    }));
-    expect(screen.getByRole("button", {
-      name: /在内网启动 Agent Center|Launch Agent Center on internal network/,
-    })).toBeDisabled();
-    expect(screen.getByRole("button", {
-      name: /打开 GitHub 等效测试|Open GitHub compatibility test/,
     })).toBeDisabled();
   });
 });

@@ -69,6 +69,8 @@ interface AtomManagerConfig {
   extraAction?: ReactNode;
   /** Optional host-specific surface shown between the pane heading and local atom controls. */
   intro?: ReactNode;
+  /** Chooses between compact rows and the wider card grid used by Skills. */
+  presentation?: "list" | "grid";
 }
 
 /** The Roles pane manages the configurable agents surfaced to Ora sessions. */
@@ -124,6 +126,7 @@ export function SkillsSettings() {
       error={skillsQuery.error !== null}
       extraAction={<Button variant="outline" size="sm" onClick={() => setImportOpen(true)}><IconUpload />{t("settings.skills.import")}</Button>}
       intro={<SkillMarketplacePanel />}
+      presentation="grid"
       onCreate={(name, description, content) => createSkill.mutateAsync({ name, description, content }).then(() => undefined)}
       onUpdate={(item, name, description, content) => updateSkill.mutateAsync({ skill: item as Skill, name, description, content }).then(() => undefined)}
       onDelete={(item) => deleteSkill.mutateAsync({ skillId: item.id }).then(() => undefined)}
@@ -140,7 +143,7 @@ export function SkillsSettings() {
  * The list-and-editor surface shared by both panes. While creating or editing, the toolbar and
  * list are replaced entirely by {@link AtomEditor}; leaving the editor brings the list back.
  */
-function AtomManager({ tPrefix, icon, loadContent, items, loading, error, onCreate, onUpdate, onDelete, extraAction, intro }: AtomManagerConfig) {
+function AtomManager({ tPrefix, icon, loadContent, items, loading, error, onCreate, onUpdate, onDelete, extraAction, intro, presentation = "list" }: AtomManagerConfig) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   // `null` = list view; `{ item: null }` = creating; `{ item }` = editing that record.
@@ -197,34 +200,54 @@ function AtomManager({ tPrefix, icon, loadContent, items, loading, error, onCrea
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border">
-        <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className={cn(presentation === "list" && "overflow-hidden rounded-lg border border-border")}>
+        <div className={cn(
+          "flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
+          presentation === "list"
+            ? "border-b border-border bg-muted/40 px-3 py-2"
+            : "px-1 py-1",
+        )}>
           <span>{t(`${tPrefix}.sectionLabel`)}</span>
           <span className="tabular-nums">{items.length}</span>
         </div>
-        {loading && <p className="px-4 py-10 text-center text-sm text-muted-foreground">{t(`${tPrefix}.loading`)}</p>}
-        {!loading && error && <p className="px-4 py-10 text-center text-sm text-muted-foreground">{t(`${tPrefix}.loadError`)}</p>}
-        {!loading && !error && visibleItems.length === 0 && <p className="px-4 py-10 text-center text-sm text-muted-foreground">{t(`${tPrefix}.empty`)}</p>}
-        {!loading && !error && visibleItems.map((item) => {
-          const Icon = icon;
-          return (
-            <div key={item.id} className="grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-3 py-2 last:border-b-0 hover:bg-muted/30">
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
-                  <Icon className="size-4" />
+        <div
+          role="list"
+          aria-label={t(`${tPrefix}.sectionLabel`)}
+          className={cn(presentation === "grid" && "mt-2 grid gap-3 md:grid-cols-2")}
+        >
+          {loading && <p className={cn("px-4 py-10 text-center text-sm text-muted-foreground", presentation === "grid" && "rounded-lg border border-border md:col-span-2")}>{t(`${tPrefix}.loading`)}</p>}
+          {!loading && error && <p className={cn("px-4 py-10 text-center text-sm text-muted-foreground", presentation === "grid" && "rounded-lg border border-border md:col-span-2")}>{t(`${tPrefix}.loadError`)}</p>}
+          {!loading && !error && visibleItems.length === 0 && <p className={cn("px-4 py-10 text-center text-sm text-muted-foreground", presentation === "grid" && "rounded-lg border border-border md:col-span-2")}>{t(`${tPrefix}.empty`)}</p>}
+          {!loading && !error && visibleItems.map((item) => {
+            const Icon = icon;
+            return (
+              <div
+                key={item.id}
+                role="listitem"
+                className={cn(
+                  "grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-3 py-2 hover:bg-muted/30",
+                  presentation === "list"
+                    ? "min-h-16 items-center border-b border-border last:border-b-0"
+                    : "min-h-28 items-start rounded-lg border border-border bg-background p-3",
+                )}
+              >
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
+                    <Icon className="size-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{item.name}</p>
+                    <p className={cn("mt-0.5 text-xs leading-5 text-muted-foreground", presentation === "grid" ? "line-clamp-3" : "line-clamp-2")}>{item.description}</p>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{item.name}</p>
-                  <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
+                <div className="flex justify-end gap-1">
+                  <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("common.edit")} onClick={() => setEditing({ item })}><IconPencil /></Button>
+                  <Button variant="ghost" size="icon-sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" aria-label={t("common.delete")} onClick={() => setDeleteTarget(item)}><IconTrash /></Button>
                 </div>
               </div>
-              <div className="flex justify-end gap-1">
-                <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("common.edit")} onClick={() => setEditing({ item })}><IconPencil /></Button>
-                <Button variant="ghost" size="icon-sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" aria-label={t("common.delete")} onClick={() => setDeleteTarget(item)}><IconTrash /></Button>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       <DeleteAtomDialog tPrefix={tPrefix} target={deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)} onDelete={onDelete} />
