@@ -4,6 +4,7 @@ import type {
   AgentCli,
   ContractsClient,
   Project,
+  RepositorySnapshot,
   Session,
   Skill,
   Task,
@@ -101,6 +102,32 @@ function requireWorkflowRecord(state: MockClientState, workflowId: string): Mock
   return record;
 }
 
+/** Creates the stable repository snapshot used by app-shell tests that do not exercise Git. */
+function repositorySnapshot(projectId: string): RepositorySnapshot {
+  return {
+    projectId,
+    rootPath: "/workspaces/test",
+    headCommitId: null,
+    currentBranch: "main",
+    references: [],
+    commits: [],
+    remoteStatus: {
+      upstream: null,
+      ahead: 0,
+      behind: 0,
+    },
+    syncOperation: null,
+    workingTree: {
+      changedFiles: 0,
+      stagedFiles: 0,
+      unstagedFiles: 0,
+      untrackedFiles: 0,
+      conflictedFiles: 0,
+      files: [],
+    },
+  };
+}
+
 /**
  * Builds a ContractsClient whose CRUD operations mutate the supplied state arrays.
  * Mirrors the real client surface so react-query hooks exercise the same code path.
@@ -130,6 +157,79 @@ export function createMockClient(state: MockClientState): ContractsClient {
         if (idx >= 0) state.projects.splice(idx, 1);
         return { projectId: req.projectId };
       },
+    },
+    repository: {
+      getSnapshot: async (request) => ({ snapshot: repositorySnapshot(request.projectId) }),
+      getWorkingTreeDiff: async () => ({
+        diff: {
+          headCommitId: null,
+          patch: "",
+        },
+      }),
+      createBranch: async (request) => ({ branch: request.branchName }),
+      checkoutBranch: async (request) => ({ branch: request.branchName }),
+      fetch: async (request) => ({ snapshot: repositorySnapshot(request.projectId) }),
+      pull: async (request) => ({
+        outcome: { kind: "alreadyUpToDate" },
+        snapshot: repositorySnapshot(request.projectId),
+      }),
+      resolveSync: async (request) => ({
+        outcome: "completed",
+        snapshot: repositorySnapshot(request.projectId),
+      }),
+      resolveConflict: async () => ({
+        workingTree: repositorySnapshot("project").workingTree,
+      }),
+      pushBranch: async (request) => ({
+        branchName: "main",
+        remoteName: "origin",
+        snapshot: repositorySnapshot(request.projectId),
+      }),
+      stageChanges: async () => ({
+        workingTree: {
+          changedFiles: 0,
+          stagedFiles: 0,
+          unstagedFiles: 0,
+          untrackedFiles: 0,
+          conflictedFiles: 0,
+          files: [],
+        },
+      }),
+      unstageChanges: async () => ({
+        workingTree: {
+          changedFiles: 0,
+          stagedFiles: 0,
+          unstagedFiles: 0,
+          untrackedFiles: 0,
+          conflictedFiles: 0,
+          files: [],
+        },
+      }),
+      commitChanges: async (request) => ({
+        commitId: "commit",
+        summary: request.message,
+        workingTree: {
+          changedFiles: 0,
+          stagedFiles: 0,
+          unstagedFiles: 0,
+          untrackedFiles: 0,
+          conflictedFiles: 0,
+          files: [],
+        },
+      }),
+      getCommit: async (request) => ({
+        commit: {
+          id: request.commitId,
+          shortId: request.commitId.slice(0, 8),
+          parents: [],
+          subject: "",
+          authorName: "",
+          authorEmail: "",
+          authoredAt: "",
+          files: [],
+        },
+      }),
+      getCommitDiff: async () => ({ patch: "" }),
     },
     projectWorkContext: {
       open: async () => { throw new Error("projectWorkContext not implemented in mock"); },
@@ -324,6 +424,17 @@ export function createMockClient(state: MockClientState): ContractsClient {
         breadcrumbs: [],
         entries: [],
       }),
+      listProjectDirectory: async () => ({ path: "", entries: [] }),
+      readProjectFile: async (request) => ({
+        path: request.path,
+        content: "",
+        version: "test",
+        sizeBytes: 0,
+      }),
+      searchProject: async () => ({ results: [], truncated: false }),
+      watchProject: () => (async function* () {
+        yield* [];
+      })(),
       listWorkspaceDirectory: async () => ({ path: "", entries: [] }),
       readWorkspaceFile: async (request) => ({
         path: request.path,

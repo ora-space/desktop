@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  ContractsClient,
   WorkspaceEntry,
   WorkspaceFileChange,
+  WorkspaceFileEventBatch,
   WorkspaceSearchKind,
   WorkspaceSearchResult,
 } from "@ora/contracts";
@@ -48,8 +50,27 @@ interface WorkspaceFilesViewProps {
   onSurfaceChange?: (surface: "explorer" | "search") => void;
 }
 
+interface ProjectFilesViewProps {
+  projectId: string;
+  rootPath: string;
+  branchName?: string;
+  toolbar?: ReactNode;
+}
+
+type FileExplorerScope =
+  | { kind: "project"; projectId: string; rootPath: string; branchName?: string }
+  | { kind: "task"; taskId: string };
+
+interface FileExplorerViewProps {
+  scope: FileExplorerScope;
+  toolbar?: ReactNode;
+  hideHeader?: boolean;
+  surface?: "explorer" | "search";
+  onSurfaceChange?: (surface: "explorer" | "search") => void;
+}
+
 interface DirectoryTreeProps {
-  taskId: string;
+  scope: FileExplorerScope;
   path: string;
   depth: number;
   expanded: ReadonlySet<string>;
@@ -65,12 +86,47 @@ export function WorkspaceFilesView({
   taskId,
   toolbar,
   hideHeader = false,
-  surface: controlledSurface,
+  surface,
   onSurfaceChange,
 }: WorkspaceFilesViewProps) {
+  return (
+    <FileExplorerView
+      scope={{ kind: "task", taskId }}
+      toolbar={toolbar}
+      hideHeader={hideHeader}
+      surface={surface}
+      onSurfaceChange={onSurfaceChange}
+    />
+  );
+}
+
+/** Renders the project's main checkout with path-scoped directory and file queries. */
+export function ProjectFilesView({
+  projectId,
+  rootPath,
+  branchName,
+  toolbar,
+}: ProjectFilesViewProps) {
+  return (
+    <FileExplorerView
+      scope={{ kind: "project", projectId, rootPath, branchName }}
+      toolbar={toolbar}
+    />
+  );
+}
+
+/** Renders a file explorer against either a project checkout or a task worktree. */
+function FileExplorerView({
+  scope,
+  toolbar,
+  hideHeader = false,
+  surface: controlledSurface,
+  onSurfaceChange,
+}: FileExplorerViewProps) {
   const { t } = useTranslation();
   const client = useContractsClient();
   const queryClient = useQueryClient();
+  const scopeKey = fileScopeKey(scope);
   const [internalSurface, setInternalSurface] = useState<"explorer" | "search">("explorer");
   const surface = controlledSurface ?? internalSurface;
   const setSurface = (next: "explorer" | "search") => {
@@ -78,6 +134,7 @@ export function WorkspaceFilesView({
     onSurfaceChange?.(next);
   };
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set([""]));
+  const [activeDirectory, setActiveDirectory] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<WorkspaceFileMatchTarget | null>(
     null,
@@ -87,6 +144,17 @@ export function WorkspaceFilesView({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [fileFilterText, setFileFilterText] = useState("");
   const [debouncedFileFilter, setDebouncedFileFilter] = useState("");
+
+  useEffect(() => {
+    setExpanded(new Set([""]));
+    setActiveDirectory("");
+    setSelectedPath(null);
+    setSelectedTarget(null);
+    setSearchText("");
+    setDebouncedSearch("");
+    setFileFilterText("");
+    setDebouncedFileFilter("");
+  }, [scopeKey]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchText.trim()), 200);
@@ -102,26 +170,21 @@ export function WorkspaceFilesView({
     const controller = new AbortController();
     void watchWorkspaceContinuously({
       signal: controller.signal,
-      openStream: (signal) =>
-        client.fileSystem.watchWorkspace({ taskId }, { signal }),
-      onBatch: (batch) => invalidateWorkspaceQueries(queryClient, taskId, batch.changes),
+      openStream: (signal) => watchFileScope(client, scope, signal),
+      onBatch: (batch) => invalidateFileQueries(queryClient, scope, batch.changes),
     });
     return () => controller.abort();
-  }, [client, queryClient, taskId]);
+  }, [client, queryClient, scopeKey]);
 
   const fileQuery = useQuery({
-    queryKey: queryKeys.workspaceFile(taskId, selectedPath ?? ""),
-    queryFn: () =>
-      client.fileSystem.readWorkspaceFile({ taskId, path: selectedPath! }),
+    queryKey: fileQueryKey(scope, selectedPath ?? ""),
+    queryFn: () => readFile(client, scope, selectedPath!),
     enabled: selectedPath !== null,
+    refetchOnMount: "always",
   });
   const searchQuery = useQuery({
-    queryKey: queryKeys.workspaceSearch(taskId, searchKind, debouncedSearch),
-    queryFn: ({ signal }) =>
-      client.fileSystem.searchWorkspace(
-        { taskId, query: debouncedSearch, kind: searchKind },
-        { signal },
-      ),
+    queryKey: searchQueryKey(scope, searchKind, debouncedSearch),
+    queryFn: ({ signal }) => searchFiles(client, scope, debouncedSearch, searchKind, signal),
     enabled: surface === "search" && debouncedSearch.length > 0,
   });
   const visibleSearchResults = useMemo(
@@ -129,12 +192,8 @@ export function WorkspaceFilesView({
     [searchQuery.data],
   );
   const fileFilterQuery = useQuery({
-    queryKey: queryKeys.workspaceSearch(taskId, "files", debouncedFileFilter),
-    queryFn: ({ signal }) =>
-      client.fileSystem.searchWorkspace(
-        { taskId, query: debouncedFileFilter, kind: "files" },
-        { signal },
-      ),
+    queryKey: searchQueryKey(scope, "files", debouncedFileFilter),
+    queryFn: ({ signal }) => searchFiles(client, scope, debouncedFileFilter, "files", signal),
     enabled: surface === "explorer" && debouncedFileFilter.length > 0,
   });
   const visibleFileFilterResults = useMemo(
@@ -144,6 +203,7 @@ export function WorkspaceFilesView({
 
   const openSearchResult = (result: WorkspaceSearchResult) => {
     setSelectedPath(result.path);
+    setActiveDirectory(parentPath(result.path));
     setSelectedTarget(
       result.kind === "match"
         ? {
@@ -154,14 +214,17 @@ export function WorkspaceFilesView({
         : null,
     );
   };
-  const addLineSelectionToChat = (selection: WorkspaceFileLineSelection) => {
-    useComposerFileContextStore.getState().addSelection(taskId, selection);
-    toast.success(t("files.lineSelectionAdded", {
-      startLine: selection.startLine,
-      endLine: selection.endLine,
-    }));
-  };
+  const addLineSelectionToChat = scope.kind === "task"
+    ? (selection: WorkspaceFileLineSelection) => {
+      useComposerFileContextStore.getState().addSelection(scope.taskId, selection);
+      toast.success(t("files.lineSelectionAdded", {
+        startLine: selection.startLine,
+        endLine: selection.endLine,
+      }));
+    }
+    : undefined;
   const toggleDirectory = (path: string) => {
+    setActiveDirectory(path);
     setExpanded((current) => {
       const next = new Set(current);
       if (next.has(path)) next.delete(path);
@@ -169,10 +232,60 @@ export function WorkspaceFilesView({
       return next;
     });
   };
-  const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: queryKeys.workspaceFiles(taskId) });
+  const refresh = async () => {
+    await queryClient.invalidateQueries({
+      queryKey: directoryQueryKey(scope, activeDirectory),
+    });
+    if (selectedPath !== null && parentPath(selectedPath) === activeDirectory) {
+      await queryClient.invalidateQueries({ queryKey: fileQueryKey(scope, selectedPath) });
+    }
+  };
 
-  const body = (
+  return (
+    <section className="flex h-full min-h-0 flex-col bg-background">
+      {!hideHeader && (
+      <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3">
+        <Button
+          size="sm"
+          variant={surface === "explorer" ? "secondary" : "ghost"}
+          onClick={() => setSurface("explorer")}
+        >
+          <IconFolderOpen />
+          {t("files.explorer")}
+        </Button>
+        <Button
+          size="sm"
+          variant={surface === "search" ? "secondary" : "ghost"}
+          onClick={() => setSurface("search")}
+        >
+          <IconSearch />
+          {t("files.search")}
+        </Button>
+        <div className="min-w-0 flex-1 px-2">
+          {scope.kind === "project" && (
+            <div className="truncate text-[10px] text-muted-foreground" title={scope.rootPath}>
+              <span className="font-medium text-foreground/80">
+                {scope.branchName ?? "project"}
+              </span>
+              <span className="px-1">·</span>
+              {scope.rootPath}
+              {activeDirectory.length > 0 && ` / ${activeDirectory}`}
+            </div>
+          )}
+        </div>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="shrink-0"
+          aria-label={t("files.refresh")}
+          onClick={() => void refresh()}
+        >
+          <IconRefresh />
+        </Button>
+        {toolbar}
+      </header>
+      )}
+
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup orientation="horizontal" className="min-h-0">
         <ResizablePanel id="workspace-file-content" minSize={420}>
@@ -287,7 +400,7 @@ export function WorkspaceFilesView({
                   />
                 ) : (
                   <DirectoryTree
-                    taskId={taskId}
+                    scope={scope}
                     path=""
                     depth={0}
                     expanded={expanded}
@@ -295,6 +408,7 @@ export function WorkspaceFilesView({
                     onToggleDirectory={toggleDirectory}
                     onSelectFile={(path) => {
                       setSelectedPath(path);
+                      setActiveDirectory(parentPath(path));
                       setSelectedTarget(null);
                     }}
                   />
@@ -322,52 +436,14 @@ export function WorkspaceFilesView({
         </ResizablePanel>
         </ResizablePanelGroup>
       </div>
-  );
-
-  if (hideHeader) {
-    return <section className="flex h-full min-h-0 flex-col bg-background">{body}</section>;
-  }
-
-  return (
-    <section className="flex h-full min-h-0 flex-col bg-background">
-      <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3">
-        <Button
-          size="sm"
-          variant={surface === "explorer" ? "secondary" : "ghost"}
-          onClick={() => setSurface("explorer")}
-        >
-          <IconFolderOpen />
-          {t("files.explorer")}
-        </Button>
-        <Button
-          size="sm"
-          variant={surface === "search" ? "secondary" : "ghost"}
-          onClick={() => setSurface("search")}
-        >
-          <IconSearch />
-          {t("files.search")}
-        </Button>
-        <div className="flex-1" />
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          className="shrink-0"
-          aria-label={t("files.refresh")}
-          onClick={() => void refresh()}
-        >
-          <IconRefresh />
-        </Button>
-        {toolbar}
-      </header>
-      {body}
     </section>
   );
 }
 
-/** Invalidates only the workspace queries affected by one native event batch. */
-async function invalidateWorkspaceQueries(
+/** Invalidates only the file queries affected by one native event batch. */
+async function invalidateFileQueries(
   queryClient: ReturnType<typeof useQueryClient>,
-  taskId: string,
+  scope: FileExplorerScope,
   changes: WorkspaceFileChange[],
 ): Promise<void> {
   const directoryPaths = new Set<string>();
@@ -390,24 +466,122 @@ async function invalidateWorkspaceQueries(
   }
 
   if (invalidateWorkspace) {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.workspaceFiles(taskId) });
+    await queryClient.invalidateQueries({ queryKey: fileScopeQueryKey(scope) });
     return;
   }
 
   await Promise.all([
     ...Array.from(directoryPaths, (path) =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceDirectory(taskId, path) }),
+      queryClient.invalidateQueries({ queryKey: directoryQueryKey(scope, path) }),
     ),
     ...Array.from(filePaths, (path) =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceFile(taskId, path) }),
+      queryClient.invalidateQueries({ queryKey: fileQueryKey(scope, path) }),
     ),
     ...(invalidateSearch
-      ? [queryClient.invalidateQueries({ queryKey: ["workspace-files", taskId, "search"] })]
+      ? [queryClient.invalidateQueries({ queryKey: searchScopeQueryKey(scope) })]
       : []),
   ]);
 }
 
-/** Returns the parent directory for a normalized workspace-relative path. */
+/** Returns the stable cache namespace for one project or task file scope. */
+function fileScopeQueryKey(scope: FileExplorerScope) {
+  return scope.kind === "project"
+    ? queryKeys.projectFiles(scope.projectId)
+    : queryKeys.workspaceFiles(scope.taskId);
+}
+
+/** Returns the directory cache key whose path is being rendered or refreshed. */
+function directoryQueryKey(scope: FileExplorerScope, path: string) {
+  return scope.kind === "project"
+    ? queryKeys.projectDirectory(scope.projectId, path)
+    : queryKeys.workspaceDirectory(scope.taskId, path);
+}
+
+/** Returns the selected-file cache key for one root scope. */
+function fileQueryKey(scope: FileExplorerScope, path: string) {
+  return scope.kind === "project"
+    ? queryKeys.projectFile(scope.projectId, path)
+    : queryKeys.workspaceFile(scope.taskId, path);
+}
+
+/** Returns the scoped cache key for one filename or content search. */
+function searchQueryKey(scope: FileExplorerScope, kind: string, query: string) {
+  return scope.kind === "project"
+    ? queryKeys.projectSearch(scope.projectId, kind, query)
+    : queryKeys.workspaceSearch(scope.taskId, kind, query);
+}
+
+/** Returns the search cache prefix used when native changes can alter results. */
+function searchScopeQueryKey(scope: FileExplorerScope) {
+  return scope.kind === "project"
+    ? ["project-files", scope.projectId, "search"] as const
+    : ["workspace-files", scope.taskId, "search"] as const;
+}
+
+/** Keeps the file cache and watcher stable while display-only project metadata changes. */
+function fileScopeKey(scope: FileExplorerScope): string {
+  return scope.kind === "project" ? `project:${scope.projectId}` : `task:${scope.taskId}`;
+}
+
+/** Opens the native watcher for the selected project or task root. */
+function watchFileScope(
+  client: ContractsClient,
+  scope: FileExplorerScope,
+  signal: AbortSignal,
+): AsyncIterable<WorkspaceFileEventBatch> {
+  return scope.kind === "project"
+    ? client.fileSystem.watchProject({ projectId: scope.projectId }, { signal })
+    : client.fileSystem.watchWorkspace({ taskId: scope.taskId }, { signal });
+}
+
+/** Lists one immediate directory using the endpoint owned by its root scope. */
+function listDirectory(
+  client: ContractsClient,
+  scope: FileExplorerScope,
+  path: string,
+) {
+  return scope.kind === "project"
+    ? client.fileSystem.listProjectDirectory({
+      projectId: scope.projectId,
+      ...(path === "" ? {} : { path }),
+    })
+    : client.fileSystem.listWorkspaceDirectory({
+      taskId: scope.taskId,
+      ...(path === "" ? {} : { path }),
+    });
+}
+
+/** Reads one selected file using the endpoint owned by its root scope. */
+function readFile(
+  client: ContractsClient,
+  scope: FileExplorerScope,
+  path: string,
+) {
+  return scope.kind === "project"
+    ? client.fileSystem.readProjectFile({ projectId: scope.projectId, path })
+    : client.fileSystem.readWorkspaceFile({ taskId: scope.taskId, path });
+}
+
+/** Searches one root scope while preserving the caller's cancellation signal. */
+function searchFiles(
+  client: ContractsClient,
+  scope: FileExplorerScope,
+  query: string,
+  kind: WorkspaceSearchKind,
+  signal: AbortSignal,
+) {
+  return scope.kind === "project"
+    ? client.fileSystem.searchProject(
+      { projectId: scope.projectId, query, kind },
+      { signal },
+    )
+    : client.fileSystem.searchWorkspace(
+      { taskId: scope.taskId, query, kind },
+      { signal },
+    );
+}
+
+/** Returns the parent directory for a normalized file-relative path. */
 function parentPath(path: string): string {
   const separator = path.lastIndexOf("/");
   return separator <= 0 ? "" : path.slice(0, separator);
@@ -415,7 +589,7 @@ function parentPath(path: string): string {
 
 /** Loads one expanded directory lazily and renders its descendants recursively. */
 function DirectoryTree({
-  taskId,
+  scope,
   path,
   depth,
   expanded,
@@ -426,12 +600,9 @@ function DirectoryTree({
   const client = useContractsClient();
   const { t } = useTranslation();
   const directoryQuery = useQuery({
-    queryKey: queryKeys.workspaceDirectory(taskId, path),
-    queryFn: () =>
-      client.fileSystem.listWorkspaceDirectory({
-        taskId,
-        ...(path === "" ? {} : { path }),
-      }),
+    queryKey: directoryQueryKey(scope, path),
+    queryFn: () => listDirectory(client, scope, path),
+    refetchOnMount: "always",
   });
 
   if (directoryQuery.isLoading) {
@@ -449,7 +620,7 @@ function DirectoryTree({
     <WorkspaceTreeEntry
       key={entry.path}
       entry={entry}
-      taskId={taskId}
+      scope={scope}
       depth={depth}
       expanded={expanded}
       selectedPath={selectedPath}
@@ -462,7 +633,7 @@ function DirectoryTree({
 /** Renders one tree row and mounts its lazy child query only while expanded. */
 function WorkspaceTreeEntry({
   entry,
-  taskId,
+  scope,
   depth,
   expanded,
   selectedPath,
@@ -499,7 +670,7 @@ function WorkspaceTreeEntry({
       </button>
       {isExpanded && (
         <DirectoryTree
-          taskId={taskId}
+          scope={scope}
           path={entry.path}
           depth={depth + 1}
           expanded={expanded}

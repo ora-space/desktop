@@ -18,12 +18,14 @@ export type DeleteTarget =
 interface UiState {
   sidebarCollapsed: boolean;
   settingsOpen: boolean;
+  repositoryOpen: boolean;
   expandedProjects: Set<string>;
   expandedTasks: Set<string>;
   dialog: DialogState | null;
   deleteTarget: DeleteTarget | null;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
+  setRepositoryOpen: (open: boolean) => void;
   toggleProjectExpand: (projectId: string) => void;
   toggleTaskExpand: (taskId: string) => void;
   /** Expands a project without toggling it closed (used after mutations select a child). */
@@ -38,12 +40,14 @@ interface UiState {
 export const useUiStore = create<UiState>((set) => ({
   sidebarCollapsed: false,
   settingsOpen: false,
+  repositoryOpen: false,
   expandedProjects: new Set<string>(),
   expandedTasks: new Set<string>(),
   dialog: null,
   deleteTarget: null,
   setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setRepositoryOpen: (repositoryOpen) => set({ repositoryOpen }),
   toggleProjectExpand: (projectId) =>
     set((state) => {
       const next = new Set(state.expandedProjects);

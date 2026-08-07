@@ -144,6 +144,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   // the one the composer and model picker are actually pointing at — a stale
   // read would warm a different agent than what is on screen.
   const targetAgentCli = useTargetAgentCli(selection);
+  const setRepositoryOpen = useUiStore((s) => s.setRepositoryOpen);
 
   const chatStore = useChatStore();
   useTaskDiffLiveSync(chatStore, sessions);
@@ -532,6 +533,17 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             taskId={task?.id}
             projectPath={project?.rootPath}
           />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={project === undefined}
+            aria-label={t("repository.open")}
+            title={t("repository.open")}
+            onClick={() => setRepositoryOpen(true)}
+          >
+            <IconBrandGit />
+          </Button>
           <WindowControls />
         </div>
         <SessionHistoryBanner session={session} />
@@ -625,6 +637,17 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           taskId={task?.id}
           projectPath={project?.rootPath}
         />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          disabled={project === undefined}
+          aria-label={t("repository.open")}
+          title={t("repository.open")}
+          onClick={() => setRepositoryOpen(true)}
+        >
+          <IconBrandGit />
+        </Button>
         <WindowControls />
       </header>
       <WorkspaceReviewLayout context={reviewContext}>

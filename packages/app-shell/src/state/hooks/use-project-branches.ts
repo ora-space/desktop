@@ -9,15 +9,22 @@ import { queryKeys } from "./query-keys";
  */
 const PROJECT_BRANCHES_STALE_MS = 60_000;
 
+interface ProjectBranchesOptions {
+  enabled?: boolean;
+}
+
 /** Loads refreshed local and remote refs that can seed a new worktree for the selected project. */
-export function useProjectBranches(projectId: string | null) {
+export function useProjectBranches(
+  projectId: string | null,
+  options: ProjectBranchesOptions = {},
+) {
   const client = useContractsClient();
   return useQuery({
     queryKey: queryKeys.projectBranches(projectId ?? ""),
     queryFn: () => client.project
       .listBranches({ projectId: projectId! })
       .then((response) => response.branches),
-    enabled: projectId !== null,
+    enabled: projectId !== null && (options.enabled ?? true),
     staleTime: PROJECT_BRANCHES_STALE_MS,
     gcTime: PROJECT_BRANCHES_STALE_MS * 10,
   });

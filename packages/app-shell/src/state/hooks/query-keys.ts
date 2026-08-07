@@ -9,6 +9,13 @@ import type { AgentCli, TaskDiffScope, WarmSessionTarget } from "@ora/contracts"
 export const queryKeys = {
   projects: ["projects"] as const,
   projectBranches: (projectId: string) => ["project-branches", projectId] as const,
+  repositorySnapshot: (projectId: string) => ["repository-snapshot", projectId] as const,
+  repositoryCommit: (projectId: string, commitId: string) =>
+    ["repository-commit", projectId, commitId] as const,
+  repositoryCommitDiff: (projectId: string, commitId: string, path: string) =>
+    ["repository-commit-diff", projectId, commitId, path] as const,
+  repositoryWorkingTreeDiff: (projectId: string) =>
+    ["repository-working-tree-diff", projectId] as const,
   tasks: ["tasks"] as const,
   sessions: ["sessions"] as const,
   agents: ["agents"] as const,
@@ -36,6 +43,13 @@ export const queryKeys = {
     ["workspace-files", taskId, "file", path] as const,
   workspaceSearch: (taskId: string, kind: string, query: string) =>
     ["workspace-files", taskId, "search", kind, query] as const,
+  projectFiles: (projectId: string) => ["project-files", projectId] as const,
+  projectDirectory: (projectId: string, path: string) =>
+    ["project-files", projectId, "directory", path] as const,
+  projectFile: (projectId: string, path: string) =>
+    ["project-files", projectId, "file", path] as const,
+  projectSearch: (projectId: string, kind: string, query: string) =>
+    ["project-files", projectId, "search", kind, query] as const,
   /**
    * Mirrors the identity the backend keys warm sessions by, so two surfaces
    * never share one cache entry and revisiting a surface reuses its session.

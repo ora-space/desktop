@@ -21,6 +21,7 @@ import { ContractsClientContext } from "./contracts-client-context";
 import { ChatStoreContext } from "./chat-store-context";
 import { WorkspaceSidebar } from "./features/workspace/workspace-sidebar";
 import { WorkspaceView } from "./features/workspace/workspace-view";
+import { RepositoryWorkspaceView } from "./features/repository/repository-workspace-view";
 import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
 import { AppI18nProvider } from "./i18n/i18n";
@@ -84,6 +85,7 @@ function AppShellContent({ client, chatStore, platform, user: injectedUser }: Ap
   const user = injectedUser ?? gitIdentityUser;
 
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
+  const repositoryOpen = useUiStore((s) => s.repositoryOpen);
   const { i18n, t } = useTranslation();
   const sidebarPanelRef = useRef<ResizablePanelHandle | null>(null);
   const locale: PlatformLocale = i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
@@ -106,7 +108,7 @@ function AppShellContent({ client, chatStore, platform, user: injectedUser }: Ap
             </a>
             <div className="flex h-dvh overflow-hidden bg-background text-foreground">
               {sidebarCollapsed ? (
-                <WorkspaceView userName={user.name} />
+                repositoryOpen ? <RepositoryWorkspaceView /> : <WorkspaceView userName={user.name} />
               ) : (
                 <ResizablePanelGroup orientation="horizontal">
                   <ResizablePanel
@@ -127,7 +129,7 @@ function AppShellContent({ client, chatStore, platform, user: injectedUser }: Ap
                     onDoubleClick={() => sidebarPanelRef.current?.resize(DEFAULT_SIDEBAR_WIDTH)}
                   />
                   <ResizablePanel id="workspace-content" minSize={MIN_WORKSPACE_WIDTH}>
-                    <WorkspaceView userName={user.name} />
+                    {repositoryOpen ? <RepositoryWorkspaceView /> : <WorkspaceView userName={user.name} />}
                   </ResizablePanel>
                 </ResizablePanelGroup>
               )}
