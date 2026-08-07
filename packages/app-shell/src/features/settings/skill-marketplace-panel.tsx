@@ -33,15 +33,6 @@ export function SkillMarketplacePanel() {
         if (disposed) return;
 
         setStatus(nextStatus);
-        if (nextStatus.status === "downloaded") {
-          toast.success(
-            t("settings.skills.marketplaceDownloaded", { fileName: nextStatus.fileName }),
-            {
-              description: nextStatus.archivePath,
-              duration: 5_000,
-            },
-          );
-        }
       })
       .then((stop) => {
         if (disposed) stop();

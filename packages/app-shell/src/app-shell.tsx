@@ -23,6 +23,7 @@ import { WorkspaceSidebar } from "./features/workspace/workspace-sidebar";
 import { WorkspaceView } from "./features/workspace/workspace-view";
 import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
+import { SkillMarketplaceInstallController } from "./features/settings/skill-marketplace-install-controller";
 import { AppI18nProvider } from "./i18n/i18n";
 import type { CurrentUser } from "./lib/types";
 import { createAppQueryClient } from "./state/query-client";
@@ -132,6 +133,7 @@ function AppShellContent({ client, chatStore, platform, user: injectedUser }: Ap
                 </ResizablePanelGroup>
               )}
               <SettingsDialog />
+              <SkillMarketplaceInstallController />
               {/* Mounted here, not in the sidebar, so collapsing the sidebar does
                   not take the workspace dialogs down with it. */}
               <WorkspaceDialogs />

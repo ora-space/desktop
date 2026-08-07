@@ -471,15 +471,16 @@ function AgentImportDialog({ open, onOpenChange, onCompleted }: {
 const SKILL_NAME = /^[A-Za-z0-9._-]+$/;
 
 /** Guides one source through preparation, conflict decisions, and background import progress. */
-function SkillImportDialog({ open, onOpenChange, onCompleted }: {
+export function SkillImportDialog({ open, onOpenChange, onCompleted, initialSession = null }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCompleted: () => void;
+  initialSession?: SkillImportSession | null;
 }) {
   const { t } = useTranslation();
   const platform = usePlatform();
   const client = useContractsClient();
-  const [session, setSession] = useState<SkillImportSession | null>(null);
+  const [session, setSession] = useState<SkillImportSession | null>(() => initialSession);
   const [decisions, setDecisions] = useState<Record<string, SkillImportDecision>>({});
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);

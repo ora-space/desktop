@@ -10,4 +10,7 @@ The GitHub Marketplace compatibility provider is an explicitly labeled public te
 
 ZIP downloads are written to collision-free partial paths under Ora application data and promoted only after the WebView reports success. The module reports typed provider-aware status events to the main window; presentation failures never discard a completed archive.
 
-This module does not install or execute downloaded skills. Validation and installation remain downstream responsibilities.
+This module does not install or execute downloaded skills. The process-wide App Shell marketplace
+controller consumes completed-download events and delegates the archive to the shared two-phase
+skill import service. Ready candidates commit automatically; conflicts and invalid candidates reuse
+the existing import review dialog instead of bypassing validation or silently overwriting a skill.

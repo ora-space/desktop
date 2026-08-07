@@ -1,7 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { toast } from "@ora/ui";
 import {
   PlatformProvider,
   type LocationActionsCapability,
@@ -37,7 +36,6 @@ describe("SkillMarketplacePanel", () => {
       listener = nextListener;
       return stop;
     });
-    const successToast = vi.spyOn(toast, "success").mockImplementation(() => "skill-download");
     const openLocation = vi.fn().mockResolvedValue(undefined);
     const view = renderMarketplace(
       { kind: "supported", open, onStatus },
@@ -65,13 +63,6 @@ describe("SkillMarketplacePanel", () => {
       fileName: "skill.zip",
       archivePath: "/app-data/skill-downloads/skill.zip",
     }));
-    expect(successToast).toHaveBeenCalledWith(
-      expect.stringMatching(/已下载 skill.zip|Downloaded skill.zip/),
-      {
-        description: "/app-data/skill-downloads/skill.zip",
-        duration: 5_000,
-      },
-    );
     expect(screen.getByRole("status")).not.toHaveTextContent(/已下载 skill.zip|Downloaded skill.zip/);
     expect(screen.queryByText("/app-data/skill-downloads/skill.zip")).not.toBeInTheDocument();
     const savedLocation = screen.getByRole("button", { name: /保存位置|Saved to/ });
@@ -81,7 +72,6 @@ describe("SkillMarketplacePanel", () => {
 
     view.unmount();
     expect(stop).toHaveBeenCalledOnce();
-    successToast.mockRestore();
   });
 
   it("shows native download failures without reporting a completed archive", async () => {
