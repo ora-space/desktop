@@ -145,7 +145,6 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     setStopOpen(false);
     setOpenInspectorOnTheaterEnter(false);
     setReviewPanelOpen(false);
-    setReviewCloseRequestId(0);
   }
   useEffect(() => {
     focusStatusSampleRef.current = null;

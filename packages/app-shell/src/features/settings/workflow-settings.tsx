@@ -256,8 +256,13 @@ function WorkflowSettingsContent({
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [libraryVisualWidth, setLibraryVisualWidth] = useState(initialLibraryWidth);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
-  workflowRef.current = workflow;
-  previewedVersionRef.current = previewedVersion;
+
+  // Autosave flush reads these after render; keep them current without render-time writes.
+  useEffect(() => {
+    workflowRef.current = workflow;
+    previewedVersionRef.current = previewedVersion;
+  });
+
   /** Library rows for the manager, derived from persisted workflow summaries. */
   const libraryWorkflows: DemoWorkflow[] = useMemo(
     () => (library.data ?? []).map((summary) => ({
@@ -321,6 +326,8 @@ function WorkflowSettingsContent({
       edges: envelope.edges,
     });
     setHydratedWorkflowId(draftQuery.data.workflow.id);
+    // Capture the server name in the same hydrate turn so autosave can skip no-op renames.
+    // eslint-disable-next-line react-hooks/refs -- render-phase hydrate pairs this with setState
     persistedNameRef.current = draftQuery.data.workflow.name;
   }
 

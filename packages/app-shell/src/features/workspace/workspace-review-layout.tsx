@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@ora/ui";
 import {
   IconArrowsMaximize,
@@ -49,9 +49,13 @@ export function WorkspaceReviewLayout({
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRequestSequence = useRef(0);
   const onOpenChangeRef = useRef(onOpenChange);
-  onOpenChangeRef.current = onOpenChange;
   const taskId = context.kind === "task" ? context.taskId : undefined;
   const contextKey = context.kind === "none" ? "none" : context.kind === "project" ? `project:${context.projectId}` : `task:${context.taskId}`;
+
+  // Keep the latest open-change listener for setState updaters without recreating them.
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  });
 
   const setReviewOpen = useCallback((next: boolean) => {
     setOpen((current) => {
@@ -78,7 +82,7 @@ export function WorkspaceReviewLayout({
     setPreviousContextKind(context.kind);
     if (context.kind === "none") {
       if (open) {
-        onOpenChangeRef.current?.(false);
+        onOpenChange?.(false);
       }
       setOpen(false);
       setExpanded(false);

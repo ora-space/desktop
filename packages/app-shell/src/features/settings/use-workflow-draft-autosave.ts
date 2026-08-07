@@ -54,9 +54,6 @@ export function useWorkflowDraftAutosave({
   const runSaveRef = useRef<() => Promise<SaveAttemptResult>>(async () => "noop");
   const scheduleRef = useRef<() => void>(() => undefined);
 
-  enabledRef.current = enabled;
-  saveRef.current = save;
-
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
@@ -79,8 +76,6 @@ export function useWorkflowDraftAutosave({
       void runSaveRef.current();
     }, debounceMs);
   }, [clearTimer, debounceMs]);
-
-  scheduleRef.current = schedule;
 
   const runSave = useCallback(async (): Promise<SaveAttemptResult> => {
     if (inFlightRef.current !== null) {
@@ -131,8 +126,6 @@ export function useWorkflowDraftAutosave({
     }
   }, [setSaveStatus]);
 
-  runSaveRef.current = runSave;
-
   const markDirty = useCallback(() => {
     if (!enabledRef.current) {
       return;
@@ -173,6 +166,14 @@ export function useWorkflowDraftAutosave({
     generationRef.current += 1;
     setSaveStatus("clean");
   }, [clearTimer, setSaveStatus]);
+
+  // Publish the latest closures after render so timers/unmount always see current values.
+  useEffect(() => {
+    enabledRef.current = enabled;
+    saveRef.current = save;
+    scheduleRef.current = schedule;
+    runSaveRef.current = runSave;
+  });
 
   // Preview disables autosave; keep dirty and resume the debounce when editing returns.
   useEffect(() => {

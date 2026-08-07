@@ -86,8 +86,6 @@ export function RunTheater({
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
   const pathScrollOpenSigRef = useRef<string>("");
   const pathRailRef = useRef<HTMLDivElement | null>(null);
-  const reviewPanelOpenRef = useRef(reviewPanelOpen);
-  reviewPanelOpenRef.current = reviewPanelOpen;
 
   const focus = useMemo(
     () => resolveTheaterFocus(run, focusNodeId),
@@ -229,7 +227,7 @@ export function RunTheater({
    * open; user clicks always open so the rail can sit beside an open Diff.
    */
   function openInspector(reason: "automatic" | "user"): void {
-    if (reason === "automatic" && reviewPanelOpenRef.current) {
+    if (reason === "automatic" && reviewPanelOpen) {
       return;
     }
     if (hitlExpanded) {

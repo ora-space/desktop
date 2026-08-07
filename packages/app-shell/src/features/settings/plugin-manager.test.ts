@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledPlugin } from "@ora/contracts";
-import { filterDiscoveredPlugins } from "./plugin-manager";
+import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
 
 const plugins: InstalledPlugin[] = [
   {

@@ -26,7 +26,7 @@ function seedDemoWorkflows(state: MockClientState): void {
       workflow: {
         id: workflow.id,
         name: workflow.name,
-        publishedSnapshotId: null,
+        publishedSnapshotId: null as string | null,
         createdAt: now,
         updatedAt: now,
       },

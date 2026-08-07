@@ -21,6 +21,7 @@ import {
 import { IconDots, IconInfoCircle, IconPlug, IconSearch, IconTrash } from "@tabler/icons-react";
 import type { PluginEntry } from "./plugin-catalog";
 import { PluginTile } from "./plugin-tile";
+import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
 
 /**
  * The installed-plugin manager keeps catalog interactions unchanged and appends
@@ -142,16 +143,4 @@ export function PluginManager({ plugins, discoveredPlugins, disabledIds, onBack,
         )}
     </div>
   );
-}
-
-/** Filters discovered packages across every field exposed by installed-plugin search. */
-export function filterDiscoveredPlugins(plugins: InstalledPlugin[], query: string): InstalledPlugin[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return plugins;
-  return plugins.filter((plugin) => [
-    plugin.displayName,
-    plugin.packageName,
-    plugin.id,
-    ...plugin.agents.map((agent) => agent.displayName),
-  ].some((value) => value.toLowerCase().includes(needle)));
 }

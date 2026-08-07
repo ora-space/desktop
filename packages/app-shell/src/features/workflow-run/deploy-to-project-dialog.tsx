@@ -121,13 +121,17 @@ export function DeployToProjectDialog({
   const projectMissing = projectId === "";
   const branchMissing = !projectMissing && !branchesLoading && effectiveBaseBranch === "";
 
-  // Seed the run name from the workflow whenever the dialog opens or the target changes.
-  useEffect(() => {
-    if (!open || workflow === null) {
-      return;
-    }
+  // Seed the run name when the dialog opens or the target workflow changes (render-phase
+  // reset avoids an effect-driven cascading setState on open).
+  const [nameSeedKey, setNameSeedKey] = useState<string | null>(null);
+  const nextNameSeedKey = open && workflow !== null ? `${workflow.id}:${workflow.name}` : null;
+  if (nextNameSeedKey !== null && nextNameSeedKey !== nameSeedKey && workflow !== null) {
+    setNameSeedKey(nextNameSeedKey);
     setName(workflow.name);
-  }, [open, workflow?.id, workflow?.name]);
+  }
+  if (!open && nameSeedKey !== null) {
+    setNameSeedKey(null);
+  }
 
   /** Creates a pending run under the chosen project and focuses it in the shell. */
   async function submit(): Promise<void> {
