@@ -109,6 +109,10 @@ Keep these stacks separate — shared chrome only where noted.
   the run — not a single node session. Stage-scoped Diff is deferred until a
   session-level Git Diff API (or turn-level filter) exists; `nodeStates.sessionId`
   is projected for that follow-up.
+- **Open location (Desktop)**: the run header reuses `LocationActionsButton`
+  (File Manager / Terminal / VS Code / Copy Path). Prefer
+  `GetWorkflowRunResponse.taskId` so opens target the run worktree; fall back to
+  the project root until that id is available. Hidden on Web (`unsupported`).
 - Lists: react-query via `queryKeys.workflowMounts` /
   `workflowMountsByDefinition` / `workflowRuns`.
 - Runtime: `WorkflowRuntimeProvider` in `AppShell` injects

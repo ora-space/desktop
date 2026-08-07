@@ -44,6 +44,7 @@ import { RunTheater } from "./run-theater";
 import { RunStatusBadge } from "./run-status-mark";
 import { isTerminalRunStatus, runStatusTone } from "./run-status-style";
 import type { WorkflowRunViewMode } from "./run-view-mode";
+import { LocationActionsButton } from "../workspace/location-actions-button";
 import {
   WorkspaceReviewLayout,
   type WorkspaceReviewContext,
@@ -499,6 +500,11 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             </Button>
           )}
         </div>
+        {/* Prefer the run-task worktree; project root is the fallback before taskId loads. */}
+        <LocationActionsButton
+          taskId={runTaskId}
+          projectPath={project?.rootPath}
+        />
         <WindowControls />
       </header>
 
