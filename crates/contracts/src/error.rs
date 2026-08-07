@@ -89,6 +89,14 @@ pub struct TaskBaseBranchNotFoundParams {
     pub branch_name: String,
 }
 
+/// Carries a repository branch name when a branch operation cannot resolve it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct RepositoryBranchParams {
+    pub branch_name: String,
+}
+
 /// Enumerates every user-visible Ora failure and its exact interpolation parameters.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(tag = "code", content = "params", rename_all = "snake_case")]
@@ -110,6 +118,14 @@ pub enum PublicError {
     ProjectOccupied(EmptyErrorParams),
     ProjectWorkContextNotFound(EmptyErrorParams),
     TaskNotFound(EmptyErrorParams),
+    RepositoryBranchNameBlank(EmptyErrorParams),
+    RepositoryBranchNotFound(RepositoryBranchParams),
+    RepositoryBranchAlreadyExists(RepositoryBranchParams),
+    RepositoryWorktreeDirty(EmptyErrorParams),
+    RepositoryCommitMessageBlank(EmptyErrorParams),
+    RepositoryNothingStaged(EmptyErrorParams),
+    RepositoryUpstreamNotConfigured(EmptyErrorParams),
+    RepositorySyncNotInProgress(EmptyErrorParams),
     ResourceInUse(EmptyErrorParams),
     WorktreeRequiresGitRepository(EmptyErrorParams),
     TaskBaseBranchRequired(EmptyErrorParams),
@@ -216,6 +232,14 @@ impl PublicError {
             Self::ProjectOccupied(_) => "project_occupied",
             Self::ProjectWorkContextNotFound(_) => "project_work_context_not_found",
             Self::TaskNotFound(_) => "task_not_found",
+            Self::RepositoryBranchNameBlank(_) => "repository_branch_name_blank",
+            Self::RepositoryBranchNotFound(_) => "repository_branch_not_found",
+            Self::RepositoryBranchAlreadyExists(_) => "repository_branch_already_exists",
+            Self::RepositoryWorktreeDirty(_) => "repository_worktree_dirty",
+            Self::RepositoryCommitMessageBlank(_) => "repository_commit_message_blank",
+            Self::RepositoryNothingStaged(_) => "repository_nothing_staged",
+            Self::RepositoryUpstreamNotConfigured(_) => "repository_upstream_not_configured",
+            Self::RepositorySyncNotInProgress(_) => "repository_sync_not_in_progress",
             Self::ResourceInUse(_) => "resource_in_use",
             Self::WorktreeRequiresGitRepository(_) => "worktree_requires_git_repository",
             Self::TaskBaseBranchRequired(_) => "task_base_branch_required",

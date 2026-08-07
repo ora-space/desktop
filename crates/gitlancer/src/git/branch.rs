@@ -1,5 +1,6 @@
 use crate::domain::refs::{BranchName, CommitId};
 use crate::domain::repo::Repository;
+use crate::domain::worktree::WorktreeHandle;
 use crate::error::{DomainError, GitlancerError};
 use crate::exec::command::{GitCommand, GitIntent};
 use crate::exec::env::GitEnv;
@@ -29,6 +30,19 @@ pub struct CreateBranchRequest<'a> {
 /// Returns the branch created through the runtime API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateBranchResponse {
+    pub branch: BranchName,
+}
+
+/// Carries the worktree and target branch needed to move one checkout safely.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutBranchRequest<'a> {
+    pub worktree: &'a WorktreeHandle,
+    pub branch_name: &'a BranchName,
+}
+
+/// Returns the branch selected by the checkout operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutBranchResponse {
     pub branch: BranchName,
 }
 
@@ -108,6 +122,19 @@ impl<R: GitRunner> Git<R> {
         })
     }
 
+    /// Switches one existing checkout to a local branch without creating an implicit branch.
+    pub fn checkout_branch(
+        &self,
+        request: CheckoutBranchRequest<'_>,
+    ) -> Result<CheckoutBranchResponse, GitlancerError> {
+        let command = build_checkout_branch_command(&request);
+        let _output = self.runner().run(&command)?;
+
+        Ok(CheckoutBranchResponse {
+            branch: request.branch_name.clone(),
+        })
+    }
+
     /// Deletes one local branch after validating the named branch exists in the supplied repository.
     pub fn delete_branch(
         &self,
@@ -150,6 +177,20 @@ pub fn build_create_branch_command(request: &CreateBranchRequest<'_>) -> GitComm
     )
 }
 
+/// Builds a `git switch` command with an explicit argument separator to keep branch names data-only.
+pub fn build_checkout_branch_command(request: &CheckoutBranchRequest<'_>) -> GitCommand {
+    GitCommand::new(
+        request.worktree.worktree_root().as_path().to_path_buf(),
+        vec![
+            "switch".to_string(),
+            "--".to_string(),
+            request.branch_name.as_str().to_string(),
+        ],
+        GitEnv::default(),
+        GitIntent::Mutating,
+    )
+}
+
 /// Builds a stable `git branch -d/-D` command so deletion policy remains explicit and testable.
 pub fn build_delete_branch_command(request: &DeleteBranchRequest<'_>) -> GitCommand {
     let delete_flag = match request.mode {
@@ -176,12 +217,14 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::{
-        BranchDeletionMode, CreateBranchRequest, DeleteBranchRequest, build_create_branch_command,
-        build_delete_branch_command,
+        BranchDeletionMode, CheckoutBranchRequest, CreateBranchRequest, DeleteBranchRequest,
+        build_checkout_branch_command, build_create_branch_command, build_delete_branch_command,
     };
     use crate::domain::paths::RepoRoot;
+    use crate::domain::paths::{GitDir, WorktreeRoot};
     use crate::domain::refs::{BranchName, CommitId};
     use crate::domain::repo::Repository;
+    use crate::domain::worktree::{WorktreeHandle, WorktreeKind};
     use crate::error::{DomainError, GitExecError, GitlancerError};
     use crate::exec::command::{GitCommand, GitIntent};
     use crate::exec::output::GitOutput;
@@ -225,6 +268,17 @@ mod tests {
     /// Creates a stable repository fixture for branch lifecycle tests.
     fn repository_fixture() -> Repository {
         Repository::new(RepoRoot::new("/tmp/gitlancer-branch-tests"))
+    }
+
+    /// Creates a main worktree fixture so checkout command tests can assert the execution root.
+    fn worktree_fixture(repository: &Repository) -> WorktreeHandle {
+        WorktreeHandle::new(
+            repository.root().clone(),
+            WorktreeRoot::new(repository.root().as_path()),
+            GitDir::new(repository.root().as_path().join(".git")),
+            WorktreeKind::Main,
+            Some(BranchName::new("main")),
+        )
     }
 
     /// Verifies branch listing still assembles the same read-only command after lifecycle APIs are added.
@@ -339,6 +393,41 @@ mod tests {
         assert_eq!(git.runner().recorded_commands().len(), 1);
     }
 
+    /// Verifies checkout uses the requested worktree and never turns a switch into branch creation.
+    #[test]
+    fn checkout_branch_uses_the_worktree_root_and_mutating_intent() {
+        let repository = repository_fixture();
+        let worktree = worktree_fixture(&repository);
+        let git = Git::new(TestRunner::new(vec![GitOutput::new(
+            Some(0),
+            String::new(),
+            String::new(),
+            0,
+        )]));
+
+        let response = git
+            .checkout_branch(CheckoutBranchRequest {
+                worktree: &worktree,
+                branch_name: &BranchName::new("feature/runtime"),
+            })
+            .expect("checkout branch");
+
+        assert_eq!(response.branch, BranchName::new("feature/runtime"));
+        assert_eq!(
+            git.runner().recorded_commands(),
+            vec![GitCommand::new(
+                worktree.worktree_root().as_path().to_path_buf(),
+                vec![
+                    "switch".to_string(),
+                    "--".to_string(),
+                    "feature/runtime".to_string(),
+                ],
+                crate::GitEnv::default(),
+                GitIntent::Mutating,
+            )]
+        );
+    }
+
     /// Verifies local branch deletion validates existence and uses the explicit deletion mode in command assembly.
     #[test]
     fn delete_branch_validates_existence_and_uses_the_selected_mode() {
@@ -412,6 +501,7 @@ mod tests {
     #[test]
     fn branch_command_builders_encode_modes_explicitly() {
         let repository = repository_fixture();
+        let worktree = worktree_fixture(&repository);
 
         let create_command = build_create_branch_command(&CreateBranchRequest {
             repository: &repository,
@@ -422,6 +512,10 @@ mod tests {
             repository: &repository,
             branch_name: BranchName::new("feature/runtime"),
             mode: BranchDeletionMode::Checked,
+        });
+        let checkout_command = build_checkout_branch_command(&CheckoutBranchRequest {
+            worktree: &worktree,
+            branch_name: &BranchName::new("feature/runtime"),
         });
 
         assert_eq!(
@@ -444,6 +538,19 @@ mod tests {
                 vec![
                     "branch".to_string(),
                     "-d".to_string(),
+                    "feature/runtime".to_string(),
+                ],
+                crate::GitEnv::default(),
+                GitIntent::Mutating,
+            )
+        );
+        assert_eq!(
+            checkout_command,
+            GitCommand::new(
+                worktree.worktree_root().as_path().to_path_buf(),
+                vec![
+                    "switch".to_string(),
+                    "--".to_string(),
                     "feature/runtime".to_string(),
                 ],
                 crate::GitEnv::default(),

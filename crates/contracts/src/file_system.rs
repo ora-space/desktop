@@ -92,6 +92,26 @@ pub struct ListWorkspaceDirectoryResponse {
     pub entries: Vec<WorkspaceEntry>,
 }
 
+/// Requests one immediate directory inside a project's main checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct ListProjectDirectoryRequest {
+    pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<String>,
+}
+
+/// Returns one normalized project directory and its immediate entries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct ListProjectDirectoryResponse {
+    pub path: String,
+    pub entries: Vec<WorkspaceEntry>,
+}
+
 /// Identifies one text file inside a task's managed worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -106,6 +126,26 @@ pub struct ReadWorkspaceFileRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "file-system.ts")]
 pub struct ReadWorkspaceFileResponse {
+    pub path: String,
+    pub content: String,
+    pub version: String,
+    pub size_bytes: u32,
+}
+
+/// Identifies one text file inside a project's main checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct ReadProjectFileRequest {
+    pub project_id: String,
+    pub path: String,
+}
+
+/// Returns one bounded UTF-8 file from a project's main checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct ReadProjectFileResponse {
     pub path: String,
     pub content: String,
     pub version: String,
@@ -160,12 +200,39 @@ pub struct SearchWorkspaceResponse {
     pub truncated: bool,
 }
 
+/// Requests a bounded ripgrep search inside a project's main checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct SearchProjectRequest {
+    pub project_id: String,
+    pub query: String,
+    pub kind: WorkspaceSearchKind,
+}
+
+/// Returns ordered search results from a project's main checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct SearchProjectResponse {
+    pub results: Vec<WorkspaceSearchResult>,
+    pub truncated: bool,
+}
+
 /// Starts one workspace watcher stream scoped to a task's managed worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "file-system.ts")]
 pub struct WatchWorkspaceRequest {
     pub task_id: String,
+}
+
+/// Starts a filesystem watcher scoped to a project's main checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "file-system.ts")]
+pub struct WatchProjectRequest {
+    pub project_id: String,
 }
 
 /// Describes cache-invalidating changes emitted by the native workspace watcher.
@@ -199,13 +266,20 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkspaceEntry::export(config)?;
     ListWorkspaceDirectoryRequest::export(config)?;
     ListWorkspaceDirectoryResponse::export(config)?;
+    ListProjectDirectoryRequest::export(config)?;
+    ListProjectDirectoryResponse::export(config)?;
     ReadWorkspaceFileRequest::export(config)?;
     ReadWorkspaceFileResponse::export(config)?;
+    ReadProjectFileRequest::export(config)?;
+    ReadProjectFileResponse::export(config)?;
     WorkspaceSearchKind::export(config)?;
     WorkspaceSearchResult::export(config)?;
     SearchWorkspaceRequest::export(config)?;
     SearchWorkspaceResponse::export(config)?;
+    SearchProjectRequest::export(config)?;
+    SearchProjectResponse::export(config)?;
     WatchWorkspaceRequest::export(config)?;
+    WatchProjectRequest::export(config)?;
     WorkspaceFileChange::export(config)?;
     WorkspaceFileEventBatch::export(config)?;
     Ok(())

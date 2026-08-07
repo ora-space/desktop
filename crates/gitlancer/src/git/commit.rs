@@ -27,6 +27,19 @@ pub struct StageAllRequest<'a> {
     pub worktree: &'a WorktreeHandle,
 }
 
+/// Carries the repo-relative paths whose index entries should be removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnstageRequest<'a> {
+    pub worktree: &'a WorktreeHandle,
+    pub paths: Vec<RepoRelativePath>,
+}
+
+/// Carries the worktree whose complete index should be restored to HEAD.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnstageAllRequest<'a> {
+    pub worktree: &'a WorktreeHandle,
+}
+
 /// Carries the information needed to create a commit in one worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitRequest<'a> {
@@ -66,6 +79,18 @@ impl<R: GitRunner> Git<R> {
             GitEnv::default(),
             GitIntent::Mutating,
         ))?;
+        Ok(())
+    }
+
+    /// Removes selected paths from the index while preserving their worktree content.
+    pub fn unstage(&self, request: UnstageRequest<'_>) -> Result<(), GitlancerError> {
+        self.runner().run(&build_unstage_command(&request))?;
+        Ok(())
+    }
+
+    /// Removes every staged path from the index while preserving worktree content.
+    pub fn unstage_all(&self, request: UnstageAllRequest<'_>) -> Result<(), GitlancerError> {
+        self.runner().run(&build_unstage_all_command(&request))?;
         Ok(())
     }
 
@@ -152,4 +177,104 @@ pub fn build_commit_command(request: &CommitRequest<'_>) -> GitCommand {
         GitEnv::default(),
         GitIntent::Mutating,
     )
+}
+
+/// Builds the selected-path restore command used to unstage without discarding edits.
+pub fn build_unstage_command(request: &UnstageRequest<'_>) -> GitCommand {
+    let mut args = vec![
+        "restore".to_string(),
+        "--staged".to_string(),
+        "--".to_string(),
+    ];
+    args.extend(
+        request
+            .paths
+            .iter()
+            .map(|path| path.as_path().to_string_lossy().into_owned()),
+    );
+
+    GitCommand::new(
+        request.worktree.worktree_root().as_path().to_path_buf(),
+        args,
+        GitEnv::default(),
+        GitIntent::Mutating,
+    )
+}
+
+/// Builds the all-path restore command used to unstage without discarding edits.
+pub fn build_unstage_all_command(request: &UnstageAllRequest<'_>) -> GitCommand {
+    GitCommand::new(
+        request.worktree.worktree_root().as_path().to_path_buf(),
+        vec![
+            "restore".to_string(),
+            "--staged".to_string(),
+            "--".to_string(),
+            ".".to_string(),
+        ],
+        GitEnv::default(),
+        GitIntent::Mutating,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::{
+        AddRequest, UnstageAllRequest, UnstageRequest, build_add_command,
+        build_unstage_all_command, build_unstage_command,
+    };
+    use crate::domain::paths::{GitDir, RepoRelativePath, RepoRoot, WorktreeRoot};
+    use crate::domain::refs::BranchName;
+    use crate::domain::worktree::{WorktreeHandle, WorktreeKind};
+
+    /// Creates a stable main-worktree fixture for command assembly tests.
+    fn worktree_fixture() -> WorktreeHandle {
+        let root = RepoRoot::new("D:/gitlancer-commit-tests");
+        WorktreeHandle::new(
+            root.clone(),
+            WorktreeRoot::new(root.as_path()),
+            GitDir::new(root.as_path().join(".git")),
+            WorktreeKind::Main,
+            Some(BranchName::new("main")),
+        )
+    }
+
+    /// Verifies selected staging and unstaging commands keep path arguments after `--`.
+    #[test]
+    fn builds_selected_change_commands() {
+        let worktree = worktree_fixture();
+        let path = RepoRelativePath::new("src/main.rs");
+
+        assert_eq!(
+            build_add_command(&AddRequest {
+                worktree: &worktree,
+                paths: vec![path.clone()],
+            })
+            .args,
+            vec!["add", "--", "src/main.rs"]
+        );
+        assert_eq!(
+            build_unstage_command(&UnstageRequest {
+                worktree: &worktree,
+                paths: vec![path],
+            })
+            .args,
+            vec!["restore", "--staged", "--", "src/main.rs"]
+        );
+    }
+
+    /// Verifies all-path unstaging uses a scoped restore command instead of discarding edits.
+    #[test]
+    fn builds_all_unstage_command() {
+        let worktree = worktree_fixture();
+
+        assert_eq!(
+            build_unstage_all_command(&UnstageAllRequest {
+                worktree: &worktree,
+            })
+            .args,
+            vec!["restore", "--staged", "--", "."]
+        );
+    }
 }

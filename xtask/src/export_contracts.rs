@@ -284,6 +284,43 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ProjectBranch"
         | "UpdateProjectRequest"
         | "UpdateProjectResponse" => "project",
+        // repository
+        "GetRepositoryCommitRequest"
+        | "GetRepositoryCommitResponse"
+        | "GetRepositoryCommitDiffRequest"
+        | "GetRepositoryCommitDiffResponse"
+        | "GetRepositorySnapshotRequest"
+        | "GetRepositorySnapshotResponse"
+        | "GetRepositoryWorkingTreeDiffRequest"
+        | "GetRepositoryWorkingTreeDiffResponse"
+        | "CreateRepositoryBranchRequest"
+        | "CreateRepositoryBranchResponse"
+        | "CheckoutRepositoryBranchRequest"
+        | "CheckoutRepositoryBranchResponse"
+        | "RepositoryChangeSelection"
+        | "FetchRepositoryRequest"
+        | "FetchRepositoryResponse"
+        | "PullRepositoryRequest"
+        | "PullRepositoryStrategy"
+        | "PullRepositoryOutcome"
+        | "PullRepositoryResponse"
+        | "RepositoryConflictSide"
+        | "ResolveRepositoryConflictRequest"
+        | "ResolveRepositoryConflictResponse"
+        | "RepositorySyncAction"
+        | "RepositorySyncOutcome"
+        | "ResolveRepositorySyncRequest"
+        | "ResolveRepositorySyncResponse"
+        | "PushRepositoryBranchRequest"
+        | "PushRepositoryBranchResponse"
+        | "StageRepositoryChangesRequest"
+        | "StageRepositoryChangesResponse"
+        | "UnstageRepositoryChangesRequest"
+        | "UnstageRepositoryChangesResponse"
+        | "CommitRepositoryChangesRequest"
+        | "CommitRepositoryChangesResponse"
+        | "RepositoryWorkingTreeFile"
+        | "RepositoryRemoteStatus" => "repository",
         // projectWorkContext
         "OpenProjectWorkContextRequest"
         | "OpenProjectWorkContextResponse"
@@ -444,12 +481,19 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         // fileSystem
         "ListDirectoryRequest"
         | "ListDirectoryResponse"
+        | "ListProjectDirectoryRequest"
+        | "ListProjectDirectoryResponse"
         | "ListWorkspaceDirectoryRequest"
         | "ListWorkspaceDirectoryResponse"
+        | "ReadProjectFileRequest"
+        | "ReadProjectFileResponse"
         | "ReadWorkspaceFileRequest"
         | "ReadWorkspaceFileResponse"
+        | "SearchProjectRequest"
+        | "SearchProjectResponse"
         | "SearchWorkspaceRequest"
         | "SearchWorkspaceResponse"
+        | "WatchProjectRequest"
         | "WatchWorkspaceRequest"
         | "WorkspaceFileEventBatch" => "file-system",
         // spec
@@ -609,6 +653,7 @@ mod tests {
             "file-system.ts",
             "project.ts",
             "project-work-context.ts",
+            "repository.ts",
             "session.ts",
             "skill.ts",
             "task.ts",

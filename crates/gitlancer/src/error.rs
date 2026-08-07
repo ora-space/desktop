@@ -120,6 +120,18 @@ pub enum ParseError {
     #[error("invalid status output")]
     InvalidStatus,
 
+    /// Returned when the commit history stream does not contain the expected machine-readable fields.
+    #[error("invalid commit history output")]
+    InvalidCommitHistory,
+
+    /// Returned when a commit detail stream contains malformed file records.
+    #[error("invalid commit detail output")]
+    InvalidCommitDetails,
+
+    /// Returned when Git's machine-readable upstream count cannot be decoded.
+    #[error("invalid remote tracking status output")]
+    InvalidRemoteTrackingStatus,
+
     /// Returned when a parser slot exists but the typed parser is not implemented yet.
     #[error("parser for feature {feature} is not implemented yet")]
     Unimplemented { feature: &'static str },

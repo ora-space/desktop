@@ -36,7 +36,7 @@ It exists so upper layers can inject a fake runner in tests, record commands for
 
 ### `git`
 
-Exposes the typed use cases Ora calls directly — repository discovery, worktree discovery and lifecycle, branch read and lifecycle, add/commit, diff, push, status, and global identity. Each takes a typed request and returns a typed response, which keeps option growth manageable and produces better call boundaries for agent orchestration.
+Exposes the typed use cases Ora calls directly — repository discovery, worktree discovery and lifecycle, branch read and lifecycle, add/commit, diff, fetch/pull/push, status, and global identity. Each takes a typed request and returns a typed response, which keeps option growth manageable and produces better call boundaries for agent orchestration.
 
 Worktree-base discovery is a separate branch read path because it has network semantics: it fetches `upstream`, or falls back to `origin`, then combines remote-tracking refs with local-only branches while preferring the refreshed remote ref for duplicate logical names.
 
@@ -98,6 +98,10 @@ Three resolution paths exist:
 - `list_worktree_bases` fetches the preferred remote and returns remote-only plus local-only bases as `WorktreeBase` values. `resolve_worktree_base_commit` refreshes again, validates the selected ref, and resolves it to an immutable `CommitId`.
 - `status` returns one `StatusEntry` per porcelain-v2 record, from `git status --porcelain=v2 -z`.
 - `commit` returns the resulting `HEAD` commit id and the latest commit summary.
+- `fetch_all` refreshes every configured remote-tracking ref with pruning and prompts disabled; `read_tracking_status` reports the checked-out branch's upstream and ahead/behind distance.
+- `fast_forward` advances a clean worktree to an already-fetched upstream with `--ff-only`, so a pull cannot create an implicit merge commit.
+- `integrate` applies an explicit merge or rebase strategy and reports an expected conflict as `SyncResult::Conflicted`; `read_sync_operation`, `continue_sync`, and `abort_sync` let upper layers expose a resumable resolution flow.
+- `resolve_conflict` selects `ours` or `theirs` for one validated conflicted path, stages the result, and leaves the active merge or rebase available for `continue_sync`.
 - `push_branch` publishes the checked-out branch to `origin` with `GitIntent::Network` and prompts disabled.
 - `read_global_identity` returns `GlobalIdentity { name, email }`, treating an unset Git config key as `None` rather than an execution failure.
 
@@ -107,8 +111,9 @@ Branch and worktree lifecycle commands are typed APIs, so callers never assemble
 
 - `create_branch` creates a branch at the caller-supplied `CommitId`; `delete_branch` uses `BranchDeletionMode` to select checked or forced deletion. A deleted branch no longer appears in `list_branches`.
 - `create_worktree` creates its branch and linked checkout at the caller-supplied `CommitId`; `delete_worktree` uses `WorktreeDeletionMode` to select checked or forced removal. A created linked worktree appears in `list_worktrees` as `WorktreeKind::Linked`; a removed one disappears.
-- `add` stages `RepoRelativePath` values; `commit` creates commits without GPG signing.
-- `push_branch` is the only networked use case in this module. It derives the branch from `WorktreeHandle` rather than accepting a free-form ref from an upper layer.
+- `add` stages `RepoRelativePath` values; `restore --staged` removes selected or all paths from the index without discarding worktree edits; `commit` creates commits without GPG signing.
+- `fetch_all` refreshes every remote-tracking ref with pruning, while `read_tracking_status` reports the checked-out branch's upstream and ahead/behind distance.
+- `fetch_all` is the networked read use case; `fast_forward`, `integrate`, `continue_sync`, and `abort_sync` are deliberately local, while `push_branch` is the networked write use case. Push derives the branch from `WorktreeHandle` rather than accepting a free-form ref from an upper layer.
 
 Mutating operations perform domain validation *before* invoking Git whenever the invalid state is determinable from repository and worktree metadata, and no Git command is issued when validation fails:
 

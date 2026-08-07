@@ -5,6 +5,7 @@ mod clock;
 mod error;
 mod identity;
 mod project;
+mod repository;
 mod request_lifecycle;
 mod session;
 mod session_history;

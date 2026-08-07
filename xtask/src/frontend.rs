@@ -3,6 +3,10 @@ pub(crate) const PROJECT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "project_id",
     wire_name: "projectId",
 };
+pub(crate) const REPOSITORY_COMMIT_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
+    rust_field_name: "commit_id",
+    wire_name: "commitId",
+};
 pub(crate) const TASK_ID_PATH_PARAM: FrontendPathParam = FrontendPathParam {
     rust_field_name: "task_id",
     wire_name: "taskId",
@@ -61,6 +65,8 @@ pub(crate) const TASK_DIFF_SCOPE_QUERY_PARAM: FrontendQueryParam = FrontendQuery
 };
 
 pub(crate) const PROJECT_PATH_PARAMS: &[FrontendPathParam] = &[PROJECT_ID_PATH_PARAM];
+pub(crate) const REPOSITORY_COMMIT_PATH_PARAMS: &[FrontendPathParam] =
+    &[PROJECT_ID_PATH_PARAM, REPOSITORY_COMMIT_ID_PATH_PARAM];
 pub(crate) const TASK_PATH_PARAMS: &[FrontendPathParam] = &[TASK_ID_PATH_PARAM];
 pub(crate) const TASK_COMMENT_PATH_PARAMS: &[FrontendPathParam] =
     &[TASK_ID_PATH_PARAM, COMMENT_ID_PATH_PARAM];
@@ -83,6 +89,16 @@ pub(crate) const WORKFLOW_RUN_WORKFLOW_QUERY_PARAMS: &[FrontendQueryParam] =
 pub(crate) const FILE_SYSTEM_DIRECTORY_QUERY_PARAMS: &[FrontendQueryParam] =
     &[FILE_SYSTEM_DIRECTORY_PATH_QUERY_PARAM];
 pub(crate) const TASK_DIFF_QUERY_PARAMS: &[FrontendQueryParam] = &[TASK_DIFF_SCOPE_QUERY_PARAM];
+pub(crate) const REPOSITORY_COMMIT_DIFF_QUERY_PARAMS: &[FrontendQueryParam] = &[
+    FrontendQueryParam {
+        rust_field_name: "parent_commit_id",
+        wire_name: "parentCommitId",
+    },
+    FrontendQueryParam {
+        rust_field_name: "path",
+        wire_name: "path",
+    },
+];
 pub(crate) const NO_QUERY_PARAMS: &[FrontendQueryParam] = &[];
 
 /// Enumerates the HTTP methods supported by the generated frontend SDK.
@@ -137,6 +153,7 @@ impl FrontendEndpoint {
             "getTaskDiff" => TASK_DIFF_QUERY_PARAMS,
             "listWorkflowRuns" => WORKFLOW_RUN_PROJECT_QUERY_PARAMS,
             "listWorkflowRunsByWorkflow" => WORKFLOW_RUN_WORKFLOW_QUERY_PARAMS,
+            "getRepositoryCommitDiff" => REPOSITORY_COMMIT_DIFF_QUERY_PARAMS,
             _ => NO_QUERY_PARAMS,
         }
     }
@@ -144,7 +161,7 @@ impl FrontendEndpoint {
     /// Returns the transport mode explicitly owned by the Rust endpoint catalog.
     pub(crate) fn response_mode(&self) -> FrontendResponseMode {
         match self.operation_name {
-            "loadSession" | "promptSession" | "watchWorkspace" | "watchSpecs" => {
+            "loadSession" | "promptSession" | "watchWorkspace" | "watchProject" | "watchSpecs" => {
                 FrontendResponseMode::Stream
             }
             _ => FrontendResponseMode::Unary,

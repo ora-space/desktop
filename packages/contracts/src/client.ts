@@ -63,6 +63,36 @@ export function createContractsClient(
       delete: (request, options) =>
         executeOperation("deleteProject", request, transport, options),
     },
+    repository: {
+      getSnapshot: (request, options) =>
+        executeOperation("getRepositorySnapshot", request, transport, options),
+      getCommit: (request, options) =>
+        executeOperation("getRepositoryCommit", request, transport, options),
+      getCommitDiff: (request, options) =>
+        executeOperation("getRepositoryCommitDiff", request, transport, options),
+      getWorkingTreeDiff: (request, options) =>
+        executeOperation("getRepositoryWorkingTreeDiff", request, transport, options),
+      createBranch: (request, options) =>
+        executeOperation("createRepositoryBranch", request, transport, options),
+      checkoutBranch: (request, options) =>
+        executeOperation("checkoutRepositoryBranch", request, transport, options),
+      fetch: (request, options) =>
+        executeOperation("fetchRepository", request, transport, options),
+      pull: (request, options) =>
+        executeOperation("pullRepository", request, transport, options),
+      resolveSync: (request, options) =>
+        executeOperation("resolveRepositorySync", request, transport, options),
+      resolveConflict: (request, options) =>
+        executeOperation("resolveRepositoryConflict", request, transport, options),
+      pushBranch: (request, options) =>
+        executeOperation("pushRepositoryBranch", request, transport, options),
+      stageChanges: (request, options) =>
+        executeOperation("stageRepositoryChanges", request, transport, options),
+      unstageChanges: (request, options) =>
+        executeOperation("unstageRepositoryChanges", request, transport, options),
+      commitChanges: (request, options) =>
+        executeOperation("commitRepositoryChanges", request, transport, options),
+    },
     projectWorkContext: {
       open: (request, options) =>
         executeOperation("openProjectWorkContext", request, transport, options),
@@ -146,6 +176,14 @@ export function createContractsClient(
     fileSystem: {
       listDirectory: (request, options) =>
         executeOperation("listDirectory", request, transport, options),
+      listProjectDirectory: (request, options) =>
+        executeOperation("listProjectDirectory", request, transport, options),
+      readProjectFile: (request, options) =>
+        executeOperation("readProjectFile", request, transport, options),
+      searchProject: (request, options) =>
+        executeOperation("searchProject", request, transport, options),
+      watchProject: (request, options) =>
+        executeStreamOperation("watchProject", request, transport, options),
       listWorkspaceDirectory: (request, options) =>
         executeOperation("listWorkspaceDirectory", request, transport, options),
       readWorkspaceFile: (request, options) =>

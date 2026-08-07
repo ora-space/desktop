@@ -1,9 +1,12 @@
 //! Endpoint declarations for the fileSystem generated-client namespace.
 
-use crate::frontend::{FrontendEndpoint, FrontendHttpMethod, NO_PATH_PARAMS, TASK_PATH_PARAMS};
+use crate::frontend::{
+    FrontendEndpoint, FrontendHttpMethod, NO_PATH_PARAMS, PROJECT_PATH_PARAMS, TASK_PATH_PARAMS,
+};
 use ora_contracts::{
-    FILE_SYSTEM_DIRECTORY_PATH, WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH,
-    WORKSPACE_SEARCH_PATH, WORKSPACE_WATCH_PATH,
+    FILE_SYSTEM_DIRECTORY_PATH, PROJECT_DIRECTORY_PATH, PROJECT_FILE_PATH, PROJECT_SEARCH_PATH,
+    PROJECT_WATCH_PATH, WORKSPACE_DIRECTORY_PATH, WORKSPACE_FILE_PATH, WORKSPACE_SEARCH_PATH,
+    WORKSPACE_WATCH_PATH,
 };
 
 const NAMESPACE: &str = "fileSystem";
@@ -63,6 +66,50 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "WatchWorkspaceRequest",
         response_type: "WorkspaceFileEventBatch",
         path_params: TASK_PATH_PARAMS,
+        has_json_body: false,
+    },
+    FrontendEndpoint {
+        operation_name: "listProjectDirectory",
+        namespace: NAMESPACE,
+        member_name: "listProjectDirectory",
+        method: FrontendHttpMethod::Post,
+        path_template: PROJECT_DIRECTORY_PATH,
+        request_type: "ListProjectDirectoryRequest",
+        response_type: "ListProjectDirectoryResponse",
+        path_params: PROJECT_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "readProjectFile",
+        namespace: NAMESPACE,
+        member_name: "readProjectFile",
+        method: FrontendHttpMethod::Post,
+        path_template: PROJECT_FILE_PATH,
+        request_type: "ReadProjectFileRequest",
+        response_type: "ReadProjectFileResponse",
+        path_params: PROJECT_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "searchProject",
+        namespace: NAMESPACE,
+        member_name: "searchProject",
+        method: FrontendHttpMethod::Post,
+        path_template: PROJECT_SEARCH_PATH,
+        request_type: "SearchProjectRequest",
+        response_type: "SearchProjectResponse",
+        path_params: PROJECT_PATH_PARAMS,
+        has_json_body: true,
+    },
+    FrontendEndpoint {
+        operation_name: "watchProject",
+        namespace: NAMESPACE,
+        member_name: "watchProject",
+        method: FrontendHttpMethod::Get,
+        path_template: PROJECT_WATCH_PATH,
+        request_type: "WatchProjectRequest",
+        response_type: "WorkspaceFileEventBatch",
+        path_params: PROJECT_PATH_PARAMS,
         has_json_body: false,
     },
 ];

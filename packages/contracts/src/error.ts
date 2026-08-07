@@ -22,6 +22,23 @@ export type ContractError =
     | { "code": "project_occupied"; "params": EmptyErrorParams }
     | { "code": "project_work_context_not_found"; "params": EmptyErrorParams }
     | { "code": "task_not_found"; "params": EmptyErrorParams }
+    | { "code": "repository_branch_name_blank"; "params": EmptyErrorParams }
+    | {
+      "code": "repository_branch_not_found";
+      "params": RepositoryBranchParams;
+    }
+    | {
+      "code": "repository_branch_already_exists";
+      "params": RepositoryBranchParams;
+    }
+    | { "code": "repository_worktree_dirty"; "params": EmptyErrorParams }
+    | { "code": "repository_commit_message_blank"; "params": EmptyErrorParams }
+    | { "code": "repository_nothing_staged"; "params": EmptyErrorParams }
+    | {
+      "code": "repository_upstream_not_configured";
+      "params": EmptyErrorParams;
+    }
+    | { "code": "repository_sync_not_in_progress"; "params": EmptyErrorParams }
     | { "code": "resource_in_use"; "params": EmptyErrorParams }
     | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
     | { "code": "task_base_branch_required"; "params": EmptyErrorParams }
@@ -167,6 +184,17 @@ export type PublicError =
   | { "code": "project_occupied"; "params": EmptyErrorParams }
   | { "code": "project_work_context_not_found"; "params": EmptyErrorParams }
   | { "code": "task_not_found"; "params": EmptyErrorParams }
+  | { "code": "repository_branch_name_blank"; "params": EmptyErrorParams }
+  | { "code": "repository_branch_not_found"; "params": RepositoryBranchParams }
+  | {
+    "code": "repository_branch_already_exists";
+    "params": RepositoryBranchParams;
+  }
+  | { "code": "repository_worktree_dirty"; "params": EmptyErrorParams }
+  | { "code": "repository_commit_message_blank"; "params": EmptyErrorParams }
+  | { "code": "repository_nothing_staged"; "params": EmptyErrorParams }
+  | { "code": "repository_upstream_not_configured"; "params": EmptyErrorParams }
+  | { "code": "repository_sync_not_in_progress"; "params": EmptyErrorParams }
   | { "code": "resource_in_use"; "params": EmptyErrorParams }
   | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
   | { "code": "task_base_branch_required"; "params": EmptyErrorParams }
@@ -263,6 +291,11 @@ export type PublicError =
   }
   | { "code": "workflow_run_not_found"; "params": EmptyErrorParams }
   | { "code": "workflow_run_active"; "params": EmptyErrorParams };
+
+/**
+ * Carries a repository branch name when a branch operation cannot resolve it.
+ */
+export type RepositoryBranchParams = { branchName: string };
 
 /**
  * Identifies one Ora request across adapters, spans, responses, and completion events.

@@ -2,10 +2,15 @@ pub mod base_branch;
 pub mod branch;
 pub mod commit;
 pub mod config;
+pub mod conflict;
 pub mod diff;
+pub mod history;
+pub mod pull;
 pub mod push;
+pub mod remote;
 pub mod repository;
 pub mod status;
+pub mod sync;
 pub mod worktree;
 
 use crate::exec::runner::GitRunner;

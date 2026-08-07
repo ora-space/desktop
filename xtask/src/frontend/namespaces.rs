@@ -7,6 +7,7 @@ mod file_system;
 mod git;
 mod project;
 mod project_work_context;
+mod repository;
 mod session;
 mod skill;
 mod skill_import;
@@ -25,6 +26,7 @@ pub(super) fn frontend_endpoints() -> Vec<FrontendEndpoint> {
     [
         project::ENDPOINTS,
         project_work_context::ENDPOINTS,
+        repository::ENDPOINTS,
         task::ENDPOINTS,
         session::ENDPOINTS,
         agent_runtime::ENDPOINTS,

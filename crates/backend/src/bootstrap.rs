@@ -3,6 +3,7 @@ use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream};
 use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
 use crate::project::ProjectApi;
+use crate::repository::RepositoryApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
 use crate::spec::SpecApi;
@@ -59,6 +60,7 @@ pub struct Backend {
     pool: RepositoryPool,
     worktree_root: Arc<RwLock<PathBuf>>,
     project: Arc<ProjectApi>,
+    repository: Arc<RepositoryApi>,
     task: Arc<TaskApi>,
     task_diff: Arc<TaskDiffApi>,
     session: Arc<SessionApi>,
@@ -101,6 +103,7 @@ impl Backend {
 
         Ok(Self {
             project: Arc::new(ProjectApi::new(pool.clone(), sessions_root.clone(), clock)),
+            repository: Arc::new(RepositoryApi::new(pool.clone())),
             task: Arc::new(TaskApi::new(
                 pool.clone(),
                 worktree_root.clone(),
@@ -151,6 +154,18 @@ impl Backend {
         crate::task::resolve_task_cwd(&self.pool, &ora_domain::TaskId::new(task_id))
     }
 
+    /// Resolves the project's persisted checkout root for repository-scoped file access.
+    pub fn resolve_project_root(&self, project_id: &str) -> Result<PathBuf, BackendError> {
+        Ok(PathBuf::from(
+            self.project
+                .get(GetProjectRequest {
+                    project_id: project_id.to_string(),
+                })?
+                .project
+                .root_path,
+        ))
+    }
+
     // =============================================================================
     // project
     // =============================================================================
@@ -184,6 +199,118 @@ impl Backend {
         self.project
             .list_branches(request)
             .map_err(BackendError::from)
+    }
+
+    /// Reads the repository graph snapshot for one project.
+    pub fn get_repository_snapshot(
+        &self,
+        request: GetRepositorySnapshotRequest,
+    ) -> Result<GetRepositorySnapshotResponse, BackendError> {
+        self.repository.get_snapshot(request)
+    }
+
+    /// Reads one repository commit for the graph detail pane.
+    pub fn get_repository_commit(
+        &self,
+        request: GetRepositoryCommitRequest,
+    ) -> Result<GetRepositoryCommitResponse, BackendError> {
+        self.repository.get_commit(request)
+    }
+
+    /// Reads a historical repository commit patch after the user opens its file detail.
+    pub fn get_repository_commit_diff(
+        &self,
+        request: GetRepositoryCommitDiffRequest,
+    ) -> Result<GetRepositoryCommitDiffResponse, BackendError> {
+        self.repository.get_commit_diff(request)
+    }
+
+    /// Reads the current main checkout patch for a project without requiring an Ora task.
+    pub fn get_repository_working_tree_diff(
+        &self,
+        request: GetRepositoryWorkingTreeDiffRequest,
+    ) -> Result<GetRepositoryWorkingTreeDiffResponse, BackendError> {
+        self.repository.get_working_tree_diff(request)
+    }
+
+    /// Creates a local repository branch from the selected project's current HEAD.
+    pub fn create_repository_branch(
+        &self,
+        request: CreateRepositoryBranchRequest,
+    ) -> Result<CreateRepositoryBranchResponse, BackendError> {
+        self.repository.create_branch(request)
+    }
+
+    /// Checks out a clean project's main worktree onto an existing local branch.
+    pub fn checkout_repository_branch(
+        &self,
+        request: CheckoutRepositoryBranchRequest,
+    ) -> Result<CheckoutRepositoryBranchResponse, BackendError> {
+        self.repository.checkout_branch(request)
+    }
+
+    /// Fetches remote refs and refreshes the project's repository snapshot.
+    pub fn fetch_repository(
+        &self,
+        request: FetchRepositoryRequest,
+    ) -> Result<FetchRepositoryResponse, BackendError> {
+        self.repository.fetch(request)
+    }
+
+    /// Fetches and integrates the project's main repository branch with an explicit strategy.
+    pub fn pull_repository(
+        &self,
+        request: PullRepositoryRequest,
+    ) -> Result<PullRepositoryResponse, BackendError> {
+        self.repository.pull(request)
+    }
+
+    /// Continues or aborts an active merge/rebase operation in the project's main repository.
+    pub fn resolve_repository_sync(
+        &self,
+        request: ResolveRepositorySyncRequest,
+    ) -> Result<ResolveRepositorySyncResponse, BackendError> {
+        self.repository.resolve_sync(request)
+    }
+
+    /// Selects and stages one side of a conflicted main-worktree path.
+    pub fn resolve_repository_conflict(
+        &self,
+        request: ResolveRepositoryConflictRequest,
+    ) -> Result<ResolveRepositoryConflictResponse, BackendError> {
+        self.repository.resolve_conflict(request)
+    }
+
+    /// Pushes the project's checked-out main branch to its default remote.
+    pub fn push_repository_branch(
+        &self,
+        request: PushRepositoryBranchRequest,
+    ) -> Result<PushRepositoryBranchResponse, BackendError> {
+        self.repository.push_branch(request)
+    }
+
+    /// Stages selected changes in the project's main repository worktree.
+    pub fn stage_repository_changes(
+        &self,
+        request: StageRepositoryChangesRequest,
+    ) -> Result<StageRepositoryChangesResponse, BackendError> {
+        self.repository.stage_changes(request)
+    }
+
+    /// Removes selected changes from the main repository index without discarding edits.
+    pub fn unstage_repository_changes(
+        &self,
+        request: UnstageRepositoryChangesRequest,
+    ) -> Result<UnstageRepositoryChangesResponse, BackendError> {
+        self.repository.unstage_changes(request)
+    }
+
+    /// Commits the staged changes in the project's main repository worktree.
+    pub fn commit_repository_changes(
+        &self,
+        request: CommitRepositoryChangesRequest,
+    ) -> Result<CommitRepositoryChangesResponse, BackendError> {
+        self.repository.commit_changes(request)
     }
     /// Updates one project through the shared application composition.
     pub fn update_project(

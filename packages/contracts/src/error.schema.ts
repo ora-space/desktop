@@ -5,6 +5,10 @@ export const requestIdSchema = z.string();
 
 export const emptyErrorParamsSchema = z.record(z.string(), z.never());
 
+export const repositoryBranchParamsSchema = z.object({
+    branchName: z.string()
+});
+
 export const taskBaseBranchNotFoundParamsSchema = z.object({
     branchName: z.string()
 });
@@ -76,6 +80,30 @@ export const contractErrorSchema = z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("task_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_branch_name_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_branch_not_found"),
+        "params": repositoryBranchParamsSchema
+    }), z.object({
+        "code": z.literal("repository_branch_already_exists"),
+        "params": repositoryBranchParamsSchema
+    }), z.object({
+        "code": z.literal("repository_worktree_dirty"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_commit_message_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_nothing_staged"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_upstream_not_configured"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_sync_not_in_progress"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("resource_in_use"),
@@ -378,6 +406,30 @@ export const publicErrorSchema = z.union([z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("task_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_branch_name_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_branch_not_found"),
+        "params": repositoryBranchParamsSchema
+    }), z.object({
+        "code": z.literal("repository_branch_already_exists"),
+        "params": repositoryBranchParamsSchema
+    }), z.object({
+        "code": z.literal("repository_worktree_dirty"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_commit_message_blank"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_nothing_staged"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_upstream_not_configured"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("repository_sync_not_in_progress"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("resource_in_use"),

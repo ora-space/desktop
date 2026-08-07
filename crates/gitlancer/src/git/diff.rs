@@ -1,4 +1,5 @@
 use crate::domain::refs::CommitId;
+use crate::domain::repo::Repository;
 use crate::domain::worktree::WorktreeHandle;
 use crate::error::{GitExecError, GitlancerError};
 use crate::exec::command::{GitCommand, GitIntent};
@@ -34,6 +35,21 @@ pub struct DiffRequest<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffResponse {
     pub head_commit_id: CommitId,
+    pub patch: String,
+}
+
+/// Carries the repository and revisions needed to render one historical commit patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitDiffRequest<'a> {
+    pub repository: &'a Repository,
+    pub commit_id: &'a CommitId,
+    pub parent_commit_id: Option<&'a CommitId>,
+    pub path: Option<&'a str>,
+}
+
+/// Returns a bounded unified patch for one historical commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitDiffResponse {
     pub patch: String,
 }
 
@@ -90,6 +106,22 @@ impl<R: GitRunner> Git<R> {
         Ok(DiffResponse {
             head_commit_id: CommitId::new(head_commit_id),
             patch,
+        })
+    }
+
+    /// Renders a historical commit against its first parent without touching the worktree or index.
+    pub fn diff_commit(
+        &self,
+        request: CommitDiffRequest<'_>,
+    ) -> Result<CommitDiffResponse, GitlancerError> {
+        let output = self.runner().run_bounded(
+            &build_commit_diff_command(&request),
+            MAX_DIFF_BYTES,
+            MAX_DIFF_STDERR_BYTES,
+        )?;
+
+        Ok(CommitDiffResponse {
+            patch: output.stdout,
         })
     }
 }
@@ -246,6 +278,49 @@ pub fn build_diff_command(request: &DiffRequest<'_>) -> GitCommand {
     command(request.worktree, args)
 }
 
+/// Builds a commit-to-parent diff while using an empty tree comparison for root commits.
+pub fn build_commit_diff_command(request: &CommitDiffRequest<'_>) -> GitCommand {
+    let mut args = vec![
+        "diff".to_string(),
+        "--no-color".to_string(),
+        "--no-ext-diff".to_string(),
+        "--no-textconv".to_string(),
+        "--find-renames".to_string(),
+        FULL_FILE_CONTEXT_ARG.to_string(),
+        "--end-of-options".to_string(),
+    ];
+
+    if let Some(parent_commit_id) = request.parent_commit_id {
+        args.push(parent_commit_id.as_str().to_string());
+        args.push(request.commit_id.as_str().to_string());
+    } else {
+        args = vec![
+            "show".to_string(),
+            "--format=".to_string(),
+            "--patch".to_string(),
+            "--root".to_string(),
+            "--no-color".to_string(),
+            "--no-ext-diff".to_string(),
+            "--no-textconv".to_string(),
+            "--find-renames".to_string(),
+            FULL_FILE_CONTEXT_ARG.to_string(),
+            "--end-of-options".to_string(),
+            request.commit_id.as_str().to_string(),
+        ];
+    }
+
+    args.push("--".to_string());
+    if let Some(path) = request.path {
+        args.push(path.to_string());
+    }
+    GitCommand::new(
+        request.repository.root().as_path().to_path_buf(),
+        args,
+        GitEnv::default(),
+        GitIntent::ReadOnly,
+    )
+}
+
 /// Lists ignored-aware untracked paths in a machine-readable representation.
 fn build_untracked_command(worktree: &WorktreeHandle) -> GitCommand {
     command(
@@ -361,9 +436,9 @@ fn command(worktree: &WorktreeHandle, args: Vec<&str>) -> GitCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffRequest, DiffScope, build_diff_command, build_empty_untracked_diff_command,
-        build_initialize_temporary_index_command, build_intent_to_add_command,
-        build_untracked_diff_command, is_missing_untracked_file_error,
+        CommitDiffRequest, DiffRequest, DiffScope, build_commit_diff_command, build_diff_command,
+        build_empty_untracked_diff_command, build_initialize_temporary_index_command,
+        build_intent_to_add_command, build_untracked_diff_command, is_missing_untracked_file_error,
     };
     use crate::{CommitId, GitDir, RepoRoot, WorktreeHandle, WorktreeKind, WorktreeRoot};
     use pretty_assertions::assert_eq;
@@ -390,6 +465,37 @@ mod tests {
                 "--unified=1000000",
                 "base-commit",
                 "--",
+            ]
+        );
+    }
+
+    /// Verifies historical commit diffs use the first parent and protect revision arguments from option parsing.
+    #[test]
+    fn builds_commit_diff_command() {
+        let repository = crate::Repository::new(RepoRoot::new("/tmp/repository"));
+        let parent_commit_id = CommitId::new("parent-commit");
+        let commit_id = CommitId::new("commit");
+
+        assert_eq!(
+            build_commit_diff_command(&CommitDiffRequest {
+                repository: &repository,
+                commit_id: &commit_id,
+                parent_commit_id: Some(&parent_commit_id),
+                path: Some("src/main.rs"),
+            })
+            .args,
+            vec![
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--unified=1000000",
+                "--end-of-options",
+                "parent-commit",
+                "commit",
+                "--",
+                "src/main.rs",
             ]
         );
     }

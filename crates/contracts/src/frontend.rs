@@ -10,6 +10,25 @@ pub use spec::{
 pub const PROJECTS_PATH: &str = "/api/projects";
 pub const PROJECT_PATH: &str = "/api/projects/{projectId}";
 pub const PROJECT_BRANCHES_PATH: &str = "/api/projects/{projectId}/branches";
+pub const REPOSITORY_SNAPSHOT_PATH: &str = "/api/projects/{projectId}/repository/snapshot";
+pub const REPOSITORY_COMMIT_PATH: &str = "/api/projects/{projectId}/repository/commits/{commitId}";
+pub const REPOSITORY_COMMIT_DIFF_PATH: &str =
+    "/api/projects/{projectId}/repository/commits/{commitId}/diff";
+pub const REPOSITORY_WORKING_TREE_DIFF_PATH: &str =
+    "/api/projects/{projectId}/repository/working-tree-diff";
+pub const REPOSITORY_BRANCH_CREATE_PATH: &str = "/api/projects/{projectId}/repository/branches";
+pub const REPOSITORY_BRANCH_CHECKOUT_PATH: &str = "/api/projects/{projectId}/repository/checkout";
+pub const REPOSITORY_FETCH_PATH: &str = "/api/projects/{projectId}/repository/fetch";
+pub const REPOSITORY_PULL_PATH: &str = "/api/projects/{projectId}/repository/pull";
+pub const REPOSITORY_SYNC_PATH: &str = "/api/projects/{projectId}/repository/sync";
+pub const REPOSITORY_CONFLICT_RESOLVE_PATH: &str =
+    "/api/projects/{projectId}/repository/conflicts/resolve";
+pub const REPOSITORY_PUSH_PATH: &str = "/api/projects/{projectId}/repository/push";
+pub const REPOSITORY_STAGE_CHANGES_PATH: &str =
+    "/api/projects/{projectId}/repository/changes/stage";
+pub const REPOSITORY_UNSTAGE_CHANGES_PATH: &str =
+    "/api/projects/{projectId}/repository/changes/unstage";
+pub const REPOSITORY_COMMIT_CHANGES_PATH: &str = "/api/projects/{projectId}/repository/commit";
 pub const PROJECT_WORK_CONTEXT_OPEN_PATH: &str = "/api/project-work-contexts/open";
 pub const PROJECT_WORK_CONTEXT_RENEW_PATH: &str = "/api/project-work-contexts/renew";
 pub const TASKS_PATH: &str = "/api/tasks";
@@ -49,6 +68,10 @@ pub const WORKSPACE_DIRECTORY_PATH: &str = "/api/tasks/{taskId}/files/list";
 pub const WORKSPACE_FILE_PATH: &str = "/api/tasks/{taskId}/files/read";
 pub const WORKSPACE_SEARCH_PATH: &str = "/api/tasks/{taskId}/files/search";
 pub const WORKSPACE_WATCH_PATH: &str = "/api/tasks/{taskId}/files/watch";
+pub const PROJECT_DIRECTORY_PATH: &str = "/api/projects/{projectId}/files/list";
+pub const PROJECT_FILE_PATH: &str = "/api/projects/{projectId}/files/read";
+pub const PROJECT_SEARCH_PATH: &str = "/api/projects/{projectId}/files/search";
+pub const PROJECT_WATCH_PATH: &str = "/api/projects/{projectId}/files/watch";
 pub const GIT_IDENTITY_PATH: &str = "/api/git/identity";
 pub const WORKFLOWS_PATH: &str = "/api/workflows";
 pub const WORKFLOW_PATH: &str = "/api/workflows/{workflowId}";

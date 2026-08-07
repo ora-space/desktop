@@ -36,6 +36,19 @@ export type ListDirectoryResponse = {
 };
 
 /**
+ * Requests one immediate directory inside a project's main checkout.
+ */
+export type ListProjectDirectoryRequest = { projectId: string; path?: string };
+
+/**
+ * Returns one normalized project directory and its immediate entries.
+ */
+export type ListProjectDirectoryResponse = {
+  path: string;
+  entries: Array<WorkspaceEntry>;
+};
+
+/**
  * Requests one immediate directory inside a task's managed worktree.
  */
 export type ListWorkspaceDirectoryRequest = { taskId: string; path?: string };
@@ -46,6 +59,21 @@ export type ListWorkspaceDirectoryRequest = { taskId: string; path?: string };
 export type ListWorkspaceDirectoryResponse = {
   path: string;
   entries: Array<WorkspaceEntry>;
+};
+
+/**
+ * Identifies one text file inside a project's main checkout.
+ */
+export type ReadProjectFileRequest = { projectId: string; path: string };
+
+/**
+ * Returns one bounded UTF-8 file from a project's main checkout.
+ */
+export type ReadProjectFileResponse = {
+  path: string;
+  content: string;
+  version: string;
+  sizeBytes: number;
 };
 
 /**
@@ -64,6 +92,23 @@ export type ReadWorkspaceFileResponse = {
 };
 
 /**
+ * Requests a bounded ripgrep search inside a project's main checkout.
+ */
+export type SearchProjectRequest = {
+  projectId: string;
+  query: string;
+  kind: WorkspaceSearchKind;
+};
+
+/**
+ * Returns ordered search results from a project's main checkout.
+ */
+export type SearchProjectResponse = {
+  results: Array<WorkspaceSearchResult>;
+  truncated: boolean;
+};
+
+/**
  * Requests a bounded ripgrep search inside one task workspace.
  */
 export type SearchWorkspaceRequest = {
@@ -79,6 +124,11 @@ export type SearchWorkspaceResponse = {
   results: Array<WorkspaceSearchResult>;
   truncated: boolean;
 };
+
+/**
+ * Starts a filesystem watcher scoped to a project's main checkout.
+ */
+export type WatchProjectRequest = { projectId: string };
 
 /**
  * Starts one workspace watcher stream scoped to a task's managed worktree.
