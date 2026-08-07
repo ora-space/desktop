@@ -33,10 +33,12 @@ export interface WorkflowCanvasProps {
   onExpandInspector: () => void;
   versionHistory: MockWorkflowVersion[];
   previewedVersion: MockWorkflowVersion | null;
+  /** Version string of the workflow's currently active published snapshot, if any. */
+  activeVersion: string | null;
   /** Formatted last-edit time of the draft (workflow_snapshots.updated_at). */
   draftUpdatedAt?: string;
   onPreviewVersion: (version: MockWorkflowVersion | null) => void;
-  onRestoreVersion: (version: MockWorkflowVersion) => void;
+  onActivateVersion: (version: MockWorkflowVersion) => void;
   onDeleteVersion: (version: MockWorkflowVersion) => void;
   readOnly: boolean;
 }

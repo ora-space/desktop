@@ -15,10 +15,9 @@ import {
   type XYPosition,
 } from "@xyflow/react";
 import {
-  IconDeviceFloppy,
   IconDownload,
   IconRoute,
-  IconSend,
+  IconVersions,
 } from "@tabler/icons-react";
 import {
   AlertDialog,
@@ -34,6 +33,7 @@ import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
+  toast,
   type ResizablePanelHandle,
 } from "@ora/ui";
 import {
@@ -61,17 +61,18 @@ import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowManager } from "./workflow-manager";
 import {
+  useActivateWorkflow,
   useCreateWorkflow,
   useDeleteWorkflow,
   useDeleteWorkflowSnapshot,
   usePublishWorkflow,
   useRenameWorkflow,
-  useRollbackWorkflow,
   useUpdateWorkflowDraft,
   useWorkflowDraft,
   useWorkflowLibrary,
   useWorkflowVersions,
 } from "./workflow-definitions";
+import { useWorkflowDraftAutosave } from "./use-workflow-draft-autosave";
 import {
   animateWorkflowPanel,
   cancelWorkflowPanelAnimation,
@@ -115,6 +116,33 @@ function workflowExportFileName(name: string): string {
   // characters out of the regex literal so no-control-regex stays satisfied.
   const safeName = name.replace(/[<>:"/\\|?*\p{Cc}]/gu, " ").trim();
   return `${safeName === "" ? "workflow" : safeName}.reactflow.json`;
+}
+
+/**
+ * Picks a publish version for an imported file: prefer the filename stem (matching export
+ * naming), then the workflow title, else let the backend mint an automatic version.
+ */
+function importPublishVersion(fileName: string, workflowName: string): string | null {
+  const stem = fileName
+    .replace(/\.reactflow\.json$/i, "")
+    .replace(/\.json$/i, "")
+    .trim();
+  const candidate = (stem !== "" ? stem : workflowName).trim();
+  if (
+    candidate === ""
+    || candidate === "draft"
+    || candidate === "."
+    || candidate === ".."
+    || candidate.length > 128
+    || [...candidate].some((character) => (
+      character === "/"
+      || character === "\\"
+      || character.charCodeAt(0) < 32
+    ))
+  ) {
+    return null;
+  }
+  return candidate;
 }
 
 /** Provides one React Flow store to the canvas and its sibling inspector. */
@@ -197,15 +225,14 @@ function WorkflowSettingsContent({
   const deleteWorkflowMutation = useDeleteWorkflow();
   const updateDraftMutation = useUpdateWorkflowDraft();
   const publishWorkflowMutation = usePublishWorkflow();
-  const rollbackWorkflowMutation = useRollbackWorkflow();
+  const activateWorkflowMutation = useActivateWorkflow();
   const deleteSnapshotMutation = useDeleteWorkflowSnapshot();
 
   const [workflow, setWorkflow] = useState<DemoWorkflow | null>(null);
-  /** Tracks the hydrated draft's updated_at so render-phase resets re-run on save/rollback. */
-  const [hydratedDraftUpdatedAt, setHydratedDraftUpdatedAt] = useState<bigint | null>(null);
+  /** Selected workflow id whose draft is currently mounted in the editor. */
+  const [hydratedWorkflowId, setHydratedWorkflowId] = useState<string | null>(null);
   const [previewedVersion, setPreviewedVersion] = useState<MockWorkflowVersion | null>(null);
   const [managerError, setManagerError] = useState<string | null>(null);
-  const [savePending, setSavePending] = useState(false);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [publishVersionName, setPublishVersionName] = useState("");
   const editorLayoutRef = useRef<HTMLDivElement>(null);
@@ -213,6 +240,12 @@ function WorkflowSettingsContent({
   const inspectorPanelRef = useRef<ResizablePanelHandle | null>(null);
   const libraryAnimationRef = useRef<number | null>(null);
   const inspectorAnimationRef = useRef<number | null>(null);
+  /** Bumps on every persistable edit so in-flight writes can detect they are stale. */
+  const editGenerationRef = useRef(0);
+  const workflowRef = useRef<DemoWorkflow | null>(null);
+  const previewedVersionRef = useRef<MockWorkflowVersion | null>(null);
+  /** Last name known to be persisted, so autosave skips no-op renames. */
+  const persistedNameRef = useRef<string | null>(null);
   const initialLibraryWidth = DEFAULT_WORKFLOW_LIBRARY_WIDTH;
   const initialInspectorWidth = DEFAULT_WORKFLOW_INSPECTOR_WIDTH;
   const libraryWidthRef = useRef(initialLibraryWidth);
@@ -223,6 +256,8 @@ function WorkflowSettingsContent({
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [libraryVisualWidth, setLibraryVisualWidth] = useState(initialLibraryWidth);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
+  workflowRef.current = workflow;
+  previewedVersionRef.current = previewedVersion;
   /** Library rows for the manager, derived from persisted workflow summaries. */
   const libraryWorkflows: DemoWorkflow[] = useMemo(
     () => (library.data ?? []).map((summary) => ({
@@ -238,14 +273,13 @@ function WorkflowSettingsContent({
   );
 
   // Render-phase adjustments (the documented "adjust state when props change"
-  // pattern): hydrate the selected workflow's draft when its server snapshot first
-  // arrives, and open the first workflow once the library loads. Running these
-  // during render instead of in an effect keeps the react-hooks/set-state-in-effect
-  // rule satisfied for async data that also carries local edits.
+  // pattern): hydrate when the selected workflow identity changes. Autosave must
+  // not remount the canvas, so timestamp-only draft updates are ignored here;
+  // activate clears hydratedWorkflowId to force a same-id reload.
   if (
     draftQuery.data !== undefined
     && draftQuery.data.workflow.id === selectedWorkflowId
-    && hydratedDraftUpdatedAt !== draftQuery.data.draft.updatedAt
+    && hydratedWorkflowId !== selectedWorkflowId
   ) {
     const envelope = parseWorkflowGraph(draftQuery.data.draft.graph);
     // Persisted drafts may reference a model that is no longer available. Keep the
@@ -286,7 +320,8 @@ function WorkflowSettingsContent({
       nodes,
       edges: envelope.edges,
     });
-    setHydratedDraftUpdatedAt(draftQuery.data.draft.updatedAt);
+    setHydratedWorkflowId(draftQuery.data.workflow.id);
+    persistedNameRef.current = draftQuery.data.workflow.name;
   }
 
   if (
@@ -307,6 +342,7 @@ function WorkflowSettingsContent({
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
+        second: "2-digit",
       }).format(new Date(Number(version.createdAt))),
       graph: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
     })),
@@ -324,6 +360,7 @@ function WorkflowSettingsContent({
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
+      second: "2-digit",
     }).format(new Date(Number(updatedAt)));
   }, [draftQuery.data?.draft.updatedAt, i18n.resolvedLanguage]);
 
@@ -467,8 +504,13 @@ function WorkflowSettingsContent({
   /** Applies one graph or metadata mutation to the open in-memory workflow. */
   function updateWorkflow(
     updater: (current: DemoWorkflow) => DemoWorkflow,
+    options: { persist?: boolean } = {},
   ): void {
     setWorkflow((current) => (current === null ? current : updater(current)));
+    if (options.persist !== false) {
+      editGenerationRef.current += 1;
+      autosave.markDirty();
+    }
   }
 
   /** Commits the mounted graph through React Flow's database-ready snapshot boundary. */
@@ -481,66 +523,21 @@ function WorkflowSettingsContent({
     return snapshot;
   }
 
-  /** Switches the active workflow; the draft query hydrates it on arrival. */
-  function selectWorkflow(workflowId: string): void {
-    setPreviewedVersion(null);
-    setSelectedWorkflowId(workflowId);
+  /**
+   * Writes the current draft graph and name. Returns whether the write still
+   * matches the edit generation that started it, so autosave can reschedule.
+   * Reads workflow through a ref so a flush right after setState still sees the
+   * latest name/description while toObject() supplies live graph geometry.
+   */
+  const persistDraft = useCallback(async (): Promise<"saved" | "stale" | "skipped" | "failed"> => {
+    const current = workflowRef.current;
+    if (current === null || previewedVersionRef.current !== null) {
+      return "skipped";
+    }
+    const snapshot = { ...current, ...toObject() };
+    setWorkflow(snapshot);
+    const startedGeneration = editGenerationRef.current;
     setManagerError(null);
-  }
-
-  /** Creates a persisted workflow and immediately opens it for editing. */
-  async function createWorkflow(name: string): Promise<void> {
-    setManagerError(null);
-    try {
-      const result = await createWorkflowMutation.mutateAsync({ name });
-      selectWorkflow(result.workflow.id);
-    } catch (cause) {
-      setManagerError(localizeContractError(cause, t));
-    }
-  }
-
-  /** Renames one persisted workflow. */
-  async function renameWorkflow(workflowId: string, name: string): Promise<void> {
-    const nextName = name.trim();
-    if (nextName === "") {
-      return;
-    }
-    setManagerError(null);
-    try {
-      await renameWorkflowMutation.mutateAsync({ workflowId, name: nextName });
-      setWorkflow((current) => (current === null || current.id !== workflowId
-        ? current
-        : { ...current, name: nextName }));
-    } catch (cause) {
-      setManagerError(localizeContractError(cause, t));
-    }
-  }
-
-  /** Soft-deletes a workflow and lets the library effect pick the next selection. */
-  async function deleteWorkflow(workflowId: string): Promise<void> {
-    setManagerError(null);
-    try {
-      await deleteWorkflowMutation.mutateAsync(workflowId);
-      if (selectedWorkflowId === workflowId) {
-        setSelectedWorkflowId(null);
-        setWorkflow(null);
-      }
-    } catch (cause) {
-      setManagerError(localizeContractError(cause, t));
-    }
-  }
-
-  /** Persists the current draft graph and name through the shared backend. */
-  async function saveWorkflow(): Promise<void> {
-    if (workflow === null || previewedVersion !== null) {
-      return;
-    }
-    const snapshot = commitCurrentWorkflowSnapshot();
-    if (snapshot === null) {
-      return;
-    }
-    setManagerError(null);
-    setSavePending(true);
     try {
       const definition = normalizeWorkflowDefinition({
         id: snapshot.id,
@@ -560,22 +557,117 @@ function WorkflowSettingsContent({
           description: definition.description,
         }),
       });
-      if (snapshot.name.trim() !== "") {
+      const nextName = snapshot.name.trim();
+      // Skip rename when the title is unchanged so graph-only autosaves stay one request.
+      if (nextName !== "" && nextName !== persistedNameRef.current) {
         await renameWorkflowMutation.mutateAsync({
           workflowId: snapshot.id,
-          name: snapshot.name.trim(),
+          name: nextName,
         });
+        persistedNameRef.current = nextName;
       }
+      if (editGenerationRef.current !== startedGeneration) {
+        return "stale";
+      }
+      return "saved";
     } catch (cause) {
       setManagerError(localizeContractError(cause, t));
-    } finally {
-      setSavePending(false);
+      return "failed";
     }
+  }, [renameWorkflowMutation, t, toObject, updateDraftMutation]);
+
+  const autosave = useWorkflowDraftAutosave({
+    enabled: workflow !== null && previewedVersion === null,
+    save: persistDraft,
+  });
+
+  /** Switches the active workflow after flushing any pending draft write. */
+  async function selectWorkflow(workflowId: string): Promise<void> {
+    if (workflowId === selectedWorkflowId) {
+      return;
+    }
+    const saved = await autosave.flush({ force: true });
+    if (!saved) {
+      // Stay on the current draft so a failed write cannot drop unsaved edits.
+      return;
+    }
+    setPreviewedVersion(null);
+    setSelectedWorkflowId(workflowId);
+    setManagerError(null);
+  }
+
+  /** Creates a persisted workflow and immediately opens it for editing. */
+  async function createWorkflow(name: string): Promise<void> {
+    setManagerError(null);
+    try {
+      const saved = await autosave.flush({ force: true });
+      if (!saved) {
+        return;
+      }
+      const result = await createWorkflowMutation.mutateAsync({ name });
+      // Skip selectWorkflow's forced flush — the previous draft was already written
+      // above, and flushing again would race the newly created workflow's hydrate.
+      autosave.cancel();
+      setPreviewedVersion(null);
+      setSelectedWorkflowId(result.workflow.id);
+    } catch (cause) {
+      setManagerError(localizeContractError(cause, t));
+    }
+  }
+
+  /** Renames one persisted workflow. */
+  async function renameWorkflow(workflowId: string, name: string): Promise<void> {
+    const nextName = name.trim();
+    if (nextName === "") {
+      return;
+    }
+    setManagerError(null);
+    try {
+      await renameWorkflowMutation.mutateAsync({ workflowId, name: nextName });
+      persistedNameRef.current = nextName;
+      setWorkflow((current) => (current === null || current.id !== workflowId
+        ? current
+        : { ...current, name: nextName }));
+    } catch (cause) {
+      setManagerError(localizeContractError(cause, t));
+    }
+  }
+
+  /** Soft-deletes a workflow and lets the library effect pick the next selection. */
+  async function deleteWorkflow(workflowId: string): Promise<void> {
+    setManagerError(null);
+    const deletedName = (
+      workflow?.id === workflowId
+        ? workflow.name
+        : library.data?.find((item) => item.id === workflowId)?.name
+    ) ?? workflowId;
+    try {
+      if (selectedWorkflowId === workflowId) {
+        autosave.cancel();
+      }
+      await deleteWorkflowMutation.mutateAsync(workflowId);
+      if (selectedWorkflowId === workflowId) {
+        setSelectedWorkflowId(null);
+        setHydratedWorkflowId(null);
+        setWorkflow(null);
+      }
+      toast.success(t("settings.workflow.deleteSuccess", { name: deletedName }));
+    } catch (cause) {
+      setManagerError(localizeContractError(cause, t));
+    }
+  }
+
+  /** Immediately persists the current draft, including viewport-only changes. */
+  async function saveWorkflow(): Promise<boolean> {
+    return autosave.flush({ force: true });
   }
 
   /** Saves the draft then opens the publish dialog so a publish is never stale. */
   async function openPublishDialog(): Promise<void> {
-    await saveWorkflow();
+    const saved = await saveWorkflow();
+    if (!saved) {
+      return;
+    }
     setPublishVersionName("");
     setPublishDialogOpen(true);
   }
@@ -589,25 +681,75 @@ function WorkflowSettingsContent({
     setManagerError(null);
     const version = publishVersionName.trim();
     try {
-      await publishWorkflowMutation.mutateAsync({
+      const result = await publishWorkflowMutation.mutateAsync({
         workflowId: workflow.id,
         version: version === "" ? null : version,
       });
+      toast.success(t("settings.workflow.publishSuccess", {
+        version: result.snapshot.version,
+      }));
     } catch (cause) {
       setManagerError(localizeContractError(cause, t));
+    }
+  }
+
+  /**
+   * Prepares deploy by flushing the draft and auto-publishing when the workflow has no
+   * active published snapshot yet, so the user never fills the form only to hit that error.
+   */
+  async function prepareDeploy(): Promise<boolean> {
+    if (workflow === null) {
+      return false;
+    }
+    // Deploy targets the published snapshot; leave read-only preview before flushing.
+    if (previewedVersion !== null) {
+      setPreviewedVersion(null);
+    }
+    setManagerError(null);
+    const saved = await saveWorkflow();
+    if (!saved) {
+      return false;
+    }
+    const hasPublished = draftQuery.data?.published != null
+      || draftQuery.data?.workflow.publishedSnapshotId != null;
+    if (hasPublished) {
+      return true;
+    }
+    try {
+      const published = await publishWorkflowMutation.mutateAsync({
+        workflowId: workflow.id,
+        version: null,
+      });
+      toast.success(t("workflowRun.deployAutoPublished", {
+        version: published.snapshot.version,
+      }));
+      return true;
+    } catch (cause) {
+      setManagerError(localizeContractError(cause, t));
+      return false;
     }
   }
 
   /** Parses and validates an exported workflow before persisting it as a new workflow. */
   async function importWorkflow(file: File): Promise<void> {
     setManagerError(null);
+    let imported: DemoWorkflow;
     try {
-      const imported = JSON.parse(await file.text()) as DemoWorkflow;
-      const name = imported.name.trim();
-      if (name === "") {
-        setManagerError(t("settings.workflow.importError"));
-        return;
-      }
+      imported = JSON.parse(await file.text()) as DemoWorkflow;
+    } catch {
+      setManagerError(t("settings.workflow.importError"));
+      return;
+    }
+    const name = imported.name.trim();
+    if (name === "") {
+      setManagerError(t("settings.workflow.importError"));
+      return;
+    }
+    const saved = await autosave.flush({ force: true });
+    if (!saved) {
+      return;
+    }
+    try {
       const definition = normalizeWorkflowDefinition({
         id: imported.id,
         name: imported.name,
@@ -626,9 +768,20 @@ function WorkflowSettingsContent({
           description: definition.description,
         }),
       });
-      selectWorkflow(result.workflow.id);
-    } catch {
-      setManagerError(t("settings.workflow.importError"));
+      autosave.cancel();
+      setPreviewedVersion(null);
+      setSelectedWorkflowId(result.workflow.id);
+      // Import should leave a deployable published snapshot, not only an editable draft.
+      const published = await publishWorkflowMutation.mutateAsync({
+        workflowId: result.workflow.id,
+        version: importPublishVersion(file.name, name),
+      });
+      toast.success(t("settings.workflow.importPublishSuccess", {
+        name,
+        version: published.snapshot.version,
+      }));
+    } catch (cause) {
+      setManagerError(localizeContractError(cause, t));
     }
   }
 
@@ -651,7 +804,11 @@ function WorkflowSettingsContent({
 
   /** Opens a published graph in a read-only preview without mutating the editable draft. */
   async function previewWorkflowVersion(version: MockWorkflowVersion | null): Promise<void> {
-    commitCurrentWorkflowSnapshot();
+    // Persist pending edits before leaving the editable draft; preview disables autosave.
+    const saved = await autosave.flush({ force: true });
+    if (!saved) {
+      return;
+    }
     if (version === null || selectedWorkflowId === null) {
       setPreviewedVersion(version);
       return;
@@ -674,17 +831,33 @@ function WorkflowSettingsContent({
     }
   }
 
-  /** Restores the selected immutable graph by copying it into the editable draft. */
-  async function restoreWorkflowVersion(version: MockWorkflowVersion): Promise<void> {
+  /** Makes a published snapshot the active run target and loads its graph into the draft. */
+  async function activateWorkflowVersion(version: MockWorkflowVersion): Promise<void> {
     if (workflow === null) {
+      return;
+    }
+    // Activating the already-live snapshot is a no-op; keep the editor on the draft.
+    if (draftQuery.data?.published?.version === version.version) {
+      setPreviewedVersion(null);
+      return;
+    }
+    const snapshotId = version.id;
+    if (snapshotId === undefined || snapshotId === "") {
+      setManagerError(t("settings.workflow.versionLoadError"));
       return;
     }
     setManagerError(null);
     try {
-      await rollbackWorkflowMutation.mutateAsync({
+      await activateWorkflowMutation.mutateAsync({
         workflowId: workflow.id,
-        snapshotId: version.id ?? version.version,
+        snapshotId,
       });
+      // Discard any pre-activate dirty flag; the synced draft remounts next.
+      autosave.cancel();
+      setHydratedWorkflowId(null);
+      toast.success(t("settings.workflow.activateVersionSuccess", {
+        version: version.version,
+      }));
     } catch (cause) {
       setManagerError(localizeContractError(cause, t));
     }
@@ -697,6 +870,10 @@ function WorkflowSettingsContent({
     if (workflow === null) {
       return;
     }
+    // The active published snapshot must stay addressable for runs; mirror backend refusal in UI.
+    if (draftQuery.data?.published?.version === version.version) {
+      return;
+    }
     setManagerError(null);
     try {
       await deleteSnapshotMutation.mutateAsync({
@@ -706,6 +883,9 @@ function WorkflowSettingsContent({
       if (previewedVersion?.version === version.version) {
         setPreviewedVersion(null);
       }
+      toast.success(t("settings.workflow.deleteVersionSuccess", {
+        version: version.version,
+      }));
     } catch (cause) {
       setManagerError(localizeContractError(cause, t));
     }
@@ -767,18 +947,28 @@ function WorkflowSettingsContent({
 
   /** Applies React Flow node changes directly to the active graph. */
   function changeNodes(changes: NodeChange<Node<WorkflowNodeData, "workflow">>[]): void {
-    updateWorkflow((current) => ({
-      ...current,
-      nodes: applyNodeChanges<Node<WorkflowNodeData, "workflow">>(changes, current.nodes),
-    }));
+    const persistable = changes.some(
+      (change) => change.type !== "select" && change.type !== "dimensions",
+    );
+    updateWorkflow(
+      (current) => ({
+        ...current,
+        nodes: applyNodeChanges<Node<WorkflowNodeData, "workflow">>(changes, current.nodes),
+      }),
+      { persist: persistable },
+    );
   }
 
   /** Applies React Flow edge changes directly to the active graph. */
   function changeEdges(changes: EdgeChange[]): void {
-    updateWorkflow((current) => ({
-      ...current,
-      edges: applyEdgeChanges(changes, current.edges),
-    }));
+    const persistable = changes.some((change) => change.type !== "select");
+    updateWorkflow(
+      (current) => ({
+        ...current,
+        edges: applyEdgeChanges(changes, current.edges),
+      }),
+      { persist: persistable },
+    );
   }
 
   return (
@@ -835,21 +1025,16 @@ function WorkflowSettingsContent({
           <Button
             variant="outline"
             size="sm"
-            disabled={workflow === null || savePending}
-            onClick={() => void saveWorkflow()}
-          >
-            <IconDeviceFloppy />
-            {t("settings.workflow.save")}
-          </Button>
-          <Button
-            size="sm"
             disabled={workflow === null}
             onClick={() => void openPublishDialog()}
           >
-            <IconSend />
+            <IconVersions />
             {t("settings.workflow.publish")}
           </Button>
-          <DeployWorkflowButton workflow={workflow} />
+          <DeployWorkflowButton
+            workflow={workflow}
+            onPrepareDeploy={() => prepareDeploy()}
+          />
         </div>
       </header>
       <div ref={editorLayoutRef} className="min-h-0 flex-1">
@@ -900,7 +1085,7 @@ function WorkflowSettingsContent({
                 workflows={libraryWorkflows}
                 selectedWorkflowId={selectedWorkflowId}
                 error={managerError}
-                onSelect={selectWorkflow}
+                onSelect={(workflowId) => void selectWorkflow(workflowId)}
                 onCreate={(name) => void createWorkflow(name)}
                 onRename={(workflowId, name) => void renameWorkflow(workflowId, name)}
                 onDelete={(workflowId) => void deleteWorkflow(workflowId)}
@@ -948,9 +1133,10 @@ function WorkflowSettingsContent({
                 onExpandInspector={expandInspector}
                 versionHistory={versionHistory}
                 previewedVersion={previewedVersion}
+                activeVersion={draftQuery.data?.published?.version ?? null}
                 draftUpdatedAt={draftUpdatedAt}
                 onPreviewVersion={(version) => void previewWorkflowVersion(version)}
-                onRestoreVersion={(version) => void restoreWorkflowVersion(version)}
+                onActivateVersion={(version) => void activateWorkflowVersion(version)}
                 onDeleteVersion={(version) => void deleteWorkflowVersion(version)}
                 readOnly={previewedVersion !== null}
               />
@@ -1055,7 +1241,7 @@ function WorkflowSettingsContent({
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => void confirmPublish()}>
-              <IconSend />
+              <IconVersions />
               {t("settings.workflow.publish")}
             </AlertDialogAction>
           </AlertDialogFooter>

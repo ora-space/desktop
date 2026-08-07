@@ -447,22 +447,23 @@ export function createMemoryContractsClient(
       },
       get: async (request) => {
         const record = requireWorkflow(state, request.workflowId);
-        const published = record.published.length > 0
-          ? structuredClone(record.published[record.published.length - 1])
-          : null;
+        const published = record.workflow.publishedSnapshotId == null
+          ? null
+          : record.published.find((item) => item.id === record.workflow.publishedSnapshotId) ?? null;
         return {
           workflow: structuredClone(record.workflow),
           draft: structuredClone(record.draft),
-          published,
+          published: published === null ? null : structuredClone(published),
         };
       },
       list: async () => ({
         workflows: state.workflows.map((record): WorkflowSummary => ({
           id: record.workflow.id,
           name: record.workflow.name,
-          publishedVersion: record.published.length > 0
-            ? record.published[record.published.length - 1].version
-            : null,
+          publishedVersion: record.workflow.publishedSnapshotId == null
+            ? null
+            : record.published.find((item) => item.id === record.workflow.publishedSnapshotId)?.version
+              ?? null,
           createdAt: record.workflow.createdAt,
           updatedAt: record.workflow.updatedAt,
         })),

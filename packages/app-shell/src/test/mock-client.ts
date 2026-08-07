@@ -379,21 +379,23 @@ export function createMockClient(state: MockClientState): ContractsClient {
       },
       get: async (req) => {
         const record = requireWorkflowRecord(state, req.workflowId);
+        const published = record.workflow.publishedSnapshotId == null
+          ? null
+          : record.published.find((item) => item.id === record.workflow.publishedSnapshotId) ?? null;
         return {
           workflow: record.workflow,
           draft: record.draft,
-          published: record.published.length > 0
-            ? record.published[record.published.length - 1]
-            : null,
+          published,
         };
       },
       list: async () => ({
         workflows: state.workflows.map((record): WorkflowSummary => ({
           id: record.workflow.id,
           name: record.workflow.name,
-          publishedVersion: record.published.length > 0
-            ? record.published[record.published.length - 1].version
-            : null,
+          publishedVersion: record.workflow.publishedSnapshotId == null
+            ? null
+            : record.published.find((item) => item.id === record.workflow.publishedSnapshotId)?.version
+              ?? null,
           createdAt: record.workflow.createdAt,
           updatedAt: record.workflow.updatedAt,
         })),

@@ -60,6 +60,10 @@ function seedDemoWorkflows(state: MockClientState): void {
         updatedAt: null,
       });
     });
+    // Seed the newest published snapshot as the active run target (matches publish semantics).
+    if (record.published.length > 0) {
+      record.workflow.publishedSnapshotId = record.published[0].id;
+    }
     return record;
   });
 }
@@ -172,7 +176,7 @@ describe("WorkflowSettings", () => {
     expect(screen.queryByRole("button", { name: "测试运行" })).not.toBeInTheDocument();
   });
 
-  it("previews and restores a mock published workflow version", async () => {
+  it("previews and activates a mock published workflow version", async () => {
     const user = userEvent.setup();
     renderSettings();
 
@@ -180,17 +184,31 @@ describe("WorkflowSettings", () => {
     await user.click(screen.getByLabelText("版本历史"));
     expect(screen.getByText("当前草稿")).toBeInTheDocument();
 
-    const versionButtons = screen.getAllByRole("button", { name: /已发布版本/ });
-    await user.click(versionButtons[versionButtons.length - 1]!);
-    expect(await screen.findByRole("button", { name: "恢复到此版本" })).toBeInTheDocument();
+    const versionButtons = screen.getAllByRole("button", { name: /已发布版本|生效中/ });
+    // Seed marks the first published snapshot as active; pick a non-active one.
+    const inactiveButton = versionButtons.find((button) => !/生效中/.test(button.getAttribute("aria-label") ?? ""));
+    expect(inactiveButton).toBeDefined();
+    await user.click(inactiveButton!);
+    expect(await screen.findByRole("button", { name: "设为生效版本" })).toBeInTheDocument();
     expect(screen.getByLabelText("工作流名称")).toBeDisabled();
     expect(screen.queryByLabelText("输出节点: 输出报告")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "恢复到此版本" }));
+    await user.click(screen.getByRole("button", { name: "设为生效版本" }));
     await waitFor(() => {
       expect(screen.queryByLabelText("输出节点: 输出报告")).not.toBeInTheDocument();
       expect(screen.getByLabelText("工作流名称")).toBeEnabled();
     });
+
+    await user.click(screen.getByLabelText("版本历史"));
+    await waitFor(() => {
+      expect(screen.getByText("生效中")).toBeInTheDocument();
+    });
+    // Active version preview offers a status hint, not a redundant activate action.
+    const activePreview = screen.getAllByRole("button", { name: /生效中/ })[0];
+    expect(activePreview).toBeDefined();
+    await user.click(activePreview!);
+    expect(screen.queryByRole("button", { name: "设为生效版本" })).not.toBeInTheDocument();
+    expect(screen.getByText("这是当前生效的版本，部署会使用它。")).toBeInTheDocument();
   });
 
   it("zooms around the pointer with the mouse wheel", async () => {
@@ -469,12 +487,7 @@ describe("WorkflowSettings", () => {
     });
     const editedViewport = flowViewport()?.style.transform;
 
-    // Real CRUD persists the viewport only on save, so persist it before switching.
-    await user.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
-    });
-
+    // Switching workflows force-flushes the draft, including the live viewport.
     await user.click(screen.getByText("发布准备检查").closest("button")!);
     await waitFor(() => {
       expect(flowViewport()?.style.transform).toContain("translate(32px,32px)");
@@ -740,13 +753,28 @@ describe("WorkflowSettings", () => {
     });
   });
 
+  it("auto-saves draft edits after the debounce window", async () => {
+    const state = createMockClientState();
+    renderSettings(<WorkflowSettings />, state);
+    const nameInput = await screen.findByLabelText("工作流名称");
+    const openId = state.workflows[0]?.workflow.id;
+    expect(openId).toBeDefined();
+
+    fireEvent.change(nameInput, { target: { value: "自动保存草稿" } });
+
+    await waitFor(() => {
+      const record = state.workflows.find((item) => item.workflow.id === openId);
+      expect(record?.workflow.name).toBe("自动保存草稿");
+    }, { timeout: 3_000 });
+  });
+
   it("keeps edits only for the mounted demo session", async () => {
     const view = renderSettings();
     const nameInput = await screen.findByLabelText("工作流名称");
 
     fireEvent.change(nameInput, { target: { value: "当前会话草稿" } });
     expect(screen.getByDisplayValue("当前会话草稿")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "保存" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存" })).not.toBeInTheDocument();
 
     view.unmount();
     renderSettings();

@@ -122,6 +122,34 @@ const tauriCommands = {
   // gitIdentity
   // =============================================================================
   getGitIdentity: "get_git_identity",
+
+  // =============================================================================
+  // workflow
+  // =============================================================================
+  createWorkflow: "create_workflow",
+  getWorkflow: "get_workflow",
+  listWorkflows: "list_workflows",
+  updateWorkflow: "update_workflow",
+  deleteWorkflow: "delete_workflow",
+  getDraft: "get_workflow_draft",
+  updateDraft: "update_workflow_draft",
+  publishWorkflow: "publish_workflow",
+  rollbackWorkflow: "rollback_workflow",
+  activateWorkflow: "activate_workflow",
+  listVersions: "list_workflow_versions",
+  getVersion: "get_workflow_version",
+  deleteSnapshot: "delete_workflow_snapshot",
+  getWorkflowSnapshot: "get_workflow_snapshot",
+
+  // =============================================================================
+  // workflowRun
+  // =============================================================================
+  createWorkflowRun: "create_workflow_run",
+  getWorkflowRun: "get_workflow_run",
+  listWorkflowRuns: "list_workflow_runs",
+  listWorkflowRunsByWorkflow: "list_workflow_runs_by_workflow",
+  listWorkflowNodeRuns: "list_workflow_node_runs",
+  deleteWorkflowRun: "delete_workflow_run",
 } as const satisfies Record<SupportedTauriOperation, string>;
 
 /** Creates the Desktop contracts transport backed by unary commands and Tauri IPC channels. */

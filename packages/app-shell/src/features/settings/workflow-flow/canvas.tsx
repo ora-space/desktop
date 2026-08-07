@@ -160,9 +160,10 @@ function WorkflowCanvasInner({
   onExpandInspector,
   versionHistory,
   previewedVersion,
+  activeVersion,
   draftUpdatedAt,
   onPreviewVersion,
-  onRestoreVersion,
+  onActivateVersion,
   onDeleteVersion,
   readOnly,
 }: WorkflowCanvasProps) {
@@ -503,9 +504,10 @@ function WorkflowCanvasInner({
         <WorkflowVersionHistory
           versions={versionHistory}
           previewedVersion={previewedVersion}
+          activeVersion={activeVersion}
           draftUpdatedAt={draftUpdatedAt}
           onPreviewVersion={onPreviewVersion}
-          onRestoreVersion={onRestoreVersion}
+          onActivateVersion={onActivateVersion}
           onDeleteVersion={onDeleteVersion}
         />
       </div>

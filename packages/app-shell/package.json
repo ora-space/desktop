@@ -23,6 +23,7 @@
     "@ora/workflow-runtime": "workspace:*",
     "@tabler/icons-react": "^3.44.0",
     "@tanstack/react-query": "^5.101.2",
+    "@tanstack/react-virtual": "^3.14.6",
     "@xyflow/react": "^12.11.2",
     "diff": "^8.0.4",
     "i18next": "^25.8.13",

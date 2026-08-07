@@ -64,6 +64,10 @@ describe("createTauriTransport", () => {
     ["resumeSessionHistory", "resume_session_history", { sessionId: "s1" }],
     ["prepareAgentImport", "prepare_agent_import", { content: "# Role" }],
     ["commitAgentImport", "commit_agent_import", { content: "# Role", decision: null, expectedAgentId: null, expectedUpdatedAt: null }],
+    ["listWorkflows", "list_workflows", {}],
+    ["getDraft", "get_workflow_draft", { workflowId: "wf-1" }],
+    ["createWorkflowRun", "create_workflow_run", { workflowId: "wf-1", projectId: "project-1" }],
+    ["listWorkflowNodeRuns", "list_workflow_node_runs", { runId: "run-1" }],
   ] as const)("routes %s to its desktop command", async (operationName, command, request) => {
     const invoke = vi.fn().mockResolvedValue({});
     const transport = createTauriTransport(invoke, () => ({ onmessage: () => undefined }));
@@ -72,7 +76,7 @@ describe("createTauriTransport", () => {
       operationName,
       request,
       method: "POST",
-      path: `/api/sessions/${request.sessionId}`,
+      path: "/api/contract",
       body: request,
       headers: {},
     });
