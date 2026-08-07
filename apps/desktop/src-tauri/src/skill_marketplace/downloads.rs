@@ -302,6 +302,12 @@ mod tests {
     /// Verifies path components, controls, illegal characters, empty names, and devices are safe.
     #[test]
     fn sanitizes_untrusted_zip_file_names() {
+        // Windows Path::file_name treats backslashes as separators; Unix keeps them in the stem.
+        let windows_drive_path = if cfg!(windows) {
+            "evil.zip"
+        } else {
+            "C__nested_evil.zip"
+        };
         assert_eq!(
             [
                 "",
@@ -320,7 +326,7 @@ mod tests {
                 "skill.zip",
                 "Mixed.zip",
                 "unsafe_name.zip",
-                "C__nested_evil.zip",
+                windows_drive_path,
                 "bad_name.zip",
                 "skill.zip",
                 "_CON.zip",
