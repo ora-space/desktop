@@ -391,9 +391,11 @@ async fn cancelled_shutdown_wait_does_not_detach_completion_owner() {
     drop(first);
 
     let second_scheduler = scheduler.clone();
-    let mut second = Box::pin(second_scheduler.shutdown());
-    assert!(matches!(poll_once(second.as_mut()), Poll::Pending));
-    second.await;
+    second_scheduler.shutdown().await;
+    let error = scheduler
+        .schedule_after(Duration::ZERO, async {})
+        .expect_err("the replacement waiter must observe completed shutdown");
+    assert!(matches!(error, SchedulerError::ShuttingDown));
 }
 
 /// Verifies delayed-task cancellation reports its monotonic terminal state.

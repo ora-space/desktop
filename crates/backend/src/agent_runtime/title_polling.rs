@@ -45,82 +45,11 @@ impl RuntimeActor {
         let mut final_attempt_pending = false;
 
         loop {
+            // A ready user command must win even when the provider response becomes ready in the
+            // same poll. Keeping the request below commands and terminal controls also prevents
+            // its first write from starting when user work was already waiting in the actor queue.
             tokio::select! {
                 biased;
-                result = &mut request => {
-                    self.title_acquisition.finish_attempt(attempt);
-                    match result {
-                        Ok(Ok(response)) => {
-                            if let Some(title) = response
-                                .sessions
-                                .into_iter()
-                                .find(|session| {
-                                    session.session_id.0.as_ref() == self.session.agent_session_id.as_str()
-                                })
-                                .and_then(|session| session.title)
-                            {
-                                self.persist_agent_title(&title);
-                            }
-                        }
-                        Ok(Err(error)) => {
-                            ora_debug!(
-                                session_id = %self.session.id,
-                                error = %error,
-                                attempt = ?attempt,
-                                "session/list title polling failed",
-                            );
-                        }
-                        Err(_) => {
-                            ora_debug!(
-                                session_id = %self.session.id,
-                                attempt = ?attempt,
-                                "session/list title polling timed out",
-                            );
-                        }
-                    }
-                    if matches!(attempt, PollAttempt::Final) {
-                        self.title_acquisition.close();
-                    }
-                    self.channel = Some(channel);
-                    if final_attempt_pending
-                        && let Some(command_sender) = self.command_sender.upgrade()
-                    {
-                        let _ = command_sender.send(RuntimeCommand::TitlePoll {
-                            attempt: PollAttempt::Final,
-                        });
-                    }
-                    return;
-                }
-                control = channel.controls.recv() => {
-                    match control {
-                        Some(SessionControl::ConnectionLost(_)) | None => {
-                            self.title_acquisition.close();
-                            self.mark_stopped();
-                            return;
-                        }
-                        Some(SessionControl::QueueOverflow) => {
-                            self.title_acquisition.close();
-                            self.isolate_channel(channel).await;
-                            return;
-                        }
-                    }
-                }
-                event = channel.events.recv() => {
-                    match event {
-                        Some(SessionEvent::Update(update)) => {
-                            self.observe_session_update(&update.update);
-                            channel.pending_updates.push_back(update);
-                        }
-                        Some(event) => {
-                            settle_idle_event(&client, event).await;
-                        }
-                        None => {
-                            self.title_acquisition.close();
-                            self.mark_stopped();
-                            return;
-                        }
-                    }
-                }
                 command = self.commands.recv() => {
                     let Some(command) = command else {
                         self.title_acquisition.close();
@@ -181,6 +110,80 @@ impl RuntimeActor {
                         RuntimeCommand::TitlePoll { .. } => {
                             // Duplicate or stale scheduler commands have no work while this
                             // attempt is already in flight.
+                        }
+                    }
+                }
+                control = channel.controls.recv() => {
+                    match control {
+                        Some(SessionControl::ConnectionLost(_)) | None => {
+                            self.title_acquisition.close();
+                            self.mark_stopped();
+                            return;
+                        }
+                        Some(SessionControl::QueueOverflow) => {
+                            self.title_acquisition.close();
+                            self.isolate_channel(channel).await;
+                            return;
+                        }
+                    }
+                }
+                result = &mut request => {
+                    self.title_acquisition.finish_attempt(attempt);
+                    match result {
+                        Ok(Ok(response)) => {
+                            if let Some(title) = response
+                                .sessions
+                                .into_iter()
+                                .find(|session| {
+                                    session.session_id.0.as_ref() == self.session.agent_session_id.as_str()
+                                })
+                                .and_then(|session| session.title)
+                            {
+                                self.persist_agent_title(&title);
+                            }
+                        }
+                        Ok(Err(error)) => {
+                            ora_debug!(
+                                session_id = %self.session.id,
+                                error = %error,
+                                attempt = ?attempt,
+                                "session/list title polling failed",
+                            );
+                        }
+                        Err(_) => {
+                            ora_debug!(
+                                session_id = %self.session.id,
+                                attempt = ?attempt,
+                                "session/list title polling timed out",
+                            );
+                        }
+                    }
+                    if matches!(attempt, PollAttempt::Final) {
+                        self.title_acquisition.close();
+                    }
+                    self.channel = Some(channel);
+                    if final_attempt_pending
+                        && let Some(command_sender) = self.command_sender.upgrade()
+                    {
+                        let _ = command_sender.send(RuntimeCommand::TitlePoll {
+                            attempt: PollAttempt::Final,
+                        });
+                    }
+                    return;
+                }
+                event = channel.events.recv() => {
+                    match event {
+                        Some(SessionEvent::Update(update)) => {
+                            self.observe_session_update(&update.update);
+                            channel.pending_updates.push_back(update);
+                        }
+                        Some(event) => {
+                            settle_idle_event(&client, event).await;
+                        }
+                        None => {
+                            self.title_acquisition.close();
+                            self.mark_stopped();
+                            return;
                         }
                     }
                 }

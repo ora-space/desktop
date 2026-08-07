@@ -9,7 +9,7 @@ pub type BoxFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 ///
 /// Implementors declare their desired fire frequency via [`schedule`] (a cron expression accepted
 /// by the `cron` crate) and perform their work inside [`run`]. The scheduler parses the expression
-/// once at startup and then drives each registered job independently.
+/// once when the job is registered and then drives each registered job independently.
 pub trait Job: Send + Sync + 'static {
     /// Returns a human-readable identifier for this job, used in log output.
     fn name(&self) -> &str;
