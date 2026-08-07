@@ -174,7 +174,7 @@ export const SpecsContent = forwardRef<SpecsContentHandle, SpecsContentProps>(fu
   return (
     <>
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-        <ResizablePanel id="spec-content" minSize={420}>
+        <ResizablePanel id="spec-content" minSize={280}>
           <div className="flex h-full min-w-0 flex-col">
             {activeSelectedPath !== null && (
               <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
@@ -197,7 +197,7 @@ export const SpecsContent = forwardRef<SpecsContentHandle, SpecsContentProps>(fu
           </div>
         </ResizablePanel>
         <ResizableHandle withHandle aria-label={t("specs.resizeTree")} />
-        <ResizablePanel id="spec-tree" defaultSize={320} minSize={240} maxSize={520}>
+        <ResizablePanel id="spec-tree" defaultSize={260} minSize={180} maxSize={480}>
           <div className="flex h-full min-h-0 flex-col border-l border-border">
             <div className="flex items-center gap-2 border-b border-border p-2">
               <div className="relative min-w-0 flex-1">

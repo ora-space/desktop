@@ -60,6 +60,14 @@ import { createCommentAnchor } from "./task-diff-comment-anchor";
 import { diffFilePath } from "./task-diff-file-tree-utils";
 import { TaskDiffFileTree } from "./task-diff-file-tree";
 import { TaskGitActions } from "./task-git-actions";
+import { animatePanelWidth, cancelPanelWidthAnimation } from "../../lib/panel-motion";
+
+/** Matches the review panel slide so the file tree toggle feels consistent. */
+const FILE_TREE_SLIDE_MS = 180;
+const FILE_TREE_WIDTH = 240;
+/** Narrowest tree width a user resize settles on; below it the tree collapses. */
+const FILE_TREE_MIN_WIDTH = 180;
+const FILE_TREE_COLLAPSE_THRESHOLD = FILE_TREE_MIN_WIDTH / 2;
 
 interface TaskDiffViewProps {
   taskId: string;
@@ -106,6 +114,8 @@ export function TaskDiffView({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const fileElementsRef = useRef(new Map<string, HTMLDivElement>());
   const fileTreePanelRef = useRef<ResizablePanelHandle | null>(null);
+  const fileTreeAnimationRef = useRef<number | null>(null);
+  const fileTreeWidthRef = useRef(FILE_TREE_WIDTH);
 
   const files = useMemo(
     () => diffQuery.data === undefined ? [] : parseTaskDiffPatch(diffQuery.data.patch),
@@ -150,11 +160,32 @@ export function TaskDiffView({
   }, [fileRequest, filePaths, files.length, selectFile]);
 
   useEffect(() => {
-    const panel = fileTreePanelRef.current;
-    if (panel === null) return;
-    if (fileTreeOpen && panel.isCollapsed()) panel.expand();
-    if (!fileTreeOpen && !panel.isCollapsed()) panel.collapse();
+    // The tree panel mounts collapsed alongside the diff, so toggling (or a late
+    // mount once the patch arrives) slides it instead of snapping the diff width.
+    cancelPanelWidthAnimation(fileTreeAnimationRef);
+    animatePanelWidth({
+      animationRef: fileTreeAnimationRef,
+      duration: FILE_TREE_SLIDE_MS,
+      panel: fileTreePanelRef.current,
+      targetWidth: fileTreeOpen ? FILE_TREE_WIDTH : 0,
+    });
   }, [fileTreeOpen, files.length]);
+
+  // Never let a pending slide write to a panel that already left the tree.
+  useEffect(() => () => cancelPanelWidthAnimation(fileTreeAnimationRef), []);
+
+  /** Snaps an undersized tree after release so direct dragging stays linear. */
+  const settleFileTreeAfterResize = useCallback(() => {
+    const width = fileTreeWidthRef.current;
+    if (width <= 0 || width >= FILE_TREE_MIN_WIDTH) return;
+    cancelPanelWidthAnimation(fileTreeAnimationRef);
+    animatePanelWidth({
+      animationRef: fileTreeAnimationRef,
+      duration: FILE_TREE_SLIDE_MS,
+      panel: fileTreePanelRef.current,
+      targetWidth: width < FILE_TREE_COLLAPSE_THRESHOLD ? 0 : FILE_TREE_MIN_WIDTH,
+    });
+  }, []);
 
   useEffect(() => {
     const root = scrollContainerRef.current;
@@ -414,12 +445,17 @@ export function TaskDiffView({
         {files.length === 0 ? (
           <DiffMessage title={t("diff.noChanges")} detail={t("diff.noChangesDetail")} />
         ) : (
-          <ResizablePanelGroup orientation="horizontal">
+          <ResizablePanelGroup
+            orientation="horizontal"
+            onLayoutChanged={(_layout, meta) => {
+              if (meta.isUserInteraction) settleFileTreeAfterResize();
+            }}
+          >
             <ResizablePanel
               id="task-diff-content"
               className="flex min-h-0 overflow-hidden"
               style={{ height: "100%", overflow: "hidden" }}
-              minSize={320}
+              minSize={280}
             >
               <div
                 ref={scrollContainerRef}
@@ -481,20 +517,29 @@ export function TaskDiffView({
               withHandle
               aria-label={t("diff.resizeFileTree")}
               title={t("diff.resizeFileTree")}
-              className={`${fileTreeOpen ? "" : "hidden"} z-10 transition-colors hover:bg-ring focus-visible:bg-ring`}
+              // Always visible so a collapsed tree can be dragged back open.
+              className="z-10 transition-colors hover:bg-ring focus-visible:bg-ring"
+              onPointerDown={() => cancelPanelWidthAnimation(fileTreeAnimationRef)}
             />
             <ResizablePanel
               id="task-diff-files"
               panelRef={fileTreePanelRef}
               className="flex min-h-0 overflow-hidden"
               style={{ height: "100%", overflow: "hidden" }}
-              defaultSize={fileTreeOpen ? 240 : 0}
-              minSize={200}
+              defaultSize={fileTreeOpen ? FILE_TREE_WIDTH : 0}
+              // A pixel min would snap scripted slides onto it; the settle
+              // callback restores the effective minimum after the user lets go.
+              minSize={1}
               maxSize={400}
               collapsible
               collapsedSize={0}
               groupResizeBehavior="preserve-pixel-size"
               onResize={(size) => {
+                fileTreeWidthRef.current = size.inPixels;
+                // Scripted slides (and lagging observer deliveries) report
+                // transient sizes; only settled ones may flip the toolbar state,
+                // or the toggle fights the slide and the tree won't reopen.
+                if (fileTreeAnimationRef.current !== null) return;
                 const open = size.inPixels > 0;
                 if (open !== fileTreeOpen) onFileTreeOpenChange(open);
               }}

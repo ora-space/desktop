@@ -175,7 +175,7 @@ export function WorkspaceFilesView({
   const body = (
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup orientation="horizontal" className="min-h-0">
-        <ResizablePanel id="workspace-file-content" minSize={420}>
+        <ResizablePanel id="workspace-file-content" minSize={280}>
         <div className="flex h-full min-w-0 flex-col">
           {selectedPath === null ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -229,9 +229,9 @@ export function WorkspaceFilesView({
         />
         <ResizablePanel
           id="workspace-file-tree"
-          defaultSize={320}
-          minSize={240}
-          maxSize={520}
+          defaultSize={260}
+          minSize={180}
+          maxSize={480}
           className="border-l border-border"
         >
         <aside className="flex h-full min-w-0 flex-col">

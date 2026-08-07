@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@ora/ui";
+﻿import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Button,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+  type ResizablePanelHandle,
+} from "@ora/ui";
 import {
   IconArrowsMaximize,
   IconArrowsMinimize,
@@ -13,9 +19,19 @@ import { useTranslation } from "react-i18next";
 import { TaskDiffView, type TaskDiffFileRequest, type TaskDiffViewType } from "../diff/task-diff-view";
 import { TaskChangesNavigationProvider } from "../diff/task-changes-navigation";
 import { WorkspaceReviewFilesPanel } from "../files/workspace-review-files-panel";
+import { animatePanelWidth, cancelPanelWidthAnimation } from "../../lib/panel-motion";
+import {
+  DEFAULT_REVIEW_WIDTH,
+  MAX_REVIEW_WIDTH,
+  MIN_REVIEW_WIDTH,
+  responsiveReviewWidth,
+} from "./workspace-review-layout-utils";
 import "./workspace-review-layout.css";
 
 const EXPANDED_PANEL_EXIT_MS = 180;
+/** Matches the workflow editor's panel settle so the review slide feels identical. */
+const REVIEW_PANEL_SLIDE_MS = 180;
+const REVIEW_PANEL_COLLAPSE_THRESHOLD = MIN_REVIEW_WIDTH / 2;
 
 export type WorkspaceReviewContext =
   | { kind: "none" }
@@ -50,6 +66,16 @@ export function WorkspaceReviewLayout({
   const fileRequestSequence = useRef(0);
   const onOpenChangeRef = useRef(onOpenChange);
   const skipOpenNotifyRef = useRef(true);
+  const panelRef = useRef<ResizablePanelHandle | null>(null);
+  const panelAnimationRef = useRef<number | null>(null);
+  /** Remembers the width the user last settled on, so reopen and restore reuse it. */
+  const panelWidthRef = useRef(DEFAULT_REVIEW_WIDTH);
+  /** Mirrors the live width (including transient drag values) for settle decisions. */
+  const panelCurrentWidthRef = useRef(DEFAULT_REVIEW_WIDTH);
+  /** Once the user drags (or a settle lands), stop re-adapting to the window. */
+  const panelWidthTouchedRef = useRef(false);
+  /** Host whose width drives the responsive opening width. */
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const taskId = context.kind === "task" ? context.taskId : undefined;
   const contextKey = context.kind === "none" ? "none" : context.kind === "project" ? `project:${context.projectId}` : `task:${context.taskId}`;
 
@@ -72,14 +98,60 @@ export function WorkspaceReviewLayout({
     onOpenChangeRef.current?.(open);
   }, [open]);
 
-  const close = useCallback(() => {
+  /** Tears the review surface down after its closing slide (or at once when already collapsed). */
+  const finalizeClose = useCallback(() => {
     if (closeTimer.current !== null) clearTimeout(closeTimer.current);
     closeTimer.current = null;
     setReviewOpen(false);
     setExpanded(false);
     setClosing(false);
     setViewType("unified");
-  }, [setReviewOpen]);
+  }, []);
+
+  const close = useCallback(() => {
+    cancelPanelWidthAnimation(panelAnimationRef);
+    if (expanded) {
+      // The overlay already covers the side panel, so a hidden slide adds nothing.
+      finalizeClose();
+      return;
+    }
+    animatePanelWidth({
+      animationRef: panelAnimationRef,
+      duration: REVIEW_PANEL_SLIDE_MS,
+      panel: panelRef.current,
+      targetWidth: 0,
+      onComplete: finalizeClose,
+    });
+  }, [expanded, finalizeClose]);
+
+  /** Slides the review panel out: the user's settled width, or a window-fit one until first use. */
+  const slidePanelOpen = useCallback(() => {
+    cancelPanelWidthAnimation(panelAnimationRef);
+    const targetWidth = panelWidthTouchedRef.current
+      ? panelWidthRef.current
+      : responsiveReviewWidth(contentRef.current?.clientWidth ?? 0);
+    animatePanelWidth({
+      animationRef: panelAnimationRef,
+      duration: REVIEW_PANEL_SLIDE_MS,
+      panel: panelRef.current,
+      targetWidth,
+    });
+  }, []);
+
+  /** Snaps an undersized panel after release so direct dragging stays linear. */
+  const settleReviewAfterResize = useCallback(() => {
+    const width = panelCurrentWidthRef.current;
+    if (width <= 0 || width >= MIN_REVIEW_WIDTH) return;
+    animatePanelWidth({
+      animationRef: panelAnimationRef,
+      duration: REVIEW_PANEL_SLIDE_MS,
+      panel: panelRef.current,
+      targetWidth: width < REVIEW_PANEL_COLLAPSE_THRESHOLD ? 0 : MIN_REVIEW_WIDTH,
+      onComplete: () => {
+        if (width < REVIEW_PANEL_COLLAPSE_THRESHOLD) finalizeClose();
+      },
+    });
+  }, [finalizeClose]);
 
   // React permits guarded render-time adjustment for state that is directly tied to
   // a prop. Closing here prevents one frame of stale review UI without an effect loop.
@@ -87,6 +159,7 @@ export function WorkspaceReviewLayout({
   if (context.kind !== previousContextKind) {
     setPreviousContextKind(context.kind);
     if (context.kind === "none") {
+      // A pending slide aborts itself once the panel leaves the tree.
       setOpen(false);
       setExpanded(false);
       setClosing(false);
@@ -100,7 +173,43 @@ export function WorkspaceReviewLayout({
     setFileRequest({ path, requestId: fileRequestSequence.current });
     setPanel("changes");
     setReviewOpen(true);
-  }, [setReviewOpen, taskId]);
+    // A close slide may still be in flight; switch it back to opening.
+    if (panelAnimationRef.current !== null) slidePanelOpen();
+  }, [setReviewOpen, slidePanelOpen, taskId]);
+
+  // The panel mounts collapsed, so opening (or re-opening after a context switch)
+  // slides it out to the last settled width instead of snapping the conversation.
+  useEffect(() => {
+    if (!open) return;
+    slidePanelOpen();
+  }, [contextKey, open, slidePanelOpen]);
+
+  // Before the user picks a width, keep the panel matched to the window: maximizing
+  // opens it wider, restoring snaps it narrower, without ever fighting a drag.
+  useEffect(() => {
+    if (!open || typeof ResizeObserver === "undefined") return;
+    const content = contentRef.current;
+    if (content === null) return;
+    let lastWidth = content.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (panelWidthTouchedRef.current) return;
+      const nextWidth = content.clientWidth;
+      if (Math.abs(nextWidth - lastWidth) < 8) return;
+      lastWidth = nextWidth;
+      cancelPanelWidthAnimation(panelAnimationRef);
+      animatePanelWidth({
+        animationRef: panelAnimationRef,
+        duration: REVIEW_PANEL_SLIDE_MS,
+        panel: panelRef.current,
+        targetWidth: responsiveReviewWidth(nextWidth),
+      });
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [open]);
+
+  // Never let a pending slide write to a panel that already left the tree.
+  useEffect(() => () => cancelPanelWidthAnimation(panelAnimationRef), []);
 
   const toggleExpanded = () => {
     if (!expanded) {
@@ -122,6 +231,8 @@ export function WorkspaceReviewLayout({
     else {
       setPanel(next);
       setReviewOpen(true);
+      // A close slide may still be in flight; switch it back to opening.
+      if (panelAnimationRef.current !== null) slidePanelOpen();
     }
   };
 
@@ -167,12 +278,49 @@ export function WorkspaceReviewLayout({
     />
   );
 
-  const workspaceContent = context.kind === "none" || !open || expanded ? children : (
-    <ResizablePanelGroup orientation="horizontal" className="min-h-0 min-w-0 flex-1">
+  // The group stays mounted while open (even under the expanded overlay) so the
+  // review panel keeps its settled width; only its content yields to the overlay
+  // to avoid mounting the same diff/file surface twice.
+  const workspaceContent = context.kind === "none" || !open ? children : (
+    <ResizablePanelGroup
+      orientation="horizontal"
+      className="min-h-0 min-w-0 flex-1"
+      onLayoutChanged={(_layout, meta) => {
+        if (meta.isUserInteraction) settleReviewAfterResize();
+      }}
+    >
       <ResizablePanel id="workspace-primary" minSize={360}>{children}</ResizablePanel>
-      <ResizableHandle withHandle aria-label={t("diff.resizePanel")} title={t("diff.resizePanel")} className="z-10 transition-colors hover:bg-ring focus-visible:bg-ring" />
-      <ResizablePanel id="workspace-review" className="ora-review-side-panel" defaultSize={900} minSize={620} maxSize={1300} collapsible collapsedSize={0} groupResizeBehavior="preserve-pixel-size" onResize={(size) => { if (size.inPixels === 0) close(); }}>
-        {panelContent}
+      <ResizableHandle
+        withHandle
+        aria-label={t("diff.resizePanel")}
+        title={t("diff.resizePanel")}
+        className="z-10 transition-colors hover:bg-ring focus-visible:bg-ring"
+        onPointerDown={() => cancelPanelWidthAnimation(panelAnimationRef)}
+      />
+      <ResizablePanel
+        id="workspace-review"
+        panelRef={panelRef}
+        className="ora-review-side-panel"
+        defaultSize={0}
+        // A pixel min would snap scripted slides onto it; the settle callback
+        // restores the effective minimum after the user lets go (workflow pattern).
+        minSize={1}
+        maxSize={MAX_REVIEW_WIDTH}
+        collapsible
+        collapsedSize={0}
+        groupResizeBehavior="preserve-pixel-size"
+        onResize={(size) => {
+          // Scripted slides report intermediate sizes; only settle on stable ones.
+          if (panelAnimationRef.current !== null) return;
+          panelCurrentWidthRef.current = size.inPixels;
+          if (size.inPixels === 0) close();
+          else if (size.inPixels >= MIN_REVIEW_WIDTH) {
+            panelWidthTouchedRef.current = true;
+            panelWidthRef.current = size.inPixels;
+          }
+        }}
+      >
+        {expanded ? null : panelContent}
       </ResizablePanel>
     </ResizablePanelGroup>
   );
@@ -182,7 +330,7 @@ export function WorkspaceReviewLayout({
       <div className="relative flex min-h-0 min-w-0 flex-1">
         {context.kind !== "none" && !open && <div className="absolute right-4 top-2 z-30">{controls}</div>}
         <div className="relative flex min-h-0 min-w-0 flex-1">
-          <div className="flex min-h-0 min-w-0 flex-1" aria-hidden={expanded || undefined} inert={expanded || undefined}>{workspaceContent}</div>
+          <div ref={contentRef} className="flex min-h-0 min-w-0 flex-1" aria-hidden={expanded || undefined} inert={expanded || undefined}>{workspaceContent}</div>
           {context.kind !== "none" && open && expanded && (
             <>
               <button type="button" aria-label={t("diff.closeExpandedPanel")} className={`ora-review-backdrop absolute inset-0 z-40 bg-background/45 backdrop-blur-[1.5px] ${closing ? "is-closing" : ""}`} onClick={toggleExpanded} />
