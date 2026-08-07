@@ -2,7 +2,8 @@ use regex::Regex;
 use std::error::Error;
 use std::sync::LazyLock;
 
-const MAX_CHAIN_DEPTH: usize = 16;
+const MAX_RENDERED_CHAIN_DEPTH: usize = 16;
+const MAX_CHAIN_TRAVERSAL_DEPTH: usize = 1_024;
 const MAX_NODE_CHARS: usize = 512;
 const MAX_CHAIN_CHARS: usize = 4_096;
 const TRUNCATED: &str = "[truncated]";
@@ -40,7 +41,7 @@ enum ReportRendering {
     Sanitized,
 }
 
-/// Contains a build-appropriate representation of a complete in-memory error chain.
+/// Contains a build-appropriate representation of an in-memory error chain.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ErrorReport {
     message: String,
@@ -66,11 +67,17 @@ impl ErrorReport {
         let mut chain_depth = 0;
 
         while let Some(node) = current {
+            // A custom Error implementation can form a source cycle, so traversal needs a
+            // separate hard limit even though only a small sanitized prefix is retained.
+            if chain_depth == MAX_CHAIN_TRAVERSAL_DEPTH {
+                break;
+            }
+
             chain_depth += 1;
             match rendering {
                 ReportRendering::Unrestricted => nodes.push(node.to_string()),
                 ReportRendering::Sanitized => {
-                    if nodes.len() < MAX_CHAIN_DEPTH {
+                    if nodes.len() < MAX_RENDERED_CHAIN_DEPTH {
                         nodes.push(sanitize_node(&node.to_string()));
                     }
                 }
@@ -78,8 +85,18 @@ impl ErrorReport {
             current = node.source();
         }
 
-        if rendering == ReportRendering::Sanitized && chain_depth > MAX_CHAIN_DEPTH {
-            nodes.push(TRUNCATED.to_string());
+        let hit_safety_limit = current.is_some();
+        match rendering {
+            ReportRendering::Sanitized
+                if hit_safety_limit || chain_depth > MAX_RENDERED_CHAIN_DEPTH =>
+            {
+                nodes.push(TRUNCATED.to_string());
+            }
+            // Debug keeps full node text, but still marks when the absolute traversal guard fired.
+            ReportRendering::Unrestricted if hit_safety_limit => {
+                nodes.push(TRUNCATED.to_string());
+            }
+            ReportRendering::Sanitized | ReportRendering::Unrestricted => {}
         }
 
         let message = nodes
@@ -108,7 +125,7 @@ impl ErrorReport {
         &self.chain
     }
 
-    /// Returns the complete in-memory depth even when the rendered chain is truncated.
+    /// Returns the traversed depth, saturated at the absolute source-chain safety limit.
     pub const fn chain_depth(&self) -> usize {
         self.chain_depth
     }
@@ -149,8 +166,9 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ErrorReport, ReportRendering};
+    use super::{ErrorReport, MAX_CHAIN_TRAVERSAL_DEPTH, ReportRendering};
     use pretty_assertions::assert_eq;
+    use std::fmt;
     use thiserror::Error;
 
     #[derive(Debug, Error)]
@@ -246,5 +264,34 @@ mod tests {
             report,
             ErrorReport::render(&ContextError { source: RootError }, rendering)
         );
+    }
+
+    #[derive(Debug)]
+    struct CyclicError;
+
+    impl fmt::Display for CyclicError {
+        /// Formats the stable node text used to verify bounded cyclic traversal.
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("cyclic error")
+        }
+    }
+
+    impl std::error::Error for CyclicError {
+        /// Deliberately forms an invalid source cycle to exercise the absolute traversal guard.
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(self)
+        }
+    }
+
+    /// Verifies a malformed cyclic source chain cannot hang completion logging.
+    #[test]
+    fn stops_traversing_at_the_absolute_source_chain_limit() {
+        let sanitized = ErrorReport::render(&CyclicError, ReportRendering::Sanitized);
+        assert_eq!(sanitized.chain_depth(), MAX_CHAIN_TRAVERSAL_DEPTH);
+        assert!(sanitized.chain().ends_with("[truncated]"));
+
+        let unrestricted = ErrorReport::render(&CyclicError, ReportRendering::Unrestricted);
+        assert_eq!(unrestricted.chain_depth(), MAX_CHAIN_TRAVERSAL_DEPTH);
+        assert!(unrestricted.chain().ends_with("[truncated]"));
     }
 }

@@ -332,7 +332,9 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContractError, EmptyErrorParams, PublicError, RequestId, SkillUploadTooLargeParams,
+        ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget, PublicError,
+        RequestId, SkillFolderConflictParams, SkillUploadTooLargeParams,
+        SkillUploadTooManyFilesParams, TaskBaseBranchNotFoundParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -373,5 +375,250 @@ mod tests {
                 "requestId": "550e8400-e29b-41d4-a716-446655440000",
             })
         );
+    }
+
+    /// Builds one representative value for every public error variant.
+    ///
+    /// The trailing match is exhaustive on purpose: adding a `PublicError` variant fails
+    /// compilation here until the sample list is updated, so code/serde drift cannot skip a
+    /// newly added variant.
+    fn public_error_samples() -> Vec<PublicError> {
+        let empty = EmptyErrorParams {};
+        let samples = vec![
+            PublicError::InternalError(empty),
+            PublicError::InvalidRequest(empty),
+            PublicError::SkillNameBlank(empty),
+            PublicError::SkillNameInvalid(empty),
+            PublicError::SkillNameTooLong(empty),
+            PublicError::SkillDescriptionBlank(empty),
+            PublicError::SkillDescriptionTooLarge(empty),
+            PublicError::SkillNameConflict(empty),
+            PublicError::SkillNotFound(empty),
+            PublicError::AgentNameBlank(empty),
+            PublicError::AgentNameConflict(empty),
+            PublicError::AgentNotFound(empty),
+            PublicError::ProjectNotFound(empty),
+            PublicError::ProjectOccupied(empty),
+            PublicError::ProjectWorkContextNotFound(empty),
+            PublicError::TaskNotFound(empty),
+            PublicError::ResourceInUse(empty),
+            PublicError::WorktreeRequiresGitRepository(empty),
+            PublicError::TaskBaseBranchRequired(empty),
+            PublicError::TaskBaseBranchNotFound(TaskBaseBranchNotFoundParams {
+                branch_name: "main".to_string(),
+            }),
+            PublicError::WorktreeNotFound(empty),
+            PublicError::TaskDiffBaselineUnavailable(empty),
+            PublicError::TaskDiffCommitMessageBlank(empty),
+            PublicError::TaskDiffTooLarge(empty),
+            PublicError::TaskDiffStale(empty),
+            PublicError::TaskDiffCommentNotFound(empty),
+            PublicError::TaskDiffCommentInvalid(empty),
+            PublicError::TaskDiffCommentConflict(empty),
+            PublicError::SessionNotFound(empty),
+            PublicError::AgentCliNotFound(empty),
+            PublicError::AgentRuntimeUnavailable(empty),
+            PublicError::SessionBusy(empty),
+            PublicError::SessionStopped(empty),
+            PublicError::SessionLoadUnsupported(empty),
+            PublicError::SessionHistoryDegraded(empty),
+            PublicError::SessionAgentUnchanged(empty),
+            PublicError::PermissionRequestNotPending(empty),
+            PublicError::PermissionOptionInvalid(empty),
+            PublicError::PromptEmpty(empty),
+            PublicError::PromptTooLarge(empty),
+            PublicError::TaskWorktreeUnavailable(empty),
+            PublicError::TaskProjectRootUnavailable(empty),
+            PublicError::FileSystemPathNotAbsolute(empty),
+            PublicError::FileSystemPathNotDirectory(empty),
+            PublicError::FileSystemPathNotFound(empty),
+            PublicError::FileSystemPathPermissionDenied(empty),
+            PublicError::SpecSourceInvalid(empty),
+            PublicError::SpecSourceOutsideWorkspace(empty),
+            PublicError::SpecSourceWorkspaceRoot(empty),
+            PublicError::SpecDocumentNotFound(empty),
+            PublicError::WorktreeRootNotAbsolute(empty),
+            PublicError::WorktreeRootNotDirectory(empty),
+            PublicError::OpenLocationFailed(OpenLocationFailedParams {
+                target: OpenLocationTarget::Explorer,
+            }),
+            PublicError::SkillUploadEmpty(empty),
+            PublicError::SkillUploadTooLarge(SkillUploadTooLargeParams {
+                max_bytes: 52_428_800,
+            }),
+            PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
+                max_files: 1_000,
+            }),
+            PublicError::SkillUploadPathInvalid(empty),
+            PublicError::SkillUploadPathDuplicate(empty),
+            PublicError::SkillManifestMissing(empty),
+            PublicError::SkillManifestInvalid(empty),
+            PublicError::SkillManifestNameBlank(empty),
+            PublicError::SkillManifestDescriptionBlank(empty),
+            PublicError::SkillManifestNameInvalid(empty),
+            PublicError::SkillFolderConflict(SkillFolderConflictParams {
+                name: "review".to_string(),
+            }),
+            PublicError::SkillManifestNotFound(empty),
+            PublicError::SkillManifestTooLarge(empty),
+            PublicError::TooManySkills(empty),
+            PublicError::ArchiveFormatUnsupported(empty),
+            PublicError::ArchiveFormatMismatch(empty),
+            PublicError::ArchiveCorrupt(empty),
+            PublicError::ArchiveEncryptedUnsupported(empty),
+            PublicError::ArchiveSpecialEntryUnsupported(empty),
+            PublicError::ArchivePathEncodingInvalid(empty),
+            PublicError::ArchivePathCaseConflict(empty),
+            PublicError::PathSegmentTooLong(empty),
+            PublicError::PathTooLong(empty),
+            PublicError::PathTooDeep(empty),
+            PublicError::ArchiveExpansionRatioExceeded(empty),
+            PublicError::ImportPreparationTimeout(empty),
+            PublicError::ImportSessionExpired(empty),
+            PublicError::ImportSessionCancelled(empty),
+            PublicError::ImportSessionCommitInProgress(empty),
+            PublicError::ImportSessionAlreadyCommitted(empty),
+            PublicError::SkillStorageInconsistent(empty),
+            PublicError::WorkflowNameBlank(empty),
+            PublicError::WorkflowNotFound(empty),
+            PublicError::WorkflowSnapshotNotFound(empty),
+            PublicError::WorkflowVersionAlreadyExists(empty),
+            PublicError::WorkflowVersionInvalid(empty),
+            PublicError::WorkflowVersionReserved(empty),
+            PublicError::WorkflowCannotDeleteDraft(empty),
+            PublicError::WorkflowCannotDeleteActiveVersion(empty),
+            PublicError::WorkflowActiveRuns(empty),
+            PublicError::WorkflowCannotRollbackToDraft(empty),
+            PublicError::WorkflowCannotActivateDraft(empty),
+            PublicError::WorkflowSnapshotInUse(empty),
+            PublicError::WorkflowNoPublishedSnapshot(empty),
+            PublicError::WorkflowRunCannotUseDraftSnapshot(empty),
+            PublicError::WorkflowRunNotFound(empty),
+            PublicError::WorkflowRunActive(empty),
+        ];
+
+        for error in &samples {
+            match error {
+                PublicError::InternalError(_)
+                | PublicError::InvalidRequest(_)
+                | PublicError::SkillNameBlank(_)
+                | PublicError::SkillNameInvalid(_)
+                | PublicError::SkillNameTooLong(_)
+                | PublicError::SkillDescriptionBlank(_)
+                | PublicError::SkillDescriptionTooLarge(_)
+                | PublicError::SkillNameConflict(_)
+                | PublicError::SkillNotFound(_)
+                | PublicError::AgentNameBlank(_)
+                | PublicError::AgentNameConflict(_)
+                | PublicError::AgentNotFound(_)
+                | PublicError::ProjectNotFound(_)
+                | PublicError::ProjectOccupied(_)
+                | PublicError::ProjectWorkContextNotFound(_)
+                | PublicError::TaskNotFound(_)
+                | PublicError::ResourceInUse(_)
+                | PublicError::WorktreeRequiresGitRepository(_)
+                | PublicError::TaskBaseBranchRequired(_)
+                | PublicError::TaskBaseBranchNotFound(_)
+                | PublicError::WorktreeNotFound(_)
+                | PublicError::TaskDiffBaselineUnavailable(_)
+                | PublicError::TaskDiffCommitMessageBlank(_)
+                | PublicError::TaskDiffTooLarge(_)
+                | PublicError::TaskDiffStale(_)
+                | PublicError::TaskDiffCommentNotFound(_)
+                | PublicError::TaskDiffCommentInvalid(_)
+                | PublicError::TaskDiffCommentConflict(_)
+                | PublicError::SessionNotFound(_)
+                | PublicError::AgentCliNotFound(_)
+                | PublicError::AgentRuntimeUnavailable(_)
+                | PublicError::SessionBusy(_)
+                | PublicError::SessionStopped(_)
+                | PublicError::SessionLoadUnsupported(_)
+                | PublicError::SessionHistoryDegraded(_)
+                | PublicError::SessionAgentUnchanged(_)
+                | PublicError::PermissionRequestNotPending(_)
+                | PublicError::PermissionOptionInvalid(_)
+                | PublicError::PromptEmpty(_)
+                | PublicError::PromptTooLarge(_)
+                | PublicError::TaskWorktreeUnavailable(_)
+                | PublicError::TaskProjectRootUnavailable(_)
+                | PublicError::FileSystemPathNotAbsolute(_)
+                | PublicError::FileSystemPathNotDirectory(_)
+                | PublicError::FileSystemPathNotFound(_)
+                | PublicError::FileSystemPathPermissionDenied(_)
+                | PublicError::SpecSourceInvalid(_)
+                | PublicError::SpecSourceOutsideWorkspace(_)
+                | PublicError::SpecSourceWorkspaceRoot(_)
+                | PublicError::SpecDocumentNotFound(_)
+                | PublicError::WorktreeRootNotAbsolute(_)
+                | PublicError::WorktreeRootNotDirectory(_)
+                | PublicError::OpenLocationFailed(_)
+                | PublicError::SkillUploadEmpty(_)
+                | PublicError::SkillUploadTooLarge(_)
+                | PublicError::SkillUploadTooManyFiles(_)
+                | PublicError::SkillUploadPathInvalid(_)
+                | PublicError::SkillUploadPathDuplicate(_)
+                | PublicError::SkillManifestMissing(_)
+                | PublicError::SkillManifestInvalid(_)
+                | PublicError::SkillManifestNameBlank(_)
+                | PublicError::SkillManifestDescriptionBlank(_)
+                | PublicError::SkillManifestNameInvalid(_)
+                | PublicError::SkillFolderConflict(_)
+                | PublicError::SkillManifestNotFound(_)
+                | PublicError::SkillManifestTooLarge(_)
+                | PublicError::TooManySkills(_)
+                | PublicError::ArchiveFormatUnsupported(_)
+                | PublicError::ArchiveFormatMismatch(_)
+                | PublicError::ArchiveCorrupt(_)
+                | PublicError::ArchiveEncryptedUnsupported(_)
+                | PublicError::ArchiveSpecialEntryUnsupported(_)
+                | PublicError::ArchivePathEncodingInvalid(_)
+                | PublicError::ArchivePathCaseConflict(_)
+                | PublicError::PathSegmentTooLong(_)
+                | PublicError::PathTooLong(_)
+                | PublicError::PathTooDeep(_)
+                | PublicError::ArchiveExpansionRatioExceeded(_)
+                | PublicError::ImportPreparationTimeout(_)
+                | PublicError::ImportSessionExpired(_)
+                | PublicError::ImportSessionCancelled(_)
+                | PublicError::ImportSessionCommitInProgress(_)
+                | PublicError::ImportSessionAlreadyCommitted(_)
+                | PublicError::SkillStorageInconsistent(_)
+                | PublicError::WorkflowNameBlank(_)
+                | PublicError::WorkflowNotFound(_)
+                | PublicError::WorkflowSnapshotNotFound(_)
+                | PublicError::WorkflowVersionAlreadyExists(_)
+                | PublicError::WorkflowVersionInvalid(_)
+                | PublicError::WorkflowVersionReserved(_)
+                | PublicError::WorkflowCannotDeleteDraft(_)
+                | PublicError::WorkflowCannotDeleteActiveVersion(_)
+                | PublicError::WorkflowActiveRuns(_)
+                | PublicError::WorkflowCannotRollbackToDraft(_)
+                | PublicError::WorkflowCannotActivateDraft(_)
+                | PublicError::WorkflowSnapshotInUse(_)
+                | PublicError::WorkflowNoPublishedSnapshot(_)
+                | PublicError::WorkflowRunCannotUseDraftSnapshot(_)
+                | PublicError::WorkflowRunNotFound(_)
+                | PublicError::WorkflowRunActive(_) => {}
+            }
+        }
+
+        samples
+    }
+
+    /// Verifies the manually exposed code cannot drift from Serde's tagged representation.
+    #[test]
+    fn public_error_codes_match_serde_tags_for_every_variant() {
+        let samples = public_error_samples();
+        assert_eq!(samples.len(), 100);
+
+        for error in samples {
+            let serialized = serde_json::to_value(&error).unwrap();
+
+            assert_eq!(
+                serialized.get("code").and_then(serde_json::Value::as_str),
+                Some(error.code()),
+                "code mismatch for {error:?}"
+            );
+        }
     }
 }

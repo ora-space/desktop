@@ -24,7 +24,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use crate::{
-    CascadeDeleteOutcome, DatabaseBootstrapper, DatabaseLocation, RepositoryPool,
+    CascadeDeleteOutcome, DatabaseBootstrapper, DatabaseError, DatabaseLocation, RepositoryPool,
     SqliteAgentDefinitionRepository, SqliteCascadeRepository, SqliteProjectRepository,
     SqliteProjectSpecSourceOverrideRepository, SqliteProjectWorkContextRepository,
     SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository, SqliteWorkflowRepository,
@@ -1887,6 +1887,10 @@ fn worktree_repository_reports_row_mapping_failures() {
 fn assert_repository_source(error: RepositoryError, expected: &str) {
     let source = std::error::Error::source(&error).expect("repository source must be retained");
     assert_eq!(source.to_string(), expected);
+    assert!(
+        source.downcast_ref::<DatabaseError>().is_some(),
+        "repository source must be the concrete DatabaseError, got {source:?}"
+    );
 }
 
 /// Bootstraps a file-backed SQLite database and returns the ready repository pool.
