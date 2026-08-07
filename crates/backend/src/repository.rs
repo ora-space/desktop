@@ -1123,6 +1123,8 @@ mod tests {
             worktree_root: temporary.path().join("worktrees"),
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open backend");
         let project = backend
@@ -1199,6 +1201,8 @@ mod tests {
             worktree_root: temporary.path().join("worktrees"),
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open backend");
         let project_id = backend
@@ -1288,6 +1292,8 @@ mod tests {
             worktree_root: temporary.path().join("worktrees"),
             home_directory: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms").join("skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
         })
         .expect("open backend");
         let project_id = backend
