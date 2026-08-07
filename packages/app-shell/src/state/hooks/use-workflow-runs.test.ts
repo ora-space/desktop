@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { waitFor } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { createMockClient, createMockClientState, type MockClientState } from "../../test/mock-client";
 import { buildDisplayRun, useDeleteWorkflowRun, useRealWorkflowRun, useRenameWorkflowRun, useWorkflowRunsByProject } from "./use-workflow-runs";
@@ -146,7 +147,7 @@ describe("useRealWorkflowRun", () => {
     }];
     const client = createMockClient(state);
     const { result } = renderHookWithClient(() => useRealWorkflowRun("run-1"), client);
-    await vi.waitFor(() => expect(result.current.data).toBeDefined());
+    await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.data?.taskId).toBe("t1");
     expect(result.current.data?.run.id).toBe("run-1");
     expect(result.current.data?.run.name).toBe("审查流程 1");
@@ -158,7 +159,7 @@ describe("persisted run hooks", () => {
     const state = seededState();
     const client = createMockClient(state);
     const { result } = renderHookWithClient(() => useWorkflowRunsByProject("p1"), client);
-    await vi.waitFor(() => expect(result.current.data).toBeDefined());
+    await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.data).toEqual([{
       id: "run-1",
       name: "审查流程 1",

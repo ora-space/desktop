@@ -49,23 +49,28 @@ export function WorkspaceReviewLayout({
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRequestSequence = useRef(0);
   const onOpenChangeRef = useRef(onOpenChange);
+  const skipOpenNotifyRef = useRef(true);
   const taskId = context.kind === "task" ? context.taskId : undefined;
   const contextKey = context.kind === "none" ? "none" : context.kind === "project" ? `project:${context.projectId}` : `task:${context.taskId}`;
 
-  // Keep the latest open-change listener for setState updaters without recreating them.
+  // Keep the latest open-change listener for effect notifications.
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
   });
 
   const setReviewOpen = useCallback((next: boolean) => {
-    setOpen((current) => {
-      if (current === next) {
-        return current;
-      }
-      onOpenChangeRef.current?.(next);
-      return next;
-    });
+    setOpen((current) => (current === next ? current : next));
   }, []);
+
+  // Notify the parent after paint so we never setState on the parent during this
+  // layout's render (React forbids updating WorkflowRunWorkspace from here).
+  useEffect(() => {
+    if (skipOpenNotifyRef.current) {
+      skipOpenNotifyRef.current = false;
+      return;
+    }
+    onOpenChangeRef.current?.(open);
+  }, [open]);
 
   const close = useCallback(() => {
     if (closeTimer.current !== null) clearTimeout(closeTimer.current);
@@ -78,12 +83,10 @@ export function WorkspaceReviewLayout({
 
   // React permits guarded render-time adjustment for state that is directly tied to
   // a prop. Closing here prevents one frame of stale review UI without an effect loop.
+  // Parent notification happens via the `open` effect above — do not call onOpenChange here.
   if (context.kind !== previousContextKind) {
     setPreviousContextKind(context.kind);
     if (context.kind === "none") {
-      if (open) {
-        onOpenChange?.(false);
-      }
       setOpen(false);
       setExpanded(false);
       setClosing(false);

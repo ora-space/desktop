@@ -193,7 +193,9 @@ export function useWorkflowDraftAutosave({
     if (!dirtyRef.current) {
       return;
     }
-    void saveRef.current();
+    // Swallow rejection: unmount must not leave an unhandled rejection on stderr
+    // after the suite already passed (run-with-clean-stderr treats that as fail).
+    void saveRef.current().catch(() => undefined);
   }, [clearTimer]);
 
   return { status, markDirty, flush, cancel };
