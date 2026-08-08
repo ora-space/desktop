@@ -11,8 +11,8 @@
 
 use crate::error::CommandError;
 use crate::state::DesktopState;
-use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
 use ora_backend::{BackendError, ErrorClassification};
+use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::State;
@@ -42,9 +42,9 @@ pub fn dashboard_agent_type(agent_cli: ContractAgentCli) -> DashboardAgentType {
         // Claude, CodeAgentCli, and Codex all emit Claude-Code-compatible transcripts
         // (JSONL / stream-json), so the claude_code parser covers them until a dedicated
         // Codex trace format is introduced.
-        ContractAgentCli::CodeAgentCli
-        | ContractAgentCli::Claude
-        | ContractAgentCli::Codex => DashboardAgentType::ClaudeCode,
+        ContractAgentCli::CodeAgentCli | ContractAgentCli::Claude | ContractAgentCli::Codex => {
+            DashboardAgentType::ClaudeCode
+        }
     }
 }
 
@@ -90,7 +90,11 @@ pub fn write_locator(
         .unwrap_or_else(|| PathBuf::from("."));
     let mut temp = tempfile::NamedTempFile::new_in(&temp_directory)?;
     use std::io::Write;
-    write!(temp, "{}", serde_json::to_string_pretty(locator).map_err(std::io::Error::other)?)?;
+    write!(
+        temp,
+        "{}",
+        serde_json::to_string_pretty(locator).map_err(std::io::Error::other)?
+    )?;
     temp.write_all(b"\n")?;
     temp.as_file().sync_all()?;
     temp.persist(&target).map(|_| ()).map_err(|e| e.error)
@@ -98,15 +102,31 @@ pub fn write_locator(
 
 /// Locates the Claude Code transcript JSONL for one agent session id.
 ///
-/// Claude auto-saves every interactive session to
-/// `~/.claude/projects/<project-hash>/<claude-session-id>.jsonl`; the project hash
-/// is derived from the working directory and is not worth recomputing, so this
-/// scans every project directory and matches by file name (the agent session id).
+/// Every Claude-Code-compatible fork auto-saves interactive sessions to
+/// `<home>/<config>/projects/<project-hash>/<session-id>.jsonl`, but the config
+/// directory is fork-specific: stock Claude Code and Codex use `.claude`, while
+/// the `codeagentcli` fork uses `.cac` (its data directory, distinct from the
+/// `~/.codeagentcli` binary install dir). Ora launches these CLIs over stdio
+/// without passing a config dir, so each fork's default must be resolved here.
+/// The project hash is derived from the working directory and is not worth
+/// recomputing, so this scans every project directory under the CLI's projects
+/// root and matches by file name (the agent session id).
 pub fn resolve_claude_code_trace(
+    agent_cli: ContractAgentCli,
     home_directory: &Path,
     agent_session_id: &str,
 ) -> Result<Option<PathBuf>, std::io::Error> {
-    let projects_root = home_directory.join(".claude").join("projects");
+    let config_directory = match agent_cli {
+        ContractAgentCli::CodeAgentCli => ".cac",
+        // Stock Claude and Codex use `.claude`; the opencode family never reaches
+        // here (routed to `resolve_opencode_trace`) but is listed for an exhaustive
+        // match over the contract enum.
+        ContractAgentCli::Claude
+        | ContractAgentCli::Codex
+        | ContractAgentCli::OpenCode
+        | ContractAgentCli::Nga => ".claude",
+    };
+    let projects_root = home_directory.join(config_directory).join("projects");
     if !projects_root.is_dir() {
         return Ok(None);
     }
@@ -142,19 +162,22 @@ pub fn resolve_opencode_trace(
     Ok(candidate.is_file().then_some(candidate))
 }
 
-/// Resolves the agent-written trace file for one locator, by agent family.
+/// Resolves the agent-written trace file for one session, by agent family.
+///
+/// Dispatches on the dashboard agent family derived from `agent_cli`. The
+/// Claude-Code family additionally needs the full CLI identity to pick its
+/// fork-specific projects root, so the contract CLI is threaded in directly
+/// rather than the collapsed `DashboardAgentType`.
 pub fn resolve_trace_file(
-    agent_type: DashboardAgentType,
+    agent_cli: ContractAgentCli,
     home_directory: &Path,
     agent_session_id: &str,
 ) -> Result<Option<PathBuf>, std::io::Error> {
-    match agent_type {
+    match dashboard_agent_type(agent_cli) {
         DashboardAgentType::ClaudeCode => {
-            resolve_claude_code_trace(home_directory, agent_session_id)
+            resolve_claude_code_trace(agent_cli, home_directory, agent_session_id)
         }
-        DashboardAgentType::Opencode => {
-            resolve_opencode_trace(home_directory, agent_session_id)
-        }
+        DashboardAgentType::Opencode => resolve_opencode_trace(home_directory, agent_session_id),
     }
 }
 
@@ -164,10 +187,10 @@ pub fn resolve_trace_file(
 /// `resolve_claude_code_trace`) can short-circuit without reading the whole tree.
 /// Unreadable subdirectories are logged and skipped so one permission issue does
 /// not abort the entire scan.
-fn walkdir_files(root: &Path) -> Box<dyn Iterator<Item = PathBuf>> {
-    Box::new(WalkDirIter {
+fn walkdir_files(root: &Path) -> WalkDirIter {
+    WalkDirIter {
         stack: vec![root.to_path_buf()],
-    })
+    }
 }
 
 /// Stateful depth-first file iterator backed by a path stack.
@@ -179,21 +202,22 @@ impl Iterator for WalkDirIter {
     type Item = PathBuf;
 
     fn next(&mut self) -> Option<PathBuf> {
-        while let Some(dir) = self.stack.pop() {
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(rd) => rd,
-                Err(e) => {
-                    tracing::warn!(?dir, ?e, "skipping unreadable directory during trace scan");
-                    continue;
+        while let Some(path) = self.stack.pop() {
+            if path.is_dir() {
+                match std::fs::read_dir(&path) {
+                    Ok(entries) => self
+                        .stack
+                        .extend(entries.flatten().map(|entry| entry.path())),
+                    Err(error) => {
+                        tracing::warn!(
+                            ?path,
+                            ?error,
+                            "skipping unreadable directory during trace scan"
+                        );
+                    }
                 }
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    self.stack.push(path);
-                } else {
-                    return Some(path);
-                }
+            } else {
+                return Some(path);
             }
         }
         None
@@ -203,9 +227,7 @@ impl Iterator for WalkDirIter {
 /// Asserts an Ora session id cannot escape its locator directory via path traversal.
 fn debug_assert_path_safe(id: &str) {
     debug_assert!(
-        !id.contains('/')
-            && !id.contains('\\')
-            && !id.contains(".."),
+        !id.contains('/') && !id.contains('\\') && !id.contains(".."),
         "ora_session_id must not contain path separators or traversal segments: {id:?}",
     );
 }
@@ -268,7 +290,7 @@ pub async fn get_dashboard_url(
     let agent_type = dashboard_agent_type(locator_info.agent_cli);
 
     let trace_file_path = match resolve_trace_file(
-        agent_type,
+        locator_info.agent_cli,
         &locator_info.home_directory,
         &locator_info.agent_session_id,
     ) {
@@ -280,7 +302,7 @@ pub async fn get_dashboard_url(
                 ErrorClassification::Internal,
                 PublicError::InternalError(EmptyErrorParams {}),
                 "failed to scan the agent trace directory",
-            )))
+            )));
         }
     };
 
@@ -463,16 +485,13 @@ mod tests {
         fs::write(p1.join("other-session.jsonl"), b"{}").expect("write other session");
         fs::write(p2.join("target-session.jsonl"), b"{}").expect("write target session");
 
-        let resolved = resolve_claude_code_trace(&home, "target-session")
+        let resolved = resolve_claude_code_trace(ContractAgentCli::Claude, &home, "target-session")
             .expect("scan transcripts")
             .expect("target session should be found");
-        assert_eq!(
-            resolved,
-            p2.join("target-session.jsonl")
-        );
+        assert_eq!(resolved, p2.join("target-session.jsonl"));
 
         assert!(
-            resolve_claude_code_trace(&home, "missing")
+            resolve_claude_code_trace(ContractAgentCli::Claude, &home, "missing")
                 .expect("scan transcripts")
                 .is_none(),
             "missing session resolves to None"
@@ -485,10 +504,68 @@ mod tests {
         let temporary = TempDir::new().expect("create temporary home directory");
         let home = temporary.path().to_path_buf();
         assert!(
-            resolve_claude_code_trace(&home, "any")
+            resolve_claude_code_trace(ContractAgentCli::Claude, &home, "any")
                 .expect("scan transcripts")
                 .is_none()
         );
+    }
+
+    /// Verifies codeagentcli transcripts are discovered under ~/.cac/projects, not
+    /// ~/.claude/projects, so the fork's separate data directory is respected.
+    #[test]
+    fn resolves_codeagentcli_trace_under_cac_projects_root() {
+        let temporary = TempDir::new().expect("create temporary home directory");
+        let home = temporary.path().to_path_buf();
+        // codeagentcli writes under .cac; stock Claude would write under .claude.
+        // Both hold a same-named file to prove each CLI scans only its own root.
+        let cac_projects = home.join(".cac").join("projects").join("hash");
+        let claude_projects = home.join(".claude").join("projects").join("hash");
+        fs::create_dir_all(&cac_projects).expect("create codeagentcli project dir");
+        fs::create_dir_all(&claude_projects).expect("create stock claude project dir");
+        for sibling in ["older-session.jsonl", "newer-session.jsonl"] {
+            fs::write(cac_projects.join(sibling), b"{}")
+                .expect("write sibling codeagentcli transcript");
+        }
+        fs::write(cac_projects.join("xc-session.jsonl"), b"{}")
+            .expect("write codeagentcli transcript");
+        fs::write(claude_projects.join("xc-session.jsonl"), b"{}")
+            .expect("write stock claude transcript");
+
+        let resolved =
+            resolve_claude_code_trace(ContractAgentCli::CodeAgentCli, &home, "xc-session")
+                .expect("scan transcripts")
+                .expect("codeagentcli session should be found under .cac");
+        assert_eq!(resolved, cac_projects.join("xc-session.jsonl"));
+
+        // Stock Claude must still resolve from .claude, proving the two CLIs are
+        // isolated by their fork-specific projects root.
+        let claude_resolved =
+            resolve_claude_code_trace(ContractAgentCli::Claude, &home, "xc-session")
+                .expect("scan transcripts")
+                .expect("stock claude session should be found under .claude");
+        assert_eq!(claude_resolved, claude_projects.join("xc-session.jsonl"));
+    }
+
+    /// Verifies transcript discovery does not discard sibling files after yielding
+    /// the first directory entry, because one project normally owns many sessions.
+    #[test]
+    fn walks_every_trace_file_in_the_same_project_directory() {
+        let temporary = TempDir::new().expect("create temporary projects directory");
+        let project = temporary.path().join("project-hash");
+        fs::create_dir_all(&project).expect("create project directory");
+        let mut expected = vec![
+            project.join("session-one.jsonl"),
+            project.join("session-two.jsonl"),
+            project.join("session-three.jsonl"),
+        ];
+        for path in &expected {
+            fs::write(path, b"{}").expect("write session transcript");
+        }
+
+        let mut actual = walkdir_files(temporary.path()).collect::<Vec<_>>();
+        expected.sort();
+        actual.sort();
+        assert_eq!(actual, expected);
     }
 
     /// Verifies the opencode trace-logger file is resolved by its single known path.
@@ -502,8 +579,7 @@ mod tests {
             .join("opencode")
             .join("trace");
         fs::create_dir_all(&trace_dir).expect("create trace directory");
-        fs::write(trace_dir.join("ses_abc.ndjson"), b"{}")
-            .expect("write trace file");
+        fs::write(trace_dir.join("ses_abc.ndjson"), b"{}").expect("write trace file");
 
         let resolved = resolve_opencode_trace(&home, "ses_abc")
             .expect("resolve opencode trace")
@@ -518,40 +594,48 @@ mod tests {
         );
     }
 
-    /// Verifies the trace dispatcher routes each agent family to its resolver.
+    /// Verifies the trace dispatcher routes each agent family and CLI to its resolver.
     #[test]
     fn resolve_trace_file_dispatches_by_agent_family() {
         let temporary = TempDir::new().expect("create temporary home directory");
         let home = temporary.path().to_path_buf();
 
         // opencode trace file present.
-        let oc_dir = home.join(".local").join("share").join("opencode").join("trace");
+        let oc_dir = home
+            .join(".local")
+            .join("share")
+            .join("opencode")
+            .join("trace");
         fs::create_dir_all(&oc_dir).expect("create opencode trace dir");
         fs::write(oc_dir.join("ses_oc.ndjson"), b"{}").expect("write opencode trace");
-        let oc = resolve_trace_file(DashboardAgentType::Opencode, &home, "ses_oc")
+        let oc = resolve_trace_file(ContractAgentCli::OpenCode, &home, "ses_oc")
             .expect("dispatch opencode")
             .expect("opencode trace should be found");
         assert_eq!(oc, oc_dir.join("ses_oc.ndjson"));
 
-        // claude transcript present.
+        // stock claude transcript present under .claude.
         let cc_dir = home.join(".claude").join("projects").join("hash-one");
         fs::create_dir_all(&cc_dir).expect("create claude project dir");
         fs::write(cc_dir.join("cc-sess.jsonl"), b"{}").expect("write claude transcript");
-        let cc = resolve_trace_file(DashboardAgentType::ClaudeCode, &home, "cc-sess")
+        let cc = resolve_trace_file(ContractAgentCli::Claude, &home, "cc-sess")
             .expect("dispatch claude")
             .expect("claude transcript should be found");
         assert_eq!(cc, cc_dir.join("cc-sess.jsonl"));
+
+        // codeagentcli transcript present under .cac (its fork-specific data dir).
+        let xc_dir = home.join(".cac").join("projects").join("hash-two");
+        fs::create_dir_all(&xc_dir).expect("create codeagentcli project dir");
+        fs::write(xc_dir.join("xc-sess.jsonl"), b"{}").expect("write codeagentcli transcript");
+        let xc = resolve_trace_file(ContractAgentCli::CodeAgentCli, &home, "xc-sess")
+            .expect("dispatch codeagentcli")
+            .expect("codeagentcli transcript should be found");
+        assert_eq!(xc, xc_dir.join("xc-sess.jsonl"));
     }
 
     /// Verifies the IPv6 loopback host is bracketed in the dashboard URL.
     #[test]
     fn brackets_ipv6_loopback_in_dashboard_url() {
-        let url = dashboard_url(
-            "::1",
-            8601,
-            "sess-1",
-            DashboardAgentType::Opencode,
-        );
+        let url = dashboard_url("::1", 8601, "sess-1", DashboardAgentType::Opencode);
         assert!(url.starts_with("http://[::1]:8601/"), "got {url}");
     }
 
