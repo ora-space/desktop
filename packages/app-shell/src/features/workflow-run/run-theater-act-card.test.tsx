@@ -122,6 +122,7 @@ describe("RunTheaterActCard conversation", () => {
               executor: { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
               roleId: "researcher",
               skills: [],
+              mcps: [],
               prompt: longPrompt,
             },
           }}

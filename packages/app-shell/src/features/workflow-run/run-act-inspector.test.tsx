@@ -23,6 +23,7 @@ const AGENT_DATA: WorkflowNodeData = {
       { skillId: "sk-explore", enabled: true },
       { skillId: "sk-disabled", enabled: false },
     ],
+    mcps: [],
     prompt: "阅读相关代码并输出风险。",
   },
 };

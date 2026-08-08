@@ -53,7 +53,7 @@ React Flow–based canvas for the session-only settings workflow demo.
 - React Flow owns selection semantics and performs node/edge deletion through
   `deleteElements`, including removal of incident edges.
 - Executable fields use React Flow's supported `node.data` extension point.
-  Agent nodes store their versioned executor, Role, Skill, and prompt
+  Agent nodes store their versioned executor, Role, Skill, MCP, and prompt
   configuration in `agentConfig` rather than in card UI state.
 - Editor cards render populated execution fields as read-only parameter summaries;
   the right inspector remains the single surface for changing those fields.

@@ -92,5 +92,12 @@ function isWorkflowAgentConfig(value: unknown): value is WorkflowAgentConfig {
       && skill.skillId.trim() !== ""
       && typeof skill.enabled === "boolean")
     && new Set(config.skills.map((skill) => skill.skillId)).size === config.skills.length
+    && Array.isArray(config.mcps)
+    && config.mcps.every((mcp) => typeof mcp === "object"
+      && mcp !== null
+      && typeof mcp.mcpId === "string"
+      && mcp.mcpId.trim() !== ""
+      && typeof mcp.enabled === "boolean")
+    && new Set(config.mcps.map((mcp) => mcp.mcpId)).size === config.mcps.length
     && typeof config.prompt === "string";
 }

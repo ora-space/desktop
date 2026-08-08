@@ -24,6 +24,7 @@ describe("agent-config-display", () => {
         executor: { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
         roleId: "researcher",
         skills: [],
+        mcps: [],
         prompt: "梳理现状与风险。",
       },
     };
@@ -43,6 +44,7 @@ describe("agent-config-display", () => {
         executor: { agentCli: "open_code", modelId: "ignored" },
         roleId: "reviewer",
         skills: [],
+        mcps: [],
         prompt: "Unused prompt",
       },
     };

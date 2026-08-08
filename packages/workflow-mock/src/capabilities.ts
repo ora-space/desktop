@@ -22,6 +22,8 @@ export interface WorkflowCapabilities {
   agentModels: WorkflowAgentModel[];
   roles: WorkflowChoice[];
   skills: WorkflowChoice[];
+  /** MCP catalog choices for Agent node attachments (optional per node). */
+  mcps: WorkflowChoice[];
   tools: WorkflowChoice[];
   defaultModel: string;
   defaultAgentConfig: WorkflowAgentConfig;
@@ -84,6 +86,14 @@ const MOCK_AGENT_SKILLS: WorkflowChoice[] = [
   "code-defect-scan",
 ].map((value) => ({ value, label: value }));
 
+const MOCK_AGENT_MCPS: WorkflowChoice[] = [
+  { value: "filesystem", label: "Filesystem" },
+  { value: "github", label: "GitHub" },
+  { value: "browser", label: "Browser" },
+  { value: "postgres", label: "Postgres" },
+  { value: "notion", label: "Notion" },
+];
+
 /**
  * Returns prototype workflow capabilities, optionally using models discovered
  * by the backend while retaining local Role and Skill catalogs until their
@@ -121,6 +131,7 @@ export function createMockWorkflowCapabilities(
     agentModels,
     roles: MOCK_AGENT_ROLES,
     skills: MOCK_AGENT_SKILLS,
+    mcps: MOCK_AGENT_MCPS,
     tools,
     defaultModel: models[0].value,
     defaultAgentConfig: {
@@ -131,6 +142,7 @@ export function createMockWorkflowCapabilities(
       },
       roleId: MOCK_AGENT_ROLES[0]!.value,
       skills: [],
+      mcps: [],
       prompt: "",
     },
     defaultTool: tools[0].value,

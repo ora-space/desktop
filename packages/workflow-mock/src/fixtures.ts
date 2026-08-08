@@ -28,6 +28,7 @@ function createAgentConfig(
     executor: options.executor ?? { agentCli: "code_agent_cli", modelId: "gpt-5" },
     roleId,
     skills: (options.skillIds ?? []).map((skillId) => ({ skillId, enabled: true })),
+    mcps: [],
     prompt,
   };
 }

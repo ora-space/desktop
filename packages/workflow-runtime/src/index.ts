@@ -17,6 +17,7 @@ export type {
   WorkflowArtifact,
   WorkflowArtifactKind,
   WorkflowAgentConfig,
+  WorkflowAgentMcpConfig,
   WorkflowAgentSkillConfig,
   WorkflowDefinition,
   WorkflowDefinitionEdge,

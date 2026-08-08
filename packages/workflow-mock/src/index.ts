@@ -4,5 +4,6 @@ export * from "./fixtures";
 export * from "./node-data";
 export * from "./node-factory";
 export * from "./node-layout";
+export * from "./normalize-agent-config";
 export * from "./validation";
 export * from "./version-history";

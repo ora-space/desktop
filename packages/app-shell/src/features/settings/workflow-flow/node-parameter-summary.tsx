@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { type WorkflowNodeData } from "@ora/workflow-mock";
 import { useAgents } from "../../../state/hooks/use-agents";
 import { useSkills } from "../../../state/hooks/use-skills";
+import { MCP_CATALOG } from "../mcp-catalog";
 
 interface NodeParameter {
   label: string;
@@ -15,7 +16,8 @@ export function WorkflowNodeParameterSummary({ data }: { data: WorkflowNodeData 
   const skillsQuery = useSkills();
   const agentNameById = new Map((agentsQuery.data ?? []).map((agent) => [agent.id, agent.name]));
   const skillNameById = new Map((skillsQuery.data ?? []).map((skill) => [skill.id, skill.name]));
-  const parameters = configuredParameters(data, t, agentNameById, skillNameById);
+  const mcpNameById = new Map(MCP_CATALOG.map((mcp) => [mcp.id, mcp.name]));
+  const parameters = configuredParameters(data, t, agentNameById, skillNameById, mcpNameById);
 
   if (parameters.length === 0) {
     return null;
@@ -53,12 +55,16 @@ function configuredParameters(
   t: (key: string) => string,
   agentNameById: ReadonlyMap<string, string>,
   skillNameById: ReadonlyMap<string, string>,
+  mcpNameById: ReadonlyMap<string, string>,
 ): NodeParameter[] {
   const parameters: NodeParameter[] = [];
   if (data.kind === "agent" && data.agentConfig !== undefined) {
-    const enabledSkills = data.agentConfig.skills
+    const enabledSkills = (data.agentConfig.skills ?? [])
       .filter((skill) => skill.enabled)
       .map((skill) => skillNameById.get(skill.skillId) ?? skill.skillId);
+    const enabledMcps = (data.agentConfig.mcps ?? [])
+      .filter((mcp) => mcp.enabled)
+      .map((mcp) => mcpNameById.get(mcp.mcpId) ?? mcp.mcpId);
     parameters.push(
       {
         label: t("settings.workflow.field.role"),
@@ -73,6 +79,12 @@ function configuredParameters(
       parameters.push({
         label: t("settings.workflow.field.skills"),
         values: enabledSkills.slice(0, 3),
+      });
+    }
+    if (enabledMcps.length > 0) {
+      parameters.push({
+        label: t("settings.workflow.field.mcps"),
+        values: enabledMcps.slice(0, 3),
       });
     }
     return parameters;

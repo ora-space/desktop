@@ -27,6 +27,7 @@ function createAgentNode(): Node<WorkflowNodeData, "workflow"> {
         },
         roleId: "Researcher",
         skills: [{ skillId: "openspec-explore", enabled: true }],
+        mcps: [],
         prompt: "阅读相关代码、文档和现有规范，输出现状、约束、风险与可选路径。",
       },
     },
@@ -82,7 +83,9 @@ describe("WorkflowInspector layout", () => {
 
     const addSkill = screen.getByRole("button", { name: "添加 Skill" });
     expect(addSkill).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加 MCP" })).toBeInTheDocument();
     expect(screen.getByText(/1\/1/)).toBeInTheDocument();
+    expect(screen.getByText("暂未配置 MCP（可选）")).toBeInTheDocument();
     expect(screen.getByRole("switch", {
       name: "启用或禁用 openspec-explore",
     })).toBeInTheDocument();

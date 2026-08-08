@@ -16,6 +16,12 @@ export interface WorkflowAgentSkillConfig {
   enabled: boolean;
 }
 
+/** Stores one configured MCP binding and whether it is available during execution. */
+export interface WorkflowAgentMcpConfig {
+  mcpId: string;
+  enabled: boolean;
+}
+
 /** Stores the execution contract for an Agent node without relying on display labels. */
 export interface WorkflowAgentConfig {
   schemaVersion: 3;
@@ -25,6 +31,8 @@ export interface WorkflowAgentConfig {
   };
   roleId: string;
   skills: WorkflowAgentSkillConfig[];
+  /** Optional MCP attachments; empty means the node uses no MCP servers. */
+  mcps: WorkflowAgentMcpConfig[];
   prompt: string;
 }
 

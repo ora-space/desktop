@@ -39,6 +39,7 @@ import {
 import {
   createMockWorkflowCapabilities,
   createMockWorkflowNode,
+  normalizeWorkflowNodeAgentConfigs,
   type DemoWorkflow,
   type MockWorkflowVersion,
   type WorkflowCapabilities,
@@ -60,6 +61,7 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowManager } from "./workflow-manager";
+import { MCP_CATALOG } from "./mcp-catalog";
 import {
   useActivateWorkflow,
   useCreateWorkflow,
@@ -184,6 +186,10 @@ function WorkflowSettingsContent({
       value: skill.id,
       label: skill.name,
     }));
+    const mcps = MCP_CATALOG.map((mcp) => ({
+      value: mcp.id,
+      label: mcp.name,
+    }));
     const agentModels = agentModelsCatalog.agentModels;
     const defaultExecutor = agentModels[0];
     return {
@@ -191,6 +197,7 @@ function WorkflowSettingsContent({
       agentModels,
       roles,
       skills,
+      mcps,
       defaultAgentConfig: {
         ...baseCapabilities.defaultAgentConfig,
         ...(defaultExecutor === undefined
@@ -202,6 +209,7 @@ function WorkflowSettingsContent({
             },
           }),
         roleId: roles[0]?.value ?? baseCapabilities.defaultAgentConfig.roleId,
+        mcps: [],
       },
     };
   }, [
@@ -290,33 +298,35 @@ function WorkflowSettingsContent({
     const envelope = parseWorkflowGraph(draftQuery.data.draft.graph);
     // Persisted drafts may reference a model that is no longer available. Keep the
     // selected CLI stable and only substitute a discovered model for that same CLI.
-    const nodes = capabilitiesOverride !== undefined || availableAgentModels.length === 0
-      ? envelope.nodes
-      : envelope.nodes.map((node) => {
-        if (node.data.kind !== "agent" || node.data.agentConfig === undefined) {
-          return node;
-        }
-        const { agentCli, modelId } = node.data.agentConfig.executor;
-        if (availableAgentModels.some((model) =>
-          model.agentCli === agentCli && model.modelId === modelId,
-        )) {
-          return node;
-        }
-        const modelForCli = availableAgentModels.find((model) => model.agentCli === agentCli);
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            agentConfig: {
-              ...node.data.agentConfig,
-              executor: {
-                agentCli,
-                modelId: modelForCli?.modelId ?? modelId,
+    const nodes = normalizeWorkflowNodeAgentConfigs(
+      capabilitiesOverride !== undefined || availableAgentModels.length === 0
+        ? envelope.nodes
+        : envelope.nodes.map((node) => {
+          if (node.data.kind !== "agent" || node.data.agentConfig === undefined) {
+            return node;
+          }
+          const { agentCli, modelId } = node.data.agentConfig.executor;
+          if (availableAgentModels.some((model) =>
+            model.agentCli === agentCli && model.modelId === modelId,
+          )) {
+            return node;
+          }
+          const modelForCli = availableAgentModels.find((model) => model.agentCli === agentCli);
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              agentConfig: {
+                ...node.data.agentConfig,
+                executor: {
+                  agentCli,
+                  modelId: modelForCli?.modelId ?? modelId,
+                },
               },
             },
-          },
-        };
-      });
+          };
+        }),
+    );
     setWorkflow({
       id: draftQuery.data.workflow.id,
       name: draftQuery.data.workflow.name,
