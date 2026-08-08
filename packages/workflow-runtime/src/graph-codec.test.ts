@@ -84,6 +84,28 @@ describe("graph envelope codec", () => {
       customMetadata: { owner: "rhythm" },
     });
   });
+
+  it("upgrades legacy prompt and model nodes to the agent kind on parse", () => {
+    const graph = JSON.stringify({
+      nodes: [
+        {
+          ...node,
+          data: { kind: "prompt", title: "理解改动", description: "LLM 推理" },
+        },
+        {
+          ...node,
+          data: { kind: "model", title: "总结", description: "LLM 推理" },
+        },
+      ],
+      edges: [edge],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    expect(parseWorkflowGraph(graph).nodes.map((item) => item.data)).toEqual([
+      expect.objectContaining({ kind: "agent", title: "理解改动" }),
+      expect.objectContaining({ kind: "agent", title: "总结" }),
+    ]);
+  });
 });
 
 describe("workflow timestamp projection", () => {

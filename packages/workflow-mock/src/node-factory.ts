@@ -43,14 +43,26 @@ function createMockNodeExecutionData(
   kind: WorkflowNodeKind,
   locale: "zh-CN" | "en-US",
   agentConfig: WorkflowAgentConfig | undefined,
-): Pick<WorkflowNodeData, "agentConfig" | "instruction" | "model" | "tool" | "condition"> {
+): Pick<
+  WorkflowNodeData,
+  | "agentConfig"
+  | "instruction"
+  | "trigger"
+  | "tool"
+  | "condition"
+  | "waitStrategy"
+  | "failureStrategy"
+  | "maxAttempts"
+  | "exitCondition"
+> {
   const capabilities = createMockWorkflowCapabilities(locale);
   switch (kind) {
     case "start":
+      return { instruction: "", trigger: capabilities.defaultTrigger };
     case "output":
+    case "human":
+    case "subflow":
       return { instruction: "" };
-    case "prompt":
-      return { instruction: "", model: capabilities.defaultModel };
     case "agent":
       return { agentConfig: structuredClone(agentConfig ?? capabilities.defaultAgentConfig) };
     case "condition":
@@ -60,5 +72,9 @@ function createMockNodeExecutionData(
       };
     case "tool":
       return { instruction: "", tool: capabilities.defaultTool };
+    case "junction":
+      return { instruction: "", waitStrategy: "all", failureStrategy: "fail" };
+    case "loop":
+      return { instruction: "", maxAttempts: 3, exitCondition: "" };
   }
 }

@@ -5,3 +5,10 @@ export type {
 } from "./card-shell";
 export { getNodeMetadata } from "./metadata";
 export type { WorkflowNodeMetadata } from "./metadata";
+export {
+  conditionBranchesSummary,
+  createWorkflowSummaryLabels,
+  junctionFailureStrategyLabel,
+  junctionWaitStrategyLabel,
+} from "./node-summary";
+export type { WorkflowSummaryLabels } from "./node-summary";

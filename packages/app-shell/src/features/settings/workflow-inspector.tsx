@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconCheck,
@@ -19,15 +19,9 @@ import {
   CommandItem,
   CommandList,
   Input,
-  Label,
   Popover,
   PopoverContent,
   PopoverTrigger,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Switch,
   Textarea,
 } from "@ora/ui";
@@ -43,6 +37,7 @@ import { AGENT_CLI_LABELS, AGENT_CLI_ORDER } from "../chat/model-catalog";
 import { ProviderLogo } from "../chat/provider-logos";
 import type { WorkflowAgentCliStatus } from "../../state/hooks/use-workflow-agent-models";
 import { getNodeMetadata } from "./workflow-node-metadata";
+import { InspectorField, WorkflowNodeDetailsLayout } from "./workflow-node-details";
 
 /** Soft card copy limit so node descriptions stay glanceable on the canvas. */
 const NODE_DESCRIPTION_MAX_LENGTH = 30;
@@ -147,158 +142,113 @@ function WorkflowNodeInspector({
   }
   const Icon = metadata.icon;
   const agentConfig = node.data.agentConfig;
+  // Agent and output keep their dedicated flat editors; the remaining kinds
+  // use the Dify-style grouped layout so their details read as sections.
+  const usesFlatLayout = node.data.kind === "agent" || node.data.kind === "output";
   return (
     <aside
       data-workflow-inspector=""
       className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden border-l border-border bg-background"
     >
-      <div className="flex min-w-0 items-center gap-2.5 border-b border-border px-4 py-3">
-        <span className={`flex size-8 items-center justify-center rounded-lg ${metadata.tone}`}>
-          <Icon className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-xs font-semibold">{node.data.title}</h3>
-          <p className="text-[10px] text-muted-foreground">
-            {t("settings.workflow.nodeSuffix", { type: nodeType.label })}
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="shrink-0"
-          aria-label={t("settings.workflow.closeConfiguration")}
-          onClick={onClose}
-        >
-          <IconLayoutSidebarRightCollapse />
-        </Button>
-      </div>
-      <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto p-4">
-        <InspectorField label={t("settings.workflow.field.name")} htmlFor="workflow-node-title">
-          <Input
-            id="workflow-node-title"
-            value={node.data.title}
-            onChange={(event) => onUpdate({
-              ...node,
-              data: { ...node.data, title: event.target.value },
-            })}
-          />
-        </InspectorField>
-        <InspectorField label={t("settings.workflow.field.description")} htmlFor="workflow-node-description">
-          <>
-            <Input
-              id="workflow-node-description"
-              value={node.data.description}
-              maxLength={NODE_DESCRIPTION_MAX_LENGTH}
-              onChange={(event) => onUpdate({
-                ...node,
-                data: {
-                  ...node.data,
-                  description: event.target.value.slice(0, NODE_DESCRIPTION_MAX_LENGTH),
-                },
-              })}
-            />
-            <p className="text-right text-[10px] text-muted-foreground" aria-live="polite">
-              {t("settings.workflow.characterCount", {
-                count: node.data.description.length,
-                max: NODE_DESCRIPTION_MAX_LENGTH,
-              })}
-            </p>
-          </>
-        </InspectorField>
-        {nodeType.configFields.includes("model") && (
-          <InspectorField label={t("settings.workflow.field.model")} htmlFor="workflow-node-model">
-            <Select
-              value={node.data.model ?? capabilities.defaultModel}
-              onValueChange={(model) => {
-                if (model !== null) {
-                  onUpdate({ ...node, data: { ...node.data, model } });
-                }
-              }}
+      {usesFlatLayout ? (
+        <>
+          <div className="flex min-w-0 items-center gap-2.5 border-b border-border px-4 py-3">
+            <span className={`flex size-8 items-center justify-center rounded-lg ${metadata.tone}`}>
+              <Icon className="size-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-xs font-semibold">{node.data.title}</h3>
+              <p className="text-[10px] text-muted-foreground">
+                {t("settings.workflow.nodeSuffix", { type: nodeType.label })}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0"
+              aria-label={t("settings.workflow.closeConfiguration")}
+              onClick={onClose}
             >
-              <SelectTrigger id="workflow-node-model" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {capabilities.models.map((model) => (
-                  <SelectItem key={model.value} value={model.value}>
-                    {model.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </InspectorField>
-        )}
-        {nodeType.configFields.includes("tool") && (
-          <InspectorField label={t("settings.workflow.field.tool")} htmlFor="workflow-node-tool">
-            <Select
-              value={node.data.tool ?? capabilities.defaultTool}
-              onValueChange={(tool) => {
-                if (tool !== null) {
-                  onUpdate({ ...node, data: { ...node.data, tool } });
-                }
-              }}
-            >
-              <SelectTrigger id="workflow-node-tool" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {capabilities.tools.map((tool) => (
-                  <SelectItem key={tool.value} value={tool.value}>
-                    {tool.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </InspectorField>
-        )}
-        {nodeType.configFields.includes("condition") && (
-          <InspectorField label={t("settings.workflow.field.condition")} htmlFor="workflow-node-condition">
-            <Input
-              id="workflow-node-condition"
-              value={node.data.condition ?? ""}
-              onChange={(event) =>
-                onUpdate({
+              <IconLayoutSidebarRightCollapse />
+            </Button>
+          </div>
+          <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto p-4">
+            <InspectorField label={t("settings.workflow.field.name")} htmlFor="workflow-node-title">
+              <Input
+                id="workflow-node-title"
+                value={node.data.title}
+                onChange={(event) => onUpdate({
                   ...node,
-                  data: { ...node.data, condition: event.target.value },
-                })
-              }
-            />
-          </InspectorField>
-        )}
-        {nodeType.configFields.includes("agent") && agentConfig !== undefined && (
-          <AgentConfigurationFields
-            config={agentConfig}
-            capabilities={capabilities}
-            modelsLoading={agentModelsLoading}
-            modelsError={agentModelsError}
-            onRetryModels={onRetryAgentModels}
-            modelsByCli={modelsByCli}
-            cliStatus={cliStatus}
-            catalogsLoading={agentCatalogsLoading}
-            catalogsError={agentCatalogsError}
-            onRetryCatalogs={onRetryAgentCatalogs}
-            onChange={(config) => onUpdate({
-              ...node,
-              data: { ...node.data, agentConfig: config },
-            })}
-          />
-        )}
-        {nodeType.configFields.includes("instruction") && (
-          <InspectorField label={t("settings.workflow.field.instruction")} htmlFor="workflow-node-instruction">
-            <Textarea
-              id="workflow-node-instruction"
-              className="min-h-32 resize-none text-xs leading-5"
-              value={node.data.instruction ?? ""}
-              onChange={(event) =>
-                onUpdate({
+                  data: { ...node.data, title: event.target.value },
+                })}
+              />
+            </InspectorField>
+            <InspectorField label={t("settings.workflow.field.description")} htmlFor="workflow-node-description">
+              <>
+                <Input
+                  id="workflow-node-description"
+                  value={node.data.description}
+                  maxLength={NODE_DESCRIPTION_MAX_LENGTH}
+                  onChange={(event) => onUpdate({
+                    ...node,
+                    data: {
+                      ...node.data,
+                      description: event.target.value.slice(0, NODE_DESCRIPTION_MAX_LENGTH),
+                    },
+                  })}
+                />
+                <p className="text-right text-[10px] text-muted-foreground" aria-live="polite">
+                  {t("settings.workflow.characterCount", {
+                    count: node.data.description.length,
+                    max: NODE_DESCRIPTION_MAX_LENGTH,
+                  })}
+                </p>
+              </>
+            </InspectorField>
+            {nodeType.configFields.includes("agent") && agentConfig !== undefined && (
+              <AgentConfigurationFields
+                config={agentConfig}
+                capabilities={capabilities}
+                modelsLoading={agentModelsLoading}
+                modelsError={agentModelsError}
+                onRetryModels={onRetryAgentModels}
+                modelsByCli={modelsByCli}
+                cliStatus={cliStatus}
+                catalogsLoading={agentCatalogsLoading}
+                catalogsError={agentCatalogsError}
+                onRetryCatalogs={onRetryAgentCatalogs}
+                onChange={(config) => onUpdate({
                   ...node,
-                  data: { ...node.data, instruction: event.target.value },
-                })
-              }
-            />
-          </InspectorField>
-        )}
-      </div>
+                  data: { ...node.data, agentConfig: config },
+                })}
+              />
+            )}
+            {nodeType.configFields.includes("instruction") && (
+              <InspectorField label={t("settings.workflow.field.instruction")} htmlFor="workflow-node-instruction">
+                <Textarea
+                  id="workflow-node-instruction"
+                  className="min-h-32 resize-none text-xs leading-5"
+                  value={node.data.instruction ?? ""}
+                  onChange={(event) =>
+                    onUpdate({
+                      ...node,
+                      data: { ...node.data, instruction: event.target.value },
+                    })
+                  }
+                />
+              </InspectorField>
+            )}
+          </div>
+        </>
+      ) : (
+        <WorkflowNodeDetailsLayout
+          node={node}
+          nodeType={nodeType}
+          capabilities={capabilities}
+          onUpdate={onUpdate}
+          onClose={onClose}
+        />
+      )}
       <div className="border-t border-border p-3">
         <Button
           variant="ghost"
@@ -355,7 +305,7 @@ function AgentConfigurationFields({
   const selectedModel = configuredModel ?? {
     agentCli: config.executor.agentCli,
     modelId: config.executor.modelId,
-    label: `${AGENT_CLI_LABELS[config.executor.agentCli as AgentCli]} · ${config.executor.modelId}`,
+    label: `${AGENT_CLI_LABELS[config.executor.agentCli as AgentCli]} 路 ${config.executor.modelId}`,
   };
   const modelsForSelectedCli = modelsByCli?.get(currentAgentCli)
     ?? capabilities.agentModels.filter((model) => model.agentCli === currentAgentCli);
@@ -365,7 +315,7 @@ function AgentConfigurationFields({
   const selectedCliLoading = modelsLoading || selectedCliStatus?.isLoading === true;
   // A node always shows its model name; when the executor is not backed by a
   // discovered model (e.g. a CLI that failed to report one) the full
-  // `CLI · model` pair is shown instead so the agent pick stays legible.
+  // `CLI 路 model` pair is shown instead so the agent pick stays legible.
   const selectedModelName = configuredModel === undefined
     ? selectedModel.label
     : workflowModelDisplayName(selectedModel);
@@ -441,7 +391,7 @@ function AgentConfigurationFields({
    * Switches the node onto another Agent CLI. Keeps the current model id when
    * that CLI offers it; otherwise falls back to the first discovered model so
    * the executor pair stays catalog-backed. A CLI with no discovered models
-   * keeps the current id rather than inventing one — the model group then
+   * keeps the current id rather than inventing one 鈥?the model group then
    * shows the empty state and the pick stays visible (never reverted).
    */
   function selectAgentCli(agentCli: AgentCli): void {
@@ -876,29 +826,11 @@ function AgentConfigurationFields({
   );
 }
 
-/** Keeps field labels visible and consistently spaced for scanning and accessibility. */
-function InspectorField({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="min-w-0 space-y-1.5">
-      <Label htmlFor={htmlFor} className="text-[11px]">{label}</Label>
-      {children}
-    </div>
-  );
-}
-
 /**
- * Catalog labels are stored as `CLI · model` for legacy flat pickers; the
+ * Catalog labels are stored as `CLI 路 model` for legacy flat pickers; the
  * two-section menu shows the model name alone, matching chat.
  */
 function workflowModelDisplayName(model: WorkflowAgentModel): string {
-  const prefix = `${AGENT_CLI_LABELS[model.agentCli as AgentCli]} · `;
+  const prefix = `${AGENT_CLI_LABELS[model.agentCli as AgentCli]} 路 `;
   return model.label.startsWith(prefix) ? model.label.slice(prefix.length) : model.label;
 }

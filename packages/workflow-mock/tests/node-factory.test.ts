@@ -60,13 +60,7 @@ describe("createMockWorkflowNode", () => {
           kind: "start",
           label: "开始",
           description: "定义工作流输入",
-          configFields: ["instruction"],
-        },
-        {
-          kind: "prompt",
-          label: "提示词",
-          description: "处理和转换文本",
-          configFields: ["model", "instruction"],
+          configFields: ["instruction", "trigger"],
         },
         {
           kind: "agent",
@@ -85,6 +79,30 @@ describe("createMockWorkflowNode", () => {
           label: "工具",
           description: "调用终端或插件",
           configFields: ["tool", "instruction"],
+        },
+        {
+          kind: "junction",
+          label: "汇合",
+          description: "等待多个执行分支完成",
+          configFields: ["instruction", "waitStrategy", "failureStrategy"],
+        },
+        {
+          kind: "human",
+          label: "人工确认",
+          description: "等待人工决策后继续",
+          configFields: ["instruction"],
+        },
+        {
+          kind: "loop",
+          label: "循环",
+          description: "重复执行直到满足条件",
+          configFields: ["instruction", "maxAttempts", "exitCondition"],
+        },
+        {
+          kind: "subflow",
+          label: "子流程",
+          description: "封装复杂业务步骤",
+          configFields: ["instruction"],
         },
         {
           kind: "output",
@@ -150,6 +168,33 @@ describe("createMockWorkflowNode", () => {
         { value: "File system", label: "File system" },
         { value: "GitHub", label: "GitHub" },
       ],
+      conditionOperators: [
+        { value: "equals", label: "等于" },
+        { value: "not_equals", label: "不等于" },
+        { value: "contains", label: "包含" },
+        { value: "not_contains", label: "不包含" },
+        { value: "greater_than", label: "大于" },
+        { value: "less_than", label: "小于" },
+        { value: "is_empty", label: "为空" },
+        { value: "is_not_empty", label: "不为空" },
+      ],
+      toolOperations: {
+        Terminal: [{ value: "run_command", label: "执行命令" }],
+        "File system": [
+          { value: "read_file", label: "读取文件" },
+          { value: "write_file", label: "写入文件" },
+        ],
+        GitHub: [
+          { value: "create_pr", label: "创建 Pull Request" },
+          { value: "merge_pr", label: "合并 Pull Request" },
+        ],
+      },
+      startTriggers: [
+        { value: "merge_request", label: "Merge Request" },
+        { value: "push", label: "Push" },
+        { value: "manual", label: "手动" },
+      ],
+      defaultTrigger: "merge_request",
       defaultModel: "GPT-5",
       defaultAgentConfig: {
         schemaVersion: 3,

@@ -6,7 +6,13 @@ import {
 } from "@tabler/icons-react";
 import { createMockWorkflowNodeType } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
-import { getNodeMetadata } from "../workflow-node-chrome";
+import {
+  conditionBranchesSummary,
+  createWorkflowSummaryLabels,
+  getNodeMetadata,
+  junctionFailureStrategyLabel,
+  junctionWaitStrategyLabel,
+} from "../workflow-node-chrome";
 import { RunActAgentConfig } from "./run-act-agent-config";
 import { RunActArtifacts } from "./run-act-artifacts";
 import { RunBriefPopover } from "./run-brief-popover";
@@ -94,6 +100,8 @@ function RunActInspectorPanel({
   const nodeType = createMockWorkflowNodeType(data.kind, locale);
   const metadata = getNodeMetadata(data.kind);
   const Icon = metadata.icon;
+  const summaryLabels = createWorkflowSummaryLabels(locale);
+  const toolParameters = data.toolParameters ?? [];
   const timingRange = state.startedAt !== undefined || state.finishedAt !== undefined
     ? [
       state.startedAt !== undefined
@@ -146,27 +154,77 @@ function RunActInspectorPanel({
             label={t("settings.workflow.field.description")}
             value={data.description}
           />
-          {nodeType.configFields.includes("model") && (
+          {data.inputVariables !== undefined && data.inputVariables.length > 0 && (
             <ReadOnlyField
-              label={t("settings.workflow.field.model")}
-              value={data.model ?? "—"}
+              label={t("settings.workflow.section.inputVariables")}
+              value={data.inputVariables
+                .map((variable) => `${variable.name} = ${variable.defaultValue ?? ""}`)
+                .join(", ")}
               mono
             />
           )}
           {nodeType.configFields.includes("tool") && (
-            <ReadOnlyField
-              label={t("settings.workflow.field.tool")}
-              value={data.tool ?? "—"}
-              mono
-            />
+            <>
+              <ReadOnlyField
+                label={t("settings.workflow.field.tool")}
+                value={data.tool ?? "—"}
+                mono
+              />
+              {data.operation !== undefined && data.operation !== "" && (
+                <ReadOnlyField
+                  label={t("settings.workflow.field.operation")}
+                  value={summaryLabels.operationLabel(data.operation)}
+                  mono
+                />
+              )}
+              {toolParameters.length > 0 && (
+                <ReadOnlyField
+                  label={t("settings.workflow.section.parameters")}
+                  value={toolParameters
+                    .map((parameter) => `${parameter.key} = ${parameter.value}`)
+                    .join(", ")}
+                  mono
+                />
+              )}
+            </>
           )}
           {nodeType.configFields.includes("condition") && (
             <ReadOnlyField
               label={t("settings.workflow.field.condition")}
-              value={data.condition ?? "—"}
+              value={conditionBranchesSummary(data, summaryLabels, locale) ?? "—"}
               mono
             />
           )}
+          {nodeType.configFields.includes("waitStrategy") && data.waitStrategy !== undefined && (
+            <ReadOnlyField
+              label={t("settings.workflow.field.waitStrategy")}
+              value={junctionWaitStrategyLabel(data.waitStrategy, t)}
+              mono
+            />
+          )}
+          {nodeType.configFields.includes("failureStrategy") && data.failureStrategy !== undefined && (
+            <ReadOnlyField
+              label={t("settings.workflow.field.failureStrategy")}
+              value={junctionFailureStrategyLabel(data.failureStrategy, t)}
+              mono
+            />
+          )}
+          {nodeType.configFields.includes("maxAttempts") && data.maxAttempts !== undefined && (
+            <ReadOnlyField
+              label={t("settings.workflow.field.maxAttempts")}
+              value={String(data.maxAttempts)}
+              mono
+            />
+          )}
+          {nodeType.configFields.includes("exitCondition")
+            && data.exitCondition !== undefined
+            && data.exitCondition !== "" && (
+              <ReadOnlyField
+                label={t("settings.workflow.field.exitCondition")}
+                value={data.exitCondition}
+                mono
+              />
+            )}
           {nodeType.configFields.includes("agent") && agentConfig !== undefined && (
             <RunActAgentConfig config={agentConfig} />
           )}

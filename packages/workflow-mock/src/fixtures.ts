@@ -60,6 +60,11 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
         title: "开始",
         description: "接收任务和当前工作区",
         instruction: "从用户输入中提取审查范围。",
+        trigger: "merge_request",
+        inputVariables: [
+          { name: "仓库", defaultValue: "{{repository}}" },
+          { name: "目标分支", defaultValue: "{{target_branch}}" },
+        ],
       },
     },
     {
@@ -67,11 +72,13 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
       type: "workflow",
       position: { x: 356, y: 188 },
       data: {
-        kind: "prompt",
+        kind: "agent",
         title: "理解改动",
         description: "总结变更意图与影响范围",
-        instruction: "阅读改动文件，整理变更目标、受影响模块和潜在风险。",
-        model: "GPT-5",
+        agentConfig: createAgentConfig(
+          "Planner",
+          "阅读改动文件，整理变更目标、受影响模块和潜在风险。",
+        ),
       },
     },
     {
@@ -83,7 +90,13 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
         title: "质量门禁",
         description: "判断是否需要执行测试",
         instruction: "根据改动类型选择后续路径。",
-        condition: "包含源代码改动",
+        conditionBranches: [
+          {
+            conditions: [
+              { variable: "改动类型", operator: "contains", value: "源代码" },
+            ],
+          },
+        ],
       },
     },
     {
@@ -96,6 +109,8 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
         description: "执行格式化、类型检查和测试",
         instruction: "运行与改动范围匹配的最小验证集。",
         tool: "Terminal",
+        operation: "run_command",
+        toolParameters: [{ key: "command", value: "npm run test" }],
       },
     },
     {
@@ -137,30 +152,53 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
 
 const ENGLISH_NODE_CONTENT: Record<
   string,
-  Pick<WorkflowNodeData, "title" | "description" | "instruction" | "model" | "tool" | "condition">
+  Pick<
+    WorkflowNodeData,
+    | "title"
+    | "description"
+    | "instruction"
+    | "trigger"
+    | "inputVariables"
+    | "tool"
+    | "condition"
+    | "conditionBranches"
+    | "operation"
+    | "toolParameters"
+  >
 > = {
   start: {
     title: "Start",
     description: "Receive the task and current workspace",
     instruction: "Extract the review scope from the user input.",
+    trigger: "merge_request",
+    inputVariables: [
+      { name: "Repository", defaultValue: "{{repository}}" },
+      { name: "Target branch", defaultValue: "{{target_branch}}" },
+    ],
   },
   understand: {
     title: "Understand changes",
     description: "Summarize intent and affected areas",
-    instruction: "Read changed files and identify the goal, affected modules, and potential risks.",
-    model: "GPT-5",
   },
   quality: {
     title: "Quality gate",
     description: "Decide whether validation is required",
     instruction: "Choose the next path based on the type of change.",
-    condition: "Contains source code changes",
+    conditionBranches: [
+      {
+        conditions: [
+          { variable: "Change type", operator: "contains", value: "source code" },
+        ],
+      },
+    ],
   },
   tests: {
     title: "Run checks",
     description: "Run formatting, type checks, and tests",
     instruction: "Run the smallest validation set that matches the change scope.",
     tool: "Terminal",
+    operation: "run_command",
+    toolParameters: [{ key: "command", value: "npm run test" }],
   },
   review: {
     title: "Review agent",
@@ -171,6 +209,12 @@ const ENGLISH_NODE_CONTENT: Record<
     description: "Generate a structured review result",
     instruction: "Return a summary, findings, validation results, and next steps.",
   },
+};
+
+/** Per-node Agent prompts for the English fixture, keyed by node id. */
+const ENGLISH_AGENT_PROMPTS: Record<string, string> = {
+  understand: "Read changed files and identify the goal, affected modules, and potential risks.",
+  review: "Organize findings by severity and provide locations and remediation advice.",
 };
 
 /** Creates localized fixture content with native React Flow nodes and edges. */
@@ -197,7 +241,7 @@ export function createMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkflow {
           ...ENGLISH_NODE_CONTENT[node.id],
           agentConfig: {
             ...node.data.agentConfig!,
-            prompt: "Organize findings by severity and provide locations and remediation advice.",
+            prompt: ENGLISH_AGENT_PROMPTS[node.id] ?? node.data.agentConfig!.prompt,
           },
         }
       : { ...node.data, ...ENGLISH_NODE_CONTENT[node.id] },
@@ -461,13 +505,12 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
         type: "workflow",
         position: { x: 320, y: 280 },
         data: {
-          kind: "prompt",
+          kind: "human",
           title: zh ? "收集上下文" : "Gather context",
           description: zh ? "汇总改动与相关文件" : "Summarize changes and related files",
           instruction: zh
             ? "列出改动文件、模块边界和已知风险点。"
             : "List changed files, module boundaries, and known risks.",
-          model: "GPT-5",
         },
       },
       {
@@ -506,13 +549,12 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
         type: "workflow",
         position: { x: 620, y: 480 },
         data: {
-          kind: "prompt",
+          kind: "human",
           title: zh ? "文档一致性" : "Docs consistency",
           description: zh ? "并行分支 · 文档" : "Parallel branch · docs",
           instruction: zh
             ? "核对 README / 注释是否与改动一致。"
             : "Check README / comments against the change set.",
-          model: "GPT-5",
         },
       },
       {
@@ -609,13 +651,12 @@ export function createStaggeredParallelMockWorkflow(
         type: "workflow",
         position: { x: 300, y: 80 },
         data: {
-          kind: "prompt",
+          kind: "human",
           title: zh ? "快速扫描" : "Quick scan",
           description: zh ? "短任务 · 先结束" : "Short task · finishes first",
           instruction: zh
             ? "做一次廉价的风险预检。"
             : "Run a cheap risk pre-check.",
-          model: "GPT-5",
           mockStepMs: 1_500,
         },
       },
@@ -672,13 +713,12 @@ export function createStaggeredParallelMockWorkflow(
         type: "workflow",
         position: { x: 560, y: 520 },
         data: {
-          kind: "prompt",
+          kind: "human",
           title: zh ? "文档校对" : "Docs pass",
           description: zh ? "最晚启动 · 短尾" : "Latest start · short tail",
           instruction: zh
             ? "索引完成后核对文档。"
             : "Proof docs after the index is ready.",
-          model: "GPT-5",
           mockStepMs: 2_000,
         },
       },
@@ -687,16 +727,14 @@ export function createStaggeredParallelMockWorkflow(
         type: "workflow",
         position: { x: 840, y: 300 },
         data: {
-        kind: "agent",
-        title: zh ? "汇合" : "Join",
-        description: zh ? "等待全部交错分支" : "Wait for all staggered branches",
-        agentConfig: createAgentConfig(
-          "Architect",
-          zh
+          kind: "junction",
+          title: zh ? "汇合" : "Join",
+          description: zh ? "等待全部交错分支" : "Wait for all staggered branches",
+          instruction: zh
             ? "合并安全、lint 与文档结果。"
             : "Merge security, lint, and docs results.",
-          { skillIds: ["openspec-verify-change"] },
-        ),
+          waitStrategy: "all",
+          failureStrategy: "fail",
           mockStepMs: 2_000,
         },
       },

@@ -187,5 +187,5 @@ export function topologicalOrder(
 
 /** Kinds that participate in mock token accounting (LLM/tool work). */
 export function nodeKindUsesTokens(kind: WorkflowNodeData["kind"]): boolean {
-  return kind === "prompt" || kind === "agent" || kind === "tool";
+  return kind === "agent" || kind === "tool";
 }

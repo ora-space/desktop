@@ -463,12 +463,12 @@ describe("mock run engine", () => {
     );
   });
 
-  it("pauses on prompt nodes until HITL is submitted", async () => {
+  it("pauses on human nodes until HITL is submitted", async () => {
     const runtime = createMemoryWorkflowRuntime({
       nodeStepMs: 100,
       autoStart: false,
     });
-    const definition = createMockWorkflow("zh-CN");
+    const definition = createStaggeredParallelMockWorkflow("zh-CN");
     await runtime.host.mount("p1", definition);
     const run = await runtime.runs.create({
       projectId: "p1",
@@ -480,20 +480,21 @@ describe("mock run engine", () => {
     });
 
     await runtime.runs.start(run.id);
-    await vi.advanceTimersByTimeAsync(100);
+    // The start wave (800ms) finishes, then quick_scan opens its approval gate.
+    await vi.advanceTimersByTimeAsync(800);
 
     const paused = await runtime.runs.get(run.id);
     expect(paused?.status).toBe("awaiting_input");
-    expect(paused?.nodeStates.understand?.status).toBe("awaiting_input");
+    expect(paused?.nodeStates.quick_scan?.status).toBe("awaiting_input");
     expect(paused?.openHitls).toEqual([
       expect.objectContaining({
-        nodeId: "understand",
+        nodeId: "quick_scan",
         status: "open",
         policy: "wait",
         blocking: true,
         createdAt: expect.any(String),
         schema: expect.objectContaining({
-          kind: "clarify",
+          kind: "approval",
           prompt: expect.any(String),
         }),
       }),
@@ -513,7 +514,7 @@ describe("mock run engine", () => {
       }),
     );
     expect(
-      (await runtime.runs.get(run.id))?.nodeStates.understand,
+      (await runtime.runs.get(run.id))?.nodeStates.quick_scan,
     ).toEqual(
       expect.objectContaining({
         status: "succeeded",
@@ -521,24 +522,6 @@ describe("mock run engine", () => {
         output: expect.objectContaining({ summary: expect.any(String) }),
       }),
     );
-    expect((await runtime.runs.getLiveSnapshot(run.id))?.conversation).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          nodeId: "understand",
-          kind: "message",
-          role: "assistant",
-        }),
-        expect.objectContaining({
-          nodeId: "understand",
-          kind: "message",
-          role: "user",
-          markdown: "looks good",
-        }),
-      ]),
-    );
-
-    const finished = await drainRun(runtime, run.id, 100);
-    expect(finished?.status).toBe("succeeded");
   });
 
   it("appends the approval answer and an ack into the node conversation", async () => {
@@ -590,7 +573,7 @@ describe("mock run engine", () => {
       nodeStepMs: 100,
       autoStart: false,
     });
-    const definition = createMockWorkflow("zh-CN");
+    const definition = createParallelMockWorkflow("zh-CN");
     await runtime.host.mount("p1", definition);
     const run = await runtime.runs.create({
       projectId: "p1",
@@ -608,7 +591,7 @@ describe("mock run engine", () => {
     ).rejects.toThrow(/no open hitl request/i);
     await expect(
       runtime.runs.submitHitl(run.id, paused!.openHitls[0]!.id, { scope: "diff" }),
-    ).rejects.toThrow(/missing required field answer/i);
+    ).rejects.toThrow(/missing required field notes/i);
   });
 
   it("rejects invalid select options on HITL submit", async () => {
@@ -636,7 +619,7 @@ describe("mock run engine", () => {
       nodeStepMs: 100,
       autoStart: false,
     });
-    const definition = createMockWorkflow("zh-CN");
+    const definition = createParallelMockWorkflow("zh-CN");
     await runtime.host.mount("p1", definition);
     const run = await runtime.runs.create({
       projectId: "p1",
@@ -659,7 +642,7 @@ describe("mock run engine", () => {
       nodeStepMs: 100,
       autoStart: false,
     });
-    const definition = createMockWorkflow("zh-CN");
+    const definition = createParallelMockWorkflow("zh-CN");
     await runtime.host.mount("p1", definition);
     const run = await runtime.runs.create({
       projectId: "p1",
@@ -732,7 +715,7 @@ describe("mock run engine", () => {
     const mid = await runtime.runs.get(run.id);
     expect(mid?.nodeStates.security?.status).toBe("running");
     expect(mid?.nodeStates.quality?.status).toBe("running");
-    // docs is also a prompt node ? second concurrent HITL gate in the wave
+    // docs is also a human node ? second concurrent HITL gate in the wave
     expect(mid?.nodeStates.docs?.status).toBe("awaiting_input");
     expect(mid?.openHitls.map((item) => item.nodeId)).toEqual(["docs"]);
     expect(mid?.status).toBe("awaiting_input");
@@ -759,7 +742,7 @@ describe("mock run engine", () => {
 
     await vi.advanceTimersByTimeAsync(800);
     let snap = await runtime.runs.get(run.id);
-    // quick_scan is prompt ? HITL; lint/index start on timers.
+    // quick_scan is human ? HITL; lint/index start on timers.
     expect(snap?.nodeStates).toEqual(
       expect.objectContaining({
         start: expect.objectContaining({ status: "succeeded", durationMs: 800 }),
@@ -902,10 +885,10 @@ describe("mock run engine", () => {
   });
 
   /**
-   * Demo-path smoke: mount -> start -> drain HITL gates -> succeeded.
+   * Demo-path smoke: mount -> start -> drain -> succeeded.
    * Mirrors the manual Theater checklist without browser e2e.
    */
-  it("demo path: mount, start, drain HITL, succeed", async () => {
+  it("demo path: mount, start, drain, succeed", async () => {
     const stepMs = 50;
     const runtime = createMemoryWorkflowRuntime({
       nodeStepMs: stepMs,
@@ -934,8 +917,7 @@ describe("mock run engine", () => {
         openHitls: [],
       }),
     );
-    expect(types).toContain("hitl_required");
-    expect(types).toContain("hitl_resolved");
+    expect(types).toContain("node_finished");
     expect(types.at(-1)).toBe("run_finished");
   });
 });

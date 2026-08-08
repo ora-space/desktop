@@ -53,7 +53,7 @@ function ioPreview(text: string, max = 96): string {
   return `${trimmed.slice(0, max - 1)}…`;
 }
 
-/** Builds mock HITL schema for a prompt node (approval / feedback / clarify). */
+/** Builds mock HITL schema for a human node (approval / feedback / clarify). */
 export function createMockHitlSchema(
   nodeId: string,
   locale: MockHitlLocale = "zh-CN",
@@ -358,7 +358,7 @@ export function createMockRunEngine(
       return;
     }
     const node = run.definitionSnapshot.nodes.find((item) => item.id === nodeId);
-    if (node?.data.kind === "prompt") {
+    if (node?.data.kind === "human") {
       beginHitl(runId, nodeId);
       return;
     }
@@ -453,7 +453,7 @@ export function createMockRunEngine(
   }
 
   /**
-   * Pauses a prompt node for human input until `submitHitl` (no timeout).
+   * Pauses a human node for input until `submitHitl` (no timeout).
    * Multiple prompts may open gates concurrently; each gets its own request
    * in `openHitls` so the user can answer any of them.
    */
@@ -619,7 +619,7 @@ export function createMockRunEngine(
         );
       }
     } else {
-      // Approval / generic prompt nodes need a visible ack so the session
+      // Approval / generic human nodes need a visible ack so the session
       // projection changes after submit (not only the user's own bubble).
       publishConversationMessage(
         runId,

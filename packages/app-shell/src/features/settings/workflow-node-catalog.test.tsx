@@ -16,6 +16,7 @@ describe("WorkflowNodeCatalog", () => {
       <AppI18nProvider>
         <WorkflowNodeCatalog
           capabilities={capabilities}
+          hasStartNode={false}
           onAdd={vi.fn()}
           onDrop={vi.fn()}
         />
@@ -44,6 +45,7 @@ describe("WorkflowNodeCatalog", () => {
       <AppI18nProvider>
         <WorkflowNodeCatalog
           capabilities={capabilities}
+          hasStartNode={false}
           onAdd={vi.fn()}
           onDrop={vi.fn()}
         />
@@ -73,6 +75,21 @@ describe("WorkflowNodeCatalog", () => {
     fireEvent.wheel(catalog, { deltaY: -200 });
     expect(viewport!.scrollLeft).toBe(0);
     expect(track!.style.transform).toBe("translate3d(18px, 0, 0)");
+  });
+
+  it("keeps the start entry visible but disabled when the canvas already has one", () => {
+    render(
+      <AppI18nProvider>
+        <WorkflowNodeCatalog
+          capabilities={capabilities}
+          hasStartNode
+          onAdd={vi.fn()}
+          onDrop={vi.fn()}
+        />
+      </AppI18nProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
   });
 });
 

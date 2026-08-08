@@ -37,17 +37,18 @@ interface NodeDragPreview {
 /** Presents node types as a compact bottom dock that stays close to the canvas. */
 export function WorkflowNodeCatalog({
   capabilities,
+  hasStartNode,
   onAdd,
   onDrop,
 }: {
   capabilities: WorkflowCapabilities;
+  /** Whether the canvas already contains its required Start node (disables the dock entry). */
+  hasStartNode: boolean;
   onAdd: (kind: WorkflowNodeKind) => void;
   onDrop: (kind: WorkflowNodeKind, position: XYPosition) => void;
 }) {
   const { t } = useTranslation();
-  // Every valid workflow is created with its required Start node, so exposing
-  // another Start in the catalog would make an invalid graph selectable.
-  const nodeTypes = capabilities.nodeTypes.filter(({ kind }) => kind !== "start");
+  const nodeTypes = capabilities.nodeTypes;
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const returnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const elasticOffsetRef = useRef(0);
@@ -198,7 +199,7 @@ export function WorkflowNodeCatalog({
 
   return (
     <div
-      className="flex w-max max-w-full items-center gap-1.5 rounded-xl border border-border bg-background/95 p-1.5 shadow-lg backdrop-blur"
+      className="flex w-max max-w-full items-center gap-1 rounded-xl border border-border bg-background/95 p-1 shadow-lg backdrop-blur"
       aria-label={t("settings.workflow.addNode")}
       aria-orientation="horizontal"
       onWheel={handleWheel}
@@ -216,7 +217,7 @@ export function WorkflowNodeCatalog({
         <div
           data-workflow-node-track
           className={cn(
-            "flex w-max items-center gap-1 px-1",
+            "flex w-max items-center gap-0.5 px-0.5",
             returning && "transition-transform duration-200 ease-out motion-reduce:transition-none",
           )}
           style={{ transform: `translate3d(${elasticOffset}px, 0, 0)` }}
@@ -224,21 +225,25 @@ export function WorkflowNodeCatalog({
           {nodeTypes.map((nodeType) => {
             const metadata = getNodeMetadata(nodeType.kind);
             const Icon = metadata.icon;
+            const startTaken = nodeType.kind === "start" && hasStartNode;
             return (
               <button
                 key={nodeType.kind}
                 type="button"
+                disabled={startTaken}
                 onClick={(event) => addNodeFromClick(event, nodeType.kind)}
                 onPointerDown={(event) => startNodeDrag(event, nodeType.kind)}
                 onPointerMove={moveNodeDrag}
                 onPointerUp={finishNodeDrag}
                 onPointerCancel={cancelNodeDrag}
                 onLostPointerCapture={cancelNodeDrag}
-                title={`${nodeType.description} · ${t("settings.workflow.dragNodeHint")}`}
-                className="group flex h-10 shrink-0 touch-none cursor-grab items-center gap-1.5 rounded-lg border border-transparent px-2 text-left outline-none transition-colors hover:border-border hover:bg-muted/65 focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+                title={startTaken
+                  ? t("settings.workflow.startAlreadyPresent")
+                  : `${nodeType.description} · ${t("settings.workflow.dragNodeHint")}`}
+                className="group flex h-9 shrink-0 touch-none cursor-grab items-center gap-1 rounded-lg border border-transparent px-1.5 text-left outline-none transition-colors hover:border-border hover:bg-muted/65 focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-transparent disabled:hover:bg-transparent"
               >
                 <span className={cn(
-                  "flex size-7 shrink-0 items-center justify-center rounded-md",
+                  "flex size-6 shrink-0 items-center justify-center rounded-md",
                   metadata.tone,
                 )}>
                   <Icon className="size-3.5" stroke={1.8} />

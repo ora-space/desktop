@@ -4,8 +4,11 @@ import {
   IconBinaryTree,
   IconBolt,
   IconBraces,
-  IconMessageCode,
+  IconGitMerge,
+  IconHierarchy2,
   IconPlayerPlay,
+  IconRepeat,
+  IconUserCheck,
   type IconProps,
 } from "@tabler/icons-react";
 import type { WorkflowNodeKind } from "@ora/workflow-mock";
@@ -22,11 +25,6 @@ const WORKFLOW_NODE_METADATA: Record<WorkflowNodeKind, WorkflowNodeMetadata> = {
     icon: IconPlayerPlay,
     tone: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
   },
-  prompt: {
-    kind: "prompt",
-    icon: IconMessageCode,
-    tone: "bg-violet-500/12 text-violet-700 dark:text-violet-400",
-  },
   agent: {
     kind: "agent",
     icon: IconBolt,
@@ -41,6 +39,26 @@ const WORKFLOW_NODE_METADATA: Record<WorkflowNodeKind, WorkflowNodeMetadata> = {
     kind: "tool",
     icon: IconBraces,
     tone: "bg-cyan-500/12 text-cyan-700 dark:text-cyan-400",
+  },
+  junction: {
+    kind: "junction",
+    icon: IconGitMerge,
+    tone: "bg-teal-500/12 text-teal-700 dark:text-teal-400",
+  },
+  human: {
+    kind: "human",
+    icon: IconUserCheck,
+    tone: "bg-sky-500/12 text-sky-700 dark:text-sky-400",
+  },
+  loop: {
+    kind: "loop",
+    icon: IconRepeat,
+    tone: "bg-indigo-500/12 text-indigo-700 dark:text-indigo-400",
+  },
+  subflow: {
+    kind: "subflow",
+    icon: IconHierarchy2,
+    tone: "bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-400",
   },
   output: {
     kind: "output",

@@ -57,7 +57,7 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
   const envelope: WorkflowGraphEnvelope = {
     ...record,
     nodes: Array.isArray(record.nodes)
-      ? (record.nodes as WorkflowDefinitionNode[])
+      ? (record.nodes as WorkflowDefinitionNode[]).map(upgradeLegacyNodeKind)
       : [],
     edges: Array.isArray(record.edges)
       ? (record.edges as WorkflowDefinitionEdge[])
@@ -68,6 +68,20 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
     envelope.description = record.description;
   }
   return envelope;
+}
+
+/**
+ * Re-maps legacy node kinds that predate the base-node model. The former
+ * "prompt" node was renamed to "model" and then folded into the Agent node,
+ * which already carries model configuration, so persisted graphs keep loading
+ * unchanged as Agent steps.
+ */
+function upgradeLegacyNodeKind(node: WorkflowDefinitionNode): WorkflowDefinitionNode {
+  const kind = (node.data as { kind?: unknown }).kind;
+  if (kind === "prompt" || kind === "model") {
+    return { ...node, data: { ...node.data, kind: "agent" } };
+  }
+  return node;
 }
 
 /** Converts a backend epoch-millis timestamp into the editor's ISO string form. */

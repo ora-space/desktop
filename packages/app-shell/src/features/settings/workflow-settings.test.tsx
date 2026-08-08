@@ -285,7 +285,7 @@ describe("WorkflowSettings", () => {
       x: "72px",
       y: "286px",
     });
-    expect(nodeGraphPosition("提示词节点: 理解改动")).toEqual({
+    expect(nodeGraphPosition("Agent节点: 理解改动")).toEqual({
       x: "356px",
       y: "188px",
     });
@@ -395,7 +395,9 @@ describe("WorkflowSettings", () => {
 
     expect(screen.getByDisplayValue("发布准备检查")).toBeInTheDocument();
     expect(screen.getByLabelText("添加工作流节点")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "开始" })).not.toBeInTheDocument();
+    // The start entry stays visible in the dock but is disabled while the
+    // required start node already exists on the canvas.
+    expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
     const canvas = screen.getByLabelText("工作流画布");
     vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
       ...canvas.getBoundingClientRect(),
@@ -407,10 +409,13 @@ describe("WorkflowSettings", () => {
       bottom: 600,
     });
 
-    await user.click(screen.getByRole("button", { name: "提示词" }));
+    await user.click(screen.getByRole("button", { name: "循环" }));
 
-    expect(screen.getAllByText("提示词 1")).toHaveLength(2);
-    expect(nodeGraphPosition("提示词节点: 提示词 1")).toEqual({
+    // The card carries the title text and the inspector header exposes the
+    // same title as an editable input (Dify-style grouped layout).
+    expect(screen.getAllByText("循环 1")).toHaveLength(1);
+    expect(screen.getByLabelText("名称")).toHaveValue("循环 1");
+    expect(nodeGraphPosition("循环节点: 循环 1")).toEqual({
       x: "260px",
       y: "200px",
     });
@@ -523,7 +528,7 @@ describe("WorkflowSettings", () => {
     const user = userEvent.setup();
     renderSettings();
 
-    const node = await screen.findByLabelText("提示词节点: 理解改动");
+    const node = await screen.findByLabelText("Agent节点: 理解改动");
     expect(screen.getByRole("button", {
       name: "Edge from start to understand",
     })).toBeInTheDocument();
@@ -535,7 +540,7 @@ describe("WorkflowSettings", () => {
     await user.click(screen.getByRole("button", { name: "删除理解改动" }));
 
     await waitFor(() => {
-      expect(screen.queryByLabelText("提示词节点: 理解改动")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Agent节点: 理解改动")).not.toBeInTheDocument();
       expect(screen.queryByRole("button", {
         name: "Edge from start to understand",
       })).not.toBeInTheDocument();

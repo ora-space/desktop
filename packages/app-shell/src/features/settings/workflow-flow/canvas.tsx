@@ -522,10 +522,11 @@ function WorkflowCanvasInner({
       {!readOnly && (
         <div
           data-workflow-controls
-          className="absolute bottom-3 left-1/2 z-30 w-fit max-w-[calc(100%_-_12rem)] -translate-x-1/2"
+          className="absolute bottom-3 left-1/2 z-30 w-fit max-w-[calc(100%_-_6rem)] -translate-x-1/2"
         >
           <WorkflowNodeCatalog
             capabilities={capabilities}
+            hasStartNode={nodes.some((node) => node.data.kind === "start")}
             onAdd={addNodeAtViewportCenter}
             onDrop={dropNodeAtClientPosition}
           />

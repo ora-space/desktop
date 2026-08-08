@@ -1,5 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { type WorkflowNodeData } from "@ora/workflow-mock";
+import {
+  conditionBranchesSummary,
+  createWorkflowSummaryLabels,
+  junctionFailureStrategyLabel,
+  junctionWaitStrategyLabel,
+  type WorkflowSummaryLabels,
+} from "../../workflow-node-chrome";
 import { useAgents } from "../../../state/hooks/use-agents";
 import { useSkills } from "../../../state/hooks/use-skills";
 import { MCP_CATALOG } from "../mcp-catalog";
@@ -11,13 +18,15 @@ interface NodeParameter {
 
 /** Displays the persisted node configuration without introducing card-level editing controls. */
 export function WorkflowNodeParameterSummary({ data }: { data: WorkflowNodeData }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
   const agentsQuery = useAgents();
   const skillsQuery = useSkills();
   const agentNameById = new Map((agentsQuery.data ?? []).map((agent) => [agent.id, agent.name]));
   const skillNameById = new Map((skillsQuery.data ?? []).map((skill) => [skill.id, skill.name]));
   const mcpNameById = new Map(MCP_CATALOG.map((mcp) => [mcp.id, mcp.name]));
-  const parameters = configuredParameters(data, t, agentNameById, skillNameById, mcpNameById);
+  const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
+  const labels = createWorkflowSummaryLabels(locale);
+  const parameters = configuredParameters(data, t, agentNameById, skillNameById, mcpNameById, labels, locale);
 
   if (parameters.length === 0) {
     return null;
@@ -52,10 +61,12 @@ export function WorkflowNodeParameterSummary({ data }: { data: WorkflowNodeData 
 /** Extracts only populated execution fields so cards summarize the saved configuration compactly. */
 function configuredParameters(
   data: WorkflowNodeData,
-  t: (key: string) => string,
+  t: (key: string, options?: Record<string, unknown>) => string,
   agentNameById: ReadonlyMap<string, string>,
   skillNameById: ReadonlyMap<string, string>,
   mcpNameById: ReadonlyMap<string, string>,
+  labels: WorkflowSummaryLabels,
+  locale: "zh-CN" | "en-US",
 ): NodeParameter[] {
   const parameters: NodeParameter[] = [];
   if (data.kind === "agent" && data.agentConfig !== undefined) {
@@ -89,10 +100,69 @@ function configuredParameters(
     }
     return parameters;
   }
+  if (data.kind === "condition") {
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.condition"),
+      conditionBranchesSummary(data, labels, locale) ?? undefined,
+    );
+    appendParameter(parameters, t("settings.workflow.field.instruction"), data.instruction);
+    return parameters;
+  }
+  if (data.kind === "tool") {
+    appendParameter(parameters, t("settings.workflow.field.tool"), data.tool);
+    if (data.operation !== undefined && data.operation !== "") {
+      appendParameter(
+        parameters,
+        t("settings.workflow.field.operation"),
+        labels.operationLabel(data.operation),
+      );
+    }
+    if ((data.toolParameters ?? []).length > 0) {
+      appendParameter(
+        parameters,
+        t("settings.workflow.section.parameters"),
+        data.toolParameters!.map((parameter) => `${parameter.key} = ${parameter.value}`),
+      );
+    }
+    appendParameter(parameters, t("settings.workflow.field.instruction"), data.instruction);
+    return parameters;
+  }
 
-  appendParameter(parameters, t("settings.workflow.field.model"), data.model);
-  appendParameter(parameters, t("settings.workflow.field.tool"), data.tool);
-  appendParameter(parameters, t("settings.workflow.field.condition"), data.condition);
+  if (data.kind === "start") {
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.trigger"),
+      data.trigger === undefined ? undefined : labels.triggerLabel(data.trigger),
+    );
+    appendParameter(parameters, t("settings.workflow.field.instruction"), data.instruction);
+    return parameters;
+  }
+  if (data.kind === "junction") {
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.waitStrategy"),
+      junctionWaitStrategyLabel(data.waitStrategy, t),
+    );
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.failureStrategy"),
+      junctionFailureStrategyLabel(data.failureStrategy, t),
+    );
+    appendParameter(parameters, t("settings.workflow.field.instruction"), data.instruction);
+    return parameters;
+  }
+  if (data.kind === "loop") {
+    appendParameter(
+      parameters,
+      t("settings.workflow.field.maxAttempts"),
+      data.maxAttempts?.toString(),
+    );
+    appendParameter(parameters, t("settings.workflow.field.exitCondition"), data.exitCondition);
+    appendParameter(parameters, t("settings.workflow.field.instruction"), data.instruction);
+    return parameters;
+  }
+
   appendParameter(parameters, t("settings.workflow.field.instruction"), data.instruction);
   return parameters;
 }
@@ -101,10 +171,13 @@ function configuredParameters(
 function appendParameter(
   parameters: NodeParameter[],
   label: string,
-  value: string | undefined,
+  value: string | string[] | undefined,
 ): void {
-  const trimmedValue = value?.trim();
-  if (trimmedValue !== undefined && trimmedValue !== "") {
-    parameters.push({ label, values: [trimmedValue] });
+  const values = Array.isArray(value) ? value : [value];
+  const populated = values
+    .map((entry) => entry?.trim())
+    .filter((entry): entry is string => entry !== undefined && entry !== "");
+  if (populated.length > 0) {
+    parameters.push({ label, values: populated });
   }
 }
