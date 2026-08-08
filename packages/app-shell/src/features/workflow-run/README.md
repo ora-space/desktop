@@ -31,12 +31,12 @@ Keep these stacks separate — shared chrome only where noted.
     `running` / `awaiting_input` nodes share a drag-to-switch stage carousel
     (chips + arrow keys for precise jumps). A soft right **act inspector**
     (settings-parity) opens as a right **overlay** from the stage card click
-    (or a new outcome) so the centered act card does not shift. While the run
-    is `pending`, description / instruction are editable on the **run
-    snapshot only** (label「仅本次」); after start they lock to read-only.
-    The rail stays resizable/collapsible — drag the handle to resize, drag
-    narrow or use the close control to dismiss. Switching acts updates the
-    open panel.
+    (or a new outcome) so the centered act card does not shift. Configuration
+    fields are always **read-only** (settings-parity, including Agent model /
+    role / enabled skills / prompt). Role/skills with catalog descriptions and
+    long instruction/prompt text open a brief preview popover. The rail stays
+    resizable/collapsible — drag the handle to resize, drag narrow or use the
+    close control to dismiss. Switching acts updates the open panel.
     The focused stage card owns a **session dock**. Without HITL it sits
     lower-right beside metrics. With embedded HITL it joins the gate chrome so
     permission / clarify and conversation share one action cluster. Activating it

@@ -1,24 +1,19 @@
 import { useTranslation } from "react-i18next";
-import {
-  Button,
-  Input,
-  Textarea,
-  cn,
-} from "@ora/ui";
+import { Button, cn } from "@ora/ui";
 import {
   IconLayoutSidebarRightCollapse,
   IconSparkles,
 } from "@tabler/icons-react";
-import {
-  createMockWorkflowNodeType,
-} from "@ora/workflow-mock";
+import { createMockWorkflowNodeType } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { getNodeMetadata } from "../workflow-node-chrome";
+import { RunActAgentConfig } from "./run-act-agent-config";
 import { RunActArtifacts } from "./run-act-artifacts";
+import { RunBriefPopover } from "./run-brief-popover";
 import { RunStatusBadge } from "./run-status-mark";
+import { shouldPreviewBrief } from "./should-preview-brief";
 import type {
   GraphWorkflowNodeState,
-  GraphWorkflowSnapshotNodePatch,
   WorkflowArtifact,
   WorkflowNodeData,
 } from "@ora/workflow-runtime";
@@ -29,18 +24,12 @@ interface RunActInspectorProps {
   state: GraphWorkflowNodeState | null;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
-  /**
-   * When true, description / instruction are editable for this run only
-   * (`pending` overrides on the frozen snapshot).
-   */
-  editable?: boolean;
-  onPatchNode?: (patch: GraphWorkflowSnapshotNodePatch) => void;
   onClose: () => void;
 }
 
 /**
- * Theater companion rail: settings-parity fields.
- * Editable only while the host marks the run as pending (snapshot overrides).
+ * Theater companion rail: read-only settings-parity configuration plus
+ * execution metrics and artifacts.
  */
 export function RunActInspector({
   nodeId,
@@ -48,8 +37,6 @@ export function RunActInspector({
   state,
   artifacts,
   revealedArtifactId,
-  editable = false,
-  onPatchNode,
   onClose,
 }: RunActInspectorProps) {
   const { t } = useTranslation();
@@ -80,35 +67,26 @@ export function RunActInspector({
 
   return (
     <RunActInspectorPanel
-      nodeId={nodeId}
       data={data}
       state={state}
       artifacts={artifacts}
       revealedArtifactId={revealedArtifactId}
-      editable={editable}
-      onPatchNode={onPatchNode}
       onClose={onClose}
     />
   );
 }
 
 function RunActInspectorPanel({
-  nodeId,
   data,
   state,
   artifacts,
   revealedArtifactId,
-  editable,
-  onPatchNode,
   onClose,
 }: {
-  nodeId: string;
   data: WorkflowNodeData;
   state: GraphWorkflowNodeState;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
-  editable: boolean;
-  onPatchNode?: (patch: GraphWorkflowSnapshotNodePatch) => void;
   onClose: () => void;
 }) {
   const { i18n, t } = useTranslation();
@@ -126,7 +104,7 @@ function RunActInspectorPanel({
         : "—",
     ].join(" — ")
     : null;
-  const canEdit = editable && onPatchNode !== undefined;
+  const agentConfig = data.agentConfig;
 
   return (
     <aside
@@ -145,11 +123,7 @@ function RunActInspectorPanel({
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-xs font-semibold">{data.title}</h3>
           <p className="truncate text-[10px] text-muted-foreground">
-            {canEdit
-              ? t("workflowRun.inspector.nodeSuffixEditable", {
-                type: nodeType.label,
-              })
-              : t("workflowRun.inspector.nodeSuffix", { type: nodeType.label })}
+            {t("workflowRun.inspector.nodeSuffix", { type: nodeType.label })}
           </p>
         </div>
         <RunStatusBadge status={state.status} quiet className="shrink-0" />
@@ -166,29 +140,12 @@ function RunActInspectorPanel({
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
-        {canEdit && (
-          <p className="rounded-lg border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-[11px] leading-5 text-sky-900 dark:text-sky-200">
-            {t("workflowRun.inspector.runOnlyHint")}
-          </p>
-        )}
-
         <InspectorSection title={t("workflowRun.inspector.config")}>
           <ReadOnlyField label={t("settings.workflow.field.name")} value={data.title} />
-          {canEdit
-            ? (
-              <EditableField
-                id={`run-node-description-${nodeId}`}
-                label={t("settings.workflow.field.description")}
-                value={data.description}
-                onChange={(value) => onPatchNode({ description: value })}
-              />
-            )
-            : (
-              <ReadOnlyField
-                label={t("settings.workflow.field.description")}
-                value={data.description}
-              />
-            )}
+          <ReadOnlyField
+            label={t("settings.workflow.field.description")}
+            value={data.description}
+          />
           {nodeType.configFields.includes("model") && (
             <ReadOnlyField
               label={t("settings.workflow.field.model")}
@@ -210,30 +167,16 @@ function RunActInspectorPanel({
               mono
             />
           )}
-          {nodeType.configFields.includes("instruction") && (
-            canEdit
-              ? (
-                <EditableField
-                  id={`run-node-instruction-${nodeId}`}
-                  label={t("settings.workflow.field.instruction")}
-                  value={data.instruction ?? ""}
-                  multiline
-                  onChange={(value) => onPatchNode({ instruction: value })}
-                />
-              )
-              : (
-                <ReadOnlyField
-                  label={t("settings.workflow.field.instruction")}
-                  value={data.instruction ?? ""}
-                  multiline
-                />
-              )
+          {nodeType.configFields.includes("agent") && agentConfig !== undefined && (
+            <RunActAgentConfig config={agentConfig} />
           )}
-          <ReadOnlyField
-            label={t("workflowRun.theater.nodeId")}
-            value={nodeId}
-            mono
-          />
+          {nodeType.configFields.includes("instruction") && (
+            <ReadOnlyField
+              label={t("settings.workflow.field.instruction")}
+              value={data.instruction ?? ""}
+              multiline
+            />
+          )}
         </InspectorSection>
 
         <InspectorSection title={t("workflowRun.inspector.execution")}>
@@ -346,58 +289,41 @@ function ReadOnlyField({
   mono?: boolean;
   multiline?: boolean;
 }) {
+  const { t } = useTranslation();
+  const trimmed = value.trim();
+  const previewable = multiline && shouldPreviewBrief(trimmed);
+
   return (
     <div className="space-y-1">
       <p className="text-[11px] text-muted-foreground">{label}</p>
-      <div
-        data-selectable
-        className={cn(
-          "rounded-lg border border-border/70 bg-muted/25 px-3 py-2 text-xs text-foreground/90",
-          mono && "font-mono text-[11px]",
-          multiline && "max-h-40 overflow-y-auto whitespace-pre-wrap leading-5",
-        )}
-      >
-        {value === "" ? "—" : value}
-      </div>
-    </div>
-  );
-}
-
-function EditableField({
-  id,
-  label,
-  value,
-  multiline = false,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  multiline?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="space-y-1">
-      <label htmlFor={id} className="text-[11px] text-muted-foreground">
-        {label}
-      </label>
-      {multiline
+      {previewable
         ? (
-          <Textarea
-            id={id}
-            value={value}
-            rows={4}
-            className="min-h-24 resize-y text-xs leading-5"
-            onChange={(event) => onChange(event.target.value)}
-          />
+          <RunBriefPopover
+            title={label}
+            body={trimmed}
+            openLabel={t("workflowRun.inspector.textOpen", { field: label })}
+          >
+            <span
+              className={cn(
+                "line-clamp-4 whitespace-pre-wrap text-xs leading-5",
+                mono && "font-mono text-[11px]",
+              )}
+            >
+              {trimmed}
+            </span>
+          </RunBriefPopover>
         )
         : (
-          <Input
-            id={id}
-            value={value}
-            className="h-9 text-xs"
-            onChange={(event) => onChange(event.target.value)}
-          />
+          <div
+            data-selectable
+            className={cn(
+              "rounded-lg border border-border/70 bg-muted/25 px-3 py-2 text-xs text-foreground/90",
+              mono && "font-mono text-[11px]",
+              multiline && "max-h-40 overflow-y-auto whitespace-pre-wrap leading-5",
+            )}
+          >
+            {trimmed === "" ? "—" : trimmed}
+          </div>
         )}
     </div>
   );

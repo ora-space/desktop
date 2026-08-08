@@ -347,7 +347,6 @@ export function RunTheaterParallelStage({
                     }}
                   >
                     <RunTheaterActCard
-                      nodeId={act.nodeId}
                       data={act.data}
                       state={act.state}
                       live={live}

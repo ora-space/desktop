@@ -88,7 +88,6 @@ function renderCard(onSelect = vi.fn()) {
     ...render(
       <AppI18nProvider>
         <RunTheaterActCard
-          nodeId="review"
           data={NODE_DATA}
           state={{
             status: "succeeded",
@@ -108,6 +107,35 @@ function renderCard(onSelect = vi.fn()) {
 }
 
 describe("RunTheaterActCard conversation", () => {
+  it("shows agent prompt and executor mono detail when flat fields are absent", async () => {
+    const user = userEvent.setup();
+    const longPrompt = "梳理现状、约束、风险与可选路径。".repeat(8);
+    render(
+      <AppI18nProvider>
+        <RunTheaterActCard
+          data={{
+            kind: "agent",
+            title: "探索",
+            description: "只读探索",
+            agentConfig: {
+              schemaVersion: 3,
+              executor: { agentCli: "open_code", modelId: "deepseek/deepseek-v4-flash" },
+              roleId: "researcher",
+              skills: [],
+              prompt: longPrompt,
+            },
+          }}
+          state={{ status: "succeeded" }}
+          live={false}
+        />
+      </AppI18nProvider>,
+    );
+
+    expect(screen.getByText("OpenCode · deepseek/deepseek-v4-flash")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看完整指令" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(longPrompt);
+  });
+
   it("morphs the card body into a chat-like filtered transcript", async () => {
     const { user } = renderCard();
 
@@ -147,7 +175,6 @@ describe("RunTheaterActCard conversation", () => {
     render(
       <AppI18nProvider>
         <RunTheaterActCard
-          nodeId="review"
           data={NODE_DATA}
           state={{
             status: "awaiting_input",

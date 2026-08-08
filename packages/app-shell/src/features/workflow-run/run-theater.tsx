@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Badge, cn, toast } from "@ora/ui";
-import { useUpdateGraphWorkflowRunSnapshotNode } from "../../state/hooks/use-graph-workflow-runs";
+import { Badge, cn } from "@ora/ui";
 import { filterArtifacts, latestArtifact } from "./artifact-filter";
 import { RunActInspector } from "./run-act-inspector";
 import { RunResultAct } from "./run-result-act";
@@ -77,7 +76,6 @@ export function RunTheater({
   onSessionConversationNodeIdChange,
 }: RunTheaterProps) {
   const { t } = useTranslation();
-  const updateSnapshotNode = useUpdateGraphWorkflowRunSnapshotNode();
   const inspectorAnimationRef = useRef<number | null>(null);
   const inspectorWidthRef = useRef(DEFAULT_INSPECTOR_WIDTH);
   const inspectorCurrentWidthRef = useRef(0);
@@ -435,7 +433,6 @@ export function RunTheater({
                     className="animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] fill-mode-both motion-reduce:animate-none"
                   >
                     <RunTheaterActCard
-                      nodeId={primaryNode.id}
                       data={primaryNode.data}
                       state={primaryState}
                       live={isNodeWorking(primaryState.status)}
@@ -576,18 +573,6 @@ export function RunTheater({
                 state={primaryState ?? null}
                 artifacts={primaryArtifacts}
                 revealedArtifactId={revealedArtifactId}
-                editable={run.status === "pending"}
-                onPatchNode={run.status === "pending" && primaryId !== null
-                  ? (patch) => {
-                    updateSnapshotNode.mutate({
-                      runId: run.id,
-                      nodeId: primaryId,
-                      patch,
-                    }, {
-                      onError: () => toast.error(t("workflowRun.updateFailed")),
-                    });
-                  }
-                  : undefined}
                 onClose={closeInspector}
               />
             </div>

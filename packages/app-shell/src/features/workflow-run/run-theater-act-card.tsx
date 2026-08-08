@@ -6,10 +6,16 @@ import {
 } from "@ora/workflow-mock";
 import { formatRunClock } from "../../lib/format";
 import { WorkflowNodeCardShell } from "../workflow-node-chrome";
+import {
+  resolveTheaterActDetail,
+  resolveTheaterActInstruction,
+} from "./agent-config-display";
 import { RunActSessionDock, type ActSessionDockTone } from "./run-act-session-dock";
+import { RunBriefPopover } from "./run-brief-popover";
 import { RunStatusBadge } from "./run-status-mark";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
 import { RunNodeConversation } from "./run-node-conversation";
+import { shouldPreviewBrief } from "./should-preview-brief";
 import type {
   GraphWorkflowNodeState,
   WorkflowNodeConversationItem,
@@ -18,7 +24,6 @@ import type {
 import "./theater-motion.css";
 
 interface RunTheaterActCardProps {
-  nodeId: string;
   data: WorkflowNodeData;
   state: GraphWorkflowNodeState;
   /** Soft emphasis when this act is live (running / awaiting). */
@@ -51,7 +56,6 @@ interface RunTheaterActCardProps {
  * and outcomes.
  */
 export function RunTheaterActCard({
-  nodeId,
   data,
   state,
   live,
@@ -69,7 +73,8 @@ export function RunTheaterActCard({
   const locale = i18n.resolvedLanguage === "en-US" ? "en-US" as const : "zh-CN" as const;
   const kindLabel = createMockWorkflowNodeType(data.kind, locale).label;
   const tone = runStatusTone(state.status);
-  const detail = data.model ?? data.tool ?? data.condition;
+  const detail = resolveTheaterActDetail(data);
+  const instruction = resolveTheaterActInstruction(data);
   const compact = variant === "compact";
   const [uncontrolledConversationOpen, setUncontrolledConversationOpen] = useState(false);
   const conversationOpen = conversationOpenProp ?? uncontrolledConversationOpen;
@@ -105,15 +110,7 @@ export function RunTheaterActCard({
           {timingRange}
         </p>
       )}
-      <dl className={cn("grid gap-3", compact ? "grid-cols-2" : "sm:grid-cols-3")}>
-        {!compact && (
-          <div className="rounded-lg border border-border/70 bg-background/80 px-3 py-2.5">
-            <dt className="text-[10px] text-muted-foreground">
-              {t("workflowRun.theater.nodeId")}
-            </dt>
-            <dd className="mt-0.5 truncate font-mono text-xs">{nodeId}</dd>
-          </div>
-        )}
+      <dl className={cn("grid gap-3", compact ? "grid-cols-2" : "sm:grid-cols-2")}>
         <div className="rounded-lg border border-border/70 bg-background/80 px-3 py-2.5">
           <dt className="text-[10px] text-muted-foreground">
             {t("workflowRun.field.duration")}
@@ -256,10 +253,31 @@ export function RunTheaterActCard({
               <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
                 {t("workflowRun.theater.instruction")}
               </p>
-              <p className="mt-1.5 text-sm leading-6 text-foreground/90">
-                {data.instruction}
-              </p>
-              {detail !== undefined && detail !== "" && (
+              {shouldPreviewBrief(instruction)
+                ? (
+                  <div className="mt-1.5">
+                    <RunBriefPopover
+                      title={t("workflowRun.theater.instruction")}
+                      body={instruction}
+                      openLabel={t("workflowRun.inspector.textOpen", {
+                        field: t("workflowRun.theater.instruction"),
+                      })}
+                      side="bottom"
+                      stopPropagation
+                      className="border-border/60 bg-background/70 hover:bg-background/90"
+                    >
+                      <span className="line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-foreground/90">
+                        {instruction}
+                      </span>
+                    </RunBriefPopover>
+                  </div>
+                )
+                : (
+                  <p className="mt-1.5 line-clamp-4 text-sm leading-6 text-foreground/90">
+                    {instruction === "" ? "—" : instruction}
+                  </p>
+                )}
+              {detail !== undefined && (
                 <p className="mt-2 font-mono text-[11px] text-muted-foreground">
                   {detail}
                 </p>
