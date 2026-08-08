@@ -315,7 +315,7 @@ describe("WorkflowSettings", () => {
 
     const pane = document.querySelector(".react-flow__pane");
     expect(pane).not.toBeNull();
-    fireEvent.click(pane!);
+    await user.click(pane!);
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "收起节点配置" })).not.toBeInTheDocument();
@@ -547,6 +547,58 @@ describe("WorkflowSettings", () => {
       expect(screen.queryByRole("button", {
         name: "Edge from understand to quality",
       })).not.toBeInTheDocument();
+    });
+  });
+
+  it("box-selects multiple nodes with a left drag and deletes them together", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const canvas = await screen.findByLabelText("工作流画布");
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      ...canvas.getBoundingClientRect(),
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 600,
+      right: 800,
+      bottom: 600,
+    });
+    const pane = canvas.querySelector<HTMLElement>(".react-flow__pane");
+    expect(pane).not.toBeNull();
+    pane!.setPointerCapture = () => {};
+
+    fireEvent.pointerDown(pane!, {
+      button: 0,
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 50,
+      clientY: 50,
+      bubbles: true,
+    });
+    fireEvent.pointerMove(pane!, {
+      button: 0,
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 950,
+      clientY: 550,
+      bubbles: true,
+    });
+    fireEvent.pointerUp(pane!, {
+      button: 0,
+      isPrimary: true,
+      pointerId: 1,
+      clientX: 950,
+      clientY: 550,
+      bubbles: true,
+    });
+
+    expect(canvas.querySelectorAll(".react-flow__node.selected").length).toBeGreaterThan(1);
+    await user.keyboard("{Delete}");
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Agent节点: 理解改动")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("条件分支节点: 质量门禁")).not.toBeInTheDocument();
+      // The required start node is not deletable and survives the batch delete.
+      expect(screen.getByLabelText("开始节点: 开始")).toBeInTheDocument();
     });
   });
 
@@ -829,7 +881,9 @@ describe("WorkflowSettings", () => {
     expect(await screen.findByText("Code review workflow")).toBeInTheDocument();
     expect(await screen.findByLabelText("Workflow canvas")).toBeInTheDocument();
     expect(
-      screen.getByText("Scroll to zoom · Drag to pan · Nodes snap to grid"),
+      screen.getByText(
+        "Left-drag to box-select nodes · Middle-drag to pan · Scroll to zoom · Nodes snap to grid",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deploy to project" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Test run" })).not.toBeInTheDocument();

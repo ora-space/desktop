@@ -32,13 +32,14 @@ describe("agent-config-display", () => {
     expect(resolveTheaterActInstruction(data)).toBe("梳理现状与风险。");
   });
 
-  it("prefers flat instruction and model over agentConfig", () => {
+  it("prefers flat tool/condition and instruction over agentConfig", () => {
     const data: WorkflowNodeData = {
       kind: "agent",
       title: "Review",
       description: "Review branch",
       instruction: "Find regressions.",
-      model: "mock-model",
+      tool: "Terminal",
+      condition: "contains source changes",
       agentConfig: {
         schemaVersion: 3,
         executor: { agentCli: "open_code", modelId: "ignored" },
@@ -48,7 +49,7 @@ describe("agent-config-display", () => {
         prompt: "Unused prompt",
       },
     };
-    expect(resolveTheaterActDetail(data)).toBe("mock-model");
+    expect(resolveTheaterActDetail(data)).toBe("Terminal");
     expect(resolveTheaterActInstruction(data)).toBe("Find regressions.");
   });
 });

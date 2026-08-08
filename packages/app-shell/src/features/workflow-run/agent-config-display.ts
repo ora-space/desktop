@@ -18,11 +18,11 @@ export function formatAgentExecutorLabel(
 }
 
 /**
- * Theater mono detail line: flat model/tool/condition first, else agent executor.
+ * Theater mono detail line: flat tool/condition first, else agent executor.
  * Keeps the stage glance to one quiet line.
  */
 export function resolveTheaterActDetail(data: WorkflowNodeData): string | undefined {
-  for (const candidate of [data.model, data.tool, data.condition]) {
+  for (const candidate of [data.tool, data.condition]) {
     const trimmed = candidate?.trim();
     if (trimmed !== undefined && trimmed !== "") {
       return trimmed;

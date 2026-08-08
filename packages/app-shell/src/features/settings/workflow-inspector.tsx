@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconCheck,
@@ -305,7 +305,7 @@ function AgentConfigurationFields({
   const selectedModel = configuredModel ?? {
     agentCli: config.executor.agentCli,
     modelId: config.executor.modelId,
-    label: `${AGENT_CLI_LABELS[config.executor.agentCli as AgentCli]} 路 ${config.executor.modelId}`,
+    label: `${AGENT_CLI_LABELS[config.executor.agentCli as AgentCli]} · ${config.executor.modelId}`,
   };
   const modelsForSelectedCli = modelsByCli?.get(currentAgentCli)
     ?? capabilities.agentModels.filter((model) => model.agentCli === currentAgentCli);
@@ -315,7 +315,7 @@ function AgentConfigurationFields({
   const selectedCliLoading = modelsLoading || selectedCliStatus?.isLoading === true;
   // A node always shows its model name; when the executor is not backed by a
   // discovered model (e.g. a CLI that failed to report one) the full
-  // `CLI 路 model` pair is shown instead so the agent pick stays legible.
+  // `CLI · model` pair is shown instead so the agent pick stays legible.
   const selectedModelName = configuredModel === undefined
     ? selectedModel.label
     : workflowModelDisplayName(selectedModel);
@@ -391,7 +391,7 @@ function AgentConfigurationFields({
    * Switches the node onto another Agent CLI. Keeps the current model id when
    * that CLI offers it; otherwise falls back to the first discovered model so
    * the executor pair stays catalog-backed. A CLI with no discovered models
-   * keeps the current id rather than inventing one 鈥?the model group then
+   * keeps the current id rather than inventing one — the model group then
    * shows the empty state and the pick stays visible (never reverted).
    */
   function selectAgentCli(agentCli: AgentCli): void {
@@ -827,10 +827,10 @@ function AgentConfigurationFields({
 }
 
 /**
- * Catalog labels are stored as `CLI 路 model` for legacy flat pickers; the
+ * Catalog labels are stored as `CLI · model` for legacy flat pickers; the
  * two-section menu shows the model name alone, matching chat.
  */
 function workflowModelDisplayName(model: WorkflowAgentModel): string {
-  const prefix = `${AGENT_CLI_LABELS[model.agentCli as AgentCli]} 路 `;
+  const prefix = `${AGENT_CLI_LABELS[model.agentCli as AgentCli]} · `;
   return model.label.startsWith(prefix) ? model.label.slice(prefix.length) : model.label;
 }

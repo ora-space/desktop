@@ -75,7 +75,6 @@ export function RunTheaterActCard({
   const tone = runStatusTone(state.status);
   const detail = resolveTheaterActDetail(data);
   const instruction = resolveTheaterActInstruction(data);
-  const detail = data.tool ?? data.condition;
   const compact = variant === "compact";
   const [uncontrolledConversationOpen, setUncontrolledConversationOpen] = useState(false);
   const conversationOpen = conversationOpenProp ?? uncontrolledConversationOpen;
