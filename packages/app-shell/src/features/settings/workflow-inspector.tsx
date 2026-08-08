@@ -43,6 +43,9 @@ import { ProviderLogo } from "../chat/provider-logos";
 import type { WorkflowAgentCliStatus } from "../../state/hooks/use-workflow-agent-models";
 import { getNodeMetadata } from "./workflow-node-metadata";
 
+/** Soft card copy limit so node descriptions stay glanceable on the canvas. */
+const NODE_DESCRIPTION_MAX_LENGTH = 30;
+
 interface WorkflowInspectorProps {
   node: Node<WorkflowNodeData, "workflow"> | null;
   capabilities: WorkflowCapabilities;
@@ -184,16 +187,19 @@ function WorkflowNodeInspector({
             <Input
               id="workflow-node-description"
               value={node.data.description}
-              maxLength={20}
+              maxLength={NODE_DESCRIPTION_MAX_LENGTH}
               onChange={(event) => onUpdate({
                 ...node,
-                data: { ...node.data, description: event.target.value.slice(0, 20) },
+                data: {
+                  ...node.data,
+                  description: event.target.value.slice(0, NODE_DESCRIPTION_MAX_LENGTH),
+                },
               })}
             />
             <p className="text-right text-[10px] text-muted-foreground" aria-live="polite">
               {t("settings.workflow.characterCount", {
                 count: node.data.description.length,
-                max: 20,
+                max: NODE_DESCRIPTION_MAX_LENGTH,
               })}
             </p>
           </>

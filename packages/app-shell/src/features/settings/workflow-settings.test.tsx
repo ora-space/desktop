@@ -585,7 +585,7 @@ describe("WorkflowSettings", () => {
     expect(configuredParameters).not.toHaveTextContent("按严重程度整理问题，并给出定位与修复建议。");
   });
 
-  it("limits node descriptions to 20 characters and shows their count", async () => {
+  it("limits node descriptions to 30 characters and shows their count", async () => {
     const user = userEvent.setup();
     renderSettings();
 
@@ -593,14 +593,14 @@ describe("WorkflowSettings", () => {
     await user.click(reviewNode.closest(".react-flow__node") ?? reviewNode);
     const description = screen.getByLabelText("说明");
 
-    expect(description).toHaveAttribute("maxlength", "20");
-    expect(screen.getByText("9/20")).toBeInTheDocument();
+    expect(description).toHaveAttribute("maxlength", "30");
+    expect(screen.getByText("9/30")).toBeInTheDocument();
     fireEvent.change(description, {
-      target: { value: "123456789012345678901" },
+      target: { value: "1234567890123456789012345678901" },
     });
 
-    expect(screen.getByLabelText("说明")).toHaveValue("12345678901234567890");
-    expect(screen.getByText("20/20")).toBeInTheDocument();
+    expect(screen.getByLabelText("说明")).toHaveValue("123456789012345678901234567890");
+    expect(screen.getByText("30/30")).toBeInTheDocument();
   });
 
   it("searches Agent models and roles before updating their selections", async () => {
