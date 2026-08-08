@@ -52,6 +52,7 @@ export {
   type WorkflowGraphEnvelope,
 } from "./graph-codec";
 export { projectNodeStatus, projectRunStatus } from "./run-projection";
+export { workflowPathNodes, workflowPathOrder } from "./workflow-path-order";
 
 export type {
   WorkflowHostRepository,

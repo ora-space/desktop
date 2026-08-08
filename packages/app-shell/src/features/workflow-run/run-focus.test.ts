@@ -159,6 +159,27 @@ describe("resolveTheaterFocus", () => {
     });
   });
 
+  it("orders parallel actives by path order even when the snapshot array is reversed", () => {
+    const snapshot = normalizeWorkflowDefinition(createMockWorkflowFixture("zh-CN"));
+    const reversed = {
+      ...snapshot,
+      nodes: [...snapshot.nodes].reverse(),
+    };
+    const run = baseRun({
+      definitionSnapshot: reversed,
+      nodeStates: {
+        start: { status: "succeeded", finishedAt: "a" },
+        understand: { status: "succeeded", finishedAt: "b" },
+        quality: { status: "succeeded", finishedAt: "c" },
+        tests: { status: "running", startedAt: "2026-08-01T12:00:10+08:00" },
+        review: { status: "running", startedAt: "2026-08-01T12:00:12+08:00" },
+        output: { status: "idle" },
+      },
+    });
+    expect(reversed.nodes.map((node) => node.id)[0]).toBe("output");
+    expect(resolveTheaterFocus(run, null).activeIds).toEqual(["tests", "review"]);
+  });
+
   it("prefers awaiting_input over running when choosing primary", () => {
     const run = baseRun({
       status: "awaiting_input",

@@ -84,6 +84,57 @@ function waitingRun(): { run: GraphWorkflowRun; request: HitlRequest } {
 }
 
 describe("RunTheaterPathRail", () => {
+  it("renders chips in path order when the snapshot array is reversed", () => {
+    const definition = normalizeWorkflowDefinition(createMockWorkflow("zh-CN"));
+    const reversed = {
+      ...definition,
+      nodes: [...definition.nodes].reverse(),
+    };
+    const run: GraphWorkflowRun = {
+      id: "run-1",
+      projectId: "p1",
+      definitionId: reversed.id,
+      definitionSnapshot: reversed,
+      name: reversed.name,
+      status: "running",
+      nodeStates: Object.fromEntries(
+        reversed.nodes.map((node) => [node.id, { status: "idle" as const }]),
+      ),
+      openHitls: [],
+      totals: {},
+      createdAt: "2026-08-04T12:00:00+08:00",
+      updatedAt: "2026-08-04T12:00:00+08:00",
+    };
+
+    render(
+      <AppI18nProvider>
+        <RunTheaterPathRail
+          run={run}
+          primaryId={null}
+          activeIds={[]}
+          openHitls={[]}
+          artifactCountByNode={{}}
+          showResultAct={false}
+          progress={{ done: 0, total: reversed.nodes.length, percent: 0 }}
+          pathRailRef={createRef()}
+          onFocusNode={vi.fn()}
+          onExpandHitl={vi.fn()}
+        />
+      </AppI18nProvider>,
+    );
+
+    const chips = within(screen.getByRole("list")).getAllByRole("button");
+    expect(chips.map((chip) => chip.getAttribute("data-path-node"))).toEqual([
+      "start",
+      "understand",
+      "quality",
+      "tests",
+      "review",
+      "output",
+    ]);
+    expect(reversed.nodes.map((node) => node.id)[0]).toBe("output");
+  });
+
   it("appends a status-toned Result chip after path nodes on terminal runs", async () => {
     const onShowResultAct = vi.fn();
     const onFocusNode = vi.fn();

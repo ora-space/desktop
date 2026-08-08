@@ -27,7 +27,10 @@ Keep these stacks separate — shared chrome only where noted.
 - Wire project mounts and `GraphWorkflowRun` lists through react-query hooks
   against the injected `WorkflowRuntime`.
 - Render the Run Workspace when `workflowRunId` is selected:
-  - **Theater**: focused act stage + path rail + live totals. Parallel
+  - **Theater**: focused act stage + path rail + live totals. The path rail
+    (and parallel act lists) use a derived order: topological constraints first,
+    then canvas position (`x`, then `y`, then id) among concurrently ready
+    nodes — not the frozen snapshot array order. Parallel
     `running` / `awaiting_input` nodes share a drag-to-switch stage carousel
     (chips + arrow keys for precise jumps). A soft right **act inspector**
     (settings-parity) opens as a right **overlay** from the stage card click

@@ -8,6 +8,9 @@ Transport-neutral Host/Run ports and an in-memory adapter for **graph workflow r
   (`GraphWorkflowRun*`, HITL, artifacts, `WorkflowRunEvent`).
 - Normalize editor graphs into serializable `WorkflowDefinition` snapshots so
   execution contracts never depend on React Flow runtime objects.
+- Derive a stable display path order (`workflowPathOrder`) for consumers that
+  need a linear node list: topological constraints first, canvas position as
+  the ready-set tie-break — without rewriting the frozen snapshot array.
 - Validate deployable definitions as non-empty DAGs with unique identifiers and
   resolvable edges, preventing invalid graphs from entering a stuck run state.
 - Provide `createMemoryWorkflowRuntime` that mounts `DemoWorkflow` snapshots,

@@ -3,7 +3,11 @@ import { useMemo, type RefObject } from "react";
 import { cn } from "@ora/ui";
 import { RunStatusMark } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
-import type { GraphWorkflowRun, HitlRequest } from "@ora/workflow-runtime";
+import {
+  workflowPathNodes,
+  type GraphWorkflowRun,
+  type HitlRequest,
+} from "@ora/workflow-runtime";
 import "./theater-motion.css";
 
 interface RunTheaterPathRailProps {
@@ -25,6 +29,7 @@ interface RunTheaterPathRailProps {
 /**
  * Theater header: progress track + horizontal path chips.
  * Waiting chips expand HITL; others only change focus.
+ * Chip order follows {@link workflowPathNodes} (topo + canvas position).
  */
 export function RunTheaterPathRail({
   run,
@@ -40,6 +45,10 @@ export function RunTheaterPathRail({
   onShowResultAct,
 }: RunTheaterPathRailProps) {
   const { t } = useTranslation();
+  const pathNodes = useMemo(
+    () => workflowPathNodes(run.definitionSnapshot),
+    [run.definitionSnapshot],
+  );
   const activeIdSet = useMemo(() => new Set(activeIds), [activeIds]);
   const hitlByNodeId = useMemo(
     () => new Map(openHitls.map((request) => [request.nodeId, request])),
@@ -88,7 +97,7 @@ export function RunTheaterPathRail({
         </div>
         <div className="overflow-x-auto" ref={pathRailRef} data-slot="theater-path-rail">
           <ol className="flex w-max gap-2 pb-0.5">
-            {run.definitionSnapshot.nodes.map((node) => {
+            {pathNodes.map((node) => {
               const state = run.nodeStates[node.id] ?? { status: "idle" as const };
               const tone = runStatusTone(state.status);
               const selected = !showResultAct && node.id === primaryId;

@@ -1,4 +1,8 @@
-import type { GraphWorkflowNodeStatus, GraphWorkflowRun } from "@ora/workflow-runtime";
+import {
+  workflowPathOrder,
+  type GraphWorkflowNodeStatus,
+  type GraphWorkflowRun,
+} from "@ora/workflow-runtime";
 import { isTerminalRunStatus } from "./run-status-style";
 
 const ACTIVE_STATUSES: ReadonlySet<GraphWorkflowNodeStatus> = new Set([
@@ -16,8 +20,9 @@ export interface TheaterFocus {
   /** Primary act shown large on stage. */
   primaryId: string | null;
   /**
-   * All currently active acts (running + awaiting_input), snapshot order.
-   * Length > 1 means genuine parallelism from the UI's point of view.
+   * All currently active acts (running + awaiting_input), path order
+   * (topo + canvas position). Length > 1 means genuine parallelism from
+   * the UI's point of view.
    */
   activeIds: string[];
 }
@@ -57,18 +62,16 @@ export function shouldReleaseFocusToFollow(
   return isActiveStatus(prev.status) && isTerminalNodeStatus(currentStatus);
 }
 
-/** Snapshot order keeps parallel chips stable across engine patches. */
+/** Path order keeps parallel chips stable and aligned with the Theater rail. */
 function orderedActiveIds(run: GraphWorkflowRun): string[] {
-  return run.definitionSnapshot.nodes
-    .map((node) => node.id)
-    .filter((nodeId) => {
-      const state = run.nodeStates[nodeId];
-      return state !== undefined && isActiveStatus(state.status);
-    });
+  return workflowPathOrder(run.definitionSnapshot).filter((nodeId) => {
+    const state = run.nodeStates[nodeId];
+    return state !== undefined && isActiveStatus(state.status);
+  });
 }
 
 /**
- * Among active acts, prefer awaiting_input, then latest startedAt, then snapshot order.
+ * Among active acts, prefer awaiting_input, then latest startedAt, then path order.
  */
 function pickPrimaryAmongActive(
   run: GraphWorkflowRun,
@@ -111,7 +114,7 @@ function pickFallbackPrimary(run: GraphWorkflowRun): string | null {
   if (latestSucceeded !== null) {
     return latestSucceeded.nodeId;
   }
-  return run.definitionSnapshot.nodes[0]?.id ?? null;
+  return workflowPathOrder(run.definitionSnapshot)[0] ?? null;
 }
 
 /**
