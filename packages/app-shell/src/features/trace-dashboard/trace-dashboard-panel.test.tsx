@@ -3,29 +3,50 @@ import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createStubPlatform } from "../../test/stub-platform";
 import { PlatformProvider } from "@ora/platform";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { TraceDashboardPanel } from "./trace-dashboard-panel";
-import type { DashboardResolver } from "./types";
+import type { DashboardCompareResolver, DashboardResolver } from "./types";
 
-function PanelShell({ resolve }: { resolve: DashboardResolver }) {
+function PanelShell({
+  resolve,
+  resolveCompare = null,
+}: {
+  resolve: DashboardResolver;
+  resolveCompare?: DashboardCompareResolver | null;
+}) {
   return (
     <PlatformProvider adapter={createStubPlatform()}>
       <AppI18nProvider>
         <TooltipProvider>
-          <TraceDashboardPanel resolveDashboardUrl={resolve} />
+          <TraceDashboardPanel
+            resolveDashboardUrl={resolve}
+            resolveDashboardCompareUrl={resolveCompare}
+          />
         </TooltipProvider>
       </AppI18nProvider>
     </PlatformProvider>
   );
 }
 
-function renderPanel(resolve: DashboardResolver) {
-  return render(<PanelShell resolve={resolve} />);
+function renderPanel(
+  resolve: DashboardResolver,
+  resolveCompare?: DashboardCompareResolver | null,
+) {
+  return render(<PanelShell resolve={resolve} resolveCompare={resolveCompare} />);
 }
 
 describe("TraceDashboardPanel", () => {
+  beforeEach(() => {
+    useUiStore.setState({
+      dashboardOpen: false,
+      dashboardMode: "trace",
+      dashboardWidth: 800,
+    });
+    useWorkspaceSelectionStore.getState().clearSelection();
+  });
+
   it("renders the panel when open with no session selected", async () => {
     useUiStore.getState().setDashboardOpen(true);
     useWorkspaceSelectionStore.getState().clearSelection();
@@ -53,6 +74,25 @@ describe("TraceDashboardPanel", () => {
       "http://127.0.0.1:8601/?session_id=sess-1&agent_type=claude_code",
     );
     expect(resolve).toHaveBeenCalledWith("sess-1");
+  });
+
+  it("renders the token comparison iframe without a selected session", async () => {
+    useUiStore.getState().openDashboardPanel("compare");
+    useWorkspaceSelectionStore.getState().clearSelection();
+    const resolve = vi.fn() as unknown as DashboardResolver;
+    const resolveCompare = vi.fn(async () => ({
+      host: "127.0.0.1",
+      port: 8601,
+      url: "http://127.0.0.1:8601/?app_mode=compare",
+      serverReachable: true,
+    })) as unknown as DashboardCompareResolver;
+
+    renderPanel(resolve, resolveCompare);
+
+    const iframe = await screen.findByTitle(/Token/i, undefined, { timeout: 2000 });
+    expect(iframe).toHaveAttribute("src", "http://127.0.0.1:8601/?app_mode=compare");
+    expect(resolveCompare).toHaveBeenCalledOnce();
+    expect(resolve).not.toHaveBeenCalled();
   });
 
   it("shows the server-unreachable guidance when the probe reports the server down", async () => {

@@ -1,5 +1,9 @@
 export { AppShell } from "./app-shell";
-export type { DashboardEndpoint, DashboardResolver } from "./features/trace-dashboard/types";
+export type {
+  DashboardCompareResolver,
+  DashboardEndpoint,
+  DashboardResolver,
+} from "./features/trace-dashboard/types";
 export { AppI18nProvider, type Locale, type TranslationKey } from "./i18n/i18n";
 export { appI18n } from "./i18n/i18n-instance";
 export { useContractsClient } from "./contracts-client-context";

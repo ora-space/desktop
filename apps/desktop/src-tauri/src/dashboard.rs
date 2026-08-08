@@ -225,6 +225,12 @@ pub fn dashboard_url(
     )
 }
 
+/// Builds the iframe URL for the standalone token-comparison dashboard mode.
+pub fn dashboard_compare_url(host: &str, port: u16) -> String {
+    let authority = format_host_port(host, port);
+    format!("http://{authority}/?app_mode=compare")
+}
+
 /// Carries the empty request used to ask Ora for a dashboard iframe URL.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -314,6 +320,25 @@ pub async fn get_dashboard_url(
     })
 }
 
+/// Returns the token-comparison dashboard endpoint without resolving a session trace.
+#[tauri::command]
+pub async fn get_dashboard_compare_url(
+    state: State<'_, DesktopState>,
+) -> Result<GetDashboardUrlResponse, CommandError> {
+    let config = state.config.snapshot().map_err(CommandError::from)?;
+    let host = config.dashboard_host().to_string();
+    let port = config.dashboard_port();
+    let url = dashboard_compare_url(&host, port);
+    let server_reachable = probe_dashboard_server(&host, port).await;
+
+    Ok(GetDashboardUrlResponse {
+        host,
+        port,
+        url,
+        server_reachable,
+    })
+}
+
 /// Returns true when something answers a TCP connect on host:port within a beat.
 async fn probe_dashboard_server(host: &str, port: u16) -> bool {
     use std::time::Duration;
@@ -382,6 +407,13 @@ mod tests {
             url,
             "http://127.0.0.1:8601/?session_id=811983f7-b35f-49a1-91ca-378ef1ece7ac&agent_type=claude_code"
         );
+    }
+
+    /// Verifies compare mode carries only the app mode and no trace/session path.
+    #[test]
+    fn builds_dashboard_compare_url_without_trace_path() {
+        let url = dashboard_compare_url("127.0.0.1", 8601);
+        assert_eq!(url, "http://127.0.0.1:8601/?app_mode=compare");
     }
 
     /// Verifies the locator is written as camelCase JSON at the conventional path.

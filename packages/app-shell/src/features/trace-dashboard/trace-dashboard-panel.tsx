@@ -1,14 +1,16 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cn, Sheet, SheetContent, SheetHeader, SheetTitle } from "@ora/ui";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { useDashboardEndpoint } from "./use-dashboard-endpoint";
-import type { DashboardResolver } from "./types";
+import type { DashboardCompareResolver, DashboardEndpoint, DashboardResolver } from "./types";
 
 interface TraceDashboardPanelProps {
   /** Injected by the Desktop app via Tauri invoke; null in non-Desktop builds/tests. */
   resolveDashboardUrl: DashboardResolver | null;
+  /** Injected by the Desktop app for the standalone token-comparison dashboard. */
+  resolveDashboardCompareUrl?: DashboardCompareResolver | null;
 }
 
 // Sizing bounds for the docked panel; the handle clamps live drags to this range
@@ -30,10 +32,14 @@ const MAX_PANEL_WIDTH = 1400;
  * so reopening re-resolves the trace (the Streamlit server stays running, so this
  * is cheap).
  */
-export function TraceDashboardPanel({ resolveDashboardUrl }: TraceDashboardPanelProps) {
+export function TraceDashboardPanel({
+  resolveDashboardUrl,
+  resolveDashboardCompareUrl = null,
+}: TraceDashboardPanelProps) {
   const { t } = useTranslation();
   const open = useUiStore((s) => s.dashboardOpen);
   const setOpen = useUiStore((s) => s.setDashboardOpen);
+  const mode = useUiStore((s) => s.dashboardMode);
   const width = useUiStore((s) => s.dashboardWidth);
   const setWidth = useUiStore((s) => s.setDashboardWidth);
   const sessionId = useWorkspaceSelectionStore((s) => s.selection.sessionId);
@@ -41,7 +47,11 @@ export function TraceDashboardPanel({ resolveDashboardUrl }: TraceDashboardPanel
   const { endpoint, isLoading, error } = useDashboardEndpoint(
     sessionId,
     resolveDashboardUrl,
-    open,
+    open && mode === "trace",
+  );
+  const compareEndpoint = useDashboardCompareEndpoint(
+    resolveDashboardCompareUrl,
+    open && mode === "compare",
   );
 
   // Clamp the persisted width so a value saved from a larger window does not
@@ -66,22 +76,34 @@ export function TraceDashboardPanel({ resolveDashboardUrl }: TraceDashboardPanel
         // too or the data-[side=right]:sm:max-w-sm variant caps the panel at 24rem.
         className="w-auto gap-0 data-[side=right]:sm:max-w-none"
         style={{ width: clamp(width), maxWidth: "none" }}
-        aria-label={t("dashboard.title")}
+        aria-label={mode === "compare" ? t("dashboard.compareTitle") : t("dashboard.title")}
       >
         <PanelResizeHandle
           onResize={(delta, startWidth) => setWidth(clamp(startWidth - delta))}
           aria-label={t("dashboard.resize")}
         />
         <SheetHeader className="gap-0.5 pr-10">
-          <SheetTitle>{t("dashboard.title")}</SheetTitle>
+          <SheetTitle>
+            {mode === "compare" ? t("dashboard.compareTitle") : t("dashboard.title")}
+          </SheetTitle>
         </SheetHeader>
         <div className="h-full min-h-0 flex-1 px-4 pb-4">
-          <DashboardTabBody
-            sessionId={sessionId}
-            isLoading={isLoading}
-            error={error}
-            endpoint={endpoint}
-          />
+          {mode === "compare"
+            ? (
+              <CompareTabBody
+                isLoading={compareEndpoint.isLoading}
+                error={compareEndpoint.error}
+                endpoint={compareEndpoint.endpoint}
+              />
+            )
+            : (
+              <DashboardTabBody
+                sessionId={sessionId}
+                isLoading={isLoading}
+                error={error}
+                endpoint={endpoint}
+              />
+            )}
         </div>
       </SheetContent>
     </Sheet>
@@ -160,9 +182,40 @@ function DashboardTabBody({
     return <StatusLine>{t("dashboard.serverUnreachable")}</StatusLine>;
   }
   return (
+    <DashboardIframe title={t("dashboard.tab.dashboard")} src={endpoint.url} />
+  );
+}
+
+/** Renders the standalone token-comparison dashboard iframe. */
+function CompareTabBody({
+  isLoading,
+  error,
+  endpoint,
+}: {
+  isLoading: boolean;
+  error: string | null;
+  endpoint: DashboardEndpoint | null;
+}) {
+  const { t } = useTranslation();
+
+  if (isLoading) {
+    return <StatusLine>{t("dashboard.compareResolving")}</StatusLine>;
+  }
+  if (error || !endpoint) {
+    return <StatusLine>{t("dashboard.compareResolveError")}</StatusLine>;
+  }
+  if (!endpoint.serverReachable) {
+    return <StatusLine>{t("dashboard.serverUnreachable")}</StatusLine>;
+  }
+  return <DashboardIframe title={t("dashboard.tab.compare")} src={endpoint.url} />;
+}
+
+/** Shared iframe shell for Streamlit dashboard modes. */
+function DashboardIframe({ title, src }: { title: string; src: string }) {
+  return (
     <iframe
-      title={t("dashboard.tab.dashboard")}
-      src={endpoint.url}
+      title={title}
+      src={src}
       className="h-full w-full rounded-md border bg-background"
       // The dashboard is a same-loopback HTTP server the user runs; allow scripts,
       // forms, and same-origin storage without forcing fullscreen or payment.
@@ -176,4 +229,72 @@ function DashboardTabBody({
 /** A single muted line used for not-ready states. */
 function StatusLine({ children }: { children: React.ReactNode }) {
   return <p className="py-6 text-sm text-muted-foreground">{children}</p>;
+}
+
+interface DashboardCompareEndpointState {
+  endpoint: DashboardEndpoint | null;
+  isLoading: boolean;
+  error: string | null;
+}
+
+const EMPTY_COMPARE_STATE: DashboardCompareEndpointState = {
+  endpoint: null,
+  isLoading: false,
+  error: null,
+};
+
+interface ResolvedCompareState {
+  resolve: DashboardCompareResolver | null;
+  endpoint: DashboardEndpoint | null;
+  error: string | null;
+}
+
+const INITIAL_COMPARE_RESOLVED: ResolvedCompareState = {
+  resolve: null,
+  endpoint: null,
+  error: null,
+};
+
+function useDashboardCompareEndpoint(
+  resolve: DashboardCompareResolver | null,
+  open: boolean,
+): DashboardCompareEndpointState {
+  const activeResolve = useRef<Promise<DashboardEndpoint> | null>(null);
+  const [resolved, setResolved] = useState<ResolvedCompareState>(INITIAL_COMPARE_RESOLVED);
+  const canResolve = open && resolve !== null;
+
+  useEffect(() => {
+    if (!canResolve || !resolve) return;
+
+    const promise = resolve();
+    activeResolve.current = promise;
+
+    let superseded = false;
+    promise
+      .then((endpoint) => {
+        if (!superseded && activeResolve.current === promise) {
+          setResolved({ resolve, endpoint, error: null });
+        }
+      })
+      .catch((error) => {
+        if (!superseded && activeResolve.current === promise) {
+          const message =
+            error instanceof Error ? error.message : "Failed to resolve dashboard endpoint";
+          setResolved({ resolve, endpoint: null, error: message });
+        }
+      });
+
+    return () => {
+      superseded = true;
+      if (activeResolve.current === promise) activeResolve.current = null;
+    };
+  }, [canResolve, resolve]);
+
+  if (!canResolve) return EMPTY_COMPARE_STATE;
+  const isStale = resolved.resolve !== resolve;
+  return {
+    endpoint: isStale ? null : resolved.endpoint,
+    isLoading: isStale || (resolved.endpoint === null && resolved.error === null),
+    error: isStale ? null : resolved.error,
+  };
 }

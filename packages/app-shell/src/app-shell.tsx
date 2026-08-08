@@ -25,7 +25,10 @@ import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
 import { SkillMarketplaceInstallController } from "./features/settings/skill-marketplace-install-controller";
 import { TraceDashboardPanel } from "./features/trace-dashboard/trace-dashboard-panel";
-import type { DashboardResolver } from "./features/trace-dashboard/types";
+import type {
+  DashboardCompareResolver,
+  DashboardResolver,
+} from "./features/trace-dashboard/types";
 import { AppI18nProvider } from "./i18n/i18n";
 import type { CurrentUser } from "./lib/types";
 import { createAppQueryClient } from "./state/query-client";
@@ -48,6 +51,8 @@ interface AppShellProps {
   workflowRuntime?: WorkflowRuntime;
   /** Desktop-injected resolver for the trace dashboard iframe URL; null when absent. */
   resolveDashboardUrl?: DashboardResolver | null;
+  /** Desktop-injected resolver for the standalone token-comparison dashboard. */
+  resolveDashboardCompareUrl?: DashboardCompareResolver | null;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 320;
@@ -63,6 +68,7 @@ export function AppShell({
   user,
   workflowRuntime,
   resolveDashboardUrl = null,
+  resolveDashboardCompareUrl = null,
 }: AppShellProps) {
   // One client per shell instance so HMR or multiple mounted shells never share cache.
   const [queryClient] = useState(() => createAppQueryClient());
@@ -77,6 +83,7 @@ export function AppShell({
               platform={platform}
               user={user}
               resolveDashboardUrl={resolveDashboardUrl}
+              resolveDashboardCompareUrl={resolveDashboardCompareUrl}
             />
           </WorkflowRuntimeProvider>
         </AppEventGate>
@@ -92,6 +99,7 @@ function AppShellContent({
   platform,
   user: injectedUser,
   resolveDashboardUrl,
+  resolveDashboardCompareUrl,
 }: AppShellProps) {
   // Mirror theme/density onto <html> for the shell's lifetime.
   useEffect(() => startThemeSubscription(), []);
@@ -155,7 +163,10 @@ function AppShellContent({
               )}
               <SettingsDialog />
               <SkillMarketplaceInstallController />
-              <TraceDashboardPanel resolveDashboardUrl={resolveDashboardUrl ?? null} />
+              <TraceDashboardPanel
+                resolveDashboardUrl={resolveDashboardUrl ?? null}
+                resolveDashboardCompareUrl={resolveDashboardCompareUrl ?? null}
+              />
               {/* Mounted here, not in the sidebar, so collapsing the sidebar does
                   not take the workspace dialogs down with it. */}
               <WorkspaceDialogs />

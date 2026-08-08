@@ -3,7 +3,11 @@ import { createChatStore } from "@ora/chat";
 import { createContractsClient } from "@ora/contracts";
 import { createTauriPlatformAdapter } from "@ora/platform/tauri";
 import { invoke } from "@tauri-apps/api/core";
-import type { DashboardEndpoint, DashboardResolver } from "@ora/app-shell";
+import type {
+  DashboardCompareResolver,
+  DashboardEndpoint,
+  DashboardResolver,
+} from "@ora/app-shell";
 import { createTauriTransport } from "./tauri-transport";
 
 const client = createContractsClient(createTauriTransport());
@@ -19,6 +23,10 @@ const resolveDashboardUrl: DashboardResolver = async (sessionId: string) => {
   });
 };
 
+const resolveDashboardCompareUrl: DashboardCompareResolver = async () => {
+  return invoke<DashboardEndpoint>("get_dashboard_compare_url");
+};
+
 export default function App() {
   return (
     <AppShell
@@ -26,6 +34,7 @@ export default function App() {
       chatStore={chatStore}
       platform={platform}
       resolveDashboardUrl={resolveDashboardUrl}
+      resolveDashboardCompareUrl={resolveDashboardCompareUrl}
     />
   );
 }

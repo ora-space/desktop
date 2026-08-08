@@ -21,3 +21,10 @@ export interface DashboardEndpoint {
  * app-shell stays transport-agnostic and unit-testable without Tauri.
  */
 export type DashboardResolver = (sessionId: string) => Promise<DashboardEndpoint>;
+
+/**
+ * Resolves the standalone token-comparison dashboard iframe endpoint. This mode
+ * does not carry any session id or trace path; users upload both trace files in
+ * the Streamlit iframe.
+ */
+export type DashboardCompareResolver = () => Promise<DashboardEndpoint>;

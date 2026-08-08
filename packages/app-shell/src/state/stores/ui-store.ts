@@ -15,10 +15,13 @@ export type DeleteTarget =
   | { kind: "session"; id: string; name: string }
   | { kind: "workflowRun"; id: string; name: string; projectId: string };
 
+export type DashboardPanelMode = "trace" | "compare";
+
 interface UiState {
   sidebarCollapsed: boolean;
   settingsOpen: boolean;
   dashboardOpen: boolean;
+  dashboardMode: DashboardPanelMode;
   /** Resizable dashboard panel width in px; clamped to a sane min/max by the panel. */
   dashboardWidth: number;
   expandedProjects: Set<string>;
@@ -28,6 +31,7 @@ interface UiState {
   setSidebarCollapsed: (collapsed: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setDashboardOpen: (open: boolean) => void;
+  openDashboardPanel: (mode: DashboardPanelMode) => void;
   setDashboardWidth: (width: number) => void;
   toggleProjectExpand: (projectId: string) => void;
   toggleTaskExpand: (taskId: string) => void;
@@ -44,6 +48,7 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarCollapsed: false,
   settingsOpen: false,
   dashboardOpen: false,
+  dashboardMode: "trace",
   dashboardWidth: 800,
   expandedProjects: new Set<string>(),
   expandedTasks: new Set<string>(),
@@ -52,6 +57,7 @@ export const useUiStore = create<UiState>((set) => ({
   setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setDashboardOpen: (dashboardOpen) => set({ dashboardOpen }),
+  openDashboardPanel: (dashboardMode) => set({ dashboardMode, dashboardOpen: true }),
   setDashboardWidth: (dashboardWidth) => set({ dashboardWidth }),
   toggleProjectExpand: (projectId) =>
     set((state) => {

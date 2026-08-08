@@ -153,6 +153,7 @@ pub fn run() {
             commands::open_location,
             commands::write_workflow_export,
             dashboard::get_dashboard_url,
+            dashboard::get_dashboard_compare_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

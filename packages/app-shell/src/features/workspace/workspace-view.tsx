@@ -6,6 +6,7 @@ import type { acp } from "@ora/contracts";
 import { useStore } from "zustand";
 import {
   IconBrandGit,
+  IconChartBar,
   IconFolder,
   IconGitBranch,
   IconLayoutDashboard,
@@ -145,7 +146,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   // the one the composer and model picker are actually pointing at — a stale
   // read would warm a different agent than what is on screen.
   const targetAgentCli = useTargetAgentCli(selection);
-  const setDashboardOpen = useUiStore((s) => s.setDashboardOpen);
+  const openDashboardPanel = useUiStore((s) => s.openDashboardPanel);
 
   const chatStore = useChatStore();
   useTaskDiffLiveSync(chatStore, sessions);
@@ -533,8 +534,23 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             )}
           </DragRegion>
           <LocationActionsButton taskId={task?.id} projectPath={project?.rootPath} />
-          <Button variant="ghost" size="icon" onClick={() => setDashboardOpen(true)} aria-label={t("dashboard.open")} title={t("dashboard.open")}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => openDashboardPanel("trace")}
+            aria-label={t("dashboard.open")}
+            title={t("dashboard.open")}
+          >
             <IconLayoutDashboard />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => openDashboardPanel("compare")}
+            aria-label={t("dashboard.openCompare")}
+            title={t("dashboard.openCompare")}
+          >
+            <IconChartBar />
           </Button>
           <WindowControls />
         </div>
