@@ -66,13 +66,8 @@ impl WorkflowRunCallback for WorkflowRunEngineCallback {
     ) {
         if let Ok(guard) = self.engine.read()
             && let Some(engine) = guard.as_ref()
-            && let Err(error) = engine.complete_node(
-                run_id,
-                node_run_id,
-                output,
-                stop_reason,
-                file_changes,
-            )
+            && let Err(error) =
+                engine.complete_node(run_id, node_run_id, output, stop_reason, file_changes)
         {
             ora_error!(run_id = %run_id, node_run_id = %node_run_id, error = %error, "node completion callback failed");
         }

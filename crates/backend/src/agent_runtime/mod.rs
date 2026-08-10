@@ -27,6 +27,7 @@ use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermission
 use ora_contracts::acp::session::SessionUpdate;
 use ora_contracts::acp::session_config_options::{SessionConfigId, SessionConfigOptionValue};
 use ora_contracts::acp::slash_command::AvailableCommand;
+use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
 use ora_contracts::{
     AttachSessionRequest, AttachSessionResponse, DeleteSessionResponse, LoadSessionEvent,
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
@@ -35,7 +36,6 @@ use ora_contracts::{
     SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse,
     WarmSessionTarget,
 };
-use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
     AgentCli, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus, TaskId,

@@ -193,9 +193,7 @@ fn rewrite_manifest_name(target: &Path, dir_name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ora_db::{
-        DatabaseBootstrapper, DatabaseLocation, default_migration_catalog,
-    };
+    use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 

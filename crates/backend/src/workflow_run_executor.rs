@@ -8,8 +8,8 @@ use crate::error::BackendError;
 use crate::task::resolve_task_cwd;
 use crate::workflow_run_prerequisites::resolve_executable_skill_name;
 use ora_application::{
-    AgentDefinitionRepository, AgentSkill, Clock, ExecutionContext, FileChange, FilesystemSkillStorage,
-    NodeExecutor, RepositoryError, WorkflowGraph, WorkflowGraphNode,
+    AgentDefinitionRepository, AgentSkill, Clock, ExecutionContext, FileChange,
+    FilesystemSkillStorage, NodeExecutor, RepositoryError, WorkflowGraph, WorkflowGraphNode,
     WorkflowRunCallback, WorkflowRunEngineRepository,
 };
 use ora_contracts::acp::content::{ContentBlock, TextContent};
@@ -472,10 +472,11 @@ fn resolve_skill_names(
     let skill_repository = SqliteSkillRepository::new(pool.clone());
     let mut names = Vec::new();
     for skill in skills.iter().filter(|skill| skill.enabled) {
-        let name = resolve_executable_skill_name(&storage, Some(&skill_repository), &skill.skill_id)
-            .map_err(|_| NodeExecutionError::SkillResolution {
-                skill_id: skill.skill_id.clone(),
-            })?;
+        let name =
+            resolve_executable_skill_name(&storage, Some(&skill_repository), &skill.skill_id)
+                .map_err(|_| NodeExecutionError::SkillResolution {
+                    skill_id: skill.skill_id.clone(),
+                })?;
         names.push(name);
     }
     Ok(names)
@@ -505,7 +506,9 @@ fn assemble_prompt(
             blocks.push(system_instructions_block(role));
         }
         if !node_prompt.is_empty() {
-            blocks.push(ContentBlock::Text(TextContent::new(node_prompt.to_string())));
+            blocks.push(ContentBlock::Text(TextContent::new(
+                node_prompt.to_string(),
+            )));
         }
     } else {
         // The `/name` invocation must be the first token the agent reads; the role instructions
@@ -686,7 +689,10 @@ mod tests {
         baseline.insert("src/b.ts".to_string(), Some("keep\n".to_string()));
 
         let mut current = BTreeMap::new();
-        current.insert("src/a.ts".to_string(), Some("one\ntwo\nthree\n".to_string()));
+        current.insert(
+            "src/a.ts".to_string(),
+            Some("one\ntwo\nthree\n".to_string()),
+        );
         current.insert("src/b.ts".to_string(), None);
         current.insert("src/new.ts".to_string(), Some("fresh\n".to_string()));
 
@@ -694,9 +700,21 @@ mod tests {
         assert_eq!(
             compute_file_changes(&baseline, &current),
             vec![
-                FileChange { path: "src/a.ts".to_string(), additions: 1, deletions: 0 },
-                FileChange { path: "src/b.ts".to_string(), additions: 0, deletions: 1 },
-                FileChange { path: "src/new.ts".to_string(), additions: 1, deletions: 0 },
+                FileChange {
+                    path: "src/a.ts".to_string(),
+                    additions: 1,
+                    deletions: 0
+                },
+                FileChange {
+                    path: "src/b.ts".to_string(),
+                    additions: 0,
+                    deletions: 1
+                },
+                FileChange {
+                    path: "src/new.ts".to_string(),
+                    additions: 1,
+                    deletions: 0
+                },
             ]
         );
     }
@@ -718,7 +736,10 @@ mod tests {
 
         let baseline = capture_worktree_snapshot(root);
         // The clean tracked file is part of the baseline.
-        assert_eq!(baseline.get("src/a.ts"), Some(&Some("one\ntwo\n".to_string())));
+        assert_eq!(
+            baseline.get("src/a.ts"),
+            Some(&Some("one\ntwo\n".to_string()))
+        );
 
         // The node edits the tracked file and creates files inside a new untracked directory.
         std::fs::write(root.join("src/a.ts"), "one\ntwo\nthree\n").unwrap();
@@ -728,8 +749,16 @@ mod tests {
         assert_eq!(
             compute_file_changes(&baseline, &capture_worktree_snapshot(root)),
             vec![
-                FileChange { path: "openspec/changes/demo/proposal.md".to_string(), additions: 1, deletions: 0 },
-                FileChange { path: "src/a.ts".to_string(), additions: 1, deletions: 0 },
+                FileChange {
+                    path: "openspec/changes/demo/proposal.md".to_string(),
+                    additions: 1,
+                    deletions: 0
+                },
+                FileChange {
+                    path: "src/a.ts".to_string(),
+                    additions: 1,
+                    deletions: 0
+                },
             ]
         );
     }

@@ -136,7 +136,11 @@ impl Backend {
             task_diff: Arc::new(TaskDiffApi::new(pool.clone(), clock)),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime,
-            skill: Arc::new(SkillApi::new(pool.clone(), paths.skills_root.clone(), clock)),
+            skill: Arc::new(SkillApi::new(
+                pool.clone(),
+                paths.skills_root.clone(),
+                clock,
+            )),
             agent: Arc::new(AgentApi::new(pool.clone(), clock)),
             spec: Arc::new(SpecApi::new(pool.clone(), paths.ripgrep_path)),
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
@@ -582,7 +586,6 @@ impl Backend {
     // =============================================================================
     // skill
     // =============================================================================
-
 
     /// Creates one skill through the shared application composition.
     pub fn create_skill(

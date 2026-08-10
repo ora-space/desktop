@@ -228,7 +228,12 @@ fn build_head_command(worktree: &WorktreeHandle) -> GitCommand {
 
 /// Builds the tracked-file comparison without external diff or text-conversion processes.
 pub fn build_diff_command(request: &DiffRequest<'_>) -> GitCommand {
+    // Render paths verbatim: with the default `core.quotepath`, Git octal-escapes
+    // non-ASCII (e.g. Chinese) names in `diff --git` headers, which the frontend diff
+    // parser does not decode back — jump-to-file would break for those paths.
     let mut args = vec![
+        "-c",
+        "core.quotepath=false",
         "diff",
         "--no-color",
         "--no-ext-diff",
@@ -263,6 +268,8 @@ fn build_untracked_diff_command(
     GitCommand::new(
         worktree.worktree_root().as_path().to_path_buf(),
         vec![
+            "-c",
+            "core.quotepath=false",
             "diff",
             "--no-index",
             "--no-color",
@@ -317,6 +324,8 @@ fn build_empty_untracked_diff_command(
     command_with_index(
         worktree,
         vec![
+            "-c",
+            "core.quotepath=false",
             "diff",
             "--no-color",
             "--no-ext-diff",
@@ -382,6 +391,8 @@ mod tests {
         assert_eq!(
             command.args,
             vec![
+                "-c",
+                "core.quotepath=false",
                 "diff",
                 "--no-color",
                 "--no-ext-diff",
@@ -407,6 +418,8 @@ mod tests {
             )
             .args,
             vec![
+                "-c",
+                "core.quotepath=false",
                 "diff",
                 "--no-index",
                 "--no-color",
@@ -458,6 +471,8 @@ mod tests {
                 ),
                 (
                     vec![
+                        "-c".to_string(),
+                        "core.quotepath=false".to_string(),
                         "diff".to_string(),
                         "--no-color".to_string(),
                         "--no-ext-diff".to_string(),
