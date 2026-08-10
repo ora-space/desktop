@@ -1,15 +1,17 @@
+use crate::task::branch::branch_name_for_task;
+use crate::task::{
+    PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, WorktreeProvisioningLeaseStore,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use uuid::Uuid;
 
-use crate::task::{
-    CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskIdGenerator,
-    TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-};
+use crate::task::{CreateTaskWorktreeRequest, TaskIdGenerator, TaskWorktreeProvisioner};
 use crate::workflow::WorkflowRepository;
 use crate::workflow_run::mapper::{map_node_run, map_run, map_run_summary};
 use crate::workflow_run::{
-    DeleteWorkflowRunResult, WorkflowRunIdGenerator, WorkflowRunRepository,
-    WorkflowRunWorktreeInitializer,
+    DeleteWorkflowRunResult, WorkflowRunCreateOutcome, WorkflowRunIdGenerator,
+    WorkflowRunRepository, WorkflowRunWorktreeInitializer,
 };
 use crate::worktree::WorktreeIdGenerator;
 use crate::{ApplicationError, Clock, WorkflowGraph};
@@ -22,12 +24,11 @@ use ora_contracts::{
 use ora_domain::{
     AuditFields, ProjectId, Task, TaskId, TaskStatus, Workflow, WorkflowId, WorkflowRun,
     WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Worktree,
-    WorktreeActivity, WorktreeBaseline,
+    WorktreeActivity, WorktreeBaseline, WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
 };
 
 const DRAFT_VERSION: &str = "draft";
 const DEFAULT_RUN_BASE_REFERENCE: &str = "main";
-const TASK_BRANCH_PREFIX_LEN: usize = 8;
 
 /// Handles creation of a workflow run against a published snapshot with a dedicated worktree.
 pub struct CreateWorkflowRunHandler<
@@ -38,6 +39,7 @@ pub struct CreateWorkflowRunHandler<
     WorktreeIdGeneratorPort,
     WorktreeProvisioner,
     WorktreeInitializer,
+    LeaseStorePort,
     ClockSource,
 > {
     workflow_repository: Arc<WorkflowRepositoryPort>,
@@ -47,6 +49,9 @@ pub struct CreateWorkflowRunHandler<
     worktree_id_generator: WorktreeIdGeneratorPort,
     worktree_provisioner: WorktreeProvisioner,
     worktree_initializer: WorktreeInitializer,
+    lease_store: LeaseStorePort,
+    /// Root of the project's Git repository, persisted into leases.
+    repository_root: PathBuf,
     work_dir: PathBuf,
     clock: ClockSource,
 }
@@ -59,6 +64,7 @@ impl<
     WorktreeIdGeneratorPort,
     WorktreeProvisioner,
     WorktreeInitializer,
+    LeaseStorePort,
     ClockSource,
 >
     CreateWorkflowRunHandler<
@@ -69,6 +75,7 @@ impl<
         WorktreeIdGeneratorPort,
         WorktreeProvisioner,
         WorktreeInitializer,
+        LeaseStorePort,
         ClockSource,
     >
 {
@@ -81,6 +88,8 @@ impl<
         worktree_id_generator: WorktreeIdGeneratorPort,
         worktree_provisioner: WorktreeProvisioner,
         worktree_initializer: WorktreeInitializer,
+        lease_store: LeaseStorePort,
+        repository_root: PathBuf,
         work_dir: PathBuf,
         clock: ClockSource,
     ) -> Self {
@@ -92,6 +101,8 @@ impl<
             worktree_id_generator,
             worktree_provisioner,
             worktree_initializer,
+            lease_store,
+            repository_root,
             work_dir,
             clock,
         }
@@ -106,6 +117,7 @@ impl<
     WorktreeIdGeneratorPort,
     WorktreeProvisioner,
     WorktreeInitializer,
+    LeaseStorePort,
     ClockSource,
 >
     CreateWorkflowRunHandler<
@@ -116,6 +128,7 @@ impl<
         WorktreeIdGeneratorPort,
         WorktreeProvisioner,
         WorktreeInitializer,
+        LeaseStorePort,
         ClockSource,
     >
 where
@@ -126,7 +139,8 @@ where
     WorktreeIdGeneratorPort: WorktreeIdGenerator,
     WorktreeProvisioner: TaskWorktreeProvisioner,
     WorktreeInitializer: WorkflowRunWorktreeInitializer,
-    ClockSource: Clock,
+    LeaseStorePort: WorktreeProvisioningLeaseStore,
+    ClockSource: Clock + Clone + Send + 'static,
 {
     /// Resolves the frozen snapshot and provisions a worktree before persisting the run atomically.
     pub fn handle(
@@ -160,33 +174,74 @@ where
             .map(str::trim)
             .filter(|branch| !branch.is_empty())
             .unwrap_or(DEFAULT_RUN_BASE_REFERENCE);
-        let provisioned = self
-            .worktree_provisioner
-            .create_task_worktree(CreateTaskWorktreeRequest {
-                branch_name: branch_name.clone(),
-                base_reference_name: base_reference_name.to_string(),
-                worktree_path: worktree_path.clone(),
-            })
-            .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
+
+        // Write-ahead lease: identical to ordinary task creation, the run-task's
+        // provisioned Git resources always have a durable owner from here on.
+        let lease = WorktreeProvisioningLease::new(
+            WorktreeProvisioningLeaseId::new(Uuid::new_v4().to_string()),
+            project_id.clone(),
+            task_id.clone(),
+            self.repository_root.to_string_lossy().into_owned(),
+            worktree_path.to_string_lossy().into_owned(),
+            branch_name.clone(),
+            now + PROVISIONING_LEASE_DURATION_MS,
+            now,
+        );
+        self.lease_store
+            .create_lease(&lease)
+            .map_err(ApplicationError::from_workflow_run_repository_error)?;
+        let renewal =
+            ProvisioningLeaseRenewal::spawn(self.lease_store.clone(), lease.id.clone(), {
+                let clock = self.clock.clone();
+                move || clock.now_timestamp_millis()
+            });
+
+        let provisioned =
+            match self
+                .worktree_provisioner
+                .create_task_worktree(CreateTaskWorktreeRequest {
+                    branch_name: branch_name.clone(),
+                    base_reference_name: base_reference_name.to_string(),
+                    worktree_path: worktree_path.clone(),
+                }) {
+                Ok(provisioned) => provisioned,
+                Err(error) => {
+                    drop(renewal);
+                    self.release_lease_to_cleanup(&lease.id);
+                    return Err(ApplicationError::from_task_worktree_provisioner_error(
+                        error,
+                    ));
+                }
+            };
 
         // Set up the worktree's initial state (validate declared roles and materialize enabled
         // skills) while the worktree is being created, so the run is born complete and `start`
-        // needs no re-validation. A failure aborts creation and removes the physical worktree.
-        let graph = WorkflowGraph::parse(&snapshot.graph)
-            .map_err(ApplicationError::WorkflowRunGraphParse)?;
-        self.worktree_initializer
+        // needs no re-validation. A failure aborts creation; the durable cleanup
+        // path reclaims the physical worktree and branch.
+        let graph = match WorkflowGraph::parse(&snapshot.graph)
+            .map_err(ApplicationError::WorkflowRunGraphParse)
+        {
+            Ok(graph) => graph,
+            Err(error) => {
+                drop(renewal);
+                self.release_lease_to_cleanup(&lease.id);
+                return Err(error);
+            }
+        };
+        if let Err(error) = self
+            .worktree_initializer
             .initialize_worktree(&graph, &worktree_path)
-            .map_err(|error| {
-                self.compensate_provisioned_worktree(
-                    &branch_name,
-                    ApplicationError::from_start_prerequisites_error(error),
-                )
-            })?;
+        {
+            drop(renewal);
+            self.release_lease_to_cleanup(&lease.id);
+            return Err(ApplicationError::from_start_prerequisites_error(error));
+        }
 
         let worktree = Worktree::new(
             worktree_id.clone(),
             task_id.clone(),
-            Some(branch_name.clone()),
+            Some(branch_name),
+            Some(worktree_path.to_string_lossy().into_owned()),
             WorktreeBaseline::recorded(provisioned.base_commit_id).map_err(|error| {
                 ApplicationError::TaskWorktreeProvisioner {
                     source: crate::TaskWorktreeProvisionerError::operation_failed(
@@ -203,7 +258,7 @@ where
             .unwrap_or_else(|| default_run_title(&workflow.name, now));
         let task = Task::workflow_run(
             task_id.clone(),
-            project_id,
+            project_id.clone(),
             title,
             TaskStatus::Todo,
             run_id.clone(),
@@ -227,18 +282,36 @@ where
 
         let created = self
             .run_repository
-            .create_run(run, task, worktree)
-            .map_err(|error| {
-                self.compensate_provisioned_worktree(
-                    &branch_name,
-                    ApplicationError::from_workflow_run_repository_error(error),
-                )
-            })?;
+            .create_run(run, task, worktree, &lease.id);
+        drop(renewal);
+        match created {
+            Ok(WorkflowRunCreateOutcome::Created(created)) => Ok(CreateWorkflowRunResponse {
+                run: map_run(*created),
+                task_id: task_id.to_string(),
+            }),
+            // The owning project was deleted while Git work ran; durable
+            // cleanup reclaims the provisioned worktree and branch.
+            Ok(WorkflowRunCreateOutcome::ProjectNotVisible) => {
+                self.release_lease_to_cleanup(&lease.id);
+                Err(ApplicationError::ProjectNotFound {
+                    project_id: project_id.to_string(),
+                })
+            }
+            Err(error) => {
+                self.release_lease_to_cleanup(&lease.id);
+                Err(ApplicationError::from_workflow_run_repository_error(error))
+            }
+        }
+    }
 
-        Ok(CreateWorkflowRunResponse {
-            run: map_run(created),
-            task_id: task_id.to_string(),
-        })
+    /// Hands the lease's Git resources to the durable cleanup path.
+    ///
+    /// Failure is tolerated: the lease then simply expires and the cleanup
+    /// worker reclaims it on schedule.
+    fn release_lease_to_cleanup(&self, lease_id: &WorktreeProvisioningLeaseId) {
+        let _ = self
+            .lease_store
+            .release_to_cleanup(lease_id, self.clock.now_timestamp_millis());
     }
 
     /// Resolves the snapshot a run freezes: an explicit id, or the workflow's published snapshot.
@@ -267,40 +340,6 @@ where
         }
         Ok(snapshot)
     }
-
-    /// Deletes the provisioned physical worktree when persistence fails so no orphan remains.
-    fn compensate_provisioned_worktree(
-        &self,
-        branch_name: &str,
-        original_error: ApplicationError,
-    ) -> ApplicationError {
-        let cleanup = self
-            .worktree_provisioner
-            .delete_task_worktree(DeleteTaskWorktreeRequest {
-                branch_name: branch_name.to_string(),
-                mode: TaskWorktreeDeletionMode::Force,
-            });
-        match cleanup {
-            Ok(()) => original_error,
-            Err(cleanup_error) => {
-                ApplicationError::from_task_worktree_provisioner_error(cleanup_error)
-            }
-        }
-    }
-}
-
-/// Derives the stable task branch name from the first eight characters of the generated task id.
-fn branch_name_for_task(task_id: &TaskId) -> String {
-    format!("ora/{}", task_branch_prefix(task_id))
-}
-
-/// Derives the short branch prefix used to keep task branch names readable.
-fn task_branch_prefix(task_id: &TaskId) -> String {
-    task_id
-        .to_string()
-        .chars()
-        .take(TASK_BRANCH_PREFIX_LEN)
-        .collect()
 }
 
 /// Derives the owned linked-worktree path from the configured worktree root and full task id.
@@ -454,76 +493,48 @@ where
     }
 }
 
-/// Handles soft-deletion of a workflow run followed by physical worktree cleanup.
-pub struct DeleteWorkflowRunHandler<Repository, WorktreeProvisioner, ClockSource> {
+/// Handles soft-deletion of a workflow run; physical Git cleanup is durable.
+pub struct DeleteWorkflowRunHandler<Repository, ClockSource> {
     repository: Arc<Repository>,
-    worktree_provisioner: WorktreeProvisioner,
     clock: ClockSource,
 }
 
-impl<Repository, WorktreeProvisioner, ClockSource>
-    DeleteWorkflowRunHandler<Repository, WorktreeProvisioner, ClockSource>
-{
-    /// Builds a delete-run handler with the provisioner used for physical worktree cleanup.
-    pub fn new(
-        repository: Arc<Repository>,
-        worktree_provisioner: WorktreeProvisioner,
-        clock: ClockSource,
-    ) -> Self {
-        Self {
-            repository,
-            worktree_provisioner,
-            clock,
-        }
+impl<Repository, ClockSource> DeleteWorkflowRunHandler<Repository, ClockSource> {
+    pub fn new(repository: Arc<Repository>, clock: ClockSource) -> Self {
+        Self { repository, clock }
     }
 }
 
-impl<Repository, WorktreeProvisioner, ClockSource>
-    DeleteWorkflowRunHandler<Repository, WorktreeProvisioner, ClockSource>
+impl<Repository, ClockSource> DeleteWorkflowRunHandler<Repository, ClockSource>
 where
     Repository: WorkflowRunRepository + Send + Sync + 'static,
-    WorktreeProvisioner: TaskWorktreeProvisioner,
     ClockSource: Clock,
 {
-    /// Soft-deletes one run and removes its physical worktree after refusing active runs.
+    /// Soft-deletes one run after refusing active runs.
+    ///
+    /// Physical Git cleanup is not invoked here: the repository cascade
+    /// registers a durable cleanup job for the run-task's worktree and branch
+    /// in the same transaction, and the backend cleanup worker executes it.
+    /// This keeps workflow-run deletion semantics identical to task/project
+    /// deletion — the commit is the success, cleanup is asynchronous and
+    /// replayable.
     pub fn handle(
         &self,
         request: DeleteWorkflowRunRequest,
     ) -> Result<DeleteWorkflowRunResponse, ApplicationError> {
         let run_id = WorkflowRunId::new(request.run_id);
-        // Capture the branch before the cascade hides the task row it belongs to.
-        let task_id = self
-            .repository
-            .find_run_task_id(&run_id)
-            .map_err(ApplicationError::from_workflow_run_repository_error)?;
-
         let deleted = self
             .repository
             .soft_delete_run(&run_id, self.clock.now_timestamp_millis())
             .map_err(ApplicationError::from_workflow_run_repository_error)?;
         match deleted {
-            DeleteWorkflowRunResult::Deleted => {}
-            DeleteWorkflowRunResult::NotFound => {
-                return Err(ApplicationError::WorkflowRunNotFound {
-                    run_id: run_id.to_string(),
-                });
-            }
-            DeleteWorkflowRunResult::ActiveRun => {
-                return Err(ApplicationError::WorkflowRunActive);
-            }
+            DeleteWorkflowRunResult::Deleted => Ok(DeleteWorkflowRunResponse {
+                run_id: run_id.to_string(),
+            }),
+            DeleteWorkflowRunResult::NotFound => Err(ApplicationError::WorkflowRunNotFound {
+                run_id: run_id.to_string(),
+            }),
+            DeleteWorkflowRunResult::ActiveRun => Err(ApplicationError::WorkflowRunActive),
         }
-
-        if let Some(task_id) = task_id {
-            self.worktree_provisioner
-                .delete_task_worktree(DeleteTaskWorktreeRequest {
-                    branch_name: branch_name_for_task(&task_id),
-                    mode: TaskWorktreeDeletionMode::Force,
-                })
-                .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
-        }
-
-        Ok(DeleteWorkflowRunResponse {
-            run_id: run_id.to_string(),
-        })
     }
 }

@@ -27,12 +27,21 @@ use std::path::PathBuf;
 pub(crate) struct TaskDiffApi {
     pool: RepositoryPool,
     clock: SystemClock,
+    git_cleanup: crate::git_cleanup::GitCleanupHandle,
 }
 
 impl TaskDiffApi {
     /// Builds the shared task diff API from durable repositories and the system clock.
-    pub(crate) fn new(pool: RepositoryPool, clock: SystemClock) -> Self {
-        Self { pool, clock }
+    pub(crate) fn new(
+        pool: RepositoryPool,
+        clock: SystemClock,
+        git_cleanup: crate::git_cleanup::GitCleanupHandle,
+    ) -> Self {
+        Self {
+            pool,
+            clock,
+            git_cleanup,
+        }
     }
 
     /// Computes a diff from the exact directory used as the task's agent session cwd.
@@ -40,6 +49,9 @@ impl TaskDiffApi {
         &self,
         request: GetTaskDiffRequest,
     ) -> Result<GetTaskDiffResponse, BackendError> {
+        // Shared use lease: physical cleanup of this task's checkout waits for
+        // this read instead of removing the directory underneath it.
+        let _worktree_use = self.git_cleanup.shared_worktree_use(&request.task_id);
         let task_id = TaskId::new(request.task_id.clone());
         let task = self.load_task(&task_id)?;
         let project = self.load_project(&task)?;
@@ -111,6 +123,8 @@ impl TaskDiffApi {
         &self,
         request: CommitTaskChangesRequest,
     ) -> Result<CommitTaskChangesResponse, BackendError> {
+        // Shared use lease: see get_diff; commits must not lose the checkout mid-write.
+        let _worktree_use = self.git_cleanup.shared_worktree_use(&request.task_id);
         let (task, project, worktree_path) = self.worktree_context(&request.task_id)?;
         CommitTaskChangesHandler::new(
             SqliteTaskRepository::new(self.pool.clone()),
@@ -130,6 +144,8 @@ impl TaskDiffApi {
         &self,
         request: PushTaskBranchRequest,
     ) -> Result<PushTaskBranchResponse, BackendError> {
+        // Shared use lease: see get_diff; pushes read the checkout's branch state.
+        let _worktree_use = self.git_cleanup.shared_worktree_use(&request.task_id);
         let (task, project, worktree_path) = self.worktree_context(&request.task_id)?;
         PushTaskBranchHandler::new(
             SqliteTaskRepository::new(self.pool.clone()),

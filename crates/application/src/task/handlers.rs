@@ -1,9 +1,13 @@
+use crate::task::branch::{branch_name_for_task, task_branch_prefix};
 use crate::task::mapper::map_task;
 use crate::task::ports::{
-    CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskIdGenerator, TaskRepository,
-    TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
+    CreateTaskWorktreeRequest, TaskIdGenerator, TaskRepository, TaskWorktreeProvisioner,
 };
-use crate::worktree::{WorktreeIdGenerator, WorktreeRepository};
+use crate::task::provisioning::{
+    PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, TaskWorkspaceCommit,
+    WorkspaceCommitOutcome, WorktreeProvisioningLeaseStore,
+};
+use crate::worktree::WorktreeIdGenerator;
 use crate::{ApplicationError, Clock};
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest,
@@ -11,65 +15,71 @@ use ora_contracts::{
 };
 use ora_domain::{
     AuditFields, ProjectId, Task as DomainTask, TaskId, TaskStatus as DomainTaskStatus,
-    Worktree as DomainWorktree, WorktreeActivity as DomainWorktreeActivity, WorktreeId,
+    Worktree as DomainWorktree, WorktreeActivity as DomainWorktreeActivity,
+    WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
 };
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
-const TASK_BRANCH_PREFIX_LEN: usize = 8;
 const MAX_TASK_ID_GENERATION_ATTEMPTS: usize = 3;
 
 /// Handles task creation without depending on transport-specific concerns.
 pub struct CreateTaskHandler<
-    TaskRepositoryPort,
-    WorktreeRepositoryPort,
+    WorkspaceCommitPort,
+    LeaseStorePort,
     TaskIdGeneratorPort,
     WorktreeIdGeneratorPort,
     WorktreeProvisioner,
     ClockSource,
 > {
-    task_repository: TaskRepositoryPort,
-    worktree_repository: WorktreeRepositoryPort,
+    workspace_commit: WorkspaceCommitPort,
+    lease_store: LeaseStorePort,
     task_id_generator: TaskIdGeneratorPort,
     worktree_id_generator: WorktreeIdGeneratorPort,
     worktree_provisioner: WorktreeProvisioner,
+    /// Root of the project's Git repository, persisted into leases and rows.
+    repository_root: PathBuf,
     work_dir: PathBuf,
     clock: ClockSource,
 }
 
 impl<
-    TaskRepositoryPort,
-    WorktreeRepositoryPort,
+    WorkspaceCommitPort,
+    LeaseStorePort,
     TaskIdGeneratorPort,
     WorktreeIdGeneratorPort,
     WorktreeProvisioner,
     ClockSource,
 >
     CreateTaskHandler<
-        TaskRepositoryPort,
-        WorktreeRepositoryPort,
+        WorkspaceCommitPort,
+        LeaseStorePort,
         TaskIdGeneratorPort,
         WorktreeIdGeneratorPort,
         WorktreeProvisioner,
         ClockSource,
     >
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        task_repository: TaskRepositoryPort,
-        worktree_repository: WorktreeRepositoryPort,
+        workspace_commit: WorkspaceCommitPort,
+        lease_store: LeaseStorePort,
         task_id_generator: TaskIdGeneratorPort,
         worktree_id_generator: WorktreeIdGeneratorPort,
         worktree_provisioner: WorktreeProvisioner,
+        repository_root: PathBuf,
         work_dir: PathBuf,
         clock: ClockSource,
     ) -> Self {
         Self {
-            task_repository,
-            worktree_repository,
+            workspace_commit,
+            lease_store,
             task_id_generator,
             worktree_id_generator,
             worktree_provisioner,
+            repository_root,
             work_dir,
             clock,
         }
@@ -77,28 +87,28 @@ impl<
 }
 
 impl<
-    TaskRepositoryPort,
-    WorktreeRepositoryPort,
+    WorkspaceCommitPort,
+    LeaseStorePort,
     TaskIdGeneratorPort,
     WorktreeIdGeneratorPort,
     WorktreeProvisioner,
     ClockSource,
 >
     CreateTaskHandler<
-        TaskRepositoryPort,
-        WorktreeRepositoryPort,
+        WorkspaceCommitPort,
+        LeaseStorePort,
         TaskIdGeneratorPort,
         WorktreeIdGeneratorPort,
         WorktreeProvisioner,
         ClockSource,
     >
 where
-    TaskRepositoryPort: TaskRepository,
-    WorktreeRepositoryPort: WorktreeRepository,
+    WorkspaceCommitPort: TaskWorkspaceCommit,
+    LeaseStorePort: WorktreeProvisioningLeaseStore,
     TaskIdGeneratorPort: TaskIdGenerator,
     WorktreeIdGeneratorPort: WorktreeIdGenerator,
     WorktreeProvisioner: TaskWorktreeProvisioner,
-    ClockSource: Clock,
+    ClockSource: Clock + Clone + Send + 'static,
 {
     /// Creates a task in either an owned linked worktree or the project root.
     pub fn handle(
@@ -129,63 +139,113 @@ where
         let task_id = self.select_available_task_id()?;
         let branch_name = branch_name_for_task(&task_id);
         let worktree_path = worktree_path_for_task(&self.work_dir, &task_id);
-        let provisioned_worktree = self
-            .worktree_provisioner
-            .create_task_worktree(CreateTaskWorktreeRequest {
-                branch_name: branch_name.clone(),
-                base_reference_name,
-                worktree_path,
-            })
-            .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
+        // Write-ahead lease: from here on the provisioned Git resources are
+        // always owned by something durable — the lease, then the committed
+        // rows — so no crash or lost race can orphan them.
+        let project_id = ProjectId::new(request.project_id.clone());
+        let now = self.clock.now_timestamp_millis();
+        let lease = WorktreeProvisioningLease::new(
+            WorktreeProvisioningLeaseId::new(Uuid::new_v4().to_string()),
+            project_id.clone(),
+            task_id.clone(),
+            self.repository_root.to_string_lossy().into_owned(),
+            worktree_path.to_string_lossy().into_owned(),
+            branch_name.clone(),
+            now + PROVISIONING_LEASE_DURATION_MS,
+            now,
+        );
+        self.lease_store
+            .create_lease(&lease)
+            .map_err(ApplicationError::from_worktree_repository_error)?;
+        let renewal =
+            ProvisioningLeaseRenewal::spawn(self.lease_store.clone(), lease.id.clone(), {
+                let clock = self.clock.clone();
+                move || clock.now_timestamp_millis()
+            });
+
+        let provisioned_worktree =
+            match self
+                .worktree_provisioner
+                .create_task_worktree(CreateTaskWorktreeRequest {
+                    branch_name: branch_name.clone(),
+                    base_reference_name,
+                    worktree_path: worktree_path.clone(),
+                }) {
+                Ok(provisioned) => provisioned,
+                Err(error) => {
+                    drop(renewal);
+                    self.release_lease_to_cleanup(&lease.id);
+                    return Err(ApplicationError::from_task_worktree_provisioner_error(
+                        error,
+                    ));
+                }
+            };
 
         let now = self.clock.now_timestamp_millis();
         let worktree_id = self.worktree_id_generator.generate_worktree_id();
+        let baseline =
+            match ora_domain::WorktreeBaseline::recorded(provisioned_worktree.base_commit_id) {
+                Ok(baseline) => baseline,
+                Err(error) => {
+                    drop(renewal);
+                    self.release_lease_to_cleanup(&lease.id);
+                    return Err(ApplicationError::TaskWorktreeProvisioner {
+                        source: crate::TaskWorktreeProvisionerError::operation_failed(
+                            "failed to record task worktree baseline",
+                            error,
+                        ),
+                    });
+                }
+            };
         let worktree = DomainWorktree::new(
             worktree_id,
             task_id.clone(),
-            Some(branch_name.clone()),
-            ora_domain::WorktreeBaseline::recorded(provisioned_worktree.base_commit_id).map_err(
-                |error| ApplicationError::TaskWorktreeProvisioner {
-                    source: crate::TaskWorktreeProvisionerError::operation_failed(
-                        "failed to record task worktree baseline",
-                        error,
-                    ),
-                },
-            )?,
+            Some(branch_name),
+            Some(worktree_path.to_string_lossy().into_owned()),
+            baseline,
             DomainWorktreeActivity::Active,
             AuditFields::new(now, now, false),
         );
-        let worktree = match self.worktree_repository.create_worktree(worktree) {
-            Ok(worktree) => worktree,
-            Err(error) => {
-                return Err(self.handle_create_failure_after_provisioning(
-                    &branch_name,
-                    ApplicationError::from_worktree_repository_error(error),
-                ));
-            }
-        };
         let task = DomainTask::new(
             task_id,
-            ProjectId::new(request.project_id),
+            project_id.clone(),
             request.title,
             map_contract_task_status(request.status),
             Some(worktree.id.clone()),
             AuditFields::new(now, now, false),
         );
-        let task = match self.task_repository.create_task(task) {
-            Ok(task) => task,
-            Err(error) => {
-                return Err(self.handle_task_persistence_failure_after_worktree_create(
-                    &worktree.id,
-                    &branch_name,
-                    ApplicationError::from_task_repository_error(error),
-                ));
-            }
-        };
 
-        Ok(CreateTaskResponse {
-            task: map_task(task),
-        })
+        let committed = self
+            .workspace_commit
+            .commit_worktree_task(&task, &worktree, &lease.id);
+        drop(renewal);
+        match committed {
+            Ok(WorkspaceCommitOutcome::Committed) => Ok(CreateTaskResponse {
+                task: map_task(task),
+            }),
+            // The owning project was deleted while Git work ran; the durable
+            // cleanup path reclaims both the worktree and the branch.
+            Ok(WorkspaceCommitOutcome::ProjectNotVisible) => {
+                self.release_lease_to_cleanup(&lease.id);
+                Err(ApplicationError::ProjectNotFound {
+                    project_id: project_id.to_string(),
+                })
+            }
+            Err(error) => {
+                self.release_lease_to_cleanup(&lease.id);
+                Err(ApplicationError::from_task_repository_error(error))
+            }
+        }
+    }
+
+    /// Hands the lease's Git resources to the durable cleanup path.
+    ///
+    /// Failure is deliberately tolerated: the lease then simply expires and the
+    /// cleanup worker reclaims it on schedule.
+    fn release_lease_to_cleanup(&self, lease_id: &WorktreeProvisioningLeaseId) {
+        let _ = self
+            .lease_store
+            .release_to_cleanup(lease_id, self.clock.now_timestamp_millis());
     }
 
     /// Persists a task that will run directly in its owning project's root directory.
@@ -203,14 +263,18 @@ where
             None,
             AuditFields::new(now, now, false),
         );
-        let task = self
-            .task_repository
-            .create_task(task)
-            .map_err(ApplicationError::from_task_repository_error)?;
-
-        Ok(CreateTaskResponse {
-            task: map_task(task),
-        })
+        match self
+            .workspace_commit
+            .commit_project_root_task(&task)
+            .map_err(ApplicationError::from_task_repository_error)?
+        {
+            WorkspaceCommitOutcome::Committed => Ok(CreateTaskResponse {
+                task: map_task(task),
+            }),
+            WorkspaceCommitOutcome::ProjectNotVisible => Err(ApplicationError::ProjectNotFound {
+                project_id: task.project_id.to_string(),
+            }),
+        }
     }
 
     /// Generates a task id whose branch prefix does not collide with existing task worktree folders.
@@ -236,47 +300,6 @@ where
         Err(ApplicationError::TaskWorktreeIdExhausted {
             attempts: MAX_TASK_ID_GENERATION_ATTEMPTS,
         })
-    }
-
-    /// Attempts compensating worktree cleanup after persistence fails and returns the stable application error.
-    fn handle_create_failure_after_provisioning(
-        &self,
-        branch_name: &str,
-        original_error: ApplicationError,
-    ) -> ApplicationError {
-        let cleanup_result =
-            self.worktree_provisioner
-                .delete_task_worktree(DeleteTaskWorktreeRequest {
-                    branch_name: branch_name.to_string(),
-                    mode: TaskWorktreeDeletionMode::Force,
-                });
-
-        match cleanup_result {
-            Ok(()) => original_error,
-            Err(cleanup_error) => {
-                ApplicationError::from_task_worktree_provisioner_error(cleanup_error)
-            }
-        }
-    }
-
-    /// Soft-deletes the persisted worktree row, then removes the created checkout, before returning a stable failure.
-    fn handle_task_persistence_failure_after_worktree_create(
-        &self,
-        worktree_id: &WorktreeId,
-        branch_name: &str,
-        original_error: ApplicationError,
-    ) -> ApplicationError {
-        let worktree_cleanup = self
-            .worktree_repository
-            .soft_delete_worktree(worktree_id, self.clock.now_timestamp_millis())
-            .map_err(ApplicationError::from_worktree_repository_error);
-        let filesystem_cleanup =
-            self.handle_create_failure_after_provisioning(branch_name, original_error);
-
-        match worktree_cleanup {
-            Ok(_) => filesystem_cleanup,
-            Err(error) => error,
-        }
     }
 }
 
@@ -420,20 +443,6 @@ fn map_contract_task_status(status: TaskStatus) -> DomainTaskStatus {
         TaskStatus::Doing => DomainTaskStatus::Doing,
         TaskStatus::Done => DomainTaskStatus::Done,
     }
-}
-
-/// Derives the stable task branch name from the first eight characters of the generated task id.
-fn branch_name_for_task(task_id: &TaskId) -> String {
-    format!("ora/{}", task_branch_prefix(task_id))
-}
-
-/// Derives the short branch prefix used to keep task branch names readable.
-fn task_branch_prefix(task_id: &TaskId) -> String {
-    task_id
-        .to_string()
-        .chars()
-        .take(TASK_BRANCH_PREFIX_LEN)
-        .collect()
 }
 
 /// Derives the owned linked-worktree path from the configured worktree root and full task id.

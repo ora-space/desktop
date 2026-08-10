@@ -1,8 +1,15 @@
 use crate::RepositoryError;
 use ora_domain::{
     ProjectId, Task, TaskId, WorkflowId, WorkflowNodeRun, WorkflowRun, WorkflowRunDetail,
-    WorkflowRunId, WorkflowRunSummary, Worktree,
+    WorkflowRunId, WorkflowRunSummary, Worktree, WorktreeProvisioningLeaseId,
 };
+
+/// Reports whether run creation committed or lost to a project deletion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkflowRunCreateOutcome {
+    Created(Box<WorkflowRun>),
+    ProjectNotVisible,
+}
 
 /// Describes the outcome of soft-deleting a workflow run while preserving aggregate invariants.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,12 +28,15 @@ pub trait WorkflowRunRepository {
     ///
     /// Runs are created `Pending` with `current_nodes=[]`. The run row MUST be inserted before the
     /// task row because `tasks.workflow_run_id` is an immediate foreign key on `workflow_runs`.
+    /// Implementations must re-validate that the owning project is still visible and delete the
+    /// provisioning lease inside the same transaction, mirroring ordinary task creation.
     fn create_run(
         &self,
         run: WorkflowRun,
         task: Task,
         worktree: Worktree,
-    ) -> Result<WorkflowRun, RepositoryError>;
+        lease_id: &WorktreeProvisioningLeaseId,
+    ) -> Result<WorkflowRunCreateOutcome, RepositoryError>;
 
     /// Loads one visible run by identifier.
     fn find_run(&self, run_id: &WorkflowRunId) -> Result<Option<WorkflowRun>, RepositoryError>;

@@ -106,8 +106,7 @@ impl RuntimeActor {
                     events,
                     accepted,
                 } => {
-                    let _ = accepted.send(Ok(()));
-                    self.run_load(operation_id, events).await;
+                    self.run_load(operation_id, events, accepted).await;
                 }
                 RuntimeCommand::Prompt {
                     operation_id,
@@ -147,10 +146,16 @@ impl RuntimeActor {
     }
 
     /// Re-registers a stopped session and streams provider history without replacing the process.
+    ///
+    /// The admission signal is only sent after the Running row is persisted:
+    /// an aggregate-deletion cascade that runs after `accepted` resolves must
+    /// observe the Running session and refuse the delete, otherwise it could
+    /// remove the checkout while provider setup is still using it.
     async fn run_load(
         &mut self,
         operation_id: u64,
         events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
+        accepted: oneshot::Sender<Result<(), BackendError>>,
     ) {
         self.unload().await;
         let running = match self.repository.update_session_status(
@@ -160,10 +165,14 @@ impl RuntimeActor {
         ) {
             Ok(session) => session,
             Err(_) => {
-                let _ = events.try_send(Err(session_not_found(self.session.id.as_ref())));
+                // The session (or its task/project) is no longer visible — a
+                // deletion won the race. Reject the admission itself so no
+                // caller proceeds against a removed checkout.
+                let _ = accepted.send(Err(session_not_found(self.session.id.as_ref())));
                 return;
             }
         };
+        let _ = accepted.send(Ok(()));
         self.session = running;
         let channel = match self
             .connection

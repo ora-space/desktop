@@ -3,9 +3,8 @@ use crate::workflow_run_prerequisites::SkillRoleWorktreeInitializer;
 use ora_application::{
     ApplicationError, CreateWorkflowRunHandler, DeleteWorkflowRunHandler, GetWorkflowRunHandler,
     GitTaskWorktreeProvisioner, ListWorkflowNodeRunsHandler, ListWorkflowRunsByWorkflowHandler,
-    ListWorkflowRunsHandler, ProjectRepository, RepositoryError, TaskRepository,
-    UuidTaskIdGenerator, UuidWorkflowRunIdGenerator, UuidWorktreeIdGenerator,
-    WorkflowRunRepository,
+    ListWorkflowRunsHandler, ProjectRepository, RepositoryError, UuidTaskIdGenerator,
+    UuidWorkflowRunIdGenerator, UuidWorktreeIdGenerator,
 };
 use ora_contracts::{
     CreateWorkflowRunRequest, CreateWorkflowRunResponse, DeleteWorkflowRunRequest,
@@ -14,10 +13,10 @@ use ora_contracts::{
     ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
 };
 use ora_db::{
-    RepositoryPool, SqliteProjectRepository, SqliteTaskRepository, SqliteWorkflowRepository,
-    SqliteWorkflowRunRepository,
+    RepositoryPool, SqliteProjectRepository, SqliteWorkflowRepository, SqliteWorkflowRunRepository,
+    SqliteWorktreeProvisioningLeaseRepository,
 };
-use ora_domain::{Project, ProjectId, TaskId, WorkflowRunId};
+use ora_domain::{Project, ProjectId};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -27,6 +26,8 @@ pub(crate) struct WorkflowRunApi {
     worktree_root: Arc<RwLock<PathBuf>>,
     /// Skill catalog root used to materialize a run worktree's initial `.agents/skills/`.
     skills_root: PathBuf,
+    /// Serializes Git mutations per repository between provisioning and cleanup.
+    repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
     get: GetWorkflowRunHandler<SqliteWorkflowRunRepository>,
     list: ListWorkflowRunsHandler<SqliteWorkflowRunRepository>,
     list_by_workflow: ListWorkflowRunsByWorkflowHandler<SqliteWorkflowRunRepository>,
@@ -41,6 +42,7 @@ impl WorkflowRunApi {
         pool: RepositoryPool,
         worktree_root: Arc<RwLock<PathBuf>>,
         skills_root: PathBuf,
+        repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
         clock: SystemClock,
     ) -> Self {
         let repository = Arc::new(SqliteWorkflowRunRepository::new(pool.clone()));
@@ -49,6 +51,7 @@ impl WorkflowRunApi {
             pool,
             worktree_root,
             skills_root,
+            repository_gates,
             get: GetWorkflowRunHandler::new(repository.clone()),
             list: ListWorkflowRunsHandler::new(repository.clone()),
             list_by_workflow: ListWorkflowRunsByWorkflowHandler::new(repository.clone()),
@@ -64,14 +67,21 @@ impl WorkflowRunApi {
         request: CreateWorkflowRunRequest,
     ) -> Result<CreateWorkflowRunResponse, ApplicationError> {
         let project = self.find_project(&ProjectId::new(&request.project_id))?;
+        let repository_root = PathBuf::from(project.root_path);
         let handler = CreateWorkflowRunHandler::new(
             Arc::new(SqliteWorkflowRepository::new(self.pool.clone())),
             Arc::new(SqliteWorkflowRunRepository::new(self.pool.clone())),
             UuidWorkflowRunIdGenerator::new(),
             UuidTaskIdGenerator::new(),
             UuidWorktreeIdGenerator::new(),
-            GitTaskWorktreeProvisioner::new(PathBuf::from(project.root_path)),
+            crate::git_cleanup::GatedWorktreeProvisioner::new(
+                GitTaskWorktreeProvisioner::new(repository_root.clone()),
+                Arc::clone(&self.repository_gates),
+                crate::git_cleanup::normalize_repository_key(&repository_root),
+            ),
             SkillRoleWorktreeInitializer::new(self.skills_root.clone(), self.pool.clone()),
+            SqliteWorktreeProvisioningLeaseRepository::new(self.pool.clone()),
+            repository_root,
             self.worktree_root_snapshot()?,
             self.clock,
         );
@@ -111,23 +121,13 @@ impl WorkflowRunApi {
         self.list_node_runs.handle(request)
     }
 
-    /// Soft-deletes one run and removes its physical worktree from the owning project repository.
+    /// Soft-deletes one run; the cascade registers durable Git cleanup jobs.
     pub(crate) fn delete(
         &self,
         request: DeleteWorkflowRunRequest,
     ) -> Result<DeleteWorkflowRunResponse, ApplicationError> {
-        let run_id = WorkflowRunId::new(&request.run_id);
-        let run_repository = SqliteWorkflowRunRepository::new(self.pool.clone());
-        let task_id = run_repository
-            .find_run_task_id(&run_id)
-            .map_err(|source| ApplicationError::WorkflowRunRepository { source })?
-            .ok_or_else(|| ApplicationError::WorkflowRunNotFound {
-                run_id: request.run_id.clone(),
-            })?;
-        let project = self.find_project_for_task(&task_id, &request.run_id)?;
         let handler = DeleteWorkflowRunHandler::new(
-            Arc::new(run_repository),
-            GitTaskWorktreeProvisioner::new(PathBuf::from(project.root_path)),
+            Arc::new(SqliteWorkflowRunRepository::new(self.pool.clone())),
             self.clock,
         );
 
@@ -144,22 +144,6 @@ impl WorkflowRunApi {
         project.ok_or_else(|| ApplicationError::ProjectNotFound {
             project_id: project_id.to_string(),
         })
-    }
-
-    /// Resolves the project that owns a run-task so its worktree can be removed from the right repo.
-    fn find_project_for_task(
-        &self,
-        task_id: &TaskId,
-        run_id: &str,
-    ) -> Result<Project, ApplicationError> {
-        let task = SqliteTaskRepository::new(self.pool.clone())
-            .find_task(task_id)
-            .map_err(|source| ApplicationError::TaskRepository { source })?
-            .ok_or_else(|| ApplicationError::WorkflowRunNotFound {
-                run_id: run_id.to_string(),
-            })?;
-
-        self.find_project(&task.project_id)
     }
 
     /// Captures the configured creation root once so an in-flight operation remains coherent.

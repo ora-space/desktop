@@ -27,14 +27,20 @@ use crate::clock::SystemClock;
 pub(crate) struct SpecApi {
     pool: RepositoryPool,
     file_system: WorkspaceFileSystem,
+    git_cleanup: crate::git_cleanup::GitCleanupHandle,
 }
 
 impl SpecApi {
     /// Builds the shared Spec API with Ora's bundled ripgrep path.
-    pub(crate) fn new(pool: RepositoryPool, ripgrep_path: PathBuf) -> Self {
+    pub(crate) fn new(
+        pool: RepositoryPool,
+        ripgrep_path: PathBuf,
+        git_cleanup: crate::git_cleanup::GitCleanupHandle,
+    ) -> Self {
         Self {
             pool,
             file_system: WorkspaceFileSystem::system(ripgrep_path),
+            git_cleanup,
         }
     }
 
@@ -254,9 +260,16 @@ impl SpecApi {
                     })?
                     .ok_or_else(|| project_not_found(&project_id))?;
                 let root = absolute_existing_root(PathBuf::from(project.root_path))?;
-                Ok(SpecContext { project_id, root })
+                Ok(SpecContext {
+                    project_id,
+                    root,
+                    _worktree_use: None,
+                })
             }
             SpecTarget::Task { task_id } => {
+                // Shared use lease: keeps the checkout on disk while spec files
+                // resolved from it are being read; dropped with the context.
+                let worktree_use = self.git_cleanup.shared_worktree_use(task_id);
                 let task_id = TaskId::new(task_id);
                 let task = SqliteTaskRepository::new(self.pool.clone())
                     .find_task(&task_id)
@@ -268,6 +281,7 @@ impl SpecApi {
                 Ok(SpecContext {
                     project_id: task.project_id,
                     root,
+                    _worktree_use: Some(worktree_use),
                 })
             }
         }
@@ -277,6 +291,8 @@ impl SpecApi {
 struct SpecContext {
     project_id: ProjectId,
     root: PathBuf,
+    /// Holds the task checkout on disk for the lifetime of this resolution.
+    _worktree_use: Option<crate::git_cleanup::SharedLeaseGuard>,
 }
 
 struct SourceCandidate {

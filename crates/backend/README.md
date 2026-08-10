@@ -18,7 +18,7 @@
 
 ## Ownership boundaries
 
-Project and task deletion soft-delete Ora-owned database records in one transaction and reject aggregates with running sessions. These paths do not call Git and do not delete provider-owned ACP history.
+Project, task, and workflow-run deletion soft-delete Ora-owned database records in one transaction, reject aggregates with running sessions, and register durable Git cleanup jobs in that same transaction. The crate-owned `git_cleanup` worker executes those jobs asynchronously — force-removing each deleted task's linked worktree and `ora/*` branch with at-least-once, idempotent semantics, replaying pending jobs and expired provisioning leases on every start. Deletion never touches provider-owned ACP history, and cleanup that cannot prove Ora ownership parks as `manual_attention` instead of removing the checkout.
 
 `ProjectWorkContext` and general-purpose filesystem browsing remain outside this crate. Specification filesystem access is composed here because it combines persisted project configuration with target ownership. Logging initialization and environment parsing belong to runtime composition roots. This crate provides the transport-neutral request lifecycle, while adapters decide where a request begins and completes.
 

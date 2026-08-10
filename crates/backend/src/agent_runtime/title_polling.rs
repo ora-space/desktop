@@ -60,8 +60,9 @@ impl RuntimeActor {
                         RuntimeCommand::Load { operation_id, events, accepted } => {
                             self.channel = Some(channel);
                             self.title_acquisition.preempt_attempt(attempt);
-                            let _ = accepted.send(Ok(()));
-                            self.run_load(operation_id, events).await;
+                            // run_load resolves `accepted` only after the Running
+                            // row is persisted (see actor.rs for the ordering).
+                            self.run_load(operation_id, events, accepted).await;
                             return;
                         }
                         RuntimeCommand::Prompt { operation_id, prompt, events, accepted } => {

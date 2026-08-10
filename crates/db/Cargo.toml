@@ -19,6 +19,7 @@ rusqlite = { workspace = true, features = ["bundled"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 ora-contracts = { workspace = true }

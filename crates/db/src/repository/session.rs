@@ -132,9 +132,17 @@ impl SessionRepository for SqliteSessionRepository {
     ) -> Result<Session, RepositoryError> {
         self.pool
             .with_connection(|connection| {
+                // The whole ownership chain must still be visible: admission racing
+                // an aggregate deletion must fail here instead of resurrecting a
+                // session row whose task or project rows are already soft-deleted.
                 let mut statement = connection.prepare(
                     "UPDATE sessions SET status = ?2, updated_at = ?3
                      WHERE id = ?1 AND is_deleted = 0
+                       AND EXISTS (
+                           SELECT 1 FROM tasks t
+                           JOIN projects p ON p.id = t.project_id AND p.is_deleted = 0
+                           WHERE t.id = sessions.task_id AND t.is_deleted = 0
+                       )
                      RETURNING id, task_id, agent_cli, agent_session_id, title, status,
                          history_degraded_reason, created_at, updated_at, is_deleted",
                 )?;

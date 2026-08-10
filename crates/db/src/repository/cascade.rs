@@ -1,7 +1,9 @@
-use ora_domain::{ProjectId, SessionStatus, TaskId};
+use ora_domain::{GitCleanupJob, GitCleanupJobId, ProjectId, SessionStatus, TaskId};
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
+use uuid::Uuid;
 
 use crate::repository::RepositoryPool;
+use crate::repository::git_cleanup_job::insert_jobs;
 
 /// Reports the atomic outcome of an Ora-only aggregate deletion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +57,16 @@ impl SqliteCascadeRepository {
             if running {
                 return Ok(CascadeDeleteOutcome::ActiveSession);
             }
+            // Cleanup identity must be read before the soft deletes below make the
+            // rows invisible; registering the jobs in the same transaction is what
+            // guarantees a crash after commit cannot lose the cleanup targets.
+            let cleanup_jobs = collect_task_cleanup_jobs(
+                &transaction,
+                "t.id = ?1",
+                task_id.as_ref(),
+                deleted_at,
+            )?;
+            insert_jobs(&transaction, &cleanup_jobs)?;
             transaction.execute(
                 "UPDATE sessions SET updated_at = ?2, is_deleted = 1 WHERE task_id = ?1 AND is_deleted = 0",
                 params![task_id.as_ref(), deleted_at],
@@ -106,6 +118,15 @@ impl SqliteCascadeRepository {
             if running {
                 return Ok(CascadeDeleteOutcome::ActiveSession);
             }
+            // Same ordering constraint as the task cascade: identity is only
+            // reachable while the descendant rows are still visible.
+            let cleanup_jobs = collect_task_cleanup_jobs(
+                &transaction,
+                "t.project_id = ?1",
+                project_id.as_ref(),
+                deleted_at,
+            )?;
+            insert_jobs(&transaction, &cleanup_jobs)?;
             transaction.execute(
                 "UPDATE sessions SET updated_at = ?2, is_deleted = 1
                  WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?1 AND is_deleted = 0)
@@ -142,4 +163,38 @@ impl SqliteCascadeRepository {
             Ok(CascadeDeleteOutcome::Deleted)
         })
     }
+}
+
+/// Collects pending cleanup jobs for every visible worktree-backed task matched
+/// by the given task filter.
+///
+/// Project-root tasks (no worktree row) and worktree rows without a branch name
+/// produce no job: they own no Ora-created physical Git resources.
+pub(super) fn collect_task_cleanup_jobs(
+    transaction: &Transaction<'_>,
+    task_filter: &str,
+    filter_value: &str,
+    now: i64,
+) -> Result<Vec<GitCleanupJob>, rusqlite::Error> {
+    let mut statement = transaction.prepare(&format!(
+        "SELECT t.id, t.project_id, p.root_path, w.branch_name, w.checkout_root
+         FROM tasks t
+         JOIN projects p ON p.id = t.project_id AND p.is_deleted = 0
+         JOIN worktrees w ON w.id = t.worktree_id AND w.is_deleted = 0
+         WHERE {task_filter} AND t.is_deleted = 0 AND w.branch_name IS NOT NULL"
+    ))?;
+    let mut rows = statement.query(params![filter_value])?;
+    let mut jobs = Vec::new();
+    while let Some(row) = rows.next()? {
+        jobs.push(GitCleanupJob::pending(
+            GitCleanupJobId::new(Uuid::new_v4().to_string()),
+            ProjectId::new(row.get::<_, String>(1)?),
+            TaskId::new(row.get::<_, String>(0)?),
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, String>(3)?,
+            now,
+        ));
+    }
+    Ok(jobs)
 }

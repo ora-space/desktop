@@ -11,10 +11,11 @@ use ora_application::{
     DeleteWorkflowRunResult, EngineError, ExecutionContext, NodeExecutor, NodeRunToStart, NodeType,
     ProjectRepository, ProjectSpecSourceOverrideRepository, ProjectWorkContextRepository,
     PublishSnapshotResult, RepositoryError, RestartWorkflowRunResult, RollbackDraftResult,
-    SessionRepository, SkillRepository, StartWorkflowRunResult,
-    TaskRepository, UpdateWorkflowRunInputResult, WorkflowGraphNode,
-    WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunControlHandler, WorkflowRunEngine,
-    WorkflowRunEngineRepository, WorkflowRunRepository, WorkflowValidationError, WorktreeRepository,
+    SessionRepository, SkillRepository, StartWorkflowRunResult, TaskRepository,
+    UpdateWorkflowRunInputResult, WorkflowGraphNode, WorkflowNodeRunIdGenerator,
+    WorkflowRepository, WorkflowRunControlHandler, WorkflowRunCreateOutcome, WorkflowRunEngine,
+    WorkflowRunEngineRepository, WorkflowRunRepository, WorkflowValidationError,
+    WorktreeRepository,
 };
 use ora_contracts::{StartWorkflowRunRequest, WorkflowRunStatus as ContractRunStatus};
 use ora_domain::{
@@ -24,7 +25,7 @@ use ora_domain::{
     SessionTitle, Skill, SkillId, SpecSourceVisibility, SpecWorkflow, Task, TaskId, TaskStatus,
     Workflow, WorkflowId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun, WorkflowRunDetail,
     WorkflowRunId, WorkflowRunStatus, WorkflowRunSummary, WorkflowSnapshot, WorkflowSnapshotId,
-    Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
+    Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId, WorktreeProvisioningLeaseId,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -699,6 +700,7 @@ fn workflow_repository_snapshot_in_use_guard_yields_to_draft_and_active() {
 #[test]
 fn workflow_run_repository_creates_and_reads_run() {
     let (_temp_dir, pool) = bootstrapped_repository_pool();
+    ensure_project(&pool, "project-1");
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
 
@@ -746,6 +748,7 @@ fn workflow_run_repository_creates_and_reads_run() {
         worktree_id.clone(),
         task_id.clone(),
         Some("ora/task-1".to_string()),
+        None,
         WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Active,
         AuditFields::new(30, 30, /*is_deleted*/ false),
@@ -753,9 +756,14 @@ fn workflow_run_repository_creates_and_reads_run() {
 
     assert_eq!(
         run_repository
-            .create_run(run.clone(), task.clone(), worktree.clone())
+            .create_run(
+                run.clone(),
+                task.clone(),
+                worktree.clone(),
+                &WorktreeProvisioningLeaseId::new("lease-absent"),
+            )
             .unwrap(),
-        run.clone()
+        WorkflowRunCreateOutcome::Created(Box::new(run.clone()))
     );
     assert_eq!(run_repository.find_run(&run_id).unwrap(), Some(run.clone()));
     assert_eq!(
@@ -825,6 +833,8 @@ fn workflow_run_repository_requires_run_row_before_task_row() {
 fn create_pending_run_fixture(pool: &RepositoryPool) -> (WorkflowRunId, TaskId, WorktreeId) {
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    // create_run re-validates project visibility, so the owning project must exist.
+    ensure_project(pool, "project-1");
     let (workflow, draft) = workflow_with_draft("workflow-a", "{\"nodes\":[]}", 10);
     workflow_repository
         .create_workflow(workflow.clone(), draft.clone())
@@ -869,12 +879,39 @@ fn create_pending_run_fixture(pool: &RepositoryPool) -> (WorkflowRunId, TaskId, 
         worktree_id.clone(),
         task_id.clone(),
         Some("ora/task-1".to_string()),
+        None,
         WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Active,
         AuditFields::new(30, 30, /*is_deleted*/ false),
     );
-    run_repository.create_run(run, task, worktree).unwrap();
+    run_repository
+        .create_run(
+            run,
+            task,
+            worktree,
+            &WorktreeProvisioningLeaseId::new("lease-absent"),
+        )
+        .unwrap();
     (run_id, task_id, worktree_id)
+}
+
+/// Inserts a visible project row when a fixture needs an owning project.
+fn ensure_project(pool: &RepositoryPool, project_id: &str) {
+    let repository = SqliteProjectRepository::new(pool.clone());
+    if repository
+        .find_project(&ProjectId::new(project_id))
+        .unwrap()
+        .is_none()
+    {
+        repository
+            .create_project(Project::new(
+                ProjectId::new(project_id),
+                "Fixture project",
+                "/tmp/fixture-project",
+                AuditFields::new(1, 1, false),
+            ))
+            .unwrap();
+    }
 }
 
 /// Builds the node-run descriptor for a run's `start` node.
@@ -1163,7 +1200,13 @@ fn engine_repository_completes_a_node_and_advances_current_nodes() {
     // A late or duplicate callback is rejected idempotently.
     assert_eq!(
         repository
-            .complete_node(&WorkflowNodeRunId::new("node-start"), None, None, Vec::new(), 42)
+            .complete_node(
+                &WorkflowNodeRunId::new("node-start"),
+                None,
+                None,
+                Vec::new(),
+                42
+            )
             .unwrap(),
         AdvanceWorkflowRunResult::NotRunning
     );
@@ -1179,7 +1222,13 @@ fn engine_repository_starts_ready_nodes_and_tracks_them() {
         .start_run(&run_id, &start_node_run(None), 40)
         .unwrap();
     repository
-        .complete_node(&WorkflowNodeRunId::new("node-start"), None, None, Vec::new(), 41)
+        .complete_node(
+            &WorkflowNodeRunId::new("node-start"),
+            None,
+            None,
+            Vec::new(),
+            41,
+        )
         .unwrap();
 
     repository
@@ -1286,7 +1335,13 @@ fn engine_repository_finish_run_succeeds() {
         .start_run(&run_id, &start_node_run(None), 40)
         .unwrap();
     repository
-        .complete_node(&WorkflowNodeRunId::new("node-start"), None, None, Vec::new(), 41)
+        .complete_node(
+            &WorkflowNodeRunId::new("node-start"),
+            None,
+            None,
+            Vec::new(),
+            41,
+        )
         .unwrap();
 
     repository
@@ -1416,7 +1471,9 @@ fn engine_repository_updates_pending_run_input() {
     assert_eq!(run.input.as_deref(), Some("kickoff"));
 
     // Once started, the input is frozen.
-    repository.start_run(&run_id, &start_node_run(None), 41).unwrap();
+    repository
+        .start_run(&run_id, &start_node_run(None), 41)
+        .unwrap();
     assert_eq!(
         repository
             .update_run_input(&run_id, Some("late".to_string()), 42)
@@ -1600,6 +1657,8 @@ fn create_pending_run_with_graph(
 ) -> (WorkflowRunId, TaskId, WorktreeId) {
     let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
     let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    // create_run re-validates project visibility, so the owning project must exist.
+    ensure_project(pool, "project-1");
     let (workflow, draft) = workflow_with_draft("workflow-engine", graph_json, 10);
     workflow_repository
         .create_workflow(workflow.clone(), draft.clone())
@@ -1644,11 +1703,19 @@ fn create_pending_run_with_graph(
         worktree_id.clone(),
         task_id.clone(),
         Some("ora/task-1".to_string()),
+        None,
         WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Active,
         AuditFields::new(30, 30, /*is_deleted*/ false),
     );
-    run_repository.create_run(run, task, worktree).unwrap();
+    run_repository
+        .create_run(
+            run,
+            task,
+            worktree,
+            &WorktreeProvisioningLeaseId::new("lease-absent"),
+        )
+        .unwrap();
     (run_id, task_id, worktree_id)
 }
 
@@ -1847,10 +1914,22 @@ fn engine_dispatches_parallel_branches_concurrently() {
         .id
         .clone();
     engine
-        .complete_node(&run_id, &left, Some(assistant_conversation("left")), None, Vec::new())
+        .complete_node(
+            &run_id,
+            &left,
+            Some(assistant_conversation("left")),
+            None,
+            Vec::new(),
+        )
         .unwrap();
     engine
-        .complete_node(&run_id, &right, Some(assistant_conversation("right")), None, Vec::new())
+        .complete_node(
+            &run_id,
+            &right,
+            Some(assistant_conversation("right")),
+            None,
+            Vec::new(),
+        )
         .unwrap();
     let dispatched: Vec<String> = executor
         .dispatched
@@ -2721,6 +2800,7 @@ fn worktree_repository_supports_crud_and_soft_delete() {
         WorktreeId::new("worktree-1"),
         TaskId::new("task-1"),
         Some("feature/db-pool".to_string()),
+        Some("/worktrees/task-1".to_string()),
         ora_domain::WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Inactive,
         AuditFields::new(13, 13, false),
@@ -2744,6 +2824,7 @@ fn worktree_repository_supports_crud_and_soft_delete() {
     let updated_worktree = Worktree::new(
         created_worktree.id.clone(),
         created_worktree.task_id.clone(),
+        None,
         None,
         ora_domain::WorktreeBaseline::recorded("updated-base-commit").unwrap(),
         WorktreeActivity::Active,
@@ -2807,6 +2888,7 @@ fn repository_pool_composes_all_repository_adapters() {
         WorktreeId::new("worktree-1"),
         task.id.clone(),
         Some("feature/composition".to_string()),
+        None,
         ora_domain::WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Active,
         AuditFields::new(43, 43, false),

@@ -6,6 +6,8 @@ mod repository;
 mod time;
 
 #[cfg(test)]
+mod git_cleanup_tests;
+#[cfg(test)]
 mod repository_tests;
 #[cfg(test)]
 mod tests;
@@ -16,9 +18,11 @@ pub use location::DatabaseLocation;
 pub use migration::{AppliedMigration, Migration, MigrationCatalog, default_migration_catalog};
 pub use repository::{
     CascadeDeleteOutcome, RepositoryPool, SqliteAgentDefinitionRepository, SqliteCascadeRepository,
-    SqliteProjectRepository, SqliteProjectSpecSourceOverrideRepository,
-    SqliteProjectWorkContextRepository, SqliteSessionRepository, SqliteSkillRepository,
-    SqliteTaskDiffCommentRepository, SqliteTaskRepository, SqliteWorkflowRepository,
-    SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository, SqliteWorktreeRepository,
+    SqliteGitCleanupJobRepository, SqliteProjectRepository,
+    SqliteProjectSpecSourceOverrideRepository, SqliteProjectWorkContextRepository,
+    SqliteSessionRepository, SqliteSkillRepository, SqliteTaskDiffCommentRepository,
+    SqliteTaskRepository, SqliteTaskWorkspaceRepository, SqliteWorkflowRepository,
+    SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository,
+    SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,
 };
 pub use time::{SystemTimestampSource, TimestampSource};

@@ -40,7 +40,9 @@ Git and database state must not drift apart, and a partially created workspace i
 
 - If linked-worktree creation fails, the handler returns a stable application error and persists no task or worktree row.
 - If the selected local base ref no longer exists, the handler returns `base_branch_not_found` before creating a task branch or worktree.
-- If persistence fails *after* the Git worktree was created, the handler attempts compensating cleanup — soft-deleting whatever record was written and removing the linked worktree with `TaskWorktreeDeletionMode::Force`, so a dirty checkout cannot block the rollback — and then returns the original application error rather than a cleanup error.
+- Before `git worktree add` runs, the handler persists a **provisioning lease** carrying the exact repository root, checkout path, and branch. The lease is renewed while slow Git work runs and is deleted inside the same transaction that commits the task and worktree rows, so at every instant the provisioned Git resources have exactly one durable owner: the lease, or the committed rows.
+- The commit itself is a single-transaction unit of work (`SqliteTaskWorkspaceRepository`) that re-validates the owning project is still visible. Losing the race against a project deletion returns `project_not_found` and hands the lease to durable cleanup.
+- If anything fails after the Git worktree was created — persistence errors, the project disappearing, or a process crash — the provisioned worktree and branch are reclaimed through the durable Git cleanup path: either the handler releases the lease into a cleanup job immediately, or the lease expires without renewal and the cleanup worker converts it.
 
 The Web runtime maps these into typed `ContractError` values that identify task creation as failed without exposing raw Git command output or filesystem formatting.
 
@@ -52,8 +54,10 @@ Existing checkout paths are never recomposed from the configured root. When an a
 
 ## Deletion
 
-Task and project deletion remove Ora-owned database records only. `SqliteCascadeRepository` soft-deletes the aggregate — sessions and the owned worktree record — in one transaction, and rejects the operation with `resource_in_use` when a descendant session is still `Running`.
+Task, project, and workflow-run deletion share one semantic: **the database cascade is the success, and physical Git cleanup is durable and asynchronous**. `SqliteCascadeRepository` soft-deletes the aggregate — sessions and the owned worktree record — in one transaction, and rejects the operation with `resource_in_use` when a descendant session is still `Running`.
 
-These paths deliberately **do not** call Git. The linked worktree directory and its `ora/<prefix>` branch survive task deletion, and provider-owned ACP history is never deleted. Forced worktree removal happens only as compensating cleanup for a failed creation.
+Inside that same transaction the cascade reads each worktree-backed task's persisted identity (repository root, branch name, recorded checkout path) and inserts one `git_cleanup_jobs` row per task. Because the jobs commit atomically with the soft deletes, a crash, power loss, or SIGKILL after the commit can never lose the cleanup targets: the backend's Git cleanup worker replays every pending job on the next start.
+
+The worker force-removes the linked worktree (resolved by branch first, then by the recorded checkout path for detached worktrees) and force-deletes the local `ora/<prefix>` branch. Both stages are idempotent — an already-absent resource is a positively confirmed success, never an error. Removal is only confirmed on disk: when Git deregisters a worktree but leaves the directory behind (a common Windows half-failure), an empty leftover shell is finished with a plain filesystem removal, while a leftover that still has content stays a retryable failure. A **non-empty** checkout that exists on disk but can no longer be proven Ora-owned is left untouched and the job parks as `manual_attention`; empty directories at a recorded checkout path hold no user data and are reclaimed as Ora residue. Bounded retries with backoff handle transient Git failures. Project-root tasks own no Git resources and produce no job, remote branches are never touched, and provider-owned ACP history is never deleted.
 
 See [Application and Contracts Boundary](application-contracts.md), [Gitlancer Architecture](gitlancer-architecture.md), and [ACP Agent Runtime](agent-runtime.md).

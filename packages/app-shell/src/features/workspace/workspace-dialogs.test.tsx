@@ -262,8 +262,8 @@ describe("WorkspaceDialogs project deletion", () => {
 
 describe("WorkspaceDialogs task deletion", () => {
   it.each([
-    ["direct chat", "project_root", ["s1"], "该会话将被删除，此操作无法撤销。"],
-    ["worktree", "worktree", ["s1", "s2"], "该工作树任务下的所有会话也会被删除，此操作无法撤销。"],
+    ["direct chat", "project_root", ["s1"], "仅删除该会话记录；项目目录本身不受影响，此操作无法撤销。"],
+    ["worktree", "worktree", ["s1", "s2"], "该任务的会话记录、Git 工作树及其 ora/* 分支将被删除。未提交的修改和仅存在于该分支的提交将永久丢失，此操作无法撤销。"],
   ] as const)("deletes every %s session before deleting its task", async (_label, workspaceMode, sessionIds, description) => {
     const user = userEvent.setup();
     const state = createMockClientState();
