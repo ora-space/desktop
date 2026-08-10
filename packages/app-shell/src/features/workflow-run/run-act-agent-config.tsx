@@ -17,9 +17,9 @@ interface RunActAgentConfigProps {
 
 /**
  * Read-only Agent contract for the run inspector — settings field parity without
- * editable controls. Role and enabled skills always open a brief popover
- * (catalog description, or a quiet “no description” tip when empty). Long
- * prompt text also opens a preview when it would otherwise truncate.
+ * editable controls. Role, enabled skills, and enabled MCP bindings each open a
+ * brief popover (catalog label/description, or a quiet “no description” tip when
+ * empty). Long prompt text also opens a preview when it would otherwise truncate.
  */
 export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
   const { t } = useTranslation();
@@ -37,6 +37,7 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
   const roleDescription = role?.description?.trim() ?? "";
   const modelLabel = formatAgentExecutorLabel(config.executor);
   const enabledSkills = config.skills.filter((skill) => skill.enabled);
+  const enabledMcps = (config.mcps ?? []).filter((mcp) => mcp.enabled);
   const agentCli = config.executor.agentCli;
   const prompt = config.prompt.trim();
 
@@ -98,6 +99,27 @@ export function RunActAgentConfig({ config }: RunActAgentConfigProps) {
                 </li>
               );
             })}
+          </ul>
+        </div>
+      )}
+
+      {enabledMcps.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[11px] text-muted-foreground">
+            {t("settings.workflow.field.mcps")}
+          </p>
+          <ul className="space-y-1.5" aria-label={t("settings.workflow.field.mcps")}>
+            {enabledMcps.map((mcp) => (
+              <li key={mcp.mcpId}>
+                <RunBriefPopover
+                  title={mcp.mcpId}
+                  body={t("workflowRun.inspector.catalogNoDescription")}
+                  openLabel={t("workflowRun.inspector.mcpOpen", { name: mcp.mcpId })}
+                >
+                  <span className="line-clamp-2 text-xs leading-4">{mcp.mcpId}</span>
+                </RunBriefPopover>
+              </li>
+            ))}
           </ul>
         </div>
       )}
