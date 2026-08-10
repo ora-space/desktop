@@ -115,7 +115,8 @@ pub enum RestartWorkflowRunResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateWorkflowRunInputResult {
     Updated,
-    /// The run is not `Pending` with empty `current_nodes`, so its input is frozen.
+    /// The run is executing (`Running`, or a `Pending` pause with in-flight nodes), so its
+    /// input is frozen. A not-started `Pending` run or any terminal run is editable.
     NotEditable,
     NotFound,
 }

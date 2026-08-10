@@ -1,7 +1,7 @@
 use ora_application::{
-    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange, NodeRunToStart,
-    RepositoryError, RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowRunEngineRepository,
+    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
+    NodeRunToStart, RepositoryError, RestartWorkflowRunResult, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowRunEngineRepository,
 };
 use ora_domain::{
     SessionId, SessionStatus, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
@@ -433,7 +433,17 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 };
                 let status = WorkflowRunStatus::from_database_value(status)?;
                 let current_nodes = current_nodes_from_state(state.as_deref())?;
-                if status != WorkflowRunStatus::Pending || !current_nodes.is_empty() {
+                // The kickoff input is frozen only while the run is executing: a `Running` run (or
+                // a `Pending` pause with in-flight nodes) is using it, but a not-started `Pending`
+                // run and any terminal run may be edited to prepare the next execution.
+                let editable = (status == WorkflowRunStatus::Pending && current_nodes.is_empty())
+                    || matches!(
+                        status,
+                        WorkflowRunStatus::Succeeded
+                            | WorkflowRunStatus::Failed
+                            | WorkflowRunStatus::Cancelled
+                    );
+                if !editable {
                     return Ok(UpdateWorkflowRunInputResult::NotEditable);
                 }
                 transaction.execute(
@@ -541,10 +551,7 @@ fn current_nodes_to_state(current_nodes: &[String]) -> Result<String, crate::Dat
 }
 
 /// Builds the node-run `payload` blob: the ACP stop reason and incremental file changes, when any.
-fn complete_payload(
-    stop_reason: Option<String>,
-    file_changes: Vec<FileChange>,
-) -> Option<String> {
+fn complete_payload(stop_reason: Option<String>, file_changes: Vec<FileChange>) -> Option<String> {
     let mut payload = serde_json::Map::new();
     if let Some(reason) = stop_reason {
         payload.insert("stop_reason".to_string(), serde_json::json!(reason));
@@ -552,13 +559,18 @@ fn complete_payload(
     if !file_changes.is_empty() {
         payload.insert(
             "file_changes".to_string(),
-            serde_json::json!(file_changes.iter().map(|change| {
-                serde_json::json!({
-                    "path": change.path,
-                    "additions": change.additions,
-                    "deletions": change.deletions,
-                })
-            }).collect::<Vec<_>>()),
+            serde_json::json!(
+                file_changes
+                    .iter()
+                    .map(|change| {
+                        serde_json::json!({
+                            "path": change.path,
+                            "additions": change.additions,
+                            "deletions": change.deletions,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            ),
         );
     }
     if payload.is_empty() {

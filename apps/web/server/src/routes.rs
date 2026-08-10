@@ -1639,7 +1639,7 @@ mod tests {
             &app,
             Method::POST,
             "/api/workflows",
-            json!({ "name": "Run flow", "graph": "{\"nodes\":[]}" }),
+            json!({ "name": "Run flow", "graph": "{\"nodes\":[],\"edges\":[]}" }),
         )
         .await;
         let workflow_id = response_json(create_workflow).await["workflow"]["id"]

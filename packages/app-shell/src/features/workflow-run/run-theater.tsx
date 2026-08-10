@@ -156,7 +156,10 @@ export function RunTheater({
   const primaryState = primaryId !== null
     ? run.nodeStates[primaryId]
     : undefined;
-  const isEditableStart = run.status === "pending" && primaryNode?.data?.kind === "start";
+  // The start instruction is editable whenever the run is not executing — a not-started pending
+  // run or any terminal run — so the kickoff input can be changed before a restart re-runs it.
+  const isEditableStart = (run.status === "pending" || isTerminalRunStatus(run.status))
+    && primaryNode?.data?.kind === "start";
 
   // Drop an uncommitted draft the moment the run leaves pending (or the run switches) so a stale
   // draft cannot reappear on the start node after a restart. Implemented as a render-time reset
@@ -603,7 +606,7 @@ export function RunTheater({
                 state={primaryState ?? null}
                 artifacts={primaryArtifacts}
                 revealedArtifactId={revealedArtifactId}
-                editable={run.status === "pending"}
+                editable={isEditableStart}
                 onPatchNode={isEditableStart
                   ? (patch) => {
                     // The start node's instruction is the run's kickoff input; the backend has no

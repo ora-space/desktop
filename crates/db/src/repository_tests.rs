@@ -11,10 +11,10 @@ use ora_application::{
     DeleteWorkflowRunResult, EngineError, ExecutionContext, NodeExecutor, NodeRunToStart, NodeType,
     ProjectRepository, ProjectSpecSourceOverrideRepository, ProjectWorkContextRepository,
     PublishSnapshotResult, RepositoryError, RestartWorkflowRunResult, RollbackDraftResult,
-    SessionRepository, SkillRepository, StartWorkflowRunResult,
-    TaskRepository, UpdateWorkflowRunInputResult, WorkflowGraphNode,
-    WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunControlHandler, WorkflowRunEngine,
-    WorkflowRunEngineRepository, WorkflowRunRepository, WorkflowValidationError, WorktreeRepository,
+    SessionRepository, SkillRepository, StartWorkflowRunResult, TaskRepository,
+    UpdateWorkflowRunInputResult, WorkflowGraphNode, WorkflowNodeRunIdGenerator,
+    WorkflowRepository, WorkflowRunControlHandler, WorkflowRunEngine, WorkflowRunEngineRepository,
+    WorkflowRunRepository, WorkflowValidationError, WorktreeRepository,
 };
 use ora_contracts::{StartWorkflowRunRequest, WorkflowRunStatus as ContractRunStatus};
 use ora_domain::{
@@ -1163,7 +1163,13 @@ fn engine_repository_completes_a_node_and_advances_current_nodes() {
     // A late or duplicate callback is rejected idempotently.
     assert_eq!(
         repository
-            .complete_node(&WorkflowNodeRunId::new("node-start"), None, None, Vec::new(), 42)
+            .complete_node(
+                &WorkflowNodeRunId::new("node-start"),
+                None,
+                None,
+                Vec::new(),
+                42
+            )
             .unwrap(),
         AdvanceWorkflowRunResult::NotRunning
     );
@@ -1179,7 +1185,13 @@ fn engine_repository_starts_ready_nodes_and_tracks_them() {
         .start_run(&run_id, &start_node_run(None), 40)
         .unwrap();
     repository
-        .complete_node(&WorkflowNodeRunId::new("node-start"), None, None, Vec::new(), 41)
+        .complete_node(
+            &WorkflowNodeRunId::new("node-start"),
+            None,
+            None,
+            Vec::new(),
+            41,
+        )
         .unwrap();
 
     repository
@@ -1286,7 +1298,13 @@ fn engine_repository_finish_run_succeeds() {
         .start_run(&run_id, &start_node_run(None), 40)
         .unwrap();
     repository
-        .complete_node(&WorkflowNodeRunId::new("node-start"), None, None, Vec::new(), 41)
+        .complete_node(
+            &WorkflowNodeRunId::new("node-start"),
+            None,
+            None,
+            Vec::new(),
+            41,
+        )
         .unwrap();
 
     repository
@@ -1416,12 +1434,36 @@ fn engine_repository_updates_pending_run_input() {
     assert_eq!(run.input.as_deref(), Some("kickoff"));
 
     // Once started, the input is frozen.
-    repository.start_run(&run_id, &start_node_run(None), 41).unwrap();
+    repository
+        .start_run(&run_id, &start_node_run(None), 41)
+        .unwrap();
     assert_eq!(
         repository
             .update_run_input(&run_id, Some("late".to_string()), 42)
             .unwrap(),
         UpdateWorkflowRunInputResult::NotEditable
+    );
+}
+
+/// Verifies a terminal run's kickoff input is editable again so a re-run can change it.
+#[test]
+fn engine_repository_updates_terminal_run_input() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    let (run_id, _, _) = create_pending_run_fixture(&pool);
+    let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    repository
+        .start_run(&run_id, &start_node_run(None), 40)
+        .unwrap();
+    assert_eq!(
+        repository.cancel_run(&run_id, 41).unwrap(),
+        CancelWorkflowRunResult::Cancelled
+    );
+    // A cancelled (terminal) run is editable again, preparing the next execution.
+    assert_eq!(
+        repository
+            .update_run_input(&run_id, Some("rerun".to_string()), 42)
+            .unwrap(),
+        UpdateWorkflowRunInputResult::Updated
     );
 }
 
@@ -1847,10 +1889,22 @@ fn engine_dispatches_parallel_branches_concurrently() {
         .id
         .clone();
     engine
-        .complete_node(&run_id, &left, Some(assistant_conversation("left")), None, Vec::new())
+        .complete_node(
+            &run_id,
+            &left,
+            Some(assistant_conversation("left")),
+            None,
+            Vec::new(),
+        )
         .unwrap();
     engine
-        .complete_node(&run_id, &right, Some(assistant_conversation("right")), None, Vec::new())
+        .complete_node(
+            &run_id,
+            &right,
+            Some(assistant_conversation("right")),
+            None,
+            Vec::new(),
+        )
         .unwrap();
     let dispatched: Vec<String> = executor
         .dispatched
