@@ -1,4 +1,5 @@
-import type { acp, SessionPermissionRequest } from "@ora/contracts";
+import type * as acp from "@agentclientprotocol/sdk";
+import type { SessionPermissionRequest } from "@ora/contracts";
 
 /** Identifies who produced a rendered chat message. */
 export type ChatMessageRole = "user" | "assistant";

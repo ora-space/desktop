@@ -1,7 +1,7 @@
 use super::connection::RuntimeConnection;
 use crate::BackendError;
+use agent_client_protocol_schema::v1::SessionNotification;
 use ora_acp::{PermissionRequest, SessionResponse, SessionTraceRegistration};
-use ora_contracts::acp::notification::SessionNotification;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -220,13 +220,13 @@ impl Drop for RouteRegistration {
 #[cfg(test)]
 mod tests {
     use super::{RouteRegistry, SessionControl, SessionEvent};
+    use agent_client_protocol_schema::v1::RequestId;
+    use agent_client_protocol_schema::v1::RequestPermissionRequest;
+    use agent_client_protocol_schema::v1::SessionId;
+    use agent_client_protocol_schema::v1::SessionNotification;
+    use agent_client_protocol_schema::v1::{SessionInfoUpdate, SessionUpdate};
+    use agent_client_protocol_schema::v1::{ToolCallUpdate, ToolCallUpdateFields};
     use ora_acp::{AcpInboundEvent, AcpPeer, PermissionRequest};
-    use ora_contracts::acp::common::SessionId;
-    use ora_contracts::acp::notification::SessionNotification;
-    use ora_contracts::acp::permission::RequestPermissionRequest;
-    use ora_contracts::acp::rpc::RequestId;
-    use ora_contracts::acp::session::{SessionInfoUpdate, SessionUpdate};
-    use ora_contracts::acp::tool_call::{ToolCallUpdate, ToolCallUpdateFields};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::sync::Arc;

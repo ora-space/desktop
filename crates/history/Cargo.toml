@@ -11,7 +11,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-ora-contracts = { workspace = true }
+agent-client-protocol-schema = { workspace = true }
 ora-domain = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

@@ -1,5 +1,6 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import { create } from "zustand";
-import type { AgentCli, acp } from "@ora/contracts";
+import type { AgentCli } from "@ora/contracts";
 
 interface AgentModelState {
   /** The configuration options each CLI reported most recently, keyed by that CLI. */

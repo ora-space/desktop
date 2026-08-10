@@ -1,5 +1,5 @@
-use ora_contracts::acp::prompt::StopReason;
-use ora_contracts::acp::session::SessionUpdate;
+use agent_client_protocol_schema::v1::SessionUpdate;
+use agent_client_protocol_schema::v1::StopReason;
 use ora_domain::AgentCli;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -45,7 +45,7 @@ pub enum HistoryRecord {
     /// Opens the file and pins the schema and provider binding it started with.
     Meta(SessionMeta),
     /// One settled conversation item.
-    Update { update: SessionUpdate },
+    Update { update: Box<SessionUpdate> },
     /// Closes one prompt turn with the provider's typed stop reason.
     ///
     /// Without this a replayed turn cannot be told apart from a completed one,

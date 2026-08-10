@@ -1,10 +1,7 @@
-use crate::acp::content::ContentBlock;
-use crate::acp::permission::PermissionOption;
-use crate::acp::prompt::StopReason;
-use crate::acp::session::SessionUpdate;
-use crate::acp::session_config_options::SessionConfigOption;
-use crate::acp::slash_command::AvailableCommand;
-use crate::acp::tool_call::ToolCallUpdate;
+use agent_client_protocol_schema::v1::{
+    AvailableCommand, ContentBlock, PermissionOption, SessionConfigOption, SessionUpdate,
+    StopReason, ToolCallUpdate,
+};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -142,6 +139,7 @@ pub struct WarmSessionResponse {
     /// The final Ora session id. It is not persisted until `attachSession`
     /// succeeds, so `getSession` and `listSessions` do not report it yet.
     pub session_id: String,
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").SessionConfigOption>")]
     pub config_options: Vec<SessionConfigOption>,
 }
 
@@ -164,6 +162,7 @@ pub struct SetSessionConfigRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct SetSessionConfigResponse {
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").SessionConfigOption>")]
     pub config_options: Vec<SessionConfigOption>,
 }
 
@@ -182,6 +181,7 @@ pub struct AttachSessionRequest {
 #[ts(export_to = "session.ts")]
 pub struct AttachSessionResponse {
     pub session: Session,
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").AvailableCommand>")]
     pub available_commands: Vec<AvailableCommand>,
 }
 
@@ -229,6 +229,7 @@ pub struct LoadSessionRequest {
 #[ts(export_to = "session.ts")]
 pub struct PromptSessionRequest {
     pub session_id: String,
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").ContentBlock>")]
     pub prompt: Vec<ContentBlock>,
 }
 
@@ -238,7 +239,9 @@ pub struct PromptSessionRequest {
 #[ts(export_to = "session.ts")]
 pub struct SessionPermissionRequest {
     pub permission_request_id: String,
+    #[ts(type = "import(\"@agentclientprotocol/sdk\").ToolCallUpdate")]
     pub tool_call: ToolCallUpdate,
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").PermissionOption>")]
     pub options: Vec<PermissionOption>,
 }
 
@@ -253,11 +256,13 @@ pub struct SessionPermissionRequest {
 #[ts(export_to = "session.ts")]
 pub enum LoadSessionEvent {
     SessionUpdate {
+        #[ts(type = "import(\"@agentclientprotocol/sdk\").SessionUpdate")]
         update: SessionUpdate,
     },
     PermissionRequest(SessionPermissionRequest),
     TurnEnded {
         #[serde(rename = "stopReason")]
+        #[ts(type = "import(\"@agentclientprotocol/sdk\").StopReason")]
         stop_reason: StopReason,
     },
     Completed,
@@ -269,11 +274,13 @@ pub enum LoadSessionEvent {
 #[ts(export_to = "session.ts")]
 pub enum PromptSessionEvent {
     SessionUpdate {
+        #[ts(type = "import(\"@agentclientprotocol/sdk\").SessionUpdate")]
         update: SessionUpdate,
     },
     PermissionRequest(SessionPermissionRequest),
     Completed {
         #[serde(rename = "stopReason")]
+        #[ts(type = "import(\"@agentclientprotocol/sdk\").StopReason")]
         stop_reason: StopReason,
     },
 }
@@ -342,7 +349,9 @@ pub struct SwitchSessionAgentRequest {
 #[ts(export_to = "session.ts")]
 pub struct SwitchSessionAgentResponse {
     pub session: Session,
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").AvailableCommand>")]
     pub available_commands: Vec<AvailableCommand>,
+    #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").SessionConfigOption>")]
     pub config_options: Vec<SessionConfigOption>,
 }
 
@@ -418,4 +427,34 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     DeleteSessionRequest::export(config)?;
     DeleteSessionResponse::export(config)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PromptSessionRequest;
+    use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+    use pretty_assertions::assert_eq;
+    use serde_json::{Map, json};
+
+    /// Verifies Ora route DTOs preserve official ACP extension metadata without translation.
+    #[test]
+    fn prompt_request_serializes_official_acp_metadata() {
+        let metadata = Map::from_iter([("ora.dev/source".to_string(), json!("composer"))]);
+        let request = PromptSessionRequest {
+            session_id: "session-1".to_string(),
+            prompt: vec![ContentBlock::Text(TextContent::new("hello").meta(metadata))],
+        };
+
+        assert_eq!(
+            serde_json::to_value(request).expect("serialize prompt request"),
+            json!({
+                "sessionId": "session-1",
+                "prompt": [{
+                    "type": "text",
+                    "text": "hello",
+                    "_meta": { "ora.dev/source": "composer" },
+                }],
+            })
+        );
+    }
 }

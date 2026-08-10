@@ -1,9 +1,9 @@
 use crate::record::HistoryRecord;
-use ora_contracts::acp::content::{ContentBlock, TextContent};
-use ora_contracts::acp::plan::Plan;
-use ora_contracts::acp::prompt::StopReason;
-use ora_contracts::acp::session::{ContentChunk, MessageId, SessionUpdate};
-use ora_contracts::acp::tool_call::{ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate};
+use agent_client_protocol_schema::v1::Plan;
+use agent_client_protocol_schema::v1::StopReason;
+use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+use agent_client_protocol_schema::v1::{ContentChunk, MessageId, SessionUpdate};
+use agent_client_protocol_schema::v1::{ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate};
 
 /// One assembled record together with the position it occupies in the conversation.
 #[derive(Debug, Clone, PartialEq)]
@@ -96,7 +96,9 @@ impl HistoryAssembler {
                 AssembledRecord {
                     seq,
                     record: HistoryRecord::Update {
-                        update: SessionUpdate::UserMessageChunk(ContentChunk::new(block.clone())),
+                        update: Box::new(SessionUpdate::UserMessageChunk(ContentChunk::new(
+                            block.clone(),
+                        ))),
                     },
                 }
             })
@@ -121,6 +123,9 @@ impl HistoryAssembler {
             | SessionUpdate::ConfigOptionUpdate(_)
             | SessionUpdate::SessionInfoUpdate(_)
             | SessionUpdate::UsageUpdate(_) => Vec::new(),
+            // The official schema is non-exhaustive so a newer additive update does not
+            // prevent Ora from preserving the rest of the session history.
+            _ => Vec::new(),
         }
     }
 
@@ -141,7 +146,7 @@ impl HistoryAssembler {
             .chain(self.plan.take().map(|(seq, plan)| AssembledRecord {
                 seq,
                 record: HistoryRecord::Update {
-                    update: SessionUpdate::Plan(plan),
+                    update: Box::new(SessionUpdate::Plan(plan)),
                 },
             }))
             .collect();
@@ -359,7 +364,7 @@ fn tool_record(seq: u32, call: &ToolCall) -> AssembledRecord {
     AssembledRecord {
         seq,
         record: HistoryRecord::Update {
-            update: SessionUpdate::ToolCall(call.clone()),
+            update: Box::new(SessionUpdate::ToolCall(call.clone())),
         },
     }
 }
@@ -373,9 +378,9 @@ fn chunk_record(
     let mut chunk = ContentChunk::new(content);
     chunk.message_id = message_id;
     HistoryRecord::Update {
-        update: match kind {
+        update: Box::new(match kind {
             TextKind::Message => SessionUpdate::AgentMessageChunk(chunk),
             TextKind::Thought => SessionUpdate::AgentThoughtChunk(chunk),
-        },
+        }),
     }
 }

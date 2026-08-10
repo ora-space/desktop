@@ -1,6 +1,6 @@
-use ora_contracts::acp::common::SessionId;
-use ora_contracts::acp::error::Error as RpcError;
-use ora_contracts::acp::rpc::RequestId;
+use agent_client_protocol_schema::v1::Error as RpcError;
+use agent_client_protocol_schema::v1::RequestId;
+use agent_client_protocol_schema::v1::SessionId;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, PoisonError};

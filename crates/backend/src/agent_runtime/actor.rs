@@ -9,16 +9,16 @@ use super::title_acquisition::PollAttempt;
 use super::*;
 #[path = "title_polling.rs"]
 mod title_polling;
-use ora_acp::AcpClient;
-use ora_contracts::acp::common::SessionId as AcpSessionId;
-use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
-use ora_contracts::acp::notification::CancelNotification;
-use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
-use ora_contracts::acp::prompt::{PromptRequest, PromptResponse, StopReason};
-use ora_contracts::acp::session::{
+use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
+use agent_client_protocol_schema::v1::CancelNotification;
+use agent_client_protocol_schema::v1::SessionId as AcpSessionId;
+use agent_client_protocol_schema::v1::{
     CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate,
     LoadSessionRequest as AcpLoadSessionRequest, LoadSessionResponse, SessionUpdate,
 };
+use agent_client_protocol_schema::v1::{PromptRequest, PromptResponse, StopReason};
+use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
+use ora_acp::AcpClient;
 use ora_history::HistoryRecord;
 use ora_logging::{ora_debug, ora_warn};
 use tokio::process::ChildStdin;
@@ -81,7 +81,7 @@ impl RuntimeActor {
                                 && let Some(command_sender) = command_sender.upgrade()
                             {
                                 let _ = command_sender.send(RuntimeCommand::TitleUpdate {
-                                    update: update.update.clone(),
+                                    update: Box::new(update.update.clone()),
                                 });
                             }
                             super::events::settle_idle_event(&channel.connection.client, event).await;
@@ -705,7 +705,9 @@ impl RuntimeActor {
         };
         for line in history.lines {
             let event = match line.record {
-                HistoryRecord::Update { update } => LoadSessionEvent::SessionUpdate { update },
+                HistoryRecord::Update { update } => {
+                    LoadSessionEvent::SessionUpdate { update: *update }
+                }
                 HistoryRecord::TurnEnded { stop_reason } => {
                     LoadSessionEvent::TurnEnded { stop_reason }
                 }
@@ -737,7 +739,7 @@ impl RuntimeActor {
     async fn cancel(
         &self,
         client: &AcpClient<ChildStdin>,
-        permissions: &HashMap<String, (ora_contracts::acp::rpc::RequestId, Vec<String>)>,
+        permissions: &HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
     ) {
         ora_debug!(session_id = %self.session.id, pending_permissions = permissions.len(), "cancelling prompt");
         for (request_id, _) in permissions.values() {

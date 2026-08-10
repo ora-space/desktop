@@ -20,13 +20,14 @@ use title_acquisition::TitleAcquisition;
 use crate::clock::SystemClock;
 use crate::task::{resolve_project_cwd, resolve_task_cwd};
 use crate::{BackendError, ErrorClassification};
+use agent_client_protocol_schema::v1::AvailableCommand;
+use agent_client_protocol_schema::v1::ContentBlock;
+use agent_client_protocol_schema::v1::SessionUpdate;
+use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
+use agent_client_protocol_schema::v1::{SessionConfigId, SessionConfigOptionValue};
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionRepository};
-use ora_contracts::acp::content::ContentBlock;
-use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
-use ora_contracts::acp::session::SessionUpdate;
-use ora_contracts::acp::session_config_options::{SessionConfigId, SessionConfigOptionValue};
-use ora_contracts::acp::slash_command::AvailableCommand;
+use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
 use ora_contracts::{
     AttachSessionRequest, AttachSessionResponse, DeleteSessionResponse, LoadSessionEvent,
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
@@ -35,7 +36,6 @@ use ora_contracts::{
     SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse,
     WarmSessionTarget,
 };
-use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
     AgentCli, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus, TaskId,
@@ -115,7 +115,7 @@ pub(super) enum RuntimeCommand {
         attempt: title_acquisition::PollAttempt,
     },
     TitleUpdate {
-        update: SessionUpdate,
+        update: Box<SessionUpdate>,
     },
 }
 

@@ -1,4 +1,5 @@
-import type { acp, Skill } from "@ora/contracts";
+import type * as acp from "@agentclientprotocol/sdk";
+import type { Skill } from "@ora/contracts";
 import type { PluginEntry } from "../settings/plugin-catalog";
 
 export type ComposerActionGroup = "skills" | "commands" | "plugins" | "actions";

@@ -1,3 +1,4 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { IconLoader2 } from "@tabler/icons-react";
 import { Composer } from "./composer";
@@ -5,7 +6,7 @@ import { LandingHeading, LandingSuggestions } from "./empty-state";
 import { MessageList } from "./message-list";
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
 import type { ChatModelChange, ChatTurn } from "@ora/chat";
-import type { acp, SessionPermissionRequest, Skill } from "@ora/contracts";
+import type { SessionPermissionRequest, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 
 interface ChatViewProps {

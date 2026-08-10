@@ -2,12 +2,12 @@ use super::pending::{
     PendingRequest, PendingRequests, PendingResponse, ResponseRequest, lock_pending,
 };
 use super::trace::{SessionTraceRegistration, SessionTraceRegistry};
+use agent_client_protocol_schema::v1::CLIENT_METHOD_NAMES;
+use agent_client_protocol_schema::v1::RequestId;
+use agent_client_protocol_schema::v1::RequestPermissionRequest;
+use agent_client_protocol_schema::v1::SessionId;
+use agent_client_protocol_schema::v1::SessionNotification;
 use futures_util::StreamExt;
-use ora_contracts::acp::common::SessionId;
-use ora_contracts::acp::literals::CLIENT_METHOD_NAMES;
-use ora_contracts::acp::notification::SessionNotification;
-use ora_contracts::acp::permission::RequestPermissionRequest;
-use ora_contracts::acp::rpc::RequestId;
 use ora_logging::ora_trace;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -601,10 +601,10 @@ mod tests {
         AcpError, AcpInboundEvent, AcpPeer, PendingRequest, PendingRequests, trace_frame_summary,
     };
     use crate::trace::SessionTraceRegistry;
-    use ora_contracts::acp::common::SessionId;
-    use ora_contracts::acp::notification::SessionNotification;
-    use ora_contracts::acp::rpc::RequestId;
-    use ora_contracts::acp::session::{SessionInfoUpdate, SessionUpdate};
+    use agent_client_protocol_schema::v1::RequestId;
+    use agent_client_protocol_schema::v1::SessionId;
+    use agent_client_protocol_schema::v1::SessionNotification;
+    use agent_client_protocol_schema::v1::{SessionInfoUpdate, SessionUpdate};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::sync::Mutex;

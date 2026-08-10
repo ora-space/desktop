@@ -8,11 +8,11 @@
 //! asynchronous caller carries out, which keeps the reuse, invalidation and
 //! replay rules testable without a running agent.
 
-use ora_contracts::WarmSessionTarget;
-use ora_contracts::acp::session_config_options::{
+use agent_client_protocol_schema::v1::AvailableCommand;
+use agent_client_protocol_schema::v1::{
     SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
 };
-use ora_contracts::acp::slash_command::AvailableCommand;
+use ora_contracts::WarmSessionTarget;
 use ora_domain::{AgentCli, SessionId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -647,10 +647,10 @@ mod tests {
         MAX_ENTRIES, MAX_LIVE_ENTRIES, RebuildPlan, ReleasedSession, Reservation, WarmDecision,
         WarmKey, WarmPool,
     };
-    use ora_contracts::WarmSessionTarget;
-    use ora_contracts::acp::session_config_options::{
+    use agent_client_protocol_schema::v1::{
         SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOption,
     };
+    use ora_contracts::WarmSessionTarget;
     use ora_domain::{AgentCli, SessionId};
     use pretty_assertions::assert_eq;
     use std::path::{Path, PathBuf};

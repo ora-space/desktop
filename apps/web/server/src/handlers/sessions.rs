@@ -30,7 +30,7 @@ pub struct SessionPath {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptSessionBody {
-    prompt: Vec<ora_contracts::acp::content::ContentBlock>,
+    prompt: Vec<agent_client_protocol_schema::v1::ContentBlock>,
 }
 
 /// Carries a permission selection while the path owns the Ora session identifier.

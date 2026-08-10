@@ -1,5 +1,5 @@
 use super::RuntimeActor;
-use ora_contracts::acp::content::{ContentBlock, TextContent};
+use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use ora_history::{read_session_history, render_handoff};
 use ora_logging::{ora_debug, ora_warn};
 

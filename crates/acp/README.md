@@ -2,6 +2,8 @@
 
 `ora-acp` is Ora's provider-neutral ACP v1 transport over newline-delimited JSON-RPC stdio. It turns an asynchronous reader and writer into a typed request client plus one ordered inbound stream for each session's updates, permission requests, and terminating responses.
 
+ACP wire values come from the official `agent-client-protocol-schema` crate. `ora-acp` owns transport behavior and Ora-specific routing metadata, not a fork of the protocol schema.
+
 ## Responsibilities
 
 - `AcpPeer` owns the reader task and exposes an `AcpClient` for serialized writes.

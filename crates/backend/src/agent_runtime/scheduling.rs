@@ -21,6 +21,10 @@ impl DeferredControl {
 }
 
 /// Represents one ready source consumed by an active load or prompt actor.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "ActiveInput is consumed immediately; boxing would allocate every routed ACP update"
+)]
 pub(super) enum ActiveInput {
     Event(SessionEvent),
     EventsClosed,
@@ -107,8 +111,8 @@ mod tests {
     use super::{ActiveInput, ActiveInputState, DeferredControl, MAX_EVENTS_BEFORE_COMMAND_POLL};
     use crate::agent_runtime::RuntimeCommand;
     use crate::agent_runtime::routing::{SessionControl, SessionEvent};
-    use ora_contracts::acp::notification::SessionNotification;
-    use ora_contracts::acp::session::{SessionInfoUpdate, SessionUpdate};
+    use agent_client_protocol_schema::v1::SessionNotification;
+    use agent_client_protocol_schema::v1::{SessionInfoUpdate, SessionUpdate};
     use tokio::sync::mpsc;
 
     /// Verifies a terminal control cannot overtake events already accepted by the session FIFO.

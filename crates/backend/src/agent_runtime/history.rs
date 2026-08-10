@@ -1,6 +1,6 @@
-use ora_contracts::acp::content::ContentBlock;
-use ora_contracts::acp::prompt::StopReason;
-use ora_contracts::acp::session::SessionUpdate;
+use agent_client_protocol_schema::v1::ContentBlock;
+use agent_client_protocol_schema::v1::SessionUpdate;
+use agent_client_protocol_schema::v1::StopReason;
 use ora_domain::{AgentCli, HistoryState, Session};
 use ora_history::{
     AgentSwitch, AssembledRecord, HistoryAssembler, HistoryClock, HistoryError, HistoryRecord,

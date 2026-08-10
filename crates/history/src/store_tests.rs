@@ -5,9 +5,9 @@ use crate::path::history_path;
 use crate::reader::read_session_history;
 use crate::record::{HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta};
 use crate::writer::{HistoryWriter, remove_session_history};
-use ora_contracts::acp::content::{ContentBlock, TextContent};
-use ora_contracts::acp::prompt::StopReason;
-use ora_contracts::acp::session::{ContentChunk, SessionUpdate};
+use agent_client_protocol_schema::v1::StopReason;
+use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
 use ora_domain::AgentCli;
 use pretty_assertions::assert_eq;
 use std::path::{Path, PathBuf};
@@ -30,8 +30,8 @@ fn writer(root: &Path) -> HistoryWriter<FixedHistoryClock> {
 
 fn message(text: &str) -> HistoryRecord {
     HistoryRecord::Update {
-        update: SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
-            TextContent::new(text),
+        update: Box::new(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+            ContentBlock::Text(TextContent::new(text)),
         ))),
     }
 }

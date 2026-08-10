@@ -560,12 +560,12 @@ mod tests {
     #[test]
     fn appends_js_extension_to_extensionless_relative_imports() {
         let rewritten = append_js_extension_to_relative_specifiers(
-            "import type { Plan } from \"./acp/plan\";\nimport type { Task } from \"../task\";\n",
+            "import type { Session } from \"./session\";\nimport type { Task } from \"../task\";\n",
         );
 
         assert_eq!(
             rewritten,
-            "import type { Plan } from \"./acp/plan.js\";\nimport type { Task } from \"../task.js\";\n"
+            "import type { Session } from \"./session.js\";\nimport type { Task } from \"../task.js\";\n"
         );
     }
 
@@ -636,5 +636,10 @@ mod tests {
                 output_path
             );
         }
+
+        let session_source = fs::read_to_string(package_source_directory.join("session.ts"))
+            .unwrap_or_else(|error| panic!("failed to read generated session contract: {error}"));
+        assert!(session_source.contains("import(\"@agentclientprotocol/sdk\").ContentBlock"));
+        assert!(!package_source_directory.join("acp").exists());
     }
 }

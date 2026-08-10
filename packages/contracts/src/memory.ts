@@ -1,4 +1,4 @@
-import type * as acp from "./acp/index.js";
+import type * as acp from "@agentclientprotocol/sdk";
 import type { Agent } from "./agent.js";
 import type { AgentCli } from "./session.js";
 import type { AppEvent } from "./app_event.js";

@@ -1,3 +1,4 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import { useState } from "react";
 import {
   IconArrowsMaximize,
@@ -8,7 +9,6 @@ import {
   IconPhoto,
   IconVolume,
 } from "@tabler/icons-react";
-import type { acp } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { ImagePreviewDialog } from "./image-preview-dialog";
 
@@ -198,13 +198,13 @@ function resourceName(uri: string): string {
   }
 }
 
-/** Formats protocol byte counts without narrowing potentially large bigint values. */
-function formatBytes(bytes: bigint): string {
+/** Formats the numeric byte counts exposed by the official ACP TypeScript package. */
+function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"] as const;
   let value = bytes;
   let unit = 0;
-  while (value >= 1024n && unit < units.length - 1) {
-    value /= 1024n;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
     unit += 1;
   }
   return `${value.toLocaleString()} ${units[unit]}`;

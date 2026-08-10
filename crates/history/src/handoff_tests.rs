@@ -1,10 +1,10 @@
 use crate::handoff::{binding_needs_handoff, render_handoff};
 use crate::reader::SessionHistory;
 use crate::record::{AgentSwitch, HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta};
-use ora_contracts::acp::content::{ContentBlock, TextContent};
-use ora_contracts::acp::prompt::StopReason;
-use ora_contracts::acp::session::{ContentChunk, SessionUpdate};
-use ora_contracts::acp::tool_call::{ToolCall, ToolCallStatus};
+use agent_client_protocol_schema::v1::StopReason;
+use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
+use agent_client_protocol_schema::v1::{ToolCall, ToolCallStatus};
 use ora_domain::AgentCli;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
@@ -44,31 +44,33 @@ fn switched(from: AgentCli, to: AgentCli) -> HistoryRecord {
 
 fn user(text: &str) -> HistoryRecord {
     HistoryRecord::Update {
-        update: SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::Text(
-            TextContent::new(text),
+        update: Box::new(SessionUpdate::UserMessageChunk(ContentChunk::new(
+            ContentBlock::Text(TextContent::new(text)),
         ))),
     }
 }
 
 fn assistant(text: &str) -> HistoryRecord {
     HistoryRecord::Update {
-        update: SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
-            TextContent::new(text),
+        update: Box::new(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+            ContentBlock::Text(TextContent::new(text)),
         ))),
     }
 }
 
 fn thought(text: &str) -> HistoryRecord {
     HistoryRecord::Update {
-        update: SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(
-            TextContent::new(text),
+        update: Box::new(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+            ContentBlock::Text(TextContent::new(text)),
         ))),
     }
 }
 
 fn tool(title: &str, status: ToolCallStatus) -> HistoryRecord {
     HistoryRecord::Update {
-        update: SessionUpdate::ToolCall(ToolCall::new("t1", title).status(status)),
+        update: Box::new(SessionUpdate::ToolCall(
+            ToolCall::new("t1", title).status(status),
+        )),
     }
 }
 

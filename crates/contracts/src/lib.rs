@@ -1,4 +1,3 @@
-pub mod acp;
 pub mod app_event;
 
 pub mod agent;
@@ -50,7 +49,6 @@ pub fn export_typescript_bindings_to(
     let config = Config::new().with_out_dir(output_directory.as_ref());
     agent_import::export(&config)?;
 
-    acp::export(&config)?;
     app_event::export(&config)?;
     agent::export(&config)?;
     error::export(&config)?;

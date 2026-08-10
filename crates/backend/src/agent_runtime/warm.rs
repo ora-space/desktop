@@ -13,18 +13,18 @@ use super::warm_pool::{
 };
 use crate::BackendError;
 use crate::clock::SystemClock;
-use ora_application::{Clock, SessionIdGenerator, UuidSessionIdGenerator};
-use ora_contracts::WarmSessionTarget;
-use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
-use ora_contracts::acp::session::{
+use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
+use agent_client_protocol_schema::v1::AvailableCommand;
+use agent_client_protocol_schema::v1::{
     CloseSessionRequest, CloseSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
     NewSessionRequest, NewSessionResponse,
 };
-use ora_contracts::acp::session_config_options::{
+use agent_client_protocol_schema::v1::{
     SessionConfigId, SessionConfigOption, SessionConfigOptionValue, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse,
 };
-use ora_contracts::acp::slash_command::AvailableCommand;
+use ora_application::{Clock, SessionIdGenerator, UuidSessionIdGenerator};
+use ora_contracts::WarmSessionTarget;
 use ora_domain::{AgentCli, SessionId};
 use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;

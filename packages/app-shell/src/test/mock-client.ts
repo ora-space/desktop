@@ -1,5 +1,5 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import type {
-  acp,
   Agent,
   AgentCli,
   ContractsClient,

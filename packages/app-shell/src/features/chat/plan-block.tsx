@@ -1,9 +1,9 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import { useState } from "react";
 import { IconCheck, IconChevronDown, IconCircle, IconLoader2, IconListCheck } from "@tabler/icons-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import type { ChatPlan } from "@ora/chat";
-import type { acp } from "@ora/contracts";
 
 interface PlanBlockProps {
   plan: ChatPlan;

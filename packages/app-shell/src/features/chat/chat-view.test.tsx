@@ -317,7 +317,7 @@ describe("Structured ACP content", () => {
     const image = { type: "image" as const, data: "aGVsbG8=", mimeType: "image/png", uri: "file:///preview.png" };
     const items: ChatContent[] = [
       { kind: "content", id: "audio", source: "message", content: { type: "audio", data: "aGVsbG8=", mimeType: "audio/mpeg" }, createdAt: 2 },
-      { kind: "content", id: "link", source: "message", content: { type: "resource_link", name: "docs", title: "ACP docs", description: "Protocol reference", uri: "https://example.com/acp", size: 2048n }, createdAt: 3 },
+      { kind: "content", id: "link", source: "message", content: { type: "resource_link", name: "docs", title: "ACP docs", description: "Protocol reference", uri: "https://example.com/acp", size: 2048 }, createdAt: 3 },
       { kind: "content", id: "resource", source: "message", content: { type: "resource", resource: { uri: "file:///notes.txt", mimeType: "text/plain", text: "embedded notes" } }, createdAt: 4 },
     ];
     const mediaTurn = turn("media", "show files", 1, items);

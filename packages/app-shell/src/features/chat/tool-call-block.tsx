@@ -1,3 +1,4 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import { useState } from "react";
 import {
   IconAlertTriangle,
@@ -19,7 +20,6 @@ import {
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import type { ChatToolCall, ChatToolCallStatus } from "@ora/chat";
-import type { acp } from "@ora/contracts";
 import { DiffView } from "./diff-view";
 import { ContentBlock } from "./content-block";
 

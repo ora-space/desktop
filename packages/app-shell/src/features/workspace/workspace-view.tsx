@@ -1,8 +1,8 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@ora/ui";
 import type { AttachSessionResponse, Session, Task } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
-import type { acp } from "@ora/contracts";
 import { useStore } from "zustand";
 import {
   IconBrandGit,

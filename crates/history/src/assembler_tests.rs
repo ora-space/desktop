@@ -1,10 +1,10 @@
 use crate::assembler::{AssembledRecord, HistoryAssembler};
 use crate::record::HistoryRecord;
-use ora_contracts::acp::content::{ContentBlock, TextContent};
-use ora_contracts::acp::plan::{Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus};
-use ora_contracts::acp::prompt::StopReason;
-use ora_contracts::acp::session::{ContentChunk, MessageId, SessionUpdate};
-use ora_contracts::acp::tool_call::{
+use agent_client_protocol_schema::v1::StopReason;
+use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+use agent_client_protocol_schema::v1::{ContentChunk, MessageId, SessionUpdate};
+use agent_client_protocol_schema::v1::{Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus};
+use agent_client_protocol_schema::v1::{
     ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use pretty_assertions::assert_eq;
@@ -31,7 +31,7 @@ fn message_at(seq: u32, text: &str, message_id: Option<&str>) -> AssembledRecord
     AssembledRecord {
         seq,
         record: HistoryRecord::Update {
-            update: agent_text(text, message_id),
+            update: Box::new(agent_text(text, message_id)),
         },
     }
 }
@@ -116,7 +116,7 @@ fn keeps_messages_and_thoughts_on_independent_streams() {
             AssembledRecord {
                 seq: 1,
                 record: HistoryRecord::Update {
-                    update: thought_text("reasoning continues", None),
+                    update: Box::new(thought_text("reasoning continues", None)),
                 },
             },
             AssembledRecord {
@@ -151,9 +151,9 @@ fn keeps_text_that_resumed_after_a_tool_call_behind_it() {
             AssembledRecord {
                 seq: 1,
                 record: HistoryRecord::Update {
-                    update: SessionUpdate::ToolCall(
+                    update: Box::new(SessionUpdate::ToolCall(
                         ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed),
-                    ),
+                    )),
                 },
             },
         ],
@@ -219,7 +219,7 @@ fn writes_a_tool_call_once_it_reaches_a_terminal_status() {
         vec![AssembledRecord {
             seq: 0,
             record: HistoryRecord::Update {
-                update: SessionUpdate::ToolCall(settled),
+                update: Box::new(SessionUpdate::ToolCall(settled)),
             },
         }],
     );
@@ -244,9 +244,9 @@ fn reissues_a_settled_tool_call_under_its_original_position() {
         vec![AssembledRecord {
             seq: 0,
             record: HistoryRecord::Update {
-                update: SessionUpdate::ToolCall(
+                update: Box::new(SessionUpdate::ToolCall(
                     ToolCall::new("t1", "Run tests").status(ToolCallStatus::Failed),
-                ),
+                )),
             },
         }],
     );
@@ -269,9 +269,9 @@ fn preserves_appearance_order_when_a_tool_settles_after_a_later_message() {
         vec![AssembledRecord {
             seq: 0,
             record: HistoryRecord::Update {
-                update: SessionUpdate::ToolCall(
+                update: Box::new(SessionUpdate::ToolCall(
                     ToolCall::new("t1", "Search").status(ToolCallStatus::Completed),
-                ),
+                )),
             },
         }],
     );
@@ -295,9 +295,9 @@ fn settles_a_tool_call_the_provider_never_reported_finishing() {
             AssembledRecord {
                 seq: 0,
                 record: HistoryRecord::Update {
-                    update: SessionUpdate::ToolCall(
+                    update: Box::new(SessionUpdate::ToolCall(
                         ToolCall::new("t1", "Read file").status(ToolCallStatus::Completed),
-                    ),
+                    )),
                 },
             },
             message_at(1, "here is what I found", Some("m1")),
@@ -334,9 +334,9 @@ fn keeps_an_unfinished_tool_call_unfinished_when_the_turn_was_cut_short() {
                 AssembledRecord {
                     seq: 0,
                     record: HistoryRecord::Update {
-                        update: SessionUpdate::ToolCall(
+                        update: Box::new(SessionUpdate::ToolCall(
                             ToolCall::new("t1", "Run tests").status(ToolCallStatus::InProgress),
-                        ),
+                        )),
                     },
                 },
                 AssembledRecord {
@@ -383,9 +383,9 @@ fn synthesizes_a_tool_call_from_an_update_that_arrived_without_its_opening() {
         vec![AssembledRecord {
             seq: 0,
             record: HistoryRecord::Update {
-                update: SessionUpdate::ToolCall(
+                update: Box::new(SessionUpdate::ToolCall(
                     ToolCall::new("t9", "Tool call").status(ToolCallStatus::Completed),
-                ),
+                )),
             },
         }],
     );
@@ -416,7 +416,7 @@ fn keeps_only_the_final_plan_snapshot() {
             AssembledRecord {
                 seq: 0,
                 record: HistoryRecord::Update {
-                    update: SessionUpdate::Plan(final_plan),
+                    update: Box::new(SessionUpdate::Plan(final_plan)),
                 },
             },
             AssembledRecord {
@@ -444,8 +444,8 @@ fn records_the_prompt_ora_kept_and_ignores_the_provider_echo() {
         vec![AssembledRecord {
             seq: 0,
             record: HistoryRecord::Update {
-                update: SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::Text(
-                    TextContent::new("what the user typed"),
+                update: Box::new(SessionUpdate::UserMessageChunk(ContentChunk::new(
+                    ContentBlock::Text(TextContent::new("what the user typed")),
                 ))),
             },
         }],
@@ -455,7 +455,7 @@ fn records_the_prompt_ora_kept_and_ignores_the_provider_echo() {
 
 #[test]
 fn drops_session_chrome_that_every_binding_reestablishes() {
-    use ora_contracts::acp::session::{SessionInfoUpdate, UsageUpdate};
+    use agent_client_protocol_schema::v1::{SessionInfoUpdate, UsageUpdate};
     let mut assembler = HistoryAssembler::new(0);
 
     assert_eq!(
@@ -471,7 +471,7 @@ fn drops_session_chrome_that_every_binding_reestablishes() {
 
 #[test]
 fn settles_content_that_cannot_merge_where_it_arrived() {
-    use ora_contracts::acp::content::ImageContent;
+    use agent_client_protocol_schema::v1::ImageContent;
     let mut assembler = HistoryAssembler::new(0);
     let image = ContentBlock::Image(ImageContent::new("data", "image/png"));
     let mut expected_chunk = ContentChunk::new(image.clone());
@@ -486,7 +486,7 @@ fn settles_content_that_cannot_merge_where_it_arrived() {
         vec![AssembledRecord {
             seq: 0,
             record: HistoryRecord::Update {
-                update: SessionUpdate::AgentMessageChunk(expected_chunk),
+                update: Box::new(SessionUpdate::AgentMessageChunk(expected_chunk)),
             },
         }],
     );

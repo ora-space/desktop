@@ -1,6 +1,7 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { acp, LoadSessionEvent, PromptSessionEvent, PromptSessionRequest } from "@ora/contracts";
+import type { LoadSessionEvent, PromptSessionEvent, PromptSessionRequest } from "@ora/contracts";
 import { createChatStore, type ChatSessionClient } from "../src/index.js";
 
 /** Builds one ACP text update without exposing protocol transport details to the tests. */
@@ -389,7 +390,7 @@ test("loads commands, session metadata, and structured content without creating 
     load: () => events<LoadSessionEvent>([
       {
         type: "session_update",
-        update: { sessionUpdate: "usage_update", used: 1n, size: 100n },
+        update: { sessionUpdate: "usage_update", used: 1, size: 100 },
       },
       {
         type: "session_update",

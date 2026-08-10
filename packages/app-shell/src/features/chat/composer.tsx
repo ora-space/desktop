@@ -1,8 +1,9 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 import { IconArrowUp, IconLoader2, IconPhoto, IconPlayerStop, IconPlus, IconX } from "@tabler/icons-react";
 import { Button, Textarea } from "@ora/ui";
-import type { acp, Skill } from "@ora/contracts";
+import type { Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
 import { PermissionSelector } from "./permission-selector";

@@ -7,17 +7,17 @@ use crate::clock::SystemClock;
 use crate::error::BackendError;
 use crate::task::resolve_task_cwd;
 use crate::workflow_run_prerequisites::resolve_executable_skill_name;
-use ora_application::{
-    AgentDefinitionRepository, AgentSkill, Clock, ExecutionContext, FileChange, FilesystemSkillStorage,
-    NodeExecutor, RepositoryError, WorkflowGraph, WorkflowGraphNode,
-    WorkflowRunCallback, WorkflowRunEngineRepository,
-};
-use ora_contracts::acp::content::{ContentBlock, TextContent};
-use ora_contracts::acp::prompt::StopReason;
-use ora_contracts::acp::session::SessionUpdate;
-use ora_contracts::acp::session_config_options::{
+use agent_client_protocol_schema::v1::SessionUpdate;
+use agent_client_protocol_schema::v1::StopReason;
+use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
+use agent_client_protocol_schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
     SessionConfigSelectOptions,
+};
+use ora_application::{
+    AgentDefinitionRepository, AgentSkill, Clock, ExecutionContext, FileChange,
+    FilesystemSkillStorage, NodeExecutor, RepositoryError, WorkflowGraph, WorkflowGraphNode,
+    WorkflowRunCallback, WorkflowRunEngineRepository,
 };
 use ora_contracts::{
     AgentCli as ContractAgentCli, AttachSessionRequest, PromptSessionEvent, PromptSessionRequest,
@@ -395,6 +395,14 @@ fn report_outcome(
         StopReason::Cancelled => {
             // A cancelled turn belongs to the cancel flow; the driver must not complete the node.
         }
+        // A newer ACP stop reason has semantics this executor cannot safely map to a
+        // successful workflow transition.
+        _ => callback.fail_node(
+            run_id,
+            node_run_id,
+            "agent stopped for a reason this Ora version does not recognize".to_string(),
+            outcome.output,
+        ),
     }
 }
 
@@ -448,6 +456,14 @@ fn match_model_value(
             .iter()
             .flat_map(|group| group.options.iter())
             .collect(),
+        // New option container shapes require an explicit selection policy before
+        // workflow execution can choose a model from them.
+        _ => {
+            return Err(NodeExecutionError::WorkflowModelNotFound {
+                agent_cli: agent_cli.to_string(),
+                model_id: model_id.to_string(),
+            });
+        }
     };
     let matched = options
         .iter()
@@ -472,10 +488,11 @@ fn resolve_skill_names(
     let skill_repository = SqliteSkillRepository::new(pool.clone());
     let mut names = Vec::new();
     for skill in skills.iter().filter(|skill| skill.enabled) {
-        let name = resolve_executable_skill_name(&storage, Some(&skill_repository), &skill.skill_id)
-            .map_err(|_| NodeExecutionError::SkillResolution {
-                skill_id: skill.skill_id.clone(),
-            })?;
+        let name =
+            resolve_executable_skill_name(&storage, Some(&skill_repository), &skill.skill_id)
+                .map_err(|_| NodeExecutionError::SkillResolution {
+                    skill_id: skill.skill_id.clone(),
+                })?;
         names.push(name);
     }
     Ok(names)
@@ -505,7 +522,9 @@ fn assemble_prompt(
             blocks.push(system_instructions_block(role));
         }
         if !node_prompt.is_empty() {
-            blocks.push(ContentBlock::Text(TextContent::new(node_prompt.to_string())));
+            blocks.push(ContentBlock::Text(TextContent::new(
+                node_prompt.to_string(),
+            )));
         }
     } else {
         // The `/name` invocation must be the first token the agent reads; the role instructions
@@ -667,7 +686,7 @@ fn last_assistant_message(output: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ora_contracts::acp::session_config_options::{
+    use agent_client_protocol_schema::v1::{
         SessionConfigId, SessionConfigSelect, SessionConfigValueId,
     };
     use pretty_assertions::assert_eq;
@@ -686,7 +705,10 @@ mod tests {
         baseline.insert("src/b.ts".to_string(), Some("keep\n".to_string()));
 
         let mut current = BTreeMap::new();
-        current.insert("src/a.ts".to_string(), Some("one\ntwo\nthree\n".to_string()));
+        current.insert(
+            "src/a.ts".to_string(),
+            Some("one\ntwo\nthree\n".to_string()),
+        );
         current.insert("src/b.ts".to_string(), None);
         current.insert("src/new.ts".to_string(), Some("fresh\n".to_string()));
 
@@ -694,9 +716,21 @@ mod tests {
         assert_eq!(
             compute_file_changes(&baseline, &current),
             vec![
-                FileChange { path: "src/a.ts".to_string(), additions: 1, deletions: 0 },
-                FileChange { path: "src/b.ts".to_string(), additions: 0, deletions: 1 },
-                FileChange { path: "src/new.ts".to_string(), additions: 1, deletions: 0 },
+                FileChange {
+                    path: "src/a.ts".to_string(),
+                    additions: 1,
+                    deletions: 0
+                },
+                FileChange {
+                    path: "src/b.ts".to_string(),
+                    additions: 0,
+                    deletions: 1
+                },
+                FileChange {
+                    path: "src/new.ts".to_string(),
+                    additions: 1,
+                    deletions: 0
+                },
             ]
         );
     }
@@ -718,7 +752,10 @@ mod tests {
 
         let baseline = capture_worktree_snapshot(root);
         // The clean tracked file is part of the baseline.
-        assert_eq!(baseline.get("src/a.ts"), Some(&Some("one\ntwo\n".to_string())));
+        assert_eq!(
+            baseline.get("src/a.ts"),
+            Some(&Some("one\ntwo\n".to_string()))
+        );
 
         // The node edits the tracked file and creates files inside a new untracked directory.
         std::fs::write(root.join("src/a.ts"), "one\ntwo\nthree\n").unwrap();
@@ -728,8 +765,16 @@ mod tests {
         assert_eq!(
             compute_file_changes(&baseline, &capture_worktree_snapshot(root)),
             vec![
-                FileChange { path: "openspec/changes/demo/proposal.md".to_string(), additions: 1, deletions: 0 },
-                FileChange { path: "src/a.ts".to_string(), additions: 1, deletions: 0 },
+                FileChange {
+                    path: "openspec/changes/demo/proposal.md".to_string(),
+                    additions: 1,
+                    deletions: 0
+                },
+                FileChange {
+                    path: "src/a.ts".to_string(),
+                    additions: 1,
+                    deletions: 0
+                },
             ]
         );
     }
@@ -745,16 +790,15 @@ mod tests {
     }
 
     fn model_option(options: Vec<SessionConfigSelectOption>) -> SessionConfigOption {
-        SessionConfigOption {
-            id: SessionConfigId::new("model".to_string()),
-            name: "Model".to_string(),
-            description: None,
-            category: Some(SessionConfigOptionCategory::Model),
-            kind: SessionConfigKind::Select(SessionConfigSelect::new(
+        SessionConfigOption::new(
+            SessionConfigId::new("model".to_string()),
+            "Model",
+            SessionConfigKind::Select(SessionConfigSelect::new(
                 SessionConfigValueId::new("current".to_string()),
                 SessionConfigSelectOptions::Ungrouped(options),
             )),
-        }
+        )
+        .category(SessionConfigOptionCategory::Model)
     }
 
     #[test]
@@ -799,16 +843,14 @@ mod tests {
 
     #[test]
     fn match_model_value_falls_back_to_the_lone_select() {
-        let option = SessionConfigOption {
-            id: SessionConfigId::new("model".to_string()),
-            name: "Model".to_string(),
-            description: None,
-            category: None,
-            kind: SessionConfigKind::Select(SessionConfigSelect::new(
+        let option = SessionConfigOption::new(
+            SessionConfigId::new("model".to_string()),
+            "Model",
+            SessionConfigKind::Select(SessionConfigSelect::new(
                 SessionConfigValueId::new("smart".to_string()),
                 SessionConfigSelectOptions::Ungrouped(vec![select_option("smart", "Smart")]),
             )),
-        };
+        );
         assert_eq!(
             match_model_value(&[option], "open_code", "smart").unwrap(),
             ("model".to_string(), "smart".to_string())

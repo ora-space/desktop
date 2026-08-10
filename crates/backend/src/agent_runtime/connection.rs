@@ -5,15 +5,16 @@ use super::{
 };
 use crate::BackendError;
 use crate::clock::SystemClock;
+use agent_client_protocol_schema::ProtocolVersion;
+use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
+use agent_client_protocol_schema::v1::{
+    ClientCapabilities, ClientSessionCapabilities, Implementation, InitializeRequest,
+    InitializeResponse, SessionConfigOptionsCapabilities,
+};
+use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_acp::{AcpClient, AcpInboundEvent, AcpPeer};
 use ora_application::{Clock, SessionRepository};
 use ora_contracts::PublicError;
-use ora_contracts::acp::initialization::{
-    ClientCapabilities, ClientSessionCapabilities, Implementation, InitializeRequest,
-    InitializeResponse, ProtocolVersion, SessionConfigOptionsCapabilities,
-};
-use ora_contracts::acp::literals::AGENT_METHOD_NAMES;
-use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentCli, SessionStatus};
 use ora_logging::{ora_error, ora_info, ora_warn};
@@ -475,7 +476,7 @@ async fn spawn_initialized_process(
     // so the model selector depends on this declaration. Boolean options stay
     // undeclared because Ora renders only select-style options today; claiming
     // support would invite payloads the client silently drops.
-    let initialize = InitializeRequest::new(ProtocolVersion(1))
+    let initialize = InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(
             ClientCapabilities::new().session(
                 ClientSessionCapabilities::new()

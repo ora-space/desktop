@@ -59,4 +59,4 @@ There is no size budget. A long conversation can exceed the receiving model's co
 
 ## Interactions
 
-`ora-backend`'s agent runtime owns every instance of these types, supplies the clock, and decides when to write, replay, hand off, or delete. `ora-contracts` supplies the ACP vocabulary the records are built from and `ora-domain` the CLI identity. See [ACP Agent Runtime](../../docs/agent-runtime.md).
+`ora-backend`'s agent runtime owns every instance of these types, supplies the clock, and decides when to write, replay, hand off, or delete. The official `agent-client-protocol-schema` crate supplies the ACP vocabulary the records are built from, `ora-contracts` supplies Ora's application events, and `ora-domain` supplies the CLI identity. See [ACP Agent Runtime](../../docs/agent-runtime.md).

@@ -1,4 +1,4 @@
-import type { acp } from "@ora/contracts";
+import type * as acp from "@agentclientprotocol/sdk";
 
 /**
  * Finds the agent's model selector among its configuration options.

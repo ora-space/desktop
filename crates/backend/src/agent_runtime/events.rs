@@ -2,9 +2,9 @@ use super::RuntimeActor;
 use super::RuntimeCommand;
 use super::routing::{SessionChannel, SessionEvent};
 use crate::BackendError;
+use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_acp::AcpClient;
 use ora_contracts::PromptSessionEvent;
-use ora_contracts::acp::permission::{RequestPermissionOutcome, RequestPermissionResponse};
 use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 
@@ -28,7 +28,7 @@ pub(super) async fn drain_idle_events(
             && let Some(title_updates) = title_updates.upgrade()
         {
             let _ = title_updates.send(RuntimeCommand::TitleUpdate {
-                update: update.update.clone(),
+                update: Box::new(update.update.clone()),
             });
         }
         settle_idle_event(client, event).await;

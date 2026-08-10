@@ -8,6 +8,7 @@ name = "ora_web_server"
 path = "src/main.rs"
 
 [dependencies]
+agent-client-protocol-schema = { workspace = true }
 axum = { version = "0.8", features = ["multipart", "ws"] }
 chrono-tz = { workspace = true }
 futures-util = { workspace = true }

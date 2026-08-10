@@ -1,8 +1,8 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStore } from "zustand";
 import { useEffect } from "react";
 import type {
-  acp,
   AgentCli,
   WarmSessionResponse,
   WarmSessionTarget,

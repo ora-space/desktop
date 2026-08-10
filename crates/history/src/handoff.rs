@@ -1,9 +1,9 @@
 use crate::reader::SessionHistory;
 use crate::record::HistoryRecord;
-use ora_contracts::acp::content::ContentBlock;
-use ora_contracts::acp::prompt::StopReason;
-use ora_contracts::acp::session::SessionUpdate;
-use ora_contracts::acp::tool_call::ToolCallStatus;
+use agent_client_protocol_schema::v1::ContentBlock;
+use agent_client_protocol_schema::v1::SessionUpdate;
+use agent_client_protocol_schema::v1::StopReason;
+use agent_client_protocol_schema::v1::ToolCallStatus;
 use ora_domain::AgentCli;
 use std::fmt::Write as _;
 
@@ -66,7 +66,7 @@ pub fn binding_needs_handoff(history: &SessionHistory) -> bool {
         match &line.record {
             HistoryRecord::Update { update } => {
                 // A prompt already reached whichever agent is serving now.
-                if matches!(update, SessionUpdate::UserMessageChunk(_)) {
+                if matches!(&**update, SessionUpdate::UserMessageChunk(_)) {
                     return false;
                 }
             }
@@ -162,6 +162,13 @@ impl HandoffTurn {
                 rendered.push_str("\n_This turn stopped at the previous agent's limits._\n");
             }
             Some(StopReason::EndTurn) | None => {}
+            // StopReason is non-exhaustive; retaining a neutral note avoids claiming
+            // completion semantics for a reason introduced by a newer ACP artifact.
+            Some(_) => {
+                rendered.push_str(
+                    "\n_This turn ended for a reason this Ora version does not recognize._\n",
+                );
+            }
         }
     }
 }
@@ -223,6 +230,9 @@ fn absorb_update(turn: &mut HandoffTurn, update: &SessionUpdate) {
         | SessionUpdate::ConfigOptionUpdate(_)
         | SessionUpdate::SessionInfoUpdate(_)
         | SessionUpdate::UsageUpdate(_) => {}
+        // Future ACP updates are preserved in history but cannot be projected into a
+        // handoff until this Ora version understands their semantics.
+        _ => {}
     }
 }
 
@@ -237,6 +247,9 @@ fn describe_content(content: &ContentBlock) -> String {
         ContentBlock::Audio(_) => "[audio]".to_string(),
         ContentBlock::ResourceLink(link) => format!("[resource link: {uri}]", uri = link.uri),
         ContentBlock::Resource(_) => "[embedded resource]".to_string(),
+        // ContentBlock is non-exhaustive, so name future displayable content without
+        // guessing at a representation that could change its meaning.
+        _ => "[unsupported content]".to_string(),
     }
 }
 
@@ -265,7 +278,11 @@ fn describe_status(status: ToolCallStatus, stop_reason: Option<StopReason>) -> &
                 | StopReason::MaxTurnRequests,
             ) => "interrupted, outcome unknown",
             Some(StopReason::EndTurn) | None => "outcome not reported",
+            Some(_) => "outcome not reported",
         },
+        // A newer status is evidence that the provider reported something, but this
+        // Ora version cannot safely label it completed or failed.
+        _ => "status not recognized",
     }
 }
 

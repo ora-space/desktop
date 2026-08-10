@@ -1,9 +1,9 @@
 use crate::{BackendError, ErrorClassification};
-use ora_acp::AcpClient;
-use ora_contracts::acp::permission::{
+use agent_client_protocol_schema::v1::{
     PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
     RequestPermissionResponse, SelectedPermissionOutcome,
 };
+use ora_acp::AcpClient;
 use ora_contracts::{
     AgentCli as ContractAgentCli, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
@@ -19,7 +19,7 @@ use tokio::process::ChildStdin;
 pub(super) async fn respond_permission(
     client: &AcpClient<ChildStdin>,
     request: RespondToPermissionRequest,
-    permissions: &mut HashMap<String, (ora_contracts::acp::rpc::RequestId, Vec<String>)>,
+    permissions: &mut HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
 ) -> Result<RespondToPermissionResponse, BackendError> {
     let Some((request_id, options)) = permissions.remove(&request.permission_request_id) else {
         return Err(BackendError::new(
@@ -251,7 +251,7 @@ pub(super) fn runtime_internal(code: &'static str, message: impl Into<String>) -
 mod tests {
     use super::{pick_auto_allow_option, runtime_internal};
     use crate::ErrorClassification;
-    use ora_contracts::acp::permission::{PermissionOption, PermissionOptionKind};
+    use agent_client_protocol_schema::v1::{PermissionOption, PermissionOptionKind};
     use ora_contracts::{EmptyErrorParams, PublicError};
     use pretty_assertions::assert_eq;
 
