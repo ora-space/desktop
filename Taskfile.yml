@@ -165,6 +165,8 @@ tasks:
 
   run:desktop:
     desc: Run the desktop Tauri app in development mode
+    env:
+      ORA_DATA_DIR: '{{.ROOT_DIR}}/.data'
     cmds:
       - pnpm --filter @ora/desktop tauri dev
 

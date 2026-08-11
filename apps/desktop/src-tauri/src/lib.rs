@@ -167,10 +167,7 @@ pub fn run() {
 fn bootstrap_desktop(
     app: &mut tauri::App,
 ) -> Result<(DesktopState, DesktopRuntimeGuard), DesktopBootstrapError> {
-    let app_data_directory = app
-        .path()
-        .app_data_dir()
-        .map_err(DesktopBootstrapError::AppDataDirectory)?;
+    let app_data_directory = desktop_data_directory(app)?;
     let config = DesktopConfigStore::load_or_create(&app_data_directory)?;
     let config_snapshot = config.snapshot()?;
     let resolved_timezone = read_system_timezone();
@@ -217,8 +214,7 @@ fn bootstrap_desktop(
         timezone: resolved_timezone.timezone,
     })?;
     let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
-    let plugin_data_directory = desktop_plugin_data_directory(&app_data_directory);
-    let plugin_manager = PluginManager::discover(&plugin_data_directory);
+    let plugin_manager = PluginManager::discover(&app_data_directory);
     for issue in plugin_manager.discovery_issues() {
         ora_warn!(
             message = "installed plugin manifest skipped during discovery",
@@ -242,25 +238,22 @@ fn bootstrap_desktop(
     ))
 }
 
-/// Resolves the plugin discovery root without changing any existing Desktop storage paths.
-fn desktop_plugin_data_directory(app_data_directory: &std::path::Path) -> std::path::PathBuf {
+/// Resolves the configured Desktop data root or falls back to Tauri's application data directory.
+fn desktop_data_directory(app: &tauri::App) -> Result<std::path::PathBuf, DesktopBootstrapError> {
     if let Some(configured) = std::env::var_os("ORA_DATA_DIR") {
         let configured = std::path::PathBuf::from(configured);
         if configured.is_absolute() {
-            return configured;
+            return Ok(configured);
         }
-        return std::env::current_dir()
+
+        return Ok(std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join(configured);
+            .join(configured));
     }
 
-    if cfg!(debug_assertions) {
-        return std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
-            .join(".data");
-    }
-
-    app_data_directory.to_path_buf()
+    app.path()
+        .app_data_dir()
+        .map_err(DesktopBootstrapError::AppDataDirectory)
 }
 
 /// Resolves ripgrep from a development override or the executable directory in a release build.
