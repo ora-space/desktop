@@ -3,8 +3,8 @@ use crate::project::Clock;
 use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGraphNode};
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
-    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange, NodeRunToStart,
-    RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
+    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
+    NodeRunToStart, RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
     WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
 };
 use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
@@ -105,12 +105,7 @@ pub struct WorkflowRunEngine<R, E, G, C> {
 
 impl<R, E, G, C> WorkflowRunEngine<R, E, G, C> {
     /// Builds an engine from its ports.
-    pub fn new(
-        repository: R,
-        node_executor: E,
-        node_run_id_generator: G,
-        clock: C,
-    ) -> Self {
+    pub fn new(repository: R, node_executor: E, node_run_id_generator: G, clock: C) -> Self {
         Self {
             repository,
             node_executor,
@@ -254,8 +249,13 @@ where
                     && matches!(node.node_type, NodeType::Start | NodeType::Output)
                 {
                     let output = control_node_output(&graph, node, &node_runs, &context);
-                    self.repository
-                        .complete_node(&node_run.id, Some(output), None, Vec::new(), now)?;
+                    self.repository.complete_node(
+                        &node_run.id,
+                        Some(output),
+                        None,
+                        Vec::new(),
+                        now,
+                    )?;
                 }
             }
 

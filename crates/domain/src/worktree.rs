@@ -79,6 +79,10 @@ pub struct Worktree {
     pub id: crate::WorktreeId,
     pub task_id: TaskId,
     pub branch_name: Option<String>,
+    /// Exact filesystem path of the provisioned checkout, persisted at creation
+    /// time as ownership evidence for physical cleanup. `None` for historical
+    /// rows created before checkout paths were recorded.
+    pub checkout_root: Option<String>,
     pub baseline: WorktreeBaseline,
     pub activity: WorktreeActivity,
     pub audit_fields: AuditFields,
@@ -90,6 +94,7 @@ impl Worktree {
         id: crate::WorktreeId,
         task_id: TaskId,
         branch_name: Option<String>,
+        checkout_root: Option<String>,
         baseline: WorktreeBaseline,
         activity: WorktreeActivity,
         audit_fields: AuditFields,
@@ -98,6 +103,7 @@ impl Worktree {
             id,
             task_id,
             branch_name,
+            checkout_root,
             baseline,
             activity,
             audit_fields,

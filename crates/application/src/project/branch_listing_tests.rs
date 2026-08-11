@@ -185,6 +185,7 @@ fn worktree_fixture(worktree_id: &str, task_id: &str, branch_name: Option<&str>)
         WorktreeId::new(worktree_id),
         TaskId::new(task_id),
         branch_name.map(str::to_string),
+        None,
         WorktreeBaseline::unavailable(),
         WorktreeActivity::Active,
         AuditFields::new(1, 1, false),

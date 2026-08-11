@@ -4,6 +4,7 @@ mod app_event;
 mod bootstrap;
 mod clock;
 mod error;
+mod git_cleanup;
 mod identity;
 mod project;
 mod request_lifecycle;

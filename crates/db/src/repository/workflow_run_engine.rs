@@ -1,7 +1,7 @@
 use ora_application::{
-    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange, NodeRunToStart,
-    RepositoryError, RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowRunEngineRepository,
+    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
+    NodeRunToStart, RepositoryError, RestartWorkflowRunResult, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowRunEngineRepository,
 };
 use ora_domain::{
     SessionId, SessionStatus, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
@@ -62,7 +62,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 };
                 let worktree = {
                     let mut statement = connection.prepare(
-                        "SELECT id, task_id, branch_name, base_commit_id, is_active, created_at, updated_at, is_deleted
+                        "SELECT id, task_id, branch_name, checkout_root, base_commit_id, is_active, created_at, updated_at, is_deleted
                          FROM worktrees WHERE task_id = ?1 AND is_deleted = 0",
                     )?;
                     require_row(&mut statement.query(params![task.id.as_ref()])?, map_worktree_row)?
@@ -541,10 +541,7 @@ fn current_nodes_to_state(current_nodes: &[String]) -> Result<String, crate::Dat
 }
 
 /// Builds the node-run `payload` blob: the ACP stop reason and incremental file changes, when any.
-fn complete_payload(
-    stop_reason: Option<String>,
-    file_changes: Vec<FileChange>,
-) -> Option<String> {
+fn complete_payload(stop_reason: Option<String>, file_changes: Vec<FileChange>) -> Option<String> {
     let mut payload = serde_json::Map::new();
     if let Some(reason) = stop_reason {
         payload.insert("stop_reason".to_string(), serde_json::json!(reason));
@@ -552,13 +549,18 @@ fn complete_payload(
     if !file_changes.is_empty() {
         payload.insert(
             "file_changes".to_string(),
-            serde_json::json!(file_changes.iter().map(|change| {
-                serde_json::json!({
-                    "path": change.path,
-                    "additions": change.additions,
-                    "deletions": change.deletions,
-                })
-            }).collect::<Vec<_>>()),
+            serde_json::json!(
+                file_changes
+                    .iter()
+                    .map(|change| {
+                        serde_json::json!({
+                            "path": change.path,
+                            "additions": change.additions,
+                            "deletions": change.deletions,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            ),
         );
     }
     if payload.is_empty() {

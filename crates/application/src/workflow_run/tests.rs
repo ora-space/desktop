@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::WorkflowRunCreateOutcome;
+use crate::task::WorktreeProvisioningLeaseStore;
 use crate::task::{
     CreateTaskWorktreeRequest, CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest,
     TaskIdGenerator, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
@@ -32,10 +34,12 @@ use ora_domain::{
     WorkflowRunId, WorkflowRunStatus, WorkflowRunSummary, WorkflowSnapshot, WorkflowSnapshotId,
     WorkflowSummary, WorkflowVersion, Worktree, WorktreeId,
 };
+use ora_domain::{WorktreeProvisioningLease, WorktreeProvisioningLeaseId};
 use pretty_assertions::assert_eq;
 
 const TASK_ID: &str = "12345678-1234-5678-90ab-1234567890ab";
 const WORK_DIR: &str = "/tmp/ora-worktrees";
+const REPO_ROOT: &str = "/repos/project-1";
 
 /// Verifies a run is created against an explicitly provided published snapshot.
 #[test]
@@ -53,6 +57,8 @@ fn creates_run_with_explicit_snapshot() {
         FixedWorktreeIdGenerator::new("worktree-1"),
         provisioner.clone(),
         MockWorktreeInitializer::default(),
+        FakeLeaseStore::default(),
+        PathBuf::from(REPO_ROOT),
         PathBuf::from(WORK_DIR),
         FixedClock::new(30),
     );
@@ -96,14 +102,16 @@ fn creates_run_with_explicit_snapshot() {
     );
 }
 
-/// Verifies a failing worktree initialization aborts creation and removes the provisioned worktree.
+/// Verifies a failing worktree initialization aborts creation and hands the
+/// provisioned resources to durable cleanup.
 #[test]
-fn fails_creation_and_compensates_when_worktree_initialization_fails() {
+fn fails_creation_and_releases_lease_when_worktree_initialization_fails() {
     let workflow = workflow_fixture(Some("snapshot-a"));
     let snapshot = snapshot_fixture("snapshot-a", "v1");
     let workflow_repository = MockWorkflowRepository::with(workflow, vec![snapshot]);
     let run_repository = MockWorkflowRunRepository::default();
     let provisioner = Arc::new(FakeTaskWorktreeProvisioner::default());
+    let lease_store = FakeLeaseStore::default();
     let handler = CreateWorkflowRunHandler::new(
         Arc::new(workflow_repository),
         Arc::new(run_repository),
@@ -115,6 +123,8 @@ fn fails_creation_and_compensates_when_worktree_initialization_fails() {
             worktrees: Arc::new(Mutex::new(Vec::new())),
             fail: true,
         },
+        lease_store.clone(),
+        PathBuf::from(REPO_ROOT),
         PathBuf::from(WORK_DIR),
         FixedClock::new(30),
     );
@@ -130,15 +140,13 @@ fn fails_creation_and_compensates_when_worktree_initialization_fails() {
         })
         .unwrap_err();
 
-    assert!(matches!(error, ApplicationError::WorkflowRunStartFailed { .. }));
-    // The provisioned worktree must be removed so no orphan branch is left behind.
-    assert_eq!(
-        provisioner.deleted_requests(),
-        vec![DeleteTaskWorktreeRequest {
-            branch_name: format!("ora/{}", &TASK_ID[..8]),
-            mode: TaskWorktreeDeletionMode::Force,
-        }]
-    );
+    assert!(matches!(
+        error,
+        ApplicationError::WorkflowRunStartFailed { .. }
+    ));
+    // The provisioned resources are handed to durable cleanup via the lease.
+    let created = lease_store.created_leases();
+    assert_eq!(lease_store.released_leases(), vec![created[0].id.clone()]);
 }
 
 /// Verifies creation falls back to the workflow's published snapshot without an explicit id.
@@ -156,6 +164,8 @@ fn uses_published_snapshot_when_no_explicit_id() {
         FixedWorktreeIdGenerator::new("worktree-1"),
         Arc::new(FakeTaskWorktreeProvisioner::default()),
         MockWorktreeInitializer::default(),
+        FakeLeaseStore::default(),
+        PathBuf::from(REPO_ROOT),
         PathBuf::from(WORK_DIR),
         FixedClock::new(30),
     );
@@ -187,6 +197,8 @@ fn rejects_workflow_without_published_snapshot() {
         FixedWorktreeIdGenerator::new("worktree-1"),
         Arc::new(FakeTaskWorktreeProvisioner::default()),
         MockWorktreeInitializer::default(),
+        FakeLeaseStore::default(),
+        PathBuf::from(REPO_ROOT),
         PathBuf::from(WORK_DIR),
         FixedClock::new(30),
     );
@@ -219,6 +231,8 @@ fn rejects_draft_snapshot() {
         FixedWorktreeIdGenerator::new("worktree-1"),
         Arc::new(FakeTaskWorktreeProvisioner::default()),
         MockWorktreeInitializer::default(),
+        FakeLeaseStore::default(),
+        PathBuf::from(REPO_ROOT),
         PathBuf::from(WORK_DIR),
         FixedClock::new(30),
     );
@@ -250,6 +264,8 @@ fn rejects_snapshot_not_in_workflow() {
         FixedWorktreeIdGenerator::new("worktree-1"),
         provisioner.clone(),
         MockWorktreeInitializer::default(),
+        FakeLeaseStore::default(),
+        PathBuf::from(REPO_ROOT),
         PathBuf::from(WORK_DIR),
         FixedClock::new(30),
     );
@@ -274,9 +290,9 @@ fn rejects_snapshot_not_in_workflow() {
     assert!(provisioner.created_requests().is_empty());
 }
 
-/// Verifies a persistence failure compensates by deleting the provisioned physical worktree.
+/// Verifies a persistence failure hands the provisioned worktree to durable cleanup.
 #[test]
-fn compensates_worktree_when_persistence_fails() {
+fn releases_lease_when_persistence_fails() {
     let workflow = workflow_fixture(Some("snapshot-a"));
     let snapshot = snapshot_fixture("snapshot-a", "v1");
     let workflow_repository = MockWorkflowRepository::with(workflow, vec![snapshot]);
@@ -285,6 +301,7 @@ fn compensates_worktree_when_persistence_fails() {
         "run write failed".to_string(),
     ));
     let provisioner = Arc::new(FakeTaskWorktreeProvisioner::default());
+    let lease_store = FakeLeaseStore::default();
     let handler = CreateWorkflowRunHandler::new(
         Arc::new(workflow_repository),
         Arc::new(run_repository),
@@ -293,6 +310,8 @@ fn compensates_worktree_when_persistence_fails() {
         FixedWorktreeIdGenerator::new("worktree-1"),
         provisioner.clone(),
         MockWorktreeInitializer::default(),
+        lease_store.clone(),
+        PathBuf::from(REPO_ROOT),
         PathBuf::from(WORK_DIR),
         FixedClock::new(30),
     );
@@ -314,13 +333,8 @@ fn compensates_worktree_when_persistence_fails() {
             source: RepositoryError::from_message("run write failed"),
         }
     );
-    assert_eq!(
-        provisioner.deleted_requests(),
-        vec![DeleteTaskWorktreeRequest {
-            branch_name: format!("ora/{}", &TASK_ID[..8]),
-            mode: TaskWorktreeDeletionMode::Force,
-        }]
-    );
+    let created = lease_store.created_leases();
+    assert_eq!(lease_store.released_leases(), vec![created[0].id.clone()]);
 }
 
 /// Verifies a worktree provisioning failure aborts creation before any persistence.
@@ -343,6 +357,8 @@ fn reports_provisioning_failure() {
         FixedWorktreeIdGenerator::new("worktree-1"),
         provisioner.clone(),
         MockWorktreeInitializer::default(),
+        FakeLeaseStore::default(),
+        PathBuf::from(REPO_ROOT),
         PathBuf::from(WORK_DIR),
         FixedClock::new(30),
     );
@@ -501,17 +517,13 @@ fn lists_node_runs() {
     );
 }
 
-/// Verifies a deleted run's physical worktree is cleaned up through the provisioner.
+/// Verifies run deletion succeeds on the cascade alone: physical Git cleanup
+/// is registered durably by the repository, not invoked by the handler.
 #[test]
-fn deletes_run_and_cleans_worktree() {
+fn deletes_run_without_synchronous_git_cleanup() {
     let repository = MockWorkflowRunRepository::default();
     repository.with_task_id(TaskId::new(TASK_ID));
-    let provisioner = Arc::new(FakeTaskWorktreeProvisioner::default());
-    let handler = DeleteWorkflowRunHandler::new(
-        Arc::new(repository),
-        provisioner.clone(),
-        FixedClock::new(30),
-    );
+    let handler = DeleteWorkflowRunHandler::new(Arc::new(repository), FixedClock::new(30));
 
     let response = handler
         .handle(DeleteWorkflowRunRequest {
@@ -525,13 +537,6 @@ fn deletes_run_and_cleans_worktree() {
             run_id: "run-1".to_string(),
         }
     );
-    assert_eq!(
-        provisioner.deleted_requests(),
-        vec![DeleteTaskWorktreeRequest {
-            branch_name: format!("ora/{}", &TASK_ID[..8]),
-            mode: TaskWorktreeDeletionMode::Force,
-        }]
-    );
 }
 
 /// Verifies an active run is rejected without deleting its rows or worktree.
@@ -539,12 +544,7 @@ fn deletes_run_and_cleans_worktree() {
 fn reports_active_run_on_delete() {
     let repository = MockWorkflowRunRepository::default();
     repository.with_delete_result(DeleteWorkflowRunResult::ActiveRun);
-    let provisioner = Arc::new(FakeTaskWorktreeProvisioner::default());
-    let handler = DeleteWorkflowRunHandler::new(
-        Arc::new(repository),
-        provisioner.clone(),
-        FixedClock::new(30),
-    );
+    let handler = DeleteWorkflowRunHandler::new(Arc::new(repository), FixedClock::new(30));
 
     let error = handler
         .handle(DeleteWorkflowRunRequest {
@@ -553,7 +553,6 @@ fn reports_active_run_on_delete() {
         .unwrap_err();
 
     assert_eq!(error, ApplicationError::WorkflowRunActive);
-    assert!(provisioner.deleted_requests().is_empty());
 }
 
 /// Verifies a missing run is reported as not found without any worktree cleanup.
@@ -561,12 +560,7 @@ fn reports_active_run_on_delete() {
 fn reports_not_found_on_delete() {
     let repository = MockWorkflowRunRepository::default();
     repository.with_delete_result(DeleteWorkflowRunResult::NotFound);
-    let provisioner = Arc::new(FakeTaskWorktreeProvisioner::default());
-    let handler = DeleteWorkflowRunHandler::new(
-        Arc::new(repository),
-        provisioner.clone(),
-        FixedClock::new(30),
-    );
+    let handler = DeleteWorkflowRunHandler::new(Arc::new(repository), FixedClock::new(30));
 
     let error = handler
         .handle(DeleteWorkflowRunRequest {
@@ -580,7 +574,6 @@ fn reports_not_found_on_delete() {
             run_id: "run-1".to_string(),
         }
     );
-    assert!(provisioner.deleted_requests().is_empty());
 }
 
 /// Builds a pending run fixture for handler assertions.
@@ -838,12 +831,13 @@ impl WorkflowRunRepository for MockWorkflowRunRepository {
         run: WorkflowRun,
         _task: Task,
         _worktree: Worktree,
-    ) -> Result<WorkflowRun, RepositoryError> {
+        _lease_id: &WorktreeProvisioningLeaseId,
+    ) -> Result<WorkflowRunCreateOutcome, RepositoryError> {
         if let Some(error) = self.fail_next_create.lock().unwrap().take() {
             return Err(error);
         }
         self.created.lock().unwrap().push(run.clone());
-        Ok(run)
+        Ok(WorkflowRunCreateOutcome::Created(Box::new(run)))
     }
 
     fn find_run(&self, _run_id: &WorkflowRunId) -> Result<Option<WorkflowRun>, RepositoryError> {
@@ -910,7 +904,10 @@ impl WorkflowRunWorktreeInitializer for MockWorktreeInitializer {
         _graph: &WorkflowGraph,
         worktree_root: &Path,
     ) -> Result<(), StartPrerequisitesError> {
-        self.worktrees.lock().unwrap().push(worktree_root.to_path_buf());
+        self.worktrees
+            .lock()
+            .unwrap()
+            .push(worktree_root.to_path_buf());
         if self.fail {
             return Err(StartPrerequisitesError::SkillMaterializationError {
                 message: "boom".to_string(),
@@ -1031,6 +1028,7 @@ impl WorktreeIdGenerator for FixedWorktreeIdGenerator {
 }
 
 /// Provides a fixed wall-clock value for deterministic handler assertions.
+#[derive(Clone, Copy)]
 struct FixedClock(i64);
 
 impl FixedClock {
@@ -1042,5 +1040,49 @@ impl FixedClock {
 impl Clock for FixedClock {
     fn now_timestamp_millis(&self) -> i64 {
         self.0
+    }
+}
+
+/// Lease store fake recording releases so failure paths can be asserted.
+#[derive(Clone, Debug, Default)]
+struct FakeLeaseStore {
+    created: Arc<Mutex<Vec<WorktreeProvisioningLease>>>,
+    released: Arc<Mutex<Vec<WorktreeProvisioningLeaseId>>>,
+}
+
+impl FakeLeaseStore {
+    /// Returns every lease created through the store.
+    fn created_leases(&self) -> Vec<WorktreeProvisioningLease> {
+        self.created.lock().unwrap().clone()
+    }
+
+    /// Returns every lease id released to durable cleanup.
+    fn released_leases(&self) -> Vec<WorktreeProvisioningLeaseId> {
+        self.released.lock().unwrap().clone()
+    }
+}
+
+impl WorktreeProvisioningLeaseStore for FakeLeaseStore {
+    fn create_lease(&self, lease: &WorktreeProvisioningLease) -> Result<(), RepositoryError> {
+        self.created.lock().unwrap().push(lease.clone());
+        Ok(())
+    }
+
+    fn renew_lease(
+        &self,
+        _lease_id: &WorktreeProvisioningLeaseId,
+        _lease_expires_at: i64,
+        _now: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
+    }
+
+    fn release_to_cleanup(
+        &self,
+        lease_id: &WorktreeProvisioningLeaseId,
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        self.released.lock().unwrap().push(lease_id.clone());
+        Ok(())
     }
 }

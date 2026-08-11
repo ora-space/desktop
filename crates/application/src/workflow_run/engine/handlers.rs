@@ -110,12 +110,12 @@ where
         {
             UpdateWorkflowRunInputResult::Updated => {}
             UpdateWorkflowRunInputResult::NotEditable => {
-                return Err(ApplicationError::WorkflowRunNotEditable)
+                return Err(ApplicationError::WorkflowRunNotEditable);
             }
             UpdateWorkflowRunInputResult::NotFound => {
                 return Err(ApplicationError::WorkflowRunNotFound {
                     run_id: request.run_id,
-                })
+                });
             }
         }
         let run = self.find_run(&run_id)?;

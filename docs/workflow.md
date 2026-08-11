@@ -77,7 +77,7 @@ A workflow run freezes one published snapshot and executes it against a dedicate
 
 Get returns the run with its display name and node runs; list returns project-scoped summaries. Node-run history is read-only in this layer — the engine owns node-run writes and the state machine.
 
-Deletion refuses active runs (a `Running` run, a non-terminal node run, or a `Running` session on the run's task) and then soft-deletes the run, its node runs, its task's sessions, worktrees, and task row in one transaction; the physical worktree is removed separately through the task worktree provisioner. Soft-deleted runs are invisible to queries and cannot be reactivated.
+Deletion refuses active runs (a `Running` run, a non-terminal node run, or a `Running` session on the run's task) and then soft-deletes the run, its node runs, its task's sessions, worktrees, and task row in one transaction, registering a durable Git cleanup job for the run-task's worktree and `ora/*` branch in that same transaction; the backend cleanup worker performs the physical removal asynchronously. Soft-deleted runs are invisible to queries and cannot be reactivated.
 
 ### Snapshot protection
 

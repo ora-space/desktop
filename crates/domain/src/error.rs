@@ -19,6 +19,8 @@ pub enum DomainModelError {
     InvalidWorkflowNodeStatus(i64),
     #[error("invalid worktree activity value: {0}")]
     InvalidWorktreeActivity(i64),
+    #[error("invalid git cleanup job state value: {0}")]
+    InvalidGitCleanupJobState(String),
     #[error("invalid virtual entry kind value: {0}")]
     InvalidVirtualEntryKind(i64),
     #[error("invalid session status value: {0}")]

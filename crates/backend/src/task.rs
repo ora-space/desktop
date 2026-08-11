@@ -1,4 +1,5 @@
 use crate::clock::SystemClock;
+use crate::git_cleanup::GatedWorktreeProvisioner;
 use crate::{BackendError, ErrorClassification};
 use gitlancer::git::worktree::ResolveWorktreeByBranchRequest;
 use gitlancer::{CliGitRunner, Git, RepoRoot, Repository};
@@ -15,7 +16,8 @@ use ora_contracts::{
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{
     CascadeDeleteOutcome, RepositoryPool, SqliteCascadeRepository, SqliteProjectRepository,
-    SqliteTaskRepository, SqliteWorktreeRepository,
+    SqliteTaskRepository, SqliteTaskWorkspaceRepository, SqliteWorktreeProvisioningLeaseRepository,
+    SqliteWorktreeRepository,
 };
 use ora_domain::{Project, ProjectId, TaskId, WorktreeActivity};
 use ora_logging::ora_warn;
@@ -28,6 +30,8 @@ pub(crate) struct TaskApi {
     worktree_root: Arc<RwLock<PathBuf>>,
     /// Where cascaded sessions' recorded conversations are removed from.
     sessions_root: PathBuf,
+    /// Serializes Git mutations per repository between provisioning and cleanup.
+    repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
     get: GetTaskHandler<SqliteTaskRepository>,
     list: ListTasksHandler<SqliteTaskRepository>,
     update: UpdateTaskHandler<SqliteTaskRepository, SystemClock>,
@@ -40,6 +44,7 @@ impl TaskApi {
         pool: RepositoryPool,
         worktree_root: Arc<RwLock<PathBuf>>,
         sessions_root: PathBuf,
+        repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
         clock: SystemClock,
     ) -> Self {
         let repository = SqliteTaskRepository::new(pool.clone());
@@ -48,6 +53,7 @@ impl TaskApi {
             pool,
             worktree_root,
             sessions_root,
+            repository_gates,
             get: GetTaskHandler::new(repository.clone()),
             list: ListTasksHandler::new(repository.clone()),
             update: UpdateTaskHandler::new(repository, clock),
@@ -61,14 +67,18 @@ impl TaskApi {
         request: CreateTaskRequest,
     ) -> Result<CreateTaskResponse, ApplicationError> {
         let project = self.find_project(&ProjectId::new(&request.project_id))?;
-        let task_repository = SqliteTaskRepository::new(self.pool.clone());
-        let worktree_repository = SqliteWorktreeRepository::new(self.pool.clone());
+        let repository_root = PathBuf::from(project.root_path);
         let handler = CreateTaskHandler::new(
-            task_repository,
-            worktree_repository,
+            SqliteTaskWorkspaceRepository::new(self.pool.clone()),
+            SqliteWorktreeProvisioningLeaseRepository::new(self.pool.clone()),
             UuidTaskIdGenerator::new(),
             UuidWorktreeIdGenerator::new(),
-            GitTaskWorktreeProvisioner::new(PathBuf::from(project.root_path)),
+            GatedWorktreeProvisioner::new(
+                GitTaskWorktreeProvisioner::new(repository_root.clone()),
+                Arc::clone(&self.repository_gates),
+                crate::git_cleanup::normalize_repository_key(&repository_root),
+            ),
+            repository_root,
             self.worktree_root_snapshot()?,
             self.clock,
         );

@@ -13,7 +13,7 @@ This module coordinates task CRUD with optional backend-owned Git worktree provi
 
 `TaskRepository`, `WorktreeRepository`, identifier generators, `Clock`, and `TaskWorktreeProvisioner` keep database and Git details outside the use-case logic. `GitTaskWorktreeProvisioner` adapts the typed `gitlancer` runtime to that port.
 
-Task updates preserve project ownership and the existing worktree association. Aggregate deletion is handled by backend/database cascade logic and deliberately does not remove Git branches or worktrees.
+Task updates preserve project ownership and the existing worktree association. Aggregate deletion is handled by backend/database cascade logic, which registers durable Git cleanup jobs in the deletion transaction; this module supplies the cleanup vocabulary the backend worker executes — identity validation, the `TaskGitResourceCleaner` port with its Git implementation, and the pure reduction from stage outcomes to job transitions.
 
 Branch creation uses a short task-id prefix, so creation checks both existing task worktree directories and repository branches before accepting an id. Worktree mode fails explicitly when the project root is not a Git repository.
 

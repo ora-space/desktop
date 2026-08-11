@@ -22,6 +22,7 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 | `0007` | `project_spec_source_overrides` and its active project/path unique index |
 | `0008` | `agents.content` for persisted agent definitions |
 | `0009` | nullable `sessions.title` for the persisted display name |
+| `0010` | nullable `worktrees.checkout_root`, `git_cleanup_jobs`, `worktree_provisioning_leases` |
 
 `default_migration_catalog()` returns all nine with every version as the active target.
 
@@ -44,7 +45,7 @@ Migration `0004` is additive for existing databases: it adds the nullable worktr
 Migration `0005` is additive as well: it adds the nullable `sessions.history_degraded_reason` column, and its rollback only drops that column. On-disk conversation history lives outside SQLite, so neither direction touches recorded transcripts.
 
 Migration `0006` adds workflow definitions/snapshots, workflow runs/node runs, and the task `type`/`workflow_run_id` association columns. Migration `0007` stores audited project-level Spec source decisions. Database checks make custom workflow names mandatory and forbid custom names on built-in workflows; the partial unique index applies only to active rows so replacements can retain soft-deleted history.
-Migration `0008` stores the optional agent definition content. Migration `0009` adds the nullable `sessions.title` column; the acquisition window and its locked state are intentionally not persisted, so rollback only removes the title column.
+Migration `0008` stores the optional agent definition content. Migration `0009` adds the nullable `sessions.title` column; the acquisition window and its locked state are intentionally not persisted, so rollback only removes the title column. Migration `0010` records the exact checkout path on new worktrees and introduces the durable Git cleanup bookkeeping (`git_cleanup_jobs` with CHECK-constrained states and a dispatch index, plus `worktree_provisioning_leases`); rolling it back drops all pending cleanup and provisioning bookkeeping, deliberately re-accepting the pre-migration behavior of leaking physical Git resources on aggregate deletion.
 
 ## Operational logging
 

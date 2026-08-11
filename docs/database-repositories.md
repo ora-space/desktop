@@ -17,6 +17,9 @@
 | `SqliteWorkflowRepository` | `WorkflowRepository` |
 | `SqliteWorkflowRunRepository` | `WorkflowRunRepository` |
 | `SqliteCascadeRepository` | aggregate deletion used by `ora-backend` |
+| `SqliteTaskWorkspaceRepository` | `TaskWorkspaceCommit` |
+| `SqliteWorktreeProvisioningLeaseRepository` | `WorktreeProvisioningLeaseStore` |
+| `SqliteGitCleanupJobRepository` | durable Git cleanup queue used by `ora-backend` |
 
 Adding an adapter never changes a port signature. Handlers keep depending on the traits they own, so a composition root can swap in fakes without touching use-case code.
 
@@ -67,6 +70,7 @@ An unrecognized persisted category value is a mapping failure, not a silently co
 
 - Task deletion cascades through its sessions and its owned worktree record.
 - Project deletion cascades through project work contexts, tasks, sessions, and worktree records.
+- Both cascades read each worktree-backed task's persisted Git identity (repository root, branch, recorded checkout path) before the soft deletes and insert `git_cleanup_jobs` rows in the same transaction, so physical cleanup intent commits or rolls back atomically with the deletion. Workflow-run deletion (`SqliteWorkflowRunRepository::soft_delete_run`) registers the same jobs for its run-task.
 
 The result is a `CascadeDeleteOutcome` — `Deleted`, `NotFound`, or `ActiveSession` — rather than an error, so the caller decides the public meaning. `ora-backend` maps `ActiveSession` to the stable public code `resource_in_use`, and no partial cascade is committed in that case.
 

@@ -20,4 +20,7 @@ pub use handlers::{
     ListWorkflowNodeRunsHandler, ListWorkflowRunsByWorkflowHandler, ListWorkflowRunsHandler,
 };
 pub use id_generator::{UuidWorkflowNodeRunIdGenerator, UuidWorkflowRunIdGenerator};
-pub use ports::{DeleteWorkflowRunResult, WorkflowRunIdGenerator, WorkflowRunRepository};
+pub use ports::{
+    DeleteWorkflowRunResult, WorkflowRunCreateOutcome, WorkflowRunIdGenerator,
+    WorkflowRunRepository,
+};
