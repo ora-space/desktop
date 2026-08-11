@@ -349,6 +349,7 @@ where
         Ok(GetWorkflowRunResponse {
             run: map_run(detail.run),
             name: detail.name,
+            project_id: detail.project_id.to_string(),
             task_id: detail.task_id.to_string(),
             nodes: detail.nodes.into_iter().map(map_node_run).collect(),
         })

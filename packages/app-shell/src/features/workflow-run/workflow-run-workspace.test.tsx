@@ -186,4 +186,42 @@ describe("WorkflowRunWorkspace", () => {
 
     runtime.dispose();
   });
+
+  it("keeps the workspace project selected when restarting a run", async () => {
+    const state = seedRunWithTask();
+    // "Run again" is only offered on terminal runs.
+    state.workflowRuns[0].status = "cancelled";
+    const client = createMockClient(state);
+    const runtime = createMemoryWorkflowRuntime();
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+      runtime,
+    );
+    const user = userEvent.setup();
+
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <Wrapper>
+          <WorkflowRunWorkspace runId="run-1" />
+        </Wrapper>
+      </PlatformProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("审查流程 1")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /再次运行|Run again/ }));
+
+    // Regression: the display run stubs projectId as "", and re-selecting with it
+    // would poison the workspace selection, making the next warm target an empty
+    // project root. Restart must keep the real project id.
+    await waitFor(() => {
+      expect(useWorkspaceSelectionStore.getState().selection.projectId).toBe("p1");
+    });
+
+    runtime.dispose();
+  });
 });

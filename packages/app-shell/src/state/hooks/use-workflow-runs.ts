@@ -11,6 +11,7 @@ import {
 } from "@ora/workflow-runtime";
 import { useContractsClient } from "../../contracts-client-context";
 import { isTerminalRunStatus } from "../../features/workflow-run/run-status-style";
+import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import type { WorkflowRunSummary } from "@ora/contracts";
 
 const runsByWorkflowKey = (workflowId: string) => ["workflowRun", "byWorkflow", workflowId] as const;
@@ -67,7 +68,15 @@ export function useCreateWorkflowRun() {
   });
 }
 
-/** Soft-deletes one non-active workflow run and refreshes its project's run list. */
+/**
+ * Soft-deletes one non-active workflow run and refreshes its project's run list.
+ *
+ * If the deleted run is the one open in the workspace, its selection must be
+ * retired too: `WorkspaceView` renders the run view for any non-null
+ * `workflowRunId`, and without a clear the graph would linger over the project
+ * after the sidebar row is gone. Mirrors the mock-engine delete, which clears
+ * the same selection leg.
+ */
 export function useDeleteWorkflowRun() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -77,6 +86,15 @@ export function useDeleteWorkflowRun() {
     onSuccess: (_result, variables) => {
       if (variables.projectId != null) {
         void queryClient.invalidateQueries({ queryKey: runsByProjectKey(variables.projectId) });
+      }
+      // The run no longer exists; drop its detail cache so nothing can resurrect
+      // a stale graph after the selection clear unmounts the run workspace.
+      queryClient.removeQueries({ queryKey: runDetailKey(variables.runId) });
+      const selection = useWorkspaceSelectionStore.getState().selection;
+      if (selection.workflowRunId === variables.runId) {
+        useWorkspaceSelectionStore
+          .getState()
+          .clearWorkflowRunSelection(selection.projectId ?? "");
       }
     },
   });
@@ -194,6 +212,7 @@ export function buildDisplayRun(
   detail: {
     run: { id: string; workflowId: string; status: string; state: string | null; input: string | null; startedAt: bigint | null; finishedAt: bigint | null; createdAt: bigint; updatedAt: bigint };
     name: string;
+    projectId: string;
     nodes: Array<{
       nodeId: string;
       status: string;
@@ -263,7 +282,7 @@ export function buildDisplayRun(
   }
   return {
     id: detail.run.id,
-    projectId: "",
+    projectId: detail.projectId,
     definitionId: detail.run.workflowId,
     definitionSnapshot,
     name: detail.name,

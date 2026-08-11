@@ -122,14 +122,20 @@ impl WorkflowRunRepository for SqliteWorkflowRunRepository {
                         None => return Ok(None),
                     }
                 };
-                // The display name and task id live on the run-task; a run created through
-                // create_run always has one, so an absent row degrades to empty values rather
-                // than corruption.
-                let (task_id, name) = connection
+                // The display name, task id, and owning project live on the run-task; a run
+                // created through create_run always has one, so an absent row degrades to empty
+                // values rather than corruption.
+                let (task_id, name, project_id) = connection
                     .query_row(
-                        "SELECT id, title FROM tasks WHERE workflow_run_id = ?1 AND is_deleted = 0",
+                        "SELECT id, title, project_id FROM tasks WHERE workflow_run_id = ?1 AND is_deleted = 0",
                         params![run_id.as_ref()],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                            ))
+                        },
                     )
                     .optional()?
                     .unwrap_or_default();
@@ -137,6 +143,7 @@ impl WorkflowRunRepository for SqliteWorkflowRunRepository {
                 Ok(Some(WorkflowRunDetail {
                     run,
                     name,
+                    project_id: ProjectId::new(project_id),
                     task_id: TaskId::new(task_id),
                     nodes,
                 }))

@@ -226,6 +226,8 @@ pub struct WorkflowRunSummary {
 pub struct WorkflowRunDetail {
     pub run: WorkflowRun,
     pub name: String,
+    /// The project owning the run-task, mirroring the summary's `project_id`.
+    pub project_id: ProjectId,
     pub task_id: TaskId,
     pub nodes: Vec<WorkflowNodeRun>,
 }

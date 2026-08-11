@@ -1,8 +1,13 @@
 import { waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { renderHookWithClient } from "../../test/hook-harness";
 import { createMockClient, createMockClientState, type MockClientState } from "../../test/mock-client";
+import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { buildDisplayRun, useDeleteWorkflowRun, useRealWorkflowRun, useRenameWorkflowRun, useWorkflowRunsByProject } from "./use-workflow-runs";
+
+beforeEach(() => {
+  useWorkspaceSelectionStore.getState().clearSelection();
+});
 
 /** Seeds one persisted run and its run-task for hook tests. */
 function seededState(): MockClientState {
@@ -64,6 +69,7 @@ describe("buildDisplayRun", () => {
       updatedAt: 1n,
     },
     name: "审查流程 1",
+    projectId: "p1",
     nodes: [
       {
         nodeId: "explore",
@@ -80,6 +86,11 @@ describe("buildDisplayRun", () => {
   it("projects a paused pending run to awaiting_input", () => {
     const display = buildDisplayRun(detail, GRAPH);
     expect(display.status).toBe("awaiting_input");
+  });
+
+  it("carries the run-task's real project id onto the display run", () => {
+    const display = buildDisplayRun(detail, GRAPH);
+    expect(display.projectId).toBe("p1");
   });
 
   it("builds the definition snapshot and per-node states from the frozen graph", () => {
@@ -261,5 +272,28 @@ describe("persisted run hooks", () => {
     const { result } = renderHookWithClient(() => useDeleteWorkflowRun(), client);
     await result.current.mutateAsync({ runId: "run-1", projectId: "p1" });
     expect(state.workflowRuns).toEqual([]);
+  });
+
+  it("retires the selection when the deleted run is the one open in the workspace", async () => {
+    const state = seededState();
+    const client = createMockClient(state);
+    useWorkspaceSelectionStore.getState().selectWorkflowRun("run-1", "p1");
+    const { result } = renderHookWithClient(() => useDeleteWorkflowRun(), client);
+    await result.current.mutateAsync({ runId: "run-1", projectId: "p1" });
+    expect(useWorkspaceSelectionStore.getState().selection).toEqual({
+      projectId: "p1",
+      taskId: null,
+      sessionId: null,
+      workflowRunId: null,
+    });
+  });
+
+  it("keeps the selection when a different run is deleted", async () => {
+    const state = seededState();
+    const client = createMockClient(state);
+    useWorkspaceSelectionStore.getState().selectWorkflowRun("run-other", "p1");
+    const { result } = renderHookWithClient(() => useDeleteWorkflowRun(), client);
+    await result.current.mutateAsync({ runId: "run-1", projectId: "p1" });
+    expect(useWorkspaceSelectionStore.getState().selection.workflowRunId).toBe("run-other");
   });
 });

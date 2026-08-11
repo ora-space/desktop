@@ -763,6 +763,7 @@ fn workflow_run_repository_creates_and_reads_run() {
         Some(WorkflowRunDetail {
             run: run.clone(),
             name: "Workflow workflow-a 30".to_string(),
+            project_id: ProjectId::new("project-1"),
             task_id: task_id.clone(),
             nodes: Vec::new(),
         })

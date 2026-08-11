@@ -74,6 +74,7 @@ pub async fn cancel_workflow_run(
         .cancel_workflow_run(CancelWorkflowRunRequest {
             run_id: path.run_id,
         })
+        .await
         .map(Json)
         .map_err(Into::into)
 }

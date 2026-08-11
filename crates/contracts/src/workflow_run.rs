@@ -134,6 +134,7 @@ pub struct GetWorkflowRunRequest {
 pub struct GetWorkflowRunResponse {
     pub run: WorkflowRun,
     pub name: String,
+    pub project_id: String,
     pub task_id: String,
     pub nodes: Vec<WorkflowNodeRun>,
 }
@@ -419,6 +420,7 @@ mod tests {
             &GetWorkflowRunResponse {
                 run: run.clone(),
                 name: "Workflow workflow-1 30".to_string(),
+                project_id: "project-1".to_string(),
                 task_id: "task-1".to_string(),
                 nodes: vec![node.clone()],
             },
@@ -439,6 +441,7 @@ mod tests {
                     "updatedAt": 30,
                 },
                 "name": "Workflow workflow-1 30",
+                "projectId": "project-1",
                 "taskId": "task-1",
                 "nodes": [{
                     "id": "node-1",

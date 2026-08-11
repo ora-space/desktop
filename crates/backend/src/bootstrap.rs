@@ -17,7 +17,7 @@ use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::SqliteWorkflowRunEngineRepository;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
-use ora_logging::ora_error;
+use ora_logging::{ora_error, ora_warn};
 use ora_scheduler::Scheduler;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -167,14 +167,66 @@ impl Backend {
             .map_err(BackendError::from)
     }
 
-    /// Cancels a running workflow run.
-    pub fn cancel_workflow_run(
+    /// Cancels a running workflow run and stops its live node sessions.
+    ///
+    /// The engine commits the `Cancelled` transition first; then every session still bound to the
+    /// run's node runs is stopped. Without this second step the agent keeps executing its prompt
+    /// and the delete guard treats the lingering `Running` session as an active run.
+    pub async fn cancel_workflow_run(
         &self,
         request: CancelWorkflowRunRequest,
     ) -> Result<CancelWorkflowRunResponse, BackendError> {
-        self.workflow_run_engine
-            .cancel(request)
-            .map_err(BackendError::from)
+        let run_id = ora_domain::WorkflowRunId::new(&request.run_id);
+        let engine = self.workflow_run_engine.clone();
+        let response =
+            spawn_repository_work(move || engine.cancel(request).map_err(BackendError::from))
+                .await?;
+        self.stop_workflow_run_sessions(&run_id).await;
+        Ok(response)
+    }
+
+    /// Stops every agent session started for one run's node runs.
+    ///
+    /// Best-effort cleanup of an already-cancelled run: a session that cannot be stopped is logged
+    /// rather than failing the cancel request, and sessions whose rows were deleted since attach
+    /// surface as a warn because `stop_session` can no longer resolve them.
+    async fn stop_workflow_run_sessions(&self, run_id: &ora_domain::WorkflowRunId) {
+        let pool = self.pool.clone();
+        let run_id_for_query = run_id.clone();
+        let node_runs = match spawn_repository_work(move || {
+            SqliteWorkflowRunEngineRepository::new(pool)
+                .list_node_runs(&run_id_for_query)
+                .map_err(|source| {
+                    BackendError::from(ApplicationError::WorkflowRunRepository { source })
+                })
+        })
+        .await
+        {
+            Ok(node_runs) => node_runs,
+            Err(error) => {
+                ora_warn!(run_id = %run_id, error = %error, "cancel: failed to list node runs for session cleanup");
+                return;
+            }
+        };
+        for node_run in node_runs {
+            let Some(session_id) = node_run.session_id else {
+                continue;
+            };
+            if let Err(error) = self
+                .agent_runtime
+                .stop_session(StopSessionRequest {
+                    session_id: session_id.to_string(),
+                })
+                .await
+            {
+                ora_warn!(
+                    run_id = %run_id,
+                    session_id = %session_id,
+                    error = %error,
+                    "cancel: failed to stop workflow run session"
+                );
+            }
+        }
     }
 
     /// Restarts a finished workflow run.

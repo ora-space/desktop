@@ -398,6 +398,7 @@ fn gets_run_detail() {
     repository.with_detail(WorkflowRunDetail {
         run: run.clone(),
         name: "Manual name".to_string(),
+        project_id: ProjectId::new("project-1"),
         task_id: TaskId::new("task-1".to_string()),
         nodes: vec![node.clone()],
     });
@@ -414,6 +415,7 @@ fn gets_run_detail() {
         GetWorkflowRunResponse {
             run: map_run(run),
             name: "Manual name".to_string(),
+            project_id: "project-1".to_string(),
             task_id: "task-1".to_string(),
             nodes: vec![map_node_run(node)],
         }

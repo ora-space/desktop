@@ -165,8 +165,9 @@ where
         }
     }
 
-    /// Cancels a running run. Stopping the running sessions is orchestrated by the backend before
-    /// this commits the `Cancelled` transition.
+    /// Cancels a running run. The backend orchestrates stopping the run's live sessions around
+    /// this; the `Cancelled` transition is committed here, and a late session stop makes the
+    /// executor's in-flight callbacks no-ops against the already-cancelled node runs.
     pub fn cancel(&self, run_id: &WorkflowRunId) -> Result<CancelWorkflowRunResult, EngineError> {
         let now = self.clock.now_timestamp_millis();
         Ok(self.repository.cancel_run(run_id, now)?)

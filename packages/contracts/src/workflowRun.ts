@@ -54,6 +54,7 @@ export type GetWorkflowRunRequest = { runId: string };
 export type GetWorkflowRunResponse = {
   run: WorkflowRun;
   name: string;
+  projectId: string;
   taskId: string;
   nodes: Array<WorkflowNodeRun>;
 };

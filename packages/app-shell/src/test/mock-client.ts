@@ -579,6 +579,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
             updatedAt: record.updatedAt,
           },
           name: record.name,
+          projectId: record.projectId,
           taskId: record.taskId,
           nodes: [],
         };

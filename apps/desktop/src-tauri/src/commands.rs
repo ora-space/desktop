@@ -1179,13 +1179,21 @@ backend_command!(
     start_workflow_run,
     "Starts one workflow run through the shared Backend."
 );
-backend_command!(
-    cancel_workflow_run,
-    CancelWorkflowRunRequest,
-    CancelWorkflowRunResponse,
-    cancel_workflow_run,
-    "Cancels one workflow run through the shared Backend."
-);
+/// Cancels one workflow run through the shared Backend.
+///
+/// Not a `backend_command!` because cancelling also stops the run's live agent
+/// sessions, which is asynchronous.
+#[tauri::command]
+pub async fn cancel_workflow_run(
+    state: State<'_, DesktopState>,
+    request: CancelWorkflowRunRequest,
+) -> Result<CancelWorkflowRunResponse, CommandError> {
+    state
+        .backend
+        .cancel_workflow_run(request)
+        .await
+        .map_err(CommandError::from)
+}
 backend_command!(
     restart_workflow_run,
     RestartWorkflowRunRequest,
