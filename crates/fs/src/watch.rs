@@ -1,8 +1,8 @@
-use crate::WorkspaceFileSystemError;
 use crate::workspace::{canonical_root, relative_string};
+use crate::{CanonicalPathRoot, WorkspaceFileSystemError};
 use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
@@ -27,7 +27,7 @@ pub struct WorkspaceChange {
 pub struct WorkspaceWatcher {
     _watcher: RecommendedWatcher,
     events: Receiver<notify::Result<Event>>,
-    root: PathBuf,
+    root: CanonicalPathRoot,
 }
 
 impl WorkspaceWatcher {
@@ -39,13 +39,13 @@ impl WorkspaceWatcher {
             let _ = sender.send(event);
         })
         .map_err(|error| WorkspaceFileSystemError::WatchFailed {
-            path: root.clone(),
+            path: root.as_path().to_path_buf(),
             message: error.to_string(),
         })?;
         watcher
-            .watch(&root, RecursiveMode::Recursive)
+            .watch(root.as_path(), RecursiveMode::Recursive)
             .map_err(|error| WorkspaceFileSystemError::WatchFailed {
-                path: root.clone(),
+                path: root.as_path().to_path_buf(),
                 message: error.to_string(),
             })?;
         Ok(Self {
@@ -65,7 +65,7 @@ impl WorkspaceWatcher {
             Err(RecvTimeoutError::Timeout) => return Ok(None),
             Err(RecvTimeoutError::Disconnected) => {
                 return Err(WorkspaceFileSystemError::WatchFailed {
-                    path: self.root.clone(),
+                    path: self.root.as_path().to_path_buf(),
                     message: "native watcher disconnected".to_string(),
                 });
             }
@@ -89,7 +89,7 @@ impl WorkspaceWatcher {
         event: notify::Result<Event>,
     ) -> Result<Vec<WorkspaceChange>, WorkspaceFileSystemError> {
         let event = event.map_err(|error| WorkspaceFileSystemError::WatchFailed {
-            path: self.root.clone(),
+            path: self.root.as_path().to_path_buf(),
             message: error.to_string(),
         })?;
         if matches!(event.kind, EventKind::Other | EventKind::Any) {

@@ -6,8 +6,7 @@ use crate::WorkflowRunCreateOutcome;
 use crate::task::WorktreeProvisioningLeaseStore;
 use crate::task::{
     CreateTaskWorktreeRequest, CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest,
-    TaskIdGenerator, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError,
+    TaskIdGenerator, TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
 };
 use crate::workflow::WorkflowRepository;
 use crate::workflow_run::handlers::{

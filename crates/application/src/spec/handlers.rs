@@ -9,8 +9,8 @@ use ora_domain::{
     AuditFields, ProjectId, ProjectSpecSourceOverride, ProjectSpecSourceOverrideId,
     SpecSourceVisibility, SpecWorkflow,
 };
+use ora_fs::PortableRelativePath;
 use std::collections::BTreeSet;
-use std::path::{Component, Path};
 use uuid::Uuid;
 
 /// Generates random identifiers for persisted project specification source overrides.
@@ -105,7 +105,12 @@ where
         let mut seen_paths = BTreeSet::new();
         let mut replacements = Vec::with_capacity(request.sources.len());
         for source in request.sources {
-            let relative_path = normalize_relative_path(&source.relative_path)?;
+            let relative_path = PortableRelativePath::parse(&source.relative_path)
+                .map_err(|_| ApplicationError::SpecSourceInvalid)?;
+            if relative_path.is_root() {
+                return Err(ApplicationError::SpecSourceInvalid);
+            }
+            let relative_path = relative_path.as_str().to_string();
             if !seen_paths.insert(source_path_key(&relative_path)) {
                 return Err(ApplicationError::SpecSourceInvalid);
             }
@@ -130,26 +135,6 @@ where
             sources: stored.into_iter().map(map_override).collect(),
         })
     }
-}
-
-/// Normalizes a portable workspace-relative path and rejects any escape or absolute component.
-fn normalize_relative_path(value: &str) -> Result<String, ApplicationError> {
-    let normalized_input = value.replace('\\', "/");
-    let path = Path::new(&normalized_input);
-    let mut segments = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(segment) => segments.push(segment.to_string_lossy().into_owned()),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ApplicationError::SpecSourceInvalid);
-            }
-        }
-    }
-    if segments.is_empty() {
-        return Err(ApplicationError::SpecSourceInvalid);
-    }
-    Ok(segments.join("/"))
 }
 
 /// Maps the tagged public workflow while enforcing the custom-name invariant at the application edge.
@@ -199,28 +184,11 @@ fn map_override(source: ProjectSpecSourceOverride) -> ContractOverride {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_workflow, normalize_relative_path, source_path_key};
+    use super::{map_workflow, source_path_key};
     use crate::ApplicationError;
     use ora_contracts::SpecWorkflow as ContractWorkflow;
     use ora_domain::SpecWorkflow;
     use pretty_assertions::assert_eq;
-
-    /// Verifies persisted source paths use slash separators and reject workspace escapes.
-    #[test]
-    fn normalizes_safe_relative_paths() {
-        assert_eq!(
-            normalize_relative_path("docs\\specs\\api").unwrap(),
-            "docs/specs/api"
-        );
-        assert_eq!(
-            normalize_relative_path("../outside").unwrap_err(),
-            ApplicationError::SpecSourceInvalid
-        );
-        assert_eq!(
-            normalize_relative_path("./docs//specs/").unwrap(),
-            "docs/specs"
-        );
-    }
 
     /// Verifies custom names are trimmed and blank names remain unrepresentable.
     #[test]

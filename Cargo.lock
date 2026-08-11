@@ -1688,6 +1688,7 @@ dependencies = [
  "gray_matter",
  "ora-contracts",
  "ora-domain",
+ "ora-fs",
  "ora-logging",
  "ora-skill-package",
  "petgraph",
@@ -1829,6 +1830,7 @@ dependencies = [
 name = "ora-plugin-manager"
 version = "0.0.0"
 dependencies = [
+ "ora-fs",
  "pretty_assertions",
  "semver",
  "serde",

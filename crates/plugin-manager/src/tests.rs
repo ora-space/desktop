@@ -313,6 +313,77 @@ fn rejects_unsafe_entrypoints() {
     }
 }
 
+/// Verifies plugin entrypoints persist the shared portable slash representation.
+#[test]
+fn normalizes_plugin_entrypoints() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut manifest = valid_manifest("ora.normalized", "Normalized", "1.0.0");
+    manifest["ora"]["main"] = json!("./dist\\index.js");
+    write_manifest(temp_dir.path(), "normalized", manifest);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    assert_eq!(
+        manager.installed_plugins()[0].main,
+        Path::new("dist/index.js")
+    );
+}
+
+/// Verifies an entrypoint must already be a regular file when its package is discovered.
+#[test]
+fn rejects_missing_and_directory_entrypoints() {
+    let missing_root = TempDir::new().unwrap();
+    let package_root = write_manifest(
+        missing_root.path(),
+        "missing",
+        valid_manifest("ora.missing", "Missing", "1.0.0"),
+    );
+    fs::remove_file(package_root.join("dist").join("index.js")).unwrap();
+
+    let missing = PluginManager::discover(missing_root.path());
+
+    assert_eq!(missing.installed_plugins(), &[]);
+    assert_eq!(missing.discovery_issues()[0].field_path(), Some("ora.main"));
+
+    let directory_root = TempDir::new().unwrap();
+    let mut manifest = valid_manifest("ora.directory", "Directory", "1.0.0");
+    manifest["ora"]["main"] = json!("dist");
+    write_manifest(directory_root.path(), "directory", manifest);
+
+    let directory = PluginManager::discover(directory_root.path());
+
+    assert_eq!(directory.installed_plugins(), &[]);
+    assert_eq!(
+        directory.discovery_issues()[0].field_path(),
+        Some("ora.main")
+    );
+}
+
+/// Verifies canonical containment rejects an entrypoint symlink that targets outside its package.
+#[test]
+fn rejects_entrypoint_symlink_escape() {
+    let temp_dir = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let package_root = write_manifest(
+        temp_dir.path(),
+        "escape",
+        valid_manifest("ora.escape", "Escape", "1.0.0"),
+    );
+    let entrypoint = package_root.join("dist").join("index.js");
+    fs::remove_file(&entrypoint).unwrap();
+    let outside_entrypoint = outside.path().join("outside.js");
+    fs::write(&outside_entrypoint, "export {};\n").unwrap();
+    if create_file_symlink(&outside_entrypoint, &entrypoint).is_err() {
+        return;
+    }
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.installed_plugins(), &[]);
+    assert_eq!(manager.discovery_issues()[0].field_path(), Some("ora.main"));
+}
+
 /// Verifies duplicate contribution and plugin identifiers are diagnosed deterministically.
 #[test]
 fn rejects_duplicate_agent_and_plugin_ids() {
@@ -438,6 +509,8 @@ fn valid_manifest(id: &str, display_name: &str, version: &str) -> Value {
 fn write_manifest(data_dir: &Path, directory: &str, manifest: Value) -> std::path::PathBuf {
     let package_root = data_dir.join("plugins").join(directory);
     fs::create_dir_all(&package_root).unwrap();
+    fs::create_dir_all(package_root.join("dist")).unwrap();
+    fs::write(package_root.join("dist").join("index.js"), "export {};\n").unwrap();
     fs::write(
         package_root.join("package.json"),
         serde_json::to_vec_pretty(&manifest).unwrap(),
@@ -467,4 +540,16 @@ fn replace_path(value: &mut Value, path: &[&str], replacement: Value) {
         Ok(index) => current.as_array_mut().unwrap()[index] = replacement,
         Err(_) => current[last] = replacement,
     }
+}
+
+/// Creates a platform-native file symlink when the test environment permits it.
+#[cfg(unix)]
+fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+/// Creates a Windows file symlink when Developer Mode or privileges permit it.
+#[cfg(windows)]
+fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
 }

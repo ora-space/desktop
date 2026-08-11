@@ -1049,11 +1049,6 @@ impl FakeTaskWorktreeProvisioner {
         self.created_requests.borrow().clone()
     }
 
-    /// Returns the delete requests recorded by this fake provisioner.
-    fn deleted_requests(&self) -> Vec<DeleteTaskWorktreeRequest> {
-        self.deleted_requests.borrow().clone()
-    }
-
     /// Returns the next queued create failure, if any.
     fn take_create_error(&self) -> Result<(), TaskWorktreeProvisionerError> {
         match self.next_create_error.borrow_mut().take() {

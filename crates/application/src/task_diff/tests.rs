@@ -36,3 +36,12 @@ fn rejects_parent_relative_comment_paths() {
         })
     );
 }
+
+/// Verifies valid anchors persist the shared slash-separated portable representation.
+#[test]
+fn normalizes_comment_paths() {
+    assert_eq!(
+        validate_anchor("diff-1", "./src\\main.rs", 1, 1),
+        Ok("src/main.rs".to_string())
+    );
+}

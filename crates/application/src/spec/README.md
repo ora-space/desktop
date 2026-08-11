@@ -5,5 +5,7 @@ checks project ownership, creates audited domain snapshots, and asks the reposit
 the active set atomically. Filesystem discovery and target checkout resolution remain backend and
 filesystem-adapter responsibilities.
 
-An empty replacement clears every active override. Paths are stored as normalized workspace-relative
-slash paths, and custom workflows must carry a non-blank display name.
+An empty replacement clears every active override. Paths pass through `ora-fs` portable relative-path
+validation and are stored as normalized workspace-relative slash paths; rooted paths, platform
+prefixes, and parent traversal are rejected consistently on every host. Custom workflows must carry
+a non-blank display name.

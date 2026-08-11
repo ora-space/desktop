@@ -1,7 +1,8 @@
 use crate::manifest::{AgentManifest, PackageManifest};
+use ora_fs::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
 use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 const SUPPORTED_MANIFEST_VERSION: u32 = 1;
@@ -111,7 +112,7 @@ pub(crate) fn validate(
             ));
         }
     };
-    let main = validate_main_path(&manifest.ora.main)?;
+    let main = validate_main_path(package_root, &manifest.ora.main)?;
     require_non_empty("ora.engines.ora", &manifest.ora.engines.ora)?;
     if manifest.ora.engines.plugin_api != SUPPORTED_PLUGIN_API_VERSION {
         return Err(invalid(
@@ -145,33 +146,52 @@ pub(crate) fn validate(
     })
 }
 
-/// Validates a package-local entrypoint without resolving or executing it.
-fn validate_main_path(value: &str) -> Result<PathBuf, ManifestValidationError> {
+/// Resolves one existing regular entrypoint without allowing package-boundary escape.
+fn validate_main_path(
+    package_root: &Path,
+    value: &str,
+) -> Result<PathBuf, ManifestValidationError> {
     require_non_empty("ora.main", value)?;
-    let path = Path::new(value);
-    if path.is_absolute() {
-        return Err(invalid("ora.main", "entrypoint must be a relative path"));
-    }
-    if path
-        .components()
-        .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
-    {
-        return Err(invalid(
+    let relative = PortableRelativePath::parse(value).map_err(|error| {
+        invalid(
             "ora.main",
-            "entrypoint must remain inside the plugin package",
-        ));
-    }
-    if !path
-        .components()
-        .any(|component| matches!(component, Component::Normal(_)))
-    {
+            format!("entrypoint must be a safe relative path: {error}"),
+        )
+    })?;
+    if relative.is_root() {
         return Err(invalid(
             "ora.main",
             "entrypoint must identify a package file",
         ));
     }
+    let root = CanonicalPathRoot::new(package_root).map_err(|error| {
+        invalid(
+            "ora.main",
+            format!("plugin package root is unavailable: {error}"),
+        )
+    })?;
+    let resolved = root.resolve_existing(&relative).map_err(|error| {
+        invalid(
+            "ora.main",
+            format!("entrypoint must resolve inside the plugin package: {error}"),
+        )
+    })?;
+    // The canonical check covers the current symlink target only; is_file remains path-based and
+    // cannot prevent a caller-controlled replacement between validation and later loading.
+    if !resolved.is_file() {
+        return Err(invalid(
+            "ora.main",
+            "entrypoint must identify a regular package file",
+        ));
+    }
+    let main = root.relative_path(&resolved).map_err(|error| {
+        invalid(
+            "ora.main",
+            format!("entrypoint must resolve inside the plugin package: {error}"),
+        )
+    })?;
 
-    Ok(path.to_path_buf())
+    Ok(main.to_path_buf())
 }
 
 /// Validates agent contract versions and uniqueness inside one package.

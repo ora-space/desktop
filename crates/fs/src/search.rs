@@ -1,5 +1,5 @@
 use crate::workspace::{canonical_root, relative_string};
-use crate::{WorkspaceFileSystem, WorkspaceFileSystemError};
+use crate::{CanonicalPathRoot, WorkspaceFileSystem, WorkspaceFileSystemError};
 use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec, ProcessStdio};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -65,7 +65,7 @@ where
 
         let spec = ProcessSpec::new(self.ripgrep_path.as_os_str())
             .args(arguments)
-            .cwd(&root)
+            .cwd(root.as_path())
             .stdin(ProcessStdio::Null);
         let mut process = self.process_spawner.spawn(spec).map_err(|source| {
             WorkspaceFileSystemError::SearchToolUnavailable {
@@ -183,7 +183,7 @@ where
 
 /// Filters ripgrep's file discovery output using a predictable case-insensitive substring match.
 fn parse_files(
-    root: &Path,
+    root: &CanonicalPathRoot,
     query: &str,
     output: &[u8],
 ) -> Result<SearchResults, WorkspaceFileSystemError> {
@@ -205,7 +205,10 @@ fn parse_files(
 }
 
 /// Parses only ripgrep JSON match records and ignores summary/context protocol records.
-fn parse_matches(root: &Path, output: &[u8]) -> Result<SearchResults, WorkspaceFileSystemError> {
+fn parse_matches(
+    root: &CanonicalPathRoot,
+    output: &[u8],
+) -> Result<SearchResults, WorkspaceFileSystemError> {
     let mut results = Vec::new();
     let mut truncated = false;
     for line in output
@@ -237,11 +240,11 @@ fn parse_matches(root: &Path, output: &[u8]) -> Result<SearchResults, WorkspaceF
 
 /// Normalizes ripgrep's cwd-relative spelling into the crate's slash-separated representation.
 pub(crate) fn normalize_ripgrep_path(
-    root: &Path,
+    root: &CanonicalPathRoot,
     path: &str,
 ) -> Result<String, WorkspaceFileSystemError> {
     let path = path.strip_prefix("./").unwrap_or(path);
-    relative_string(root, &root.join(PathBuf::from(path)))
+    relative_string(root, &root.as_path().join(PathBuf::from(path)))
 }
 
 #[derive(Deserialize)]
@@ -277,6 +280,7 @@ struct RipgrepSubmatch {
 #[cfg(test)]
 mod tests {
     use super::{SearchKind, SearchMatch, SearchResult, parse_matches, search_arguments};
+    use crate::CanonicalPathRoot;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -290,7 +294,9 @@ mod tests {
 {"type":"end","data":{"path":{"text":"src/main.rs"},"binary_offset":null,"stats":{}}}
 "#;
 
-        let results = parse_matches(workspace.path(), output)
+        let root = CanonicalPathRoot::new(workspace.path())
+            .unwrap_or_else(|error| panic!("canonicalize workspace: {error}"));
+        let results = parse_matches(&root, output)
             .unwrap_or_else(|error| panic!("parse ripgrep fixture: {error}"));
 
         assert_eq!(

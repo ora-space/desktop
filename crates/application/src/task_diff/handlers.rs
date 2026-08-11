@@ -16,7 +16,8 @@ use ora_domain::{
     AuditFields, Task, TaskDiffAnchor, TaskDiffComment, TaskDiffCommentId, TaskDiffCommentKind,
     TaskDiffThreadStatus, TaskId, Worktree,
 };
-use std::path::{Component, Path, PathBuf};
+use ora_fs::PortableRelativePath;
+use std::path::PathBuf;
 
 /// Lists persisted root discussions and replies for one visible task.
 pub struct ListTaskDiffCommentsHandler<TaskRepositoryPort, CommentRepository> {
@@ -144,14 +145,14 @@ where
     /// Validates and persists one root line discussion.
     pub fn handle(
         &self,
-        request: CreateTaskDiffCommentRequest,
+        mut request: CreateTaskDiffCommentRequest,
     ) -> Result<CreateTaskDiffCommentResponse, ApplicationError> {
         let task_id = TaskId::new(request.task_id);
         let (_task, worktree) =
             load_task_worktree(&self.task_repository, &self.worktree_repository, &task_id)?;
         let base_commit_id = recorded_baseline(&worktree)?;
         validate_comment_body(&request.body)?;
-        validate_anchor(
+        request.anchor.path = validate_anchor(
             &request.anchor.diff_id,
             &request.anchor.path,
             request.anchor.start_line,
@@ -592,23 +593,19 @@ pub(super) fn validate_anchor(
     path: &str,
     start_line: u32,
     end_line: u32,
-) -> Result<(), ApplicationError> {
-    let path = Path::new(path);
-    let invalid_path = path.as_os_str().is_empty()
-        || path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        });
-    if diff_id.trim().is_empty() || invalid_path || start_line == 0 || end_line < start_line {
+) -> Result<String, ApplicationError> {
+    let path = PortableRelativePath::parse(path).map_err(|_| {
+        ApplicationError::TaskDiffCommentInvalid {
+            message: "comment anchor is invalid".to_string(),
+        }
+    })?;
+    if diff_id.trim().is_empty() || path.is_root() || start_line == 0 || end_line < start_line {
         return Err(ApplicationError::TaskDiffCommentInvalid {
             message: "comment anchor is invalid".to_string(),
         });
     }
 
-    Ok(())
+    Ok(path.as_str().to_string())
 }
 
 /// Produces a deterministic identifier with explicit field boundaries for stale snapshots.

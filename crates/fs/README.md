@@ -4,8 +4,16 @@
 
 ## Guarantees
 
-- Every caller supplies a workspace root, but all user paths must be relative to that root.
-- Roots and requested paths are canonicalized before containment checks, including symlink escape protection.
+- `PortableRelativePath` gives wire and configuration paths platform-independent validation and a
+  slash-separated identity. It treats both slash styles as separators and rejects parent traversal,
+  rooted paths, Windows drive/UNC prefixes, and NUL bytes on every host.
+- `CanonicalPathRoot` centralizes canonical root identity, existing-target resolution, absolute
+  selection containment, and conversion back to portable relative paths. Workspace and plugin
+  callers use the same primitives rather than maintaining local path validators.
+- Roots and existing requested paths are canonicalized before containment checks, including static
+  symlink escape protection. These path-based checks do not protect against a concurrently replaced
+  symlink between validation and use; callers handling actively hostile directories need a
+  handle-relative filesystem design.
 - File reads are bounded and reject binary or invalid UTF-8 content.
 - Search runs through the injected `ora-process` runner, making ripgrep execution replaceable in tests.
 - Native watcher events are normalized into workspace-relative changes and can be debounced by the caller.

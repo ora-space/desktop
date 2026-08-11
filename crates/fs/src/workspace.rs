@@ -1,7 +1,9 @@
-use crate::WorkspaceFileSystemError;
+use crate::{
+    CanonicalPathRoot, PathContainmentError, PortableRelativePath, WorkspaceFileSystemError,
+};
 use ora_process::TokioProcessSpawner;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 const DEFAULT_MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
@@ -68,13 +70,15 @@ impl<S> WorkspaceFileSystem<S> {
         root: &Path,
         relative_path: &Path,
     ) -> Result<DirectoryListing, WorkspaceFileSystemError> {
-        let resolved = resolve_existing(root, relative_path)?;
+        let root = canonical_root(root)?;
+        let resolved = resolve_existing(&root, relative_path)?;
         if !resolved.is_dir() {
             return Err(WorkspaceFileSystemError::NotDirectory { path: resolved });
         }
 
-        let root = canonical_root(root)?;
         let mut entries = Vec::new();
+        // Canonical containment describes the checked link topology only; read_dir cannot retain a
+        // race-proof handle if an untrusted process replaces a symlink after resolution.
         let directory = fs::read_dir(&resolved).map_err(|source| WorkspaceFileSystemError::Io {
             path: resolved.clone(),
             source,
@@ -115,12 +119,14 @@ impl<S> WorkspaceFileSystem<S> {
                         path: path.clone(),
                         source,
                     })?;
-            if !canonical_path.starts_with(&root) {
-                continue;
-            }
+            let relative_path = match relative_string(&root, &canonical_path) {
+                Ok(relative_path) => relative_path,
+                Err(WorkspaceFileSystemError::PathOutsideWorkspace { .. }) => continue,
+                Err(error) => return Err(error),
+            };
             entries.push(DirectoryEntry {
                 name: entry.file_name().to_string_lossy().into_owned(),
-                path: relative_string(&root, &canonical_path)?,
+                path: relative_path,
                 kind,
                 is_symbolic_link,
             });
@@ -149,7 +155,10 @@ impl<S> WorkspaceFileSystem<S> {
         root: &Path,
         relative_path: &Path,
     ) -> Result<ReadFile, WorkspaceFileSystemError> {
-        let resolved = resolve_existing(root, relative_path)?;
+        let root = canonical_root(root)?;
+        let resolved = resolve_existing(&root, relative_path)?;
+        // Canonical containment rejects the current symlink target, but these path-based metadata
+        // and read calls remain subject to replacement between the check and use (TOCTOU).
         let metadata = fs::metadata(&resolved).map_err(|source| WorkspaceFileSystemError::Io {
             path: resolved.clone(),
             source,
@@ -180,8 +189,6 @@ impl<S> WorkspaceFileSystem<S> {
             .ok()
             .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
             .map_or(0, |duration| duration.as_millis());
-        let root = canonical_root(root)?;
-
         Ok(ReadFile {
             path: relative_string(&root, &resolved)?,
             content,
@@ -193,71 +200,61 @@ impl<S> WorkspaceFileSystem<S> {
 
 /// Resolves one existing relative path and verifies its canonical target remains under the root.
 pub(crate) fn resolve_existing(
-    root: &Path,
+    root: &CanonicalPathRoot,
     relative_path: &Path,
 ) -> Result<PathBuf, WorkspaceFileSystemError> {
-    validate_relative(relative_path)?;
-    let root = canonical_root(root)?;
-    let requested = root.join(relative_path);
-    let resolved = requested.canonicalize().map_err(|source| {
-        if source.kind() == std::io::ErrorKind::NotFound {
-            WorkspaceFileSystemError::PathNotFound { path: requested }
-        } else {
-            WorkspaceFileSystemError::Io {
-                path: requested,
-                source,
-            }
-        }
-    })?;
-    if !resolved.starts_with(&root) {
-        return Err(WorkspaceFileSystemError::PathOutsideWorkspace {
-            path: relative_path.to_path_buf(),
-        });
-    }
-    Ok(resolved)
+    let relative_path = parse_relative(relative_path)?;
+    root.resolve_existing(&relative_path)
+        .map_err(map_containment_error)
 }
 
 /// Canonicalizes the workspace root so every later containment check uses one stable spelling.
-pub(crate) fn canonical_root(root: &Path) -> Result<PathBuf, WorkspaceFileSystemError> {
-    root.canonicalize()
-        .map_err(|source| WorkspaceFileSystemError::WorkspaceUnavailable {
-            path: root.to_path_buf(),
-            source,
-        })
-}
-
-/// Rejects path syntax that could select an absolute path or traverse above the workspace.
-fn validate_relative(path: &Path) -> Result<(), WorkspaceFileSystemError> {
-    if path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err(WorkspaceFileSystemError::PathNotRelative {
-            path: path.to_path_buf(),
-        });
-    }
-    Ok(())
+pub(crate) fn canonical_root(root: &Path) -> Result<CanonicalPathRoot, WorkspaceFileSystemError> {
+    CanonicalPathRoot::new(root).map_err(map_containment_error)
 }
 
 /// Converts a canonical workspace path to the slash-separated wire representation.
 pub(crate) fn relative_string(
-    root: &Path,
+    root: &CanonicalPathRoot,
     path: &Path,
 ) -> Result<String, WorkspaceFileSystemError> {
-    let relative =
-        path.strip_prefix(root)
-            .map_err(|_| WorkspaceFileSystemError::PathOutsideWorkspace {
-                path: path.to_path_buf(),
-            })?;
-    Ok(relative
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/"))
+    root.relative_path(path)
+        .map(|relative| relative.as_str().to_string())
+        .map_err(map_containment_error)
+}
+
+/// Parses one UTF-8 request path with the shared platform-independent safety rules.
+fn parse_relative(path: &Path) -> Result<PortableRelativePath, WorkspaceFileSystemError> {
+    let value = path
+        .to_str()
+        .ok_or_else(|| WorkspaceFileSystemError::PathNotRelative {
+            path: path.to_path_buf(),
+        })?;
+    PortableRelativePath::parse(value).map_err(|_| WorkspaceFileSystemError::PathNotRelative {
+        path: path.to_path_buf(),
+    })
+}
+
+/// Maps generic containment failures into the stable workspace filesystem error surface.
+pub(crate) fn map_containment_error(error: PathContainmentError) -> WorkspaceFileSystemError {
+    match error {
+        PathContainmentError::RootUnavailable { path, source } => {
+            WorkspaceFileSystemError::WorkspaceUnavailable { path, source }
+        }
+        PathContainmentError::PathNotAbsolute { path }
+        | PathContainmentError::NonUtf8Path { path }
+        | PathContainmentError::NonPortablePath { path }
+        | PathContainmentError::NonCanonicalPath { path } => {
+            WorkspaceFileSystemError::PathNotRelative { path }
+        }
+        PathContainmentError::PathNotFound { path } => {
+            WorkspaceFileSystemError::PathNotFound { path }
+        }
+        PathContainmentError::OutsideRoot { path } => {
+            WorkspaceFileSystemError::PathOutsideWorkspace { path }
+        }
+        PathContainmentError::Io { path, source } => WorkspaceFileSystemError::Io { path, source },
+    }
 }
 
 #[cfg(test)]
