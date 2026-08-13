@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowNodeFileChange } from "@ora/workflow-runtime";
+import { AppI18nProvider } from "../../i18n/i18n";
 import { TaskChangesNavigationProvider } from "../diff/task-changes-navigation";
 import { RunActFileChanges } from "./run-act-file-changes";
 
@@ -18,9 +19,11 @@ describe("RunActFileChanges", () => {
     const openFile = vi.fn();
     const user = userEvent.setup();
     render(
-      <TaskChangesNavigationProvider onOpenFile={openFile}>
-        <RunActFileChanges files={files} />
-      </TaskChangesNavigationProvider>,
+      <AppI18nProvider>
+        <TaskChangesNavigationProvider onOpenFile={openFile}>
+          <RunActFileChanges files={files} />
+        </TaskChangesNavigationProvider>
+      </AppI18nProvider>,
     );
 
     // The payload path is absolute under the managed worktree; the task Changes
