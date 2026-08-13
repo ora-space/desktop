@@ -12,7 +12,6 @@ use ora_contracts::{
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_domain::{AgentCli, HistoryState, Session, SessionStatus};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use tokio::process::ChildStdin;
 
 /// Responds to a pending permission after validating the public request ownership.
@@ -99,64 +98,6 @@ pub(super) fn domain_agent_cli(agent_cli: ContractAgentCli) -> AgentCli {
         ContractAgentCli::Claude => AgentCli::Claude,
         ContractAgentCli::Codex => AgentCli::Codex,
     }
-}
-
-/// Resolves one CLI through the Windows executable lookup mechanism for each retry generation.
-#[cfg(windows)]
-pub(super) fn resolve_agent_cli_path(
-    agent_cli: AgentCli,
-    _home_directory: &Path,
-) -> Result<PathBuf, BackendError> {
-    let output = std::process::Command::new("where.exe")
-        .arg(agent_cli.executable_name())
-        .output()
-        .map_err(|source| BackendError::internal("failed to run where.exe", source))?;
-    if !output.status.success() {
-        return Err(runtime_internal(
-            "agent_cli_not_found",
-            format!(
-                "{} executable not found on PATH",
-                agent_cli.executable_name()
-            ),
-        ));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .lines()
-        .find(|line| {
-            let lower = line.to_lowercase();
-            lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat")
-        })
-        .or_else(|| stdout.lines().next())
-        .map(|path| PathBuf::from(path.trim()))
-        .ok_or_else(|| {
-            runtime_internal(
-                "agent_cli_not_found",
-                format!(
-                    "{} executable not found on PATH",
-                    agent_cli.executable_name()
-                ),
-            )
-        })
-}
-
-/// Resolves one CLI from its fixed per-user Unix installation directory.
-#[cfg(unix)]
-pub(super) fn resolve_agent_cli_path(
-    agent_cli: AgentCli,
-    home_directory: &Path,
-) -> Result<PathBuf, BackendError> {
-    let installation_directory = match agent_cli {
-        AgentCli::OpenCode => ".opencode",
-        AgentCli::Nga => ".nga",
-        AgentCli::CodeAgentCli => ".codeagentcli",
-        AgentCli::Claude => ".claude",
-        AgentCli::Codex => ".codex",
-    };
-    Ok(home_directory
-        .join(installation_directory)
-        .join("bin")
-        .join(agent_cli.executable_name()))
 }
 
 /// Drains child stderr so provider diagnostics can never block the shared process.

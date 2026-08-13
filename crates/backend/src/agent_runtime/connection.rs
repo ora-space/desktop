@@ -437,16 +437,11 @@ async fn spawn_initialized_process(
     agent_cli: AgentCli,
     home_directory: &Path,
 ) -> Result<SharedProcess, BackendError> {
-    let executable = resolve_agent_cli_path(agent_cli, home_directory)?;
-    if !executable.is_file() {
-        return Err(runtime_internal(
-            "agent_cli_not_found",
-            format!(
-                "agent CLI executable not found: {path}",
-                path = executable.display()
-            ),
-        ));
-    }
+    let executable = resolve_agent_cli_path(
+        agent_cli,
+        std::env::var_os("PATH").as_deref(),
+        home_directory,
+    )?;
     let mut child = TokioProcessSpawner::new()
         .spawn(
             ProcessSpec::new(executable)

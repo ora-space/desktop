@@ -1,4 +1,5 @@
 mod actor;
+mod cli_path;
 mod connection;
 mod events;
 mod handoff;
@@ -12,6 +13,7 @@ mod warm;
 mod warm_pool;
 
 use crate::app_event::AppEventPublisher;
+use cli_path::resolve_agent_cli_path;
 use history::{RecordOutcome, SessionRecorder};
 pub use stream::SessionEventStream;
 use support::*;

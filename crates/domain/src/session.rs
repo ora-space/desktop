@@ -43,7 +43,7 @@ impl AgentCli {
         }
     }
 
-    /// Returns the executable basename used by PATH lookup on Windows.
+    /// Returns the executable basename used by the cross-platform PATH lookup.
     pub fn executable_name(self) -> &'static str {
         match self {
             Self::OpenCode => "opencode",
