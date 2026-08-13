@@ -19,7 +19,13 @@ export default defineConfig({
     ],
   },
   server: {
-    host: "0.0.0.0",
+    // Bind the loopback address Tauri actually loads. Vite's default 5173 is often
+    // already taken on Windows by the IDE's localhost port-forward, which binds
+    // 127.0.0.1 more specifically than a 0.0.0.0 listener and returns empty HTTP
+    // replies (Chrome ERR_EMPTY_RESPONSE). Port 1420 is the Tauri template default.
+    host: "127.0.0.1",
+    port: 1420,
+    strictPort: true,
     watch: {
       // The Tauri Rust build target dir is constantly rewritten by cargo; watching
       // it on Windows raises EBUSY and crashes the Vite dev watcher.
