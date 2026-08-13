@@ -1,6 +1,19 @@
-* text=auto
+# Keep repository text identical across Windows and Unix environments.
+* text=auto eol=lf
 
-*.rs    text eol=lf
-*.toml  text eol=lf
-*.sh    text eol=lf
-*.md    text eol=lf
+# Preserve binary assets without line-ending conversion.
+*.gif binary
+*.gz binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.pdf binary
+*.png binary
+*.wasm binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+
+# Windows command scripts require native line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
