@@ -19,7 +19,7 @@
     "@ora/ui": "workspace:*",
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/plugin-dialog": "^2.0.0",
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "^2.11.1",
     "@tailwindcss/vite": "^4.2.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
