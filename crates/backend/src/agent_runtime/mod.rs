@@ -81,6 +81,7 @@ struct ManagerInner {
     // Stored so resolve_session_locator can hand the dashboard resolver the user
     // home directory under which each agent CLI writes its trace artifacts.
     home_directory: PathBuf,
+    relative_path_base: PathBuf,
 }
 
 #[derive(Clone)]
@@ -179,6 +180,7 @@ impl AgentRuntimeManager {
     pub(crate) fn new(
         pool: RepositoryPool,
         home_directory: PathBuf,
+        relative_path_base: PathBuf,
         sessions_root: PathBuf,
         clock: SystemClock,
         scheduler: Scheduler,
@@ -199,6 +201,7 @@ impl AgentRuntimeManager {
                 scheduler,
                 app_events,
                 home_directory,
+                relative_path_base,
             }),
         })
     }
@@ -306,7 +309,7 @@ impl AgentRuntimeManager {
     ) -> Result<AttachSessionResponse, BackendError> {
         let session_id = SessionId::new(request.session_id.as_str());
         let task_id = TaskId::new(request.task_id);
-        let cwd = resolve_task_cwd(&self.inner.pool, &task_id)?;
+        let cwd = self.task_cwd(&task_id)?;
         // The provider handshake a rebuild may need runs before the lifecycle
         // lock is taken, so attaching never blocks other sessions on the network.
         let reservation = self.inner.warm.take(&session_id, &cwd).await?;
@@ -403,7 +406,7 @@ impl AgentRuntimeManager {
         if let HistoryState::Degraded { .. } = session.history_state {
             return Err(history_degraded());
         }
-        let cwd = resolve_task_cwd(&self.inner.pool, &session.task_id)?;
+        let cwd = self.task_cwd(&session.task_id)?;
         // Keyed by Task, the same way the picker warmed it: one warm session per
         // chat surface and CLI, shared by every session under that Task rather
         // than one per conversation.
@@ -635,13 +638,18 @@ impl AgentRuntimeManager {
     /// Derives the directory a warm session must be created against.
     fn resolve_warm_cwd(&self, target: &WarmSessionTarget) -> Result<PathBuf, BackendError> {
         match target {
-            WarmSessionTarget::Task { task_id } => {
-                resolve_task_cwd(&self.inner.pool, &TaskId::new(task_id.as_str()))
-            }
-            WarmSessionTarget::ProjectRoot { project_id } => {
-                resolve_project_cwd(&self.inner.pool, &ProjectId::new(project_id.as_str()))
-            }
+            WarmSessionTarget::Task { task_id } => self.task_cwd(&TaskId::new(task_id.as_str())),
+            WarmSessionTarget::ProjectRoot { project_id } => resolve_project_cwd(
+                &self.inner.pool,
+                &ProjectId::new(project_id.as_str()),
+                &self.inner.relative_path_base,
+            ),
         }
+    }
+
+    /// Resolves a task's execution directory against the bootstrap path base.
+    pub(crate) fn task_cwd(&self, task_id: &TaskId) -> Result<PathBuf, BackendError> {
+        resolve_task_cwd(&self.inner.pool, task_id, &self.inner.relative_path_base)
     }
 
     /// Starts an explicit ACP load stream for one persisted Ora session.
@@ -814,7 +822,7 @@ impl AgentRuntimeManager {
         session_id: &str,
     ) -> Result<SessionLocator, BackendError> {
         let session = self.find_session(session_id)?;
-        let cwd = resolve_task_cwd(&self.inner.pool, &session.task_id)?;
+        let cwd = self.task_cwd(&session.task_id)?;
         Ok(SessionLocator {
             agent_session_id: session.agent_session_id.clone(),
             agent_cli: contract_agent_cli(session.agent_cli),
@@ -836,7 +844,7 @@ impl AgentRuntimeManager {
         if let Some(handle) = self.lookup_actor(&session.id)? {
             return Ok(handle);
         }
-        let cwd = resolve_task_cwd(&self.inner.pool, &session.task_id)?;
+        let cwd = self.task_cwd(&session.task_id)?;
         let connection = self.inner.connections.for_agent(session.agent_cli);
         let mut opened = self.open_recorder(&session)?;
         let session = match opened.failure.take() {

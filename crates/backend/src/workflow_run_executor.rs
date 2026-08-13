@@ -5,7 +5,6 @@
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
-use crate::task::resolve_task_cwd;
 use crate::workflow_run_prerequisites::resolve_executable_skill_name;
 use agent_client_protocol_schema::v1::SessionUpdate;
 use agent_client_protocol_schema::v1::StopReason;
@@ -306,7 +305,7 @@ async fn drive_agent_node(
     let skill_names = resolve_skill_names(pool, skills_root, &config.skills)?;
     let prompt = assemble_prompt(node, role_content.as_deref(), &upstream, &skill_names);
 
-    let worktree_root = resolve_task_cwd(pool, &context.task.id)?;
+    let worktree_root = agent_runtime.task_cwd(&context.task.id)?;
 
     // Snapshot the worktree before this node runs so its completion diff is the node's own
     // incremental change (previous nodes' changes are already in the baseline).

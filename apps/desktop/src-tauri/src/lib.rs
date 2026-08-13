@@ -18,6 +18,7 @@ use ora_logging::{
 use ora_plugin_manager::PluginManager;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
@@ -208,6 +209,7 @@ fn bootstrap_desktop(
             .path()
             .home_dir()
             .map_err(DesktopBootstrapError::AppDataDirectory)?,
+        relative_path_base: desktop_relative_path_base(&app_data_directory),
         sessions_root: app_data_directory.join("sessions"),
         skills_root: app_data_directory.join("atoms").join("skills"),
         ripgrep_path: ripgrep_path.clone(),
@@ -254,6 +256,23 @@ fn desktop_data_directory(app: &tauri::App) -> Result<std::path::PathBuf, Deskto
     app.path()
         .app_data_dir()
         .map_err(DesktopBootstrapError::AppDataDirectory)
+}
+
+/// Resolves relative project roots against a stable directory, not process cwd.
+///
+/// `task run:desktop` points `ORA_DATA_DIR` at the repo `.data` directory shared
+/// with the web server. Project roots in that database are stored relative to
+/// the repo root (the data directory's parent). Tauri starts in `src-tauri`, so
+/// joining against live `current_dir()` would miss those roots.
+fn desktop_relative_path_base(app_data_directory: &Path) -> PathBuf {
+    if std::env::var_os("ORA_DATA_DIR").is_some() {
+        return app_data_directory
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| app_data_directory.to_path_buf());
+    }
+    std::env::current_dir().unwrap_or_else(|_| app_data_directory.to_path_buf())
 }
 
 /// Resolves ripgrep from a development override or the executable directory in a release build.

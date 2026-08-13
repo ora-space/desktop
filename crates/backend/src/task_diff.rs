@@ -28,6 +28,7 @@ pub(crate) struct TaskDiffApi {
     pool: RepositoryPool,
     clock: SystemClock,
     git_cleanup: crate::git_cleanup::GitCleanupHandle,
+    relative_path_base: PathBuf,
 }
 
 impl TaskDiffApi {
@@ -36,11 +37,13 @@ impl TaskDiffApi {
         pool: RepositoryPool,
         clock: SystemClock,
         git_cleanup: crate::git_cleanup::GitCleanupHandle,
+        relative_path_base: PathBuf,
     ) -> Self {
         Self {
             pool,
             clock,
             git_cleanup,
+            relative_path_base,
         }
     }
 
@@ -55,7 +58,7 @@ impl TaskDiffApi {
         let task_id = TaskId::new(request.task_id.clone());
         let task = self.load_task(&task_id)?;
         let project = self.load_project(&task)?;
-        let cwd = resolve_task_cwd(&self.pool, &task_id)?;
+        let cwd = resolve_task_cwd(&self.pool, &task_id, &self.relative_path_base)?;
 
         if let Some(worktree_id) = task.worktree_id.as_ref() {
             let worktree = SqliteWorktreeRepository::new(self.pool.clone())
@@ -265,7 +268,7 @@ impl TaskDiffApi {
             ));
         }
         let project = self.load_project(&task)?;
-        let cwd = resolve_task_cwd(&self.pool, &task_id)?;
+        let cwd = resolve_task_cwd(&self.pool, &task_id, &self.relative_path_base)?;
         Ok((task, project, cwd))
     }
 }
@@ -389,6 +392,7 @@ mod tests {
             database_path: temporary.path().join("ora.sqlite3"),
             worktree_root: temporary.path().join("worktrees"),
             home_directory: temporary.path().to_path_buf(),
+            relative_path_base: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),

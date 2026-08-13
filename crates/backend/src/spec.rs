@@ -28,6 +28,7 @@ pub(crate) struct SpecApi {
     pool: RepositoryPool,
     file_system: WorkspaceFileSystem,
     git_cleanup: crate::git_cleanup::GitCleanupHandle,
+    relative_path_base: PathBuf,
 }
 
 impl SpecApi {
@@ -36,11 +37,13 @@ impl SpecApi {
         pool: RepositoryPool,
         ripgrep_path: PathBuf,
         git_cleanup: crate::git_cleanup::GitCleanupHandle,
+        relative_path_base: PathBuf,
     ) -> Self {
         Self {
             pool,
             file_system: WorkspaceFileSystem::system(ripgrep_path),
             git_cleanup,
+            relative_path_base,
         }
     }
 
@@ -259,7 +262,10 @@ impl SpecApi {
                         BackendError::internal("project repository operation failed", source)
                     })?
                     .ok_or_else(|| project_not_found(&project_id))?;
-                let root = absolute_existing_root(PathBuf::from(project.root_path))?;
+                let root = crate::task::absolute_project_root(
+                    PathBuf::from(project.root_path),
+                    &self.relative_path_base,
+                )?;
                 Ok(SpecContext {
                     project_id,
                     root,
@@ -277,7 +283,8 @@ impl SpecApi {
                         BackendError::internal("task repository operation failed", source)
                     })?
                     .ok_or_else(|| task_not_found(&task_id))?;
-                let root = crate::task::resolve_task_cwd(&self.pool, &task_id)?;
+                let root =
+                    crate::task::resolve_task_cwd(&self.pool, &task_id, &self.relative_path_base)?;
                 Ok(SpecContext {
                     project_id: task.project_id,
                     root,
@@ -467,25 +474,6 @@ fn map_domain_visibility(visibility: DomainVisibility) -> SpecSourceVisibility {
         DomainVisibility::Enabled => SpecSourceVisibility::Enabled,
         DomainVisibility::Disabled => SpecSourceVisibility::Disabled,
     }
-}
-
-/// Resolves a stored project root without requiring the project to be a Git repository.
-fn absolute_existing_root(path: PathBuf) -> Result<PathBuf, BackendError> {
-    let path = if path.is_absolute() {
-        path
-    } else {
-        std::env::current_dir()
-            .map_err(|source| BackendError::internal("project root resolution failed", source))?
-            .join(path)
-    };
-    if !path.is_dir() {
-        return Err(BackendError::new(
-            ErrorClassification::Conflict,
-            PublicError::TaskProjectRootUnavailable(EmptyErrorParams {}),
-            "project root is unavailable",
-        ));
-    }
-    Ok(path)
 }
 
 /// Builds the stable not-found response for a missing project target.

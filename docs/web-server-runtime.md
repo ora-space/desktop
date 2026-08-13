@@ -35,7 +35,9 @@ Startup asks `ora-backend` to create the required directories, bootstrap the dat
 ## Project and worktree configuration
 
 The web server does not require a bootstrap project. A new database starts with an empty project
-catalog, and users add repositories through the project API or Web UI.
+catalog, and users add repositories through the project API or Web UI. Relative project roots remain
+valid in that catalog; they are resolved against the process working directory captured at bootstrap,
+not a later live cwd.
 
 The global worktree root is `<ORA_DATA_DIR>/worktrees`. Task creation resolves the project identified
 by the request and provisions linked worktrees under `<ORA_DATA_DIR>/worktrees/<full-task-id>`.
@@ -167,7 +169,7 @@ Project branch responses separate the logical branch name, exact resolvable ref,
 
 ### Agent runtime
 
-Backend construction immediately attempts one supervised `acp` child per supported CLI, rooted at the user's home directory. Executable resolution is platform-specific: on Unix each CLI is read from its fixed per-user directory (`<home>/.opencode/bin/opencode`, `<home>/.nga/bin/nga`, `<home>/.codeagentcli/bin/codeagentcli`, `<home>/.claude/bin/claude-agent-acp`, `<home>/.codex/bin/codex-acp`); on Windows it is resolved from `PATH` through `where.exe` on every retry generation.
+Backend construction immediately attempts one supervised `acp` child per supported CLI, rooted at the user's home directory. Executable resolution searches the process `PATH` first, then each CLI's fixed per-user install directory. See [ACP Agent Runtime](agent-runtime.md).
 
 Each independent supervisor performs `initialize` once per process generation and retries failures without blocking healthy CLIs or non-agent APIs. Warming a session calls `session/new` on the connection selected by `agentCli` and keeps it in memory, capturing the configuration options and the available-command catalog the handshake announces; attach persists it against its Task and returns that catalog. Updates emitted before the response reveals the private provider session id are temporarily buffered, then attached to the matching session route. Load calls `session/load` using that private id and the Task worktree `cwd`; the public Session payload never exposes it. The load response streams Ora's own recorded conversation rather than the agent's replay, which is drained and discarded. `POST /api/sessions/{sessionId}/agent` rebinds a live conversation to a different CLI without changing its identifier, and `POST /api/sessions/{sessionId}/history/resume` returns a session whose history writes failed to a writable state. `GET /api/agent-runtime/status` reports each CLI's live ACP handshake status as ready, starting, or unavailable. A newly attached session accepts valid provider titles during its first prompt and bounded three/ten-second `session/list` window; restored sessions do not reopen title acquisition. Successful title writes update `Session.title` and emit `SessionTitleUpdated`, after which the client refetches sessions.
 

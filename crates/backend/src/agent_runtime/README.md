@@ -10,6 +10,7 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 - Prompts preserve the public ACP `ContentBlock` sequence, so one turn can contain text, images, audio, and linked or embedded resources instead of being reduced to plain text.
 - Model discovery runs each CLI's bounded command independently and returns only successful groups.
 - CLI executables are located with the same semantics on every platform: each directory on the process `PATH` is searched first, then the CLI's fixed per-user install directory (`~/.{cli}/bin`) as a fallback. PATH wins so the resolved binary matches what `which` reports in the user's terminal; the fallback keeps official install-script setups working when a desktop-launched GUI process inherits a minimal PATH. Known limitation: PATH entries added only by shell rc files (nvm, bun) may be invisible to a GUI-launched process; the not-found error enumerates every searched location to keep that diagnosable.
+- Session cwd for project-root tasks and warm project-root chats is resolved against the bootstrap path base, not live process cwd.
 - A newly attached session has a non-persisted title-acquisition window. It accepts valid ACP `session_info_update` titles from attach onward and, after the first eligible prompt (`EndTurn`, `MaxTokens`, or `MaxTurnRequests`), schedules bounded `session/list` fallbacks at three and ten seconds when the CLI advertises that capability. Restored sessions start with acquisition disabled.
 
 ## Flow control and failure isolation

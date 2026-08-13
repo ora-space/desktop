@@ -50,7 +50,7 @@ The Tauri identifier is `space.ora.desktop`. Tauri's system `app_data_dir` owns 
 
 On first launch, Desktop creates the app data directory, default worktree directory, and a versioned configuration file using an atomic sibling-temporary-file replacement. `config.json` currently holds version `1` and the `worktreeRoot`. Existing malformed, unknown-version, or otherwise invalid configuration is fatal; Desktop does not silently reset it.
 
-Unlike the Web server, Desktop reads no environment variables for these paths. Everything is derived from Tauri's `app_data_dir` and the versioned configuration file.
+`ORA_DATA_DIR` is the one path override Desktop reads. `task run:desktop` points it at the repo `.data` directory so Desktop shares the web server's database. Relative project roots stored in that database are resolved against the data directory's parent (the repo root), not the Tauri process cwd — `tauri dev` starts in `apps/desktop/src-tauri`, which would otherwise miss paths such as `.data/rustun`. Without `ORA_DATA_DIR`, paths come from Tauri's `app_data_dir` and folder-picker selections are already absolute.
 
 The worktree root is non-sensitive configuration. Users can change it from Settings → Data & privacy on Desktop. A selected value must be an absolute path to an existing directory. The new value affects task creations that start after the update; in-flight operations retain their original snapshot, and existing worktrees are not moved.
 

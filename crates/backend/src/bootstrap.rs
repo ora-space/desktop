@@ -30,6 +30,12 @@ pub struct BackendPaths {
     pub database_path: PathBuf,
     pub worktree_root: PathBuf,
     pub home_directory: PathBuf,
+    /// Directory against which persisted relative project roots are resolved.
+    ///
+    /// Relative roots are stored against the directory from which `ORA_DATA_DIR`
+    /// was created. Live process cwd is not used: Desktop `tauri dev` starts in
+    /// `src-tauri`, which is not that directory.
+    pub relative_path_base: PathBuf,
     pub sessions_root: PathBuf,
     /// Root of the formal skill package tree (`<data>/atoms/skills`).
     pub skills_root: PathBuf,
@@ -78,6 +84,7 @@ pub struct Backend {
     workflow_run_engine: Arc<ConcreteWorkflowRunControl>,
     app_events: Arc<AppEventHub>,
     git_cleanup: crate::git_cleanup::GitCleanupHandle,
+    relative_path_base: PathBuf,
 }
 
 impl Backend {
@@ -103,10 +110,12 @@ impl Backend {
         let scheduler = Scheduler::new(paths.timezone);
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let sessions_root = paths.sessions_root;
+        let relative_path_base = paths.relative_path_base;
         let agent_runtime = Arc::new(
             AgentRuntimeManager::new(
                 pool.clone(),
                 paths.home_directory,
+                relative_path_base.clone(),
                 sessions_root.clone(),
                 clock,
                 scheduler,
@@ -141,7 +150,12 @@ impl Backend {
                 repository_gates.clone(),
                 clock,
             )),
-            task_diff: Arc::new(TaskDiffApi::new(pool.clone(), clock, git_cleanup.clone())),
+            task_diff: Arc::new(TaskDiffApi::new(
+                pool.clone(),
+                clock,
+                git_cleanup.clone(),
+                relative_path_base.clone(),
+            )),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime,
             skill: Arc::new(SkillApi::new(
@@ -154,6 +168,7 @@ impl Backend {
                 pool.clone(),
                 paths.ripgrep_path,
                 git_cleanup.clone(),
+                relative_path_base.clone(),
             )),
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
             workflow_run: Arc::new(WorkflowRunApi::new(
@@ -168,6 +183,7 @@ impl Backend {
             git_cleanup,
             pool,
             worktree_root,
+            relative_path_base,
         })
     }
 
@@ -287,7 +303,11 @@ impl Backend {
     /// provider, so the path always matches where the session actually runs. Fails
     /// when the task has no active worktree on disk.
     pub fn resolve_task_cwd(&self, task_id: &str) -> Result<PathBuf, BackendError> {
-        crate::task::resolve_task_cwd(&self.pool, &ora_domain::TaskId::new(task_id))
+        crate::task::resolve_task_cwd(
+            &self.pool,
+            &ora_domain::TaskId::new(task_id),
+            &self.relative_path_base,
+        )
     }
 
     // =============================================================================
@@ -418,7 +438,7 @@ impl Backend {
         &self,
         request: GetTaskWorkspaceRequest,
     ) -> Result<GetTaskWorkspaceResponse, BackendError> {
-        crate::task::get_task_workspace(&self.pool, &request.task_id)
+        crate::task::get_task_workspace(&self.pool, &request.task_id, &self.relative_path_base)
     }
 
     // =============================================================================
@@ -1032,6 +1052,7 @@ mod tests {
             database_path: database_path.clone(),
             worktree_root: worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
+            relative_path_base: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),
@@ -1150,6 +1171,7 @@ mod tests {
             database_path: temporary.path().join("ora.sqlite3"),
             worktree_root: temporary.path().join("worktrees"),
             home_directory: temporary.path().to_path_buf(),
+            relative_path_base: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
             skills_root: skills_root.clone(),
             ripgrep_path: std::path::PathBuf::from("rg"),
@@ -1197,6 +1219,7 @@ mod tests {
             database_path: temporary.path().join("ora.sqlite3"),
             worktree_root: original_worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
+            relative_path_base: temporary.path().to_path_buf(),
             sessions_root: temporary.path().join("sessions"),
             skills_root: temporary.path().join("atoms").join("skills"),
             ripgrep_path: std::path::PathBuf::from("rg"),

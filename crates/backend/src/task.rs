@@ -21,7 +21,7 @@ use ora_db::{
 };
 use ora_domain::{Project, ProjectId, TaskId, WorktreeActivity};
 use ora_logging::ora_warn;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 /// Groups task handlers while resolving each Git repository from the task's owning project.
@@ -194,6 +194,7 @@ pub(crate) fn task_ids_in_project(pool: &RepositoryPool, project_id: &ProjectId)
 pub(crate) fn resolve_task_cwd(
     pool: &RepositoryPool,
     task_id: &TaskId,
+    relative_path_base: &Path,
 ) -> Result<PathBuf, BackendError> {
     let task = SqliteTaskRepository::new(pool.clone())
         .find_task(task_id)
@@ -204,12 +205,7 @@ pub(crate) fn resolve_task_cwd(
             .find_project(&task.project_id)
             .map_err(task_project_root_unavailable_with)?
             .ok_or_else(task_project_root_unavailable)?;
-        let cwd = absolute_project_root(PathBuf::from(project.root_path))?;
-        return if cwd.is_dir() {
-            Ok(cwd)
-        } else {
-            Err(task_project_root_unavailable())
-        };
+        return absolute_project_root(PathBuf::from(project.root_path), relative_path_base);
     }
 
     let worktree_id = task.worktree_id.ok_or_else(task_worktree_unavailable)?;
@@ -243,6 +239,7 @@ pub(crate) fn resolve_task_cwd(
 pub(crate) fn get_task_workspace(
     pool: &RepositoryPool,
     task_id: &str,
+    relative_path_base: &Path,
 ) -> Result<GetTaskWorkspaceResponse, BackendError> {
     let task_id = TaskId::new(task_id);
     let task = SqliteTaskRepository::new(pool.clone())
@@ -263,7 +260,7 @@ pub(crate) fn get_task_workspace(
             .and_then(|worktree| worktree.branch_name),
         None => None,
     };
-    let root = resolve_task_cwd(pool, &task_id)?;
+    let root = resolve_task_cwd(pool, &task_id, relative_path_base)?;
     Ok(GetTaskWorkspaceResponse {
         workspace: TaskWorkspace {
             root_path: root.to_string_lossy().into_owned(),
@@ -272,10 +269,6 @@ pub(crate) fn get_task_workspace(
     })
 }
 
-/// Normalizes a stored project root before it crosses the ACP process boundary.
-///
-/// Relative project roots remain valid in persisted server configurations, while providers
-/// require a stable absolute working directory after Ora starts them.
 /// Resolves the execution directory for a chat whose Task does not exist yet.
 ///
 /// Direct chats create their Task only when the first message is sent, but the
@@ -285,26 +278,35 @@ pub(crate) fn get_task_workspace(
 pub(crate) fn resolve_project_cwd(
     pool: &RepositoryPool,
     project_id: &ProjectId,
+    relative_path_base: &Path,
 ) -> Result<PathBuf, BackendError> {
     let project = SqliteProjectRepository::new(pool.clone())
         .find_project(project_id)
         .map_err(|_| task_project_root_unavailable())?
         .ok_or_else(task_project_root_unavailable)?;
-    let cwd = absolute_project_root(PathBuf::from(project.root_path))?;
+    absolute_project_root(PathBuf::from(project.root_path), relative_path_base)
+}
+
+/// Resolves a persisted project root against the runtime's stable path base.
+///
+/// Relative roots are stored against the directory from which `ORA_DATA_DIR` was
+/// created. Joining them to a live process cwd would miss those directories
+/// whenever the binary is started elsewhere — Desktop `tauri dev` starts in
+/// `src-tauri`.
+pub(crate) fn absolute_project_root(
+    path: PathBuf,
+    relative_path_base: &Path,
+) -> Result<PathBuf, BackendError> {
+    let cwd = if path.is_absolute() {
+        path
+    } else {
+        relative_path_base.join(path)
+    };
     if cwd.is_dir() {
         Ok(cwd)
     } else {
         Err(task_project_root_unavailable())
     }
-}
-
-fn absolute_project_root(path: PathBuf) -> Result<PathBuf, BackendError> {
-    if path.is_absolute() {
-        return Ok(path);
-    }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(path))
-        .map_err(task_project_root_unavailable_with)
 }
 
 /// Builds the conflict used when task ownership cannot resolve an active Git worktree.
@@ -395,11 +397,13 @@ mod tests {
             .expect("persist task");
 
         assert_eq!(
-            resolve_task_cwd(&pool, &TaskId::new("task-1")).expect("resolve project root cwd"),
+            resolve_task_cwd(&pool, &TaskId::new("task-1"), temp_dir.path())
+                .expect("resolve project root cwd"),
             project_root.clone(),
         );
         assert_eq!(
-            get_task_workspace(&pool, "task-1").expect("load project-root workspace"),
+            get_task_workspace(&pool, "task-1", temp_dir.path())
+                .expect("load project-root workspace"),
             GetTaskWorkspaceResponse {
                 workspace: TaskWorkspace {
                     root_path: project_root.to_string_lossy().into_owned(),
@@ -409,11 +413,26 @@ mod tests {
         );
     }
 
-    /// Verifies relative roots are made stable before being passed to provider processes.
+    /// Verifies relative roots are resolved against the injected base, not process cwd.
     #[test]
-    fn normalizes_relative_project_roots_for_acp() {
-        let cwd = absolute_project_root(PathBuf::from(".")).expect("resolve relative project root");
-        assert!(cwd.is_absolute());
-        assert!(cwd.is_dir());
+    fn resolves_relative_project_roots_against_injected_base() {
+        let base = TempDir::new().expect("create path base");
+        let project_root = base.path().join("nested").join("repo");
+        fs::create_dir_all(&project_root).expect("create nested project root");
+
+        let resolved = absolute_project_root(PathBuf::from("nested").join("repo"), base.path())
+            .expect("resolve relative project root");
+
+        assert_eq!(resolved, project_root);
+        assert!(resolved.is_absolute());
+    }
+
+    /// Verifies a relative root that does not exist under the injected base is rejected.
+    #[test]
+    fn rejects_relative_project_root_missing_from_injected_base() {
+        let base = TempDir::new().expect("create path base");
+        let error = absolute_project_root(PathBuf::from("missing-project"), base.path())
+            .expect_err("missing relative root");
+        assert_eq!(error.to_string(), "task project root is unavailable");
     }
 }

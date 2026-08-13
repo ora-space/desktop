@@ -5,7 +5,7 @@ use crate::service::{FileSystemApi, WorkspaceFileApi};
 use ora_backend::{Backend, BackendBootstrapError, BackendPaths};
 use ora_logging::ora_warn;
 use ora_plugin_manager::PluginManager;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Builds the application state used by the web runtime from SQLite-backed dependencies.
@@ -87,6 +87,7 @@ fn build_backend(
         database_path: database_path.to_path_buf(),
         worktree_root: worktree_root.to_path_buf(),
         home_directory: home_directory.to_path_buf(),
+        relative_path_base: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         sessions_root: sessions_root.to_path_buf(),
         skills_root: database_path
             .parent()
