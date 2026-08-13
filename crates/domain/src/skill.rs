@@ -58,17 +58,42 @@ pub enum SkillDescriptionError {
     TooLarge,
 }
 
+/// Name of the reserved directory holding in-flight transaction staging.
+pub const STAGING_DIR_NAME: &str = ".ora-staging";
+/// Name of the reserved directory holding transaction compensation backups.
+pub const BACKUP_DIR_NAME: &str = ".ora-backup";
+/// Name of the reserved directory holding transaction journal markers.
+pub const JOURNAL_DIR_NAME: &str = ".ora-journal";
+
+/// Every directory name reserved under the skills root, which a skill name may never take.
+///
+/// A skill promoted onto one of these directories would have its package deleted by startup
+/// reconciliation, which sweeps their contents as transaction leftovers. The names live here
+/// rather than in the storage layer because [`validate_skill_name`] is what enforces the split
+/// and sits in the lower crate; storage re-exports these constants so one literal defines each
+/// directory. A new reserved directory belongs in this array, which makes it unclaimable.
+pub const RESERVED_SKILL_NAMES: [&str; 3] = [STAGING_DIR_NAME, BACKUP_DIR_NAME, JOURNAL_DIR_NAME];
+
 /// Validates a trimmed skill name against the ASCII slug rules shared by every write path.
 ///
 /// The name must be a single filesystem-safe path segment composed only of `A-Z`, `a-z`,
-/// `0-9`, `.`, `_`, and `-`, and must not be the reserved `.` or `..` segments. The same
-/// byte and UTF-16 code-unit segment limits that protect archive paths also apply so the
-/// name can always back a directory entry.
+/// `0-9`, `.`, `_`, and `-`, must not be the reserved `.` or `..` segments, and must not
+/// collide with [`RESERVED_SKILL_NAMES`]. The same byte and UTF-16 code-unit segment limits
+/// that protect archive paths also apply so the name can always back a directory entry.
+///
+/// The reserved-name comparison ignores ASCII case because the skills root may sit on a
+/// case-insensitive filesystem, where `.ORA-Backup` and `.ora-backup` are the same directory.
 pub fn validate_skill_name(name: &str) -> Result<(), SkillNameError> {
     if name.is_empty() {
         return Err(SkillNameError::Blank);
     }
     if name == "." || name == ".." {
+        return Err(SkillNameError::Invalid);
+    }
+    if RESERVED_SKILL_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+    {
         return Err(SkillNameError::Invalid);
     }
     if !name

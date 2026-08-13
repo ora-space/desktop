@@ -9,7 +9,7 @@ export const translationResources = {
       "内部错误。请提供请求编号 {{requestId}} 以便排查。",
     "errors.invalid_request": "请求内容无效。",
     "errors.skill_name_blank": "技能名称不能为空。",
-    "errors.skill_name_invalid": "技能名称只能使用安全 slug 字符。",
+    "errors.skill_name_invalid": "技能名称只能使用安全 slug 字符，且不能使用系统保留名称。",
     "errors.skill_name_too_long": "技能名称过长。",
     "errors.skill_description_blank": "技能描述不能为空。",
     "errors.skill_description_too_large": "技能描述超过最大长度。",
@@ -1339,7 +1339,7 @@ export const translationResources = {
       "An internal error occurred. Provide request ID {{requestId}} for support.",
     "errors.invalid_request": "The request is invalid.",
     "errors.skill_name_blank": "Skill name cannot be blank.",
-    "errors.skill_name_invalid": "Skill name must use safe slug characters.",
+    "errors.skill_name_invalid": "Skill name must use safe slug characters and cannot be a system-reserved name.",
     "errors.skill_name_too_long": "Skill name is too long.",
     "errors.skill_description_blank": "Skill description cannot be blank.",
     "errors.skill_description_too_large":

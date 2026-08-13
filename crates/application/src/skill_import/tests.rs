@@ -2,7 +2,7 @@ use super::{
     NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportError, SkillImportIdGenerator,
     SkillImportService,
 };
-use crate::skill::FilesystemSkillStorage;
+use crate::skill::{BACKUP_DIR_NAME, FilesystemSkillStorage, JOURNAL_DIR_NAME, STAGING_DIR_NAME};
 use crate::{Clock, RepositoryError, SkillRepository};
 use ora_contracts::{
     CommitSkillImportRequest, GetSkillImportSessionRequest, PrepareSkillImportRequest,
@@ -489,6 +489,59 @@ fn skips_conflict_candidates_on_skip_decision() {
             .join("SKILL.md")
             .is_file()
     );
+}
+
+/// Guards the namespace split between committed skills and reserved transaction directories.
+///
+/// A skill named after a reserved directory used to be promoted onto that directory, leaving
+/// startup reconciliation to delete the package while sweeping transaction leftovers. The name
+/// must now be refused during preparation, before anything reaches the formal tree.
+#[test]
+fn rejects_skill_names_reserved_by_the_storage_layer() {
+    for reserved in [STAGING_DIR_NAME, BACKUP_DIR_NAME, JOURNAL_DIR_NAME] {
+        let temp = TempDir::new().unwrap();
+        let repository = FakeSkillRepository::new();
+        let source = temp.path().join("source");
+        write_manifest(&source, "pkg/SKILL.md", reserved, "Collides with reserved");
+
+        let (service, _) = test_service(repository.clone(), &temp, Duration::from_secs(30));
+        let session = prepare_folder(&service, &source);
+        let session_id = session.session_id.clone();
+
+        assert_eq!(session.candidates.len(), 1);
+        assert_eq!(
+            session.candidates[0].status,
+            ora_contracts::SkillImportCandidateStatus::Invalid
+        );
+        assert_eq!(
+            session.candidates[0].error_code.as_deref(),
+            Some("name_invalid")
+        );
+
+        service
+            .commit(CommitSkillImportRequest {
+                session_id: session_id.clone(),
+                decisions: vec![],
+            })
+            .unwrap();
+        let completed = wait_for_completion(&service, &session_id);
+
+        assert_eq!(
+            completed.progress.results[0].status,
+            ora_contracts::SkillImportResultStatus::Failed
+        );
+        // Neither the database nor the reserved directory may be touched by the refused import.
+        assert_eq!(repository.find_skill_by_name(reserved).unwrap(), None);
+        assert_eq!(
+            temp.path()
+                .join("atoms")
+                .join("skills")
+                .join(reserved)
+                .join("SKILL.md")
+                .is_file(),
+            false
+        );
+    }
 }
 
 #[test]

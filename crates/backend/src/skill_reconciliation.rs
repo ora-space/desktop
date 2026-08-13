@@ -255,7 +255,15 @@ fn operation_failed(error: impl std::fmt::Display) -> SkillStorageReconciliation
 #[cfg(test)]
 mod tests {
     use super::reconcile_skill_storage;
-    use ora_application::{SkillRepository, TransactionJournal};
+    use ora_application::{
+        BACKUP_DIR_NAME, FilesystemSkillStorage, NoopSkillImportProgressPublisher,
+        SkillImportConfig, SkillImportService, SkillRepository, TransactionJournal,
+        UuidSkillImportIdGenerator,
+    };
+    use ora_contracts::{
+        CommitSkillImportRequest, GetSkillImportSessionRequest, PrepareSkillImportRequest,
+        SkillImportSource,
+    };
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteSkillRepository,
         default_migration_catalog,
@@ -343,6 +351,120 @@ mod tests {
         );
         assert!(!backup.exists());
         assert!(!skills_root.join(".ora-journal").join("txn.json").exists());
+    }
+
+    /// Verifies a reserved directory name survives a real import followed by startup reconciliation.
+    ///
+    /// This is the end-to-end shape of the original defect: a skill whose name matched a reserved
+    /// transaction directory was promoted onto that directory, and the next startup deleted the
+    /// package contents while sweeping what it took to be transaction leftovers. The import must
+    /// now refuse the name, leaving reconciliation with nothing to misread.
+    #[test]
+    fn refuses_reserved_name_import_and_reconciles_cleanly_on_restart() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        let database_path = temp.path().join("ora.sqlite3");
+
+        // A legitimate skill shares the tree so reconciliation has real state to preserve.
+        create_formal(&skills_root, "review", "---\nname: review\n---\n");
+        let repository = SqliteSkillRepository::new(pool(&database_path));
+        repository
+            .create_skill(
+                Skill::new(
+                    SkillId::new("skill-1"),
+                    "review",
+                    "Reviews",
+                    AuditFields::new(100, 100, false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let source = temp.path().join("source").join("pkg");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            format!(
+                "---\nname: {BACKUP_DIR_NAME}\ndescription: Collides with reserved\n---\nBody.\n"
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("nested").join("note.md"), "payload").unwrap();
+
+        let service = SkillImportService::new(
+            SqliteSkillRepository::new(pool(&database_path)),
+            FilesystemSkillStorage::new(skills_root.clone()),
+            UuidSkillImportIdGenerator,
+            crate::clock::SystemClock,
+            NoopSkillImportProgressPublisher,
+            SkillImportConfig {
+                temp_root: temp.path().join("os-temp"),
+                ..SkillImportConfig::default()
+            },
+        );
+
+        let session = service
+            .prepare(PrepareSkillImportRequest {
+                source: SkillImportSource::Folder {
+                    path: source.parent().unwrap().to_string_lossy().into_owned(),
+                },
+            })
+            .unwrap()
+            .session;
+        assert_eq!(
+            session.candidates[0].status,
+            ora_contracts::SkillImportCandidateStatus::Invalid
+        );
+        assert_eq!(
+            session.candidates[0].error_code.as_deref(),
+            Some("name_invalid")
+        );
+
+        service
+            .commit(CommitSkillImportRequest {
+                session_id: session.session_id.clone(),
+                decisions: vec![],
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let current = service
+                .get_session(GetSkillImportSessionRequest {
+                    session_id: session.session_id.clone(),
+                })
+                .unwrap()
+                .session;
+            if current.status == ora_contracts::SkillImportSessionStatus::Completed {
+                assert_eq!(
+                    current.progress.results[0].status,
+                    ora_contracts::SkillImportResultStatus::Failed
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "commit did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        // Restart: reconciliation must succeed rather than trip over a package on a reserved root.
+        reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+
+        assert_eq!(
+            repository.find_skill_by_name(BACKUP_DIR_NAME).unwrap(),
+            None
+        );
+        assert_eq!(
+            skills_root.join(BACKUP_DIR_NAME).join("SKILL.md").is_file(),
+            false
+        );
+        // The unrelated skill is untouched by the refused import and the sweep.
+        assert_eq!(
+            fs::read_to_string(skills_root.join("review").join("SKILL.md")).unwrap(),
+            "---\nname: review\n---\n"
+        );
     }
 
     #[test]

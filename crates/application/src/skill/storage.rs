@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-/// Name of the reserved directory holding in-flight transaction staging.
-pub const STAGING_DIR_NAME: &str = ".ora-staging";
-/// Name of the reserved directory holding transaction compensation backups.
-pub const BACKUP_DIR_NAME: &str = ".ora-backup";
-/// Name of the reserved directory holding transaction journal markers.
-pub const JOURNAL_DIR_NAME: &str = ".ora-journal";
+/// Names of the directories this layer reserves under the skills root.
+///
+/// They are owned by `ora-domain` because [`ora_domain::validate_skill_name`] must refuse them
+/// to keep skill names and reserved directories in disjoint namespaces. Re-exporting instead of
+/// redeclaring keeps one literal per directory, so the two rules cannot drift apart.
+pub use ora_domain::{BACKUP_DIR_NAME, JOURNAL_DIR_NAME, STAGING_DIR_NAME};
 
 /// Captures one durable intent record written before a formal skill mutation.
 ///
@@ -91,6 +91,12 @@ pub enum SkillStorageError {
 /// compensation backups under `<skills_root>/<BACKUP_DIR_NAME>`, and record intent in
 /// `<skills_root>/<JOURNAL_DIR_NAME>`. All staging, backup, and journal paths live on the
 /// same filesystem as the formal tree so promotion uses rename instead of cross-device copies.
+///
+/// Reserved directory names and committed skill names occupy disjoint namespaces:
+/// [`ora_domain::validate_skill_name`] refuses every name in [`ora_domain::RESERVED_SKILL_NAMES`],
+/// the array these constants come from. Without that split a skill would be promoted onto a
+/// transaction root and startup reconciliation would delete its package as a leftover, so a new
+/// reserved directory must be added to that array rather than declared here.
 pub trait SkillStorage {
     /// Reserves a unique staging directory for one transaction.
     fn create_staging(&self) -> Result<PathBuf, SkillStorageError>;

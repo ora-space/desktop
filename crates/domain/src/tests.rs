@@ -1,7 +1,8 @@
 use crate::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, DomainModelError, HistoryState,
-    Namespace, Project, ProjectId, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId,
-    TaskStatus, TaskType, Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
+    Namespace, Project, ProjectId, RESERVED_SKILL_NAMES, Session, SessionId, SessionStatus, Skill,
+    SkillId, Task, TaskId, TaskStatus, TaskType, Worktree, WorktreeActivity, WorktreeBaseline,
+    WorktreeId,
 };
 use pretty_assertions::assert_eq;
 
@@ -171,6 +172,54 @@ fn normalizes_and_validates_namespaces() {
         Err(DomainModelError::EmptyNamespace)
     );
     assert!(serde_json::from_str::<Namespace>(r#""  ""#).is_err());
+}
+
+/// Verifies skill names stay disjoint from the storage layer's reserved directory namespace.
+#[test]
+fn rejects_skill_names_reserved_by_skill_storage() {
+    let audit_fields = AuditFields::new(1, 1, false);
+
+    // Every reserved transaction directory, plus the path-traversal segments.
+    let mut rejected = RESERVED_SKILL_NAMES.to_vec();
+    rejected.extend([".", ".."]);
+    // A case-insensitive skills root maps these onto the same reserved directories.
+    rejected.extend([".ORA-BACKUP", ".Ora-Staging"]);
+    for name in rejected {
+        assert_eq!(
+            Skill::new(
+                SkillId::new("skill-1"),
+                Namespace::local(),
+                name,
+                "Rejected",
+                audit_fields.clone()
+            ),
+            Err(DomainModelError::InvalidSkillName {
+                name: name.to_string()
+            })
+        );
+    }
+
+    // Only the reserved names are refused: other dot-prefixed names remain valid, so upgrading
+    // cannot orphan a skill that a previous release accepted and still serves today.
+    for accepted in [
+        ".hidden",
+        ".ora-future",
+        "backup.tmp",
+        "ora-backup",
+        "v1.2.3",
+    ] {
+        assert_eq!(
+            Skill::new(
+                SkillId::new("skill-1"),
+                Namespace::local(),
+                accepted,
+                "Accepted",
+                audit_fields.clone()
+            )
+            .map(|skill| skill.name),
+            Ok(accepted.to_string())
+        );
+    }
 }
 
 /// Verifies CLI identities use the reviewed namespaced database representation.

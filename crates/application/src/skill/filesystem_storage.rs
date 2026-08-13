@@ -334,6 +334,9 @@ impl SkillStorage for FilesystemSkillStorage {
         for entry in fs::read_dir(&self.skills_root).map_err(map_storage_error)? {
             let entry = entry.map_err(map_storage_error)?;
             let name = entry.file_name().to_string_lossy().into_owned();
+            // Skipping dot-prefixed entries excludes the reserved transaction roots. It stays
+            // deliberately broader than those three names so an unrelated hidden entry is never
+            // reported as a formal skill and deleted as an orphan by startup reconciliation.
             if name.starts_with('.') {
                 continue;
             }
