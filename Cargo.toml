@@ -18,6 +18,7 @@ members = [
     "crates/pty",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/test-support",
     "crates/utils",
     "xtask",
 ]
@@ -39,6 +40,7 @@ default-members = [
     "crates/pty",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/test-support",
     "crates/utils",
     "xtask",
 ]
@@ -71,6 +73,7 @@ ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
 ora-scheduler = { path = "crates/scheduler" }
 ora-skill-package = { path = "crates/skill-package" }
+ora-test-support = { path = "crates/test-support" }
 ora-utils = { path = "crates/utils" }
 
 # External

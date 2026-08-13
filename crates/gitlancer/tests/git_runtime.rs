@@ -1,8 +1,6 @@
-mod common;
-
+use std::ffi::OsStr;
 use std::path::Path;
 
-use common::TestScaffold;
 use gitlancer::git::base_branch::{
     ListWorktreeBasesRequest, ResolveWorktreeBaseCommitRequest, WorktreeBase,
 };
@@ -18,6 +16,7 @@ use gitlancer::git::worktree::{
     ResolveWorktreeByBranchRequest, ResolveWorktreeRequest, WorktreeDeletionMode,
 };
 use gitlancer::{BranchName, CliGitRunner, CommitId, Git, RepoRoot, WorktreeKind, WorktreeRoot};
+use ora_test_support::GitTestScaffold as TestScaffold;
 use pretty_assertions::assert_eq;
 
 /// Creates an initial commit so linked worktrees can be created from a valid repository history.
@@ -407,9 +406,13 @@ fn runtime_lists_and_resolves_local_worktree_bases_without_fetching() {
     let scaffold = TestScaffold::new("runtime-local-worktree-bases").expect("create scaffold");
     seed_repository(&scaffold);
     let remote_path = scaffold.sandbox_root().join("missing-remote.git");
-    let remote_path_arg = remote_path.to_string_lossy().into_owned();
     scaffold
-        .run_git(["remote", "add", "origin", &remote_path_arg])
+        .run_git([
+            OsStr::new("remote"),
+            OsStr::new("add"),
+            OsStr::new("origin"),
+            remote_path.as_os_str(),
+        ])
         .expect("configure origin");
     let local_main_commit = scaffold
         .run_git(["rev-parse", "main"])

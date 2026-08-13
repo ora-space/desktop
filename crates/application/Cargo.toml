@@ -30,6 +30,7 @@ uuid = { workspace = true }
 [dev-dependencies]
 flate2 = { workspace = true }
 ora-logging = { workspace = true }
+ora-test-support = { workspace = true }
 pretty_assertions = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }

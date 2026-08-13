@@ -309,17 +309,24 @@ mod tests {
         CreateProjectRequest, CreateTaskRequest, GetTaskDiffRequest, TaskDiffScope, TaskStatus,
         TaskWorkspaceMode,
     };
+    use ora_test_support::GitTestScaffold;
     use std::fs;
     use std::path::Path;
-    use std::process::Command;
     use tempfile::TempDir;
 
     /// Verifies direct-chat edits are read from the same project root used by the agent.
     #[test]
     fn captures_agent_changes_from_project_root_tasks() {
         let temporary = TempDir::new().expect("create temporary backend directory");
-        let repository_root = temporary.path().join("repository");
-        initialize_repository(&repository_root);
+        let scaffold = GitTestScaffold::new("backend-task-diff-project-root")
+            .expect("create Git test scaffold");
+        scaffold
+            .write_file(scaffold.repo_path(), "README.md", "ora backend test\n")
+            .expect("write repository seed file");
+        scaffold
+            .stage_all_and_commit("initial")
+            .expect("create repository seed commit");
+        let repository_root = scaffold.repo_path();
         let backend = open_backend(&temporary);
         let project_id = create_project(&backend, &repository_root);
         let task = backend
@@ -354,8 +361,15 @@ mod tests {
     #[test]
     fn captures_agent_changes_from_worktree_tasks() {
         let temporary = TempDir::new().expect("create temporary backend directory");
-        let repository_root = temporary.path().join("repository");
-        initialize_repository(&repository_root);
+        let scaffold =
+            GitTestScaffold::new("backend-task-diff-worktree").expect("create Git test scaffold");
+        scaffold
+            .write_file(scaffold.repo_path(), "README.md", "ora backend test\n")
+            .expect("write repository seed file");
+        scaffold
+            .stage_all_and_commit("initial")
+            .expect("create repository seed commit");
+        let repository_root = scaffold.repo_path();
         let backend = open_backend(&temporary);
         let project_id = create_project(&backend, &repository_root);
         let task = backend
@@ -411,31 +425,5 @@ mod tests {
             .expect("create project")
             .project
             .id
-    }
-
-    /// Initializes a repository with one commit so both workspace modes can produce diffs.
-    fn initialize_repository(repository_root: &Path) {
-        fs::create_dir_all(repository_root).expect("create repository root");
-        run_git(repository_root, &["init", "--initial-branch=main"]);
-        run_git(repository_root, &["config", "user.name", "Ora Tests"]);
-        run_git(
-            repository_root,
-            &["config", "user.email", "ora-tests@example.com"],
-        );
-        fs::write(repository_root.join("README.md"), "ora backend test\n")
-            .expect("write repository seed file");
-        run_git(repository_root, &["add", "README.md"]);
-        run_git(repository_root, &["commit", "-m", "initial"]);
-    }
-
-    /// Runs one required Git setup command for the repository fixture.
-    fn run_git(repository_root: &Path, arguments: &[&str]) {
-        let status = Command::new("git")
-            .current_dir(repository_root)
-            .args(arguments)
-            .status()
-            .unwrap_or_else(|error| panic!("failed to start git {arguments:?}: {error}"));
-
-        assert!(status.success(), "git {arguments:?} failed with {status}");
     }
 }

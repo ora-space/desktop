@@ -1554,6 +1554,7 @@ dependencies = [
 name = "gitlancer"
 version = "0.0.0"
 dependencies = [
+ "ora-test-support",
  "ora-utils",
  "pretty_assertions",
  "thiserror 2.0.20",
@@ -2877,6 +2878,7 @@ dependencies = [
  "ora-domain",
  "ora-logging",
  "ora-skill-package",
+ "ora-test-support",
  "ora-utils",
  "petgraph",
  "pretty_assertions",
@@ -2911,6 +2913,7 @@ dependencies = [
  "ora-process",
  "ora-scheduler",
  "ora-skill-package",
+ "ora-test-support",
  "ora-utils",
  "pretty_assertions",
  "serde",
@@ -3127,6 +3130,14 @@ dependencies = [
  "ora-utils",
  "pretty_assertions",
  "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "ora-test-support"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
  "tempfile",
 ]
 
