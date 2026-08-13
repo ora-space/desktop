@@ -18,7 +18,8 @@ pub const MAX_DEPTH: usize = 32;
 pub enum PathValidationError {
     /// The path is not valid UTF-8 or contains disallowed control characters.
     EncodingInvalid,
-    /// The path is absolute, a drive/UNC path, or contains empty, `.`, or `..` segments.
+    /// The path is absolute, a drive/UNC path, contains empty, `.`, or `..` segments, or names a
+    /// Windows reserved device.
     Unsafe,
     /// One segment exceeds the byte or UTF-16 code-unit limit.
     SegmentTooLong,
@@ -60,6 +61,12 @@ impl RelativePath {
         }
         if normalized.len() > MAX_PATH_BYTES {
             return Err(PathValidationError::TooLong);
+        }
+        if segments
+            .iter()
+            .any(|segment| is_reserved_device_name(segment))
+        {
+            return Err(PathValidationError::Unsafe);
         }
         for segment in &segments {
             if segment.len() > MAX_SEGMENT_BYTES
@@ -183,6 +190,27 @@ fn validate_shape(normalized: &str) -> Result<(), PathValidationError> {
     Ok(())
 }
 
+/// Detects Windows device names in a platform-independent way before any filesystem access.
+fn is_reserved_device_name(segment: &str) -> bool {
+    let stem = segment
+        .split_once('.')
+        .map_or(segment, |(stem, _)| stem)
+        .trim_end_matches(|character| matches!(character, ' ' | '.'));
+    let fixed_name = ["CON", "PRN", "AUX", "NUL"];
+
+    if fixed_name
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+    {
+        return true;
+    }
+
+    let bytes = stem.as_bytes();
+    bytes.len() == 4
+        && (bytes[..3].eq_ignore_ascii_case(b"COM") || bytes[..3].eq_ignore_ascii_case(b"LPT"))
+        && matches!(bytes[3], b'1'..=b'9')
+}
+
 /// Detects a leading drive letter (`C:`) or UNC-style rooted path prefix.
 fn looks_like_drive_or_unc(normalized: &str) -> bool {
     let bytes = normalized.as_bytes();
@@ -243,6 +271,47 @@ mod tests {
                 RelativePath::parse(raw),
                 Err(PathValidationError::Unsafe),
                 "expected {raw:?} to be rejected"
+            );
+        }
+    }
+
+    /// Verifies reserved device names are rejected in every path component and with extensions.
+    #[test]
+    fn rejects_windows_reserved_device_names() {
+        for raw in [
+            "CON",
+            "con.txt",
+            "folder/PrN.md",
+            "AUX.tar.gz",
+            "NUL.",
+            "COM1",
+            "com9.log",
+            "folder\\LPT1\\notes.txt",
+            "lpt9.md",
+        ] {
+            assert_eq!(
+                RelativePath::parse(raw),
+                Err(PathValidationError::Unsafe),
+                "expected {raw:?} to be rejected"
+            );
+        }
+    }
+
+    /// Verifies names near the reserved device set remain valid ordinary relative paths.
+    #[test]
+    fn accepts_names_near_windows_reserved_device_names() {
+        for raw in [
+            "CONSOLE.txt",
+            "COM0",
+            "COM10.txt",
+            "LPT0",
+            "LPT10.md",
+            "NULLED/SKILL.md",
+            "folder.CON/notes.txt",
+        ] {
+            assert!(
+                RelativePath::parse(raw).is_ok(),
+                "expected {raw:?} to remain valid"
             );
         }
     }
