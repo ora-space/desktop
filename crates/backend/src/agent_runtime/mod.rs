@@ -12,9 +12,12 @@ mod title_acquisition;
 mod warm;
 mod warm_pool;
 
+#[cfg(test)]
+mod history_tests;
+
 use crate::app_event::AppEventPublisher;
 use cli_path::resolve_agent_cli_path;
-use history::{RecordOutcome, SessionRecorder};
+use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 pub use stream::SessionEventStream;
 use support::*;
 use title_acquisition::TitleAcquisition;
@@ -580,6 +583,7 @@ impl AgentRuntimeManager {
                     session_id,
                     history.next_seq,
                     &session.history_state,
+                    LocalHistoryClock,
                 )
                 .map_err(|source| {
                     BackendError::internal("failed to open session history", source)
@@ -602,6 +606,7 @@ impl AgentRuntimeManager {
                     &HistoryState::Degraded {
                         reason: failure.clone(),
                     },
+                    LocalHistoryClock,
                 )
                 .map_err(|source| {
                     BackendError::internal("failed to open session history", source)

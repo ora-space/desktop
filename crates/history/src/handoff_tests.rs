@@ -42,6 +42,12 @@ fn switched(from: AgentCli, to: AgentCli) -> HistoryRecord {
     })
 }
 
+fn delivered() -> HistoryRecord {
+    HistoryRecord::HandoffDelivered {
+        agent_session_id: "provider-2".to_string(),
+    }
+}
+
 fn user(text: &str) -> HistoryRecord {
     HistoryRecord::Update {
         update: Box::new(SessionUpdate::UserMessageChunk(ContentChunk::new(
@@ -252,16 +258,79 @@ fn a_switch_with_no_prompt_after_it_still_needs_the_handoff() {
 }
 
 #[test]
-fn a_prompt_after_the_switch_settles_the_new_binding() {
+fn a_delivered_handoff_settles_the_new_binding() {
     let recorded = history(vec![
         meta(AgentCli::OpenCode),
         user("hello"),
         turn_ended(StopReason::EndTurn),
         switched(AgentCli::OpenCode, AgentCli::Nga),
         user("carry on"),
+        delivered(),
         assistant("will do"),
         turn_ended(StopReason::EndTurn),
     ]);
 
     assert_eq!(binding_needs_handoff(&recorded), false);
+}
+
+#[test]
+fn a_prompt_that_was_never_delivered_leaves_the_handoff_owed() {
+    // Ora records the user's turn before sending it, so this file is exactly what
+    // a `session/prompt` that failed on the way out leaves behind. Reading the
+    // prompt as proof of delivery would lose the transcript for good: the new
+    // binding would never be offered it again.
+    let recorded = history(vec![
+        meta(AgentCli::OpenCode),
+        user("hello"),
+        turn_ended(StopReason::EndTurn),
+        switched(AgentCli::OpenCode, AgentCli::Nga),
+        user("carry on"),
+        turn_ended(StopReason::Cancelled),
+    ]);
+
+    assert_eq!(binding_needs_handoff(&recorded), true);
+}
+
+#[test]
+fn a_later_switch_reopens_a_handoff_an_earlier_one_settled() {
+    let recorded = history(vec![
+        meta(AgentCli::OpenCode),
+        switched(AgentCli::OpenCode, AgentCli::Nga),
+        user("carry on"),
+        delivered(),
+        turn_ended(StopReason::EndTurn),
+        switched(AgentCli::Nga, AgentCli::CodeAgentCli),
+    ]);
+
+    assert_eq!(binding_needs_handoff(&recorded), true);
+}
+
+#[test]
+fn a_delivery_record_is_not_part_of_the_transcript_it_reports_on() {
+    let rendered = render_handoff(&history(vec![
+        meta(AgentCli::OpenCode),
+        switched(AgentCli::OpenCode, AgentCli::Nga),
+        user("carry on"),
+        delivered(),
+        assistant("will do"),
+        turn_ended(StopReason::EndTurn),
+    ]));
+
+    assert_eq!(
+        rendered,
+        Some(
+            "<ora_session_handoff>\nThis conversation was previously handled by a different \
+             coding agent (opencode). The transcript below is its complete history, and the \
+             work it describes has already been done — build on it instead of repeating it. \
+             Tool calls are listed by name and outcome only; their inputs and outputs are not \
+             included. Continue from where the conversation left off. The user's new message \
+             follows this block.\n\
+             \n## Turn 1\n\
+             \n**User:**\ncarry on\n\
+             \n**Assistant:**\nwill do\n\
+             \n_The conversation moved from opencode to nga at this point._\n\
+             </ora_session_handoff>"
+                .to_string()
+        ),
+    );
 }

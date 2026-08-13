@@ -41,8 +41,13 @@ pub(super) enum RecordOutcome {
 /// session stops accepting prompts and the user is told why. Continuing to append
 /// after a failure would produce a file that looks complete while missing the
 /// middle of a conversation.
-pub(super) struct SessionRecorder {
-    writer: HistoryWriter<LocalHistoryClock>,
+///
+/// The clock is injected rather than reached for, so a test can assert on what a
+/// recorded sequence means without the process-wide local clock the runtime
+/// installs at startup. Production callers pass [`LocalHistoryClock`], which the
+/// type parameter defaults to so the runtime never has to name it.
+pub(super) struct SessionRecorder<C: HistoryClock = LocalHistoryClock> {
+    writer: HistoryWriter<C>,
     assembler: HistoryAssembler,
     state: RecorderState,
 }
@@ -52,7 +57,7 @@ enum RecorderState {
     Stopped,
 }
 
-impl SessionRecorder {
+impl<C: HistoryClock> SessionRecorder<C> {
     /// Opens the recorder for one session, resuming its position counter.
     ///
     /// A session whose history already failed opens stopped, so a restart does not
@@ -62,9 +67,10 @@ impl SessionRecorder {
         session_id: &str,
         next_seq: u32,
         history_state: &HistoryState,
+        clock: C,
     ) -> Result<Self, HistoryError> {
         Ok(Self {
-            writer: HistoryWriter::open(root, session_id, LocalHistoryClock)?,
+            writer: HistoryWriter::open(root, session_id, clock)?,
             assembler: HistoryAssembler::new(next_seq),
             state: match history_state {
                 HistoryState::Writable => RecorderState::Recording,
@@ -80,18 +86,14 @@ impl SessionRecorder {
 
     /// Writes the header that opens a newly created session's history.
     pub(super) fn record_meta(&mut self, session: &Session, cwd: &Path) -> RecordOutcome {
-        let seq = self.assembler.reserve_seq();
-        self.append(&[AssembledRecord {
-            seq,
-            record: HistoryRecord::Meta(SessionMeta {
-                schema_version: SCHEMA_VERSION,
-                session_id: session.id.to_string(),
-                task_id: session.task_id.to_string(),
-                agent_cli: session.agent_cli,
-                agent_session_id: session.agent_session_id.clone(),
-                cwd: cwd.to_path_buf(),
-            }),
-        }])
+        self.append_standalone(HistoryRecord::Meta(SessionMeta {
+            schema_version: SCHEMA_VERSION,
+            session_id: session.id.to_string(),
+            task_id: session.task_id.to_string(),
+            agent_cli: session.agent_cli,
+            agent_session_id: session.agent_session_id.clone(),
+            cwd: cwd.to_path_buf(),
+        }))
     }
 
     /// Records the user's turn from the blocks Ora chose to keep.
@@ -119,15 +121,20 @@ impl SessionRecorder {
         to: AgentCli,
         agent_session_id: String,
     ) -> RecordOutcome {
-        let seq = self.assembler.reserve_seq();
-        self.append(&[AssembledRecord {
-            seq,
-            record: HistoryRecord::AgentSwitched(AgentSwitch {
-                from,
-                to,
-                agent_session_id,
-            }),
-        }])
+        self.append_standalone(HistoryRecord::AgentSwitched(AgentSwitch {
+            from,
+            to,
+            agent_session_id,
+        }))
+    }
+
+    /// Records that the agent bound by the last switch was given the transcript.
+    ///
+    /// The provider session is named so the line states which binding was
+    /// brought up to date, rather than leaving that to be inferred from where
+    /// the line happens to sit relative to the switch above it.
+    pub(super) fn record_handoff_delivered(&mut self, agent_session_id: String) -> RecordOutcome {
+        self.append_standalone(HistoryRecord::HandoffDelivered { agent_session_id })
     }
 
     /// Returns a stopped recorder to service by first recording what it lost.
@@ -137,11 +144,17 @@ impl SessionRecorder {
     /// another agent later.
     pub(super) fn resume(&mut self, reason: String) -> RecordOutcome {
         self.state = RecorderState::Recording;
+        self.append_standalone(HistoryRecord::Gap { reason })
+    }
+
+    /// Appends one record that the assembler does not produce from the ACP stream.
+    ///
+    /// Session chrome — the header, a switch, a delivery, a gap — has no streamed
+    /// item to settle, so it claims a position directly instead of arriving as
+    /// something the assembler folded together.
+    fn append_standalone(&mut self, record: HistoryRecord) -> RecordOutcome {
         let seq = self.assembler.reserve_seq();
-        self.append(&[AssembledRecord {
-            seq,
-            record: HistoryRecord::Gap { reason },
-        }])
+        self.append(&[AssembledRecord { seq, record }])
     }
 
     /// Appends a batch, stopping this recorder for good if the write fails.

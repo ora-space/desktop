@@ -19,7 +19,7 @@ Ora is an ACP client, so the model context behind a session lives inside the age
 
 ## Public boundary
 
-`HistoryAssembler` turns updates into `AssembledRecord`s. `HistoryWriter` appends them and `remove_session_history` deletes a file. `read_session_history` returns a `SessionHistory`. `render_handoff` turns one into the block another agent receives. `history_path` derives where a session's file lives. Everything else is private.
+`HistoryAssembler` turns updates into `AssembledRecord`s. `HistoryWriter` appends them and `remove_session_history` deletes a file. `read_session_history` returns a `SessionHistory`. `render_handoff` turns one into the block another agent receives, and `binding_needs_handoff` answers whether the session's current agent has already been given it. `history_path` derives where a session's file lives. Everything else is private.
 
 ## File layout
 
@@ -29,7 +29,7 @@ Ora is an ACP client, so the model context behind a session lives inside the age
 
 Every line is a `HistoryLine`: a local RFC 3339 timestamp, a position, and one `HistoryRecord`.
 
-`Update` carries assembled ACP updates — one per settled message, thought, tool call, or plan — so replaying a file reproduces the conversation with no chunk merging on the read side. `Meta` opens the file. `TurnEnded` closes a prompt turn with its stop reason, which is the one thing provider replay never carried: without it a cancelled turn is indistinguishable from a completed one. `AgentSwitched` records a move to another CLI. `Gap` marks content a failed write lost.
+`Update` carries assembled ACP updates — one per settled message, thought, tool call, or plan — so replaying a file reproduces the conversation with no chunk merging on the read side. `Meta` opens the file. `TurnEnded` closes a prompt turn with its stop reason, which is the one thing provider replay never carried: without it a cancelled turn is indistinguishable from a completed one. `AgentSwitched` records a move to another CLI, and `HandoffDelivered` records that the agent it moved to was given the transcript. `Gap` marks content a failed write lost.
 
 Agent identities are stored as the same namespaced text the database uses, not as Rust variant names, so an archived file does not depend on how the enum is spelled today.
 
@@ -56,6 +56,8 @@ ACP cannot install a conversation into an agent: `session/new` takes no context 
 The transcript keeps user messages and assistant replies in full and reduces each tool call to its title and outcome. Reasoning, tool inputs and outputs, plans, and session chrome are dropped: they belong to the agent that produced them, are stale on arrival, or would crowd out the conversation itself. Text that contains the block's own markers is neutralized so a transcript cannot close the section wrapping it.
 
 There is no size budget. A long conversation can exceed the receiving model's context window, and that failure surfaces from the provider.
+
+`binding_needs_handoff` answers whether the agent currently bound to a session has been shown what came before it, reading the most recent of the two records that can settle the question: `HandoffDelivered` means yes, `AgentSwitched` with nothing after it means no. A user turn deliberately settles nothing. The runtime records a prompt before sending it, so a user turn sitting after a switch is equally consistent with a delivered transcript and with a `session/prompt` that never left the process — reading it as proof of delivery is what would lose a transcript permanently. A switch whose delivery the file cannot prove is therefore read as still owed, because handing a transcript over twice costs a repeated history while skipping it leaves an agent answering a conversation it cannot see. A file with no switch at all owes nothing: there is no binding to bring up to date.
 
 ## Interactions
 

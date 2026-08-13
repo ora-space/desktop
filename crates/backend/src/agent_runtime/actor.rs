@@ -2,7 +2,7 @@ use super::events::{
     drain_idle_events, drain_queued_prompt_events, settle_abandoned_session_response,
     settle_cancelled_prompt,
 };
-use super::handoff::prompt_for_agent;
+use super::handoff::{AgentPrompt, prompt_for_agent};
 use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
 use super::title_acquisition::PollAttempt;
@@ -440,8 +440,10 @@ impl RuntimeActor {
         let content_count = prompt.len();
         // Built before the prompt is recorded, so the transcript handed to a new
         // agent describes the conversation up to this turn rather than including it.
-        let handoff_carried = self.handoff_pending;
-        let sent = prompt_for_agent(self, &prompt);
+        let AgentPrompt {
+            blocks,
+            settles_handoff,
+        } = prompt_for_agent(self, &prompt);
         let outcome = self.recorder.record_prompt(&prompt);
         let stopped_recording = matches!(outcome, RecordOutcome::JustFailed { .. });
         self.settle_record(outcome);
@@ -450,15 +452,11 @@ impl RuntimeActor {
             // work is real whether or not the file kept it. This one has not
             // started: nothing is lost by refusing it, and running it would put
             // the conversation somewhere the record cannot follow.
-            //
-            // The transcript this prompt would have carried was never delivered
-            // either, so the binding still owes it.
-            self.handoff_pending = handoff_carried;
             let _ = events.try_send(Err(history_degraded()));
             self.channel = Some(channel);
             return;
         }
-        let request = PromptRequest::new(self.session.agent_session_id.clone(), sent);
+        let request = PromptRequest::new(self.session.agent_session_id.clone(), blocks);
         ora_debug!(session_id = %self.session.id, content_count = content_count, "session/prompt sent");
         let pending = match client
             .start_session_request::<_, PromptResponse>(
@@ -470,12 +468,32 @@ impl RuntimeActor {
         {
             Ok(pending) => pending,
             Err(error) => {
+                // The request never reached the agent, so a transcript this prompt
+                // was carrying is still owed and stays owed — in memory and, since
+                // no delivery was recorded, across a restart as well.
                 self.end_turn(StopReason::Cancelled);
                 let _ = events.try_send(Err(map_acp_error(error)));
                 self.isolate_channel(channel).await;
                 return;
             }
         };
+        if settles_handoff {
+            // Accepting the request is the last thing Ora can observe about delivery:
+            // past it the frame is on the agent's stdin and what the agent does with
+            // it is unobservable. Treating that as delivered keeps a connection lost
+            // mid-turn from re-injecting the whole conversation into an agent that
+            // already holds it — the transcript's preamble, which tells its reader
+            // the work belongs to a *different* agent, would be false if it did.
+            //
+            // Recording it can itself fail, which degrades the session and leaves no
+            // delivery line behind. The next actor then reads the binding as still
+            // owing a handoff and sends it again, the harmless direction to be wrong in.
+            self.handoff_pending = false;
+            let outcome = self
+                .recorder
+                .record_handoff_delivered(self.session.agent_session_id.clone());
+            self.settle_record(outcome);
+        }
         let mut permissions = HashMap::new();
         let mut input_state = ActiveInputState::default();
         loop {
@@ -724,6 +742,7 @@ impl RuntimeActor {
                 // the file, where the handoff renderer and a human can still see it.
                 HistoryRecord::Meta(_)
                 | HistoryRecord::AgentSwitched(_)
+                | HistoryRecord::HandoffDelivered { .. }
                 | HistoryRecord::Gap { .. } => continue,
             };
             if events.send(Ok(event)).await.is_err() {
@@ -918,6 +937,7 @@ mod tests {
             "session-1",
             0,
             &ora_domain::HistoryState::Writable,
+            super::super::history::LocalHistoryClock,
         )
         .expect("open actor recorder");
         let session = ora_domain::Session::new(

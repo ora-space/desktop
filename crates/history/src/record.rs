@@ -53,6 +53,14 @@ pub enum HistoryRecord {
     TurnEnded { stop_reason: StopReason },
     /// Records that the conversation moved to a different agent CLI.
     AgentSwitched(AgentSwitch),
+    /// Records that the agent bound by the preceding switch was given the record.
+    ///
+    /// Written only once the provider accepted the prompt carrying the
+    /// transcript, which is what separates it from the user turn recorded just
+    /// before that prompt was sent. Ora records a prompt before sending it, so a
+    /// user turn following a switch proves only that Ora meant to hand the
+    /// transcript over — this proves it did.
+    HandoffDelivered { agent_session_id: String },
     /// Marks a discontinuity left by a failed write, so a hole is never silent.
     Gap { reason: String },
 }
