@@ -279,7 +279,77 @@ const fn status_for(classification: ErrorClassification) -> StatusCode {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::layer::{Context, Layer};
+    use tracing_subscriber::registry::LookupSpan;
+
+    /// Records request outcomes without depending on the process-global subscriber.
+    #[derive(Clone, Debug, Default)]
+    pub(crate) struct OutcomeRecorder {
+        outcomes: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl OutcomeRecorder {
+        /// Builds the tracing layer used by scoped telemetry assertions.
+        pub(crate) fn layer(&self) -> OutcomeLayer {
+            OutcomeLayer {
+                outcomes: self.outcomes.clone(),
+            }
+        }
+
+        /// Returns the request outcomes observed by the recorder.
+        pub(crate) fn outcomes(&self) -> Vec<String> {
+            self.outcomes.lock().unwrap().clone()
+        }
+    }
+
+    /// Captures only the semantic outcome field from completion events.
+    #[derive(Clone, Debug)]
+    pub(crate) struct OutcomeLayer {
+        outcomes: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for OutcomeLayer
+    where
+        S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
+    {
+        /// Stores each emitted outcome so tests can distinguish failure from success.
+        fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
+            let mut visitor = OutcomeVisitor::default();
+            event.record(&mut visitor);
+            if let Some(outcome) = visitor.outcome {
+                self.outcomes.lock().unwrap().push(outcome);
+            }
+        }
+    }
+
+    /// Extracts the string value of the lifecycle outcome field.
+    #[derive(Default)]
+    struct OutcomeVisitor {
+        outcome: Option<String>,
+    }
+
+    impl tracing::field::Visit for OutcomeVisitor {
+        /// Preserves string-valued outcome fields exactly.
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            if field.name() == "outcome" {
+                self.outcome = Some(value.to_string());
+            }
+        }
+
+        /// Handles outcome values emitted through debug formatting.
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "outcome" {
+                self.outcome = Some(format!("{value:?}").trim_matches('"').to_string());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::test_support::OutcomeRecorder;
     use super::{WebApiError, status_for};
     use axum::body::{Body, to_bytes};
     use axum::extract::{FromRequest, Multipart};
@@ -291,9 +361,6 @@ mod tests {
     use ora_logging::with_recorded_trace_logging;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
-    use std::sync::{Arc, Mutex};
-    use tracing_subscriber::layer::{Context, Layer};
-    use tracing_subscriber::registry::LookupSpan;
 
     /// Verifies transport-only upload limits retain their native HTTP status.
     #[test]
@@ -369,67 +436,5 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(actual, json!({ "code": "invalid_request", "params": {} }));
         assert_eq!(recorder.outcomes(), vec!["failure"]);
-    }
-
-    /// Records request outcomes without depending on the process-global subscriber.
-    #[derive(Clone, Debug, Default)]
-    struct OutcomeRecorder {
-        outcomes: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl OutcomeRecorder {
-        /// Builds the tracing layer used by the scoped telemetry assertion.
-        fn layer(&self) -> OutcomeLayer {
-            OutcomeLayer {
-                outcomes: self.outcomes.clone(),
-            }
-        }
-
-        /// Returns the request outcomes observed by the recorder.
-        fn outcomes(&self) -> Vec<String> {
-            self.outcomes.lock().unwrap().clone()
-        }
-    }
-
-    /// Captures only the semantic outcome field from completion events.
-    #[derive(Clone, Debug)]
-    struct OutcomeLayer {
-        outcomes: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl<S> Layer<S> for OutcomeLayer
-    where
-        S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
-    {
-        /// Stores each emitted outcome so tests can distinguish failure from success.
-        fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
-            let mut visitor = OutcomeVisitor::default();
-            event.record(&mut visitor);
-            if let Some(outcome) = visitor.outcome {
-                self.outcomes.lock().unwrap().push(outcome);
-            }
-        }
-    }
-
-    /// Extracts the string value of the lifecycle outcome field.
-    #[derive(Default)]
-    struct OutcomeVisitor {
-        outcome: Option<String>,
-    }
-
-    impl tracing::field::Visit for OutcomeVisitor {
-        /// Preserves string-valued outcome fields exactly.
-        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-            if field.name() == "outcome" {
-                self.outcome = Some(value.to_string());
-            }
-        }
-
-        /// Handles outcome values emitted through debug formatting.
-        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-            if field.name() == "outcome" {
-                self.outcome = Some(format!("{value:?}").trim_matches('"').to_string());
-            }
-        }
     }
 }

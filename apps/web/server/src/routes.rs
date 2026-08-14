@@ -265,6 +265,7 @@ fn skill_imports_router() -> Router<AppState> {
 mod tests {
     use super::build_router;
     use crate::bootstrap::build_app_state_for_database;
+    use crate::error::test_support::OutcomeRecorder;
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode};
     use ora_application::WorktreeRepository;
@@ -1110,39 +1111,49 @@ mod tests {
         assert_contract_error(&response_json(get_response).await, "session_not_found");
     }
 
-    /// Verifies every multipart failure path returns the contract envelope instead of Axum text.
-    #[tokio::test]
-    async fn maps_multipart_failures_to_contract_errors() {
-        let (_temp_dir, _database_path, app) = test_router();
-        let requests = [
-            ("application/json", Body::empty()),
-            ("multipart/form-data", Body::empty()),
-            (
-                "multipart/form-data; boundary=boundary",
-                Body::from("malformed multipart body"),
-            ),
-        ];
+    /// Verifies every multipart failure path returns the contract envelope and failure telemetry.
+    #[test]
+    fn maps_multipart_failures_to_contract_errors() {
+        let recorder = OutcomeRecorder::default();
+        ora_logging::with_recorded_trace_logging(recorder.layer(), || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("multipart route test runtime should be constructible");
+            runtime.block_on(async {
+                let (_temp_dir, _database_path, app) = test_router();
+                let requests = [
+                    ("application/json", Body::empty()),
+                    ("multipart/form-data", Body::empty()),
+                    (
+                        "multipart/form-data; boundary=boundary",
+                        Body::from("malformed multipart body"),
+                    ),
+                ];
 
-        for (content_type, body) in requests {
-            let response = match app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(Method::POST)
-                        .uri("/api/skill-imports?mode=folder")
-                        .header("content-type", content_type)
-                        .body(body)
-                        .unwrap_or_else(|error| panic!("failed to build request: {error}")),
-                )
-                .await
-            {
-                Ok(response) => response,
-                Err(error) => panic!("request failed: {error}"),
-            };
+                for (index, (content_type, body)) in requests.into_iter().enumerate() {
+                    let response = match app
+                        .clone()
+                        .oneshot(
+                            Request::builder()
+                                .method(Method::POST)
+                                .uri("/api/skill-imports?mode=folder")
+                                .header("content-type", content_type)
+                                .body(body)
+                                .unwrap_or_else(|error| panic!("failed to build request: {error}")),
+                        )
+                        .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => panic!("request failed: {error}"),
+                    };
 
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-            assert_contract_error(&response_json(response).await, "invalid_request");
-        }
+                    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+                    assert_contract_error(&response_json(response).await, "invalid_request");
+                    assert_eq!(recorder.outcomes(), vec!["failure".to_string(); index + 1]);
+                }
+            });
+        });
     }
 
     /// Verifies catalog routes address resources by identifier while names remain editable fields.
