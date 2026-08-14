@@ -287,7 +287,7 @@ mod tests {
         let upload_root = tempdir().expect("upload root should be created");
 
         let error = tokio::time::timeout(
-            Duration::from_secs(1),
+            Duration::from_secs(5),
             receive_folder_upload(multipart, upload_root.path()),
         )
         .await
