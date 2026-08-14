@@ -5,6 +5,7 @@ use axum::extract::Path as AxumPath;
 use axum::extract::{Multipart, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use ora_application::ApplicationError;
 use ora_backend::Backend;
 use ora_contracts::{
     CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest,
@@ -43,6 +44,8 @@ pub struct CommitSkillImportBody {
 const MAX_ARCHIVE_UPLOAD_BYTES: u64 = 50 * 1024 * 1024;
 /// Cap for one folder upload streamed by the web adapter.
 const MAX_FOLDER_UPLOAD_BYTES: u64 = 200 * 1024 * 1024;
+/// Cap for the number of folder parts accepted before any additional part is materialized.
+const MAX_FOLDER_UPLOAD_FILES: usize = 1000;
 
 /// Receives a folder or archive multipart upload, materializes it, and prepares the session.
 pub async fn prepare_skill_import(
@@ -169,7 +172,16 @@ async fn receive_folder_upload(
 ) -> Result<SkillImportSource, WebApiError> {
     let mut total_bytes = 0u64;
     let mut received_any = false;
+    let mut received_files = 0usize;
     while let Some(part) = multipart.next_field().await.map_err(upload_read_error)? {
+        if received_files == MAX_FOLDER_UPLOAD_FILES {
+            return Err(WebApiError::from(
+                ApplicationError::SkillUploadTooManyFiles {
+                    max_files: MAX_FOLDER_UPLOAD_FILES,
+                },
+            ));
+        }
+        received_files += 1;
         received_any = true;
         let relative = part
             .file_name()
@@ -224,4 +236,86 @@ async fn stream_part_to_file(
 /// Maps a multipart stream failure into a stable upload error.
 fn upload_read_error(_: axum::extract::multipart::MultipartError) -> WebApiError {
     WebApiError::bad_request("import_upload_read_failed")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_FOLDER_UPLOAD_FILES, receive_folder_upload};
+    use axum::body::{Body, to_bytes};
+    use axum::extract::{FromRequest, Multipart};
+    use axum::http::{Request, header::CONTENT_TYPE};
+    use axum::response::IntoResponse;
+    use futures_util::{StreamExt, stream};
+    use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
+    use std::fmt::Write as _;
+    use std::fs;
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    /// Verifies the adapter rejects the 1001st part before polling its content stream.
+    #[tokio::test]
+    async fn stops_before_reading_the_part_after_the_file_limit() {
+        let boundary = "skill-upload-test-boundary";
+        let mut prefix = String::new();
+        for index in 0..MAX_FOLDER_UPLOAD_FILES {
+            write!(
+                &mut prefix,
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"file-{index}.txt\"\r\n\r\n\r\n"
+            )
+            .expect("multipart prefix should be writable");
+        }
+        write!(
+            &mut prefix,
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"file-{MAX_FOLDER_UPLOAD_FILES}.txt\"\r\n\r\n"
+        )
+        .expect("multipart limit part should be writable");
+
+        let body_stream = stream::iter([Ok::<Vec<u8>, std::io::Error>(prefix.into_bytes())])
+            .chain(stream::pending());
+        let body = Body::from_stream(body_stream);
+        let request = Request::builder()
+            .header(
+                CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .expect("multipart request should be constructible");
+        let multipart = Multipart::from_request(request, &())
+            .await
+            .expect("multipart extractor should accept the test body");
+        let upload_root = tempdir().expect("upload root should be created");
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            receive_folder_upload(multipart, upload_root.path()),
+        )
+        .await
+        .expect("the limit check must not wait for the 1001st file content")
+        .expect_err("the 1001st file should be rejected");
+        let response = error.into_response();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("error response should be readable");
+        let mut actual: Value =
+            serde_json::from_slice(&bytes).expect("error response should be valid JSON");
+        actual
+            .as_object_mut()
+            .expect("error response should be an object")
+            .remove("requestId");
+
+        let materialized_files = fs::read_dir(upload_root.path())
+            .expect("upload root should be readable")
+            .count();
+        assert_eq!(status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(materialized_files, MAX_FOLDER_UPLOAD_FILES);
+        assert_eq!(
+            actual,
+            json!({
+                "code": "skill_upload_too_many_files",
+                "params": { "maxFiles": MAX_FOLDER_UPLOAD_FILES },
+            })
+        );
+    }
 }
