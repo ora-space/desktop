@@ -1,0 +1,182 @@
+# PR test workflow (Linux only).
+#
+# Triggers:
+# - pull_request (any base branch): runs the test blocks affected by the change set.
+# - push to main: runs all three blocks unconditionally. This doubles as the
+#   post-merge verification and as the only cache producer — PR runs can read
+#   caches created on main, but caches written inside a PR are scoped to that
+#   PR and invisible to other PRs, so PR runs are restore-only (save-if below).
+#
+# Change detection maps paths onto the three existing Taskfile test blocks.
+# The mapping is deliberately conservative (better to over-run than to skip):
+# - test:frontend starts with `cargo xtask export-contracts`, so contracts and
+#   xtask changes affect the frontend block and the frontend job needs Rust.
+# - apps/desktop/src-tauri path-depends on crates/ (ora-backend, ora-contracts,
+#   ora-fs, ora-logging, ora-plugin-manager), so crates/ changes affect desktop.
+# - @ora/desktop TS tests build on packages/ (app-shell, chat, contracts,
+#   platform, ui), so packages/ changes affect desktop.
+name: pr-tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-tests-${{ github.ref }}
+  # Cancel superseded runs on PR pushes only; never cancel main runs, they
+  # are the cache producers.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      # On push to main every block runs regardless, so the filter only needs
+      # to execute for pull_request events (where it diffs via the API and
+      # needs no checkout).
+      - name: Detect affected blocks
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            shared: &shared
+              - 'Taskfile.yml'
+              - '.github/workflows/**'
+              - 'scripts/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'tsconfig*.json'
+              - 'eslint.config.js'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            frontend:
+              - *shared
+              - 'packages/**'
+              - 'apps/web/client/**'
+              - 'crates/contracts/**'
+              - 'xtask/**'
+            backend:
+              - *shared
+              - 'crates/**'
+              - 'apps/web/server/**'
+              - 'xtask/**'
+            desktop:
+              - *shared
+              - 'apps/desktop/**'
+              - 'crates/**'
+              - 'packages/**'
+
+  frontend:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # test:frontend regenerates TS contracts via `cargo xtask export-contracts`,
+      # which compiles xtask and ora-contracts from the root cargo workspace.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: pnpm install --frozen-lockfile
+      - run: task test:frontend
+
+  backend:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # ora-fs spec tests spawn the ripgrep binary, which GitHub-hosted
+      # runners do not preinstall.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+      - run: task test:backend
+
+  desktop:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      # The desktop block builds only the standalone src-tauri cargo workspace
+      # (its path-dependencies on crates/ compile into src-tauri/target), so
+      # the root workspace target is not cached here.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> apps/desktop/src-tauri/target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # System libraries required to compile Tauri 2 on ubuntu-latest (24.04).
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential
+      - run: pnpm install --frozen-lockfile
+      - run: task test:desktop
+
+  # Aggregate gate: the single check to mark as "required" in branch
+  # protection. Skipped blocks count as success; failures and cancellations
+  # propagate. Without this, a required-but-path-skipped job would leave the
+  # PR pending forever.
+  ci-ok:
+    needs: [changes, frontend, backend, desktop]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check aggregated job results
+        env:
+          RESULTS: >-
+            changes=${{ needs.changes.result }}
+            frontend=${{ needs.frontend.result }}
+            backend=${{ needs.backend.result }}
+            desktop=${{ needs.desktop.result }}
+        run: |
+          echo "$RESULTS"
+          for entry in $RESULTS; do
+            result="${entry#*=}"
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "::error::Job ${entry%%=*} finished with result '$result'"
+              exit 1
+            fi
+          done
