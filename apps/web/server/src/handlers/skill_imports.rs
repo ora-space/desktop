@@ -2,6 +2,7 @@ use crate::app_state::AppState;
 use crate::error::WebApiError;
 use axum::Json;
 use axum::extract::Path as AxumPath;
+use axum::extract::multipart::MultipartRejection;
 use axum::extract::{Multipart, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -48,8 +49,9 @@ const MAX_FOLDER_UPLOAD_BYTES: u64 = 200 * 1024 * 1024;
 pub async fn prepare_skill_import(
     State(app_state): State<AppState>,
     Query(query): Query<PrepareSkillImportQuery>,
-    multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Json<PrepareSkillImportResponse>, WebApiError> {
+    let multipart = multipart?;
     let upload_root =
         std::env::temp_dir().join(format!("ora-skill-import-upload-{}", Uuid::new_v4()));
     fs::create_dir_all(&upload_root)

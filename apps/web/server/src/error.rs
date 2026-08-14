@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::Request;
+use axum::extract::multipart::MultipartRejection;
 use axum::extract::rejection::JsonRejection;
 use axum::http::{HeaderValue, StatusCode, header::HeaderName};
 use axum::middleware::Next;
@@ -199,8 +200,16 @@ impl From<JsonRejection> for WebApiError {
 }
 
 impl From<axum::extract::rejection::QueryRejection> for WebApiError {
+    /// Maps malformed query extraction into the stable invalid-request contract.
     fn from(_error: axum::extract::rejection::QueryRejection) -> Self {
         Self::invalid_request("failed to decode query request")
+    }
+}
+
+impl From<MultipartRejection> for WebApiError {
+    /// Maps invalid or missing multipart boundaries into the stable invalid-request contract.
+    fn from(_error: MultipartRejection) -> Self {
+        Self::invalid_request("failed to decode multipart request")
     }
 }
 
@@ -272,14 +281,19 @@ const fn status_for(classification: ErrorClassification) -> StatusCode {
 #[cfg(test)]
 mod tests {
     use super::{WebApiError, status_for};
-    use axum::body::to_bytes;
-    use axum::http::StatusCode;
+    use axum::body::{Body, to_bytes};
+    use axum::extract::{FromRequest, Multipart};
+    use axum::http::{Request, StatusCode, header::CONTENT_TYPE};
     use axum::response::IntoResponse;
     use ora_application::ApplicationError;
     use ora_backend::ErrorClassification;
     use ora_contracts::RequestId;
+    use ora_logging::with_recorded_trace_logging;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::layer::{Context, Layer};
+    use tracing_subscriber::registry::LookupSpan;
 
     /// Verifies transport-only upload limits retain their native HTTP status.
     #[test]
@@ -324,5 +338,98 @@ mod tests {
                 "params": { "branchName": "ghost-branch" },
             })
         );
+    }
+
+    /// Verifies multipart extractor failures use the contract envelope and failure telemetry.
+    #[tokio::test]
+    async fn maps_multipart_rejection_to_contract_error_and_failure_telemetry() {
+        let request = Request::builder()
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::empty())
+            .expect("invalid multipart request should be constructible");
+        let rejection = match Multipart::from_request(request, &()).await {
+            Ok(_) => panic!("non-multipart content type must be rejected"),
+            Err(error) => error,
+        };
+        let recorder = OutcomeRecorder::default();
+        let response = with_recorded_trace_logging(recorder.layer(), || {
+            WebApiError::from(rejection).into_response()
+        });
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("error response should be readable");
+        let mut actual: Value =
+            serde_json::from_slice(&bytes).expect("error response should be valid JSON");
+        actual
+            .as_object_mut()
+            .expect("error response should be an object")
+            .remove("requestId");
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(actual, json!({ "code": "invalid_request", "params": {} }));
+        assert_eq!(recorder.outcomes(), vec!["failure"]);
+    }
+
+    /// Records request outcomes without depending on the process-global subscriber.
+    #[derive(Clone, Debug, Default)]
+    struct OutcomeRecorder {
+        outcomes: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl OutcomeRecorder {
+        /// Builds the tracing layer used by the scoped telemetry assertion.
+        fn layer(&self) -> OutcomeLayer {
+            OutcomeLayer {
+                outcomes: self.outcomes.clone(),
+            }
+        }
+
+        /// Returns the request outcomes observed by the recorder.
+        fn outcomes(&self) -> Vec<String> {
+            self.outcomes.lock().unwrap().clone()
+        }
+    }
+
+    /// Captures only the semantic outcome field from completion events.
+    #[derive(Clone, Debug)]
+    struct OutcomeLayer {
+        outcomes: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for OutcomeLayer
+    where
+        S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
+    {
+        /// Stores each emitted outcome so tests can distinguish failure from success.
+        fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
+            let mut visitor = OutcomeVisitor::default();
+            event.record(&mut visitor);
+            if let Some(outcome) = visitor.outcome {
+                self.outcomes.lock().unwrap().push(outcome);
+            }
+        }
+    }
+
+    /// Extracts the string value of the lifecycle outcome field.
+    #[derive(Default)]
+    struct OutcomeVisitor {
+        outcome: Option<String>,
+    }
+
+    impl tracing::field::Visit for OutcomeVisitor {
+        /// Preserves string-valued outcome fields exactly.
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            if field.name() == "outcome" {
+                self.outcome = Some(value.to_string());
+            }
+        }
+
+        /// Handles outcome values emitted through debug formatting.
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "outcome" {
+                self.outcome = Some(format!("{value:?}").trim_matches('"').to_string());
+            }
+        }
     }
 }
