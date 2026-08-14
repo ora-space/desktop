@@ -4,6 +4,7 @@ mod connection;
 mod events;
 mod handoff;
 mod history;
+mod replay;
 mod routing;
 mod scheduling;
 mod stream;
@@ -45,7 +46,7 @@ use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
     AgentCli, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus, TaskId,
 };
-use ora_history::{binding_needs_handoff, read_session_history};
+use ora_history::{HistoryIntegrity, binding_needs_handoff, read_session_history};
 use ora_logging::{ora_debug, ora_warn};
 use ora_scheduler::Scheduler;
 use routing::{SessionChannel, SessionEvent};
@@ -571,10 +572,10 @@ impl AgentRuntimeManager {
         let session_id = session.id.as_ref();
         match read_session_history(root, session_id) {
             Ok(history) => {
-                if history.dropped_lines > 0 {
+                if let HistoryIntegrity::Damaged { unreadable_lines } = history.integrity {
                     ora_warn!(
                         session_id = %session.id,
-                        dropped_lines = history.dropped_lines,
+                        unreadable_lines = unreadable_lines.get(),
                         "session history contains unreadable lines",
                     );
                 }

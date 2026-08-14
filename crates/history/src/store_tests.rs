@@ -2,7 +2,7 @@ use crate::assembler::AssembledRecord;
 use crate::clock::FixedHistoryClock;
 use crate::error::HistoryError;
 use crate::path::history_path;
-use crate::reader::read_session_history;
+use crate::reader::{HistoryIntegrity, read_session_history};
 use crate::record::{HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta};
 use crate::writer::{HistoryWriter, remove_session_history};
 use agent_client_protocol_schema::v1::StopReason;
@@ -64,7 +64,7 @@ fn reports_an_empty_history_for_a_session_that_was_never_written() {
 
     assert_eq!(history.lines, vec![]);
     assert_eq!(history.next_seq, 0);
-    assert_eq!(history.dropped_lines, 0);
+    assert_eq!(history.integrity, HistoryIntegrity::Complete);
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn discards_a_final_line_left_unfinished_by_an_interrupted_write() {
             message("complete"),
         )],
     );
-    assert_eq!(history.dropped_lines, 0);
+    assert_eq!(history.integrity, HistoryIntegrity::Complete);
 }
 
 #[test]
@@ -203,7 +203,12 @@ fn counts_a_damaged_line_that_is_not_the_interrupted_tail() {
             HistoryLine::new(expected_timestamp(), 1, message("after")),
         ],
     );
-    assert_eq!(history.dropped_lines, 1);
+    assert_eq!(
+        history.integrity,
+        HistoryIntegrity::Damaged {
+            unreadable_lines: std::num::NonZeroUsize::new(1).expect("one is non-zero"),
+        },
+    );
 }
 
 #[test]

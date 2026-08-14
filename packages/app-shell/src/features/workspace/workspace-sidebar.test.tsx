@@ -54,6 +54,7 @@ function conversation(overrides: Partial<SessionConversation> = {}): SessionConv
   return {
     configOptions: [],
     modelChanges: [],
+    historyNotices: [],
     turns: [],
     availableCommands: [],
     sessionTitle: null,

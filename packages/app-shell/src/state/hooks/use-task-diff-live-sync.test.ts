@@ -25,6 +25,7 @@ function conversation(
   return {
     configOptions: [],
     modelChanges: [],
+    historyNotices: [],
     turns: toolStatus === undefined
       ? []
       : [{

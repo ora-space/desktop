@@ -245,6 +245,17 @@ pub struct SessionPermissionRequest {
     pub options: Vec<PermissionOption>,
 }
 
+/// Describes durable conversation content that Ora knows is missing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export_to = "session.ts")]
+pub enum SessionHistoryNotice {
+    /// Complete JSONL records could not be decoded, so their positions are unknown.
+    UnreadableRecords { count: u32 },
+    /// Recording stopped after content was already produced and later resumed.
+    UnrecordedContent { reason: String },
+}
+
 /// Replays Ora's recorded history while keeping JSON-RPC framing private to the backend.
 ///
 /// The stream carries assembled updates read back from Ora's own record, not the
@@ -264,6 +275,10 @@ pub enum LoadSessionEvent {
         #[serde(rename = "stopReason")]
         #[ts(type = "import(\"@agentclientprotocol/sdk\").StopReason")]
         stop_reason: StopReason,
+    },
+    /// Reports a known hole without pretending that the surviving transcript is continuous.
+    HistoryNotice {
+        notice: SessionHistoryNotice,
     },
     Completed,
 }
@@ -418,6 +433,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     LoadSessionRequest::export(config)?;
     PromptSessionRequest::export(config)?;
     SessionPermissionRequest::export(config)?;
+    SessionHistoryNotice::export(config)?;
     LoadSessionEvent::export(config)?;
     PromptSessionEvent::export(config)?;
     RespondToPermissionRequest::export(config)?;

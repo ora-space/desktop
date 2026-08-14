@@ -96,6 +96,7 @@ export type LoadSessionEvent =
     "type": "turn_ended";
     stopReason: import("@agentclientprotocol/sdk").StopReason;
   }
+  | { "type": "history_notice"; notice: SessionHistoryNotice }
   | { "type": "completed" };
 
 /**
@@ -169,6 +170,14 @@ export type Session = {
   status: SessionStatus;
   historyState: SessionHistoryState;
 };
+
+/**
+ * Describes durable conversation content that Ora knows is missing.
+ */
+export type SessionHistoryNotice = {
+  "type": "unreadable_records";
+  count: number;
+} | { "type": "unrecorded_content"; reason: string };
 
 /**
  * Reports whether Ora can still extend this session's recorded history.

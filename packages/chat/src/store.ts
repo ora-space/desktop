@@ -1,6 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
   ContractsClient,
+  SessionHistoryNotice,
   SessionPermissionRequest,
 } from "@ora/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
@@ -111,6 +112,7 @@ export type ChatSessionClient = Pick<
 const EMPTY_CONVERSATION: SessionConversation = {
   configOptions: [],
   modelChanges: [],
+  historyNotices: [],
   turns: [],
   availableCommands: [],
   sessionTitle: null,
@@ -246,6 +248,8 @@ export function createChatStore(
             staged.addPermission(event);
           } else if (event.type === "turn_ended") {
             staged.endTurn(event.stopReason);
+          } else if (event.type === "history_notice") {
+            staged.addHistoryNotice(event.notice);
           } else {
             completed = true;
           }
@@ -557,6 +561,8 @@ export function createChatStore(
  */
 class HistoryBuilder {
   readonly permissions: SessionPermissionRequest[] = [];
+  /** Durable-record warnings staged until the finite load completes successfully. */
+  readonly historyNotices: SessionHistoryNotice[] = [];
   /** Session-scoped options seen during replay; `null` when the agent reported none. */
   configOptions: acp.SessionConfigOption[] | null = null;
   private readonly turns: ChatTurn[] = [];
@@ -598,6 +604,11 @@ class HistoryBuilder {
     this.permissions.push(request);
   }
 
+  /** Retains one backend-authored integrity notice without guessing a turn position. */
+  addHistoryNotice(notice: SessionHistoryNotice): void {
+    this.historyNotices.push(notice);
+  }
+
   /** Settles the open turn with the outcome the record captured for it. */
   endTurn(stopReason: acp.StopReason): void {
     const last = this.turns.at(-1);
@@ -636,6 +647,7 @@ class HistoryBuilder {
     return {
       ...EMPTY_CONVERSATION,
       turns: this.turns,
+      historyNotices: this.historyNotices,
       availableCommands: this.availableCommands,
       sessionTitle: this.sessionTitle,
       sessionUpdatedAt: this.sessionUpdatedAt,

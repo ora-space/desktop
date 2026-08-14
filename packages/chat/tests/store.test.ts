@@ -49,6 +49,7 @@ test("loads provider history and reconstructs turns from message boundaries", as
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
     modelChanges: [],
+    historyNotices: [],
     turns: [
       {
         id: "local-1",
@@ -80,6 +81,36 @@ test("loads provider history and reconstructs turns from message boundaries", as
     pendingPermissions: [],
     error: null,
   });
+});
+
+test("retains durable-history notices after a successful replay", async () => {
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([
+      {
+        type: "history_notice",
+        notice: { type: "unreadable_records", count: 2 },
+      },
+      {
+        type: "history_notice",
+        notice: {
+          type: "unrecorded_content",
+          reason: "no space left on device",
+        },
+      },
+      { type: "completed" },
+    ]),
+    prompt: () => events<PromptSessionEvent>([]),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client);
+
+  await store.getState().loadSession("ora-1");
+
+  assert.deepEqual(store.getState().conversations["ora-1"]?.historyNotices, [
+    { type: "unreadable_records", count: 2 },
+    { type: "unrecorded_content", reason: "no space left on device" },
+  ]);
 });
 
 test("restores a cancelled turn and its unfinished tools from the recorded boundary", async () => {
@@ -428,6 +459,7 @@ test("loads commands, session metadata, and structured content without creating 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
     modelChanges: [],
+    historyNotices: [],
     turns: [{
       id: "local-1",
       userMessage: { kind: "message", id: "local-2", role: "user", content: "", structuredContent: [image], createdAt: 42, protocolMessageId: "user-media" },
@@ -682,6 +714,10 @@ test("rolls back staged load updates when replay fails before completion", async
   const client: ChatSessionClient = {
     load: () => ({
       async *[Symbol.asyncIterator]() {
+        yield {
+          type: "history_notice" as const,
+          notice: { type: "unreadable_records" as const, count: 1 },
+        };
         yield textEvent("agent_message_chunk", "uncommitted", "agent-new");
         throw new Error("load failed");
       },
@@ -707,6 +743,9 @@ test("rolls back staged load updates when replay fails before completion", async
       "ora-1": {
         configOptions: [],
         modelChanges: [],
+        historyNotices: [
+          { type: "unrecorded_content", reason: "earlier write failure" },
+        ],
         turns: [previousTurn],
         availableCommands: [],
         sessionTitle: null,
@@ -725,6 +764,9 @@ test("rolls back staged load updates when replay fails before completion", async
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: [],
     modelChanges: [],
+    historyNotices: [
+      { type: "unrecorded_content", reason: "earlier write failure" },
+    ],
     turns: [previousTurn],
     availableCommands: [],
     sessionTitle: null,
@@ -769,6 +811,7 @@ test("adopts the agent's answer to a model selection over the requested value", 
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: modelOptions("fast"),
     modelChanges: [],
+    historyNotices: [],
     turns: [],
     availableCommands: [],
     sessionTitle: null,
@@ -799,6 +842,7 @@ test("reports an unreachable model selection instead of silently keeping the old
   assert.deepEqual(store.getState().conversations["ora-1"], {
     configOptions: modelOptions("fast"),
     modelChanges: [],
+    historyNotices: [],
     turns: [],
     availableCommands: [],
     sessionTitle: null,

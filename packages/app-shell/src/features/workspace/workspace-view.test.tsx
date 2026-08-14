@@ -92,6 +92,64 @@ describe("WorkspaceView", () => {
     );
   });
 
+  it("warns when loaded history contains records whose positions are unknown", async () => {
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.tasks = [
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Damaged history",
+        status: "todo",
+        workspaceMode: "worktree",
+        type: "default",
+        workflowRunId: null,
+      },
+    ];
+    state.sessions = [
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        title: null,
+        historyState: { type: "writable" },
+      },
+    ];
+    const client = createMockClient(state);
+    client.session.load = async function* () {
+      yield {
+        type: "history_notice" as const,
+        notice: { type: "unreadable_records" as const, count: 2 },
+      };
+      yield { type: "completed" as const };
+    };
+    const chatStore = createChatStore(client.session);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      chatStore,
+    );
+    useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent(/有 2 条历史记录无法读取|2 history records could not be read/);
+    expect(within(banner).queryByRole("button")).toBeNull();
+    expect(await screen.findByRole("textbox")).toBeEnabled();
+  });
+
   it("does not load history for a newly initialized session", async () => {
     const state = createMockClientState();
     state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];

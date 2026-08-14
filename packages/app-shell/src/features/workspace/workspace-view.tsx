@@ -554,7 +554,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           </Button>
           <WindowControls />
         </div>
-        <SessionHistoryBanner session={session} />
+        <SessionHistoryBanner
+          session={session}
+          notices={conversation?.historyNotices ?? []}
+        />
         <WorkspaceReviewLayout context={reviewContext}>
           <ChatView
             taskId={task?.id}

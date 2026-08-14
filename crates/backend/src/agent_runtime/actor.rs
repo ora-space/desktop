@@ -3,6 +3,7 @@ use super::events::{
     settle_cancelled_prompt,
 };
 use super::handoff::{AgentPrompt, prompt_for_agent};
+use super::replay::recorded_replay;
 use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
 use super::title_acquisition::PollAttempt;
@@ -19,7 +20,6 @@ use agent_client_protocol_schema::v1::{
 use agent_client_protocol_schema::v1::{PromptRequest, PromptResponse, StopReason};
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_acp::AcpClient;
-use ora_history::HistoryRecord;
 use ora_logging::{ora_debug, ora_warn};
 use tokio::process::ChildStdin;
 use tokio::time::{Instant, timeout};
@@ -730,21 +730,7 @@ impl RuntimeActor {
                 return Replay::Unreadable;
             }
         };
-        for line in history.lines {
-            let event = match line.record {
-                HistoryRecord::Update { update } => {
-                    LoadSessionEvent::SessionUpdate { update: *update }
-                }
-                HistoryRecord::TurnEnded { stop_reason } => {
-                    LoadSessionEvent::TurnEnded { stop_reason }
-                }
-                // Bookkeeping the conversation view has no place for. It stays in
-                // the file, where the handoff renderer and a human can still see it.
-                HistoryRecord::Meta(_)
-                | HistoryRecord::AgentSwitched(_)
-                | HistoryRecord::HandoffDelivered { .. }
-                | HistoryRecord::Gap { .. } => continue,
-            };
+        for event in recorded_replay(history) {
             if events.send(Ok(event)).await.is_err() {
                 return Replay::Abandoned;
             }

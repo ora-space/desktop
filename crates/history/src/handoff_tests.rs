@@ -1,5 +1,5 @@
 use crate::handoff::{binding_needs_handoff, render_handoff};
-use crate::reader::SessionHistory;
+use crate::reader::{HistoryIntegrity, SessionHistory};
 use crate::record::{AgentSwitch, HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta};
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
@@ -19,8 +19,18 @@ fn history(records: Vec<HistoryRecord>) -> SessionHistory {
     SessionHistory {
         lines,
         next_seq: 0,
-        dropped_lines: 0,
+        integrity: HistoryIntegrity::Complete,
     }
+}
+
+/// Builds a history whose surviving records cannot locate the unreadable lines.
+fn damaged_history(records: Vec<HistoryRecord>, unreadable_lines: usize) -> SessionHistory {
+    let mut history = history(records);
+    history.integrity = HistoryIntegrity::Damaged {
+        unreadable_lines: std::num::NonZeroUsize::new(unreadable_lines)
+            .expect("damaged history requires unreadable lines"),
+    };
+    history
 }
 
 fn meta(agent_cli: AgentCli) -> HistoryRecord {
@@ -89,6 +99,32 @@ fn renders_nothing_for_a_session_that_was_never_prompted() {
     let rendered = render_handoff(&history(vec![meta(AgentCli::OpenCode)]));
 
     assert_eq!(rendered, None);
+}
+
+#[test]
+fn warns_the_successor_when_unreadable_lines_make_the_transcript_incomplete() {
+    let rendered = render_handoff(&damaged_history(
+        vec![
+            meta(AgentCli::OpenCode),
+            user("keep going"),
+            turn_ended(StopReason::EndTurn),
+        ],
+        2,
+    ))
+    .expect("damaged history should render a warning");
+
+    assert!(rendered.contains("This transcript is incomplete"));
+    assert!(rendered.contains("2 history records could not be decoded"));
+    assert!(!rendered.contains("complete history"));
+}
+
+#[test]
+fn warns_the_successor_even_when_no_conversation_record_survived() {
+    let rendered = render_handoff(&damaged_history(vec![meta(AgentCli::OpenCode)], 1))
+        .expect("damage alone should be handed over");
+
+    assert!(rendered.contains("1 history record could not be decoded"));
+    assert!(!rendered.contains("## Turn"));
 }
 
 #[test]

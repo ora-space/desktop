@@ -19,7 +19,7 @@ Ora is an ACP client, so the model context behind a session lives inside the age
 
 ## Public boundary
 
-`HistoryAssembler` turns updates into `AssembledRecord`s. `HistoryWriter` appends them and `remove_session_history` deletes a file. `read_session_history` returns a `SessionHistory`. `render_handoff` turns one into the block another agent receives, and `binding_needs_handoff` answers whether the session's current agent has already been given it. `history_path` derives where a session's file lives. Everything else is private.
+`HistoryAssembler` turns updates into `AssembledRecord`s. `HistoryWriter` appends them and `remove_session_history` deletes a file. `read_session_history` returns a `SessionHistory` whose `HistoryIntegrity` says whether every complete line survived decoding. `render_handoff` turns one into the block another agent receives, and `binding_needs_handoff` answers whether the session's current agent has already been given it. `history_path` derives where a session's file lives. Everything else is private.
 
 ## File layout
 
@@ -44,7 +44,7 @@ Agent identities are stored as the same namespaced text the database uses, not a
 ## Failure semantics
 
 - A missing file is an empty history, not an error. A session that was never prompted has nothing recorded, and neither does one created before Ora owned its own history.
-- A final line left unterminated by an interrupted write is discarded silently — that is the expected shape of a crash. Any other unparseable line is dropped but counted in `dropped_lines`, because it lost content that no longer has a place in the timeline and the caller must be able to say so.
+- A final line left unterminated by an interrupted write is discarded silently — that is the expected shape of a crash. Any other unparseable line is omitted and returns `HistoryIntegrity::Damaged` with its count. Its logical position is deliberately not guessed: append order is not timeline order, and an unreadable line may have corrected a position that still has an older valid record.
 - Writes are flushed, not synced. Losing the last records to a power cut is an accepted trade for keeping a long turn's appends off the disk's latency path.
 - Deleting a session's history removes its file and leaves its two shard directories in place. They are shared with every other session whose identifier starts the same way, so removing one that looks empty would race a session being created alongside it.
 - Every write error is a reason to stop writing that session, never to retry silently. A history that skips records is more dangerous than one that stops, because the gap is invisible to whoever replays it — see the degraded-write handling in [ACP Agent Runtime](../../docs/agent-runtime.md).
@@ -53,7 +53,7 @@ Agent identities are stored as the same namespaced text the database uses, not a
 
 ACP cannot install a conversation into an agent: `session/new` takes no context and `session/prompt` takes a single user turn. Every recorded turn therefore collapses into one user message, and the receiving agent sees a transcript it is being shown rather than one it took part in. The preamble exists to say so.
 
-The transcript keeps user messages and assistant replies in full and reduces each tool call to its title and outcome. Reasoning, tool inputs and outputs, plans, and session chrome are dropped: they belong to the agent that produced them, are stale on arrival, or would crowd out the conversation itself. Text that contains the block's own markers is neutralized so a transcript cannot close the section wrapping it.
+The transcript keeps user messages and assistant replies in full and reduces each tool call to its title and outcome. Reasoning, tool inputs and outputs, plans, and session chrome are dropped: they belong to the agent that produced them, are stale on arrival, or would crowd out the conversation itself. Text that contains the block's own markers is neutralized so a transcript cannot close the section wrapping it. A damaged history is labelled incomplete with the unreadable-record count and unknown placement, even when no conversation record survived, so the successor never receives a partial transcript described as complete.
 
 There is no size budget. A long conversation can exceed the receiving model's context window, and that failure surfaces from the provider.
 

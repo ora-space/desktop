@@ -2,7 +2,17 @@ use crate::error::HistoryError;
 use crate::path::history_path;
 use crate::record::HistoryLine;
 use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use std::path::Path;
+
+/// Describes whether every durable record could be restored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryIntegrity {
+    /// Every complete line was decoded successfully.
+    Complete,
+    /// Complete lines were unreadable and their timeline positions are unknown.
+    Damaged { unreadable_lines: NonZeroUsize },
+}
 
 /// One session's complete history, restored to conversation order.
 pub struct SessionHistory {
@@ -10,12 +20,12 @@ pub struct SessionHistory {
     pub lines: Vec<HistoryLine>,
     /// The position the next appended record should claim.
     pub next_seq: u32,
-    /// Lines that could not be parsed and were not an interrupted final write.
+    /// Whether complete lines had to be omitted while reading the record.
     ///
     /// A torn last line is normal after a crash and is not counted here. Anything
     /// else means the file lost content that no longer has a place in the
     /// timeline, which callers are expected to surface rather than absorb.
-    pub dropped_lines: usize,
+    pub integrity: HistoryIntegrity,
 }
 
 impl SessionHistory {
@@ -41,7 +51,7 @@ pub fn read_session_history(root: &Path, session_id: &str) -> Result<SessionHist
             return Ok(SessionHistory {
                 lines: Vec::new(),
                 next_seq: 0,
-                dropped_lines: 0,
+                integrity: HistoryIntegrity::Complete,
             });
         }
         Err(source) => return Err(HistoryError::Read { path, source }),
@@ -77,10 +87,14 @@ pub fn read_session_history(root: &Path, session_id: &str) -> Result<SessionHist
         .map(|line| line.seq)
         .max()
         .map_or(0, |seq| seq.saturating_add(1));
+    let integrity = match NonZeroUsize::new(dropped_lines) {
+        Some(unreadable_lines) => HistoryIntegrity::Damaged { unreadable_lines },
+        None => HistoryIntegrity::Complete,
+    };
     Ok(SessionHistory {
         lines: order_lines(parsed),
         next_seq,
-        dropped_lines,
+        integrity,
     })
 }
 

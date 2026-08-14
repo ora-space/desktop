@@ -1,4 +1,4 @@
-use crate::reader::SessionHistory;
+use crate::reader::{HistoryIntegrity, SessionHistory};
 use crate::record::HistoryRecord;
 use agent_client_protocol_schema::v1::ContentBlock;
 use agent_client_protocol_schema::v1::SessionUpdate;
@@ -27,7 +27,7 @@ const CLOSE_MARKER: &str = "</ora_session_handoff>";
 /// second answer that can disagree with the transcript it introduces.
 pub fn render_handoff(history: &SessionHistory) -> Option<String> {
     let turns = collect_turns(history);
-    if turns.is_empty() {
+    if turns.is_empty() && history.integrity == HistoryIntegrity::Complete {
         return None;
     }
 
@@ -37,12 +37,27 @@ pub fn render_handoff(history: &SessionHistory) -> Option<String> {
     if let Some(previous) = previous_agent(history) {
         let _ = write!(rendered, " ({name})", name = previous.executable_name());
     }
-    rendered.push_str(
-        ". The transcript below is its complete history, and the work it describes has \
-         already been done — build on it instead of repeating it. Tool calls are listed \
-         by name and outcome only; their inputs and outputs are not included. Continue \
-         from where the conversation left off. The user's new message follows this block.\n",
-    );
+    match history.integrity {
+        HistoryIntegrity::Complete => rendered.push_str(
+            ". The transcript below is its complete history, and the work it describes has \
+             already been done — build on it instead of repeating it. Tool calls are listed \
+             by name and outcome only; their inputs and outputs are not included. Continue \
+             from where the conversation left off. The user's new message follows this block.\n",
+        ),
+        HistoryIntegrity::Damaged { unreadable_lines } => {
+            let count = unreadable_lines.get();
+            let noun = if count == 1 { "record" } else { "records" };
+            let _ = writeln!(
+                rendered,
+                ". This transcript is incomplete: {count} history {noun} could not be decoded, \
+                 and the original positions are unknown. Do not assume continuity. The surviving \
+                 work has already been done — build on it instead of repeating it. Tool calls are \
+                 listed by name and outcome only; their inputs and outputs are not included. \
+                 Continue from where the conversation left off. The user's new message follows \
+                 this block.",
+            );
+        }
+    }
 
     for (index, turn) in turns.iter().enumerate() {
         let _ = write!(rendered, "\n## Turn {number}\n", number = index + 1);
