@@ -25,6 +25,14 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 - Opening a session route also registers its provider-to-Ora identity mapping, so ACP frame traces correlate on the stable Ora session id.
 - Title-list polling is actor-owned low-priority work: scheduler tasks only enqueue internal commands, the actor performs the ACP request when idle, and a new user operation can preempt it. Each list request has a five-second cap; the final attempt closes the window regardless of its result. `TitleUpdate` does not terminate an in-flight list request, while stale prompt-stream `Cancel` commands are ignored. Slow consumers cannot block the session actor or the application-event publisher.
 
+## Adapter streams
+
+`SessionEventStream` is the adapter-facing receiver for one load, prompt, or application-event
+subscription. `recv` waits for the next item. `try_recv` inspects a buffered item without waiting
+so a transport that is shutting down can still surface a terminal error instead of treating the
+stream as a clean end. Dropping an incomplete actor-backed stream sends cancel; application-event
+streams run their subscribe cleanup instead.
+
 ## Lifecycle boundaries
 
 Startup reconciles stale persisted Running sessions to Stopped. Create persists only after `session/new` succeeds, opens Ora's history record before the first prompt, returns the latest setup-time available-command catalog, and retains other setup updates for the first prompt. Load restores Stopped on setup failure and streams Ora's recorded history rather than the provider's replay. A session accepts only one load or prompt operation at a time.

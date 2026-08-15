@@ -65,11 +65,15 @@ state. An empty project catalog is ready for use.
 ## Shutdown
 
 On Ctrl+C the runtime cancels a shared shutdown token on application state before Axum starts
-draining connections. Infinite NDJSON streams (`GET /api/app-events/watch`,
-`GET /api/tasks/{taskId}/files/watch`, and `POST /api/specs/watch`) observe that token, emit an
-`end` frame, and complete. In-flight ACP load and prompt streams do the same, so a live browser tab
-cannot pin the process. Graceful shutdown is retained; the server does not force-kill connections or
-impose a coarse shutdown timeout.
+draining connections. All NDJSON responses share one framing path in
+`apps/web/server/src/handlers/ndjson_stream.rs`: `GET /api/app-events/watch`,
+`GET /api/tasks/{taskId}/files/watch`, `POST /api/specs/watch`, and in-flight ACP load and prompt
+streams. They observe that token and complete so a live browser tab cannot pin the process.
+
+When shutdown wins, the stream inspects already-queued items without waiting for future events. A
+buffered terminal error is emitted as an `error` frame and recorded as failure. Buffered data is
+discarded. Otherwise the stream emits `end` and records success. Graceful shutdown is retained; the
+server does not force-kill connections or impose a coarse shutdown timeout.
 
 ## HTTP API
 
@@ -110,7 +114,7 @@ Route paths come from shared `ora-contracts` path constants, while the generatio
 
 - `GET /api/app-events/watch`
 
-The first data frame is `Ready`. The backend broadcasts subsequent invalidations to every active subscriber and does not use the HTTP connection as a browser-page lease. Events are not persisted or replayed, so clients refetch sessions after initial subscription, stream loss, lag, or queue overflow. The stream also ends when the server begins graceful shutdown. The Web App Shell separately uses a same-origin Web Lock to ensure only one browser tab mounts normal application work.
+The first data frame is `Ready`. The backend broadcasts subsequent invalidations to every active subscriber and does not use the HTTP connection as a browser-page lease. Events are not persisted or replayed, so clients refetch sessions after initial subscription, stream loss, lag, or queue overflow. The stream also ends when the server begins graceful shutdown; a buffered terminal error is emitted as an `error` frame instead of a successful `end`. The Web App Shell separately uses a same-origin Web Lock to ensure only one browser tab mounts normal application work.
 
 ### agentRuntime
 
@@ -224,7 +228,7 @@ Task workspace failures use the same mapping: missing task or workspace path ret
 - `task run:backend` starts the Rust HTTP backend on its default port.
 - `task run:frontend` starts Vite and expects the backend to run separately.
 
-Long-lived task workspace watch responses defer completion until an end or error frame so the request id, error payload, and log event remain correlated. This keeps the watcher aligned with the ACP stream lifecycle and prevents an early success event followed by a duplicate failure event.
+NDJSON responses defer completion until an `end` or `error` frame so the request id, error payload, and log event remain correlated. Shared framing in `handlers/ndjson_stream.rs` keeps app-event, workspace, spec, load, and prompt streams on the same lifecycle and prevents an early success event followed by a duplicate failure event.
 
 ## Storage behavior
 

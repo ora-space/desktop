@@ -25,7 +25,7 @@ General-purpose filesystem browsing remains outside this crate. Specification fi
 
 Dropping the last backend owner shuts down provider supervisors and initiates bounded process-tree cleanup.
 
-The application event stream is deliberately not an event log: events are not persisted or replayed, a bounded queue may terminate a slow subscription, and clients refetch the database-backed queries after stream loss. Every active transport may subscribe to the same broadcast; browser-page exclusivity belongs to the frontend host rather than this stream.
+The application event stream is deliberately not an event log: events are not persisted or replayed, a bounded queue may terminate a slow subscription, and clients refetch the database-backed queries after stream loss. Every active transport may subscribe to the same broadcast; browser-page exclusivity belongs to the frontend host rather than this stream. Adapters that abort consumption, such as Web graceful shutdown, may use `SessionEventStream::try_recv` to observe a buffered terminal error without waiting for the next event.
 
 See [Application and Contracts Boundary](../../docs/application-contracts.md) and [ACP Agent Runtime](../../docs/agent-runtime.md).
 See also [Specification management](../../docs/spec-management.md).
