@@ -31,7 +31,7 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 
 ## Graph storage
 
-The `graph` column stores the complete React Flow JSON document. The backend treats it as an opaque string — no structural validation is performed at this layer. Validation and compilation belong to the future Workflow Runtime.
+The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string. The [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
 
 ## Handlers
 
@@ -57,7 +57,7 @@ Unlike project and task, workflow deletion follows the standard CRUD handler pat
 
 ## Workflow runs
 
-A workflow run freezes one published snapshot and executes it against a dedicated run-task and Git worktree. The run CRUD layer is graph-agnostic; the execution engine (start/restart/HITL) builds on top of the same repository later.
+A workflow run freezes one published snapshot and executes it against a dedicated run-task and Git worktree. The run CRUD layer is graph-agnostic. The execution engine owns start/restart/HITL on top of the same repository; `ora-backend` implements `NodeExecutor` as `WorkflowRunNodeExecutor` and composes it at `Backend::open`.
 
 ### Entities and tables
 
@@ -85,8 +85,8 @@ A published snapshot referenced by a live run cannot be soft-deleted (`SnapshotI
 
 ## Boundaries (non-goals)
 
-- Workflow execution, runtime variables, and checkpoints belong to the future Workflow Runtime layer. The run CRUD layer persists runs and node-run records but does not execute them; node-run writes and the state machine (start/restart/HITL) are engine-owned.
-- Graph validation and React Flow node-type compilation are not part of this layer.
+- Workflow-run CRUD persists runs and node-run records but does not execute them. Graph execution, node-run writes, and the state machine (start/restart/HITL) are engine-owned in `ora-application`, with agent-node sessions driven by `ora-backend`'s `WorkflowRunNodeExecutor`. Runtime variables and checkpoints are out of scope for this layer.
+- Graph validation at run start belongs to the workflow run engine, not the definition CRUD handlers.
 - Tauri command registration and web-server route wiring are transport concerns owned by the respective adapters.
 
-See [Domain Models](domain-models.md), [Application and Contracts Boundary](application-contracts.md), [Database Repositories](database-repositories.md).
+See [Domain Models](domain-models.md), [Application and Contracts Boundary](application-contracts.md), [Database Repositories](database-repositories.md), [Workflow Run Engine](../crates/application/src/workflow_run/engine/README.md), [ora-backend](../crates/backend/README.md).

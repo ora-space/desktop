@@ -12,6 +12,8 @@
 - [task](src/task/README.md) coordinates task persistence and optional Git worktree creation.
 - [task_diff](src/task_diff/README.md) coordinates task-scoped diff review, Git writes, and anchored discussions.
 - [worktree](src/worktree/README.md) defines persistence and identity ports for task-owned worktrees.
+- [workflow](src/workflow/README.md) manages workflow definitions and versioned snapshots.
+- [workflow_run](src/workflow_run/README.md) manages run CRUD; execution lives in [workflow_run/engine](src/workflow_run/engine/README.md).
 
 ## Boundaries
 

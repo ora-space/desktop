@@ -9,13 +9,13 @@ real Ora session.
 - **Graph parsing and topology** (`graph.rs`, `node_type.rs`): deserialize a frozen React Flow
   document into a validated `petgraph` DAG, validate structural invariants, and answer topology
   queries (successors/predecessors, transitive closures, ready set, reachability).
-- **Engine persistence port** (`ports.rs`, later phases): the `WorkflowRunEngineRepository` trait
-  that the run engine uses, implemented in `ora-db`.
+- **Engine persistence port** (`ports.rs`): the `WorkflowRunEngineRepository` trait that the run
+  engine uses, implemented in `ora-db`.
 - **Worktree initializer port** (`ports.rs`): the `WorkflowRunWorktreeInitializer` trait that the
   deploy flow calls to validate roles and materialize skills into a run worktree's initial state.
-- **Run engine** (`engine.rs`, later phases): `start`/`cancel`/`restart` use cases, reactive DAG
-  scheduling under a per-run serial executor, and the `NodeExecutor` port that hands agent
-  execution to `ora-backend`.
+- **Run engine** (`engine.rs`): `start`/`cancel`/`restart` use cases, reactive DAG scheduling under
+  a per-run serial executor, and the `NodeExecutor` port. `ora-backend` implements that port as
+  `WorkflowRunNodeExecutor` and wires it in `Backend::open`.
 
 ## Non-responsibilities
 
@@ -28,8 +28,17 @@ real Ora session.
 
 ## Public boundary
 
-Exported from `workflow_run::engine`: `WorkflowGraph`, `WorkflowGraphNode`, `AgentConfig`,
-`AgentExecutor`, `AgentSkill`, `NodeType`, `GraphError`, `UnknownNodeType`.
+Exported from `workflow_run::engine`: `WorkflowRunEngine`, `WorkflowRunControlHandler`,
+`NodeExecutor`, `WorkflowRunCallback`, `WorkflowRunEngineRepository`, `WorkflowGraph`,
+`WorkflowGraphNode`, `AgentConfig`, `AgentExecutor`, `AgentSkill`, `NodeType`, `GraphError`,
+`UnknownNodeType`.
+
+## Module interactions
+
+`ora-backend` implements `NodeExecutor` as `WorkflowRunNodeExecutor` and `WorkflowRunCallback` as
+`WorkflowRunEngineCallback`, composing both in `build_workflow_run_engine` during `Backend::open`.
+`ora-db` implements `WorkflowRunEngineRepository`. Agent-node sessions are a live path, not a
+test-only stub.
 
 ## Key invariants
 
