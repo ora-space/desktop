@@ -531,7 +531,12 @@ fn rejects_skill_names_reserved_by_the_storage_layer() {
             ora_contracts::SkillImportResultStatus::Failed
         );
         // Neither the database nor the reserved directory may be touched by the refused import.
-        assert_eq!(repository.find_skill_by_name(reserved).unwrap(), None);
+        assert_eq!(
+            repository
+                .find_skill_by_name(&Namespace::local(), reserved)
+                .unwrap(),
+            None
+        );
         assert_eq!(
             temp.path()
                 .join("atoms")

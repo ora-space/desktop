@@ -372,6 +372,7 @@ mod tests {
             .create_skill(
                 Skill::new(
                     SkillId::new("skill-1"),
+                    Namespace::local(),
                     "review",
                     "Reviews",
                     AuditFields::new(100, 100, false),
@@ -453,7 +454,9 @@ mod tests {
         reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
 
         assert_eq!(
-            repository.find_skill_by_name(BACKUP_DIR_NAME).unwrap(),
+            repository
+                .find_skill_by_name(&Namespace::local(), BACKUP_DIR_NAME)
+                .unwrap(),
             None
         );
         assert_eq!(
