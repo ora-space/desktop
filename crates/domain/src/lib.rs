@@ -34,8 +34,8 @@ pub use project::Project;
 pub use session::{AgentCli, HistoryState, Session, SessionStatus};
 pub use session_title::{MAX_SESSION_TITLE_CHARS, SessionTitle, SessionTitleError};
 pub use skill::{
-    BACKUP_DIR_NAME, JOURNAL_DIR_NAME, RESERVED_SKILL_NAMES, STAGING_DIR_NAME, Skill,
-    SkillDescriptionError, SkillNameError, validate_skill_description, validate_skill_name,
+    BACKUP_DIR_NAME, JOURNAL_DIR_NAME, STAGING_DIR_NAME, Skill, SkillDescriptionError,
+    SkillNameError, validate_skill_description, validate_skill_name,
 };
 pub use task::{Task, TaskStatus, TaskType};
 pub use task_diff_comment::{

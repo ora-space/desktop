@@ -5,9 +5,10 @@ use thiserror::Error;
 
 /// Names of the directories this layer reserves under the skills root.
 ///
-/// They are owned by `ora-domain` because [`ora_domain::validate_skill_name`] must refuse them
-/// to keep skill names and reserved directories in disjoint namespaces. Re-exporting instead of
-/// redeclaring keeps one literal per directory, so the two rules cannot drift apart.
+/// They are owned by `ora-domain` because [`ora_domain::validate_skill_name`] rejects every
+/// dot-prefixed skill name, which keeps these dot-prefixed directories unclaimable without
+/// needing to enumerate them individually. Re-exporting instead of redeclaring keeps one literal
+/// per directory, so the two layers cannot drift apart.
 pub use ora_domain::{BACKUP_DIR_NAME, JOURNAL_DIR_NAME, STAGING_DIR_NAME};
 
 /// Captures one durable intent record written before a formal skill mutation.
@@ -93,10 +94,10 @@ pub enum SkillStorageError {
 /// same filesystem as the formal tree so promotion uses rename instead of cross-device copies.
 ///
 /// Reserved directory names and committed skill names occupy disjoint namespaces:
-/// [`ora_domain::validate_skill_name`] refuses every name in [`ora_domain::RESERVED_SKILL_NAMES`],
-/// the array these constants come from. Without that split a skill would be promoted onto a
-/// transaction root and startup reconciliation would delete its package as a leftover, so a new
-/// reserved directory must be added to that array rather than declared here.
+/// [`ora_domain::validate_skill_name`] refuses every dot-prefixed name, which keeps any
+/// dot-prefixed reserved directory unclaimable. Without that split a skill would be promoted
+/// onto a transaction root and startup reconciliation would delete its package as a leftover, so
+/// a new reserved directory must keep the leading dot rather than needing a validation change.
 pub trait SkillStorage {
     /// Reserves a unique staging directory for one transaction.
     fn create_staging(&self) -> Result<PathBuf, SkillStorageError>;

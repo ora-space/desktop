@@ -56,7 +56,7 @@ Optional fields exist only where the schema column is nullable — for example `
 
 Most models are plain snapshots whose constructors cannot fail. Two normalize and validate instead:
 
-- `Skill::new` trims the name and rejects a blank one with `DomainModelError::EmptySkillName`. The name must also be a single filesystem-safe segment — ASCII alphanumerics plus `.`, `_`, `-`, at most 255 bytes, never `.` or `..`, and never one of `RESERVED_SKILL_NAMES` (compared ignoring ASCII case) — otherwise `DomainModelError::InvalidSkillName` or `DomainModelError::SkillNameTooLong`. `RESERVED_SKILL_NAMES` lists the directories skill storage reserves for transaction artifacts under the skills root, so a committed skill can never be promoted onto one.
+- `Skill::new` trims the name and rejects a blank one with `DomainModelError::EmptySkillName`. The name must also be a single filesystem-safe segment — ASCII alphanumerics plus `.`, `_`, `-`, at most 255 bytes, and must not start with `.` — otherwise `DomainModelError::InvalidSkillName` or `DomainModelError::SkillNameTooLong`. Rejecting every dot-prefixed name (rather than only `.`, `..`, and the specific reserved transaction directories) keeps a committed skill from ever being promoted onto a reserved or hidden directory under the skills root.
 - `AgentDefinition::new` trims the name and rejects a blank one with `DomainModelError::EmptyAgentDefinitionName`.
 - `SessionTitle::parse` trims agent-provided text, rejects blank values, and rejects more than 255 Unicode scalar values without truncating. `Session.title` is an `Option<SessionTitle>`, so an invalid or absent title cannot be represented as a persisted non-empty string.
 

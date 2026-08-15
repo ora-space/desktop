@@ -1,8 +1,8 @@
 use crate::{
-    AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, DomainModelError, HistoryState,
-    Namespace, Project, ProjectId, RESERVED_SKILL_NAMES, Session, SessionId, SessionStatus, Skill,
-    SkillId, Task, TaskId, TaskStatus, TaskType, Worktree, WorktreeActivity, WorktreeBaseline,
-    WorktreeId,
+    AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, BACKUP_DIR_NAME, DomainModelError,
+    HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, Session,
+    SessionId, SessionStatus, Skill, SkillId, Task, TaskId, TaskStatus, TaskType, Worktree,
+    WorktreeActivity, WorktreeBaseline, WorktreeId,
 };
 use pretty_assertions::assert_eq;
 
@@ -174,17 +174,21 @@ fn normalizes_and_validates_namespaces() {
     assert!(serde_json::from_str::<Namespace>(r#""  ""#).is_err());
 }
 
-/// Verifies skill names stay disjoint from the storage layer's reserved directory namespace.
+/// Verifies skill names reject every dot-prefixed segment, including the storage layer's
+/// reserved transaction directories and path-traversal segments.
 #[test]
-fn rejects_skill_names_reserved_by_skill_storage() {
+fn rejects_dot_prefixed_skill_names() {
     let audit_fields = AuditFields::new(1, 1, false);
 
-    // Every reserved transaction directory, plus the path-traversal segments.
-    let mut rejected = RESERVED_SKILL_NAMES.to_vec();
-    rejected.extend([".", ".."]);
-    // A case-insensitive skills root maps these onto the same reserved directories.
-    rejected.extend([".ORA-BACKUP", ".Ora-Staging"]);
-    for name in rejected {
+    for name in [
+        STAGING_DIR_NAME,
+        BACKUP_DIR_NAME,
+        JOURNAL_DIR_NAME,
+        ".",
+        "..",
+        ".hidden",
+        ".ORA-BACKUP",
+    ] {
         assert_eq!(
             Skill::new(
                 SkillId::new("skill-1"),
@@ -199,15 +203,7 @@ fn rejects_skill_names_reserved_by_skill_storage() {
         );
     }
 
-    // Only the reserved names are refused: other dot-prefixed names remain valid, so upgrading
-    // cannot orphan a skill that a previous release accepted and still serves today.
-    for accepted in [
-        ".hidden",
-        ".ora-future",
-        "backup.tmp",
-        "ora-backup",
-        "v1.2.3",
-    ] {
+    for accepted in ["backup.tmp", "ora-backup", "v1.2.3"] {
         assert_eq!(
             Skill::new(
                 SkillId::new("skill-1"),
