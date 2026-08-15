@@ -27,7 +27,8 @@ deepest detected source.
 ## API and security
 
 The generated `spec` client namespace exposes catalog, read, and watch operations. Catalog and read
-responses never expose absolute roots.
+responses never expose absolute roots. On the Web server, spec watch streams emit `end` when process
+shutdown begins so a mounted Specs view cannot block `Ctrl+C` exit.
 
 All filesystem operations canonicalize the target root. Reads accept only `.md`/`.mdx` files that
 still belong to the current automatically detected catalog, preventing traversal, symlink escape,

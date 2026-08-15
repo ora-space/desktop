@@ -18,6 +18,7 @@ use ora_contracts::{
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use tokio_util::sync::CancellationToken;
 
 /// Carries the request path segment used by session identifier routes.
 #[derive(Debug, Deserialize)]
@@ -158,7 +159,10 @@ pub async fn list_sessions(
 
 /// Watches application invalidations using the shared NDJSON contract stream.
 pub async fn watch_app_events(State(app_state): State<AppState>) -> Response<Body> {
-    stream_response(app_state.backend().watch_app_events())
+    stream_response(
+        app_state.backend().watch_app_events(),
+        app_state.shutdown_token(),
+    )
 }
 
 /// Streams ACP history replay as private NDJSON transport frames.
@@ -173,7 +177,7 @@ pub async fn load_session(
         })
         .await
         .map_err(WebApiError::from)?;
-    Ok(stream_response(events))
+    Ok(stream_response(events, app_state.shutdown_token()))
 }
 
 /// Streams one structured ACP prompt turn as private NDJSON transport frames.
@@ -190,7 +194,7 @@ pub async fn prompt_session(
         })
         .await
         .map_err(WebApiError::from)?;
-    Ok(stream_response(events))
+    Ok(stream_response(events, app_state.shutdown_token()))
 }
 
 /// Routes one permission selection to the actor that owns the pending request.
@@ -275,31 +279,40 @@ pub async fn delete_session(
 }
 
 /// Converts one backend event receiver into ordered, atomic NDJSON transport frames.
-fn stream_response<Event>(events: SessionEventStream<Event>) -> Response<Body>
+fn stream_response<Event>(
+    events: SessionEventStream<Event>,
+    shutdown: CancellationToken,
+) -> Response<Body>
 where
     Event: Serialize + Send + 'static,
 {
     let lifecycle = current_lifecycle();
     let body_stream = stream::unfold(
-        (events, false, lifecycle),
-        |(mut events, ended, lifecycle)| async move {
+        (events, false, lifecycle, shutdown),
+        |(mut events, ended, lifecycle, shutdown)| async move {
             if ended {
                 return None;
             }
-            let (frame, next_ended) = match events.recv().await {
-                Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
-                Some(Err(error)) => {
-                    lifecycle.complete_failure(&error);
-                    (
-                        StreamFrame::Error {
-                            error: error.contract_error(lifecycle.request_id()),
-                        },
-                        true,
-                    )
-                }
-                None => {
+            let (frame, next_ended) = tokio::select! {
+                _ = shutdown.cancelled() => {
                     lifecycle.complete_success();
                     (StreamFrame::End, true)
+                }
+                event = events.recv() => match event {
+                    Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
+                    Some(Err(error)) => {
+                        lifecycle.complete_failure(&error);
+                        (
+                            StreamFrame::Error {
+                                error: error.contract_error(lifecycle.request_id()),
+                            },
+                            true,
+                        )
+                    }
+                    None => {
+                        lifecycle.complete_success();
+                        (StreamFrame::End, true)
+                    }
                 }
             };
             let mut bytes = serde_json::to_vec(&frame).unwrap_or_else(|source| {
@@ -316,7 +329,7 @@ where
             bytes.push(b'\n');
             Some((
                 Ok::<Bytes, Infallible>(Bytes::from(bytes)),
-                (events, next_ended, lifecycle),
+                (events, next_ended, lifecycle, shutdown),
             ))
         },
     );

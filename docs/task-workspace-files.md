@@ -25,7 +25,7 @@ The layers are intentionally narrow:
 | `searchWorkspace` | `POST /api/tasks/{taskId}/files/search`, `query` and `kind` | `SearchWorkspaceResponse` |
 | `watchWorkspace` | `GET /api/tasks/{taskId}/files/watch` | `WorkspaceFileEventBatch` NDJSON stream |
 
-All returned paths are slash-separated and relative to the resolved task workspace. `watchWorkspace` emits `data`, `error`, and `end` frames. Its error frame uses the shared `{ code, params, requestId }` contract, so the frontend can reuse the same remote-error decoder as unary requests.
+All returned paths are slash-separated and relative to the resolved task workspace. `watchWorkspace` emits `data`, `error`, and `end` frames. Its error frame uses the shared `{ code, params, requestId }` contract, so the frontend can reuse the same remote-error decoder as unary requests. On the Web server the stream also emits `end` when process shutdown begins, so a live Files panel cannot block `Ctrl+C` exit.
 
 ## Desktop operations
 

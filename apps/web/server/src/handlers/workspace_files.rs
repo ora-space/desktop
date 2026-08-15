@@ -17,6 +17,7 @@ use std::convert::Infallible;
 use std::path::{Path as FilePath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(100);
 
@@ -104,7 +105,7 @@ pub async fn search(
         .map_err(WebApiError::from)
 }
 
-/// Streams debounced native filesystem events until the HTTP consumer disconnects.
+/// Streams debounced native filesystem events until the HTTP consumer disconnects or the server shuts down.
 pub async fn watch(
     State(app_state): State<AppState>,
     Path(path): Path<TaskPath>,
@@ -138,7 +139,7 @@ pub async fn watch(
             }
         }
     });
-    Ok(stream_response(receiver))
+    Ok(stream_response(receiver, app_state.shutdown_token()))
 }
 
 /// Resolves the task-owned worktree once so filesystem calls never accept a root from the client.
@@ -173,28 +174,35 @@ pub(crate) fn to_contract_change(change: WorkspaceChange) -> WorkspaceFileChange
 /// Converts watcher batches into the same private NDJSON framing used by session streams.
 pub(crate) fn stream_response(
     receiver: tokio::sync::mpsc::Receiver<Result<WorkspaceFileEventBatch, BackendError>>,
+    shutdown: CancellationToken,
 ) -> Response<Body> {
     let lifecycle = current_lifecycle();
     let body_stream = stream::unfold(
-        (receiver, false, lifecycle),
-        |(mut receiver, ended, lifecycle)| async move {
+        (receiver, false, lifecycle, shutdown),
+        |(mut receiver, ended, lifecycle, shutdown)| async move {
             if ended {
                 return None;
             }
-            let (frame, next_ended) = match receiver.recv().await {
-                Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
-                Some(Err(error)) => {
-                    lifecycle.complete_failure(&error);
-                    (
-                        StreamFrame::Error {
-                            error: error.contract_error(lifecycle.request_id()),
-                        },
-                        true,
-                    )
-                }
-                None => {
+            let (frame, next_ended) = tokio::select! {
+                _ = shutdown.cancelled() => {
                     lifecycle.complete_success();
                     (StreamFrame::End, true)
+                }
+                event = receiver.recv() => match event {
+                    Some(Ok(event)) => (StreamFrame::Data { data: event }, false),
+                    Some(Err(error)) => {
+                        lifecycle.complete_failure(&error);
+                        (
+                            StreamFrame::Error {
+                                error: error.contract_error(lifecycle.request_id()),
+                            },
+                            true,
+                        )
+                    }
+                    None => {
+                        lifecycle.complete_success();
+                        (StreamFrame::End, true)
+                    }
                 }
             };
             let mut bytes = serde_json::to_vec(&frame).unwrap_or_else(|source| {
@@ -211,7 +219,7 @@ pub(crate) fn stream_response(
             bytes.push(b'\n');
             Some((
                 Ok::<Bytes, Infallible>(Bytes::from(bytes)),
-                (receiver, next_ended, lifecycle),
+                (receiver, next_ended, lifecycle, shutdown),
             ))
         },
     );
@@ -222,4 +230,74 @@ pub(crate) fn stream_response(
         HeaderValue::from_static("application/x-ndjson"),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stream_response;
+    use futures_util::StreamExt;
+    use ora_backend::BackendError;
+    use ora_contracts::WorkspaceFileEventBatch;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    /// Verifies a live workspace watch still ends when process shutdown is requested.
+    #[tokio::test]
+    async fn workspace_watch_stream_ends_when_shutdown_is_requested() {
+        let (sender, receiver) =
+            tokio::sync::mpsc::channel::<Result<WorkspaceFileEventBatch, BackendError>>(1);
+        let shutdown = CancellationToken::new();
+        let response = stream_response(receiver, shutdown.clone());
+        let mut body = response.into_body().into_data_stream();
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), body.next())
+                .await
+                .is_err(),
+            "a live watcher must stay open until shutdown or a filesystem event"
+        );
+
+        sender
+            .send(Ok(WorkspaceFileEventBatch {
+                changes: Vec::new(),
+            }))
+            .await
+            .unwrap_or_else(|error| panic!("send watch batch: {error}"));
+        let data = next_frame(&mut body).await;
+        assert_eq!(
+            data,
+            json!({
+                "type": "data",
+                "data": { "changes": [] }
+            })
+        );
+
+        shutdown.cancel();
+        let end = next_frame(&mut body).await;
+        assert_eq!(end, json!({ "type": "end" }));
+        let finished = tokio::time::timeout(Duration::from_millis(200), body.next()).await;
+        assert!(
+            matches!(finished, Ok(None)),
+            "the body must complete after the end frame, got {finished:?}"
+        );
+        drop(sender);
+    }
+
+    /// Reads one NDJSON transport frame from a watch body.
+    async fn next_frame<E>(
+        body: &mut (impl StreamExt<Item = Result<axum::body::Bytes, E>> + Unpin),
+    ) -> serde_json::Value
+    where
+        E: std::fmt::Debug,
+    {
+        let chunk = tokio::time::timeout(Duration::from_secs(1), body.next())
+            .await
+            .unwrap_or_else(|_| panic!("watch frame timed out"))
+            .unwrap_or_else(|| panic!("watch frame is missing"))
+            .unwrap_or_else(|error| panic!("watch frame: {error:?}"));
+        serde_json::from_slice(chunk.trim_ascii())
+            .unwrap_or_else(|error| panic!("watch frame json: {error}"))
+    }
 }

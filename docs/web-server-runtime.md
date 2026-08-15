@@ -62,6 +62,15 @@ Logging variables are documented in [Runtime Logging](runtime-logging.md).
 `/health/ready` does not return success until the runtime finishes constructing its application
 state. An empty project catalog is ready for use.
 
+## Shutdown
+
+On Ctrl+C the runtime cancels a shared shutdown token on application state before Axum starts
+draining connections. Infinite NDJSON streams (`GET /api/app-events/watch`,
+`GET /api/tasks/{taskId}/files/watch`, and `POST /api/specs/watch`) observe that token, emit an
+`end` frame, and complete. In-flight ACP load and prompt streams do the same, so a live browser tab
+cannot pin the process. Graceful shutdown is retained; the server does not force-kill connections or
+impose a coarse shutdown timeout.
+
 ## HTTP API
 
 Route paths come from shared `ora-contracts` path constants, while the generation-only endpoint catalog in `xtask` references those same constants for the generated client entry. Path parameters are camelCase.
@@ -101,7 +110,7 @@ Route paths come from shared `ora-contracts` path constants, while the generatio
 
 - `GET /api/app-events/watch`
 
-The first data frame is `Ready`. The backend broadcasts subsequent invalidations to every active subscriber and does not use the HTTP connection as a browser-page lease. Events are not persisted or replayed, so clients refetch sessions after initial subscription, stream loss, lag, or queue overflow. The Web App Shell separately uses a same-origin Web Lock to ensure only one browser tab mounts normal application work.
+The first data frame is `Ready`. The backend broadcasts subsequent invalidations to every active subscriber and does not use the HTTP connection as a browser-page lease. Events are not persisted or replayed, so clients refetch sessions after initial subscription, stream loss, lag, or queue overflow. The stream also ends when the server begins graceful shutdown. The Web App Shell separately uses a same-origin Web Lock to ensure only one browser tab mounts normal application work.
 
 ### agentRuntime
 
@@ -141,7 +150,7 @@ The first data frame is `Ready`. The backend broadcasts subsequent invalidations
 - `POST /api/tasks/{taskId}/files/list` with `{ "path": "src" }` to list one workspace-relative directory
 - `POST /api/tasks/{taskId}/files/read` with `{ "path": "src/main.rs" }` to read one bounded UTF-8 file
 - `POST /api/tasks/{taskId}/files/search` with `{ "query": "needle", "kind": "files" | "content" }` to search filenames or text
-- `GET /api/tasks/{taskId}/files/watch` to stream debounced `WorkspaceFileEventBatch` NDJSON frames
+- `GET /api/tasks/{taskId}/files/watch` to stream debounced `WorkspaceFileEventBatch` NDJSON frames until the client disconnects or the server begins graceful shutdown
 
 Every task workspace route resolves the active task workspace through `ora-backend`; the client cannot select a root directory. The filesystem service rejects absolute paths, parent traversal, and symlink escapes. File reads are capped at 10 MiB and reject binary or invalid UTF-8 content. Search uses fixed-string matching for content, a 15-second timeout, an 8 MiB output bound, and at most 10,000 results. Watch events are coalesced for 100 ms before a batch is emitted. See [Task Workspace Files](task-workspace-files.md).
 
@@ -149,7 +158,7 @@ Every task workspace route resolves the active task workspace through `ora-backe
 
 - `POST /api/specs/catalog` returns bounded automatically discovered Markdown/MDX documents and truncation state for a tagged Project or Task target.
 - `POST /api/specs/read` reads one document only after revalidating that it still belongs to an automatically detected source.
-- `POST /api/specs/watch` streams workspace file-event batches for the tagged target.
+- `POST /api/specs/watch` streams workspace file-event batches for the tagged target until the client disconnects or the server begins graceful shutdown.
 
 Spec catalog and read responses never expose an absolute workspace root. Discovery is composed by the shared backend, so Web and Desktop retain identical source inference, path containment, and error semantics. See [Spec Management](spec-management.md).
 

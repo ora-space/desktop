@@ -3,6 +3,7 @@ use ora_backend::Backend;
 use ora_plugin_manager::PluginManager;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tokio_util::sync::CancellationToken;
 
 /// Holds the shared state that HTTP handlers need to serve requests.
 #[derive(Clone)]
@@ -12,6 +13,7 @@ pub struct AppState {
     workspace_file_api: Arc<WorkspaceFileApi>,
     plugin_manager: Arc<PluginManager>,
     ready: Arc<AtomicBool>,
+    shutdown: CancellationToken,
 }
 
 impl AppState {
@@ -28,7 +30,18 @@ impl AppState {
             workspace_file_api,
             plugin_manager,
             ready: Arc::new(AtomicBool::new(false)),
+            shutdown: CancellationToken::new(),
         }
+    }
+
+    /// Returns the process-wide token that HTTP streams observe during graceful shutdown.
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
+    }
+
+    /// Cancels live HTTP streams so Axum can drain connections after Ctrl+C.
+    pub fn request_shutdown(&self) {
+        self.shutdown.cancel();
     }
 
     /// Returns the shared persisted backend used by the five common CRUD route families.

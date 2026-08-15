@@ -40,7 +40,7 @@ pub async fn read(
         .map_err(WebApiError::from)
 }
 
-/// Streams the shared workspace event format for the target root resolved by Backend.
+/// Streams workspace file events until the HTTP consumer disconnects or the server shuts down.
 pub async fn watch(
     State(app_state): State<AppState>,
     Json(request): Json<WatchSpecsRequest>,
@@ -75,5 +75,5 @@ pub async fn watch(
             }
         }
     });
-    Ok(stream_response(receiver))
+    Ok(stream_response(receiver, app_state.shutdown_token()))
 }

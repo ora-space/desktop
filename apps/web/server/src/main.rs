@@ -5,11 +5,13 @@ mod error;
 mod handlers;
 mod routes;
 mod service;
+mod shutdown;
 mod timezone;
 
 use crate::bootstrap::build_app_state;
 use crate::config::RuntimeConfig;
 use crate::error::WebBootstrapError;
+use crate::shutdown::wait_for_shutdown;
 use crate::timezone::TimezoneWarning;
 use axum::Router;
 use ora_logging::{LoggingGuard, init_logging, ora_info, ora_warn, register_gitlancer_logger};
@@ -35,7 +37,7 @@ async fn main() -> Result<(), WebBootstrapError> {
     );
 
     axum::serve(listener, router)
-        .with_graceful_shutdown(wait_for_shutdown())
+        .with_graceful_shutdown(wait_for_shutdown(app_state))
         .await
         .map_err(WebBootstrapError::Serve)
 }
@@ -85,9 +87,4 @@ fn report_timezone_status(runtime_config: &RuntimeConfig) {
         timezone = %runtime_config.logging().timezone,
         timezone_source = runtime_config.timezone_source().as_str(),
     );
-}
-
-/// Waits for the process shutdown signal so the server stops cleanly on SIGINT.
-async fn wait_for_shutdown() {
-    let _ = tokio::signal::ctrl_c().await;
 }
