@@ -2,6 +2,7 @@ pub mod agents;
 pub mod file_system;
 pub mod git;
 pub mod health;
+mod ndjson_stream;
 pub mod plugins;
 pub mod projects;
 pub mod sessions;

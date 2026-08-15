@@ -54,6 +54,23 @@ impl<Event> SessionEventStream<Event> {
         }
         event
     }
+
+    /// Returns a buffered item without waiting so HTTP shutdown can surface a terminal error.
+    pub fn try_recv(&mut self) -> Option<Result<Event, BackendError>> {
+        match self.receiver.try_recv() {
+            Ok(event) => {
+                if event.is_err() {
+                    self.completed = true;
+                }
+                Some(event)
+            }
+            Err(mpsc::error::TryRecvError::Empty) => None,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.completed = true;
+                None
+            }
+        }
+    }
 }
 
 impl<Event> Drop for SessionEventStream<Event> {
@@ -72,5 +89,28 @@ impl<Event> Drop for SessionEventStream<Event> {
         if let Some(cleanup) = self.cleanup.take() {
             cleanup();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SessionEventStream;
+    use crate::BackendError;
+    use tokio::sync::mpsc;
+
+    /// Verifies a buffered terminal error is visible without waiting on `recv`.
+    #[tokio::test]
+    async fn try_recv_returns_a_buffered_error_without_waiting() {
+        let (sender, receiver) = mpsc::channel::<Result<(), BackendError>>(1);
+        let mut stream = SessionEventStream::with_cleanup(receiver, || {});
+        sender
+            .try_send(Err(BackendError::internal(
+                "stream interrupted",
+                std::io::Error::other("closed"),
+            )))
+            .expect("buffered error is queued");
+
+        assert!(matches!(stream.try_recv(), Some(Err(_))));
+        assert!(stream.try_recv().is_none());
     }
 }

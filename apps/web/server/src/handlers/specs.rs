@@ -1,6 +1,7 @@
 use crate::app_state::AppState;
 use crate::error::WebApiError;
-use crate::handlers::workspace_files::{stream_response, to_contract_change};
+use crate::handlers::ndjson_stream::stream_response;
+use crate::handlers::workspace_files::to_contract_change;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
