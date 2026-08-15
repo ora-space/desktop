@@ -1,7 +1,3 @@
-// The executor is wired into the composition root in the endpoints stage; until then every item
-// in this module is only referenced by tests, so the dead-code lint is suppressed here.
-#![allow(dead_code)]
-
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
