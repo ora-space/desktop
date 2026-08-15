@@ -36,5 +36,9 @@ filesystem port (see the `skill` module), and does not decide HTTP or IPC semant
   preparation.
 - Once a commit is accepted it is uncancellable; retrying with the same decisions replays the
   stored results, and retrying with different decisions returns `already_committed`.
+- Each candidate promotes its package directory before writing its database row, so no SQLite
+  transaction stays open across the rename and a slow skills root cannot block unrelated writers.
+  See the [skill module's atomicity and recovery model](../skill/README.md) for the journal and
+  startup reconciliation that make this ordering crash-safe.
 
 See the [ora-application overview](../../README.md).
