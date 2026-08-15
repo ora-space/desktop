@@ -12,7 +12,7 @@ use ora_domain::{
     GitCleanupJob, GitCleanupJobId, GitCleanupJobState, ProjectId, TaskId,
     WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
 };
-use ora_logging::with_recorded_trace_logging;
+use ora_logging::{with_recorded_trace_logging, with_trace_logging};
 use pretty_assertions::assert_eq;
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -188,7 +188,7 @@ fn completes_jobs_for_removed_and_already_absent_resources() {
     seed_job(&pool, TASK_A, 0);
     seed_job(&pool, TASK_B, 0);
 
-    worker(&pool, cleaner.clone()).run_pass();
+    with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     let jobs = jobs_by_task(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::Completed);
@@ -212,7 +212,7 @@ fn sibling_jobs_continue_after_a_cleaner_panic() {
     seed_job(&pool, TASK_B, 0);
     seed_job(&pool, TASK_C, 0);
 
-    worker(&pool, cleaner.clone()).run_pass();
+    with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     let jobs = jobs_by_task(&pool);
     // Both siblings of the panicking job completed.
@@ -246,7 +246,7 @@ fn branch_stage_runs_after_worktree_failure() {
     cleaner.script(&branch_for(TASK_A), StageScript::Fail, StageScript::Removed);
     seed_job(&pool, TASK_A, 0);
 
-    worker(&pool, cleaner.clone()).run_pass();
+    with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     assert_eq!(cleaner.invoked_branches(), vec![branch_for(TASK_A)]);
     let jobs = jobs_by_task(&pool);
@@ -262,7 +262,7 @@ fn exhausted_retries_park_as_manual_attention() {
     cleaner.script(&branch_for(TASK_A), StageScript::Fail, StageScript::Removed);
     seed_job(&pool, TASK_A, MAX_JOB_ATTEMPTS - 1);
 
-    worker(&pool, cleaner).run_pass();
+    with_trace_logging(|| worker(&pool, cleaner).run_pass());
 
     let jobs = jobs_by_task(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::ManualAttention);
@@ -280,7 +280,7 @@ fn ownership_loss_parks_without_removal() {
     );
     seed_job(&pool, TASK_A, 0);
 
-    worker(&pool, cleaner.clone()).run_pass();
+    with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     let jobs = jobs_by_task(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::ManualAttention);
@@ -307,7 +307,7 @@ fn identity_violation_parks_without_touching_git() {
         .expect("seed job");
     let cleaner = ScriptedCleaner::default();
 
-    worker(&pool, cleaner.clone()).run_pass();
+    with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     let jobs = jobs_by_task(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::ManualAttention);
@@ -334,7 +334,7 @@ fn expired_lease_is_reclaimed_and_cleaned() {
         .expect("seed lease");
     let cleaner = ScriptedCleaner::default();
 
-    worker(&pool, cleaner.clone()).run_pass();
+    with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     assert_eq!(lease_repository.list_leases().expect("list leases"), vec![]);
     let jobs = jobs_by_task(&pool);
@@ -366,7 +366,7 @@ fn live_lease_is_not_reclaimed() {
         .expect("seed lease");
     let cleaner = ScriptedCleaner::default();
 
-    worker(&pool, cleaner.clone()).run_pass();
+    with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     assert_eq!(
         lease_repository.list_leases().expect("list leases").len(),
