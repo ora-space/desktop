@@ -26,7 +26,8 @@ destination directory.
 ## Key invariants
 
 - Every relative path stored in a `RelativePath` is a safe, validated, `\`-normalized UTF-8 path
-  with no empty, `.`, or `..` segments.
+  with no empty, `.`, or `..` segments or Windows reserved device names. Portable filename safety
+  is inherited from `ora-fs`; this crate adds package-specific depth and length limits.
 - Resource-limit and path-safety failures reject the whole source; a malformed manifest only
   invalidates that one candidate and is surfaced as a `ManifestError`.
 - Archive entries are never followed as links and never written before their paths pass

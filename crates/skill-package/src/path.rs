@@ -18,7 +18,8 @@ pub const MAX_DEPTH: usize = 32;
 pub enum PathValidationError {
     /// The path is not valid UTF-8 or contains disallowed control characters.
     EncodingInvalid,
-    /// The path is absolute, a drive/UNC path, or contains empty, `.`, or `..` segments.
+    /// The path is absolute, a drive/UNC path, contains empty, `.`, or `..` segments, or names a
+    /// Windows reserved device.
     Unsafe,
     /// One segment exceeds the byte or UTF-16 code-unit limit.
     SegmentTooLong,
@@ -30,9 +31,10 @@ pub enum PathValidationError {
 
 /// A validated skill-relative path stored with forward-slash separators.
 ///
-/// Parsing rejects every unsafe shape (zip-slip, absolute, drive/UNC, traversal, control
-/// characters, non-UTF-8) and enforces segment, total-length, and depth limits. Instances are
-/// safe to use as key material and to reconstruct under a destination root via [`RelativePath::to_path`].
+/// Parsing rejects every unsafe shape (zip-slip, absolute, drive/UNC, traversal, Windows reserved
+/// device names, control characters, non-UTF-8) and enforces segment, total-length, and depth
+/// limits. Instances are safe to use as key material and to reconstruct under a destination root
+/// via [`RelativePath::to_path`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RelativePath {
     path: String,
@@ -52,6 +54,10 @@ impl RelativePath {
 
         let normalized = raw.replace('\\', "/");
         validate_shape(&normalized)?;
+        // Reusing the shared portable parser keeps platform-specific filename safety consistent
+        // with every other filesystem-facing caller while this type adds package-specific limits.
+        ora_fs::PortableRelativePath::parse(&normalized)
+            .map_err(|_| PathValidationError::Unsafe)?;
         let segments = normalized.split('/').collect::<Vec<_>>();
 
         let depth = segments.len() - 1;
@@ -243,6 +249,31 @@ mod tests {
                 RelativePath::parse(raw),
                 Err(PathValidationError::Unsafe),
                 "expected {raw:?} to be rejected"
+            );
+        }
+    }
+
+    /// Verifies skill paths inherit portable Windows device-name safety before materialization.
+    #[test]
+    fn rejects_windows_reserved_device_names() {
+        for raw in ["CON", "folder/aux.txt", "folder\\COM1\\notes.txt"] {
+            assert_eq!(
+                RelativePath::parse(raw),
+                Err(PathValidationError::Unsafe),
+                "expected {raw:?} to be rejected"
+            );
+        }
+    }
+
+    /// Verifies the shared portable rule does not reject nearby legal skill path names.
+    #[test]
+    fn accepts_names_near_windows_reserved_device_names() {
+        for raw in ["CONSOLE.txt", "COM10.txt", "folder/LPT0/notes.txt"] {
+            assert_eq!(
+                RelativePath::parse(raw)
+                    .unwrap_or_else(|error| panic!("parse {raw:?}: {error:?}"))
+                    .as_str(),
+                raw
             );
         }
     }

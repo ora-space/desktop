@@ -28,6 +28,9 @@ impl PortableRelativePath {
                 segment if has_windows_prefix(segment) => {
                     return Err(PortableRelativePathError::WindowsPrefix);
                 }
+                segment if is_windows_reserved_device_name(segment) => {
+                    return Err(PortableRelativePathError::WindowsReservedName);
+                }
                 segment => segments.push(segment),
             }
         }
@@ -69,7 +72,10 @@ impl PortableRelativePath {
                             })?;
                     // Rechecking host components keeps this private constructor aligned with
                     // `parse`, so every construction path preserves the public type invariant.
-                    if segment.contains(['/', '\\']) || has_windows_prefix(segment) {
+                    if segment.contains(['/', '\\'])
+                        || has_windows_prefix(segment)
+                        || is_windows_reserved_device_name(segment)
+                    {
                         return Err(PathContainmentError::NonPortablePath {
                             path: path.to_path_buf(),
                         });
@@ -104,6 +110,8 @@ pub enum PortableRelativePathError {
     Rooted,
     #[error("relative path must not contain a Windows drive or UNC prefix")]
     WindowsPrefix,
+    #[error("relative path must not contain a Windows reserved device name")]
+    WindowsReservedName,
     #[error("relative path must not contain parent traversal")]
     ParentTraversal,
     #[error("relative path must not contain a NUL byte")]
@@ -231,6 +239,26 @@ fn has_windows_prefix(value: &str) -> bool {
         || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
 }
 
+/// Detects device names that Win32 resolves as devices even when they have an extension.
+fn is_windows_reserved_device_name(segment: &str) -> bool {
+    let stem = segment
+        .split_once('.')
+        .map_or(segment, |(stem, _)| stem)
+        .trim_end_matches([' ', '.']);
+
+    if ["CON", "PRN", "AUX", "NUL"]
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+    {
+        return true;
+    }
+
+    let bytes = stem.as_bytes();
+    bytes.len() == 4
+        && (bytes[..3].eq_ignore_ascii_case(b"COM") || bytes[..3].eq_ignore_ascii_case(b"LPT"))
+        && matches!(bytes[3], b'1'..=b'9')
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -283,6 +311,53 @@ mod tests {
 
         for (input, expected) in cases {
             assert_eq!(PortableRelativePath::parse(input), Err(expected), "{input}");
+        }
+    }
+
+    /// Verifies Windows reserved device names are unsafe in every portable path component.
+    #[test]
+    fn rejects_windows_reserved_device_names() {
+        let cases = [
+            "CON",
+            "con.txt",
+            "folder/PrN.md",
+            "AUX.tar.gz",
+            "NUL.",
+            "COM1",
+            "com9.log",
+            "folder\\LPT1\\notes.txt",
+            "lpt9.md",
+        ];
+
+        for input in cases {
+            assert_eq!(
+                PortableRelativePath::parse(input),
+                Err(PortableRelativePathError::WindowsReservedName),
+                "{input}"
+            );
+        }
+    }
+
+    /// Verifies names outside the reserved device set remain portable ordinary paths.
+    #[test]
+    fn accepts_names_near_windows_reserved_device_names() {
+        let cases = [
+            ("CONSOLE.txt", "CONSOLE.txt"),
+            ("COM0", "COM0"),
+            ("COM10.txt", "COM10.txt"),
+            ("LPT0", "LPT0"),
+            ("LPT10.md", "LPT10.md"),
+            ("NULLED/SKILL.md", "NULLED/SKILL.md"),
+            ("folder.CON/notes.txt", "folder.CON/notes.txt"),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                PortableRelativePath::parse(input)
+                    .unwrap_or_else(|error| panic!("parse {input:?}: {error}"))
+                    .as_str(),
+                expected
+            );
         }
     }
 

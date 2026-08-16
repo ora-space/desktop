@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 flate2 = { workspace = true }
 ora-domain = { workspace = true }
+ora-fs = { workspace = true }
 serde_yaml = { workspace = true }
 tar = { workspace = true }
 thiserror = { workspace = true }

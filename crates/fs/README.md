@@ -6,7 +6,7 @@
 
 - `PortableRelativePath` gives wire and configuration paths platform-independent validation and a
   slash-separated identity. It treats both slash styles as separators and rejects parent traversal,
-  rooted paths, Windows drive/UNC prefixes, and NUL bytes on every host.
+  rooted paths, Windows drive/UNC prefixes, reserved device names, and NUL bytes on every host.
 - `CanonicalPathRoot` centralizes canonical root identity, existing-target resolution, absolute
   selection containment, and conversion back to portable relative paths. Workspace and plugin
   callers use the same primitives rather than maintaining local path validators.
