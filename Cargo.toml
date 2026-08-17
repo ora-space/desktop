@@ -16,6 +16,7 @@ members = [
     "crates/pty",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/utils",
     "xtask",
 ]
 exclude = ["apps/desktop/src-tauri"]
@@ -46,6 +47,7 @@ ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
 ora-scheduler = { path = "crates/scheduler" }
 ora-skill-package = { path = "crates/skill-package" }
+ora-utils = { path = "crates/utils" }
 
 # External
 agent-client-protocol-schema = "=1.6.0"

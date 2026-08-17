@@ -1,4 +1,4 @@
-use ora_skill_package::path::RelativePath;
+use ora_utils::path::StrictRelativePath;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -112,7 +112,7 @@ pub trait SkillStorage {
     fn write_file(
         &self,
         staging: &Path,
-        relative: &RelativePath,
+        relative: &StrictRelativePath,
         bytes: &[u8],
     ) -> Result<(), SkillStorageError>;
 
@@ -123,7 +123,7 @@ pub trait SkillStorage {
     fn copy_file(
         &self,
         staging: &Path,
-        relative: &RelativePath,
+        relative: &StrictRelativePath,
         source: &Path,
     ) -> Result<(), SkillStorageError>;
 

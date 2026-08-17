@@ -1,5 +1,5 @@
 use crate::manifest::{AgentManifest, PackageManifest};
-use ora_fs::{CanonicalPathRoot, PortableRelativePath};
+use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

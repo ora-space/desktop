@@ -10,7 +10,7 @@ The client sends a task id and, where needed, a workspace-relative path. The Web
 
 The layers are intentionally narrow:
 
-- `crates/fs` owns path validation, canonical containment checks, file bounds, ripgrep execution, and native watching.
+- `crates/utils` owns portable path validation and canonical containment checks; `crates/fs` applies them to workspace roots and owns file bounds, ripgrep execution, and native watching.
 - `apps/web/server/src/service/workspace_file.rs` maps filesystem results to `ora-contracts` values.
 - `apps/web/server/src/handlers/workspace_files.rs` owns HTTP extraction, task-root resolution, and watcher setup.
 - `apps/web/server/src/handlers/ndjson_stream.rs` owns NDJSON framing, process-shutdown observation, and request lifecycle completion for every Web stream, including workspace watch.
@@ -19,12 +19,12 @@ The layers are intentionally narrow:
 
 ## HTTP operations
 
-| Operation | Request | Response |
-| --- | --- | --- |
-| `listWorkspaceDirectory` | `POST /api/tasks/{taskId}/files/list`, optional `path` | `ListWorkspaceDirectoryResponse` |
-| `readWorkspaceFile` | `POST /api/tasks/{taskId}/files/read`, required `path` | `ReadWorkspaceFileResponse` |
-| `searchWorkspace` | `POST /api/tasks/{taskId}/files/search`, `query` and `kind` | `SearchWorkspaceResponse` |
-| `watchWorkspace` | `GET /api/tasks/{taskId}/files/watch` | `WorkspaceFileEventBatch` NDJSON stream |
+| Operation                | Request                                                     | Response                                |
+| ------------------------ | ----------------------------------------------------------- | --------------------------------------- |
+| `listWorkspaceDirectory` | `POST /api/tasks/{taskId}/files/list`, optional `path`      | `ListWorkspaceDirectoryResponse`        |
+| `readWorkspaceFile`      | `POST /api/tasks/{taskId}/files/read`, required `path`      | `ReadWorkspaceFileResponse`             |
+| `searchWorkspace`        | `POST /api/tasks/{taskId}/files/search`, `query` and `kind` | `SearchWorkspaceResponse`               |
+| `watchWorkspace`         | `GET /api/tasks/{taskId}/files/watch`                       | `WorkspaceFileEventBatch` NDJSON stream |
 
 All returned paths are slash-separated and relative to the resolved task workspace. `watchWorkspace` emits `data`, `error`, and `end` frames. Its error frame uses the shared `{ code, params, requestId }` contract, so the frontend can reuse the same remote-error decoder as unary requests. On the Web server the stream also completes when process shutdown begins, so a live Files panel cannot block `Ctrl+C` exit. A terminal error already queued at shutdown is emitted as `error` rather than a successful `end`.
 

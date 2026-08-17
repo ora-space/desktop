@@ -24,6 +24,7 @@ ora-logging = { workspace = true }
 ora-process = { workspace = true }
 ora-scheduler = { workspace = true }
 ora-skill-package = { workspace = true }
+ora-utils = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 similar = { workspace = true }

@@ -25,7 +25,8 @@ from one folder tree or one supported archive (`.zip`, `.skill`, `.tar.gz`, `.tg
 ## Non-responsibilities
 
 This module does not read archives itself (`ora-skill-package` owns snapshot materialization,
-path security, limits, scanning, and manifest parsing), does not implement the concrete
+skill-level limits, scanning, and manifest parsing on top of the `ora-utils` archive and path
+safety primitives), does not implement the concrete
 filesystem port (see the `skill` module), and does not decide HTTP or IPC semantics.
 
 ## Key invariants

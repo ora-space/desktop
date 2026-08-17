@@ -1,6 +1,7 @@
 use crate::workspace::{canonical_root, relative_string};
-use crate::{CanonicalPathRoot, WorkspaceFileSystem, WorkspaceFileSystemError};
+use crate::{WorkspaceFileSystem, WorkspaceFileSystemError};
 use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec, ProcessStdio};
+use ora_utils::path::CanonicalPathRoot;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -280,7 +281,7 @@ struct RipgrepSubmatch {
 #[cfg(test)]
 mod tests {
     use super::{SearchKind, SearchMatch, SearchResult, parse_matches, search_arguments};
-    use crate::CanonicalPathRoot;
+    use ora_utils::path::CanonicalPathRoot;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 

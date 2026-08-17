@@ -8,7 +8,7 @@ This module owns the transport- and storage-independent use cases behind task ch
 - Stage, commit, and push changes only after the caller's task, worktree, and persisted branch identity have been verified.
 - Create root line discussions, replies, and resolution changes while making invalid comment states unrepresentable with `TaskDiffCommentKind`.
 - Reject stale or structurally invalid anchors before persisting a comment.
-- Normalize anchor paths through `ora-fs` portable relative-path validation before matching or
+- Normalize anchor paths through `ora-utils` portable relative-path validation before matching or
   persistence, so Git paths retain one platform-independent slash representation.
 - Map domain comments into the shared `ora-contracts` DTOs.
 

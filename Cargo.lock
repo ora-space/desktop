@@ -962,6 +962,7 @@ dependencies = [
 name = "gitlancer"
 version = "0.0.0"
 dependencies = [
+ "ora-utils",
  "pretty_assertions",
  "thiserror 2.0.19",
 ]
@@ -1688,9 +1689,9 @@ dependencies = [
  "gray_matter",
  "ora-contracts",
  "ora-domain",
- "ora-fs",
  "ora-logging",
  "ora-skill-package",
+ "ora-utils",
  "petgraph",
  "pretty_assertions",
  "serde",
@@ -1724,6 +1725,7 @@ dependencies = [
  "ora-process",
  "ora-scheduler",
  "ora-skill-package",
+ "ora-utils",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1786,6 +1788,7 @@ version = "0.0.0"
 dependencies = [
  "notify",
  "ora-process",
+ "ora-utils",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1830,7 +1833,7 @@ dependencies = [
 name = "ora-plugin-manager"
 version = "0.0.0"
 dependencies = [
- "ora-fs",
+ "ora-utils",
  "pretty_assertions",
  "semver",
  "serde",
@@ -1882,15 +1885,22 @@ dependencies = [
 name = "ora-skill-package"
 version = "0.0.0"
 dependencies = [
- "flate2",
  "ora-domain",
- "ora-fs",
+ "ora-utils",
  "pretty_assertions",
  "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "ora-utils"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "pretty_assertions",
  "tar",
  "tempfile",
  "thiserror 2.0.19",
- "tracing",
  "unicode-normalization",
  "zip",
 ]
@@ -1912,6 +1922,7 @@ dependencies = [
  "ora-logging",
  "ora-plugin-manager",
  "ora-skill-package",
+ "ora-utils",
  "pretty_assertions",
  "reqwest",
  "serde",

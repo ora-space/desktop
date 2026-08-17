@@ -1600,6 +1600,7 @@ dependencies = [
 name = "gitlancer"
 version = "0.0.0"
 dependencies = [
+ "ora-utils",
  "thiserror 2.0.18",
 ]
 
@@ -2994,9 +2995,9 @@ dependencies = [
  "gray_matter",
  "ora-contracts",
  "ora-domain",
- "ora-fs",
  "ora-logging",
  "ora-skill-package",
+ "ora-utils",
  "petgraph",
  "serde",
  "serde_json",
@@ -3025,6 +3026,7 @@ dependencies = [
  "ora-process",
  "ora-scheduler",
  "ora-skill-package",
+ "ora-utils",
  "serde",
  "serde_json",
  "similar",
@@ -3103,6 +3105,7 @@ version = "0.0.0"
 dependencies = [
  "notify",
  "ora-process",
+ "ora-utils",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3141,7 +3144,7 @@ dependencies = [
 name = "ora-plugin-manager"
 version = "0.0.0"
 dependencies = [
- "ora-fs",
+ "ora-utils",
  "semver",
  "serde",
  "serde_json",
@@ -3176,13 +3179,18 @@ dependencies = [
 name = "ora-skill-package"
 version = "0.0.0"
 dependencies = [
- "flate2",
  "ora-domain",
- "ora-fs",
+ "ora-utils",
  "serde_yaml",
+]
+
+[[package]]
+name = "ora-utils"
+version = "0.0.0"
+dependencies = [
+ "flate2",
  "tar",
  "thiserror 2.0.18",
- "tracing",
  "unicode-normalization",
  "zip",
 ]

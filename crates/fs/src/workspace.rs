@@ -1,7 +1,6 @@
-use crate::{
-    CanonicalPathRoot, PathContainmentError, PortableRelativePath, WorkspaceFileSystemError,
-};
+use crate::WorkspaceFileSystemError;
 use ora_process::TokioProcessSpawner;
+use ora_utils::path::{CanonicalPathRoot, PathContainmentError, PortableRelativePath};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;

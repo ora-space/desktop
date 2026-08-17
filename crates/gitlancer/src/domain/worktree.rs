@@ -1,8 +1,9 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use crate::domain::paths::{GitDir, RepoRelativePath, RepoRoot, WorktreeRoot};
 use crate::domain::refs::BranchName;
 use crate::error::DomainError;
+use ora_utils::path::{normalize_absolute, normalize_relative};
 
 /// Distinguishes the main checkout from linked worktrees because they have different lifecycle semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,10 +71,10 @@ impl WorktreeHandle {
         path: impl AsRef<Path>,
     ) -> Result<RepoRelativePath, DomainError> {
         let candidate = path.as_ref();
-        let worktree_root = normalize_absolute_path(self.worktree_root.as_path());
+        let worktree_root = normalize_absolute(self.worktree_root.as_path());
 
         if candidate.is_absolute() {
-            let normalized = normalize_absolute_path(candidate);
+            let normalized = normalize_absolute(candidate);
             let relative = normalized.strip_prefix(&worktree_root).map_err(|_| {
                 DomainError::PathOutsideWorktree {
                     path: normalized.clone(),
@@ -85,60 +86,11 @@ impl WorktreeHandle {
         }
 
         let normalized =
-            normalize_relative_path(candidate).ok_or_else(|| DomainError::PathOutsideWorktree {
+            normalize_relative(candidate).ok_or_else(|| DomainError::PathOutsideWorktree {
                 path: candidate.to_path_buf(),
                 worktree: worktree_root.clone(),
             })?;
 
         Ok(RepoRelativePath::new(normalized))
     }
-}
-
-/// Normalizes an absolute path lexically so containment checks do not depend on filesystem existence.
-fn normalize_absolute_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::CurDir => {}
-            // Absolute paths cannot traverse above root, so extra `..` segments are ignored there.
-            Component::ParentDir => {
-                let _ = normalized.pop();
-            }
-            Component::Normal(part) => normalized.push(part),
-        }
-    }
-
-    normalized
-}
-
-/// Normalizes a relative path and rejects paths whose `..` segments would escape the worktree root.
-fn normalize_relative_path(path: &Path) -> Option<PathBuf> {
-    let mut normalized = PathBuf::new();
-    let mut depth = 0usize;
-
-    for component in path.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir => return None,
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if depth == 0 {
-                    return None;
-                }
-
-                let popped = normalized.pop();
-                if popped {
-                    depth -= 1;
-                }
-            }
-            Component::Normal(part) => {
-                normalized.push(part);
-                depth += 1;
-            }
-        }
-    }
-
-    Some(normalized)
 }

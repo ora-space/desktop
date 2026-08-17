@@ -1,7 +1,6 @@
 use ora_domain::SkillId;
-use ora_skill_package::limits::Limits;
-use ora_skill_package::path::RelativePath;
-use ora_skill_package::scan::SkillBoundary;
+use ora_skill_package::{Limits, SkillBoundary};
+use ora_utils::path::StrictRelativePath;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -111,7 +110,7 @@ pub struct ImportCandidate {
     pub name: String,
     pub description: String,
     /// Validated source-relative path of the candidate's `SKILL.md`.
-    pub source_path: RelativePath,
+    pub source_path: StrictRelativePath,
     /// The non-overlapping boundary this candidate owns.
     pub boundary: SkillBoundary,
     pub status: CandidateStatus,

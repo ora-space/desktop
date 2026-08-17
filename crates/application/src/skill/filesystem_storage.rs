@@ -2,7 +2,7 @@ use super::storage::{
     BACKUP_DIR_NAME, CreateHandle, DeleteHandle, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
     STAGING_DIR_NAME, SkillStorage, SkillStorageError, SwapHandle, TransactionJournal,
 };
-use ora_skill_package::path::RelativePath;
+use ora_utils::path::StrictRelativePath;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -127,7 +127,7 @@ impl SkillStorage for FilesystemSkillStorage {
     fn write_file(
         &self,
         staging: &Path,
-        relative: &RelativePath,
+        relative: &StrictRelativePath,
         bytes: &[u8],
     ) -> Result<(), SkillStorageError> {
         let destination = relative.to_path(staging);
@@ -143,7 +143,7 @@ impl SkillStorage for FilesystemSkillStorage {
     fn copy_file(
         &self,
         staging: &Path,
-        relative: &RelativePath,
+        relative: &StrictRelativePath,
         source: &Path,
     ) -> Result<(), SkillStorageError> {
         let destination = relative.to_path(staging);

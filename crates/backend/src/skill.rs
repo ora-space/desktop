@@ -149,7 +149,7 @@ mod tests {
     };
     use ora_domain::{AgentDefinition, AgentDefinitionId, AuditFields, Namespace};
     use ora_logging::with_trace_logging;
-    use ora_skill_package::path::RelativePath;
+    use ora_utils::path::StrictRelativePath;
     use pretty_assertions::assert_eq;
     use std::path::Path;
     use std::sync::{Arc, Barrier};
@@ -189,7 +189,7 @@ mod tests {
         fn write_file(
             &self,
             staging: &Path,
-            relative: &RelativePath,
+            relative: &StrictRelativePath,
             bytes: &[u8],
         ) -> Result<(), SkillStorageError> {
             self.inner.write_file(staging, relative, bytes)
@@ -198,7 +198,7 @@ mod tests {
         fn copy_file(
             &self,
             staging: &Path,
-            relative: &RelativePath,
+            relative: &StrictRelativePath,
             source: &Path,
         ) -> Result<(), SkillStorageError> {
             self.inner.copy_file(staging, relative, source)

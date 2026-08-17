@@ -3,8 +3,9 @@ use crate::search::{
     normalize_ripgrep_path,
 };
 use crate::workspace::{canonical_root, relative_string, resolve_existing};
-use crate::{CanonicalPathRoot, ReadFile, WorkspaceFileSystem, WorkspaceFileSystemError};
+use crate::{ReadFile, WorkspaceFileSystem, WorkspaceFileSystemError};
 use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec, ProcessStdio};
+use ora_utils::path::CanonicalPathRoot;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -229,8 +230,8 @@ fn is_markdown_path(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{IgnorePolicy, WorkspaceFileSystem, markdown_arguments, parse_markdown_output};
-    use crate::CanonicalPathRoot;
     use ora_process::TokioProcessSpawner;
+    use ora_utils::path::CanonicalPathRoot;
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::path::{Path, PathBuf};

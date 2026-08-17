@@ -11,7 +11,7 @@ use ora_contracts::{
     GetSkillImportSessionRequest, GetSkillImportSessionResponse, PrepareSkillImportRequest,
     PrepareSkillImportResponse, SkillImportConflictDecision, SkillImportSource,
 };
-use ora_skill_package::path::RelativePath;
+use ora_utils::path::StrictRelativePath;
 use serde::Deserialize;
 use std::fs;
 use std::io::Write;
@@ -175,7 +175,7 @@ async fn receive_folder_upload(
             .file_name()
             .map(ToString::to_string)
             .ok_or_else(|| WebApiError::bad_request("import_upload_missing_filename"))?;
-        let relative = RelativePath::parse(&relative)
+        let relative = StrictRelativePath::parse(&relative)
             .map_err(|_| WebApiError::bad_request("import_upload_unsafe_path"))?;
         let destination = relative.to_path(upload_root);
         let parent = destination

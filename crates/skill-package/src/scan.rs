@@ -1,6 +1,9 @@
-use crate::path::RelativePath;
-use crate::snapshot::{Snapshot, SnapshotFile};
+use ora_utils::archive::{ExtractedFile, ExtractedTree};
+use ora_utils::path::StrictRelativePath;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Exact file name that marks a directory as a skill root.
+pub const SKILL_MANIFEST_FILE_NAME: &str = "SKILL.md";
 
 /// One discovered, non-overlapping skill root and the files it owns.
 ///
@@ -10,9 +13,9 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillBoundary {
     /// Validated relative path of the boundary's own `SKILL.md`.
-    pub manifest_path: RelativePath,
+    pub manifest_path: StrictRelativePath,
     /// Ordinary files owned by this boundary, sorted by relative path.
-    pub files: Vec<SnapshotFile>,
+    pub files: Vec<ExtractedFile>,
 }
 
 impl SkillBoundary {
@@ -31,19 +34,19 @@ impl SkillBoundary {
 ///
 /// Files that do not belong to any manifest root are ignored. The returned boundaries are
 /// sorted by manifest path so preview and commit order stay deterministic.
-pub fn scan_skill_boundaries(snapshot: &Snapshot) -> Vec<SkillBoundary> {
+pub fn scan_skill_boundaries(snapshot: &ExtractedTree) -> Vec<SkillBoundary> {
     let mut manifest_roots = BTreeSet::new();
     for file in snapshot.files() {
-        if file.relative_path.is_manifest()
+        if is_manifest(&file.relative_path)
             && let Some(root) = file.relative_path.parent()
         {
             manifest_roots.insert(root);
         }
     }
 
-    let mut grouped: BTreeMap<RelativePath, Vec<SnapshotFile>> = BTreeMap::new();
+    let mut grouped: BTreeMap<StrictRelativePath, Vec<ExtractedFile>> = BTreeMap::new();
     for file in snapshot.files() {
-        if file.relative_path.is_manifest()
+        if is_manifest(&file.relative_path)
             && let Some(root) = file.relative_path.parent()
         {
             grouped.entry(root).or_default().push(file.clone());
@@ -59,7 +62,7 @@ pub fn scan_skill_boundaries(snapshot: &Snapshot) -> Vec<SkillBoundary> {
         .map(|(root, mut files)| {
             files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
             SkillBoundary {
-                manifest_path: root.append_segment("SKILL.md"),
+                manifest_path: root.append_segment(SKILL_MANIFEST_FILE_NAME),
                 files,
             }
         })
@@ -68,9 +71,9 @@ pub fn scan_skill_boundaries(snapshot: &Snapshot) -> Vec<SkillBoundary> {
 
 /// Returns the deepest ancestor directory that owns a manifest, if any.
 fn nearest_manifest_root(
-    mut directory: Option<RelativePath>,
-    manifest_roots: &BTreeSet<RelativePath>,
-) -> Option<RelativePath> {
+    mut directory: Option<StrictRelativePath>,
+    manifest_roots: &BTreeSet<StrictRelativePath>,
+) -> Option<StrictRelativePath> {
     while let Some(current) = directory {
         if manifest_roots.contains(&current) {
             return Some(current);
@@ -78,4 +81,9 @@ fn nearest_manifest_root(
         directory = current.parent();
     }
     None
+}
+
+/// Returns whether a path names the exact manifest file `SKILL.md` (case-sensitive).
+fn is_manifest(path: &StrictRelativePath) -> bool {
+    path.file_name() == Some(SKILL_MANIFEST_FILE_NAME)
 }

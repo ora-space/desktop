@@ -7,7 +7,7 @@ use crate::{ApplicationError, Clock, RepositoryError};
 use ora_contracts::{CreateSkillRequest, DeleteSkillRequest, GetSkillRequest, UpdateSkillRequest};
 use ora_domain::{AuditFields, Namespace, Skill, SkillId};
 use ora_skill_package::manifest::{render_manifest, render_minimal_manifest};
-use ora_skill_package::path::RelativePath;
+use ora_utils::path::StrictRelativePath;
 use pretty_assertions::assert_eq;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -473,7 +473,7 @@ impl SkillStorage for Rc<FakeSkillStorage> {
     fn write_file(
         &self,
         _staging: &Path,
-        _relative: &RelativePath,
+        _relative: &StrictRelativePath,
         _bytes: &[u8],
     ) -> Result<(), SkillStorageError> {
         self.take_fail()
@@ -481,7 +481,7 @@ impl SkillStorage for Rc<FakeSkillStorage> {
     fn copy_file(
         &self,
         _staging: &Path,
-        _relative: &RelativePath,
+        _relative: &StrictRelativePath,
         _source: &Path,
     ) -> Result<(), SkillStorageError> {
         self.take_fail()
