@@ -16,11 +16,14 @@ const files: WorkflowNodeFileChange[] = [
 
 describe("RunActFileChanges", () => {
   it("opens the worktree-relative path when a file is clicked", async () => {
-    const openFile = vi.fn();
+    const openDiff = vi.fn();
     const user = userEvent.setup();
     render(
       <AppI18nProvider>
-        <TaskChangesNavigationProvider onOpenFile={openFile}>
+        <TaskChangesNavigationProvider
+          onOpenDiff={openDiff}
+          onOpenWorkspaceFile={vi.fn()}
+        >
           <RunActFileChanges files={files} />
         </TaskChangesNavigationProvider>
       </AppI18nProvider>,
@@ -30,6 +33,6 @@ describe("RunActFileChanges", () => {
     // panel matches on the worktree-relative path, so the click must open the
     // normalized form.
     await user.click(screen.getByRole("button", { name: /src\/foo\.ts/ }));
-    expect(openFile).toHaveBeenCalledWith("src/foo.ts");
+    expect(openDiff).toHaveBeenCalledWith("src/foo.ts");
   });
 });

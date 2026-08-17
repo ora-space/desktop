@@ -1,0 +1,132 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { PlatformProvider, type PlatformAdapter } from "@ora/platform";
+import { describe, expect, it, vi } from "vitest";
+import { AppI18nProvider } from "../../../i18n/i18n";
+import { createStubPlatform } from "../../../test/stub-platform";
+import { TaskChangesNavigationProvider } from "../../diff/task-changes-navigation";
+import type { SessionArtifactIndex } from "./artifact-index";
+import { ChatFileLink } from "./chat-file-link";
+import { ChatLinkContext } from "./context";
+
+const index: SessionArtifactIndex = {
+  edited: ["src/main.rs"],
+  referenced: ["src/lib.rs"],
+};
+
+function desktopPlatform(open = vi.fn()): PlatformAdapter {
+  return {
+    ...createStubPlatform(),
+    locationActions: {
+      kind: "supported",
+      resolveTaskCwd: async () => "C:/repo",
+      open,
+    },
+  };
+}
+
+function renderFileLink(
+  raw: string,
+  options?: {
+    platform?: PlatformAdapter;
+    openDiff?: (path: string, line?: number) => void;
+    openWorkspaceFile?: (path: string, line?: number, column?: number) => void;
+  },
+) {
+  const openDiff = options?.openDiff ?? vi.fn();
+  const openWorkspaceFile = options?.openWorkspaceFile ?? vi.fn();
+  const view = render(
+    <PlatformProvider adapter={options?.platform ?? createStubPlatform()}>
+      <AppI18nProvider>
+        <TaskChangesNavigationProvider
+          onOpenDiff={openDiff}
+          onOpenWorkspaceFile={openWorkspaceFile}
+        >
+          <ChatLinkContext.Provider value={{ index, taskId: "task-1" }}>
+            <ChatFileLink source="inline-code" raw={raw}>
+              {raw}
+            </ChatFileLink>
+          </ChatLinkContext.Provider>
+        </TaskChangesNavigationProvider>
+      </AppI18nProvider>
+    </PlatformProvider>,
+  );
+  return { ...view, openDiff, openWorkspaceFile };
+}
+
+describe("ChatFileLink", () => {
+  it("opens edited files in Changes and referenced files in Files", async () => {
+    const user = userEvent.setup();
+    const edited = renderFileLink("src/main.rs");
+    await user.click(screen.getByRole("button", { name: /src\/main\.rs/ }));
+    expect(edited.openDiff).toHaveBeenCalledWith("src/main.rs", undefined);
+
+    edited.unmount();
+    const referenced = renderFileLink("src/lib.rs");
+    await user.click(screen.getByRole("button", { name: /src\/lib\.rs/ }));
+    expect(referenced.openWorkspaceFile).toHaveBeenCalledWith(
+      "src/lib.rs",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("passes a parsed line to openDiff", async () => {
+    const user = userEvent.setup();
+    const { openDiff } = renderFileLink("src/main.rs:12");
+    await user.click(screen.getByRole("button", { name: /src\/main\.rs/ }));
+    expect(openDiff).toHaveBeenCalledWith("src/main.rs", 12);
+  });
+
+  it("keeps commands as plain code", () => {
+    renderFileLink("cargo test");
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByText("cargo test").tagName).toBe("CODE");
+  });
+
+  it("hides Explorer, VS Code, and Terminal on the web stub", async () => {
+    renderFileLink("src/main.rs");
+    fireEvent.contextMenu(
+      screen.getByRole("button", { name: /src\/main\.rs/ }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: /文件管理器|Explorer/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /VS Code/ })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: /终端|Terminal/ }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: /复制路径|Copy path/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Explorer and VS Code on desktop without Terminal", async () => {
+    const user = userEvent.setup();
+    const open = vi.fn();
+    const platform = desktopPlatform(open);
+    renderFileLink("src/main.rs", { platform });
+    fireEvent.contextMenu(
+      screen.getByRole("button", { name: /src\/main\.rs/ }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: /文件管理器|Explorer/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /VS Code/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /终端|Terminal/ }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: /在文件中预览|Preview in Files/ }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("menuitem", { name: /文件管理器|Explorer/ }),
+    );
+    await waitFor(() => {
+      expect(open).toHaveBeenCalledWith("explorer", "C:/repo/src/main.rs");
+    });
+  });
+});

@@ -21,6 +21,45 @@ interface CollapsedRange {
   key: string;
 }
 
+export interface NewSideLineTarget {
+  change: ChangeData;
+  collapsedKey: string | null;
+}
+
+/** Returns the old or new source line represented by one parsed change. */
+function lineNumberFor(change: ChangeData, side: "old" | "new"): number | null {
+  if (change.type === "normal") {
+    return side === "old" ? change.oldLineNumber : change.newLineNumber;
+  }
+  if (change.type === "delete") {
+    return side === "old" ? change.lineNumber : null;
+  }
+  return side === "new" ? change.lineNumber : null;
+}
+
+/**
+ * Locates a new-side line in the original hunks and names the collapsed block
+ * that currently hides it, so a chat jump can expand then scroll.
+ */
+export function findNewSideLineTarget(
+  hunks: HunkData[],
+  line: number,
+): NewSideLineTarget | null {
+  for (let hunkIndex = 0; hunkIndex < hunks.length; hunkIndex += 1) {
+    const hunk = hunks[hunkIndex]!;
+    const ranges = findCollapsedRanges(hunk, hunkIndex);
+    for (let index = 0; index < hunk.changes.length; index += 1) {
+      const change = hunk.changes[index]!;
+      if (lineNumberFor(change, "new") !== line) continue;
+      const collapsed = ranges.find(
+        (range) => index >= range.start && index < range.end,
+      );
+      return { change, collapsedKey: collapsed?.key ?? null };
+    }
+  }
+  return null;
+}
+
 /**
  * Splits complete-context hunks into visible change neighborhoods and expandable
  * unchanged blocks while preserving the parser's original change objects.

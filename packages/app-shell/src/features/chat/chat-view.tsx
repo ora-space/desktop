@@ -158,6 +158,7 @@ export function ChatView({
           modelChanges={modelChanges}
           userName={userName}
           isResponding={isResponding}
+          taskId={taskId}
         />
       )}
 

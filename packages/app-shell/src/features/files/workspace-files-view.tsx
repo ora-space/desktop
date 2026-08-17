@@ -46,6 +46,15 @@ interface WorkspaceFilesViewProps {
   hideHeader?: boolean;
   surface?: "explorer" | "search";
   onSurfaceChange?: (surface: "explorer" | "search") => void;
+  fileRequest?: WorkspaceFileRequest;
+}
+
+/** External Files-panel open request. requestId must change to re-apply the same path. */
+export interface WorkspaceFileRequest {
+  path: string;
+  requestId: number;
+  line?: number;
+  column?: number;
 }
 
 interface DirectoryTreeProps {
@@ -67,6 +76,7 @@ export function WorkspaceFilesView({
   hideHeader = false,
   surface: controlledSurface,
   onSurfaceChange,
+  fileRequest,
 }: WorkspaceFilesViewProps) {
   const { t } = useTranslation();
   const client = useContractsClient();
@@ -83,11 +93,31 @@ export function WorkspaceFilesView({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedTarget, setSelectedTarget] =
     useState<WorkspaceFileMatchTarget | null>(null);
+  const [appliedFileRequestId, setAppliedFileRequestId] = useState<
+    number | null
+  >(null);
   const [searchKind, setSearchKind] = useState<WorkspaceSearchKind>("files");
   const [searchText, setSearchText] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [fileFilterText, setFileFilterText] = useState("");
   const [debouncedFileFilter, setDebouncedFileFilter] = useState("");
+
+  if (
+    fileRequest !== undefined &&
+    fileRequest.requestId !== appliedFileRequestId
+  ) {
+    setAppliedFileRequestId(fileRequest.requestId);
+    setSelectedPath(fileRequest.path);
+    setSelectedTarget(
+      fileRequest.line === undefined
+        ? null
+        : {
+            line: fileRequest.line,
+            column: fileRequest.column ?? 1,
+            matchedText: "",
+          },
+    );
+  }
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchText.trim()), 200);

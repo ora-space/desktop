@@ -15,7 +15,7 @@ vi.mock("./task-diff-view", () => ({
     fileRequest,
   }: {
     toolbar?: ReactNode;
-    fileRequest?: { path: string; requestId: number };
+    fileRequest?: { path: string; requestId: number; line?: number };
   }) => (
     <section aria-label="Task diff">
       <header data-diff-toolbar>
@@ -23,6 +23,7 @@ vi.mock("./task-diff-view", () => ({
         {toolbar}
       </header>
       <span data-testid="requested-file">{fileRequest?.path}</span>
+      <span data-testid="requested-line">{fileRequest?.line ?? ""}</span>
     </section>
   ),
 }));
@@ -32,13 +33,20 @@ vi.mock("../files/workspace-review-files-panel", () => ({
     toolbar,
     taskId,
     projectId,
+    fileRequest,
   }: {
     toolbar?: ReactNode;
     taskId?: string;
     projectId: string;
+    fileRequest?: { path: string; requestId: number; line?: number };
   }) => (
     <section aria-label="Files panel" data-testid="files-panel">
       <span data-testid="files-target">{taskId ?? projectId}</span>
+      <span data-testid="files-request">
+        {fileRequest === undefined
+          ? ""
+          : `${fileRequest.path}:${fileRequest.line ?? ""}`}
+      </span>
       {toolbar}
     </section>
   ),
@@ -48,8 +56,21 @@ vi.mock("../files/workspace-review-files-panel", () => ({
 function OpenChangedFileButton() {
   const navigation = useTaskChangesNavigation();
   return (
-    <button type="button" onClick={() => navigation?.openFile("src/main.ts")}>
+    <button type="button" onClick={() => navigation?.openDiff("src/main.ts")}>
       Open changed file
+    </button>
+  );
+}
+
+/** Requests a workspace file preview the way inline referenced links do. */
+function OpenWorkspaceFileButton() {
+  const navigation = useTaskChangesNavigation();
+  return (
+    <button
+      type="button"
+      onClick={() => navigation?.openWorkspaceFile("src/lib.ts", 8, 1)}
+    >
+      Open workspace file
     </button>
   );
 }
@@ -148,6 +169,30 @@ describe("WorkspaceReviewLayout", () => {
     ).toBeInTheDocument();
     expect(screen.getByTestId("requested-file")).toHaveTextContent(
       "src/main.ts",
+    );
+  });
+
+  it("opens the Files panel and forwards a workspace file request with a line", async () => {
+    const user = userEvent.setup();
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <WorkspaceReviewLayout context={taskContext}>
+            <OpenWorkspaceFileButton />
+          </WorkspaceReviewLayout>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Open workspace file" }),
+    );
+
+    expect(
+      screen.getByRole("region", { name: "Files panel" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("files-request")).toHaveTextContent(
+      "src/lib.ts:8",
     );
   });
 

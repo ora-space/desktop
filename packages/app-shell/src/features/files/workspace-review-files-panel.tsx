@@ -10,7 +10,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { SpecsContent, type SpecsContentHandle } from "../specs/specs-view";
-import { WorkspaceFilesView } from "./workspace-files-view";
+import {
+  WorkspaceFilesView,
+  type WorkspaceFileRequest,
+} from "./workspace-files-view";
 
 export type FilesSurface = "explorer" | "search" | "specs";
 
@@ -18,6 +21,7 @@ interface WorkspaceReviewFilesPanelProps {
   projectId: string;
   taskId?: string;
   toolbar?: ReactNode;
+  fileRequest?: WorkspaceFileRequest;
 }
 
 /** Hosts task file browsing and the read-only Spec catalog inside one review panel. */
@@ -25,6 +29,7 @@ export function WorkspaceReviewFilesPanel({
   projectId,
   taskId,
   toolbar,
+  fileRequest,
 }: WorkspaceReviewFilesPanelProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -32,8 +37,20 @@ export function WorkspaceReviewFilesPanel({
   const [surface, setSurface] = useState<FilesSurface>(
     specsOnly ? "specs" : "explorer",
   );
+  const [appliedFileRequestId, setAppliedFileRequestId] = useState<
+    number | null
+  >(null);
   const specsRef = useRef<SpecsContentHandle>(null);
   const [specsRefreshing, setSpecsRefreshing] = useState(false);
+
+  if (
+    fileRequest !== undefined &&
+    taskId !== undefined &&
+    fileRequest.requestId !== appliedFileRequestId
+  ) {
+    setAppliedFileRequestId(fileRequest.requestId);
+    setSurface("explorer");
+  }
 
   const refreshSpecs = () => void specsRef.current?.refresh();
   const refreshFiles = () => {
@@ -113,7 +130,12 @@ export function WorkspaceReviewFilesPanel({
             onRefreshingChange={setSpecsRefreshing}
           />
         ) : (
-          <WorkspaceFilesView taskId={taskId!} surface={surface} hideHeader />
+          <WorkspaceFilesView
+            taskId={taskId!}
+            surface={surface}
+            hideHeader
+            fileRequest={fileRequest}
+          />
         )}
       </div>
     </section>

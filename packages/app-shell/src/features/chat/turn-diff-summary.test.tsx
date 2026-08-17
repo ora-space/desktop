@@ -89,10 +89,13 @@ describe("turn diff summary", () => {
 
   it("opens the selected file in the diff viewer", async () => {
     const user = userEvent.setup();
-    const openFile = vi.fn();
+    const openDiff = vi.fn();
     render(
       <AppI18nProvider>
-        <TaskChangesNavigationProvider onOpenFile={openFile}>
+        <TaskChangesNavigationProvider
+          onOpenDiff={openDiff}
+          onOpenWorkspaceFile={vi.fn()}
+        >
           <TurnDiffSummary
             turn={turn([
               editTool(
@@ -109,7 +112,7 @@ describe("turn diff summary", () => {
 
     await user.click(screen.getByRole("button", { name: /src\/main\.ts/ }));
 
-    expect(openFile).toHaveBeenCalledWith("src/main.ts");
+    expect(openDiff).toHaveBeenCalledWith("src/main.ts");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -151,7 +154,7 @@ describe("turn diff summary", () => {
 
   it("shows a full-content OpenCode write when the adapter omits ACP diff content", async () => {
     const user = userEvent.setup();
-    const openFile = vi.fn();
+    const openDiff = vi.fn();
     const newFile = editTool("write-1", "quicksort.py", "", "");
     newFile.content = [];
     newFile.locations = [
@@ -166,7 +169,10 @@ describe("turn diff summary", () => {
 
     render(
       <AppI18nProvider>
-        <TaskChangesNavigationProvider onOpenFile={openFile}>
+        <TaskChangesNavigationProvider
+          onOpenDiff={openDiff}
+          onOpenWorkspaceFile={vi.fn()}
+        >
           <TurnDiffSummary turn={turn([newFile])} />
         </TaskChangesNavigationProvider>
       </AppI18nProvider>,
@@ -177,7 +183,7 @@ describe("turn diff summary", () => {
     });
     await user.click(fileButton);
 
-    expect(openFile).toHaveBeenCalledWith("quicksort.py");
+    expect(openDiff).toHaveBeenCalledWith("quicksort.py");
   });
 
   it("waits for turn completion before showing the summary", () => {

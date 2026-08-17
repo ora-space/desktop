@@ -14,6 +14,9 @@ only, while keeping the read model replaceable by a backend session adapter.
   remain the detailed/debugging surface.
 - `MessageBubble` and `MarkdownMessage` already provide the production chat
   message layout and Markdown renderer, so the node view should reuse them.
+  Workflow cards render `MessageBubble` **outside** `MessageList`, so they do
+  not receive chat inline artifact links. That is intentional: those cards are
+  not a task review surface.
 - HITL can occupy the card footer, and parallel nodes also have compact cards,
   so embedded conversation controls must not share those click targets or make
   the parallel carousel jump in height.
@@ -103,7 +106,11 @@ responsible for configuration, execution metrics, errors, and artifacts.
 - The backend only needs to preserve stable item IDs, role/kind, timestamps,
   session ID, and cursor-ordered updates. Streaming updates replace an item by
   ID, so anchor positions remain stable across reconnects.
+
 # Implementation note: node conversation anchor highlights are rendered by the
+
 # shared message bubble renderer. User bubbles and Agent Markdown each expose
+
 # a matching highlight surface, and the animated SVG is layered above message
+
 # backgrounds when a navigator jump focuses a message.

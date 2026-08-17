@@ -472,3 +472,11 @@ describe("MarkdownMessage", () => {
     ).not.toBeNull();
   });
 });
+
+describe("MarkdownMessage chat links", () => {
+  it("does not linkify inline paths without ChatLinkContext", () => {
+    renderMarkdown("See `src/main.rs`");
+    expect(screen.queryByRole("button", { name: /src\/main\.rs/ })).toBeNull();
+    expect(screen.getByText("src/main.rs").tagName).toBe("CODE");
+  });
+});

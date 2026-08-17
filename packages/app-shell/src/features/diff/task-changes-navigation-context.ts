@@ -1,7 +1,8 @@
 import { createContext, useContext } from "react";
 
 export interface TaskChangesNavigation {
-  openFile: (path: string) => void;
+  openDiff: (path: string, line?: number) => void;
+  openWorkspaceFile: (path: string, line?: number, column?: number) => void;
 }
 
 export const TaskChangesNavigationContext =

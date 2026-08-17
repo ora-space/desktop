@@ -13,12 +13,24 @@ vi.mock("../specs/specs-view", () => ({
 }));
 
 vi.mock("./workspace-files-view", () => ({
-  WorkspaceFilesView: ({ surface }: { surface: "explorer" | "search" }) => (
-    <div data-testid="files-explorer">{surface}</div>
+  WorkspaceFilesView: ({
+    surface,
+    fileRequest,
+  }: {
+    surface: "explorer" | "search";
+    fileRequest?: { path: string; requestId: number; line?: number };
+  }) => (
+    <div data-testid="files-explorer">
+      {surface}:{fileRequest?.path ?? ""}:{fileRequest?.line ?? ""}
+    </div>
   ),
 }));
 
-function renderPanel(props: { projectId?: string; taskId?: string }) {
+function renderPanel(props: {
+  projectId?: string;
+  taskId?: string;
+  fileRequest?: { path: string; requestId: number; line?: number };
+}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -30,6 +42,7 @@ function renderPanel(props: { projectId?: string; taskId?: string }) {
             <WorkspaceReviewFilesPanel
               projectId={props.projectId ?? "project-1"}
               taskId={props.taskId}
+              fileRequest={props.fileRequest}
             />
           </TooltipProvider>
         </AppI18nProvider>
@@ -64,5 +77,16 @@ describe("WorkspaceReviewFilesPanel", () => {
     expect(
       screen.getByRole("button", { name: /刷新 Specs|Refresh Specs/ }),
     ).toBeInTheDocument();
+  });
+
+  it("forces explorer and forwards a file request from chat", () => {
+    renderPanel({
+      taskId: "task-1",
+      fileRequest: { path: "src/lib.ts", requestId: 1, line: 8 },
+    });
+
+    expect(screen.getByTestId("files-explorer")).toHaveTextContent(
+      "explorer:src/lib.ts:8",
+    );
   });
 });

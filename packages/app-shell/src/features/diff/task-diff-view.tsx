@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -66,7 +67,10 @@ import {
   useTaskDiff,
   useTaskDiffComments,
 } from "../../state/hooks/use-task-diff";
-import { buildCollapsedDiffSegments } from "./task-diff-collapse";
+import {
+  buildCollapsedDiffSegments,
+  findNewSideLineTarget,
+} from "./task-diff-collapse";
 import { countChanges, parseTaskDiffPatch } from "./task-diff-data";
 import { createCommentAnchor } from "./task-diff-comment-anchor";
 import { diffFilePath } from "./task-diff-file-tree-utils";
@@ -76,6 +80,7 @@ import {
   animatePanelWidth,
   cancelPanelWidthAnimation,
 } from "../../lib/panel-motion";
+import { pathsMatchForWorkspace } from "../../lib/workspace-path";
 
 /** Matches the review panel slide so the file tree toggle feels consistent. */
 const FILE_TREE_SLIDE_MS = 180;
@@ -98,6 +103,7 @@ export type TaskDiffViewType = "unified" | "split";
 export interface TaskDiffFileRequest {
   path: string;
   requestId: number;
+  line?: number;
 }
 
 interface SelectedAnchor {
@@ -174,14 +180,9 @@ export function TaskDiffView({
 
   useEffect(() => {
     if (fileRequest === undefined || files.length === 0) return;
-    const requestedPath = normalizeDiffPath(fileRequest.path);
-    const matchingPath = filePaths.find((path) => {
-      const normalizedPath = normalizeDiffPath(path);
-      return (
-        requestedPath === normalizedPath ||
-        requestedPath.endsWith(`/${normalizedPath}`)
-      );
-    });
+    const matchingPath = filePaths.find((path) =>
+      pathsMatchForWorkspace(fileRequest.path, path),
+    );
     if (matchingPath === undefined) return;
     const frame = requestAnimationFrame(() => selectFile(matchingPath, "auto"));
     return () => cancelAnimationFrame(frame);
@@ -587,6 +588,12 @@ export function TaskDiffView({
                             replyComment.isPending ||
                             setCommentStatus.isPending
                           }
+                          targetLine={
+                            fileRequest !== undefined &&
+                            pathsMatchForWorkspace(fileRequest.path, path)
+                              ? fileRequest.line
+                              : undefined
+                          }
                           rootRef={scrollContainerRef}
                           forceRender={activeFilePath === path}
                         />
@@ -679,11 +686,6 @@ export function TaskDiffView({
   );
 }
 
-/** Normalizes provider and Git path styles before matching a chat file to the task patch. */
-function normalizeDiffPath(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^\.?\//, "");
-}
-
 interface PushBranchDialogProps {
   open: boolean;
   pending: boolean;
@@ -751,6 +753,7 @@ interface TaskDiffFileProps {
     status: TaskDiffThreadStatus,
   ) => Promise<unknown>;
   mutationPending: boolean;
+  targetLine?: number;
 }
 
 interface DiffCommentIndex {
@@ -792,13 +795,33 @@ function TaskDiffFile({
   onReply,
   onSetStatus,
   mutationPending,
+  targetLine,
 }: TaskDiffFileProps) {
   const { t } = useTranslation();
+  const fileRootRef = useRef<HTMLElement | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(
     () => new Set(),
   );
   const fileStats = useMemo(() => countChanges([file]), [file]);
+  const jumpTarget =
+    targetLine === undefined
+      ? null
+      : findNewSideLineTarget(file.hunks, targetLine);
+  const jumpChangeKey =
+    jumpTarget === null ? null : getChangeKey(jumpTarget.change);
+  if (targetLine !== undefined && !expanded) {
+    setExpanded(true);
+  }
+  if (
+    jumpTarget !== null &&
+    jumpTarget.collapsedKey !== null &&
+    !expandedBlocks.has(jumpTarget.collapsedKey)
+  ) {
+    const next = new Set(expandedBlocks);
+    next.add(jumpTarget.collapsedKey);
+    setExpandedBlocks(next);
+  }
   const renderSegments = useMemo(
     () => buildCollapsedDiffSegments(file.hunks, expandedBlocks),
     [expandedBlocks, file.hunks],
@@ -808,6 +831,14 @@ function TaskDiffFile({
   )
     ? selectedAnchor.changeKey.slice(`${fileIndex}:`.length)
     : null;
+
+  useLayoutEffect(() => {
+    if (jumpChangeKey === null) return;
+    const selected = fileRootRef.current?.querySelector(
+      ".diff-code-selected, .diff-selected",
+    );
+    selected?.scrollIntoView({ block: "center", inline: "nearest" });
+  }, [jumpChangeKey, renderSegments]);
 
   const widgets = useMemo(
     () =>
@@ -902,7 +933,7 @@ function TaskDiffFile({
   const gutterEvents = useMemo(() => ({ onClick: selectLine }), [selectLine]);
 
   return (
-    <article className="bg-background">
+    <article ref={fileRootRef} className="bg-background">
       <header className="sticky top-0 z-10 border-b border-border/60 bg-background/95 backdrop-blur">
         <button
           type="button"
@@ -956,9 +987,10 @@ function TaskDiffFile({
               diffType={file.type}
               hunks={file.hunks}
               widgets={widgets}
-              selectedChanges={
-                selectedChangeKey === null ? [] : [selectedChangeKey]
-              }
+              selectedChanges={[
+                ...(selectedChangeKey === null ? [] : [selectedChangeKey]),
+                ...(jumpChangeKey === null ? [] : [jumpChangeKey]),
+              ]}
               gutterEvents={gutterEvents}
               renderGutter={
                 viewType === "unified" ? renderSingleLineNumber : undefined
@@ -1034,6 +1066,7 @@ function areTaskDiffFilePropsEqual(
     previous.onReply === next.onReply &&
     previous.onSetStatus === next.onSetStatus &&
     previous.mutationPending === next.mutationPending &&
+    previous.targetLine === next.targetLine &&
     previousSelection === nextSelection
   );
 }

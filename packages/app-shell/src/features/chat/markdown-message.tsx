@@ -24,6 +24,11 @@ import remarkGfm from "remark-gfm";
 import type { BundledLanguage, ThemedTokenWithVariants } from "shiki";
 import { unwrapMarkdownDocument } from "./markdown-document";
 import { prepareStreamingMarkdown } from "./streaming-markdown";
+import {
+  ChatMarkdownAnchor,
+  ChatMarkdownCode,
+} from "./chat-link/markdown-overrides";
+import { useChatLinkContext } from "./chat-link/context";
 
 interface MarkdownMessageProps {
   content: string;
@@ -223,6 +228,18 @@ export function MarkdownMessage({
   streaming = false,
 }: MarkdownMessageProps) {
   const markdown = unwrapMarkdownDocument(content);
+  const chatLink = useChatLinkContext();
+  const markdownWithLinks = useMemo(
+    () =>
+      chatLink === null
+        ? markdownComponents
+        : {
+            ...markdownComponents,
+            a: ChatMarkdownAnchor,
+            code: ChatMarkdownCode,
+          },
+    [chatLink],
+  );
   const renderedMarkdown = useFrameBatchedMarkdown(markdown, streaming);
   const parseableMarkdown = useMemo(
     () =>
@@ -259,12 +276,12 @@ export function MarkdownMessage({
   const revealNodesRef = useRef(new Set<HTMLElement>());
   const streamingMarkdownComponents = useMemo<Components>(
     () => ({
-      ...markdownComponents,
+      ...markdownWithLinks,
       span: (props) => (
         <StreamingRevealSpan {...props} registryRef={revealNodesRef} />
       ),
     }),
-    [],
+    [markdownWithLinks],
   );
   const rehypePlugins = useMemo(
     () => (streaming ? [revealPlugin] : []),
@@ -275,14 +292,18 @@ export function MarkdownMessage({
       <ReactMarkdown
         remarkPlugins={markdownRemarkPlugins}
         rehypePlugins={rehypePlugins}
-        components={
-          streaming ? streamingMarkdownComponents : markdownComponents
-        }
+        components={streaming ? streamingMarkdownComponents : markdownWithLinks}
       >
         {parseableMarkdown}
       </ReactMarkdown>
     ),
-    [parseableMarkdown, rehypePlugins, streaming, streamingMarkdownComponents],
+    [
+      parseableMarkdown,
+      rehypePlugins,
+      streaming,
+      streamingMarkdownComponents,
+      markdownWithLinks,
+    ],
   );
 
   useLayoutEffect(() => {

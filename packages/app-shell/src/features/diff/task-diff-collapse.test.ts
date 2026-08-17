@@ -1,6 +1,9 @@
 import { parseDiff } from "react-diff-view";
 import { describe, expect, it } from "vitest";
-import { buildCollapsedDiffSegments } from "./task-diff-collapse";
+import {
+  buildCollapsedDiffSegments,
+  findNewSideLineTarget,
+} from "./task-diff-collapse";
 
 const COMPLETE_CONTEXT_PATCH = [
   "diff --git a/src/example.ts b/src/example.ts",
@@ -53,5 +56,33 @@ describe("collapsed task diff sections", () => {
     expect(
       expanded[0]?.kind === "hunk" ? expanded[0].hunk.changes.length : 0,
     ).toBe(6);
+  });
+});
+
+describe("findNewSideLineTarget", () => {
+  it("finds a visible new-side change without a collapsed key", () => {
+    const file = parseDiff(COMPLETE_CONTEXT_PATCH)[0]!;
+    const target = findNewSideLineTarget(file.hunks, 10);
+
+    expect(target?.collapsedKey).toBeNull();
+    expect(target?.change.content).toContain("const value = 20;");
+  });
+
+  it("returns the collapsed block that hides a distant new-side line", () => {
+    const file = parseDiff(COMPLETE_CONTEXT_PATCH)[0]!;
+    const target = findNewSideLineTarget(file.hunks, 1);
+    const firstCollapsed = buildCollapsedDiffSegments(
+      file.hunks,
+      new Set(),
+    ).find((segment) => segment.kind === "collapsed");
+
+    expect(target?.collapsedKey).toBe(
+      firstCollapsed?.kind === "collapsed" ? firstCollapsed.key : undefined,
+    );
+  });
+
+  it("returns null when the new-side line is not in the patch", () => {
+    const file = parseDiff(COMPLETE_CONTEXT_PATCH)[0]!;
+    expect(findNewSideLineTarget(file.hunks, 99)).toBeNull();
   });
 });
