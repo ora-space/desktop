@@ -11,6 +11,8 @@ that any other crate can consume without introducing dependency cycles.
 - `archive` (Cargo feature `archive`): safe materialization of untrusted `.zip` / `.tar.gz`
   archives and folder trees into a destination directory with zip-slip defenses, encrypted and
   special-entry rejection, portable case-conflict detection, and cumulative entry/byte budgets.
+- `Slug`: an owned lowercase ASCII slug segment with stable syntax and byte-length guarantees.
+- `GitBranchName`: an owned short Git branch name validated without starting a Git process.
 
 ## Non-responsibilities
 

@@ -7,4 +7,9 @@
 
 #[cfg(feature = "archive")]
 pub mod archive;
+mod git_branch;
 pub mod path;
+mod slug;
+
+pub use git_branch::{GitBranchName, GitBranchNameError};
+pub use slug::{Slug, SlugError};

@@ -11,6 +11,7 @@ members = [
     "crates/gitlancer",
     "crates/history",
     "crates/logging",
+    "crates/plugin-manifest",
     "crates/plugin-manager",
     "crates/process",
     "crates/pty",
@@ -42,6 +43,7 @@ ora-fs = { path = "crates/fs" }
 gitlancer = { path = "crates/gitlancer" }
 ora-history = { path = "crates/history" }
 ora-logging = { path = "crates/logging" }
+ora-plugin-manifest = { path = "crates/plugin-manifest" }
 ora-plugin-manager = { path = "crates/plugin-manager" }
 ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
@@ -81,6 +83,7 @@ thiserror = "2"
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = "1"
 tokio-util = "0.7"
+toml = "1"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
@@ -88,6 +91,7 @@ tower-http = { version = "0.6", features = ["cors", "request-id"] }
 ts-rs = "12.0"
 uuid = { version = "1", features = ["serde", "v4"] }
 unicode-normalization = "0.1"
+url = "2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading"] }
 zip = { version = "2", features = ["aes-crypto"] }
 
