@@ -46,7 +46,7 @@ impl FromStr for GitBranchName {
 pub enum GitBranchNameError {
     #[error("branch name must not be empty")]
     Empty,
-    #[error("branch name must be short rather than a refs/heads path")]
+    #[error("branch name must be short rather than a refs path")]
     FullRef,
     #[error("branch name must not be a checkout-history expression")]
     PreviousCheckoutExpression,
@@ -83,7 +83,7 @@ fn validate_branch_name(value: &str) -> Result<(), GitBranchNameError> {
     if value.is_empty() {
         return Err(GitBranchNameError::Empty);
     }
-    if value.starts_with("refs/heads/") {
+    if value.starts_with("refs/") {
         return Err(GitBranchNameError::FullRef);
     }
     if is_previous_checkout_expression(value) {
@@ -172,6 +172,9 @@ mod tests {
         let cases = [
             ("", GitBranchNameError::Empty),
             ("refs/heads/main", GitBranchNameError::FullRef),
+            ("refs/tags/v1", GitBranchNameError::FullRef),
+            ("refs/remotes/origin/main", GitBranchNameError::FullRef),
+            ("refs/pull/375/head", GitBranchNameError::FullRef),
             ("@{-1}", GitBranchNameError::PreviousCheckoutExpression),
             ("-feature", GitBranchNameError::LeadingHyphen),
             ("/feature", GitBranchNameError::LeadingSlash),
