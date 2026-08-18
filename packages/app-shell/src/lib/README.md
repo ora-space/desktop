@@ -21,5 +21,7 @@ Absolute ACP paths are converted to workspace-relative form with
 `stripTaskCwdPrefix` before `readWorkspaceFile` or Diff requests. Chat
 classification and the Files panel both call this helper so a late Files
 open of an absolute tool path does not hit the backend’s rooted-path
-rejection. OS handoff uses `joinOsAbsolutePath` so Explorer, VS Code, and
-Copy path receive a host path rather than an internal URI.
+rejection. A path that remains outside the task cwd is not a link: suffix
+matching it must not open a different relative file inside the worktree.
+OS handoff uses `joinOsAbsolutePath` so Explorer, VS Code, and Copy path
+receive a host path rather than an internal URI.

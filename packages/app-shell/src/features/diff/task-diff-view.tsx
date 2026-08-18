@@ -81,6 +81,7 @@ import {
   cancelPanelWidthAnimation,
 } from "../../lib/panel-motion";
 import { pathsMatchForWorkspace } from "../../lib/workspace-path";
+import { diffFileScrollTop, isDiffFileScrollSettled } from "./task-diff-scroll";
 
 /** Matches the review panel slide so the file tree toggle feels consistent. */
 const FILE_TREE_SLIDE_MS = 180;
@@ -183,7 +184,11 @@ export function TaskDiffView({
     }
   }
 
-  /** Scrolls the Diff viewport so `path` sits near the top, if the node is mounted. */
+  /**
+   * Scrolls the Diff viewport so `path` sits near the top.
+   * Returns false when the panel has not laid out yet so callers can retry
+   * instead of treating a 0-height first paint as a completed jump.
+   */
   const scrollToPath = useCallback((path: string, behavior: ScrollBehavior) => {
     const root = scrollContainerRef.current;
     const element = fileElementsRef.current.get(path);
@@ -192,17 +197,12 @@ export function TaskDiffView({
       element === undefined ||
       typeof root.scrollTo !== "function"
     ) {
-      requestAnimationFrame(() => {
-        suppressScrollSyncRef.current = false;
-      });
-      return;
+      return false;
     }
-    const top =
-      element.getBoundingClientRect().top -
-      root.getBoundingClientRect().top +
-      root.scrollTop -
-      16;
-    root.scrollTo({ top: Math.max(0, top), behavior });
+    const top = diffFileScrollTop(root, element);
+    if (top === null) return false;
+    root.scrollTo({ top, behavior });
+    return true;
   }, []);
 
   /** Selects a changed file and aligns its first line with the top of the Diff viewport. */
@@ -211,7 +211,11 @@ export function TaskDiffView({
       suppressScrollSyncRef.current = true;
       setSelectedAnchor(null);
       setSelectedFilePath(path);
-      scrollToPath(path, behavior);
+      if (scrollToPath(path, behavior)) return;
+      requestAnimationFrame(() => {
+        if (!scrollToPath(path, behavior))
+          suppressScrollSyncRef.current = false;
+      });
     },
     [scrollToPath],
   );
@@ -224,7 +228,46 @@ export function TaskDiffView({
     );
     if (matchingPath === undefined || matchingPath !== selectedFilePath) return;
     suppressScrollSyncRef.current = true;
-    scrollToPath(matchingPath, "auto");
+    let cancelled = false;
+    let succeeded = false;
+    let attempts = 0;
+    let observer: ResizeObserver | null = null;
+    const attempt = () => {
+      if (cancelled || succeeded) return;
+      const root = scrollContainerRef.current;
+      const element = fileElementsRef.current.get(matchingPath);
+      scrollToPath(matchingPath, "auto");
+      // Placeholder heights above the file can shrink after the first jump.
+      // Keep retrying until the requested section is actually at the top.
+      if (
+        root !== null &&
+        element !== undefined &&
+        isDiffFileScrollSettled(root, element)
+      ) {
+        succeeded = true;
+        observer?.disconnect();
+        return;
+      }
+      if (++attempts < 90) {
+        requestAnimationFrame(attempt);
+        return;
+      }
+      suppressScrollSyncRef.current = false;
+    };
+    attempt();
+    const root = scrollContainerRef.current;
+    const target = fileElementsRef.current.get(matchingPath);
+    const content = root?.firstElementChild;
+    if (typeof ResizeObserver !== "undefined" && root !== null) {
+      observer = new ResizeObserver(() => attempt());
+      observer.observe(root);
+      if (content instanceof Element) observer.observe(content);
+      if (target !== undefined) observer.observe(target);
+    }
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
   }, [
     appliedFileRequestId,
     diffQuery.isLoading,

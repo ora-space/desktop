@@ -181,4 +181,34 @@ describe("classifyChatCandidate", () => {
       path: "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx",
     });
   });
+
+  it("does not open Files for a suffix match of a file read outside the task cwd", () => {
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "crates/acp/src/lib.rs",
+        index: {
+          edited: [],
+          referenced: ["D:/project/desktop/crates/acp/src/lib.rs"],
+        },
+        hasNavigation: true,
+        cwd: "D:/project/desktop/.data/worktrees/f06fdb43-1297-4ba3-9143-a7a95ee85b0b",
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("does not open Files for a Markdown href that only suffix-matches an outside-cwd path", () => {
+    expect(
+      classifyChatCandidate({
+        source: "href",
+        raw: "crates/acp/src/lib.rs",
+        index: {
+          edited: [],
+          referenced: ["D:/project/desktop/crates/acp/src/lib.rs"],
+        },
+        hasNavigation: true,
+        cwd: "D:/project/desktop/.data/worktrees/f06fdb43-1297-4ba3-9143-a7a95ee85b0b",
+      }),
+    ).toEqual({ kind: "none" });
+  });
 });

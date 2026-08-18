@@ -24,9 +24,10 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 - Failed and cancelled tool calls are not indexed.
 - When ACP omits `locations`, read tools may still contribute referenced paths from `rawInput` (`filePath`, `path`, `AbsolutePath`, …).
 - Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists. A bare filename must not replace a nested index path.
-- Absolute ACP paths are stripped with the task cwd (`getWorkspace`, plus desktop `resolveTaskCwd`) before Diff/Files requests.
+- Absolute ACP paths are stripped with the task cwd (`getWorkspace`, plus desktop `resolveTaskCwd`) before Diff/Files requests. A hit outside that cwd is not a link: suffix-matching it must not open a different relative path inside the worktree.
 - If a requested diff file is not in the active task patch, navigation falls back to Files. A line missing from a file that **is** in the patch still opens that file in Changes, with no toast.
-- Changes must keep the requested file selected. Scroll-position highlighting must not replace a chat-driven `fileRequest` with the first or last file in the patch.
+- If Files cannot read a requested path, the viewer shows the localized missing-path copy, not the raw `Remote Ora request failed` transport message.
+- Changes must keep the requested file selected **and scroll that file's diff section to the top of the viewport**. The first layout after remounting Changes is often 0-height, and virtualized placeholders above the file can shrink after the first jump; do not treat `scrollTo(0)` or a one-shot jump as success. Scroll-position highlighting must not replace a chat-driven `fileRequest` with the first or last file in the patch.
 - Switching tasks drops the previous task’s Diff/Files request so a leftover path cannot open in the new worktree.
 - The index must not call `diffLines` or read diff text; streaming rebuilds stay cheap.
 
@@ -36,3 +37,8 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 - `TaskChangesNavigation.openDiff` / `openWorkspaceFile` in the review layout
 - Desktop `locationActions` for Explorer, VS Code, and copying an OS-absolute path
 - Shared slash matching in `packages/app-shell/src/lib/workspace-path.ts`
+
+## Appearance
+
+- Clickable file citations use Codex-style path chrome: sky-blue text, no muted code chip, dashed underline on hover. Unlinked inline code keeps the existing chip.
+- Web `http(s)` links keep the existing solid primary underline.

@@ -148,12 +148,25 @@ describe("assistant markdown artifact links", () => {
     const { openWorkspaceFile } = renderLinkedMarkdown(
       "[guide](docs/guide.md)",
     );
-    await user.click(screen.getByRole("button", { name: /docs\/guide\.md/ }));
+    const button = screen.getByRole("button", { name: /docs\/guide\.md/ });
+    expect(button.className).toContain("decoration-dashed");
+    expect(button).toHaveClass("text-sky-700");
+    await user.click(button);
     expect(openWorkspaceFile).toHaveBeenCalledWith(
       "docs/guide.md",
       undefined,
       undefined,
     );
+  });
+
+  it("keeps https links visually distinct from file citations", () => {
+    renderLinkedMarkdown("[docs](https://example.com) and `src/lib.rs`");
+    const web = screen.getByRole("link", { name: "docs" });
+    expect(web.className).not.toContain("decoration-dashed");
+    expect(web).toHaveAttribute("target", "_blank");
+    expect(
+      screen.getByRole("button", { name: /src\/lib\.rs/ }).className,
+    ).toContain("decoration-dashed");
   });
 
   it("does not add chat links to MarkdownDocument even inside ChatLinkContext", () => {
@@ -315,6 +328,32 @@ describe("session-wide chat links", () => {
       undefined,
       undefined,
     );
+  });
+
+  it("does not link a relative mention of a file read outside the task worktree", async () => {
+    const openWorkspaceFile = vi.fn();
+    renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [readTool("D:/project/desktop/crates/acp/src/lib.rs")],
+          "## `crates/acp/src/lib.rs` 总结",
+        ),
+      ],
+      {
+        openWorkspaceFile,
+        workspaceRoot:
+          "D:/project/desktop/.data/worktrees/f06fdb43-1297-4ba3-9143-a7a95ee85b0b",
+      },
+    );
+
+    expect(
+      await screen.findByText("crates/acp/src/lib.rs"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /crates\/acp\/src\/lib\.rs/ }),
+    ).toBeNull();
+    expect(openWorkspaceFile).not.toHaveBeenCalled();
   });
 
   it("strips workspace cwd when clicking a bare filename referencing an absolute path", async () => {

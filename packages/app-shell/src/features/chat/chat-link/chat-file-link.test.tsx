@@ -82,6 +82,41 @@ describe("ChatFileLink", () => {
     renderFileLink("cargo test");
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByText("cargo test").tagName).toBe("CODE");
+    expect(screen.getByText("cargo test")).toHaveClass("bg-muted/80");
+  });
+
+  it("styles a clickable path as a Codex file citation, not a code chip", () => {
+    renderFileLink("src/main.rs");
+    const button = screen.getByRole("button", { name: /src\/main\.rs/ });
+    expect(button).toHaveClass("text-sky-700");
+    expect(button.className).toContain("decoration-dashed");
+    expect(button.className).toContain("hover:underline");
+    expect(button.className).not.toContain("bg-muted/80");
+    expect(button.querySelector("code")).toHaveClass("text-inherit");
+  });
+
+  it("styles a Markdown file href with the same citation chrome", () => {
+    const openWorkspaceFile = vi.fn();
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <TaskChangesNavigationProvider
+            onOpenDiff={vi.fn()}
+            onOpenWorkspaceFile={openWorkspaceFile}
+          >
+            <ChatLinkContext.Provider value={{ index, taskId: "task-1" }}>
+              <ChatFileLink source="href" raw="docs/guide.md">
+                guide
+              </ChatFileLink>
+            </ChatLinkContext.Provider>
+          </TaskChangesNavigationProvider>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+    const button = screen.getByRole("button", { name: /docs\/guide\.md/ });
+    expect(button).toHaveClass("text-sky-700");
+    expect(button.className).toContain("decoration-dashed");
+    expect(button.className).toContain("hover:underline");
   });
 
   it("hides Explorer, VS Code, and Terminal on the web stub", async () => {

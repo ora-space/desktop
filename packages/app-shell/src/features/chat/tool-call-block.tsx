@@ -137,7 +137,7 @@ export function ToolCallBlock({
                     key={`${location.path}:${location.line ?? ""}`}
                     source="inline-code"
                     raw={raw}
-                    className="block max-w-full truncate text-left text-[11px] text-sky-700 underline decoration-sky-700/40 underline-offset-2 dark:text-sky-400"
+                    className="block max-w-full truncate text-left text-[11px]"
                   >
                     {label}
                   </ChatFileLink>

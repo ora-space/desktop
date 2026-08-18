@@ -62,13 +62,13 @@ export function matchIndexPath(
 
 /**
  * Converts an index hit (which may still be absolute) into the workspace-relative
- * path Files and Diff accept. Falls back to a already-relative clicked token.
+ * path Files and Diff accept. Returns null when the hit is outside the task cwd
+ * so a suffix match cannot open a different relative file inside the worktree.
  */
 export function toNavigationPath(
   storedPath: string,
   cwd: string | null | undefined,
-  clickedPath?: string,
-): string {
+): string | null {
   const normalized = normalizeDiffPath(displayPath(storedPath));
   if (cwd !== null && cwd !== undefined && cwd !== "") {
     const stripped =
@@ -81,6 +81,12 @@ export function toNavigationPath(
     ) {
       return stripped;
     }
+    if (
+      isAbsoluteWorkspacePath(storedPath) ||
+      isAbsoluteWorkspacePath(normalized)
+    ) {
+      return null;
+    }
   }
   if (
     !isAbsoluteWorkspacePath(storedPath) &&
@@ -88,18 +94,7 @@ export function toNavigationPath(
   ) {
     return normalized;
   }
-  if (clickedPath !== undefined && clickedPath !== "") {
-    const clicked = normalizeDiffPath(clickedPath);
-    if (
-      clicked !== "" &&
-      !isAbsoluteWorkspacePath(clickedPath) &&
-      !isAbsoluteWorkspacePath(clicked) &&
-      clicked.includes("/")
-    ) {
-      return clicked;
-    }
-  }
-  return normalized;
+  return null;
 }
 
 /** Classifies one inline-code token or Markdown href against the session artifact index. */
@@ -148,7 +143,8 @@ function classifyFileCandidate(
   const hit = editedHit ?? referencedHit;
   if (hit === null && !hrefMissOpensFiles) return { kind: "none" };
 
-  const navigationPath = toNavigationPath(hit ?? path, input.cwd, path);
+  const navigationPath = toNavigationPath(hit ?? path, input.cwd);
+  if (navigationPath === null) return { kind: "none" };
   const kind = editedHit !== null ? "diff" : "files";
   return {
     kind,

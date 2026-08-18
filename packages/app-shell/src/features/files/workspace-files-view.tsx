@@ -26,6 +26,7 @@ import {
   IconSearch,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
+import { localizeContractError } from "../../i18n/contract-error";
 import { useContractsClient } from "../../contracts-client-context";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { displayPath } from "../chat/turn-diff-files";
@@ -272,7 +273,7 @@ export function WorkspaceFilesView({
                     <ViewerMessage>{t("files.loading")}</ViewerMessage>
                   ) : fileQuery.error ? (
                     <ViewerMessage>
-                      {errorMessage(fileQuery.error)}
+                      {localizeContractError(fileQuery.error, t)}
                     </ViewerMessage>
                   ) : (
                     <WorkspaceFileViewer
@@ -526,7 +527,7 @@ function DirectoryTree({
   if (directoryQuery.error) {
     return (
       <p className="px-3 py-2 text-xs text-destructive">
-        {errorMessage(directoryQuery.error)}
+        {localizeContractError(directoryQuery.error, t)}
       </p>
     );
   }
@@ -618,7 +619,8 @@ function SearchResults({
 }) {
   const { t } = useTranslation();
   if (loading) return <ViewerMessage>{t("files.searching")}</ViewerMessage>;
-  if (error) return <ViewerMessage>{errorMessage(error)}</ViewerMessage>;
+  if (error)
+    return <ViewerMessage>{localizeContractError(error, t)}</ViewerMessage>;
   if (results.length === 0)
     return <ViewerMessage>{t("files.noResults")}</ViewerMessage>;
   return results.map((result, index) => (
@@ -655,9 +657,4 @@ function SearchResults({
 /** Centers lightweight loading, empty, and error copy inside a viewer surface. */
 function ViewerMessage({ children }: { children: ReactNode }) {
   return <p className="p-4 text-xs text-muted-foreground">{children}</p>;
-}
-
-/** Converts unknown query failures to useful read-only viewer copy. */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

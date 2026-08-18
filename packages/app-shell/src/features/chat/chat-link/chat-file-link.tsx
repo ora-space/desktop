@@ -21,6 +21,13 @@ import { useChatLinkContext } from "./context";
 const INLINE_CODE_CLASS =
   "rounded-sm border border-border/70 bg-muted/80 px-1.5 py-[0.15em] font-mono text-[0.85em]";
 
+/** Codex-style file citation: blue path text and a dashed underline on hover. */
+const CHAT_FILE_LINK_CLASS =
+  "inline cursor-pointer border-0 bg-transparent p-0 font-mono text-[0.85em] font-normal text-sky-700 no-underline decoration-sky-700 decoration-dashed underline-offset-[3px] hover:underline focus-visible:rounded-sm focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring dark:text-sky-400 dark:decoration-sky-400";
+
+const CHAT_FILE_LINK_CODE_CLASS =
+  "border-0 bg-transparent p-0 font-[inherit] text-[length:inherit] text-inherit leading-[inherit]";
+
 export interface ChatFileLinkProps {
   source: "inline-code" | "href";
   raw: string;
@@ -164,10 +171,9 @@ function LinkedChatFile({
       ? classified.path
       : joinOsAbsolutePath(classified.displayPath, cwd);
   const ariaLabel = t("chat.fileLink.aria", { path: classified.path });
-  const linkClassName =
-    source === "inline-code"
-      ? `${INLINE_CODE_CLASS} cursor-pointer text-primary underline decoration-primary/45 underline-offset-4`
-      : "cursor-pointer font-medium text-primary underline decoration-primary/45 underline-offset-4 transition-colors hover:decoration-primary focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+  const linkClassName = [CHAT_FILE_LINK_CLASS, className]
+    .filter((part) => part !== undefined && part !== "")
+    .join(" ");
   const showInAppAlternate =
     classified.kind === "diff" ||
     (classified.kind === "files" && editedHit !== null);
@@ -204,14 +210,18 @@ function LinkedChatFile({
         render={
           <button
             type="button"
-            className={className ?? linkClassName}
+            className={linkClassName}
             title={classified.displayPath}
             aria-label={ariaLabel}
             onClick={() => openClassified(classified, navigation)}
           />
         }
       >
-        {source === "inline-code" ? <code>{children}</code> : children}
+        {source === "inline-code" ? (
+          <code className={CHAT_FILE_LINK_CODE_CLASS}>{children}</code>
+        ) : (
+          children
+        )}
       </ContextMenuTrigger>
       <ContextMenuContent>
         {desktop && (
