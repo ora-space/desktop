@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PlatformProvider, type PlatformAdapter } from "../../../platform";
 import { describe, expect, it, vi } from "vitest";
@@ -24,7 +30,14 @@ function desktopPlatform(open = vi.fn()): PlatformAdapter {
   };
 }
 
-function renderFileLink(
+/** Lets `resolveTaskCwd` settle so CI's stderr-as-failure gate stays quiet. */
+async function flushDesktopCwd() {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+async function renderFileLink(
   raw: string,
   options?: {
     platform?: PlatformAdapter;
@@ -50,18 +63,19 @@ function renderFileLink(
       </AppI18nProvider>
     </PlatformProvider>,
   );
+  await flushDesktopCwd();
   return { ...view, openDiff, openWorkspaceFile };
 }
 
 describe("ChatFileLink", () => {
   it("opens edited files in Changes and referenced files in Files", async () => {
     const user = userEvent.setup();
-    const edited = renderFileLink("src/main.rs");
+    const edited = await renderFileLink("src/main.rs");
     await user.click(screen.getByRole("button", { name: /src\/main\.rs/ }));
     expect(edited.openDiff).toHaveBeenCalledWith("src/main.rs", undefined);
 
     edited.unmount();
-    const referenced = renderFileLink("src/lib.rs");
+    const referenced = await renderFileLink("src/lib.rs");
     await user.click(screen.getByRole("button", { name: /src\/lib\.rs/ }));
     expect(referenced.openWorkspaceFile).toHaveBeenCalledWith(
       "src/lib.rs",
@@ -72,20 +86,20 @@ describe("ChatFileLink", () => {
 
   it("passes a parsed line to openDiff", async () => {
     const user = userEvent.setup();
-    const { openDiff } = renderFileLink("src/main.rs:12");
+    const { openDiff } = await renderFileLink("src/main.rs:12");
     await user.click(screen.getByRole("button", { name: /src\/main\.rs/ }));
     expect(openDiff).toHaveBeenCalledWith("src/main.rs", 12);
   });
 
-  it("keeps commands as plain code", () => {
-    renderFileLink("cargo test");
+  it("keeps commands as plain code", async () => {
+    await renderFileLink("cargo test");
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByText("cargo test").tagName).toBe("CODE");
     expect(screen.getByText("cargo test")).toHaveClass("bg-muted/80");
   });
 
-  it("styles a clickable path as a Codex file citation, not a code chip", () => {
-    renderFileLink("src/main.rs");
+  it("styles a clickable path as a Codex file citation, not a code chip", async () => {
+    await renderFileLink("src/main.rs");
     const button = screen.getByRole("button", { name: /src\/main\.rs/ });
     expect(button).toHaveClass("text-sky-700");
     expect(button.className).toContain("decoration-dashed");
@@ -94,7 +108,7 @@ describe("ChatFileLink", () => {
     expect(button.querySelector("code")).toHaveClass("text-inherit");
   });
 
-  it("styles a Markdown file href with the same citation chrome", () => {
+  it("styles a Markdown file href with the same citation chrome", async () => {
     const openWorkspaceFile = vi.fn();
     render(
       <PlatformProvider adapter={createStubPlatform()}>
@@ -112,6 +126,7 @@ describe("ChatFileLink", () => {
         </AppI18nProvider>
       </PlatformProvider>,
     );
+    await flushDesktopCwd();
     const button = screen.getByRole("button", { name: /docs\/guide\.md/ });
     expect(button).toHaveClass("text-sky-700");
     expect(button.className).toContain("decoration-dashed");
@@ -119,7 +134,7 @@ describe("ChatFileLink", () => {
   });
 
   it("offers Explorer and VS Code without Terminal on the desktop host", async () => {
-    renderFileLink("src/main.rs");
+    await renderFileLink("src/main.rs");
     fireEvent.contextMenu(
       screen.getByRole("button", { name: /src\/main\.rs/ }),
     );
@@ -141,7 +156,7 @@ describe("ChatFileLink", () => {
     const user = userEvent.setup();
     const open = vi.fn();
     const platform = desktopPlatform(open);
-    renderFileLink("src/main.rs", { platform });
+    await renderFileLink("src/main.rs", { platform });
     fireEvent.contextMenu(
       screen.getByRole("button", { name: /src\/main\.rs/ }),
     );

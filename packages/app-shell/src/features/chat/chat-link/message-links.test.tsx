@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PlatformProvider } from "../../../platform";
 import type { ChatToolCall, ChatTurn } from "@ora/chat";
@@ -22,7 +22,14 @@ const index: SessionArtifactIndex = {
   referenced: ["src/lib.rs"],
 };
 
-function renderLinkedMarkdown(content: string) {
+/** Lets `resolveTaskCwd` settle so CI's stderr-as-failure gate stays quiet. */
+async function flushDesktopCwd() {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+async function renderLinkedMarkdown(content: string) {
   const openDiff = vi.fn();
   const openWorkspaceFile = vi.fn();
   render(
@@ -39,6 +46,7 @@ function renderLinkedMarkdown(content: string) {
       </AppI18nProvider>
     </PlatformProvider>,
   );
+  await flushDesktopCwd();
   return { openDiff, openWorkspaceFile };
 }
 
@@ -108,11 +116,11 @@ function turn(
 describe("assistant markdown artifact links", () => {
   it("opens an edited inline path in Changes and a read path in Files", async () => {
     const user = userEvent.setup();
-    const { openDiff } = renderLinkedMarkdown("See `src/main.rs`");
+    const { openDiff } = await renderLinkedMarkdown("See `src/main.rs`");
     await user.click(screen.getByRole("button", { name: /src\/main\.rs/ }));
     expect(openDiff).toHaveBeenCalledWith("src/main.rs", undefined);
 
-    const read = renderLinkedMarkdown("See `src/lib.rs`");
+    const read = await renderLinkedMarkdown("See `src/lib.rs`");
     await user.click(screen.getByRole("button", { name: /src\/lib\.rs/ }));
     expect(read.openWorkspaceFile).toHaveBeenCalledWith(
       "src/lib.rs",
@@ -123,13 +131,13 @@ describe("assistant markdown artifact links", () => {
 
   it("passes :line through to Changes", async () => {
     const user = userEvent.setup();
-    const { openDiff } = renderLinkedMarkdown("See `src/main.rs:12`");
+    const { openDiff } = await renderLinkedMarkdown("See `src/main.rs:12`");
     await user.click(screen.getByRole("button", { name: /src\/main\.rs/ }));
     expect(openDiff).toHaveBeenCalledWith("src/main.rs", 12);
   });
 
-  it("keeps https links as target=_blank and blocks dangerous schemes", () => {
-    renderLinkedMarkdown(
+  it("keeps https links as target=_blank and blocks dangerous schemes", async () => {
+    await renderLinkedMarkdown(
       "[docs](https://example.com) [xss](javascript:alert(1))",
     );
     expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute(
@@ -145,7 +153,7 @@ describe("assistant markdown artifact links", () => {
 
   it("treats a relative Markdown file href as a Files open", async () => {
     const user = userEvent.setup();
-    const { openWorkspaceFile } = renderLinkedMarkdown(
+    const { openWorkspaceFile } = await renderLinkedMarkdown(
       "[guide](docs/guide.md)",
     );
     const button = screen.getByRole("button", { name: /docs\/guide\.md/ });
@@ -159,8 +167,8 @@ describe("assistant markdown artifact links", () => {
     );
   });
 
-  it("keeps https links visually distinct from file citations", () => {
-    renderLinkedMarkdown("[docs](https://example.com) and `src/lib.rs`");
+  it("keeps https links visually distinct from file citations", async () => {
+    await renderLinkedMarkdown("[docs](https://example.com) and `src/lib.rs`");
     const web = screen.getByRole("link", { name: "docs" });
     expect(web.className).not.toContain("decoration-dashed");
     expect(web).toHaveAttribute("target", "_blank");
@@ -189,7 +197,7 @@ describe("assistant markdown artifact links", () => {
   });
 });
 
-function renderMessageList(
+async function renderMessageList(
   turns: ChatTurn[],
   options: {
     openDiff?: (path: string, line?: number) => void;
@@ -206,7 +214,7 @@ function renderMessageList(
       workspace: { rootPath: options.workspaceRoot!, branchName: "main" },
     }));
   }
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <ContractsClientContext.Provider value={mockClient}>
         <PlatformProvider adapter={createStubPlatform()}>
@@ -227,13 +235,15 @@ function renderMessageList(
       </ContractsClientContext.Provider>
     </QueryClientProvider>,
   );
+  await flushDesktopCwd();
+  return view;
 }
 
 describe("session-wide chat links", () => {
   it("opens a later mention of an earlier edited file in Changes", async () => {
     const user = userEvent.setup();
     const openDiff = vi.fn();
-    renderMessageList(
+    await renderMessageList(
       [
         turn("turn-1", [editTool("src/main.rs")]),
         turn("turn-2", [], "Updated `src/main.rs`"),
@@ -252,7 +262,7 @@ describe("session-wide chat links", () => {
   it("opens a path that was only read in Files", async () => {
     const user = userEvent.setup();
     const openWorkspaceFile = vi.fn();
-    renderMessageList(
+    await renderMessageList(
       [turn("turn-1", [readTool("src/lib.rs")], "See `src/lib.rs`")],
       { openWorkspaceFile },
     );
@@ -273,7 +283,7 @@ describe("session-wide chat links", () => {
     const user = userEvent.setup();
     const openDiff = vi.fn();
     const openWorkspaceFile = vi.fn();
-    renderMessageList(
+    await renderMessageList(
       [
         turn("turn-1", [readTool("src/main.rs")], "Summary of `src/main.rs`"),
         turn("turn-2", [editTool("src/main.rs")], "Updated `src/main.rs`"),
@@ -305,7 +315,7 @@ describe("session-wide chat links", () => {
     const openWorkspaceFile = vi.fn();
     const fullPath =
       "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx";
-    renderMessageList(
+    await renderMessageList(
       [
         turn(
           "turn-1",
@@ -332,7 +342,7 @@ describe("session-wide chat links", () => {
 
   it("does not link a relative mention of a file read outside the task worktree", async () => {
     const openWorkspaceFile = vi.fn();
-    renderMessageList(
+    await renderMessageList(
       [
         turn(
           "turn-1",
@@ -363,7 +373,7 @@ describe("session-wide chat links", () => {
     const relativePath =
       "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx";
     const absolutePath = `${workspaceRoot}/${relativePath}`;
-    renderMessageList(
+    await renderMessageList(
       [
         turn(
           "turn-1",

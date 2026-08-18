@@ -142,10 +142,16 @@ function LinkedChatFile({
     void locationActions
       .resolveTaskCwd(chatLink.taskId)
       .then((path) => {
-        if (!cancelled) setDesktopCwd(path);
+        if (cancelled) return;
+        // Empty cwd is the same as "not resolved yet": keep null so tests and
+        // first paint do not get a redundant setState after the stub resolves.
+        const next = path.trim() === "" ? null : path;
+        setDesktopCwd((current) => (current === next ? current : next));
       })
       .catch(() => {
-        if (!cancelled) setDesktopCwd(null);
+        if (!cancelled) {
+          setDesktopCwd((current) => (current === null ? current : null));
+        }
       });
     return () => {
       cancelled = true;
