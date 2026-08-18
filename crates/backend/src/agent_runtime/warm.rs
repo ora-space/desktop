@@ -168,7 +168,7 @@ impl WarmSessions {
         let gate = self.gate(&key);
         let _guard = gate.lock().await;
 
-        let supervisor = self.connections.for_agent(key.agent_cli);
+        let supervisor = self.connections.for_agent(key.agent_cli)?;
         let connection = supervisor.current()?;
         let now = self.clock.now_timestamp_millis();
         let (decision, released) =
@@ -314,7 +314,7 @@ impl WarmSessions {
             Reservation::NeedsRebuild => {}
         }
 
-        let connection = self.connections.for_agent(agent_cli).current()?;
+        let connection = self.connections.for_agent(agent_cli)?.current()?;
         let created = self.create(agent_cli, session_id, cwd).await?;
         let config_options = self
             .replay(
@@ -385,7 +385,7 @@ impl WarmSessions {
         let gate = self.gate(&key);
         let _guard = gate.lock().await;
 
-        let connection = self.connections.for_agent(key.agent_cli).current()?;
+        let connection = self.connections.for_agent(key.agent_cli)?.current()?;
         let now = self.clock.now_timestamp_millis();
         let (decision, released) =
             lock_pool(&self.pool).lookup_and_reserve(&key, cwd, connection.generation, now, || {
@@ -473,7 +473,11 @@ impl WarmSessions {
     async fn refresh_generations(&self) {
         let mut pool = lock_pool(&self.pool);
         for agent_cli in AgentCli::ALL {
-            if let Ok(connection) = self.connections.for_agent(agent_cli).current() {
+            if let Ok(connection) = self
+                .connections
+                .for_agent(agent_cli)
+                .and_then(|supervisor| supervisor.current())
+            {
                 pool.invalidate_generation(agent_cli, connection.generation);
             }
         }
@@ -512,7 +516,7 @@ impl WarmSessions {
         ora_session_id: &SessionId,
         cwd: &Path,
     ) -> Result<CreatedProvider, BackendError> {
-        let supervisor = self.connections.for_agent(agent_cli);
+        let supervisor = self.connections.for_agent(agent_cli)?;
         let connection = supervisor.current()?;
         let _setup = supervisor.begin_session_setup();
         let response = timeout(
@@ -589,7 +593,11 @@ impl WarmSessions {
         let Some(released) = released else {
             return;
         };
-        let Ok(connection) = self.connections.for_agent(released.agent_cli).current() else {
+        let Ok(connection) = self
+            .connections
+            .for_agent(released.agent_cli)
+            .and_then(|supervisor| supervisor.current())
+        else {
             return;
         };
         if connection.generation != released.generation {
@@ -639,7 +647,7 @@ pub(super) async fn request_config_option(
     config_id: &SessionConfigId,
     value: &SessionConfigOptionValue,
 ) -> Result<Vec<SessionConfigOption>, BackendError> {
-    let connection = connections.for_agent(agent_cli).current()?;
+    let connection = connections.for_agent(agent_cli)?.current()?;
     let response = timeout(
         SESSION_SETUP_TIMEOUT,
         connection

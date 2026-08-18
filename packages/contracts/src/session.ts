@@ -24,6 +24,22 @@ export type AgentCliRuntimeStatus = {
 export type AgentCliStatus = "ready" | "starting" | "unavailable";
 
 /**
+ * Describes one model an agent offers before any session exists.
+ *
+ * This is separate from the session config options an agent sends after `session/new`: the agent
+ * and model pickers must render before any session has been created. Agents that expose models
+ * only through session config options contribute nothing here.
+ */
+export type AgentModel = {
+  id: string;
+  displayName: string;
+  /**
+   * Whether the agent would select this model when the user expresses no preference.
+   */
+  default: boolean;
+};
+
+/**
  * Binds one warm session to its owning Task and persists the Ora record.
  */
 export type AttachSessionRequest = { sessionId: string; taskId: string };
@@ -67,6 +83,16 @@ export type GetSessionRequest = { sessionId: string };
  * Returns one session payload after a successful fetch.
  */
 export type GetSessionResponse = { session: Session };
+
+/**
+ * Requests the pre-session model list of one application-scoped agent runtime.
+ */
+export type ListAgentModelsRequest = { agentCli: AgentCli };
+
+/**
+ * Returns the models one agent advertises outside any session.
+ */
+export type ListAgentModelsResponse = { models: Array<AgentModel> };
 
 /**
  * Requests the full visible session list.

@@ -10,9 +10,7 @@ const plugins: InstalledPlugin[] = [
     version: "0.1.0",
     kind: "agent",
     main: "dist/index.js",
-    agents: [
-      { id: "reviewer", displayName: "Review Agent", contractVersion: 1 },
-    ],
+    agent: { displayName: "Review Agent", contractVersion: 1 },
   },
   {
     id: "ora.planner",
@@ -21,7 +19,7 @@ const plugins: InstalledPlugin[] = [
     version: "0.2.0",
     kind: "agent",
     main: "dist/index.js",
-    agents: [{ id: "planner", displayName: "Plan Agent", contractVersion: 1 }],
+    agent: { displayName: "Plan Agent", contractVersion: 1 },
   },
 ];
 

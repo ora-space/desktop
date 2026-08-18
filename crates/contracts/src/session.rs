@@ -36,6 +36,37 @@ pub struct AgentCliRuntimeStatus {
     pub status: AgentCliStatus,
 }
 
+/// Describes one model an agent offers before any session exists.
+///
+/// This is separate from the session config options an agent sends after `session/new`: the agent
+/// and model pickers must render before any session has been created. Agents that expose models
+/// only through session config options contribute nothing here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct AgentModel {
+    pub id: String,
+    pub display_name: String,
+    /// Whether the agent would select this model when the user expresses no preference.
+    pub default: bool,
+}
+
+/// Requests the pre-session model list of one application-scoped agent runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct ListAgentModelsRequest {
+    pub agent_cli: AgentCli,
+}
+
+/// Returns the models one agent advertises outside any session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct ListAgentModelsResponse {
+    pub models: Vec<AgentModel>,
+}
+
 /// Requests the live detection status of every application-scoped CLI runtime.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -412,6 +443,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentCli::export(config)?;
     AgentCliStatus::export(config)?;
     AgentCliRuntimeStatus::export(config)?;
+    AgentModel::export(config)?;
+    ListAgentModelsRequest::export(config)?;
+    ListAgentModelsResponse::export(config)?;
     GetAgentRuntimeStatusRequest::export(config)?;
     GetAgentRuntimeStatusResponse::export(config)?;
     SessionStatus::export(config)?;

@@ -1,11 +1,10 @@
 use super::RuntimeActor;
 use super::RuntimeCommand;
+use super::connection::AgentAcpClient;
 use super::routing::{SessionChannel, SessionEvent};
 use crate::BackendError;
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
-use ora_acp::AcpClient;
 use ora_contracts::PromptSessionEvent;
-use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 
 /// Drains an idle session's event FIFO while preserving title updates for the actor.
@@ -13,7 +12,7 @@ use tokio::sync::mpsc;
 /// Idle traffic must not leak into the next prompt, but dropping `SessionInfoUpdate` here would
 /// lose a push title that arrived after attach and before the first eligible prompt.
 pub(super) async fn drain_idle_events(
-    client: &AcpClient<ChildStdin>,
+    client: &AgentAcpClient,
     events: &mut mpsc::Receiver<SessionEvent>,
     title_updates: &mpsc::WeakUnboundedSender<RuntimeCommand>,
 ) {
@@ -36,7 +35,7 @@ pub(super) async fn drain_idle_events(
 }
 
 /// Settles one unexpected idle event without allowing it to leak into a later operation.
-pub(super) async fn settle_idle_event(client: &AcpClient<ChildStdin>, event: SessionEvent) {
+pub(super) async fn settle_idle_event(client: &AgentAcpClient, event: SessionEvent) {
     match event {
         SessionEvent::Permission(permission) => {
             let _ = client
@@ -54,7 +53,7 @@ pub(super) async fn settle_idle_event(client: &AcpClient<ChildStdin>, event: Ses
 pub(super) async fn settle_cancelled_prompt<Response>(
     actor: &mut RuntimeActor,
     channel: &mut SessionChannel,
-    client: &AcpClient<ChildStdin>,
+    client: &AgentAcpClient,
     pending: ora_acp::PendingSessionRequest<Response>,
     events: &mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
 ) -> Option<Result<Response, ora_acp::AcpError>>
@@ -94,7 +93,7 @@ where
 pub(super) async fn drain_queued_prompt_events(
     actor: &mut RuntimeActor,
     channel: &mut SessionChannel,
-    client: &AcpClient<ChildStdin>,
+    client: &AgentAcpClient,
     events: &mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
 ) {
     // Only drain the snapshot that was accepted before isolation was requested. Events
@@ -130,7 +129,7 @@ pub(super) async fn drain_queued_prompt_events(
 pub(super) async fn settle_abandoned_session_response<Response>(
     actor: &mut RuntimeActor,
     channel: &mut SessionChannel,
-    client: &AcpClient<ChildStdin>,
+    client: &AgentAcpClient,
     pending: ora_acp::PendingSessionRequest<Response>,
 ) -> Option<Result<Response, ora_acp::AcpError>>
 where

@@ -1,12 +1,15 @@
 # ora-acp
 
-`ora-acp` is Ora's provider-neutral ACP v1 transport over newline-delimited JSON-RPC stdio. It turns an asynchronous reader and writer into a typed request client plus one ordered inbound stream for each session's updates, permission requests, and terminating responses.
+`ora-acp` is Ora's provider-neutral ACP v1 peer. It turns one connection into a typed request client plus one ordered inbound stream for each session's updates, permission requests, and terminating responses.
+
+The peer is transport-neutral: it consumes and produces whole JSON-RPC messages and never inspects framing. `AcpTransport` is the seam. `NdjsonTransport` serves agents reached over a child process's stdio pipes, while a transport whose messages are already parsed — such as plugin IPC — avoids serializing values that were never bytes.
 
 ACP wire values come from the official `agent-client-protocol-schema` crate. `ora-acp` owns transport behavior and Ora-specific routing metadata, not a fork of the protocol schema.
 
 ## Responsibilities
 
-- `AcpPeer` owns the reader task and exposes an `AcpClient` for serialized writes.
+- `AcpTransport` owns framing and write ordering: `send` delivers whole messages in call order, and the `AcpMessages` stream handed to `AcpPeer::spawn` yields exactly one message per frame.
+- `AcpPeer` owns the routing task and exposes an `AcpClient` for writes.
 - `AcpClient` correlates direct requests by `RequestId`, decodes typed responses, sends notifications, and answers agent-originated requests.
 - Session trace registrations translate provider session identifiers into the Ora-owned identifiers used by the `session_id` log field.
 - Session requests return a pending handle whose response is emitted into the same inbound stream as that session's updates and permission requests. The reader preserves their wire order, so a terminating response cannot overtake an earlier update.
@@ -15,10 +18,10 @@ ACP wire values come from the official `agent-client-protocol-schema` crate. `or
 
 ## Boundaries and failure semantics
 
-- Frames are newline-delimited JSON with an 8 MiB maximum. An oversized or malformed frame is fatal to the connection.
+- Framing limits belong to the transport. `NdjsonTransport` uses newline-delimited JSON with an 8 MiB maximum; an oversized or malformed frame ends the inbound stream with that failure, which is fatal to the connection.
 - Unmatched responses, stdio loss, and invalid response envelopes fail pending operations instead of being silently ignored. The exception is a response for a cancelled direct request or deliberately abandoned session request, which is recognized by its bounded tombstone.
 - Recognized permission requests are emitted as `PermissionRequest`. Unknown agent-originated methods receive a correlated method-not-found response without terminating the connection.
 - The connection-to-router inbound channel is intentionally unbounded and preserves the reader's order. Per-session bounds and overflow policy belong to the backend runtime, where one noisy session can be isolated from others.
-- Writes share one mutex so concurrent JSON-RPC frames cannot interleave.
+- Write serialization is the transport's guarantee. `NdjsonTransport` holds one mutex so concurrent JSON-RPC frames cannot interleave bytes.
 
 This crate does not spawn provider processes, supervise reconnects, route updates to Ora sessions, or enforce session lifecycle policy. Those responsibilities belong to `ora-backend`. See [ACP Agent Runtime](../../docs/agent-runtime.md).

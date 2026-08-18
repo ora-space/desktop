@@ -5,6 +5,7 @@ use crate::stream_forwarding::{forward_contract_stream, forward_workspace_watch}
 use crate::workspace_files::{WorkspaceFileApi, workspace_file_backend_error};
 use ora_backend::{Backend, BackendError, RequestLifecycle, UuidRequestIdGenerator};
 use ora_contracts::*;
+use ora_plugin_manager::PluginContribution;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -743,6 +744,14 @@ backend_command!(
     "Reports the live detection status of every application-scoped CLI runtime through the shared Backend."
 );
 
+backend_command!(
+    list_agent_models,
+    ListAgentModelsRequest,
+    ListAgentModelsResponse,
+    list_agent_models,
+    "Lists the models one agent advertises outside any session through the shared Backend."
+);
+
 // =============================================================================
 // skill
 // =============================================================================
@@ -879,22 +888,20 @@ pub async fn list_installed_plugins(
         .plugin_manager
         .installed_plugins()
         .iter()
-        .map(|plugin| InstalledPlugin {
-            id: plugin.id.clone(),
-            package_name: plugin.package_name.clone(),
-            display_name: plugin.display_name.clone(),
-            version: plugin.version.to_string(),
-            kind: plugin.kind.as_str().to_string(),
-            main: plugin.main.to_string_lossy().to_string(),
-            agents: plugin
-                .agents
-                .iter()
-                .map(|agent| InstalledPluginAgent {
-                    id: agent.id.clone(),
+        .map(|plugin| {
+            let PluginContribution::Agent(agent) = &plugin.contributes;
+            InstalledPlugin {
+                id: plugin.id.clone(),
+                package_name: plugin.package_name.clone(),
+                display_name: plugin.display_name.clone(),
+                version: plugin.version.to_string(),
+                kind: plugin.contributes.kind().to_string(),
+                main: plugin.main.to_string_lossy().to_string(),
+                agent: InstalledPluginAgent {
                     display_name: agent.display_name.clone(),
                     contract_version: agent.contract_version,
-                })
-                .collect(),
+                },
+            }
         })
         .collect();
 

@@ -1,2 +1,16 @@
-export { createPlugin, type MethodHandler, Plugin } from "./plugin.ts";
+export {
+  AGENT_NOT_INSTALLED,
+  type AcpSender,
+  type AgentDefinition,
+  type AgentModel,
+  type AgentStartContext,
+  defineAgent,
+} from "./agent.ts";
+export {
+  createPlugin,
+  type MethodHandler,
+  type NotificationHandler,
+  Plugin,
+  PluginMethodError,
+} from "./plugin.ts";
 export type { JsonValue } from "./protocol.ts";

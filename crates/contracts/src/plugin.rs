@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Describes one agent contribution from an installed plugin package.
+/// Describes the single agent contributed by an installed agent plugin package.
+///
+/// The agent carries no id: one package provides exactly one agent, identified by the package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
 pub struct InstalledPluginAgent {
-    pub id: String,
     pub display_name: String,
     pub contract_version: u32,
 }
@@ -22,7 +23,7 @@ pub struct InstalledPlugin {
     pub version: String,
     pub kind: String,
     pub main: String,
-    pub agents: Vec<InstalledPluginAgent>,
+    pub agent: InstalledPluginAgent,
 }
 
 /// Requests the immutable startup snapshot of installed plugin packages.
@@ -67,11 +68,10 @@ mod tests {
             version: "0.1.0".to_string(),
             kind: "agent".to_string(),
             main: "dist/index.js".to_string(),
-            agents: vec![InstalledPluginAgent {
-                id: "claude-code".to_string(),
+            agent: InstalledPluginAgent {
                 display_name: "Claude Code".to_string(),
                 contract_version: 1,
-            }],
+            },
         };
 
         assert_eq!(
@@ -91,11 +91,10 @@ mod tests {
                     "version": "0.1.0",
                     "kind": "agent",
                     "main": "dist/index.js",
-                    "agents": [{
-                        "id": "claude-code",
+                    "agent": {
                         "displayName": "Claude Code",
                         "contractVersion": 1
-                    }]
+                    }
                 }]
             })
         );

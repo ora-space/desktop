@@ -10,14 +10,15 @@ export type InstalledPlugin = {
   version: string;
   kind: string;
   main: string;
-  agents: Array<InstalledPluginAgent>;
+  agent: InstalledPluginAgent;
 };
 
 /**
- * Describes one agent contribution from an installed plugin package.
+ * Describes the single agent contributed by an installed agent plugin package.
+ *
+ * The agent carries no id: one package provides exactly one agent, identified by the package.
  */
 export type InstalledPluginAgent = {
-  id: string;
   displayName: string;
   contractVersion: number;
 };

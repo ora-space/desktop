@@ -2908,6 +2908,8 @@ dependencies = [
  "ora-fs",
  "ora-history",
  "ora-logging",
+ "ora-plugin-manager",
+ "ora-plugin-runtime",
  "ora-process",
  "ora-scheduler",
  "ora-skill-package",

@@ -18,7 +18,7 @@
   "scripts": {
     "format": "deno fmt src tests deno.json package.json README.md",
     "format:check": "deno fmt --check src tests deno.json package.json README.md",
-    "lint": "deno lint src tests && deno check src/mod.ts tests/plugin.test.ts",
+    "lint": "deno lint src tests && deno check src/mod.ts tests/plugin.test.ts tests/agent.test.ts",
     "test": "deno test tests"
   },
   "publishConfig": {
