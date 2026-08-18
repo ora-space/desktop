@@ -6,8 +6,10 @@ import {
   WORKFLOW_NODE_WIDTH,
 } from "./node-layout";
 
-export interface DemoWorkflow
-  extends ReactFlowJsonObject<Node<WorkflowNodeData, "workflow">, Edge> {
+export interface DemoWorkflow extends ReactFlowJsonObject<
+  Node<WorkflowNodeData, "workflow">,
+  Edge
+> {
   id: string;
   name: string;
   description: string;
@@ -25,21 +27,27 @@ function createAgentConfig(
 ): WorkflowAgentConfig {
   return {
     schemaVersion: 3,
-    executor: options.executor ?? { agentCli: "code_agent_cli", modelId: "gpt-5" },
+    executor: options.executor ?? {
+      agentCli: "ora-space.codeagentcli",
+      modelId: "gpt-5",
+    },
     roleId,
-    skills: (options.skillIds ?? []).map((skillId) => ({ skillId, enabled: true })),
+    skills: (options.skillIds ?? []).map((skillId) => ({
+      skillId,
+      enabled: true,
+    })),
     mcps: [],
     prompt,
   };
 }
 
 const OPENCODE_DEEPSEEK_V4_FLASH = {
-  agentCli: "open_code",
+  agentCli: "ora-space.opencode",
   modelId: "deepseek/deepseek-v4-flash",
 };
 
 const OPENCODE_DEEPSEEK_V4_PRO = {
-  agentCli: "open_code",
+  agentCli: "ora-space.opencode",
   modelId: "deepseek/deepseek-v4-pro",
 };
 
@@ -141,12 +149,44 @@ export const MOCK_WORKFLOW: DemoWorkflow = {
     },
   ],
   edges: [
-    { id: "e-start-understand", source: "start", target: "understand", type: "workflow" },
-    { id: "e-understand-quality", source: "understand", target: "quality", type: "workflow" },
-    { id: "e-quality-tests", source: "quality", target: "tests", type: "workflow", label: "需要检查" },
-    { id: "e-quality-review", source: "quality", target: "review", type: "workflow", label: "仅文档" },
-    { id: "e-tests-review", source: "tests", target: "review", type: "workflow" },
-    { id: "e-review-output", source: "review", target: "output", type: "workflow" },
+    {
+      id: "e-start-understand",
+      source: "start",
+      target: "understand",
+      type: "workflow",
+    },
+    {
+      id: "e-understand-quality",
+      source: "understand",
+      target: "quality",
+      type: "workflow",
+    },
+    {
+      id: "e-quality-tests",
+      source: "quality",
+      target: "tests",
+      type: "workflow",
+      label: "需要检查",
+    },
+    {
+      id: "e-quality-review",
+      source: "quality",
+      target: "review",
+      type: "workflow",
+      label: "仅文档",
+    },
+    {
+      id: "e-tests-review",
+      source: "tests",
+      target: "review",
+      type: "workflow",
+    },
+    {
+      id: "e-review-output",
+      source: "review",
+      target: "output",
+      type: "workflow",
+    },
   ],
 };
 
@@ -187,7 +227,11 @@ const ENGLISH_NODE_CONTENT: Record<
     conditionBranches: [
       {
         conditions: [
-          { variable: "Change type", operator: "contains", value: "source code" },
+          {
+            variable: "Change type",
+            operator: "contains",
+            value: "source code",
+          },
         ],
       },
     ],
@@ -195,7 +239,8 @@ const ENGLISH_NODE_CONTENT: Record<
   tests: {
     title: "Run checks",
     description: "Run formatting, type checks, and tests",
-    instruction: "Run the smallest validation set that matches the change scope.",
+    instruction:
+      "Run the smallest validation set that matches the change scope.",
     tool: "Terminal",
     operation: "run_command",
     toolParameters: [{ key: "command", value: "npm run test" }],
@@ -207,14 +252,17 @@ const ENGLISH_NODE_CONTENT: Record<
   output: {
     title: "Output report",
     description: "Generate a structured review result",
-    instruction: "Return a summary, findings, validation results, and next steps.",
+    instruction:
+      "Return a summary, findings, validation results, and next steps.",
   },
 };
 
 /** Per-node Agent prompts for the English fixture, keyed by node id. */
 const ENGLISH_AGENT_PROMPTS: Record<string, string> = {
-  understand: "Read changed files and identify the goal, affected modules, and potential risks.",
-  review: "Organize findings by severity and provide locations and remediation advice.",
+  understand:
+    "Read changed files and identify the goal, affected modules, and potential risks.",
+  review:
+    "Organize findings by severity and provide locations and remediation advice.",
 };
 
 /** Creates localized fixture content with native React Flow nodes and edges. */
@@ -232,27 +280,31 @@ export function createMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkflow {
     return workflow;
   }
   workflow.name = "Code review workflow";
-  workflow.description = "Read changes, run quality checks, and produce an actionable review summary.";
+  workflow.description =
+    "Read changes, run quality checks, and produce an actionable review summary.";
   workflow.nodes = workflow.nodes.map((node) => ({
     ...node,
-    data: node.data.kind === "agent"
-      ? {
-          ...node.data,
-          ...ENGLISH_NODE_CONTENT[node.id],
-          agentConfig: {
-            ...node.data.agentConfig!,
-            prompt: ENGLISH_AGENT_PROMPTS[node.id] ?? node.data.agentConfig!.prompt,
-          },
-        }
-      : { ...node.data, ...ENGLISH_NODE_CONTENT[node.id] },
+    data:
+      node.data.kind === "agent"
+        ? {
+            ...node.data,
+            ...ENGLISH_NODE_CONTENT[node.id],
+            agentConfig: {
+              ...node.data.agentConfig!,
+              prompt:
+                ENGLISH_AGENT_PROMPTS[node.id] ?? node.data.agentConfig!.prompt,
+            },
+          }
+        : { ...node.data, ...ENGLISH_NODE_CONTENT[node.id] },
   }));
   workflow.edges = workflow.edges.map((edge) => ({
     ...edge,
-    label: edge.label === "需要检查"
-      ? "Checks required"
-      : edge.label === "仅文档"
-        ? "Documentation only"
-        : edge.label,
+    label:
+      edge.label === "需要检查"
+        ? "Checks required"
+        : edge.label === "仅文档"
+          ? "Documentation only"
+          : edge.label,
   }));
   return workflow;
 }
@@ -266,17 +318,19 @@ export function createMockWorkflows(locale: "zh-CN" | "en-US"): DemoWorkflow[] {
   const release = structuredClone(review);
   release.id = "release-readiness";
   release.name = locale === "zh-CN" ? "发布准备检查" : "Release readiness";
-  release.description = locale === "zh-CN"
-    ? "在部署前验证测试、变更说明和风险项。"
-    : "Validate tests, release notes, and risks before deployment.";
+  release.description =
+    locale === "zh-CN"
+      ? "在部署前验证测试、变更说明和风险项。"
+      : "Validate tests, release notes, and risks before deployment.";
   release.updatedAt = "2026-07-26T16:40:00+08:00";
 
   const triage = structuredClone(review);
   triage.id = "issue-triage";
   triage.name = locale === "zh-CN" ? "问题分类助手" : "Issue triage assistant";
-  triage.description = locale === "zh-CN"
-    ? "分析问题描述并分配优先级与处理角色。"
-    : "Analyze issue reports and assign priority and ownership.";
+  triage.description =
+    locale === "zh-CN"
+      ? "分析问题描述并分配优先级与处理角色。"
+      : "Analyze issue reports and assign priority and ownership.";
   triage.updatedAt = "2026-07-25T09:20:00+08:00";
 
   return [staggered, parallel, review, release, triage, openSpec];
@@ -307,7 +361,9 @@ export function createOpenSpecMockWorkflow(
         data: {
           kind: "start",
           title: zh ? "开始" : "Start",
-          description: zh ? "接收变更目标和项目上下文" : "Receive the change goal and project context",
+          description: zh
+            ? "接收变更目标和项目上下文"
+            : "Receive the change goal and project context",
           instruction: zh
             ? "提取要解决的问题、约束和验收目标。"
             : "Extract the problem, constraints, and acceptance goals.",
@@ -320,7 +376,9 @@ export function createOpenSpecMockWorkflow(
         data: {
           kind: "agent",
           title: zh ? "探索" : "Explore",
-          description: zh ? "只读探索项目现状和影响范围" : "Read-only exploration of the current project and impact",
+          description: zh
+            ? "只读探索项目现状和影响范围"
+            : "Read-only exploration of the current project and impact",
           agentConfig: createAgentConfig(
             "Researcher",
             zh
@@ -340,7 +398,9 @@ export function createOpenSpecMockWorkflow(
         data: {
           kind: "agent",
           title: zh ? "SFMEA检查" : "SFMEA review",
-          description: zh ? "检查当前方案的失效模式与风险" : "Review the current plan for failure modes and risks",
+          description: zh
+            ? "检查当前方案的失效模式与风险"
+            : "Review the current plan for failure modes and risks",
           agentConfig: createAgentConfig(
             "Reviewer",
             zh
@@ -360,7 +420,9 @@ export function createOpenSpecMockWorkflow(
         data: {
           kind: "agent",
           title: zh ? "提案" : "Propose",
-          description: zh ? "将检查结论组织为可评审方案" : "Turn review findings into a reviewable proposal",
+          description: zh
+            ? "将检查结论组织为可评审方案"
+            : "Turn review findings into a reviewable proposal",
           agentConfig: createAgentConfig(
             "Planner",
             zh
@@ -380,7 +442,9 @@ export function createOpenSpecMockWorkflow(
         data: {
           kind: "agent",
           title: zh ? "实施" : "Apply",
-          description: zh ? "按批准方案实现并验证变更" : "Implement and verify the approved change",
+          description: zh
+            ? "按批准方案实现并验证变更"
+            : "Implement and verify the approved change",
           agentConfig: createAgentConfig(
             "Implementer",
             zh
@@ -400,7 +464,9 @@ export function createOpenSpecMockWorkflow(
         data: {
           kind: "agent",
           title: zh ? "代码缺陷扫描" : "Code defect scan",
-          description: zh ? "扫描实施后的代码缺陷" : "Scan the implementation for code defects",
+          description: zh
+            ? "扫描实施后的代码缺陷"
+            : "Scan the implementation for code defects",
           agentConfig: createAgentConfig(
             "Reviewer",
             zh
@@ -420,7 +486,9 @@ export function createOpenSpecMockWorkflow(
         data: {
           kind: "agent",
           title: zh ? "缺陷修复" : "Defect repair",
-          description: zh ? "根据扫描结果修复并验证缺陷" : "Fix and verify defects found by the scan",
+          description: zh
+            ? "根据扫描结果修复并验证缺陷"
+            : "Fix and verify defects found by the scan",
           agentConfig: createAgentConfig(
             "Implementer",
             zh
@@ -439,7 +507,9 @@ export function createOpenSpecMockWorkflow(
         data: {
           kind: "agent",
           title: zh ? "归档" : "Archive",
-          description: zh ? "沉淀变更决策、验证结果和后续事项" : "Record the decision, validation, and follow-ups",
+          description: zh
+            ? "沉淀变更决策、验证结果和后续事项"
+            : "Record the decision, validation, and follow-ups",
           agentConfig: createAgentConfig(
             "Documentation Agent",
             zh
@@ -454,13 +524,48 @@ export function createOpenSpecMockWorkflow(
       },
     ],
     edges: [
-      { id: "e-start-explore", source: "start", target: "explore", type: "workflow" },
-      { id: "e-explore-sfmea", source: "explore", target: "sfmea-review", type: "workflow" },
-      { id: "e-sfmea-propose", source: "sfmea-review", target: "propose", type: "workflow" },
-      { id: "e-propose-apply", source: "propose", target: "apply", type: "workflow" },
-      { id: "e-apply-scan", source: "apply", target: "code-defect-scan", type: "workflow" },
-      { id: "e-scan-repair", source: "code-defect-scan", target: "defect-repair", type: "workflow" },
-      { id: "e-repair-archive", source: "defect-repair", target: "archive", type: "workflow" },
+      {
+        id: "e-start-explore",
+        source: "start",
+        target: "explore",
+        type: "workflow",
+      },
+      {
+        id: "e-explore-sfmea",
+        source: "explore",
+        target: "sfmea-review",
+        type: "workflow",
+      },
+      {
+        id: "e-sfmea-propose",
+        source: "sfmea-review",
+        target: "propose",
+        type: "workflow",
+      },
+      {
+        id: "e-propose-apply",
+        source: "propose",
+        target: "apply",
+        type: "workflow",
+      },
+      {
+        id: "e-apply-scan",
+        source: "apply",
+        target: "code-defect-scan",
+        type: "workflow",
+      },
+      {
+        id: "e-scan-repair",
+        source: "code-defect-scan",
+        target: "defect-repair",
+        type: "workflow",
+      },
+      {
+        id: "e-repair-archive",
+        source: "defect-repair",
+        target: "archive",
+        type: "workflow",
+      },
     ],
   };
 
@@ -477,7 +582,9 @@ export function createOpenSpecMockWorkflow(
  * Fan-out / fan-in fixture so the run Theater can show multiple live acts.
  * After「收集上下文」, security / quality / docs run concurrently, then synthesize.
  */
-export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkflow {
+export function createParallelMockWorkflow(
+  locale: "zh-CN" | "en-US",
+): DemoWorkflow {
   const zh = locale === "zh-CN";
   const workflow: DemoWorkflow = {
     id: "parallel-review",
@@ -497,7 +604,9 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
           kind: "start",
           title: zh ? "开始" : "Start",
           description: zh ? "接收审查范围" : "Receive review scope",
-          instruction: zh ? "解析用户输入中的目标路径。" : "Parse the target scope from user input.",
+          instruction: zh
+            ? "解析用户输入中的目标路径。"
+            : "Parse the target scope from user input.",
         },
       },
       {
@@ -507,7 +616,9 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
         data: {
           kind: "human",
           title: zh ? "收集上下文" : "Gather context",
-          description: zh ? "汇总改动与相关文件" : "Summarize changes and related files",
+          description: zh
+            ? "汇总改动与相关文件"
+            : "Summarize changes and related files",
           instruction: zh
             ? "列出改动文件、模块边界和已知风险点。"
             : "List changed files, module boundaries, and known risks.",
@@ -518,16 +629,16 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
         type: "workflow",
         position: { x: 620, y: 80 },
         data: {
-        kind: "agent",
-        title: zh ? "安全审查" : "Security review",
-        description: zh ? "并行分支 · 安全" : "Parallel branch · security",
-        agentConfig: createAgentConfig(
-          "Reviewer",
-          zh
-            ? "检查注入、权限与密钥泄露风险。"
-            : "Check for injection, auth, and secret-leak risks.",
-          { skillIds: ["openspec-verify-change"] },
-        ),
+          kind: "agent",
+          title: zh ? "安全审查" : "Security review",
+          description: zh ? "并行分支 · 安全" : "Parallel branch · security",
+          agentConfig: createAgentConfig(
+            "Reviewer",
+            zh
+              ? "检查注入、权限与密钥泄露风险。"
+              : "Check for injection, auth, and secret-leak risks.",
+            { skillIds: ["openspec-verify-change"] },
+          ),
         },
       },
       {
@@ -562,16 +673,18 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
         type: "workflow",
         position: { x: 920, y: 280 },
         data: {
-        kind: "agent",
-        title: zh ? "汇总结论" : "Synthesize",
-        description: zh ? "合并三条并行分支" : "Merge the three parallel branches",
-        agentConfig: createAgentConfig(
-          "Architect",
-          zh
-            ? "按严重程度合并安全、质量与文档发现。"
-            : "Merge security, quality, and docs findings by severity.",
-          { skillIds: ["openspec-verify-change"] },
-        ),
+          kind: "agent",
+          title: zh ? "汇总结论" : "Synthesize",
+          description: zh
+            ? "合并三条并行分支"
+            : "Merge the three parallel branches",
+          agentConfig: createAgentConfig(
+            "Architect",
+            zh
+              ? "按严重程度合并安全、质量与文档发现。"
+              : "Merge security, quality, and docs findings by severity.",
+            { skillIds: ["openspec-verify-change"] },
+          ),
         },
       },
       {
@@ -589,14 +702,54 @@ export function createParallelMockWorkflow(locale: "zh-CN" | "en-US"): DemoWorkf
       },
     ],
     edges: [
-      { id: "e-start-gather", source: "start", target: "gather", type: "workflow" },
-      { id: "e-gather-security", source: "gather", target: "security", type: "workflow" },
-      { id: "e-gather-quality", source: "gather", target: "quality", type: "workflow" },
-      { id: "e-gather-docs", source: "gather", target: "docs", type: "workflow" },
-      { id: "e-security-synth", source: "security", target: "synthesize", type: "workflow" },
-      { id: "e-quality-synth", source: "quality", target: "synthesize", type: "workflow" },
-      { id: "e-docs-synth", source: "docs", target: "synthesize", type: "workflow" },
-      { id: "e-synth-output", source: "synthesize", target: "output", type: "workflow" },
+      {
+        id: "e-start-gather",
+        source: "start",
+        target: "gather",
+        type: "workflow",
+      },
+      {
+        id: "e-gather-security",
+        source: "gather",
+        target: "security",
+        type: "workflow",
+      },
+      {
+        id: "e-gather-quality",
+        source: "gather",
+        target: "quality",
+        type: "workflow",
+      },
+      {
+        id: "e-gather-docs",
+        source: "gather",
+        target: "docs",
+        type: "workflow",
+      },
+      {
+        id: "e-security-synth",
+        source: "security",
+        target: "synthesize",
+        type: "workflow",
+      },
+      {
+        id: "e-quality-synth",
+        source: "quality",
+        target: "synthesize",
+        type: "workflow",
+      },
+      {
+        id: "e-docs-synth",
+        source: "docs",
+        target: "synthesize",
+        type: "workflow",
+      },
+      {
+        id: "e-synth-output",
+        source: "synthesize",
+        target: "output",
+        type: "workflow",
+      },
     ],
   };
 
@@ -642,7 +795,9 @@ export function createStaggeredParallelMockWorkflow(
           kind: "start",
           title: zh ? "开始" : "Start",
           description: zh ? "接收改动范围" : "Receive change scope",
-          instruction: zh ? "解析目标仓库与分支。" : "Parse target repo and branch.",
+          instruction: zh
+            ? "解析目标仓库与分支。"
+            : "Parse target repo and branch.",
           mockStepMs: 800,
         },
       },
@@ -665,16 +820,16 @@ export function createStaggeredParallelMockWorkflow(
         type: "workflow",
         position: { x: 560, y: 80 },
         data: {
-        kind: "agent",
-        title: zh ? "深度安全" : "Deep security",
-        description: zh ? "晚启动 · 长耗时" : "Starts later · long-running",
-        agentConfig: createAgentConfig(
-          "Reviewer",
-          zh
-            ? "在快速扫描之后做深度安全分析。"
-            : "Follow the quick scan with a deep security analysis.",
-          { skillIds: ["openspec-verify-change"] },
-        ),
+          kind: "agent",
+          title: zh ? "深度安全" : "Deep security",
+          description: zh ? "晚启动 · 长耗时" : "Starts later · long-running",
+          agentConfig: createAgentConfig(
+            "Reviewer",
+            zh
+              ? "在快速扫描之后做深度安全分析。"
+              : "Follow the quick scan with a deep security analysis.",
+            { skillIds: ["openspec-verify-change"] },
+          ),
           mockStepMs: 6_000,
         },
       },
@@ -686,9 +841,7 @@ export function createStaggeredParallelMockWorkflow(
           kind: "tool",
           title: zh ? "Lint / 类型" : "Lint / types",
           description: zh ? "中等时长 · 直达汇合" : "Medium · joins directly",
-          instruction: zh
-            ? "跑 lint 与类型检查。"
-            : "Run lint and typecheck.",
+          instruction: zh ? "跑 lint 与类型检查。" : "Run lint and typecheck.",
           tool: "Terminal",
           mockStepMs: 3_500,
         },
@@ -700,7 +853,9 @@ export function createStaggeredParallelMockWorkflow(
         data: {
           kind: "tool",
           title: zh ? "索引构建" : "Build index",
-          description: zh ? "最长前置 · 拖慢下游" : "Slowest prep · delays downstream",
+          description: zh
+            ? "最长前置 · 拖慢下游"
+            : "Slowest prep · delays downstream",
           instruction: zh
             ? "重建搜索索引（故意偏慢）。"
             : "Rebuild the search index (intentionally slow).",
@@ -729,7 +884,9 @@ export function createStaggeredParallelMockWorkflow(
         data: {
           kind: "junction",
           title: zh ? "汇合" : "Join",
-          description: zh ? "等待全部交错分支" : "Wait for all staggered branches",
+          description: zh
+            ? "等待全部交错分支"
+            : "Wait for all staggered branches",
           instruction: zh
             ? "合并安全、lint 与文档结果。"
             : "Merge security, lint, and docs results.",
@@ -754,15 +911,50 @@ export function createStaggeredParallelMockWorkflow(
       },
     ],
     edges: [
-      { id: "e-start-scan", source: "start", target: "quick_scan", type: "workflow" },
+      {
+        id: "e-start-scan",
+        source: "start",
+        target: "quick_scan",
+        type: "workflow",
+      },
       { id: "e-start-lint", source: "start", target: "lint", type: "workflow" },
-      { id: "e-start-index", source: "start", target: "slow_index", type: "workflow" },
-      { id: "e-scan-security", source: "quick_scan", target: "deep_security", type: "workflow" },
-      { id: "e-index-docs", source: "slow_index", target: "docs_pass", type: "workflow" },
-      { id: "e-security-join", source: "deep_security", target: "join", type: "workflow" },
+      {
+        id: "e-start-index",
+        source: "start",
+        target: "slow_index",
+        type: "workflow",
+      },
+      {
+        id: "e-scan-security",
+        source: "quick_scan",
+        target: "deep_security",
+        type: "workflow",
+      },
+      {
+        id: "e-index-docs",
+        source: "slow_index",
+        target: "docs_pass",
+        type: "workflow",
+      },
+      {
+        id: "e-security-join",
+        source: "deep_security",
+        target: "join",
+        type: "workflow",
+      },
       { id: "e-lint-join", source: "lint", target: "join", type: "workflow" },
-      { id: "e-docs-join", source: "docs_pass", target: "join", type: "workflow" },
-      { id: "e-join-output", source: "join", target: "output", type: "workflow" },
+      {
+        id: "e-docs-join",
+        source: "docs_pass",
+        target: "join",
+        type: "workflow",
+      },
+      {
+        id: "e-join-output",
+        source: "join",
+        target: "output",
+        type: "workflow",
+      },
     ],
   };
 

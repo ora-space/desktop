@@ -2,11 +2,8 @@ import type * as acp from "@agentclientprotocol/sdk";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useStore } from "zustand";
 import { useEffect } from "react";
-import type {
-  AgentCli,
-  WarmSessionResponse,
-  WarmSessionTarget,
-} from "@ora/contracts";
+import type { WarmSessionResponse, WarmSessionTarget } from "@ora/contracts";
+import type { KnownAgentCli } from "../../features/chat/model-catalog";
 import type { ChatStore } from "@ora/chat";
 import { useContractsClient } from "../../contracts-client-context";
 import { useChatStore } from "../../chat-store-context";
@@ -79,7 +76,7 @@ export function useWarmSession(
     taskId: string | null;
     sessionId: string | null;
   },
-  agentCli: AgentCli,
+  agentCli: KnownAgentCli,
 ): WarmSession {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -112,7 +109,7 @@ export function useWarmSession(
   // same request would hand the backend two provider sessions for one surface.
   const queryOptions = {
     queryKey: queryKeys.warmSession(target, agentCli),
-    queryFn: () => client.session.warm({ target: target!, agentCli }),
+    queryFn: () => client.session.warm({ target: target!, agentRef: agentCli }),
     // A warm session is owned by the backend and only changes when this client
     // asks it to, so re-fetching it on remount would only risk creating another.
     staleTime: Infinity,

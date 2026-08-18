@@ -6,7 +6,7 @@ An agent comes from one of two sources: a built-in CLI Ora launches itself and s
 
 ## Runtime model
 
-- `AgentRuntimeManager` owns one independently supervised ACP connection per agent and routes sessions to the supervisor selected by their current `agent_cli` binding. Switching replaces that binding while preserving the Ora session and its recorded history.
+- `AgentRuntimeManager` owns one independently supervised ACP connection per agent and routes sessions to the supervisor selected by their current `agent_ref` binding. Switching replaces that binding while preserving the Ora session and its recorded history.
 - Supervisors are keyed by the agent's persisted namespaced identity rather than by a closed enum, so a plugin-provided agent is reachable through the same lookup as a built-in CLI. A plugin that would shadow an identity already supervised is ignored rather than allowed to replace it. A lookup miss is a normal runtime state — a session can outlive the plugin that provided its agent — and is reported as an unavailable runtime.
 - Each session has one actor that serializes load, prompt, permission, cancellation, stop, deletion, and user-title adoption commands.
 - Sessions targeting the same agent share its process and connection; sessions targeting different agents or different actors can progress concurrently.

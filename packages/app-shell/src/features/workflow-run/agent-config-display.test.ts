@@ -10,7 +10,7 @@ describe("agent-config-display", () => {
   it("formats known Agent CLI labels for the mono summary line", () => {
     expect(
       formatAgentExecutorLabel({
-        agentCli: "open_code",
+        agentCli: "ora-space.opencode",
         modelId: "deepseek/deepseek-v4-pro",
       }),
     ).toBe("OpenCode · deepseek/deepseek-v4-pro");
@@ -24,7 +24,7 @@ describe("agent-config-display", () => {
       agentConfig: {
         schemaVersion: 3,
         executor: {
-          agentCli: "open_code",
+          agentCli: "ora-space.opencode",
           modelId: "deepseek/deepseek-v4-flash",
         },
         roleId: "researcher",
@@ -49,7 +49,7 @@ describe("agent-config-display", () => {
       condition: "contains source changes",
       agentConfig: {
         schemaVersion: 3,
-        executor: { agentCli: "open_code", modelId: "ignored" },
+        executor: { agentCli: "ora-space.opencode", modelId: "ignored" },
         roleId: "reviewer",
         skills: [],
         mcps: [],

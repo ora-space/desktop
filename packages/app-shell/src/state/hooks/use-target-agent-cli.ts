@@ -1,4 +1,4 @@
-import type { AgentCli } from "@ora/contracts";
+import type { KnownAgentCli } from "../../features/chat/model-catalog";
 import { useSettingsStore } from "../stores/settings-store";
 import { usePendingAgentStore } from "../stores/pending-agent-store";
 import { warmTargetKey } from "./use-warm-session";
@@ -33,7 +33,7 @@ interface AgentSelection {
  * shared default directly would let picking an agent for one not-yet-started chat
  * repaint every other one the moment it is visited.
  */
-export function useTargetAgentCli(selection: AgentSelection): AgentCli {
+export function useTargetAgentCli(selection: AgentSelection): KnownAgentCli {
   const defaultAgentCli = useSettingsStore((state) => state.settings.agentCli);
   const { data: sessions = [] } = useSessions();
   const targetKey = warmTargetKey(selection);
@@ -45,8 +45,12 @@ export function useTargetAgentCli(selection: AgentSelection): AgentCli {
   const pickedForTarget = usePendingAgentStore((state) =>
     targetKey === null ? undefined : state.selections[targetKey],
   );
+  // The wire carries any installed agent's identity as a plain string, but the picker this
+  // hook drives only ever offers Ora's bundled CLIs today, so a bound session is assumed to be
+  // one of them. A session bound to a plugin agent the picker cannot yet render falls back to
+  // the stored default rather than surfacing an identity nothing here knows how to label.
   const boundAgentCli = sessions.find(
     (session) => session.id === selection.sessionId,
-  )?.agentCli;
+  )?.agentRef as KnownAgentCli | undefined;
   return pendingSwitch ?? boundAgentCli ?? pickedForTarget ?? defaultAgentCli;
 }

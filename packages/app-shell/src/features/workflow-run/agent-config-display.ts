@@ -1,12 +1,11 @@
-import type { AgentCli } from "@ora/contracts";
 import type {
   WorkflowAgentConfig,
   WorkflowNodeData,
 } from "@ora/workflow-runtime";
-import { AGENT_CLI_LABELS } from "../chat/model-catalog";
+import { AGENT_CLI_LABELS, type KnownAgentCli } from "../chat/model-catalog";
 
 /** True when the executor CLI id is one of the known product Agent CLIs. */
-export function isKnownAgentCli(agentCli: string): agentCli is AgentCli {
+export function isKnownAgentCli(agentCli: string): agentCli is KnownAgentCli {
   return agentCli in AGENT_CLI_LABELS;
 }
 

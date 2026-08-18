@@ -1,8 +1,8 @@
 use crate::{
-    AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, BACKUP_DIR_NAME, DomainModelError,
-    HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, Session,
-    SessionId, SessionStatus, Skill, SkillId, Task, TaskId, TaskType, Worktree, WorktreeActivity,
-    WorktreeBaseline, WorktreeId,
+    AgentCli, AgentDefinition, AgentDefinitionId, AgentRef, AuditFields, BACKUP_DIR_NAME,
+    DomainModelError, HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId,
+    STAGING_DIR_NAME, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId, TaskType,
+    Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
 };
 use pretty_assertions::assert_eq;
 
@@ -35,7 +35,7 @@ fn constructs_schema_backed_entities() {
     let session = Session::new(
         SessionId::new("session-1"),
         task.id.clone(),
-        AgentCli::OpenCode,
+        AgentCli::OpenCode.agent_ref(),
         "agent-session-1",
         SessionStatus::Running,
         audit_fields.clone(),
@@ -96,7 +96,7 @@ fn constructs_schema_backed_entities() {
         Session {
             id: SessionId::new("session-1"),
             task_id: TaskId::new("task-1"),
-            agent_cli: AgentCli::OpenCode,
+            agent_ref: AgentCli::OpenCode.agent_ref(),
             agent_session_id: "agent-session-1".to_string(),
             title: None,
             status: SessionStatus::Running,
@@ -216,11 +216,11 @@ fn rejects_dot_prefixed_skill_names() {
     }
 }
 
-/// Verifies CLI identities use the reviewed namespaced database representation.
+/// Verifies built-in CLIs supply the reviewed namespaced identities persistence already stores.
 #[test]
-fn maps_agent_cli_database_values() {
+fn maps_agent_cli_identities() {
     assert_eq!(
-        AgentCli::ALL.map(AgentCli::database_value),
+        AgentCli::ALL.map(|agent_cli| agent_cli.agent_ref().to_string()),
         [
             "ora-space.opencode",
             "ora-space.nga",
@@ -228,27 +228,27 @@ fn maps_agent_cli_database_values() {
             "ora-space.claude",
             "ora-space.codex",
         ]
+        .map(str::to_string)
+    );
+}
+
+/// Verifies an agent reference accepts any installed provider id and rejects only blank text.
+///
+/// An identity Ora does not recognize is a provider that is not installed right now, so parsing
+/// must not treat it as corrupt data the way a closed set would.
+#[test]
+fn parses_any_non_blank_agent_reference() {
+    assert_eq!(
+        ["ora-space.claude", "acme.my-agent", "  spaced.id  "].map(AgentRef::parse),
+        [
+            AgentRef::parse("ora-space.claude"),
+            AgentRef::parse("acme.my-agent"),
+            AgentRef::parse("spaced.id"),
+        ]
     );
     assert_eq!(
-        [
-            "ora-space.opencode",
-            "ora-space.nga",
-            "ora-space.codeagentcli",
-            "ora-space.claude",
-            "ora-space.codex",
-        ]
-        .map(AgentCli::from_database_value),
-        [
-            Ok(AgentCli::OpenCode),
-            Ok(AgentCli::Nga),
-            Ok(AgentCli::CodeAgentCli),
-            Ok(AgentCli::Claude),
-            Ok(AgentCli::Codex),
-        ]
-    );
-    assert_eq!(
-        AgentCli::from_database_value("opencode"),
-        Err(DomainModelError::InvalidAgentCli("opencode".to_string()))
+        AgentRef::parse("   "),
+        Err(DomainModelError::InvalidAgentRef("   ".to_string()))
     );
 }
 

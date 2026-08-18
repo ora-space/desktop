@@ -35,7 +35,7 @@ use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissi
 use agent_client_protocol_schema::v1::{SessionConfigId, SessionConfigOptionValue};
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionRepository};
-use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
+use ora_contracts::{AgentRef as ContractAgentRef, EmptyErrorParams, PublicError};
 use ora_contracts::{
     AttachSessionRequest, AttachSessionResponse, DeleteSessionResponse, LoadSessionEvent,
     LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RespondToPermissionRequest,
@@ -46,7 +46,7 @@ use ora_contracts::{
 };
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
-    AgentCli, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus,
+    AgentRef, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus,
     SessionTitle, TaskId,
 };
 use ora_history::{HistoryIntegrity, binding_needs_handoff, read_session_history};
@@ -154,10 +154,10 @@ pub(super) enum RuntimeCommand {
 /// and is consumed only by Desktop backend code that writes the dashboard locator file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionLocator {
-    /// The private provider-side session identifier owned by the agent CLI.
+    /// The private provider-side session identifier owned by the agent.
     pub agent_session_id: String,
-    /// The persisted CLI selection, in the frontend-facing wire form Desktop already uses.
-    pub agent_cli: ContractAgentCli,
+    /// The persisted agent selection, in the frontend-facing wire form Desktop already uses.
+    pub agent_ref: ContractAgentRef,
     /// The authoritative worktree working directory resolved from the session's task.
     pub cwd: PathBuf,
     /// The user home directory, the root under which each agent writes its trace artifacts.
@@ -273,11 +273,11 @@ impl AgentRuntimeManager {
         request: WarmSessionRequest,
         owner: WarmOwner,
     ) -> Result<WarmSessionResponse, BackendError> {
-        let agent_cli = domain_agent_cli(request.agent_cli);
+        let agent_ref = domain_agent_ref(request.agent_ref)?;
         let cwd = self.resolve_warm_cwd(&request.target)?;
         let key = WarmKey {
             target: request.target,
-            agent_cli,
+            agent_ref,
             owner,
         };
         let (session_id, config_options) = self.inner.warm.warm(key, cwd).await?;
@@ -299,7 +299,7 @@ impl AgentRuntimeManager {
         let supervisor = self
             .inner
             .connections
-            .for_agent(domain_agent_cli(request.agent_cli))?;
+            .for_agent(&domain_agent_ref(request.agent_ref)?)?;
         let connection = supervisor.current()?;
         Ok(ora_contracts::ListAgentModelsResponse {
             models: connection
@@ -314,26 +314,23 @@ impl AgentRuntimeManager {
         })
     }
 
-    /// Reports the live ACP handshake status of every application-scoped CLI runtime.
+    /// Reports the live ACP handshake status of every supervised agent runtime.
+    ///
+    /// The set is whatever this installation actually supervises, not a fixed list: an agent
+    /// contributed by a plugin appears here exactly like a built-in one.
     pub(crate) fn agent_runtime_status(&self) -> ora_contracts::GetAgentRuntimeStatusResponse {
         ora_contracts::GetAgentRuntimeStatusResponse {
-            statuses: AgentCli::ALL
+            statuses: self
+                .inner
+                .connections
+                .statuses()
                 .into_iter()
-                .map(|agent_cli| ora_contracts::AgentCliRuntimeStatus {
-                    agent_cli: contract_agent_cli(agent_cli),
-                    // An agent with no supervisor is one this installation cannot reach at
-                    // all, which the UI shows the same way as one that failed to start.
-                    status: match self
-                        .inner
-                        .connections
-                        .for_agent(agent_cli)
-                        .map(|supervisor| supervisor.status())
-                    {
-                        Ok(ConnectionStatus::Ready) => ora_contracts::AgentCliStatus::Ready,
-                        Ok(ConnectionStatus::Starting) => ora_contracts::AgentCliStatus::Starting,
-                        Ok(ConnectionStatus::Unavailable) | Err(_) => {
-                            ora_contracts::AgentCliStatus::Unavailable
-                        }
+                .map(|(agent_ref, status)| ora_contracts::AgentRuntimeStatus {
+                    agent_ref: agent_ref.into(),
+                    status: match status {
+                        ConnectionStatus::Ready => ora_contracts::AgentStatus::Ready,
+                        ConnectionStatus::Starting => ora_contracts::AgentStatus::Starting,
+                        ConnectionStatus::Unavailable => ora_contracts::AgentStatus::Unavailable,
                     },
                 })
                 .collect(),
@@ -379,7 +376,7 @@ impl AgentRuntimeManager {
         // serialized prompt/load stream; only the title-polling attempt needs preemption.
         let config_options = warm::request_config_option(
             &self.inner.connections,
-            session.agent_cli,
+            &session.agent_ref,
             &session.agent_session_id,
             &config_id,
             &value,
@@ -427,21 +424,21 @@ impl AgentRuntimeManager {
         // lock is taken, so attaching never blocks other sessions on the network.
         let reservation = self.inner.warm.take(&session_id, &cwd).await?;
         let attachment = reservation.attachment();
-        let agent_cli = attachment.agent_cli;
+        let agent_ref = attachment.agent_ref.clone();
         let agent_session_id = attachment.agent_session_id.clone();
         let session_cwd = attachment.cwd.clone();
         let available_commands = attachment.available_commands.clone();
 
         let response = async {
             let _lifecycle = self.inner.lifecycle.lock().await;
-            let supervisor = self.inner.connections.for_agent(agent_cli)?;
+            let supervisor = self.inner.connections.for_agent(&agent_ref)?;
             let channel =
                 supervisor.open_session_channel(&agent_session_id, session_id.as_ref())?;
             let now = self.inner.clock.now_timestamp_millis();
             let session = Session::new(
                 session_id.clone(),
                 task_id,
-                agent_cli,
+                agent_ref,
                 agent_session_id,
                 SessionStatus::Running,
                 AuditFields::new(now, now, false),
@@ -505,11 +502,11 @@ impl AgentRuntimeManager {
         request: SwitchSessionAgentRequest,
     ) -> Result<SwitchSessionAgentResponse, BackendError> {
         let session = self.find_session(&request.session_id)?;
-        let target = domain_agent_cli(request.agent_cli);
+        let target = domain_agent_ref(request.agent_ref)?;
         // Refused before anything is claimed. Warming the CLI a session already
         // runs on would build a second provider session only to replace the
         // current binding with an indistinguishable one.
-        if target == session.agent_cli {
+        if target == session.agent_ref {
             return Err(BackendError::new(
                 ErrorClassification::InvalidRequest,
                 PublicError::SessionAgentUnchanged(EmptyErrorParams {}),
@@ -531,7 +528,7 @@ impl AgentRuntimeManager {
                     target: WarmSessionTarget::Task {
                         task_id: session.task_id.to_string(),
                     },
-                    agent_cli: target,
+                    agent_ref: target.clone(),
                     owner: WarmOwner::Interactive,
                 },
                 &cwd,
@@ -544,15 +541,15 @@ impl AgentRuntimeManager {
         // Only now is the move certain, so the old binding can be released. Its
         // context is not reusable afterwards: work done on the new agent would be
         // missing from it, and switching back re-injects the transcript instead.
-        let previous = session.agent_cli;
+        let previous = session.agent_ref.clone();
 
         let response = async {
             let _lifecycle = self.inner.lifecycle.lock().await;
-            let supervisor = self.inner.connections.for_agent(target)?;
+            let supervisor = self.inner.connections.for_agent(&target)?;
             let channel =
                 supervisor.open_session_channel(&agent_session_id, session.id.as_ref())?;
             let (session, recorder) = self
-                .rebind_to_provider(&session.id, previous, target, &agent_session_id)
+                .rebind_to_provider(&session.id, &previous, &target, &agent_session_id)
                 .await?;
             self.insert_actor(
                 session.clone(),
@@ -588,8 +585,8 @@ impl AgentRuntimeManager {
     async fn rebind_to_provider(
         &self,
         session_id: &SessionId,
-        previous: AgentCli,
-        target: AgentCli,
+        previous: &AgentRef,
+        target: &AgentRef,
         agent_session_id: &str,
     ) -> Result<(Session, SessionRecorder), BackendError> {
         if let Some(handle) = self.lookup_actor(session_id)? {
@@ -600,26 +597,26 @@ impl AgentRuntimeManager {
         let now = self.inner.clock.now_timestamp_millis();
         let repository = SqliteSessionRepository::new(self.inner.pool.clone());
         repository
-            .update_session_binding(session_id, target, agent_session_id, now)
+            .update_session_binding(session_id, target.clone(), agent_session_id, now)
             .map_err(|source| BackendError::internal("failed to rebind agent session", source))?;
         let session = repository
             .update_session_status(session_id, SessionStatus::Running, now)
             .map_err(|source| BackendError::internal("failed to rebind agent session", source))?;
         ora_debug!(
             session_id = %session.id,
-            from = previous.database_value(),
-            to = target.database_value(),
+            from = %previous,
+            to = %target,
             "session agent switched",
         );
 
         let mut opened = self.open_recorder(&session)?;
         let outcome = match opened.failure.take() {
             Some(reason) => RecordOutcome::JustFailed { reason },
-            None => {
-                opened
-                    .recorder
-                    .record_agent_switch(previous, target, agent_session_id.to_string())
-            }
+            None => opened.recorder.record_agent_switch(
+                previous.clone(),
+                target.clone(),
+                agent_session_id.to_string(),
+            ),
         };
         Ok((self.settle_record(session, outcome), opened.recorder))
     }
@@ -940,7 +937,7 @@ impl AgentRuntimeManager {
         let cwd = self.task_cwd(&session.task_id)?;
         Ok(SessionLocator {
             agent_session_id: session.agent_session_id.clone(),
-            agent_cli: contract_agent_cli(session.agent_cli),
+            agent_ref: session.agent_ref.into(),
             cwd,
             home_directory: self.inner.home_directory.clone(),
         })
@@ -960,7 +957,7 @@ impl AgentRuntimeManager {
             return Ok(handle);
         }
         let cwd = self.task_cwd(&session.task_id)?;
-        let connection = self.inner.connections.for_agent(session.agent_cli)?;
+        let connection = self.inner.connections.for_agent(&session.agent_ref)?;
         let mut opened = self.open_recorder(&session)?;
         let session = match opened.failure.take() {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),

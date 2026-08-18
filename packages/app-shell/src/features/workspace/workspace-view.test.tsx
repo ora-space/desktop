@@ -54,7 +54,7 @@ describe("WorkspaceView", () => {
       {
         id: "s1",
         taskId: "t1",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -108,7 +108,7 @@ describe("WorkspaceView", () => {
       {
         id: "s1",
         taskId: "t1",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -167,7 +167,7 @@ describe("WorkspaceView", () => {
       {
         id: "s1",
         taskId: "t1",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -418,7 +418,7 @@ describe("WorkspaceView", () => {
         {
           id: "s1",
           taskId: "t1",
-          agentCli: "open_code",
+          agentRef: "ora-space.opencode",
           status: "running",
           title: null,
           historyState: { type: "writable" },
@@ -894,7 +894,9 @@ describe("WorkspaceView", () => {
       },
     };
     // Stands in for an earlier surface in this run having handshaken this CLI.
-    useAgentModelStore.setState({ known: { open_code: state.configOptions } });
+    useAgentModelStore.setState({
+      known: { "ora-space.opencode": state.configOptions },
+    });
     const Wrapper = createHookWrapper(
       client,
       createTestQueryClient(),
@@ -953,7 +955,7 @@ describe("WorkspaceView", () => {
       {
         id: "s1",
         taskId: "t1",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -1074,7 +1076,7 @@ describe("WorkspaceView", () => {
         },
         warm: async (request, options) => {
           const response = await baseClient.session.warm(request, options);
-          if (request.agentCli !== "claude") return response;
+          if (request.agentRef !== "ora-space.claude") return response;
           return {
             ...response,
             configOptions: [
@@ -1120,7 +1122,7 @@ describe("WorkspaceView", () => {
       {
         id: "s1",
         taskId: "t1",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -1172,7 +1174,7 @@ describe("WorkspaceView", () => {
     // Rebinding here would tear down an agent that may be mid-reply, so nothing
     // is asked of the backend until the next message carries the move.
     expect(switched).toEqual([]);
-    expect(state.sessions[0]?.agentCli).toBe("open_code");
+    expect(state.sessions[0]?.agentRef).toBe("ora-space.opencode");
   });
 
   it("commits a recorded agent move with the next message", async () => {
@@ -1209,8 +1211,12 @@ describe("WorkspaceView", () => {
     await user.type(await screen.findByRole("textbox"), "hello");
     await user.keyboard("{Enter}");
 
-    await waitFor(() => expect(state.sessions[0]?.agentCli).toBe("claude"));
-    expect(switched).toEqual([{ sessionId: "s1", agentCli: "claude" }]);
+    await waitFor(() =>
+      expect(state.sessions[0]?.agentRef).toBe("ora-space.claude"),
+    );
+    expect(switched).toEqual([
+      { sessionId: "s1", agentRef: "ora-space.claude" },
+    ]);
   });
 
   it("sends without rebinding when the picker returns to the session's own agent", async () => {
@@ -1254,7 +1260,7 @@ describe("WorkspaceView", () => {
     // Asking the backend to move a session onto its own agent is refused with
     // `session_agent_unchanged`, which would have failed the message with it.
     expect(switched).toEqual([]);
-    expect(state.sessions[0]?.agentCli).toBe("open_code");
+    expect(state.sessions[0]?.agentRef).toBe("ora-space.opencode");
   });
 
   it("resumes a session whose history stopped recording", async () => {
@@ -1275,7 +1281,7 @@ describe("WorkspaceView", () => {
       {
         id: "s1",
         taskId: "t1",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "degraded", reason: "no space left on device" },

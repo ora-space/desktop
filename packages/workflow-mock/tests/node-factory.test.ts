@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createMockWorkflowCapabilities,
-  createMockWorkflowNode,
-} from "../src";
+import { createMockWorkflowCapabilities, createMockWorkflowNode } from "../src";
 
 describe("createMockWorkflowNode", () => {
   it("keeps localized prototype defaults inside the mock package", () => {
@@ -30,7 +27,7 @@ describe("createMockWorkflowNode", () => {
           description: "交给模型自主执行",
           agentConfig: {
             schemaVersion: 3,
-            executor: { agentCli: "code_agent_cli", modelId: "gpt-5" },
+            executor: { agentCli: "ora-space.codeagentcli", modelId: "gpt-5" },
             roleId: "Architect",
             skills: [],
             mcps: [],
@@ -117,19 +114,31 @@ describe("createMockWorkflowNode", () => {
         { value: "Local model", label: "本地模型" },
       ],
       agentModels: [
-        { agentCli: "code_agent_cli", modelId: "gpt-5", label: "CodeAgentCLI · GPT-5" },
-        { agentCli: "open_code", modelId: "opencode/sonnet", label: "OpenCode · Sonnet" },
         {
-          agentCli: "open_code",
+          agentCli: "ora-space.codeagentcli",
+          modelId: "gpt-5",
+          label: "CodeAgentCLI · GPT-5",
+        },
+        {
+          agentCli: "ora-space.opencode",
+          modelId: "opencode/sonnet",
+          label: "OpenCode · Sonnet",
+        },
+        {
+          agentCli: "ora-space.opencode",
           modelId: "deepseek/deepseek-v4-flash",
           label: "OpenCode · deepseek/deepseek-v4-flash",
         },
         {
-          agentCli: "open_code",
+          agentCli: "ora-space.opencode",
           modelId: "deepseek/deepseek-v4-pro",
           label: "OpenCode · deepseek/deepseek-v4-pro",
         },
-        { agentCli: "nga", modelId: "nga/default", label: "NGA · Default" },
+        {
+          agentCli: "ora-space.nga",
+          modelId: "nga/default",
+          label: "NGA · Default",
+        },
       ],
       roles: [
         { value: "Architect", label: "架构师" },
@@ -144,8 +153,14 @@ describe("createMockWorkflowNode", () => {
       skills: [
         { value: "openspec-apply-change", label: "openspec-apply-change" },
         { value: "openspec-archive-change", label: "openspec-archive-change" },
-        { value: "openspec-bulk-archive-change", label: "openspec-bulk-archive-change" },
-        { value: "openspec-continue-change", label: "openspec-continue-change" },
+        {
+          value: "openspec-bulk-archive-change",
+          label: "openspec-bulk-archive-change",
+        },
+        {
+          value: "openspec-continue-change",
+          label: "openspec-continue-change",
+        },
         { value: "openspec-explore", label: "openspec-explore" },
         { value: "openspec-ff-change", label: "openspec-ff-change" },
         { value: "openspec-new-change", label: "openspec-new-change" },
@@ -198,7 +213,7 @@ describe("createMockWorkflowNode", () => {
       defaultModel: "GPT-5",
       defaultAgentConfig: {
         schemaVersion: 3,
-        executor: { agentCli: "code_agent_cli", modelId: "gpt-5" },
+        executor: { agentCli: "ora-space.codeagentcli", modelId: "gpt-5" },
         roleId: "Architect",
         skills: [],
         mcps: [],

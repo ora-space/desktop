@@ -20,13 +20,13 @@ use ora_acp::{AcpClient, AcpInboundEvent, AcpMessages, AcpPeer, NdjsonTransport}
 use ora_application::{Clock, SessionRepository};
 use ora_contracts::PublicError;
 use ora_db::{RepositoryPool, SqliteSessionRepository};
-use ora_domain::{AgentCli, SessionStatus};
+use ora_domain::{AgentCli, AgentRef, SessionStatus};
 use ora_logging::{ora_error, ora_info, ora_warn};
 use ora_plugin_runtime::PluginRuntime;
 use ora_process::{
     ManagedProcess, ProcessSpawner, ProcessSpec, TokioManagedProcess, TokioProcessSpawner,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -59,10 +59,13 @@ pub(super) enum AgentSource {
 
 impl AgentSource {
     /// Returns the persisted, namespaced identity of the agent this source provides.
-    fn identifier(&self) -> &str {
+    fn agent_ref(&self) -> Result<AgentRef, BackendError> {
         match self {
-            Self::Cli(agent_cli) => agent_cli.database_value(),
-            Self::Plugin(spec) => &spec.plugin_id,
+            Self::Cli(agent_cli) => Ok(agent_cli.agent_ref()),
+            // A plugin id reaches here already validated by discovery, but parsing keeps one
+            // construction path for the value object rather than a second, unchecked one.
+            Self::Plugin(spec) => AgentRef::parse(&spec.plugin_id)
+                .map_err(|error| runtime_internal("agent_start_failed", error.to_string())),
         }
     }
 
@@ -114,6 +117,7 @@ pub(super) enum ConnectionStatus {
 
 /// Keeps one supervisor generation's fixed dependencies together as the retry loop evolves.
 struct SupervisorContext {
+    agent_ref: AgentRef,
     source: AgentSource,
     pool: RepositoryPool,
     home_directory: PathBuf,
@@ -140,7 +144,7 @@ pub(super) struct ConnectionSupervisor {
 /// plugin-provided agent is reachable through exactly the same lookup as a built-in CLI.
 #[derive(Clone)]
 pub(super) struct ConnectionSupervisors {
-    supervisors: Arc<HashMap<String, ConnectionSupervisor>>,
+    supervisors: Arc<BTreeMap<AgentRef, ConnectionSupervisor>>,
 }
 
 impl ConnectionSupervisors {
@@ -158,23 +162,19 @@ impl ConnectionSupervisors {
             .into_iter()
             .map(AgentSource::Cli)
             .chain(agent_plugins.into_iter().map(AgentSource::Plugin));
-        let mut supervisors = HashMap::new();
-        for source in sources {
-            let identifier = source.identifier().to_string();
-            // A plugin that shadows a built-in identity would silently replace it. Refusing keeps
-            // the agent the user already had instead of handing it to an unvetted package.
-            if supervisors.contains_key(&identifier) {
-                ora_warn!(
-                    agent = %identifier,
-                    "ignoring an agent whose identity is already supervised"
+        let supervisors = resolve_supervised_agents(sources)
+            .into_iter()
+            .map(|(agent_ref, source)| {
+                let supervisor = ConnectionSupervisor::start(
+                    agent_ref.clone(),
+                    source,
+                    pool.clone(),
+                    home_directory.clone(),
+                    clock,
                 );
-                continue;
-            }
-            supervisors.insert(
-                identifier,
-                ConnectionSupervisor::start(source, pool.clone(), home_directory.clone(), clock),
-            );
-        }
+                (agent_ref, supervisor)
+            })
+            .collect::<BTreeMap<_, _>>();
         Self {
             supervisors: Arc::new(supervisors),
         }
@@ -184,14 +184,24 @@ impl ConnectionSupervisors {
     ///
     /// A miss is a normal runtime state rather than data corruption: a session can outlive the
     /// plugin that provided its agent, and the caller reports that as an unavailable runtime.
-    pub fn for_agent(&self, agent_cli: AgentCli) -> Result<ConnectionSupervisor, BackendError> {
-        let identifier = agent_cli.database_value();
-        self.supervisors.get(identifier).cloned().ok_or_else(|| {
+    pub fn for_agent(&self, agent_ref: &AgentRef) -> Result<ConnectionSupervisor, BackendError> {
+        self.supervisors.get(agent_ref).cloned().ok_or_else(|| {
             runtime_internal(
                 "agent_runtime_unavailable",
-                format!("{identifier} is not installed"),
+                format!("{agent_ref} is not installed"),
             )
         })
+    }
+
+    /// Reports every supervised agent with its live status, in stable identity order.
+    ///
+    /// Enumerating what is actually supervised is what lets a plugin-provided agent appear in the
+    /// picker: the set is no longer knowable at build time.
+    pub fn statuses(&self) -> Vec<(AgentRef, ConnectionStatus)> {
+        self.supervisors
+            .iter()
+            .map(|(agent_ref, supervisor)| (agent_ref.clone(), supervisor.status()))
+            .collect()
     }
 }
 
@@ -203,6 +213,7 @@ impl ConnectionSupervisor {
 
     /// Starts one application-scoped agent supervisor independently of the caller's runtime.
     pub(super) fn start(
+        agent_ref: AgentRef,
         source: AgentSource,
         pool: RepositoryPool,
         home_directory: PathBuf,
@@ -213,10 +224,11 @@ impl ConnectionSupervisor {
         let active_generation = Arc::new(AtomicU64::new(0));
         let routes = Arc::new(RouteRegistry::default());
         let label: Arc<str> = Arc::from(source.label());
-        let identifier = source.identifier().to_string();
+        let identifier = agent_ref.to_string();
         if let Err(error) = spawn_runtime_thread(
             &label,
             run_supervisor(SupervisorContext {
+                agent_ref,
                 source,
                 pool,
                 home_directory,
@@ -302,6 +314,37 @@ impl ConnectionSupervisor {
             _registration: registration,
         })
     }
+}
+
+/// Decides which agent identity each source supervises, in the order the sources were offered.
+///
+/// Built-in CLIs are offered first, so a plugin that claims an identity already taken is dropped
+/// rather than allowed to replace it: silently handing a user's existing agent to an unvetted
+/// package is worse than ignoring the package. A source whose identity is unusable is dropped for
+/// the same reason — there would be no way to address it.
+fn resolve_supervised_agents(
+    sources: impl Iterator<Item = AgentSource>,
+) -> Vec<(AgentRef, AgentSource)> {
+    let mut claimed = BTreeSet::new();
+    let mut resolved = Vec::new();
+    for source in sources {
+        let Ok(agent_ref) = source.agent_ref() else {
+            ora_warn!(
+                agent = source.label(),
+                "ignoring an agent whose identity is not a usable reference"
+            );
+            continue;
+        };
+        if !claimed.insert(agent_ref.clone()) {
+            ora_warn!(
+                agent = %agent_ref,
+                "ignoring an agent whose identity is already supervised"
+            );
+            continue;
+        }
+        resolved.push((agent_ref, source));
+    }
+    resolved
 }
 
 /// Runs the supervisor on a dedicated runtime because Desktop bootstrap is synchronous.
@@ -415,6 +458,7 @@ struct SharedProcess {
 /// Supervises one process generation at a time and retries only after it is fully reaped.
 async fn run_supervisor(context: SupervisorContext) {
     let SupervisorContext {
+        agent_ref,
         source,
         pool,
         home_directory,
@@ -424,7 +468,7 @@ async fn run_supervisor(context: SupervisorContext) {
         routes,
         mut shutdown,
     } = context;
-    let identifier = source.identifier();
+    let identifier = agent_ref.as_str();
     let mut retry_delay = INITIAL_RETRY_DELAY;
     let mut generation = 0_u64;
     loop {
@@ -452,7 +496,7 @@ async fn run_supervisor(context: SupervisorContext) {
                 let error =
                     runtime_internal("agent_runtime_unavailable", "agent connection was lost");
                 routes.fail_generation(generation, error);
-                mark_running_sessions_stopped(&pool, clock, identifier);
+                mark_running_sessions_stopped(&pool, clock, &agent_ref);
                 if shutting_down {
                     process.process.stop_with_grace(identifier).await;
                     return;
@@ -583,11 +627,11 @@ async fn spawn_initialized_process(
     {
         Ok(Ok(response)) => response,
         Ok(Err(error)) => {
-            process.terminate_and_reap(source.identifier()).await;
+            process.terminate_and_reap(source.label()).await;
             return Err(StartFailure::Retryable(map_acp_error(error)));
         }
         Err(_) => {
-            process.terminate_and_reap(source.identifier()).await;
+            process.terminate_and_reap(source.label()).await;
             return Err(StartFailure::Retryable(runtime_internal(
                 "agent_initialize_timeout",
                 "agent initialization timed out",
@@ -701,15 +745,13 @@ fn plugin_start_error(error: PluginAgentError) -> StartFailure {
 }
 
 /// Persists one agent's connection loss without stopping sessions owned by healthy agents.
-fn mark_running_sessions_stopped(pool: &RepositoryPool, clock: SystemClock, identifier: &str) {
+fn mark_running_sessions_stopped(pool: &RepositoryPool, clock: SystemClock, agent_ref: &AgentRef) {
     let repository = SqliteSessionRepository::new(pool.clone());
     let Ok(sessions) = repository.list_sessions() else {
         return;
     };
     for session in sessions {
-        if session.agent_cli.database_value() == identifier
-            && session.status == SessionStatus::Running
-        {
+        if session.agent_ref == *agent_ref && session.status == SessionStatus::Running {
             let _ = repository.update_session_status(
                 &session.id,
                 SessionStatus::Stopped,
@@ -721,10 +763,85 @@ fn mark_running_sessions_stopped(pool: &RepositoryPool, clock: SystemClock, iden
 
 #[cfg(test)]
 mod tests {
-    use super::{PluginAgentError, StartFailure, plugin_start_error, spawn_runtime_thread};
+    use super::{
+        AgentSource, PluginAgentError, PluginAgentSpec, StartFailure, plugin_start_error,
+        resolve_supervised_agents, spawn_runtime_thread,
+    };
     use ora_contracts::PublicError;
+    use ora_domain::{AgentCli, AgentRef};
     use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
     use std::time::Duration;
+
+    /// Builds one agent plugin source with the given package identity.
+    fn plugin_source(plugin_id: &str) -> AgentSource {
+        AgentSource::Plugin(PluginAgentSpec {
+            plugin_id: plugin_id.to_string(),
+            deno_path: PathBuf::from("deno"),
+            entrypoint: PathBuf::from("main.js"),
+        })
+    }
+
+    /// Verifies a plugin-provided agent is supervised under its own package identity.
+    ///
+    /// This is what makes the agent set open: the identity comes from the installed package
+    /// rather than from a set fixed when Ora was built.
+    #[test]
+    fn supervises_a_plugin_agent_under_its_package_identity() {
+        let resolved = resolve_supervised_agents(
+            [
+                AgentSource::Cli(AgentCli::Claude),
+                plugin_source("acme.my-agent"),
+            ]
+            .into_iter(),
+        );
+
+        assert_eq!(
+            resolved
+                .into_iter()
+                .map(|(agent_ref, _source)| agent_ref)
+                .collect::<Vec<_>>(),
+            vec![
+                AgentCli::Claude.agent_ref(),
+                AgentRef::parse("acme.my-agent").expect("parse plugin identity"),
+            ]
+        );
+    }
+
+    /// Verifies a plugin cannot take over an identity another source already supervises.
+    #[test]
+    fn refuses_a_plugin_that_shadows_an_installed_identity() {
+        let resolved = resolve_supervised_agents(
+            [
+                AgentSource::Cli(AgentCli::Claude),
+                plugin_source(AgentCli::Claude.agent_ref().as_str()),
+                plugin_source("acme.my-agent"),
+            ]
+            .into_iter(),
+        );
+
+        assert_eq!(
+            resolved
+                .into_iter()
+                .map(|(agent_ref, source)| (agent_ref, matches!(source, AgentSource::Cli(_))))
+                .collect::<Vec<_>>(),
+            vec![
+                (AgentCli::Claude.agent_ref(), true),
+                (
+                    AgentRef::parse("acme.my-agent").expect("parse plugin identity"),
+                    false
+                ),
+            ]
+        );
+    }
+
+    /// Verifies a package whose identity is unusable is dropped rather than supervised blindly.
+    #[test]
+    fn drops_a_source_whose_identity_is_unusable() {
+        let resolved = resolve_supervised_agents([plugin_source("   ")].into_iter());
+
+        assert!(resolved.is_empty());
+    }
 
     /// Verifies synchronous bootstrap can launch async supervision without an ambient runtime.
     #[test]

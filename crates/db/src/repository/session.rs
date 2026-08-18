@@ -1,6 +1,6 @@
 use ora_application::{RepositoryError, SessionRepository};
 use ora_domain::{
-    AgentCli, AuditFields, DomainModelError, HistoryState, Session, SessionId, SessionStatus,
+    AgentRef, AuditFields, DomainModelError, HistoryState, Session, SessionId, SessionStatus,
     SessionTitle, TaskId,
 };
 use rusqlite::{Row, params};
@@ -34,7 +34,7 @@ impl SessionRepository for SqliteSessionRepository {
                     params![
                         session.id.as_ref(),
                         session.task_id.as_ref(),
-                        session.agent_cli.database_value(),
+                        session.agent_ref.as_str(),
                         session.agent_session_id,
                         session.title.as_ref().map(SessionTitle::as_str),
                         session.status.database_value(),
@@ -162,7 +162,7 @@ impl SessionRepository for SqliteSessionRepository {
     fn update_session_binding(
         &self,
         session_id: &SessionId,
-        agent_cli: AgentCli,
+        agent_ref: AgentRef,
         agent_session_id: &str,
         now: i64,
     ) -> Result<Session, RepositoryError> {
@@ -176,7 +176,7 @@ impl SessionRepository for SqliteSessionRepository {
                 )?;
                 let mut rows = statement.query(params![
                     session_id.as_ref(),
-                    agent_cli.database_value(),
+                    agent_ref.as_str(),
                     agent_session_id,
                     now
                 ])?;
@@ -244,7 +244,7 @@ impl SessionRepository for SqliteSessionRepository {
 /// Reconstructs a domain session from the selected session columns.
 fn map_session_row(row: &Row<'_>) -> Result<Session, crate::DatabaseError> {
     let status = SessionStatus::from_database_value(row.get("status")?)?;
-    let agent_cli = AgentCli::from_database_value(&row.get::<_, String>("agent_cli")?)?;
+    let agent_ref = AgentRef::parse(row.get::<_, String>("agent_cli")?)?;
     let is_deleted = row.get::<_, i64>("is_deleted")? != 0;
 
     let title = row
@@ -258,7 +258,7 @@ fn map_session_row(row: &Row<'_>) -> Result<Session, crate::DatabaseError> {
     Ok(Session::new(
         SessionId::new(row.get::<_, String>("id")?),
         TaskId::new(row.get::<_, String>("task_id")?),
-        agent_cli,
+        agent_ref,
         row.get::<_, String>("agent_session_id")?,
         status,
         AuditFields::new(row.get("created_at")?, row.get("updated_at")?, is_deleted),

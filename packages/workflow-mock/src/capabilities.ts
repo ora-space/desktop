@@ -1,7 +1,4 @@
-import type {
-  WorkflowAgentConfig,
-  WorkflowNodeKind,
-} from "./node-data";
+import type { WorkflowAgentConfig, WorkflowNodeKind } from "./node-data";
 
 export interface WorkflowChoice {
   value: string;
@@ -63,25 +60,29 @@ export interface WorkflowNodeType {
 }
 
 const DEFAULT_AGENT_MODEL: WorkflowAgentModel = {
-  agentCli: "code_agent_cli",
+  agentCli: "ora-space.codeagentcli",
   modelId: "gpt-5",
   label: "CodeAgentCLI · GPT-5",
 };
 
 const MOCK_AGENT_MODELS: WorkflowAgentModel[] = [
   DEFAULT_AGENT_MODEL,
-  { agentCli: "open_code", modelId: "opencode/sonnet", label: "OpenCode · Sonnet" },
   {
-    agentCli: "open_code",
+    agentCli: "ora-space.opencode",
+    modelId: "opencode/sonnet",
+    label: "OpenCode · Sonnet",
+  },
+  {
+    agentCli: "ora-space.opencode",
     modelId: "deepseek/deepseek-v4-flash",
     label: "OpenCode · deepseek/deepseek-v4-flash",
   },
   {
-    agentCli: "open_code",
+    agentCli: "ora-space.opencode",
     modelId: "deepseek/deepseek-v4-pro",
     label: "OpenCode · deepseek/deepseek-v4-pro",
   },
-  { agentCli: "nga", modelId: "nga/default", label: "NGA · Default" },
+  { agentCli: "ora-space.nga", modelId: "nga/default", label: "NGA · Default" },
 ];
 
 const MOCK_AGENT_ROLES: WorkflowChoice[] = [
@@ -154,25 +155,52 @@ export function createMockWorkflowCapabilities(
   ];
   const conditionOperators = [
     { value: "equals", label: locale === "zh-CN" ? "等于" : "Equals" },
-    { value: "not_equals", label: locale === "zh-CN" ? "不等于" : "Not equals" },
+    {
+      value: "not_equals",
+      label: locale === "zh-CN" ? "不等于" : "Not equals",
+    },
     { value: "contains", label: locale === "zh-CN" ? "包含" : "Contains" },
-    { value: "not_contains", label: locale === "zh-CN" ? "不包含" : "Not contains" },
-    { value: "greater_than", label: locale === "zh-CN" ? "大于" : "Greater than" },
+    {
+      value: "not_contains",
+      label: locale === "zh-CN" ? "不包含" : "Not contains",
+    },
+    {
+      value: "greater_than",
+      label: locale === "zh-CN" ? "大于" : "Greater than",
+    },
     { value: "less_than", label: locale === "zh-CN" ? "小于" : "Less than" },
     { value: "is_empty", label: locale === "zh-CN" ? "为空" : "Is empty" },
-    { value: "is_not_empty", label: locale === "zh-CN" ? "不为空" : "Is not empty" },
+    {
+      value: "is_not_empty",
+      label: locale === "zh-CN" ? "不为空" : "Is not empty",
+    },
   ];
   const toolOperations = {
     Terminal: [
-      { value: "run_command", label: locale === "zh-CN" ? "执行命令" : "Run command" },
+      {
+        value: "run_command",
+        label: locale === "zh-CN" ? "执行命令" : "Run command",
+      },
     ],
     "File system": [
-      { value: "read_file", label: locale === "zh-CN" ? "读取文件" : "Read file" },
-      { value: "write_file", label: locale === "zh-CN" ? "写入文件" : "Write file" },
+      {
+        value: "read_file",
+        label: locale === "zh-CN" ? "读取文件" : "Read file",
+      },
+      {
+        value: "write_file",
+        label: locale === "zh-CN" ? "写入文件" : "Write file",
+      },
     ],
     GitHub: [
-      { value: "create_pr", label: locale === "zh-CN" ? "创建 Pull Request" : "Create pull request" },
-      { value: "merge_pr", label: locale === "zh-CN" ? "合并 Pull Request" : "Merge pull request" },
+      {
+        value: "create_pr",
+        label: locale === "zh-CN" ? "创建 Pull Request" : "Create pull request",
+      },
+      {
+        value: "merge_pr",
+        label: locale === "zh-CN" ? "合并 Pull Request" : "Merge pull request",
+      },
     ],
   } satisfies Record<string, WorkflowChoice[]>;
   const startTriggers = [
@@ -219,75 +247,84 @@ export function createMockWorkflowNodeType(
       return {
         kind,
         label: locale === "zh-CN" ? "开始" : "Start",
-        description: locale === "zh-CN" ? "定义工作流输入" : "Define workflow inputs",
+        description:
+          locale === "zh-CN" ? "定义工作流输入" : "Define workflow inputs",
         configFields: ["instruction", "trigger"],
       };
     case "agent":
       return {
         kind,
         label: "Agent",
-        description: locale === "zh-CN"
-          ? "交给模型自主执行"
-          : "Delegate autonomous work to a model",
+        description:
+          locale === "zh-CN"
+            ? "交给模型自主执行"
+            : "Delegate autonomous work to a model",
         configFields: ["agent"],
       };
     case "condition":
       return {
         kind,
         label: locale === "zh-CN" ? "条件分支" : "Condition",
-        description: locale === "zh-CN"
-          ? "根据规则选择路径"
-          : "Route execution based on rules",
+        description:
+          locale === "zh-CN"
+            ? "根据规则选择路径"
+            : "Route execution based on rules",
         configFields: ["condition", "instruction"],
       };
     case "tool":
       return {
         kind,
         label: locale === "zh-CN" ? "工具" : "Tool",
-        description: locale === "zh-CN" ? "调用终端或插件" : "Call a terminal or plugin",
+        description:
+          locale === "zh-CN" ? "调用终端或插件" : "Call a terminal or plugin",
         configFields: ["tool", "instruction"],
       };
     case "junction":
       return {
         kind,
         label: locale === "zh-CN" ? "汇合" : "Merge",
-        description: locale === "zh-CN"
-          ? "等待多个执行分支完成"
-          : "Wait for multiple branches to complete",
+        description:
+          locale === "zh-CN"
+            ? "等待多个执行分支完成"
+            : "Wait for multiple branches to complete",
         configFields: ["instruction", "waitStrategy", "failureStrategy"],
       };
     case "human":
       return {
         kind,
         label: locale === "zh-CN" ? "人工确认" : "Human confirmation",
-        description: locale === "zh-CN"
-          ? "等待人工决策后继续"
-          : "Pause for a human decision",
+        description:
+          locale === "zh-CN"
+            ? "等待人工决策后继续"
+            : "Pause for a human decision",
         configFields: ["instruction"],
       };
     case "loop":
       return {
         kind,
         label: locale === "zh-CN" ? "循环" : "Loop",
-        description: locale === "zh-CN"
-          ? "重复执行直到满足条件"
-          : "Repeat until the exit condition is met",
+        description:
+          locale === "zh-CN"
+            ? "重复执行直到满足条件"
+            : "Repeat until the exit condition is met",
         configFields: ["instruction", "maxAttempts", "exitCondition"],
       };
     case "subflow":
       return {
         kind,
         label: locale === "zh-CN" ? "子流程" : "Subflow",
-        description: locale === "zh-CN"
-          ? "封装复杂业务步骤"
-          : "Encapsulate a complex business step",
+        description:
+          locale === "zh-CN"
+            ? "封装复杂业务步骤"
+            : "Encapsulate a complex business step",
         configFields: ["instruction"],
       };
     case "output":
       return {
         kind,
         label: locale === "zh-CN" ? "输出" : "Output",
-        description: locale === "zh-CN" ? "返回最终结果" : "Return the final result",
+        description:
+          locale === "zh-CN" ? "返回最终结果" : "Return the final result",
         configFields: ["instruction"],
       };
   }

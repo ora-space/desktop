@@ -1,72 +1,5 @@
-use crate::{AuditFields, DomainModelError, TaskId};
+use crate::{AgentRef, AuditFields, DomainModelError, TaskId};
 use serde::{Deserialize, Serialize};
-
-/// Identifies the application-scoped CLI process that owns a provider session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AgentCli {
-    OpenCode,
-    Nga,
-    CodeAgentCli,
-    Claude,
-    Codex,
-}
-
-impl AgentCli {
-    pub const ALL: [Self; 5] = [
-        Self::OpenCode,
-        Self::Nga,
-        Self::CodeAgentCli,
-        Self::Claude,
-        Self::Codex,
-    ];
-
-    /// Returns the namespaced text persisted independently of enum declaration order.
-    pub fn database_value(self) -> &'static str {
-        match self {
-            Self::OpenCode => "ora-space.opencode",
-            Self::Nga => "ora-space.nga",
-            Self::CodeAgentCli => "ora-space.codeagentcli",
-            Self::Claude => "ora-space.claude",
-            Self::Codex => "ora-space.codex",
-        }
-    }
-
-    /// Restores a CLI identity while rejecting unknown persisted namespaces.
-    pub fn from_database_value(value: &str) -> Result<Self, DomainModelError> {
-        match value {
-            "ora-space.opencode" => Ok(Self::OpenCode),
-            "ora-space.nga" => Ok(Self::Nga),
-            "ora-space.codeagentcli" => Ok(Self::CodeAgentCli),
-            "ora-space.claude" => Ok(Self::Claude),
-            "ora-space.codex" => Ok(Self::Codex),
-            _ => Err(DomainModelError::InvalidAgentCli(value.to_string())),
-        }
-    }
-
-    /// Returns the executable basename used by the cross-platform PATH lookup.
-    pub fn executable_name(self) -> &'static str {
-        match self {
-            Self::OpenCode => "opencode",
-            Self::Nga => "nga",
-            Self::CodeAgentCli => "codeagentcli",
-            Self::Claude => "claude-agent-acp",
-            Self::Codex => "codex-acp",
-        }
-    }
-
-    /// Returns the child process arguments used to start ACP over stdio.
-    ///
-    /// Ora's own CLIs (OpenCode, Nga, CodeAgentCli) expose ACP behind an `acp`
-    /// subcommand. Claude Code and Codex are instead fronted by dedicated
-    /// `claude-agent-acp`/`codex-acp` adapter binaries, which speak ACP directly
-    /// with no subcommand.
-    pub fn launch_arguments(self) -> &'static [&'static str] {
-        match self {
-            Self::OpenCode | Self::Nga | Self::CodeAgentCli => &["acp"],
-            Self::Claude | Self::Codex => &[],
-        }
-    }
-}
 
 /// Captures whether a conversation is registered on its shared CLI connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,14 +68,14 @@ impl HistoryState {
 
 /// Represents one conversation and the provider session it currently runs on.
 ///
-/// `agent_cli` and `agent_session_id` are the conversation's *current* binding,
+/// `agent_ref` and `agent_session_id` are the conversation's *current* binding,
 /// not its identity. Switching agents replaces both while the conversation, its
 /// identifier, and its history file all continue unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
     pub id: crate::SessionId,
     pub task_id: TaskId,
-    pub agent_cli: AgentCli,
+    pub agent_ref: AgentRef,
     pub agent_session_id: String,
     pub title: Option<crate::SessionTitle>,
     pub status: SessionStatus,
@@ -158,7 +91,7 @@ impl Session {
     pub fn new(
         id: crate::SessionId,
         task_id: TaskId,
-        agent_cli: AgentCli,
+        agent_ref: AgentRef,
         agent_session_id: impl Into<String>,
         status: SessionStatus,
         audit_fields: AuditFields,
@@ -166,7 +99,7 @@ impl Session {
         Self {
             id,
             task_id,
-            agent_cli,
+            agent_ref,
             agent_session_id: agent_session_id.into(),
             title: None,
             status,
@@ -188,17 +121,17 @@ impl Session {
         self
     }
 
-    /// Points this conversation at a different provider session, possibly on another CLI.
+    /// Points this conversation at a different provider session, possibly on another agent.
     ///
     /// The identifier and task stay fixed, so the history file the conversation
     /// owns is unaffected by the move.
     pub fn with_binding(
         mut self,
-        agent_cli: AgentCli,
+        agent_ref: AgentRef,
         agent_session_id: impl Into<String>,
         updated_at: i64,
     ) -> Self {
-        self.agent_cli = agent_cli;
+        self.agent_ref = agent_ref;
         self.agent_session_id = agent_session_id.into();
         self.audit_fields.updated_at = updated_at;
         self

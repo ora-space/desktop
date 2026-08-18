@@ -1,8 +1,4 @@
-import type {
-  AgentCli,
-  TaskDiffScope,
-  WarmSessionTarget,
-} from "@ora/contracts";
+import type { TaskDiffScope, WarmSessionTarget } from "@ora/contracts";
 
 /**
  * Centralised react-query cache keys for the app shell.
@@ -47,12 +43,12 @@ export const queryKeys = {
    * Mirrors the identity the backend keys warm sessions by, so two surfaces
    * never share one cache entry and revisiting a surface reuses its session.
    */
-  warmSession: (target: WarmSessionTarget | null, agentCli: AgentCli) =>
+  warmSession: (target: WarmSessionTarget | null, agentRef: string) =>
     [
       "warmSession",
       target?.type ?? "none",
       targetId(target),
-      agentCli,
+      agentRef,
     ] as const,
   specs: (projectId: string) => ["specs", projectId] as const,
   specCatalog: (projectId: string, targetKey: string) =>

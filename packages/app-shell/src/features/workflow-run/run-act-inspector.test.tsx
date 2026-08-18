@@ -20,7 +20,10 @@ const AGENT_DATA: WorkflowNodeData = {
   description: "只读探索项目现状",
   agentConfig: {
     schemaVersion: 3,
-    executor: { agentCli: "open_code", modelId: "deepseek/deepseek-v4-pro" },
+    executor: {
+      agentCli: "ora-space.opencode",
+      modelId: "deepseek/deepseek-v4-pro",
+    },
     roleId: "研究员",
     skills: [
       { skillId: "openspec-explore", enabled: true },

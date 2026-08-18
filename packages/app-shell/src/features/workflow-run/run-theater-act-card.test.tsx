@@ -120,7 +120,7 @@ describe("RunTheaterActCard conversation", () => {
             agentConfig: {
               schemaVersion: 3,
               executor: {
-                agentCli: "open_code",
+                agentCli: "ora-space.opencode",
                 modelId: "deepseek/deepseek-v4-flash",
               },
               roleId: "researcher",

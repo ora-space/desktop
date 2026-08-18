@@ -1,7 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
   Agent,
-  AgentCli,
   ContractsClient,
   InstalledPlugin,
   Project,
@@ -65,7 +64,7 @@ export interface MockClientState {
   workflows: MockWorkflowRecord[];
   workflowRuns: MockWorkflowRunRecord[];
   /** Warm sessions handed out but not yet attached, keyed by session id. */
-  warmSessions: Map<string, AgentCli>;
+  warmSessions: Map<string, string>;
   /** What every warm and persisted session reports as its configuration. */
   configOptions: acp.SessionConfigOption[];
   /**
@@ -73,7 +72,7 @@ export interface MockClientState {
    * reports no model catalog (warm failed); a CLI mapped to an array uses
    * those options instead of the shared `configOptions`.
    */
-  warmModelsByCli?: Partial<Record<AgentCli, acp.SessionConfigOption[] | null>>;
+  warmModelsByCli?: Partial<Record<string, acp.SessionConfigOption[] | null>>;
 }
 
 /** Creates a fresh in-memory mock state with no records. */
@@ -240,8 +239,8 @@ export function createMockClient(state: MockClientState): ContractsClient {
           "s",
           state.sessions.length + state.warmSessions.size,
         );
-        state.warmSessions.set(sessionId, req.agentCli);
-        const perCli = state.warmModelsByCli?.[req.agentCli];
+        state.warmSessions.set(sessionId, req.agentRef);
+        const perCli = state.warmModelsByCli?.[req.agentRef];
         return {
           sessionId,
           // A CLI mapped to null reports an empty catalog, which is how the
@@ -255,7 +254,8 @@ export function createMockClient(state: MockClientState): ContractsClient {
         const session: Session = {
           id: req.sessionId,
           taskId: req.taskId,
-          agentCli: state.warmSessions.get(req.sessionId) ?? "open_code",
+          agentRef:
+            state.warmSessions.get(req.sessionId) ?? "ora-space.opencode",
           status: "running",
           title: null,
           historyState: { type: "writable" },
@@ -268,7 +268,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
         const session = state.sessions.find(
           (candidate) => candidate.id === req.sessionId,
         )!;
-        session.agentCli = req.agentCli;
+        session.agentRef = req.agentRef;
         return {
           session,
           availableCommands: [],
@@ -326,9 +326,9 @@ export function createMockClient(state: MockClientState): ContractsClient {
     agentRuntime: {
       getStatus: async () => ({
         statuses: [
-          { agentCli: "open_code", status: "ready" },
-          { agentCli: "nga", status: "ready" },
-          { agentCli: "code_agent_cli", status: "ready" },
+          { agentRef: "ora-space.opencode", status: "ready" },
+          { agentRef: "ora-space.nga", status: "ready" },
+          { agentRef: "ora-space.codeagentcli", status: "ready" },
         ],
       }),
     },

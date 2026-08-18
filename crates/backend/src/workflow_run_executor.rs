@@ -15,7 +15,7 @@ use ora_application::{
     WorkflowRunCallback, WorkflowRunEngineRepository,
 };
 use ora_contracts::{
-    AgentCli as ContractAgentCli, AttachSessionRequest, PromptSessionEvent, PromptSessionRequest,
+    AgentRef as ContractAgentRef, AttachSessionRequest, PromptSessionEvent, PromptSessionRequest,
     SetSessionConfigRequest, StopSessionRequest, WarmSessionRequest, WarmSessionTarget,
 };
 use ora_db::{
@@ -123,10 +123,10 @@ struct AgentNodeOutcome {
 /// Failures raised while driving one agent node's session.
 #[derive(Debug, Error)]
 pub enum NodeExecutionError {
-    #[error("agent CLI {agent_cli} is not supported")]
-    UnknownAgentCli { agent_cli: String },
-    #[error("model {model_id} is not advertised by agent CLI {agent_cli}")]
-    WorkflowModelNotFound { agent_cli: String, model_id: String },
+    #[error("agent node names no agent")]
+    MissingAgentRef,
+    #[error("model {model_id} is not advertised by agent {agent_ref}")]
+    WorkflowModelNotFound { agent_ref: String, model_id: String },
     #[error("agent node {node_id} has no agent configuration")]
     MissingAgentConfig { node_id: String },
     #[error("enabled skill {skill_id} could not be resolved to an executable name")]
@@ -240,7 +240,7 @@ async fn drive_agent_node(
             .ok_or_else(|| NodeExecutionError::MissingAgentConfig {
                 node_id: node.id.clone(),
             })?;
-    let agent_cli = resolve_agent_cli(&config.executor.agent_cli)?;
+    let agent_ref = resolve_agent_ref(&config.executor.agent_cli)?;
 
     // Warm a reusable provider session for this run's task.
     let warm = agent_runtime
@@ -249,7 +249,7 @@ async fn drive_agent_node(
                 target: WarmSessionTarget::Task {
                     task_id: context.task.id.to_string(),
                 },
-                agent_cli,
+                agent_ref,
             },
             WarmOwner::WorkflowNode {
                 run_id: context.run.id.to_string(),
@@ -407,18 +407,17 @@ fn report_outcome(
     }
 }
 
-/// Maps the graph's `agentCli` string to the transport `AgentCli` enum.
-fn resolve_agent_cli(value: &str) -> Result<ContractAgentCli, NodeExecutionError> {
-    match value {
-        "open_code" => Ok(ContractAgentCli::OpenCode),
-        "nga" => Ok(ContractAgentCli::Nga),
-        "code_agent_cli" => Ok(ContractAgentCli::CodeAgentCli),
-        "claude" => Ok(ContractAgentCli::Claude),
-        "codex" => Ok(ContractAgentCli::Codex),
-        _ => Err(NodeExecutionError::UnknownAgentCli {
-            agent_cli: value.to_string(),
-        }),
+/// Reads the agent identity a graph node declares.
+///
+/// Which agents exist depends on installed plugins, so the graph's value is carried through as
+/// written instead of being checked against a fixed set. Whether that agent is installed is
+/// answered later by the runtime, which reports an unavailable provider rather than an
+/// unsupported one.
+fn resolve_agent_ref(value: &str) -> Result<ContractAgentRef, NodeExecutionError> {
+    if value.trim().is_empty() {
+        return Err(NodeExecutionError::MissingAgentRef);
     }
+    Ok(value.to_string())
 }
 
 /// Finds the model option and the value to select for the graph's `modelId`.
@@ -428,7 +427,7 @@ fn resolve_agent_cli(value: &str) -> Result<ContractAgentCli, NodeExecutionError
 /// node instead of silently using the CLI default.
 fn match_model_value(
     config_options: &[SessionConfigOption],
-    agent_cli: &str,
+    agent_ref: &str,
     model_id: &str,
 ) -> Result<(String, String), NodeExecutionError> {
     let model_option = config_options
@@ -442,12 +441,12 @@ fn match_model_value(
             (selects.len() == 1).then_some(selects[0])
         })
         .ok_or_else(|| NodeExecutionError::WorkflowModelNotFound {
-            agent_cli: agent_cli.to_string(),
+            agent_ref: agent_ref.to_string(),
             model_id: model_id.to_string(),
         })?;
     let SessionConfigKind::Select(select) = &model_option.kind else {
         return Err(NodeExecutionError::WorkflowModelNotFound {
-            agent_cli: agent_cli.to_string(),
+            agent_ref: agent_ref.to_string(),
             model_id: model_id.to_string(),
         });
     };
@@ -461,7 +460,7 @@ fn match_model_value(
         // workflow execution can choose a model from them.
         _ => {
             return Err(NodeExecutionError::WorkflowModelNotFound {
-                agent_cli: agent_cli.to_string(),
+                agent_ref: agent_ref.to_string(),
                 model_id: model_id.to_string(),
             });
         }
@@ -472,7 +471,7 @@ fn match_model_value(
     match matched {
         Some(option) => Ok((model_option.id.0.to_string(), option.value.0.to_string())),
         None => Err(NodeExecutionError::WorkflowModelNotFound {
-            agent_cli: agent_cli.to_string(),
+            agent_ref: agent_ref.to_string(),
             model_id: model_id.to_string(),
         }),
     }
@@ -802,16 +801,19 @@ mod tests {
         .category(SessionConfigOptionCategory::Model)
     }
 
+    /// Verifies a graph's agent identity is carried through instead of checked against a set.
+    ///
+    /// Which agents exist depends on installed plugins, so an identity this build has never heard
+    /// of must reach the runtime and be reported as unavailable there, not rejected here.
     #[test]
-    fn resolve_agent_cli_maps_snake_case_names() {
+    fn resolve_agent_ref_accepts_any_named_agent() {
         assert_eq!(
-            resolve_agent_cli("open_code").unwrap(),
-            ContractAgentCli::OpenCode
+            ["ora-space.codex", "acme.my-agent"].map(|value| resolve_agent_ref(value).unwrap()),
+            ["ora-space.codex".to_string(), "acme.my-agent".to_string()]
         );
-        assert_eq!(resolve_agent_cli("codex").unwrap(), ContractAgentCli::Codex);
         assert!(matches!(
-            resolve_agent_cli("bogus"),
-            Err(NodeExecutionError::UnknownAgentCli { .. })
+            resolve_agent_ref("   "),
+            Err(NodeExecutionError::MissingAgentRef)
         ));
     }
 

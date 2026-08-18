@@ -1,6 +1,6 @@
 use ora_contracts::{
-    AgentCli as ContractAgentCli, Session as ContractSession,
-    SessionHistoryState as ContractSessionHistoryState, SessionStatus as ContractSessionStatus,
+    Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
+    SessionStatus as ContractSessionStatus,
 };
 use ora_domain::{
     HistoryState as DomainHistoryState, Session as DomainSession,
@@ -13,13 +13,7 @@ pub(crate) fn map_session(session: DomainSession) -> ContractSession {
         id: session.id.to_string(),
         task_id: session.task_id.to_string(),
         title: session.title.map(|title| title.as_str().to_owned()),
-        agent_cli: match session.agent_cli {
-            ora_domain::AgentCli::OpenCode => ContractAgentCli::OpenCode,
-            ora_domain::AgentCli::Nga => ContractAgentCli::Nga,
-            ora_domain::AgentCli::CodeAgentCli => ContractAgentCli::CodeAgentCli,
-            ora_domain::AgentCli::Claude => ContractAgentCli::Claude,
-            ora_domain::AgentCli::Codex => ContractAgentCli::Codex,
-        },
+        agent_ref: session.agent_ref.into(),
         status: map_session_status(session.status),
         history_state: map_history_state(session.history_state),
     }

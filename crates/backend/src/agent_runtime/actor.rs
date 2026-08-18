@@ -925,6 +925,7 @@ mod tests {
         .expect("create repository pool");
         let scheduler = Scheduler::new(chrono_tz::UTC);
         let connection = ConnectionSupervisor::start(
+            AgentCli::Codex.agent_ref(),
             AgentSource::Cli(AgentCli::Codex),
             pool.clone(),
             temporary.path().to_path_buf(),
@@ -941,7 +942,7 @@ mod tests {
         let session = ora_domain::Session::new(
             SessionId::new("session-1"),
             TaskId::new("task-1"),
-            AgentCli::Codex,
+            AgentCli::Codex.agent_ref(),
             "provider-session-1",
             SessionStatus::Stopped,
             AuditFields::new(0, 0, false),
@@ -987,7 +988,8 @@ mod tests {
         .expect("create repository pool");
         let scheduler = Scheduler::new(chrono_tz::UTC);
         let connection = ConnectionSupervisor::start(
-            AgentCli::Codex,
+            AgentCli::Codex.agent_ref(),
+            AgentSource::Cli(AgentCli::Codex),
             pool.clone(),
             temporary.path().to_path_buf(),
             SystemClock,
@@ -1003,7 +1005,7 @@ mod tests {
         let session = ora_domain::Session::new(
             SessionId::new("session-1"),
             TaskId::new("task-1"),
-            AgentCli::Codex,
+            AgentCli::Codex.agent_ref(),
             "provider-session-1",
             SessionStatus::Stopped,
             AuditFields::new(0, 0, false),

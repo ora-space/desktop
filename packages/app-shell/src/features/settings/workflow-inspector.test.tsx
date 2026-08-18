@@ -27,7 +27,7 @@ function createAgentNode(): Node<WorkflowNodeData, "workflow"> {
       agentConfig: {
         schemaVersion: 3,
         executor: {
-          agentCli: "open_code",
+          agentCli: "ora-space.opencode",
           modelId:
             "deepseek/deepseek-v4-pro-with-an-extremely-long-model-identifier",
         },
@@ -133,7 +133,7 @@ function createStartNode(): Node<WorkflowNodeData, "workflow"> {
 function renderNarrowInspector(): HTMLElement {
   const capabilities = createMockWorkflowCapabilities("zh-CN", [
     {
-      agentCli: "open_code",
+      agentCli: "ora-space.opencode",
       modelId:
         "deepseek/deepseek-v4-pro-with-an-extremely-long-model-identifier",
       label: LONG_MODEL_LABEL,

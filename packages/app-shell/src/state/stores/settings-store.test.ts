@@ -44,13 +44,13 @@ describe("useSettingsStore", () => {
   });
 
   it("persists settings to localStorage under the v1 key", () => {
-    useSettingsStore.getState().updateSettings({ agentCli: "nga" });
+    useSettingsStore.getState().updateSettings({ agentCli: "ora-space.nga" });
     const raw = window.localStorage.getItem(STORAGE_KEY);
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw!) as {
       state: { settings: SettingsPreferences };
     };
-    expect(parsed.state.settings.agentCli).toBe("nga");
+    expect(parsed.state.settings.agentCli).toBe("ora-space.nga");
   });
 
   it("merges persisted partial settings over defaults via the merge strategy", () => {
@@ -60,6 +60,22 @@ describe("useSettingsStore", () => {
       JSON.stringify({ state: { settings: { theme: "light" } } }),
     );
     // Force rehydrate by reloading the persisted slice through the store's persist API.
+    useSettingsStore.persist.rehydrate();
+    expect(useSettingsStore.getState().settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      theme: "light",
+    });
+  });
+
+  it("drops a persisted agent this build cannot offer", () => {
+    // Agent identities are open strings, so a stored one can name an agent written before
+    // identities were namespaced, or a plugin that has since been uninstalled.
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: { settings: { theme: "light", agentCli: "open_code" } },
+      }),
+    );
     useSettingsStore.persist.rehydrate();
     expect(useSettingsStore.getState().settings).toEqual({
       ...DEFAULT_SETTINGS,

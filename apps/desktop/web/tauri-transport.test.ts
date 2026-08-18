@@ -72,7 +72,7 @@ describe("createTauriTransport", () => {
     [
       "switchSessionAgent",
       "switch_session_agent",
-      { sessionId: "s1", agentCli: "claude" },
+      { sessionId: "s1", agentRef: "ora-space.claude" },
     ],
     ["resumeSessionHistory", "resume_session_history", { sessionId: "s1" }],
     ["prepareAgentImport", "prepare_agent_import", { content: "# Role" }],

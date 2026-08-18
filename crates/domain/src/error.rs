@@ -23,8 +23,8 @@ pub enum DomainModelError {
     InvalidSessionStatus(i64),
     #[error("invalid plugin enabled state value: {0}")]
     InvalidPluginEnabledState(i64),
-    #[error("invalid agent CLI value: {0}")]
-    InvalidAgentCli(String),
+    #[error("invalid agent reference: {0}")]
+    InvalidAgentRef(String),
     #[error("invalid session title: {0}")]
     InvalidSessionTitle(#[from] SessionTitleError),
     #[error("skill name must not be blank")]

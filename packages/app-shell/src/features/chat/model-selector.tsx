@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import type { AgentCli } from "@ora/contracts";
+import type { KnownAgentCli } from "./model-catalog";
 import {
   Button,
   DropdownMenu,
@@ -170,11 +170,11 @@ export function ModelSelector({ disabled = false }: { disabled?: boolean }) {
    * happened yet — this only points the surface at it. The list below settles
    * when that answers, which is why the menu is still open to see it.
    */
-  const selectAgent = (candidate: AgentCli) => {
+  const selectAgent = (candidate: KnownAgentCli) => {
     if (candidate === agentCli) return;
     updateSettings({ agentCli: candidate });
     if (boundSession !== undefined) {
-      if (candidate === boundSession.agentCli) {
+      if (candidate === boundSession.agentRef) {
         clearPendingSwitch(boundSession.id);
       } else {
         setPendingSwitch(boundSession.id, candidate);
