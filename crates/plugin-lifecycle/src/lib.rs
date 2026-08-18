@@ -1,4 +1,5 @@
 mod runtime;
+mod scan;
 mod state;
 
 pub use runtime::{DenoPluginRuntime, DenoPluginRuntimeLauncher, PluginRuntimeTimeouts};
@@ -10,13 +11,12 @@ use state::{
 use ora_application::{Clock, PluginStateRepository, RepositoryError};
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, DisablePluginRequest, DisablePluginResponse,
-    EnablePluginRequest, EnablePluginResponse, ListInstalledPluginsResponse, ScanPluginsRequest,
-    ScanPluginsResponse, StopPluginRequest, StopPluginResponse, UninstallPluginRequest,
-    UninstallPluginResponse,
+    EnablePluginRequest, EnablePluginResponse, ListInstalledPluginsResponse, StopPluginRequest,
+    StopPluginResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
 use ora_domain::{PluginEnabledState, PluginId};
 use ora_plugin_manager::{InstalledPlugin as DiscoveredPlugin, PluginManager};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -248,9 +248,12 @@ where
                 Some(ManagedPluginState::Enabled(EnabledRuntime::Running { runtime, .. })) => {
                     Some(runtime.clone())
                 }
+                Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. })) => {
+                    // Launch normally owns this operation lock until Starting has resolved.
+                    None
+                }
                 Some(ManagedPluginState::Disabled)
                 | Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
-                | Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. }))
                 | Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }))
                 | None => None,
             }
@@ -264,14 +267,25 @@ where
                     source,
                 })?;
         }
-        self.inner
+        let persisted = self
+            .inner
             .repository
-            .set_plugin_enabled(
-                &plugin_id,
-                PluginEnabledState::Disabled,
-                self.inner.clock.now_timestamp_millis(),
-            )
+            .find_plugin_state(&plugin_id)
             .map_err(PluginLifecycleError::Repository)?;
+        // Missing durable state already means disabled, so only enable may create the first row.
+        if matches!(
+            persisted,
+            Some(state) if state.enabled == PluginEnabledState::Enabled
+        ) {
+            self.inner
+                .repository
+                .set_plugin_enabled(
+                    &plugin_id,
+                    PluginEnabledState::Disabled,
+                    self.inner.clock.now_timestamp_millis(),
+                )
+                .map_err(PluginLifecycleError::Repository)?;
+        }
 
         let changed = {
             let mut state = self.write_state();
@@ -359,8 +373,13 @@ where
             match managed {
                 ManagedPluginState::Disabled
                 | ManagedPluginState::Enabled(EnabledRuntime::Stopped) => None,
-                ManagedPluginState::Enabled(EnabledRuntime::Starting { .. })
-                | ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }) => {
+                ManagedPluginState::Enabled(EnabledRuntime::Starting { .. }) => {
+                    // Launch normally owns this operation lock until Starting has resolved.
+                    *managed = ManagedPluginState::Enabled(EnabledRuntime::Stopped);
+                    self.inner.publisher.publish_status_changed(&plugin_id);
+                    None
+                }
+                ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }) => {
                     *managed = ManagedPluginState::Enabled(EnabledRuntime::Stopped);
                     self.inner.publisher.publish_status_changed(&plugin_id);
                     None
@@ -439,8 +458,8 @@ where
         let running = {
             let state = self.read_state();
             match state.managed_by_id.get(&plugin_id) {
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Running { runtime, .. })) => {
-                    Some(runtime.clone())
+                Some(ManagedPluginState::Enabled(EnabledRuntime::Running { attempt, runtime })) => {
+                    Some((*attempt, runtime.clone()))
                 }
                 Some(ManagedPluginState::Disabled)
                 | Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
@@ -449,7 +468,7 @@ where
                 | None => None,
             }
         };
-        if let Some(runtime) = running {
+        if let Some((attempt, runtime)) = running {
             runtime
                 .stop()
                 .await
@@ -457,6 +476,7 @@ where
                     plugin_id: request.plugin_id.clone(),
                     source,
                 })?;
+            transition_to_stopped(Arc::clone(&self.inner), plugin_id.clone(), attempt);
         }
 
         self.inner
@@ -484,117 +504,6 @@ where
 
         Ok(UninstallPluginResponse {
             plugin_id: request.plugin_id,
-        })
-    }
-
-    /// Rebuilds the installed snapshot and rejoins durable eligibility on explicit request.
-    pub async fn scan_plugins(
-        &self,
-        _request: ScanPluginsRequest,
-    ) -> Result<ScanPluginsResponse, PluginLifecycleError> {
-        let _scan = self.inner.scan_lock.lock().await;
-        let cached_ids = self
-            .read_state()
-            .installed
-            .iter()
-            .map(|plugin| PluginId::new(&plugin.id))
-            .collect::<BTreeSet<_>>();
-        let mut _operations = Vec::with_capacity(cached_ids.len());
-        for plugin_id in &cached_ids {
-            _operations.push(self.acquire_operation(plugin_id).await);
-        }
-
-        let installed = PluginManager::discover(&self.inner.config.data_directory)
-            .installed_plugins()
-            .to_vec();
-        let installed_ids = installed
-            .iter()
-            .map(|plugin| PluginId::new(&plugin.id))
-            .collect::<BTreeSet<_>>();
-        let removed_ids = cached_ids
-            .difference(&installed_ids)
-            .cloned()
-            .collect::<Vec<_>>();
-        let removed_runtimes = {
-            let state = self.read_state();
-            removed_ids
-                .iter()
-                .filter_map(|plugin_id| match state.managed_by_id.get(plugin_id) {
-                    Some(ManagedPluginState::Enabled(EnabledRuntime::Running {
-                        runtime, ..
-                    })) => Some((plugin_id.clone(), runtime.clone())),
-                    Some(ManagedPluginState::Disabled)
-                    | Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
-                    | Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. }))
-                    | Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }))
-                    | None => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        for (plugin_id, runtime) in removed_runtimes {
-            runtime
-                .stop()
-                .await
-                .map_err(|source| PluginLifecycleError::RuntimeStop {
-                    plugin_id: plugin_id.to_string(),
-                    source,
-                })?;
-        }
-
-        let mut persisted_by_id = BTreeMap::new();
-        for persisted in self
-            .inner
-            .repository
-            .list_plugin_states()
-            .map_err(PluginLifecycleError::Repository)?
-        {
-            if installed_ids.contains(&persisted.plugin_id) {
-                persisted_by_id.insert(persisted.plugin_id, persisted.enabled);
-            } else {
-                self.inner
-                    .repository
-                    .delete_plugin_state(&persisted.plugin_id)
-                    .map_err(PluginLifecycleError::Repository)?;
-            }
-        }
-
-        let changed_ids = {
-            let mut state = self.write_state();
-            let previous_ids = state
-                .installed
-                .iter()
-                .map(|plugin| PluginId::new(&plugin.id))
-                .collect::<BTreeSet<_>>();
-            let mut previous_managed = std::mem::take(&mut state.managed_by_id);
-            let mut managed_by_id = BTreeMap::new();
-            for plugin_id in &installed_ids {
-                let managed = previous_managed.remove(plugin_id).unwrap_or_else(|| {
-                    match persisted_by_id
-                        .get(plugin_id)
-                        .copied()
-                        .unwrap_or(PluginEnabledState::Disabled)
-                    {
-                        PluginEnabledState::Enabled => {
-                            ManagedPluginState::Enabled(EnabledRuntime::Stopped)
-                        }
-                        PluginEnabledState::Disabled => ManagedPluginState::Disabled,
-                    }
-                });
-                managed_by_id.insert(plugin_id.clone(), managed);
-            }
-            state.installed = installed;
-            state.managed_by_id = managed_by_id;
-            previous_ids
-                .symmetric_difference(&installed_ids)
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        for plugin_id in changed_ids {
-            self.inner.publisher.publish_status_changed(&plugin_id);
-        }
-
-        Ok(ScanPluginsResponse {
-            plugins: self.list_installed_plugins().plugins,
         })
     }
 
