@@ -20,13 +20,14 @@ Trailing applied migrations are rolled back in reverse order. Pending migrations
 
 An applied version absent from the catalog is an error. Reconciliation is otherwise idempotent when the database already matches the target.
 
-Schema contents stay in version-specific modules; repository query behavior belongs to the repository module. The compressed catalog has five boundaries:
+Schema contents stay in version-specific modules; repository query behavior belongs to the repository module. The compressed catalog has six boundaries:
 
 - `0001` installs the core project, task, worktree, session, and bookkeeping schema.
 - `0002` installs skills and configurable agents.
 - `0003` installs constrained task-diff comments, indexes, and the root-only parent trigger.
 - `0004` installs workflow definitions, snapshots, execution records, and task associations.
 - `0005` installs durable Git cleanup jobs and worktree provisioning leases.
+- `0006` drops unused `tasks.status`.
 
 The catalog intentionally replaces the retired development history rather than providing a compatibility bridge. Databases created from the old history must be recreated. Rollback of `0003` or `0005` discards the corresponding comments or cleanup bookkeeping even though each step remains transactional.
 

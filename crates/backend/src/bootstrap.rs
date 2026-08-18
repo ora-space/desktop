@@ -570,6 +570,28 @@ impl Backend {
     ) -> Result<ListSessionsResponse, BackendError> {
         self.session.list(request).map_err(BackendError::from)
     }
+
+    /// Renames one session, locks agent title acquisition, then notifies subscribers.
+    pub async fn rename_session(
+        &self,
+        request: RenameSessionRequest,
+    ) -> Result<RenameSessionResponse, BackendError> {
+        let session_id = request.session_id.clone();
+        let response = self.session.rename(request).map_err(BackendError::from)?;
+        if let Some(title) = response.session.title.as_deref()
+            && let Ok(parsed) = ora_domain::SessionTitle::parse(title)
+        {
+            // A missing or busy actor must not fail the rename: the row is already updated.
+            let _ = self
+                .agent_runtime
+                .adopt_user_title(&session_id, parsed)
+                .await;
+        }
+        self.app_events
+            .publisher()
+            .try_publish(AppEvent::SessionTitleUpdated { session_id });
+        Ok(response)
+    }
     /// Streams the provider-owned history for one persisted session.
     pub async fn load_session(
         &self,
@@ -1018,7 +1040,7 @@ mod tests {
     use ora_contracts::{
         CreateAgentRequest, CreateProjectRequest, CreateSkillRequest, DeleteAgentRequest,
         DeleteProjectRequest, DeleteSkillRequest, DeleteTaskRequest, GetProjectRequest,
-        GetTaskRequest, ListAgentsRequest, ListProjectsRequest, ListSkillsRequest, TaskStatus,
+        GetTaskRequest, ListAgentsRequest, ListProjectsRequest, ListSkillsRequest,
         UpdateAgentRequest, UpdateProjectRequest, UpdateSkillRequest,
     };
     use std::fs;
@@ -1221,7 +1243,6 @@ mod tests {
             .create_task(CreateTaskRequest {
                 project_id: project.id,
                 title: "Move configuration".to_string(),
-                status: TaskStatus::Todo,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })

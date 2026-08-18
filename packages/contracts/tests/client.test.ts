@@ -32,14 +32,12 @@ test("forwards the complete operation request to the transport", async () => {
   const request = {
     taskId: "task-1",
     title: "Ship SDK",
-    status: "doing" as const,
   };
   const response = {
     task: {
       id: "task-1",
       projectId: "project-1",
       title: "Ship SDK",
-      status: "doing" as const,
     },
   };
   const client = createContractsClient(recordingTransport(requests, response));

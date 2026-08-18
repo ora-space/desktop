@@ -46,6 +46,12 @@ tasks:
     cmds:
       - cargo build --workspace
 
+  build:desktop:
+    desc: Build and bundle the Tauri desktop app installers
+    cmds:
+      - task: export-contracts
+      - pnpm --filter @ora/desktop tauri build
+
   clean:
     desc: Clean build artifacts
     cmds:

@@ -86,6 +86,7 @@ pub fn run() {
             commands::switch_session_agent,
             commands::resume_session_history,
             commands::delete_session,
+            commands::rename_session,
             commands::stream_contract,
             commands::cancel_contract_stream,
             // =============================================================================

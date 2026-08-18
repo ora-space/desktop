@@ -89,4 +89,11 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "DeleteSessionRequest",
         response_type: "DeleteSessionResponse",
     },
+    FrontendEndpoint {
+        operation_name: "renameSession",
+        namespace: NAMESPACE,
+        member_name: "rename",
+        request_type: "RenameSessionRequest",
+        response_type: "RenameSessionResponse",
+    },
 ];

@@ -147,6 +147,10 @@ pub enum ApplicationError {
     },
     #[error("session not found: {session_id}")]
     SessionNotFound { session_id: String },
+    #[error("session title must not be blank")]
+    SessionTitleBlank,
+    #[error("session title exceeds the maximum length")]
+    SessionTitleTooLong,
     #[error("session repository operation failed")]
     SessionRepository {
         #[source]
@@ -358,6 +362,14 @@ impl ApplicationError {
         Self::SessionRepository { source: error }
     }
 
+    /// Maps session-title validation failures into stable application errors.
+    pub(crate) fn from_session_title_error(error: ora_domain::SessionTitleError) -> Self {
+        match error {
+            ora_domain::SessionTitleError::Blank => Self::SessionTitleBlank,
+            ora_domain::SessionTitleError::TooLong { .. } => Self::SessionTitleTooLong,
+        }
+    }
+
     /// Converts workflow-construction validation failures into application errors.
     pub(crate) fn from_workflow_domain_error(error: DomainModelError) -> Self {
         match error {
@@ -537,6 +549,9 @@ impl PartialEq for ApplicationError {
             }
             (SessionNotFound { session_id: left }, SessionNotFound { session_id: right }) => {
                 left == right
+            }
+            (SessionTitleBlank, SessionTitleBlank) | (SessionTitleTooLong, SessionTitleTooLong) => {
+                true
             }
             (WorkflowNotFound { workflow_id: left }, WorkflowNotFound { workflow_id: right }) => {
                 left == right

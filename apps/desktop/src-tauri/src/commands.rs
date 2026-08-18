@@ -501,6 +501,15 @@ pub async fn delete_session(
     run_async_backend("delete_session", state.backend.delete_session(request)).await
 }
 
+/// Renames one session through the shared Backend.
+#[tauri::command]
+pub async fn rename_session(
+    state: State<'_, DesktopState>,
+    request: RenameSessionRequest,
+) -> Result<RenameSessionResponse, CommandError> {
+    run_async_backend("rename_session", state.backend.rename_session(request)).await
+}
+
 /// Starts one typed Session stream and forwards private transport frames over a Tauri Channel.
 #[tauri::command]
 pub async fn stream_contract(

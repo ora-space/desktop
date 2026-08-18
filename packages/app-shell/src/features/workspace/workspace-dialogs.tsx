@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  RemoteContractError,
-  type ProjectBranch,
-  type TaskStatus,
-} from "@ora/contracts";
+import { RemoteContractError, type ProjectBranch } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,20 +13,16 @@ import {
 } from "@ora/ui";
 import { IconTrash } from "@tabler/icons-react";
 import { EntityDialog, type EntityField } from "./entity-dialog";
+import { DeployToProjectDialog } from "../workflow-run/deploy-to-project-dialog";
 import {
   useCreateProject,
-  useUpdateProject,
   useDeleteProject,
   useCreateTask,
-  useUpdateTask,
   useDeleteTask,
   useCreateSession,
   useDeleteSession,
 } from "../../state/hooks/use-workspace-mutations";
-import {
-  useDeleteWorkflowRun,
-  useRenameWorkflowRun,
-} from "../../state/hooks/use-workflow-runs";
+import { useDeleteWorkflowRun } from "../../state/hooks/use-workflow-runs";
 import {
   useUiStore,
   type DialogState,
@@ -42,28 +34,42 @@ import { useProjectBranches } from "../../state/hooks/use-project-branches";
 import { projectNameFromPath } from "./workspace-dialogs-utils";
 
 /**
- * Hosts every workspace create/edit/delete dialog.
+ * Hosts every workspace create/delete dialog.
  *
- * These are driven entirely by `useUiStore`, so any surface can open one by
- * setting `dialog`/`deleteTarget`. Mounting them at the app shell rather than
- * inside the sidebar is what makes that true: the sidebar unmounts when it is
- * collapsed, which would otherwise take the dialogs down with it and silently
- * break callers such as the composer's project picker.
+ * Tree rename is inline on the row; these dialogs stay for create flows and
+ * delete confirmation. They are driven entirely by `useUiStore`, so any surface
+ * can open one by setting `dialog`/`deleteTarget`. Mounting them at the app
+ * shell rather than inside the sidebar is what makes that true: the sidebar
+ * unmounts when it is collapsed, which would otherwise take the dialogs down
+ * with it and silently break callers such as the composer's project picker.
  */
 export function WorkspaceDialogs() {
   const dialog = useUiStore((s) => s.dialog);
   const setDialog = useUiStore((s) => s.setDialog);
   const deleteTarget = useUiStore((s) => s.deleteTarget);
   const setDeleteTarget = useUiStore((s) => s.setDeleteTarget);
+  const deployDialog = dialog?.kind === "deployWorkflow" ? dialog : null;
+  const entityDialog =
+    dialog && dialog.kind !== "deployWorkflow" ? dialog : null;
 
   return (
     <>
-      {dialog && (
+      {entityDialog && (
         <WorkspaceEntityDialog
-          dialog={dialog}
+          dialog={entityDialog}
           onOpenChange={(open) => !open && setDialog(null)}
         />
       )}
+      <DeployToProjectDialog
+        open={deployDialog !== null}
+        workflow={
+          deployDialog
+            ? { id: deployDialog.workflowId, name: deployDialog.workflowName }
+            : null
+        }
+        initialProjectId={deployDialog?.projectId ?? null}
+        onOpenChange={(open) => !open && setDialog(null)}
+      />
       <DeleteEntityDialog
         key={deleteTarget?.id ?? "none"}
         target={deleteTarget}
@@ -183,19 +189,15 @@ function WorkspaceEntityDialog({
   dialog,
   onOpenChange,
 }: {
-  dialog: DialogState;
+  dialog: Exclude<DialogState, { kind: "deployWorkflow" }>;
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useTranslation();
   const createProject = useCreateProject();
-  const updateProject = useUpdateProject();
   const createTask = useCreateTask();
-  const updateTask = useUpdateTask();
   const createSession = useCreateSession();
-  const renameWorkflowRun = useRenameWorkflowRun();
   const settingsAgentCli = useSettingsStore((state) => state.settings.agentCli);
-  const branchProjectId =
-    dialog.kind === "task" && !dialog.entity ? dialog.projectId : null;
+  const branchProjectId = dialog.kind === "task" ? dialog.projectId : null;
   const { data: projectBranches = [], isLoading: branchesLoading } =
     useProjectBranches(branchProjectId);
   let title: string;
@@ -204,126 +206,59 @@ function WorkspaceEntityDialog({
   let submitLabel: string;
   let submit: (values: Record<string, string>) => Promise<void>;
   const pendingLabel =
-    dialog.kind !== "workflowRun" && dialog.entity === undefined
-      ? t("common.creating")
-      : t("common.saving");
+    dialog.kind === "session" && dialog.entity !== undefined
+      ? t("common.saving")
+      : t("common.creating");
 
   if (dialog.kind === "project") {
-    title = dialog.entity ? t("dialog.editProject") : t("dialog.addProject");
+    title = t("dialog.addProject");
     description = undefined;
-    submitLabel = dialog.entity
-      ? t("dialog.saveProject")
-      : t("dialog.addProject");
-    fields = dialog.entity
-      ? [
-          {
-            kind: "text",
-            name: "name",
-            label: t("dialog.projectName"),
-            value: dialog.entity.name,
-            placeholder: t("dialog.projectNamePlaceholder"),
-          },
-        ]
-      : [
-          {
-            kind: "path",
-            name: "rootPath",
-            label: t("dialog.projectFolder"),
-            value: "",
-            selectionKind: "directory",
-            placeholder: "C:\\workspace\\project",
-          },
-        ];
+    submitLabel = t("dialog.addProject");
+    fields = [
+      {
+        kind: "path",
+        name: "rootPath",
+        label: t("dialog.projectFolder"),
+        value: "",
+        selectionKind: "directory",
+        placeholder: "C:\\workspace\\project",
+      },
+    ];
     submit = async (values) => {
-      if (dialog.entity) {
-        await updateProject.mutateAsync({
-          project: dialog.entity,
-          name: values.name!,
-        });
-      } else {
-        await createProject.mutateAsync({
-          name: projectNameFromPath(values.rootPath!),
-          rootPath: values.rootPath!,
-        });
-      }
+      await createProject.mutateAsync({
+        name: projectNameFromPath(values.rootPath!),
+        rootPath: values.rootPath!,
+      });
     };
   } else if (dialog.kind === "task") {
-    title = dialog.entity ? t("dialog.editTask") : t("dialog.createWorktree");
-    description = dialog.entity ? undefined : t("dialog.worktreeDescription");
-    submitLabel = dialog.entity ? t("dialog.saveTask") : t("dialog.createTask");
+    title = t("dialog.createWorktree");
+    description = t("dialog.worktreeDescription");
+    submitLabel = t("dialog.createTask");
     fields = [
       {
         kind: "text",
         name: "title",
         label: t("dialog.taskTitle"),
-        value: dialog.entity?.title ?? "",
+        value: "",
       },
-      ...(!dialog.entity
-        ? [
-            {
-              kind: "select" as const,
-              name: "baseBranch",
-              label: t("dialog.baseBranch"),
-              value: preferredBaseBranch(projectBranches),
-              options: projectBranches.map((branch) => ({
-                label: branch.displayName,
-                value: branch.refName,
-              })),
-              loading: branchesLoading,
-            },
-          ]
-        : []),
-      // Status is only meaningful once a task exists; a new task always starts at "todo".
-      ...(dialog.entity
-        ? [
-            {
-              kind: "select" as const,
-              name: "status",
-              label: t("dialog.status"),
-              value: dialog.entity.status,
-              options: [
-                { label: t("common.todo"), value: "todo" },
-                { label: t("common.doing"), value: "doing" },
-                { label: t("common.done"), value: "done" },
-              ],
-            },
-          ]
-        : []),
-    ];
-    submit = async (values) => {
-      if (dialog.entity) {
-        await updateTask.mutateAsync({
-          task: dialog.entity,
-          title: values.title!,
-          status: values.status as TaskStatus,
-        });
-      } else {
-        await createTask.mutateAsync({
-          projectId: dialog.projectId,
-          title: values.title!,
-          status: "todo",
-          workspaceMode: "worktree",
-          baseBranch: values.baseBranch!,
-        });
-      }
-    };
-  } else if (dialog.kind === "workflowRun") {
-    title = t("dialog.editWorkflowRun");
-    description = undefined;
-    submitLabel = t("dialog.saveWorkflowRun");
-    fields = [
       {
-        kind: "text",
-        name: "name",
-        label: t("dialog.workflowRunName"),
-        value: dialog.entity.name,
-        placeholder: t("dialog.workflowRunNamePlaceholder"),
+        kind: "select",
+        name: "baseBranch",
+        label: t("dialog.baseBranch"),
+        value: preferredBaseBranch(projectBranches),
+        options: projectBranches.map((branch) => ({
+          label: branch.displayName,
+          value: branch.refName,
+        })),
+        loading: branchesLoading,
       },
     ];
     submit = async (values) => {
-      await renameWorkflowRun.mutateAsync({
-        runId: dialog.entity.id,
-        name: values.name!,
+      await createTask.mutateAsync({
+        projectId: dialog.projectId,
+        title: values.title!,
+        workspaceMode: "worktree",
+        baseBranch: values.baseBranch!,
       });
     };
   } else {
@@ -344,9 +279,9 @@ function WorkspaceEntityDialog({
   }
 
   const dialogKey =
-    dialog.kind === "workflowRun"
-      ? `${dialog.kind}-${dialog.entity.id}`
-      : `${dialog.kind}-${dialog.entity?.id ?? "new"}`;
+    dialog.kind === "session"
+      ? `${dialog.kind}-${dialog.entity?.id ?? "new"}`
+      : `${dialog.kind}-new`;
 
   return (
     <EntityDialog

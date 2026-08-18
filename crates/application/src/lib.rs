@@ -24,8 +24,8 @@ pub use project::{
 };
 pub use repository_error::{BoxRepositorySource, RepositoryError};
 pub use session::{
-    DeleteSessionHandler, GetSessionHandler, ListSessionsHandler, SessionIdGenerator,
-    SessionRepository, UuidSessionIdGenerator,
+    DeleteSessionHandler, GetSessionHandler, ListSessionsHandler, RenameSessionHandler,
+    SessionIdGenerator, SessionRepository, UuidSessionIdGenerator,
 };
 pub use skill::{
     BACKUP_DIR_NAME, CreateHandle, CreateSkillHandler, DeleteHandle, DeleteSkillHandler,

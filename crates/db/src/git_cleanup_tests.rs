@@ -12,7 +12,7 @@ use ora_application::{
     WorktreeProvisioningLeaseStore,
 };
 use ora_domain::{
-    AuditFields, GitCleanupJobState, ProjectId, SessionStatus, Task, TaskId, TaskStatus, Worktree,
+    AuditFields, GitCleanupJobState, ProjectId, SessionStatus, Task, TaskId, Worktree,
     WorktreeActivity, WorktreeBaseline, WorktreeId, WorktreeProvisioningLease,
     WorktreeProvisioningLeaseId,
 };
@@ -36,10 +36,10 @@ fn insert_mixed_project_fixture(pool: &RepositoryPool) {
     pool.with_connection(|connection| {
         connection.execute_batch(
             "INSERT INTO projects VALUES ('project-1', 'Ora', '/repos/project-1', 1, 1, 0);
-             INSERT INTO tasks (id, project_id, title, status, worktree_id, created_at, updated_at, is_deleted)
-             VALUES ('task-1', 'project-1', 'Worktree task', 0, 'worktree-1', 1, 1, 0);
-             INSERT INTO tasks (id, project_id, title, status, worktree_id, created_at, updated_at, is_deleted)
-             VALUES ('task-2', 'project-1', 'Project-root task', 0, NULL, 1, 1, 0);
+             INSERT INTO tasks (id, project_id, title, worktree_id, created_at, updated_at, is_deleted)
+             VALUES ('task-1', 'project-1', 'Worktree task', 'worktree-1', 1, 1, 0);
+             INSERT INTO tasks (id, project_id, title, worktree_id, created_at, updated_at, is_deleted)
+             VALUES ('task-2', 'project-1', 'Project-root task', NULL, 1, 1, 0);
              INSERT INTO worktrees (
                  id, task_id, branch_name, checkout_root, is_active, created_at, updated_at, is_deleted, base_commit_id
              ) VALUES ('worktree-1', 'task-1', 'ora/task-1', '/worktrees/task-1', 1, 1, 1, 0, 'base-commit');
@@ -169,7 +169,6 @@ fn workspace_rows() -> (Task, Worktree) {
         TaskId::new("task-1"),
         ProjectId::new("project-1"),
         "Worktree task",
-        TaskStatus::Doing,
         Some(worktree.id.clone()),
         AuditFields::new(1, 1, false),
     );
@@ -319,8 +318,8 @@ fn workflow_run_delete_registers_cleanup_job() {
              VALUES ('snapshot-a', 'workflow-a', 'v1', '{}', 1, 1, 0);
              INSERT INTO workflow_runs (id, workflow_id, snapshot_id, run_status, state, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted)
              VALUES ('run-1', 'workflow-a', 'snapshot-a', 3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1, 1, 0);
-             INSERT INTO tasks (id, project_id, title, status, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted)
-             VALUES ('task-1', 'project-1', 'Run task', 0, 1, 'run-1', 'worktree-1', 1, 1, 0);
+             INSERT INTO tasks (id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted)
+             VALUES ('task-1', 'project-1', 'Run task', 1, 'run-1', 'worktree-1', 1, 1, 0);
              INSERT INTO worktrees (
                  id, task_id, branch_name, checkout_root, is_active, created_at, updated_at, is_deleted, base_commit_id
              ) VALUES ('worktree-1', 'task-1', 'ora/task-1', '/worktrees/task-1', 1, 1, 1, 0, 'base-commit');",

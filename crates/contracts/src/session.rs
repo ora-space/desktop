@@ -390,6 +390,23 @@ pub struct DeleteSessionResponse {
     pub session_id: String,
 }
 
+/// Renames one persisted session with a user-supplied display title.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct RenameSessionRequest {
+    pub session_id: String,
+    pub title: String,
+}
+
+/// Returns the session after its display title was replaced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct RenameSessionResponse {
+    pub session: Session,
+}
+
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     AgentCli::export(config)?;
@@ -427,6 +444,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     StopSessionResponse::export(config)?;
     DeleteSessionRequest::export(config)?;
     DeleteSessionResponse::export(config)?;
+    RenameSessionRequest::export(config)?;
+    RenameSessionResponse::export(config)?;
     Ok(())
 }
 

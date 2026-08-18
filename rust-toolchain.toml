@@ -1,0 +1,8 @@
+# Pin the Rust toolchain so local builds and CI compile with the same compiler.
+# Keep in sync with `rust-version` in the crate manifests when bumping.
+# Components are listed explicitly because rustup auto-installs pinned
+# toolchains with a minimal profile on CI runners, which would omit the
+# rustfmt and clippy binaries the lint tasks require.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

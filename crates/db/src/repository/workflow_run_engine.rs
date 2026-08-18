@@ -55,7 +55,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 // snapshot; any of them missing is corruption, not a legitimate absence.
                 let task = {
                     let mut statement = connection.prepare(
-                        "SELECT id, project_id, title, status, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
+                        "SELECT id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
                          FROM tasks WHERE workflow_run_id = ?1 AND is_deleted = 0",
                     )?;
                     require_row(&mut statement.query(params![run_id.as_ref()])?, map_task_row)?

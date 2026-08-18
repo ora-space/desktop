@@ -126,6 +126,8 @@ export function createContractsClient(
         executeOperation("resumeSessionHistory", request, transport, options),
       delete: (request, options) =>
         executeOperation("deleteSession", request, transport, options),
+      rename: (request, options) =>
+        executeOperation("renameSession", request, transport, options),
     },
     appEvents: {
       watch: (request, options) =>

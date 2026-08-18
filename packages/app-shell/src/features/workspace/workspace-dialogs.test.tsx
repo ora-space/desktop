@@ -161,7 +161,6 @@ describe("WorkspaceDialogs task creation", () => {
           id: "t1",
           projectId: "p1",
           title: "Worktree task",
-          status: "todo",
           workspaceMode: "worktree",
           type: "default",
           workflowRunId: null,
@@ -236,54 +235,11 @@ describe("WorkspaceDialogs task creation", () => {
           id: "t1",
           projectId: "p1",
           title: "Slow worktree",
-          status: "todo",
           workspaceMode: "worktree",
           type: "default",
           workflowRunId: null,
         },
       ]),
-    );
-  });
-
-  it("does not show helper text when editing a worktree task", () => {
-    const state = createMockClientState();
-    const client = createMockClient(state);
-    const Wrapper = createHookWrapper(
-      client,
-      createTestQueryClient(),
-      createChatStore(client.session),
-    );
-    useUiStore.getState().setDialog({
-      kind: "task",
-      projectId: "p1",
-      entity: {
-        id: "t1",
-        projectId: "p1",
-        title: "Existing task",
-        status: "todo",
-        workspaceMode: "worktree",
-        type: "default",
-        workflowRunId: null,
-      },
-    });
-
-    render(
-      <Wrapper>
-        <AppI18nProvider>
-          <PlatformProvider adapter={createStubPlatform()}>
-            <TooltipProvider>
-              <WorkspaceDialogs />
-            </TooltipProvider>
-          </PlatformProvider>
-        </AppI18nProvider>
-      </Wrapper>,
-    );
-
-    expect(screen.getByRole("dialog")).not.toHaveTextContent(
-      "Agent 在独立工作树中专注处理一项任务",
-    );
-    expect(screen.getByLabelText(/任务标题|Task title/)).not.toHaveAttribute(
-      "placeholder",
     );
   });
 
@@ -443,7 +399,6 @@ describe("WorkspaceDialogs task deletion", () => {
           id: "t1",
           projectId: "p1",
           title: "Delete me",
-          status: "todo",
           workspaceMode: workspaceMode as TaskWorkspaceMode,
           type: "default",
           workflowRunId: null,

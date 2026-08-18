@@ -358,7 +358,7 @@ mod tests {
         DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteTaskRepository,
         default_migration_catalog,
     };
-    use ora_domain::{AuditFields, Project, ProjectId, Task, TaskId, TaskStatus};
+    use ora_domain::{AuditFields, Project, ProjectId, Task, TaskId};
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::path::PathBuf;
@@ -390,7 +390,6 @@ mod tests {
                 TaskId::new("task-1"),
                 ProjectId::new("project-1"),
                 "Project chat",
-                TaskStatus::Doing,
                 None,
                 AuditFields::new(1, 1, false),
             ))

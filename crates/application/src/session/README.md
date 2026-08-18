@@ -5,6 +5,7 @@ This module provides the persistence-facing portion of Ora session lifecycle.
 ## Responsibilities
 
 - `GetSessionHandler` and `ListSessionsHandler` map visible domain sessions to shared contract responses.
+- `RenameSessionHandler` validates a user-supplied title, updates only the title column, and returns the latest session snapshot. A missing or soft-deleted row maps to `SessionNotFound` rather than a generic repository failure.
 - `DeleteSessionHandler` soft-deletes a persisted session record using the injected clock and returns a stable not-found error when necessary.
 - `SessionRepository` defines create, read, list, soft-delete, and single-intent session mutations used by application and backend composition. Title, status, binding, and history-state updates each own only their columns and return the latest complete session snapshot.
 - `SessionIdGenerator` provides injectable session identity generation for runtime-owned creation flows.

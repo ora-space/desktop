@@ -135,6 +135,10 @@ impl RuntimeActor {
                 RuntimeCommand::PreemptTitlePolling { response } => {
                     let _ = response.send(());
                 }
+                RuntimeCommand::AdoptUserTitle { title, response } => {
+                    self.adopt_user_title(title);
+                    let _ = response.send(());
+                }
                 RuntimeCommand::TitlePoll { attempt } => {
                     self.run_title_poll(attempt).await;
                 }
@@ -369,6 +373,10 @@ impl RuntimeActor {
                     let _ = response.send(Err(permission_not_pending()));
                 }
                 ActiveInput::Command(RuntimeCommand::PreemptTitlePolling { response }) => {
+                    let _ = response.send(());
+                }
+                ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
+                    self.adopt_user_title(title);
                     let _ = response.send(());
                 }
                 ActiveInput::Command(RuntimeCommand::Cancel { .. }) => {}
@@ -662,6 +670,10 @@ impl RuntimeActor {
                 ActiveInput::Command(RuntimeCommand::PreemptTitlePolling { response }) => {
                     let _ = response.send(());
                 }
+                ActiveInput::Command(RuntimeCommand::AdoptUserTitle { title, response }) => {
+                    self.adopt_user_title(title);
+                    let _ = response.send(());
+                }
                 ActiveInput::Command(RuntimeCommand::Cancel { .. }) => {}
                 ActiveInput::Command(RuntimeCommand::TitlePoll {
                     attempt: PollAttempt::First,
@@ -896,7 +908,7 @@ mod tests {
     use crate::app_event::AppEventHub;
     use crate::clock::SystemClock;
     use ora_db::{DatabaseLocation, RepositoryPool};
-    use ora_domain::{AgentCli, AuditFields, SessionId, SessionStatus, TaskId};
+    use ora_domain::{AgentCli, AuditFields, SessionId, SessionStatus, SessionTitle, TaskId};
     use ora_scheduler::Scheduler;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -962,6 +974,66 @@ mod tests {
             .expect("actor should drop after its command channel closes")
             .expect("actor drop probe should remain connected");
         actor_task.await.expect("actor task should exit cleanly");
+        scheduler.shutdown().await;
+    }
+
+    /// Verifies a user-chosen title locks acquisition so a later agent title is ignored.
+    #[tokio::test]
+    async fn user_rename_locks_title_against_later_agent_updates() {
+        let temporary = TempDir::new().expect("create actor test directory");
+        let pool = RepositoryPool::new(&DatabaseLocation::path(
+            temporary.path().join("test.sqlite"),
+        ))
+        .expect("create repository pool");
+        let scheduler = Scheduler::new(chrono_tz::UTC);
+        let connection = ConnectionSupervisor::start(
+            AgentCli::Codex,
+            pool.clone(),
+            temporary.path().to_path_buf(),
+            SystemClock,
+        );
+        let recorder = super::super::history::SessionRecorder::open(
+            &temporary.path().join("sessions"),
+            "session-1",
+            0,
+            &ora_domain::HistoryState::Writable,
+            super::super::history::LocalHistoryClock,
+        )
+        .expect("open actor recorder");
+        let session = ora_domain::Session::new(
+            SessionId::new("session-1"),
+            TaskId::new("task-1"),
+            AgentCli::Codex,
+            "provider-session-1",
+            SessionStatus::Stopped,
+            AuditFields::new(0, 0, false),
+        );
+        let (commands, command_receiver) = mpsc::unbounded_channel();
+        let command_sender = commands.downgrade();
+        let mut actor = RuntimeActor {
+            session,
+            cwd: temporary.path().to_path_buf(),
+            repository: ora_db::SqliteSessionRepository::new(pool),
+            clock: SystemClock,
+            connection,
+            channel: None,
+            commands: command_receiver,
+            recorder,
+            sessions_root: temporary.path().join("sessions"),
+            handoff_pending: false,
+            scheduler: scheduler.clone(),
+            app_events: AppEventHub::new().publisher(),
+            title_acquisition: TitleAcquisition::awaiting_first_prompt(true),
+            command_sender,
+            exit_probe: None,
+        };
+        let user_title = SessionTitle::parse("User title").expect("valid user title");
+        actor.adopt_user_title(user_title.clone());
+        actor.persist_agent_title("Agent title");
+        assert_eq!(actor.session.title.as_ref(), Some(&user_title));
+        assert!(!actor.title_acquisition.accepts_title());
+        drop(commands);
+        drop(actor);
         scheduler.shutdown().await;
     }
 }

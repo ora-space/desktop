@@ -30,7 +30,7 @@ Adding an adapter never changes a port signature. Handlers keep depending on the
 - `busy_timeout = 5000` ms
 - `synchronous = NORMAL`
 
-Those PRAGMAs are applied in the connection manager rather than at call sites, so no repository can accidentally run with a different durability or concurrency profile. Pooling requires a file-backed `DatabaseLocation::Path`; `DatabaseLocation::InMemory` is for bootstrap and migration tests and returns `UnsupportedPooledLocation` if pooled.
+Those PRAGMAs are applied in the connection manager rather than at call sites, so no repository can accidentally run with a different durability or concurrency profile. `NORMAL` is crash-safe for process kills but may lose the last COMMIT on power loss. Skill package promotion flushes directory metadata _before_ that COMMIT, so a lost last transaction leaves an unowned package directory that startup reconciliation removes rather than a visible row without files. Pooling requires a file-backed `DatabaseLocation::Path`; `DatabaseLocation::InMemory` is for bootstrap and migration tests and returns `UnsupportedPooledLocation` if pooled.
 
 File-backed parent directories are not created here. The Desktop composition root prepares them before opening `ora-backend::Backend`.
 
@@ -48,7 +48,7 @@ File-backed parent directories are not created here. The Desktop composition roo
 
 Repositories map SQLite columns onto the current `ora-domain` shapes, including audit fields and enum-backed columns:
 
-- `tasks.status` becomes `TaskStatus`; `tasks.worktree_id` becomes `Option<WorktreeId>`.
+- `tasks.worktree_id` becomes `Option<WorktreeId>`.
 - `sessions.status` becomes `SessionStatus`; `sessions.agent_cli` text becomes `AgentCli` through the namespaced persisted value; nullable `sessions.title` becomes `Option<SessionTitle>` after domain validation; the nullable `sessions.history_degraded_reason` becomes `HistoryState`, where absence means writable.
 - `worktrees.is_active` becomes `WorktreeActivity`; `worktrees.branch_name` stays optional.
 - `task_diff_comments` maps root-thread columns and reply columns into the mutually exclusive `TaskDiffCommentKind` enum. Visible comments are returned in `(created_at, id)` order; malformed rows fail rather than being coerced.

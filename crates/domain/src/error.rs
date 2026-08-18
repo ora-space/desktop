@@ -9,8 +9,6 @@ pub enum DomainModelError {
     EmptyNamespace,
     #[error("worktree baseline commit must not be empty")]
     EmptyWorktreeBaseline,
-    #[error("invalid task status value: {0}")]
-    InvalidTaskStatus(i64),
     #[error("invalid task type value: {0}")]
     InvalidTaskType(i64),
     #[error("invalid workflow run status value: {0}")]

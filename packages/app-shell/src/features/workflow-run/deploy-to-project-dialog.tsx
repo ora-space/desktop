@@ -55,7 +55,12 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
 
 interface DeployToProjectDialogProps {
   open: boolean;
-  workflow: WorkflowDefinitionInput | null;
+  workflow: { id: string; name: string } | null;
+  /**
+   * Project already chosen by the caller (sidebar create). When set, the dialog
+   * is a create form: name and base branch only, matching worktree-task create.
+   */
+  initialProjectId?: string | null;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -78,15 +83,19 @@ const MENU_ITEM_CLASS =
 export function DeployToProjectDialog({
   open,
   workflow,
+  initialProjectId = null,
   onOpenChange,
 }: DeployToProjectDialogProps) {
   const { t } = useTranslation();
+  const projectLocked = Boolean(initialProjectId);
   const projectsQuery = useProjects();
   const projects = useMemo(
     () => projectsQuery.data ?? [],
     [projectsQuery.data],
   );
-  const runsQuery = useWorkflowRunsByWorkflow(open ? workflow?.id : null);
+  const runsQuery = useWorkflowRunsByWorkflow(
+    open && !projectLocked ? (workflow?.id ?? null) : null,
+  );
   const deployedProjectIds = useMemo(
     () => new Set((runsQuery.data ?? []).map((run) => run.projectId)),
     [runsQuery.data],
@@ -152,6 +161,9 @@ export function DeployToProjectDialog({
   ) {
     setNameSeedKey(nextNameSeedKey);
     setName(workflow.name);
+    if (initialProjectId) {
+      setProjectId(initialProjectId);
+    }
   }
   if (!open && nameSeedKey !== null) {
     setNameSeedKey(null);
@@ -212,10 +224,18 @@ export function DeployToProjectDialog({
     >
       <AlertDialogContent className="sm:max-w-md">
         <AlertDialogHeader>
-          <AlertDialogTitle>{t("workflowRun.deployTitle")}</AlertDialogTitle>
+          <AlertDialogTitle>
+            {projectLocked
+              ? t("sidebar.newWorkflow")
+              : t("workflowRun.deployTitle")}
+          </AlertDialogTitle>
           {workflow === null ? (
             <AlertDialogDescription>
               {t("workflowRun.deployPickWorkflow")}
+            </AlertDialogDescription>
+          ) : projectLocked ? (
+            <AlertDialogDescription className="sr-only">
+              {t("sidebar.newWorkflow")}
             </AlertDialogDescription>
           ) : (
             <AlertDialogDescription className="sr-only">
@@ -259,124 +279,128 @@ export function DeployToProjectDialog({
             ) : null}
           </div>
 
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground">
-              {t("workflowRun.deployProject")}
-            </p>
-            <Popover
-              open={projectPickerOpen}
-              onOpenChange={setProjectPickerOpen}
-            >
-              <PopoverTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className={cn(
-                      "h-9 w-full justify-between px-3 font-normal",
-                      attemptedSubmit && projectMissing && "border-destructive",
-                    )}
-                    disabled={projects.length === 0}
-                    aria-label={t("workflowRun.deployProject")}
-                    aria-invalid={attemptedSubmit && projectMissing}
-                  />
-                }
+          {!projectLocked ? (
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">
+                {t("workflowRun.deployProject")}
+              </p>
+              <Popover
+                open={projectPickerOpen}
+                onOpenChange={setProjectPickerOpen}
               >
-                <span className="flex min-w-0 items-center gap-2">
-                  <IconFolder className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span
-                    className={cn(
-                      "truncate",
-                      selectedProject
-                        ? "text-foreground"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {selectedProject?.name ??
-                      t("workflowRun.deployProjectEmpty")}
+                <PopoverTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={cn(
+                        "h-9 w-full justify-between px-3 font-normal",
+                        attemptedSubmit &&
+                          projectMissing &&
+                          "border-destructive",
+                      )}
+                      disabled={projects.length === 0}
+                      aria-label={t("workflowRun.deployProject")}
+                      aria-invalid={attemptedSubmit && projectMissing}
+                    />
+                  }
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <IconFolder className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span
+                      className={cn(
+                        "truncate",
+                        selectedProject
+                          ? "text-foreground"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {selectedProject?.name ??
+                        t("workflowRun.deployProjectEmpty")}
+                    </span>
                   </span>
-                </span>
-                <IconChevronDown className="size-3.5 shrink-0 opacity-50" />
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-80 p-0">
-                <Command>
-                  <CommandInput
-                    placeholder={t("workflowRun.deployProjectSearch")}
-                    className="text-sm"
-                  />
-                  <CommandList className="max-h-64">
-                    <CommandEmpty className="py-6 text-sm">
-                      {t("workflowRun.deployProjectEmptySearch")}
-                    </CommandEmpty>
-                    {deployedProjects.length > 0 && (
-                      <CommandGroup
-                        heading={t("workflowRun.deployGroupHasRuns")}
-                      >
-                        {deployedProjects.map((project) => (
-                          <CommandItem
-                            key={project.id}
-                            value={project.name}
-                            data-checked={project.id === projectId}
-                            className="gap-1.5 rounded-sm px-2 py-1.5 text-sm text-foreground focus:bg-muted focus:text-foreground"
-                            onSelect={() => {
-                              setProjectId(project.id);
-                              setBaseBranch("");
-                              setProjectPickerOpen(false);
-                            }}
-                          >
-                            <IconRoute className="size-3.5 text-muted-foreground" />
-                            <span className="min-w-0 flex-1 truncate">
-                              {project.name}
-                            </span>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    )}
-                    {otherProjects.length > 0 && (
-                      <CommandGroup
-                        heading={
-                          deployedProjects.length > 0
-                            ? t("workflowRun.deployGroupOther")
-                            : undefined
-                        }
-                      >
-                        {otherProjects.map((project) => (
-                          <CommandItem
-                            key={project.id}
-                            value={project.name}
-                            data-checked={project.id === projectId}
-                            className="gap-1.5 rounded-sm px-2 py-1.5 text-sm text-foreground focus:bg-muted focus:text-foreground"
-                            onSelect={() => {
-                              setProjectId(project.id);
-                              setBaseBranch("");
-                              setProjectPickerOpen(false);
-                            }}
-                          >
-                            <IconFolder className="size-3.5 text-muted-foreground" />
-                            <span className="min-w-0 flex-1 truncate">
-                              {project.name}
-                            </span>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    )}
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-            {attemptedSubmit && projectMissing ? (
-              <p
-                className="text-[11px] leading-5 text-destructive"
-                role="status"
-              >
-                {t("workflowRun.deployRequiredProject")}
-              </p>
-            ) : projectId !== "" ? (
-              <p className="text-[11px] leading-5 text-muted-foreground">
-                {t("workflowRun.deployHintDeploy")}
-              </p>
-            ) : null}
-          </div>
+                  <IconChevronDown className="size-3.5 shrink-0 opacity-50" />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-80 p-0">
+                  <Command>
+                    <CommandInput
+                      placeholder={t("workflowRun.deployProjectSearch")}
+                      className="text-sm"
+                    />
+                    <CommandList className="max-h-64">
+                      <CommandEmpty className="py-6 text-sm">
+                        {t("workflowRun.deployProjectEmptySearch")}
+                      </CommandEmpty>
+                      {deployedProjects.length > 0 && (
+                        <CommandGroup
+                          heading={t("workflowRun.deployGroupHasRuns")}
+                        >
+                          {deployedProjects.map((project) => (
+                            <CommandItem
+                              key={project.id}
+                              value={project.name}
+                              data-checked={project.id === projectId}
+                              className="gap-1.5 rounded-sm px-2 py-1.5 text-sm text-foreground focus:bg-muted focus:text-foreground"
+                              onSelect={() => {
+                                setProjectId(project.id);
+                                setBaseBranch("");
+                                setProjectPickerOpen(false);
+                              }}
+                            >
+                              <IconRoute className="size-3.5 text-muted-foreground" />
+                              <span className="min-w-0 flex-1 truncate">
+                                {project.name}
+                              </span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      )}
+                      {otherProjects.length > 0 && (
+                        <CommandGroup
+                          heading={
+                            deployedProjects.length > 0
+                              ? t("workflowRun.deployGroupOther")
+                              : undefined
+                          }
+                        >
+                          {otherProjects.map((project) => (
+                            <CommandItem
+                              key={project.id}
+                              value={project.name}
+                              data-checked={project.id === projectId}
+                              className="gap-1.5 rounded-sm px-2 py-1.5 text-sm text-foreground focus:bg-muted focus:text-foreground"
+                              onSelect={() => {
+                                setProjectId(project.id);
+                                setBaseBranch("");
+                                setProjectPickerOpen(false);
+                              }}
+                            >
+                              <IconFolder className="size-3.5 text-muted-foreground" />
+                              <span className="min-w-0 flex-1 truncate">
+                                {project.name}
+                              </span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      )}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+              {attemptedSubmit && projectMissing ? (
+                <p
+                  className="text-[11px] leading-5 text-destructive"
+                  role="status"
+                >
+                  {t("workflowRun.deployRequiredProject")}
+                </p>
+              ) : projectId !== "" ? (
+                <p className="text-[11px] leading-5 text-muted-foreground">
+                  {t("workflowRun.deployHintDeploy")}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="space-y-1.5">
             <p className="text-xs font-medium text-muted-foreground">
@@ -458,7 +482,7 @@ export function DeployToProjectDialog({
                 />
               </PopoverContent>
             </Popover>
-            {branchesLoading ? (
+            {branchesLoading && !projectLocked ? (
               <p className="flex items-center gap-1.5 text-[11px] leading-5 text-muted-foreground">
                 <Spinner className="size-3 shrink-0" />
                 {t("workflowRun.deployBaseBranchLoadingHint")}
@@ -498,8 +522,12 @@ export function DeployToProjectDialog({
             {busy ? (
               <span className="inline-flex items-center gap-1.5">
                 <Spinner className="size-3.5" />
-                {t("workflowRun.deploying")}
+                {projectLocked
+                  ? t("common.creating")
+                  : t("workflowRun.deploying")}
               </span>
+            ) : projectLocked ? (
+              t("dialog.createTask")
             ) : (
               t("workflowRun.deployConfirm")
             )}

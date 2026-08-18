@@ -27,7 +27,10 @@ Desktop exposes the shared import session lifecycle through four unary Tauri com
 The frontend sends the system picker's local path inside `PrepareSkillImportRequest`; the Rust
 side reads the folder or archive, so file bytes (up to 200 MiB) are never serialized over Tauri
 IPC. Preparation, preview, conflict decisions, background commit, and result retention behave
-through the shared `ora-backend` composition.
+through the shared `ora-backend` composition. Before the catalog row is committed, package files,
+journal markers, and directory promotes are flushed on platforms that support directory fsync.
+Mutation-time directory fsync is a hard error on Unix and best-effort on Windows; macOS
+`sync_all` uses `fsync` rather than `F_FULLFSYNC`.
 
 The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads. Task and project deletion never mutate Git.
 

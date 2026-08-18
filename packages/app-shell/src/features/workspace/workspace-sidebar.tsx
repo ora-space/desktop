@@ -1,53 +1,69 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { useStore } from "zustand";
 import {
   Button,
   Collapsible,
   CollapsibleContent,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
   Input,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  toast,
 } from "@ora/ui";
 import {
+  IconArchive,
   IconChevronDown,
   IconChevronRight,
-  IconAlertTriangle,
-  IconDots,
-  IconEdit,
   IconFolder,
   IconGitBranch,
   IconLayoutSidebarLeftCollapse,
   IconMessageCircle,
+  IconMessageCirclePlus,
   IconPencil,
-  IconPlayerStop,
   IconPlus,
   IconRoute,
   IconSearch,
-  IconSquareRoundedPlus,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
+import type { Session, Task } from "@ora/contracts";
 import type { CurrentUser } from "../../lib/types";
 import { UserProfile } from "../sidebar/user-profile";
 import { localizeContractError } from "../../i18n/contract-error";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
-import { useWorkflowRunsByProject } from "../../state/hooks/use-workflow-runs";
+import {
+  useRenameWorkflowRun,
+  useWorkflowRunsByProject,
+} from "../../state/hooks/use-workflow-runs";
+import {
+  useUpdateProject,
+  useUpdateTask,
+} from "../../state/hooks/use-workspace-mutations";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
-import { useUnreadSessionsStore } from "../../state/stores/unread-sessions-store";
 import { OraMark } from "../../components/ora-mark";
-import { AgentActivityDots } from "../../components/agent-activity-dots";
 import { DragRegion } from "../../components/drag-region";
-import { useChatStore } from "../../chat-store-context";
 import type { GraphWorkflowRunStatus } from "@ora/workflow-runtime";
+import { SidebarCreateMenu } from "./sidebar-create-menu";
+import { SessionTreeRow } from "./session-tree-row";
+import { useInlineTreeRename } from "./use-inline-tree-rename";
+
+const EMPTY_TASKS: Task[] = [];
+const EMPTY_SESSIONS: Session[] = [];
 
 interface WorkspaceSidebarProps {
   user: CurrentUser;
@@ -63,9 +79,6 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   const projectsQuery = useProjects();
   const tasksQuery = useTasks();
   const sessionsQuery = useSessions();
-  const chatStore = useChatStore();
-  const conversations = useStore(chatStore, (state) => state.conversations);
-  const unread = useUnreadSessionsStore((s) => s.unread);
   // Stabilise the array references so useMemo dependencies don't change every render.
   const projects = useMemo(
     () => projectsQuery.data ?? [],
@@ -80,14 +93,33 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     projectsQuery.isPending || tasksQuery.isPending || sessionsQuery.isPending;
   const error = projectsQuery.error ?? tasksQuery.error ?? sessionsQuery.error;
 
+  const tasksByProjectId = useMemo(() => {
+    const grouped = new Map<string, Task[]>();
+    for (const task of tasks) {
+      if (task.type === "workflow") continue;
+      const list = grouped.get(task.projectId);
+      if (list) list.push(task);
+      else grouped.set(task.projectId, [task]);
+    }
+    return grouped;
+  }, [tasks]);
+
+  const sessionsByTaskId = useMemo(() => {
+    const grouped = new Map<string, Session[]>();
+    for (const session of sessions) {
+      const list = grouped.get(session.taskId);
+      if (list) list.push(session);
+      else grouped.set(session.taskId, [session]);
+    }
+    return grouped;
+  }, [sessions]);
+
   const selection = useWorkspaceSelectionStore((s) => s.selection);
   const selectProject = useWorkspaceSelectionStore((s) => s.selectProject);
   const selectTask = useWorkspaceSelectionStore((s) => s.selectTask);
-  const selectSession = useWorkspaceSelectionStore((s) => s.selectSession);
   const selectWorkflowRun = useWorkspaceSelectionStore(
     (s) => s.selectWorkflowRun,
   );
-  const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
 
   const expandedProjects = useUiStore((s) => s.expandedProjects);
   const expandedTasks = useUiStore((s) => s.expandedTasks);
@@ -97,6 +129,9 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const setDialog = useUiStore((s) => s.setDialog);
   const setDeleteTarget = useUiStore((s) => s.setDeleteTarget);
+  const expandProject = useUiStore((s) => s.expandProject);
+  const updateProject = useUpdateProject();
+  const updateTask = useUpdateTask();
 
   const needle = query.trim().toLowerCase();
 
@@ -104,23 +139,17 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     () =>
       projects.filter((project) => {
         if (!needle) return true;
-        const projectTasks = tasks.filter(
-          (task) => task.projectId === project.id && task.type !== "workflow",
-        );
-        return (
-          project.name.toLowerCase().includes(needle) ||
-          projectTasks.some(
-            (task) =>
-              task.title.toLowerCase().includes(needle) ||
-              sessions.some(
-                (session) =>
-                  session.taskId === task.id &&
-                  session.title?.toLowerCase().includes(needle),
-              ),
-          )
-        );
+        if (project.name.toLowerCase().includes(needle)) return true;
+        const projectTasks = tasksByProjectId.get(project.id) ?? EMPTY_TASKS;
+        return projectTasks.some((task) => {
+          if (task.title.toLowerCase().includes(needle)) return true;
+          const taskSessions = sessionsByTaskId.get(task.id) ?? EMPTY_SESSIONS;
+          return taskSessions.some((session) =>
+            session.title?.toLowerCase().includes(needle),
+          );
+        });
       }),
-    [needle, projects, sessions, tasks],
+    [needle, projects, sessionsByTaskId, tasksByProjectId],
   );
 
   // Expand the initial workspace tree once while preserving later manual collapse choices.
@@ -151,31 +180,28 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     }
   };
 
-  // Start a blank direct chat in the current project. With no project selected,
-  // keep the empty selection so the composer can explain what is missing.
-  const openNewChat = () => {
-    if (selection.projectId === null) {
-      clearSelection();
-    } else {
-      selectProject(selection.projectId);
+  const createProjectId = selection.projectId ?? projects[0]?.id ?? null;
+
+  /** Starts a blank direct chat in the current (or first) project; no project yet opens create. */
+  const startNewChat = useCallback(() => {
+    if (createProjectId === null) {
+      setDialog({ kind: "project" });
+      return;
     }
-  };
+    selectProject(createProjectId);
+  }, [createProjectId, selectProject, setDialog]);
 
   // Match desktop IDE conventions while preventing the browser's new-window shortcut.
   useEffect(() => {
     const handleNewChatShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        if (selection.projectId === null) {
-          clearSelection();
-        } else {
-          selectProject(selection.projectId);
-        }
+        startNewChat();
       }
     };
     window.addEventListener("keydown", handleNewChatShortcut);
     return () => window.removeEventListener("keydown", handleNewChatShortcut);
-  }, [clearSelection, selectProject, selection.projectId]);
+  }, [startNewChat]);
 
   return (
     <>
@@ -205,23 +231,17 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
           </Tooltip>
         </header>
 
-        <div className="px-2 pb-2">
+        <div className="flex flex-col gap-1 px-2 pb-3">
           <Button
             type="button"
             variant="ghost"
-            onClick={openNewChat}
-            className="h-10 w-full justify-start gap-2.5 px-2.5 text-sm font-medium"
+            className="h-9 w-full justify-start gap-2 px-2 text-[13px] font-medium"
+            onClick={startNewChat}
           >
-            <IconSquareRoundedPlus className="size-5" />
-            {t("chat.newThread")}
-            <span className="ml-auto text-xs font-normal text-muted-foreground">
-              ⌘N
-            </span>
+            <IconMessageCirclePlus className="size-4 text-muted-foreground" />
+            {t("chat.new")}
           </Button>
-        </div>
-
-        <div className="flex items-center gap-2 px-2 pb-3">
-          <div className="relative min-w-0 flex-1">
+          <div className="relative min-w-0">
             <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}
@@ -248,7 +268,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
           className="min-h-0 flex-1 overflow-y-auto px-2 pb-3"
           aria-label={t("sidebar.navigation")}
         >
-          <div className="flex h-8 items-center px-2 text-xs font-medium text-muted-foreground">
+          <div className="flex h-8 items-center pl-2 pr-1 text-xs font-medium text-muted-foreground">
             <span>{t("sidebar.projects")}</span>
             <Tooltip>
               <TooltipTrigger
@@ -278,14 +298,13 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
             </p>
           )}
           {visibleProjects.map((project) => {
-            const projectTasks = tasks.filter(
-              (task) =>
-                task.projectId === project.id && task.type !== "workflow",
+            const projectTasks =
+              tasksByProjectId.get(project.id) ?? EMPTY_TASKS;
+            const projectSessionIds = projectTasks.flatMap((task) =>
+              (sessionsByTaskId.get(task.id) ?? EMPTY_SESSIONS).map(
+                (session) => session.id,
+              ),
             );
-            const projectTaskIds = new Set(projectTasks.map((task) => task.id));
-            const projectSessionIds = sessions
-              .filter((session) => projectTaskIds.has(session.taskId))
-              .map((session) => session.id);
             const projectOpen =
               expandedProjects.has(project.id) || Boolean(needle);
             return (
@@ -304,32 +323,31 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                   expanded={projectOpen}
                   onClick={() => openProject(project.id)}
                   action={
-                    <>
-                      <NewWorktreeButton
-                        onClick={() =>
-                          setDialog({ kind: "task", projectId: project.id })
-                        }
-                      />
-                      <NewDirectChatButton
-                        onClick={() => selectProject(project.id)}
-                      />
-                    </>
+                    <SidebarCreateMenu
+                      projectId={project.id}
+                      onNewTask={(projectId) => {
+                        expandProject(projectId);
+                        selectProject(projectId);
+                      }}
+                    />
                   }
-                  menu={
-                    <EntityMenu
-                      onEdit={() =>
-                        setDialog({ kind: "project", entity: project })
-                      }
-                      onDelete={() =>
+                  onRename={(name) =>
+                    updateProject.mutateAsync({ project, name })
+                  }
+                  commands={[
+                    {
+                      label: t("common.delete"),
+                      icon: <IconTrash />,
+                      variant: "destructive",
+                      onSelect: () =>
                         setDeleteTarget({
                           kind: "project",
                           id: project.id,
                           name: project.name,
                           sessionIds: projectSessionIds,
-                        })
-                      }
-                    />
-                  }
+                        }),
+                    },
+                  ]}
                 />
                 <TreeBranch expanded={projectOpen}>
                   <ProjectWorkflowRunRows
@@ -342,13 +360,6 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                     onSelectRun={(runId) =>
                       selectWorkflowRun(runId, project.id)
                     }
-                    onEditRun={(run) =>
-                      setDialog({
-                        kind: "workflowRun",
-                        projectId: project.id,
-                        entity: { id: run.id, name: run.name },
-                      })
-                    }
                     onDeleteRun={(run) =>
                       setDeleteTarget({
                         kind: "workflowRun",
@@ -359,73 +370,62 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                     }
                   />
                   {projectTasks.map((task) => {
-                    const taskSessions = sessions.filter(
-                      (session) => session.taskId === task.id,
-                    );
+                    const taskSessions =
+                      sessionsByTaskId.get(task.id) ?? EMPTY_SESSIONS;
                     const taskOpen =
                       expandedTasks.has(task.id) || Boolean(needle);
                     if (task.workspaceMode === "project_root") {
                       const directSession = taskSessions[0];
+                      if (directSession) {
+                        return (
+                          <SessionTreeRow
+                            key={task.id}
+                            sessionId={directSession.id}
+                            taskId={task.id}
+                            projectId={project.id}
+                            depth={1}
+                            title={
+                              directSession.title ?? t("sidebar.newSession")
+                            }
+                            deleteAs="task"
+                            workspaceMode={task.workspaceMode}
+                          />
+                        );
+                      }
                       return (
                         <TreeRow
                           key={task.id}
                           depth={1}
-                          active={
-                            directSession
-                              ? selection.sessionId === directSession.id
-                              : selection.taskId === task.id
-                          }
+                          active={selection.taskId === task.id}
                           icon={
-                            directSession &&
-                            conversations[directSession.id]?.pendingPermissions
-                              .length ? (
-                              <IconAlertTriangle
-                                className="size-[18px] text-amber-500"
-                                aria-label={t("sidebar.permissionRequired")}
-                              />
-                            ) : (
-                              <IconMessageCircle
-                                className="size-4 text-muted-foreground"
-                                aria-label={t("sidebar.directChatTask")}
-                              />
-                            )
+                            <IconMessageCircle
+                              className="size-4 text-muted-foreground"
+                              aria-label={t("sidebar.directChatTask")}
+                            />
                           }
-                          label={
-                            directSession
-                              ? (directSession.title ?? t("sidebar.newSession"))
-                              : task.title
+                          label={task.title}
+                          onClick={() => selectTask(task.id, task.projectId)}
+                          onRename={(name) =>
+                            updateTask.mutateAsync({
+                              task,
+                              title: name,
+                            })
                           }
-                          onClick={() =>
-                            directSession
-                              ? selectSession(
-                                  directSession.id,
-                                  task.id,
-                                  project.id,
-                                )
-                              : selectTask(task.id, task.projectId)
-                          }
-                          menu={
-                            <EntityMenu
-                              onEdit={() =>
-                                setDialog({
-                                  kind: "task",
-                                  projectId: project.id,
-                                  entity: task,
-                                })
-                              }
-                              onDelete={() =>
+                          commands={[
+                            {
+                              label: t("common.delete"),
+                              icon: <IconTrash />,
+                              variant: "destructive",
+                              onSelect: () =>
                                 setDeleteTarget({
                                   kind: "task",
                                   id: task.id,
                                   name: task.title,
                                   workspaceMode: task.workspaceMode,
-                                  sessionIds: taskSessions.map(
-                                    (session) => session.id,
-                                  ),
-                                })
-                              }
-                            />
-                          }
+                                  sessionIds: [],
+                                }),
+                            },
+                          ]}
                         />
                       );
                     }
@@ -453,16 +453,18 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                               }
                             />
                           }
-                          menu={
-                            <EntityMenu
-                              onEdit={() =>
-                                setDialog({
-                                  kind: "task",
-                                  projectId: project.id,
-                                  entity: task,
-                                })
-                              }
-                              onDelete={() =>
+                          onRename={(name) =>
+                            updateTask.mutateAsync({
+                              task,
+                              title: name,
+                            })
+                          }
+                          commands={[
+                            {
+                              label: t("common.delete"),
+                              icon: <IconTrash />,
+                              variant: "destructive",
+                              onSelect: () =>
                                 setDeleteTarget({
                                   kind: "task",
                                   id: task.id,
@@ -471,55 +473,20 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
                                   sessionIds: taskSessions.map(
                                     (session) => session.id,
                                   ),
-                                })
-                              }
-                            />
-                          }
+                                }),
+                            },
+                          ]}
                         />
                         <TreeBranch expanded={taskOpen}>
                           {taskSessions.map((session) => (
-                            <TreeRow
+                            <SessionTreeRow
                               key={session.id}
+                              sessionId={session.id}
+                              taskId={task.id}
+                              projectId={project.id}
                               depth={2}
-                              active={selection.sessionId === session.id}
-                              // The dots mean "the agent is working right now", which is the
-                              // live prompt activity in the chat store - not session.status,
-                              // which tracks whether the logical session is registered and stays
-                              // "running" through every idle gap between turns. Once it stops,
-                              // the same slot carries an unread mark until the session is opened.
-                              icon={
-                                conversations[session.id]?.pendingPermissions
-                                  .length ? (
-                                  <IconAlertTriangle
-                                    className="size-[18px] text-amber-500"
-                                    aria-label={t("sidebar.permissionRequired")}
-                                  />
-                                ) : conversations[session.id]?.isResponding ? (
-                                  <AgentActivityDots
-                                    label={t("common.running")}
-                                    className="text-muted-foreground"
-                                  />
-                                ) : unread.has(session.id) ? (
-                                  <UnreadDot label={t("sidebar.unread")} />
-                                ) : null
-                              }
-                              label={session.title ?? t("sidebar.newSession")}
-                              onClick={() =>
-                                selectSession(session.id, task.id, project.id)
-                              }
-                              menu={
-                                <EntityMenu
-                                  onDelete={() =>
-                                    setDeleteTarget({
-                                      kind: "session",
-                                      id: session.id,
-                                      name:
-                                        session.title ??
-                                        t("sidebar.newSession"),
-                                    })
-                                  }
-                                />
-                              }
+                              title={session.title ?? t("sidebar.newSession")}
+                              deleteAs="session"
                             />
                           ))}
                         </TreeBranch>
@@ -549,25 +516,6 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
         </div>
       </aside>
     </>
-  );
-}
-
-/**
- * Marks a session that finished a turn the user has not opened yet.
- *
- * A single filled blue dot - `sky`, the same blue the chat surface already uses
- * for tool-call chrome - so it reads as "new here" and stays clear of the status
- * colours (emerald means running, amber means a permission is waiting). It sits
- * in the icon slot the activity dots vacate when the turn ends, so a row never
- * shows both at once.
- */
-function UnreadDot({ label }: { label: string }) {
-  return (
-    <span
-      role="img"
-      aria-label={label}
-      className="size-2 rounded-full bg-sky-500"
-    />
   );
 }
 
@@ -603,6 +551,15 @@ function TreeBranch({
   );
 }
 
+interface TreeRowCommand {
+  label: string;
+  icon: React.ReactNode;
+  variant?: "destructive";
+  /** Renders a divider above this item, matching session-row delete placement. */
+  separatorBefore?: boolean;
+  onSelect: () => void;
+}
+
 interface TreeRowProps {
   depth: 0 | 1 | 2;
   active: boolean;
@@ -611,13 +568,21 @@ interface TreeRowProps {
   meta?: string;
   expanded?: boolean;
   onClick: () => void;
-  /** Optional primary command shown beside the overflow menu on hover. */
+  /** Hover-only plus (create under a project or a new session under a worktree). */
   action?: React.ReactNode;
-  /** Optional overflow menu; graph-run rows omit CRUD until later steps. */
-  menu?: React.ReactNode;
+  /** Persists the inline rename; same editor as session rows. */
+  onRename: (name: string) => Promise<unknown>;
+  /** Right-click actions after Rename; overflow `···` menus are intentionally not used. */
+  commands: TreeRowCommand[];
 }
 
-/** Keeps every tree level aligned while preserving a stable row width for actions. */
+/**
+ * One navigation row: click selects/toggles, right-click opens commands.
+ *
+ * The context-menu trigger wraps only the label so the hover plus can host its
+ * own dropdown without nesting menus. A nested native button inside Base UI's
+ * default trigger would swallow `contextmenu` in the Tauri WebKit/WebView2 shells.
+ */
 function TreeRow({
   depth,
   active,
@@ -627,46 +592,146 @@ function TreeRow({
   expanded,
   onClick,
   action,
-  menu,
+  onRename,
+  commands,
 }: TreeRowProps) {
+  const { t } = useTranslation();
+  const {
+    renaming,
+    draft,
+    setDraft,
+    inputRef,
+    restoreMenuFocus,
+    beginRename,
+    onInputKeyDown,
+    onInputBlur,
+    maxLength,
+  } = useInlineTreeRename({ value: label, onCommit: onRename });
+
   return (
     <div
       className={`group/tree flex h-9 items-center rounded-md transition-colors ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/70"}`}
     >
-      <button
-        type="button"
-        onClick={onClick}
-        aria-expanded={expanded}
-        className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        style={{ paddingLeft: `${8 + depth * 18}px` }}
-      >
-        <span className="relative flex size-[18px] shrink-0 items-center justify-center">
-          <span
-            className={`flex items-center justify-center transition-opacity duration-100 ${expanded === undefined ? "" : "group-hover/tree:opacity-0"}`}
-          >
-            {icon}
-          </span>
-          {expanded !== undefined &&
-            (expanded ? (
-              <IconChevronDown className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
-            ) : (
-              <IconChevronRight className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
-            ))}
-        </span>
-        <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-        {meta && (
-          <span
-            className={`truncate text-[11px] ${active ? "text-sidebar-accent-foreground/80" : "text-amber-700 dark:text-amber-300"}`}
-          >
-            {meta}
-          </span>
-        )}
-      </button>
-      <div className="mr-1 flex items-center opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">
-        {menu}
-        {action}
-      </div>
+      <ContextMenu>
+        <ContextMenuTrigger
+          render={
+            <div
+              className="flex h-full min-w-0 flex-1 items-center"
+              onContextMenu={(event) => event.preventDefault()}
+            />
+          }
+        >
+          {renaming ? (
+            <div
+              className="flex h-full min-w-0 flex-1 items-center gap-2"
+              style={{ paddingLeft: `${8 + depth * 18}px` }}
+            >
+              <span className="flex size-[18px] shrink-0 items-center justify-center">
+                {icon}
+              </span>
+              <Input
+                ref={inputRef}
+                value={draft}
+                maxLength={maxLength}
+                aria-label={t("sidebar.rename")}
+                className="h-7 flex-1 border-transparent bg-background px-1.5 text-[13px] shadow-none"
+                onChange={(event) => setDraft(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={onInputKeyDown}
+                onBlur={onInputBlur}
+              />
+            </div>
+          ) : (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={onClick}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                onClick();
+              }}
+              aria-expanded={expanded}
+              className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              style={{ paddingLeft: `${8 + depth * 18}px` }}
+            >
+              <span className="relative flex size-[18px] shrink-0 items-center justify-center">
+                <span
+                  className={`flex items-center justify-center transition-opacity duration-100 ${expanded === undefined ? "" : "group-hover/tree:opacity-0"}`}
+                >
+                  {icon}
+                </span>
+                {expanded !== undefined &&
+                  (expanded ? (
+                    <IconChevronDown className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
+                  ) : (
+                    <IconChevronRight className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
+                  ))}
+              </span>
+              <span className="min-w-0 flex-1 truncate font-medium">
+                {label}
+              </span>
+              {meta && (
+                <span
+                  className={`truncate text-[11px] ${active ? "text-sidebar-accent-foreground/80" : "text-amber-700 dark:text-amber-300"}`}
+                >
+                  {meta}
+                </span>
+              )}
+            </div>
+          )}
+        </ContextMenuTrigger>
+        {/* Rename suppresses restore so the editor keeps focus; other actions still return it. */}
+        <ContextMenuContent
+          className="w-44"
+          finalFocus={() => restoreMenuFocus.current}
+        >
+          <ContextMenuItem onClick={beginRename}>
+            <IconPencil />
+            {t("sidebar.rename")}
+          </ContextMenuItem>
+          {commands.map((command) => (
+            <Fragment key={command.label}>
+              {command.separatorBefore ? <ContextMenuSeparator /> : null}
+              <ContextMenuItem
+                variant={command.variant}
+                onClick={command.onSelect}
+              >
+                {command.icon}
+                {command.label}
+              </ContextMenuItem>
+            </Fragment>
+          ))}
+        </ContextMenuContent>
+      </ContextMenu>
+      {action && !renaming && (
+        <div className="mr-1 flex items-center opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">
+          {action}
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * Placeholder archive control until persistence ships.
+ * Same toast as session rows so every tree leaf exposes the same control.
+ */
+function ArchiveButton() {
+  const { t } = useTranslation();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      aria-label={t("sidebar.archive")}
+      onClick={(event) => {
+        event.stopPropagation();
+        toast(t("sidebar.archiveSoon"));
+      }}
+    >
+      <IconArchive />
+    </Button>
   );
 }
 
@@ -719,17 +784,16 @@ function ProjectWorkflowRunRows({
   projectId,
   activeRunId,
   onSelectRun,
-  onEditRun,
   onDeleteRun,
 }: {
   projectId: string;
   activeRunId: string | null;
   onSelectRun: (runId: string) => void;
-  onEditRun: (run: { id: string; name: string }) => void;
   onDeleteRun: (run: { id: string; name: string }) => void;
 }) {
   const { t } = useTranslation();
   const runsQuery = useWorkflowRunsByProject(projectId);
+  const renameWorkflowRun = useRenameWorkflowRun();
   const runs = runsQuery.data ?? [];
   return (
     <>
@@ -749,113 +813,30 @@ function ProjectWorkflowRunRows({
           }
           label={run.name}
           onClick={() => onSelectRun(run.id)}
-          menu={
-            <EntityMenu
-              onEdit={() => onEditRun({ id: run.id, name: run.name })}
-              onDelete={() => onDeleteRun({ id: run.id, name: run.name })}
-            />
+          action={<ArchiveButton />}
+          onRename={(name) =>
+            renameWorkflowRun.mutateAsync({
+              runId: run.id,
+              name,
+              projectId,
+            })
           }
+          commands={[
+            {
+              label: t("sidebar.archive"),
+              icon: <IconArchive />,
+              onSelect: () => toast(t("sidebar.archiveSoon")),
+            },
+            {
+              label: t("common.delete"),
+              icon: <IconTrash />,
+              variant: "destructive",
+              separatorBefore: true,
+              onSelect: () => onDeleteRun({ id: run.id, name: run.name }),
+            },
+          ]}
         />
       ))}
     </>
-  );
-}
-
-/**
- * Opens the create-worktree-task dialog scoped to the row's project.
- */
-function NewWorktreeButton({ onClick }: { onClick: () => void }) {
-  const { t } = useTranslation();
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("sidebar.newTask")}
-            onClick={(event) => {
-              event.stopPropagation();
-              onClick();
-            }}
-          />
-        }
-      >
-        <IconGitBranch />
-      </TooltipTrigger>
-      <TooltipContent>{t("sidebar.newTask")}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-/** Starts a blank direct chat rooted at the row's project. */
-function NewDirectChatButton({ onClick }: { onClick: () => void }) {
-  const { t } = useTranslation();
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("sidebar.newDirectChat")}
-            onClick={(event) => {
-              event.stopPropagation();
-              onClick();
-            }}
-          />
-        }
-      >
-        <IconEdit />
-      </TooltipTrigger>
-      <TooltipContent>{t("sidebar.newDirectChat")}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-/** Provides contextual CRUD commands without making every tree row visually noisy. */
-function EntityMenu({
-  onEdit,
-  onCancel,
-  onDelete,
-}: {
-  onEdit?: () => void;
-  onCancel?: () => void;
-  onDelete: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("sidebar.openActions")}
-            onClick={(event) => event.stopPropagation()}
-          />
-        }
-      >
-        <IconDots />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        {onEdit && (
-          <DropdownMenuItem onClick={onEdit}>
-            <IconPencil />
-            {t("common.edit")}
-          </DropdownMenuItem>
-        )}
-        {onCancel && (
-          <DropdownMenuItem onClick={onCancel}>
-            <IconPlayerStop />
-            {t("workflowRun.cancelAction")}
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem variant="destructive" onClick={onDelete}>
-          <IconTrash />
-          {t("common.delete")}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

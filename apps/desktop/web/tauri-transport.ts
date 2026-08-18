@@ -82,6 +82,7 @@ const tauriCommands = {
   respondToSessionPermission: "respond_to_session_permission",
   stopSession: "stop_session",
   deleteSession: "delete_session",
+  renameSession: "rename_session",
 
   // =============================================================================
   // agentRuntime

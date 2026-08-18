@@ -104,7 +104,7 @@ where
         self.storage
             .write_manifest(&staging, manifest.as_bytes())
             .map_err(ApplicationError::from_skill_storage_error)?;
-        let promoted = commit_unclaimed_package(&self.storage, &skill.name, &staging)?;
+        let promoted = commit_unclaimed_package(&self.storage, &skill.id, &skill.name, &staging)?;
         let created = persist_promoted_package(&self.storage, &promoted, || {
             self.repository.create_skill(skill)
         })
@@ -264,6 +264,8 @@ where
             });
         }
 
+        let previous_updated_at = existing.audit_fields.updated_at;
+        let updated_at = next_updated_at(previous_updated_at, self.clock.now_timestamp_millis());
         let skill = Skill::new(
             skill_id,
             existing.namespace,
@@ -271,7 +273,7 @@ where
             request.description,
             AuditFields::new(
                 existing.audit_fields.created_at,
-                self.clock.now_timestamp_millis(),
+                updated_at,
                 /*is_deleted*/ false,
             ),
         )
@@ -306,8 +308,14 @@ where
         self.storage
             .write_manifest(&staging, rewritten.as_bytes())
             .map_err(ApplicationError::from_skill_storage_error)?;
-        let promoted =
-            commit_existing_package(&self.storage, &skill.name, &existing.name, &staging)?;
+        let promoted = commit_existing_package(
+            &self.storage,
+            &skill.id,
+            previous_updated_at,
+            &skill.name,
+            &existing.name,
+            &staging,
+        )?;
         let updated = persist_promoted_package(&self.storage, &promoted, || {
             self.repository.update_skill(skill)
         })
@@ -317,6 +325,11 @@ where
             skill: map_skill(updated, SkillAvailability::Available),
         })
     }
+}
+
+/// Returns a timestamp that always distinguishes an update from its previous database version.
+pub(crate) fn next_updated_at(previous_updated_at: i64, clock_updated_at: i64) -> i64 {
+    clock_updated_at.max(previous_updated_at.saturating_add(1))
 }
 
 /// Handles atomic soft deletion of reusable skill definitions and their formal directories.
@@ -356,7 +369,7 @@ where
                 skill_id: skill_id.to_string(),
             })?;
 
-        let handle = match self.storage.commit_delete(&existing.name) {
+        let handle = match self.storage.commit_delete(&existing.name, &skill_id) {
             Ok(handle) => Some(handle),
             Err(SkillStorageError::FormalDirectoryMissing { .. }) => None,
             Err(error) => return Err(ApplicationError::from_skill_storage_error(error)),
@@ -430,6 +443,8 @@ where
     Repository: SkillRepository,
     Storage: SkillStorage,
 {
+    let previous_updated_at = existing.audit_fields.updated_at;
+    let updated_at = next_updated_at(previous_updated_at, now);
     let skill = Skill::new(
         existing.id.clone(),
         existing.namespace.clone(),
@@ -437,7 +452,7 @@ where
         description,
         AuditFields::new(
             existing.audit_fields.created_at,
-            now,
+            updated_at,
             /*is_deleted*/ false,
         ),
     )
@@ -464,6 +479,8 @@ where
     let promoted = commit_restored_package(
         storage,
         &skill.namespace,
+        &skill.id,
+        previous_updated_at,
         &skill.name,
         &existing.name,
         &staging,

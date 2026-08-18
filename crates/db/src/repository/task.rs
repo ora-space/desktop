@@ -1,7 +1,5 @@
 use ora_application::{RepositoryError, TaskRepository};
-use ora_domain::{
-    AuditFields, ProjectId, Task, TaskId, TaskStatus, TaskType, WorkflowRunId, WorktreeId,
-};
+use ora_domain::{AuditFields, ProjectId, Task, TaskId, TaskType, WorkflowRunId, WorktreeId};
 use rusqlite::{Row, params};
 
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
@@ -25,13 +23,12 @@ impl TaskRepository for SqliteTaskRepository {
         self.pool
             .with_connection(|connection| {
                 connection.execute(
-                    "INSERT INTO tasks (id, project_id, title, status, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    "INSERT INTO tasks (id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     params![
                         task.id.as_ref(),
                         task.project_id.as_ref(),
                         &task.title,
-                        task.status.database_value(),
                         task.task_type.database_value(),
                         task.workflow_run_id.as_ref().map(AsRef::as_ref),
                         task.worktree_id.as_ref().map(AsRef::as_ref),
@@ -51,7 +48,7 @@ impl TaskRepository for SqliteTaskRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, project_id, title, status, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
+                    "SELECT id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
                      FROM tasks
                      WHERE id = ?1 AND is_deleted = 0",
                 )?;
@@ -70,7 +67,7 @@ impl TaskRepository for SqliteTaskRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, project_id, title, status, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
+                    "SELECT id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
                      FROM tasks
                      WHERE is_deleted = 0
                      ORDER BY created_at, id",
@@ -93,13 +90,12 @@ impl TaskRepository for SqliteTaskRepository {
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
                     "UPDATE tasks
-                     SET project_id = ?2, title = ?3, status = ?4, type = ?5, workflow_run_id = ?6, worktree_id = ?7, created_at = ?8, updated_at = ?9, is_deleted = ?10
+                     SET project_id = ?2, title = ?3, type = ?4, workflow_run_id = ?5, worktree_id = ?6, created_at = ?7, updated_at = ?8, is_deleted = ?9
                      WHERE id = ?1 AND is_deleted = 0",
                     params![
                         task.id.as_ref(),
                         task.project_id.as_ref(),
                         &task.title,
-                        task.status.database_value(),
                         task.task_type.database_value(),
                         task.workflow_run_id.as_ref().map(AsRef::as_ref),
                         task.worktree_id.as_ref().map(AsRef::as_ref),
@@ -140,7 +136,6 @@ pub(super) fn map_task_row(row: &Row<'_>) -> Result<Task, crate::DatabaseError> 
     let worktree_id = row
         .get::<_, Option<String>>("worktree_id")?
         .map(WorktreeId::new);
-    let status = TaskStatus::from_database_value(row.get("status")?)?;
     let task_type = TaskType::from_database_value(row.get("type")?)?;
     let workflow_run_id = row
         .get::<_, Option<String>>("workflow_run_id")?
@@ -151,7 +146,6 @@ pub(super) fn map_task_row(row: &Row<'_>) -> Result<Task, crate::DatabaseError> 
         id: TaskId::new(row.get::<_, String>("id")?),
         project_id: ProjectId::new(row.get::<_, String>("project_id")?),
         title: row.get::<_, String>("title")?,
-        status,
         task_type,
         workflow_run_id,
         worktree_id,

@@ -3,7 +3,7 @@ use ora_application::{
     SkillRepository, SkillStorage, TransactionJournal,
 };
 use ora_db::{RepositoryPool, SqliteSkillRepository};
-use ora_domain::Namespace;
+use ora_domain::SkillId;
 use ora_logging::ora_warn;
 use std::collections::BTreeSet;
 use std::fs;
@@ -82,6 +82,9 @@ pub(crate) fn reconcile_skill_storage(
 }
 
 /// Applies one journal marker deterministically based on its phase and the database state.
+///
+/// Directory ownership is decided by the immutable id recorded in the journal. A visible row that
+/// only shares the user-facing name cannot claim an interrupted transaction's package.
 fn recover_journal(
     repository: &SqliteSkillRepository,
     storage: &FilesystemSkillStorage,
@@ -91,10 +94,9 @@ fn recover_journal(
     let staging = Path::new(&journal.staging).to_path_buf();
     let backup = Path::new(&journal.backup).to_path_buf();
     let formal_path = |name: &str| skills_root.join(name);
-    let target_visible = repository
-        .find_skill_by_name(&Namespace::local(), &journal.name)
-        .map_err(operation_failed)?
-        .is_some();
+    let owner = repository
+        .find_skill(&SkillId::new(&journal.skill_id))
+        .map_err(operation_failed)?;
 
     match journal.op {
         JournalOp::Create => match journal.phase {
@@ -108,46 +110,49 @@ fn recover_journal(
                 remove_if_present(storage, &staging)?;
             }
             JournalPhase::Swapped => {
-                // Keep the promoted directory only when a database record claims it.
-                if !target_visible && storage.formal_exists(&journal.name) {
+                // A same-named unrelated row cannot keep this interrupted create.
+                if owner.is_none() && storage.formal_exists(&journal.name) {
                     storage
                         .remove_dir(&formal_path(&journal.name))
                         .map_err(operation_failed)?;
                 }
             }
         },
-        JournalOp::Swap => match journal.phase {
+        JournalOp::Swap {
+            previous_updated_at,
+        } => match journal.phase {
             JournalPhase::Prepared => {
                 // The swap never reached its database write; restore the original directory.
-                if storage.formal_exists(&journal.name) {
-                    storage
-                        .remove_dir(&formal_path(&journal.name))
-                        .map_err(operation_failed)?;
-                }
-                if backup.exists() && !storage.formal_exists(&journal.from_name) {
-                    storage
-                        .restore_backup(&backup, &journal.from_name)
-                        .map_err(operation_failed)?;
-                }
+                restore_interrupted_swap(storage, journal, &backup, skills_root)?;
                 remove_if_present(storage, &staging)?;
             }
             JournalPhase::Swapped => {
-                if target_visible {
-                    // Fully committed; only the compensation backup remains.
+                let owner_name = owner.as_ref().map(|skill| skill.name.as_str());
+                let database_write_pending = previous_updated_at.is_some_and(|previous| {
+                    owner.as_ref().is_some_and(|skill| {
+                        skill.name == journal.from_name && skill.audit_fields.updated_at == previous
+                    })
+                });
+
+                if database_write_pending {
+                    // The exact pre-swap database version remains, so restore its package.
+                    restore_interrupted_swap(storage, journal, &backup, skills_root)?;
+                } else if owner_name == Some(journal.name.as_str()) {
+                    // The target version committed, or a later update superseded this journal.
                     remove_if_present(storage, &backup)?;
+                } else if previous_updated_at.is_none() && owner.is_none() {
+                    // A new row failed to claim an existing untracked package. Restore that
+                    // package instead of losing it; a same-named unrelated row is not the owner.
+                    restore_interrupted_swap(storage, journal, &backup, skills_root)?;
                 } else {
-                    // Database write never happened. Restore the original directory whether
-                    // a catalog row still owns `from_name` or the leftover was untracked.
+                    // The journaled owner no longer claims either path; discard transaction
+                    // leftovers without allowing a same-named unrelated row to inherit them.
                     if storage.formal_exists(&journal.name) {
                         storage
                             .remove_dir(&formal_path(&journal.name))
                             .map_err(operation_failed)?;
                     }
-                    if backup.exists() && !storage.formal_exists(&journal.from_name) {
-                        storage
-                            .restore_backup(&backup, &journal.from_name)
-                            .map_err(operation_failed)?;
-                    }
+                    remove_if_present(storage, &backup)?;
                 }
                 remove_if_present(storage, &staging)?;
             }
@@ -162,8 +167,8 @@ fn recover_journal(
                 }
             }
             JournalPhase::Swapped => {
-                if target_visible {
-                    // The soft delete never committed; restore the directory.
+                if owner.is_some() {
+                    // The soft delete never committed; restore the journal owner's directory.
                     if backup.exists() && !storage.formal_exists(&journal.name) {
                         storage
                             .restore_backup(&backup, &journal.name)
@@ -178,6 +183,25 @@ fn recover_journal(
     Ok(())
 }
 
+/// Restores the pre-swap package after recovery proves the database write never committed.
+fn restore_interrupted_swap(
+    storage: &FilesystemSkillStorage,
+    journal: &TransactionJournal,
+    backup: &Path,
+    skills_root: &Path,
+) -> Result<(), SkillStorageReconciliationError> {
+    if storage.formal_exists(&journal.name) {
+        storage
+            .remove_dir(&skills_root.join(&journal.name))
+            .map_err(operation_failed)?;
+    }
+    if backup.exists() && !storage.formal_exists(&journal.from_name) {
+        storage
+            .restore_backup(backup, &journal.from_name)
+            .map_err(operation_failed)?;
+    }
+    Ok(())
+}
 /// Removes one reserved directory when it still exists.
 fn remove_if_present(
     storage: &FilesystemSkillStorage,
@@ -310,7 +334,10 @@ mod tests {
         fs::write(backup.join("SKILL.md"), "old body").unwrap();
 
         let journal = TransactionJournal {
-            op: ora_application::JournalOp::Swap,
+            op: ora_application::JournalOp::Swap {
+                previous_updated_at: Some(100),
+            },
+            skill_id: "skill-1".to_string(),
             name: "review".to_string(),
             from_name: "review".to_string(),
             staging: staging.to_string_lossy().into_owned(),
@@ -351,6 +378,253 @@ mod tests {
         assert!(!skills_root.join(".ora-journal").join("txn.json").exists());
     }
 
+    #[test]
+    fn restores_same_name_swap_when_database_write_did_not_commit() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        let database_path = temp.path().join("ora.sqlite3");
+        let repository = SqliteSkillRepository::new(pool(&database_path));
+        repository
+            .create_skill(
+                Skill::new(
+                    SkillId::new("skill-1"),
+                    Namespace::local(),
+                    "review",
+                    "Old description",
+                    AuditFields::new(100, 100, false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        create_formal(&skills_root, "review", "new body");
+        let backup = skills_root.join(".ora-backup").join("txn");
+        create_formal(&skills_root.join(".ora-backup"), "txn", "old body");
+        let journal = TransactionJournal {
+            op: ora_application::JournalOp::Swap {
+                previous_updated_at: Some(100),
+            },
+            skill_id: "skill-1".to_string(),
+            name: "review".to_string(),
+            from_name: "review".to_string(),
+            staging: String::new(),
+            backup: backup.to_string_lossy().into_owned(),
+            phase: ora_application::JournalPhase::Swapped,
+            file: skills_root
+                .join(".ora-journal")
+                .join("txn.json")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        write_journal(&journal);
+
+        reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(skills_root.join("review").join("SKILL.md")).unwrap(),
+            "old body"
+        );
+        assert!(!backup.exists());
+        assert!(!Path::new(&journal.file).exists());
+    }
+
+    #[test]
+    fn keeps_same_name_swap_when_database_write_committed() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        let database_path = temp.path().join("ora.sqlite3");
+        let repository = SqliteSkillRepository::new(pool(&database_path));
+        repository
+            .create_skill(
+                Skill::new(
+                    SkillId::new("skill-1"),
+                    Namespace::local(),
+                    "review",
+                    "New description",
+                    AuditFields::new(100, 200, false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        create_formal(&skills_root, "review", "new body");
+        let backup = skills_root.join(".ora-backup").join("txn");
+        create_formal(&skills_root.join(".ora-backup"), "txn", "old body");
+        let journal = TransactionJournal {
+            op: ora_application::JournalOp::Swap {
+                previous_updated_at: Some(100),
+            },
+            skill_id: "skill-1".to_string(),
+            name: "review".to_string(),
+            from_name: "review".to_string(),
+            staging: String::new(),
+            backup: backup.to_string_lossy().into_owned(),
+            phase: ora_application::JournalPhase::Swapped,
+            file: skills_root
+                .join(".ora-journal")
+                .join("txn.json")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        write_journal(&journal);
+
+        reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(skills_root.join("review").join("SKILL.md")).unwrap(),
+            "new body"
+        );
+        assert!(!backup.exists());
+        assert!(!Path::new(&journal.file).exists());
+    }
+
+    #[test]
+    fn delete_recovery_does_not_restore_backup_for_unrelated_same_name_skill() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        let database_path = temp.path().join("ora.sqlite3");
+        let repository = SqliteSkillRepository::new(pool(&database_path));
+        repository
+            .create_skill(
+                Skill::new(
+                    SkillId::new("skill-unrelated"),
+                    Namespace::local(),
+                    "gone",
+                    "Unrelated",
+                    AuditFields::new(300, 300, false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        create_formal(&skills_root, "gone", "unrelated body");
+        let backup = skills_root.join(".ora-backup").join("txn");
+        create_formal(
+            &skills_root.join(".ora-backup"),
+            "txn",
+            "deleted owner body",
+        );
+        let journal = TransactionJournal {
+            op: ora_application::JournalOp::Delete,
+            skill_id: "skill-deleted".to_string(),
+            name: "gone".to_string(),
+            from_name: "gone".to_string(),
+            staging: String::new(),
+            backup: backup.to_string_lossy().into_owned(),
+            phase: ora_application::JournalPhase::Swapped,
+            file: skills_root
+                .join(".ora-journal")
+                .join("txn.json")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        write_journal(&journal);
+
+        reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(skills_root.join("gone").join("SKILL.md")).unwrap(),
+            "unrelated body"
+        );
+        assert!(!backup.exists());
+        assert!(!Path::new(&journal.file).exists());
+    }
+
+    #[test]
+    fn removes_interrupted_create_not_owned_by_same_name_database_skill() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        let database_path = temp.path().join("ora.sqlite3");
+        let repository = SqliteSkillRepository::new(pool(&database_path));
+        repository
+            .create_skill(
+                Skill::new(
+                    SkillId::new("skill-db-only"),
+                    Namespace::local(),
+                    "review",
+                    "Pre-existing database row",
+                    AuditFields::new(100, 100, false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        // Crash window: import promoted `review/` for a different skill id, then died
+        // before inserting that row. A same-named visible row must not inherit it.
+        create_formal(&skills_root, "review", "crashed import body");
+        let journal = TransactionJournal {
+            op: ora_application::JournalOp::Create,
+            skill_id: "skill-import".to_string(),
+            name: "review".to_string(),
+            from_name: "review".to_string(),
+            staging: String::new(),
+            backup: String::new(),
+            phase: ora_application::JournalPhase::Swapped,
+            file: skills_root
+                .join(".ora-journal")
+                .join("txn.json")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        write_journal(&journal);
+
+        ora_logging::with_trace_logging(|| {
+            reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+        });
+
+        assert!(!skills_root.join("review").exists());
+        assert!(!Path::new(&journal.file).exists());
+        assert!(
+            repository
+                .find_skill(&SkillId::new("skill-db-only"))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn keeps_promoted_create_when_journal_skill_id_exists() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        let database_path = temp.path().join("ora.sqlite3");
+        let repository = SqliteSkillRepository::new(pool(&database_path));
+        repository
+            .create_skill(
+                Skill::new(
+                    SkillId::new("skill-import"),
+                    Namespace::local(),
+                    "review",
+                    "Imported",
+                    AuditFields::new(100, 100, false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        create_formal(&skills_root, "review", "imported body");
+        let journal = TransactionJournal {
+            op: ora_application::JournalOp::Create,
+            skill_id: "skill-import".to_string(),
+            name: "review".to_string(),
+            from_name: "review".to_string(),
+            staging: String::new(),
+            backup: String::new(),
+            phase: ora_application::JournalPhase::Swapped,
+            file: skills_root
+                .join(".ora-journal")
+                .join("txn.json")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        write_journal(&journal);
+
+        reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(skills_root.join("review").join("SKILL.md")).unwrap(),
+            "imported body"
+        );
+        assert!(!Path::new(&journal.file).exists());
+    }
     /// Verifies a reserved directory name survives a real import followed by startup reconciliation.
     ///
     /// This is the end-to-end shape of the original defect: a skill whose name matched a reserved
@@ -494,7 +768,10 @@ mod tests {
         create_formal(&skills_root, "stray", "new body");
 
         let journal = TransactionJournal {
-            op: ora_application::JournalOp::Swap,
+            op: ora_application::JournalOp::Swap {
+                previous_updated_at: None,
+            },
+            skill_id: "skill-import".to_string(),
             name: "stray".to_string(),
             from_name: "stray".to_string(),
             staging: staging.to_string_lossy().into_owned(),
@@ -664,6 +941,7 @@ mod tests {
         fs::rename(skills_root.join("gone"), &backup).unwrap();
         let journal = TransactionJournal {
             op: ora_application::JournalOp::Delete,
+            skill_id: "skill-1".to_string(),
             name: "gone".to_string(),
             from_name: "gone".to_string(),
             staging: String::new(),

@@ -44,7 +44,8 @@ use ora_contracts::{
 };
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{
-    AgentCli, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus, TaskId,
+    AgentCli, AuditFields, HistoryState, ProjectId, Session, SessionId, SessionStatus,
+    SessionTitle, TaskId,
 };
 use ora_history::{HistoryIntegrity, binding_needs_handoff, read_session_history};
 use ora_logging::{ora_debug, ora_warn};
@@ -128,6 +129,10 @@ pub(super) enum RuntimeCommand {
         operation_id: u64,
     },
     PreemptTitlePolling {
+        response: oneshot::Sender<()>,
+    },
+    AdoptUserTitle {
+        title: SessionTitle,
         response: oneshot::Sender<()>,
     },
     TitlePoll {
@@ -319,6 +324,26 @@ impl AgentRuntimeManager {
         )
         .await?;
         Ok(SetSessionConfigResponse { config_options })
+    }
+
+    /// Locks first-title acquisition so a later agent title cannot overwrite a user rename.
+    ///
+    /// Missing actors are a no-op: restored sessions already start with acquisition disabled.
+    pub(crate) async fn adopt_user_title(
+        &self,
+        session_id: &str,
+        title: SessionTitle,
+    ) -> Result<(), BackendError> {
+        let session_id = SessionId::new(session_id);
+        let Some(handle) = self.lookup_actor(&session_id)? else {
+            return Ok(());
+        };
+        let (response, acknowledged) = oneshot::channel();
+        handle
+            .commands
+            .send(RuntimeCommand::AdoptUserTitle { title, response })
+            .map_err(|_error| runtime_unavailable())?;
+        acknowledged.await.map_err(|_error| runtime_unavailable())
     }
 
     /// Persists one warm session against the Task that now owns it.

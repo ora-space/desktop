@@ -11,12 +11,12 @@ use crate::worktree::WorktreeIdGenerator;
 use crate::{ApplicationError, Clock};
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest,
-    ListTasksResponse, TaskStatus, TaskWorkspaceMode, UpdateTaskRequest, UpdateTaskResponse,
+    ListTasksResponse, TaskWorkspaceMode, UpdateTaskRequest, UpdateTaskResponse,
 };
 use ora_domain::{
-    AuditFields, ProjectId, Task as DomainTask, TaskId, TaskStatus as DomainTaskStatus,
-    Worktree as DomainWorktree, WorktreeActivity as DomainWorktreeActivity,
-    WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
+    AuditFields, ProjectId, Task as DomainTask, TaskId, Worktree as DomainWorktree,
+    WorktreeActivity as DomainWorktreeActivity, WorktreeProvisioningLease,
+    WorktreeProvisioningLeaseId,
 };
 use std::fs;
 use std::io;
@@ -210,7 +210,6 @@ where
             task_id,
             project_id.clone(),
             request.title,
-            map_contract_task_status(request.status),
             Some(worktree.id.clone()),
             AuditFields::new(now, now, false),
         );
@@ -259,7 +258,6 @@ where
             task_id,
             ProjectId::new(request.project_id),
             request.title,
-            map_contract_task_status(request.status),
             None,
             AuditFields::new(now, now, false),
         );
@@ -413,7 +411,6 @@ where
             id: task_id,
             project_id: existing_task.project_id,
             title: request.title,
-            status: map_contract_task_status(request.status),
             // Preserve the task kind and run association: updating a workflow-run task must not
             // degrade it to a Default task, just as the owned worktree is carried forward.
             task_type: existing_task.task_type,
@@ -433,15 +430,6 @@ where
         Ok(UpdateTaskResponse {
             task: map_task(task),
         })
-    }
-}
-
-/// Translates the transport-facing task status into the domain enum.
-fn map_contract_task_status(status: TaskStatus) -> DomainTaskStatus {
-    match status {
-        TaskStatus::Todo => DomainTaskStatus::Todo,
-        TaskStatus::Doing => DomainTaskStatus::Doing,
-        TaskStatus::Done => DomainTaskStatus::Done,
     }
 }
 

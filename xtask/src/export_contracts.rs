@@ -285,6 +285,8 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "GetAgentRuntimeStatusResponse"
         | "GetSessionRequest"
         | "GetSessionResponse"
+        | "RenameSessionRequest"
+        | "RenameSessionResponse"
         | "SetSessionConfigRequest"
         | "SetSessionConfigResponse"
         | "WarmSessionRequest"

@@ -332,12 +332,7 @@ function BranchTab() {
                   }}
                 >
                   <IconGitBranch className={MENU_ICON_CLASS} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{task.title}</span>
-                    <span className="block truncate text-[10px] text-muted-foreground">
-                      {t(`common.${task.status}`)}
-                    </span>
-                  </span>
+                  <span className="min-w-0 flex-1 truncate">{task.title}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

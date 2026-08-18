@@ -1,16 +1,6 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Describes the public task status shared across adapter boundaries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "task.ts")]
-pub enum TaskStatus {
-    Todo,
-    Doing,
-    Done,
-}
-
 /// Selects the task kind so the frontend can distinguish workflow-run tasks from ordinary tasks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +33,6 @@ pub struct Task {
     pub id: String,
     pub project_id: String,
     pub title: String,
-    pub status: TaskStatus,
     pub workspace_mode: TaskWorkspaceMode,
     #[serde(rename = "type")]
     pub task_type: TaskType,
@@ -57,7 +46,6 @@ pub struct Task {
 pub struct CreateTaskRequest {
     pub project_id: String,
     pub title: String,
-    pub status: TaskStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub workspace_mode: Option<TaskWorkspaceMode>,
@@ -138,7 +126,6 @@ pub struct ListTasksResponse {
 pub struct UpdateTaskRequest {
     pub task_id: String,
     pub title: String,
-    pub status: TaskStatus,
 }
 
 /// Returns the updated task after a successful update request.
@@ -167,7 +154,6 @@ pub struct DeleteTaskResponse {
 
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
-    TaskStatus::export(config)?;
     TaskType::export(config)?;
     TaskWorkspaceMode::export(config)?;
     Task::export(config)?;
@@ -192,8 +178,8 @@ mod tests {
     use super::{
         CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse,
         GetTaskRequest, GetTaskResponse, GetTaskWorkspaceResponse, ListTasksRequest,
-        ListTasksResponse, Task, TaskStatus, TaskType, TaskWorkspace, TaskWorkspaceMode,
-        UpdateTaskRequest, UpdateTaskResponse,
+        ListTasksResponse, Task, TaskType, TaskWorkspace, TaskWorkspaceMode, UpdateTaskRequest,
+        UpdateTaskResponse,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -206,7 +192,6 @@ mod tests {
             id: "task-1".to_string(),
             project_id: "project-1".to_string(),
             title: "Ship handlers".to_string(),
-            status: TaskStatus::Doing,
             workspace_mode: TaskWorkspaceMode::Worktree,
             task_type: TaskType::Default,
             workflow_run_id: None,
@@ -214,7 +199,6 @@ mod tests {
         let create_request = CreateTaskRequest {
             project_id: "project-1".to_string(),
             title: "Ship handlers".to_string(),
-            status: TaskStatus::Todo,
             workspace_mode: None,
             base_branch: Some("main".to_string()),
         };
@@ -225,7 +209,6 @@ mod tests {
         let update_request = UpdateTaskRequest {
             task_id: "task-1".to_string(),
             title: "Ship updated handlers".to_string(),
-            status: TaskStatus::Done,
         };
         let delete_request = DeleteTaskRequest {
             task_id: "task-1".to_string(),
@@ -237,7 +220,6 @@ mod tests {
                 "id": "task-1",
                 "projectId": "project-1",
                 "title": "Ship handlers",
-                "status": "doing",
                 "workspaceMode": "worktree",
                 "type": "default",
                 "workflowRunId": null,
@@ -248,7 +230,6 @@ mod tests {
             json!({
                 "projectId": "project-1",
                 "title": "Ship handlers",
-                "status": "todo",
                 "baseBranch": "main",
             }),
         );
@@ -259,7 +240,6 @@ mod tests {
                     "id": "task-1",
                     "projectId": "project-1",
                 "title": "Ship handlers",
-                "status": "doing",
                 "workspaceMode": "worktree",
                 "type": "default",
                 "workflowRunId": null,
@@ -274,7 +254,6 @@ mod tests {
                     "id": "task-1",
                     "projectId": "project-1",
                 "title": "Ship handlers",
-                "status": "doing",
                 "workspaceMode": "worktree",
                 "type": "default",
                 "workflowRunId": null,
@@ -292,7 +271,6 @@ mod tests {
                         "id": "task-1",
                         "projectId": "project-1",
                         "title": "Ship handlers",
-                        "status": "doing",
                         "workspaceMode": "worktree",
                         "type": "default",
                         "workflowRunId": null,
@@ -305,7 +283,6 @@ mod tests {
             json!({
                 "taskId": "task-1",
                 "title": "Ship updated handlers",
-                "status": "done",
             }),
         );
         assert_serialized_json(
@@ -315,7 +292,6 @@ mod tests {
                     "id": "task-1",
                     "projectId": "project-1",
                     "title": "Ship handlers",
-                    "status": "doing",
                     "workspaceMode": "worktree",
                     "type": "default",
                     "workflowRunId": null,
@@ -345,7 +321,6 @@ mod tests {
             id: "task-1".to_string(),
             project_id: "project-1".to_string(),
             title: "Ship handlers".to_string(),
-            status: TaskStatus::Todo,
             workspace_mode: TaskWorkspaceMode::Worktree,
             task_type: TaskType::Default,
             workflow_run_id: None,

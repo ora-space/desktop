@@ -18,7 +18,9 @@ from one folder tree or one supported archive (`.zip`, `.skill`, `.tar.gz`, `.tg
 - Commit (`commit`) validates that every conflict candidate has a decision, freezes the decisions,
   and starts a detached background task that processes candidates in stable source-path order.
   Each skill is staged under the formal skills root and promoted atomically with its database
-  write; one failed candidate never rolls back its siblings.
+  write. The promote flushes package files and directory metadata before the row is committed
+  on platforms that can fsync directories; Windows directory flush is best-effort. One failed
+  candidate never rolls back its siblings.
 - Sessions live only in memory and expire by idle time or absolute lifetime. Completed or
   cancelled sessions retain lightweight result metadata for the result-retention window so
   idempotent retries and progress recovery keep working.

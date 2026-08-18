@@ -22,9 +22,9 @@ use ora_contracts::{
     ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
 };
 use ora_domain::{
-    AuditFields, ProjectId, Task, TaskId, TaskStatus, Workflow, WorkflowId, WorkflowRun,
-    WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Worktree,
-    WorktreeActivity, WorktreeBaseline, WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
+    AuditFields, ProjectId, Task, TaskId, Workflow, WorkflowId, WorkflowRun, WorkflowRunId,
+    WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Worktree, WorktreeActivity,
+    WorktreeBaseline, WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
 };
 
 const DRAFT_VERSION: &str = "draft";
@@ -260,7 +260,6 @@ where
             task_id.clone(),
             project_id.clone(),
             title,
-            TaskStatus::Todo,
             run_id.clone(),
             worktree_id,
             AuditFields::new(now, now, /*is_deleted*/ false),

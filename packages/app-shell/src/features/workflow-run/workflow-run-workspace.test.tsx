@@ -98,7 +98,6 @@ function seedRunWithTask() {
       id: "task-run-1",
       projectId: "p1",
       title: "审查流程 1",
-      status: "todo",
       workspaceMode: "worktree",
       type: "workflow",
       workflowRunId: "run-1",

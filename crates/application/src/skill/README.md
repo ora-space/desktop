@@ -27,7 +27,12 @@ on-disk packages.
 - `SkillStorage` isolates every filesystem mutation behind a statically dispatched port. The
   default `FilesystemSkillStorage` keeps staging, compensation backups, and journal markers under
   the reserved `<skills_root>/<.ora-staging|.ora-backup|.ora-journal>` directories so renames stay
-  on one filesystem and interrupted transactions can be recovered at startup.
+  on one filesystem and interrupted transactions can be recovered at startup. Each journal records
+  the immutable skill id so recovery attributes an in-flight directory to that identity rather
+  than to any visible row that happens to share the user-facing name. Swap journals for owned
+  packages also record the prior database version so a same-name update can distinguish an
+  uncommitted row write from
+  a fully committed or superseded update.
 - `SkillRepository` supplies case-insensitive name lookups used for global uniqueness and import
   conflict detection.
 - A destination claimed by another in-flight package transaction is a `SkillFolderConflict`,
@@ -36,6 +41,15 @@ on-disk packages.
   that a mutation still expected is `SkillStorageInconsistent`.
 - Domain validation (`ora-domain::Skill`) enforces the ASCII slug name rules and the 4096-byte
   description limit shared by create, update, and import.
+- Power-loss durability is part of package atomicity. Package files, journal markers, and
+  directory promotes are flushed before the database commit so the remaining crash window is
+  "directory exists, row not yet committed", which startup reconciliation already repairs by
+  removing unowned packages. SQLite uses `synchronous=NORMAL`, so a power loss may drop the
+  last COMMIT and leave an unowned directory, which reconciliation removes. Mutation-time
+  directory fsync is a hard error on Unix; startup recovery treats an unsupported directory fsync
+  as best-effort so restoring a valid backup cannot permanently block startup. Windows cannot
+  reliably flush directory metadata, so that flush is best-effort there, and macOS `sync_all` is
+  `fsync` rather than `F_FULLFSYNC`.
 
 ## Atomicity and recovery model
 

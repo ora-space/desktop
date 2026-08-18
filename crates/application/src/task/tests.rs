@@ -7,13 +7,12 @@ use crate::{
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest,
-    ListTasksResponse, Task as ContractTask, TaskStatus as ContractTaskStatus,
-    TaskType as ContractTaskType, TaskWorkspaceMode, UpdateTaskRequest, UpdateTaskResponse,
+    ListTasksResponse, Task as ContractTask, TaskType as ContractTaskType, TaskWorkspaceMode,
+    UpdateTaskRequest, UpdateTaskResponse,
 };
 use ora_domain::{
-    AuditFields, ProjectId, Task, TaskId, TaskStatus as DomainTaskStatus, Worktree,
-    WorktreeActivity as DomainWorktreeActivity, WorktreeId, WorktreeProvisioningLease,
-    WorktreeProvisioningLeaseId,
+    AuditFields, ProjectId, Task, TaskId, Worktree, WorktreeActivity as DomainWorktreeActivity,
+    WorktreeId, WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -50,7 +49,6 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Doing,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })
@@ -63,7 +61,6 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
                     id: TASK_ID.to_string(),
                     project_id: "project-1".to_string(),
                     title: "Ship handlers".to_string(),
-                    status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::Worktree,
                     task_type: ContractTaskType::Default,
                     workflow_run_id: None,
@@ -130,7 +127,6 @@ fn creates_tasks_with_owned_worktrees_and_clock_values() {
                 TaskId::new(TASK_ID),
                 ProjectId::new("project-1"),
                 "Ship handlers",
-                DomainTaskStatus::Doing,
                 Some(WorktreeId::new("worktree-1")),
                 AuditFields::new(1_700_000_000_000, 1_700_000_000_000, false),
             )
@@ -160,7 +156,6 @@ fn creates_project_root_tasks_without_worktrees() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Chat in project root".to_string(),
-                status: ContractTaskStatus::Doing,
                 workspace_mode: Some(TaskWorkspaceMode::ProjectRoot),
                 base_branch: None,
             })
@@ -173,7 +168,6 @@ fn creates_project_root_tasks_without_worktrees() {
                     id: TASK_ID.to_string(),
                     project_id: "project-1".to_string(),
                     title: "Chat in project root".to_string(),
-                    status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::ProjectRoot,
                     task_type: ContractTaskType::Default,
                     workflow_run_id: None,
@@ -212,7 +206,6 @@ fn rejects_worktree_tasks_outside_git_repositories() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Cannot create worktree here".to_string(),
-                status: ContractTaskStatus::Doing,
                 workspace_mode: Some(TaskWorkspaceMode::Worktree),
                 base_branch: Some("main".to_string()),
             })
@@ -250,7 +243,6 @@ fn rejects_missing_base_branches_without_persisting_ora_records() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Cannot find base branch".to_string(),
-                status: ContractTaskStatus::Doing,
                 workspace_mode: Some(TaskWorkspaceMode::Worktree),
                 base_branch: Some("ghost-branch".to_string()),
             })
@@ -291,7 +283,6 @@ fn rejects_worktree_tasks_without_a_base_branch() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Missing base branch".to_string(),
-                status: ContractTaskStatus::Todo,
                 workspace_mode: Some(TaskWorkspaceMode::Worktree),
                 base_branch: None,
             })
@@ -331,7 +322,6 @@ fn regenerates_task_ids_when_branch_prefix_folder_exists() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Doing,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })
@@ -344,7 +334,6 @@ fn regenerates_task_ids_when_branch_prefix_folder_exists() {
                     id: "87654321-1234-5678-90ab-1234567890ab".to_string(),
                     project_id: "project-1".to_string(),
                     title: "Ship handlers".to_string(),
-                    status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::Worktree,
                     task_type: ContractTaskType::Default,
                     workflow_run_id: None,
@@ -399,7 +388,6 @@ fn regenerates_task_ids_when_orphaned_branch_exists() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Doing,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })
@@ -412,7 +400,6 @@ fn regenerates_task_ids_when_orphaned_branch_exists() {
                     id: "87654321-1234-5678-90ab-1234567890ab".to_string(),
                     project_id: "project-1".to_string(),
                     title: "Ship handlers".to_string(),
-                    status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::Worktree,
                     task_type: ContractTaskType::Default,
                     workflow_run_id: None,
@@ -451,7 +438,6 @@ fn creates_task_when_work_dir_does_not_exist() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Doing,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })
@@ -464,7 +450,6 @@ fn creates_task_when_work_dir_does_not_exist() {
                     id: TASK_ID.to_string(),
                     project_id: "project-1".to_string(),
                     title: "Ship handlers".to_string(),
-                    status: ContractTaskStatus::Doing,
                     workspace_mode: TaskWorkspaceMode::Worktree,
                     task_type: ContractTaskType::Default,
                     workflow_run_id: None,
@@ -504,7 +489,6 @@ fn reports_task_worktree_error_when_task_id_retries_are_exhausted() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Doing,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })
@@ -524,7 +508,6 @@ fn gets_tasks_by_identifier() {
             TaskId::new("task-1"),
             ProjectId::new("project-1"),
             "Ship handlers",
-            DomainTaskStatus::Todo,
             None,
             AuditFields::new(1, 2, false),
         )]));
@@ -543,7 +526,6 @@ fn gets_tasks_by_identifier() {
                     id: "task-1".to_string(),
                     project_id: "project-1".to_string(),
                     title: "Ship handlers".to_string(),
-                    status: ContractTaskStatus::Todo,
                     workspace_mode: TaskWorkspaceMode::ProjectRoot,
                     task_type: ContractTaskType::Default,
                     workflow_run_id: None,
@@ -562,7 +544,6 @@ fn lists_visible_tasks() {
                 TaskId::new("task-1"),
                 ProjectId::new("project-1"),
                 "Ship handlers",
-                DomainTaskStatus::Todo,
                 None,
                 AuditFields::new(1, 2, false),
             ),
@@ -570,7 +551,6 @@ fn lists_visible_tasks() {
                 TaskId::new("task-2"),
                 ProjectId::new("project-2"),
                 "Wire exports",
-                DomainTaskStatus::Done,
                 Some(WorktreeId::new("worktree-2")),
                 AuditFields::new(3, 4, false),
             ),
@@ -589,7 +569,6 @@ fn lists_visible_tasks() {
                         id: "task-1".to_string(),
                         project_id: "project-1".to_string(),
                         title: "Ship handlers".to_string(),
-                        status: ContractTaskStatus::Todo,
                         workspace_mode: TaskWorkspaceMode::ProjectRoot,
                         task_type: ContractTaskType::Default,
                         workflow_run_id: None,
@@ -598,7 +577,6 @@ fn lists_visible_tasks() {
                         id: "task-2".to_string(),
                         project_id: "project-2".to_string(),
                         title: "Wire exports".to_string(),
-                        status: ContractTaskStatus::Done,
                         workspace_mode: TaskWorkspaceMode::Worktree,
                         task_type: ContractTaskType::Default,
                         workflow_run_id: None,
@@ -617,7 +595,6 @@ fn updates_tasks_with_refreshed_timestamps() {
             TaskId::new("task-1"),
             ProjectId::new("project-1"),
             "Ship handlers",
-            DomainTaskStatus::Todo,
             None,
             AuditFields::new(10, 20, false),
         )]));
@@ -627,7 +604,6 @@ fn updates_tasks_with_refreshed_timestamps() {
             .handle(UpdateTaskRequest {
                 task_id: "task-1".to_string(),
                 title: "Ship updated handlers".to_string(),
-                status: ContractTaskStatus::Done,
             })
             .unwrap_or_else(|error| panic!("update handler failed: {error}"));
 
@@ -638,7 +614,6 @@ fn updates_tasks_with_refreshed_timestamps() {
                     id: "task-1".to_string(),
                     project_id: "project-1".to_string(),
                     title: "Ship updated handlers".to_string(),
-                    status: ContractTaskStatus::Done,
                     workspace_mode: TaskWorkspaceMode::ProjectRoot,
                     task_type: ContractTaskType::Default,
                     workflow_run_id: None,
@@ -651,7 +626,6 @@ fn updates_tasks_with_refreshed_timestamps() {
                 TaskId::new("task-1"),
                 ProjectId::new("project-1"),
                 "Ship updated handlers",
-                DomainTaskStatus::Done,
                 None,
                 AuditFields::new(10, 30, false),
             )]
@@ -684,7 +658,6 @@ fn releases_lease_to_cleanup_when_workspace_commit_fails() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Todo,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })
@@ -729,7 +702,6 @@ fn releases_lease_to_cleanup_when_project_was_deleted_concurrently() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Todo,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })
@@ -767,7 +739,6 @@ fn rejects_project_root_tasks_when_project_was_deleted_concurrently() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Chat in project root".to_string(),
-                status: ContractTaskStatus::Todo,
                 workspace_mode: Some(TaskWorkspaceMode::ProjectRoot),
                 base_branch: None,
             })
@@ -813,7 +784,6 @@ fn reports_application_errors() {
             .handle(CreateTaskRequest {
                 project_id: "project-1".to_string(),
                 title: "Ship handlers".to_string(),
-                status: ContractTaskStatus::Todo,
                 workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })

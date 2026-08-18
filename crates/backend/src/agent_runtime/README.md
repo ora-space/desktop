@@ -5,13 +5,13 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 ## Runtime model
 
 - `AgentRuntimeManager` owns one independently supervised ACP child connection per supported CLI and routes sessions to the supervisor selected by their current `agent_cli` binding. Switching replaces that binding while preserving the Ora session and its recorded history.
-- Each session has one actor that serializes load, prompt, permission, cancellation, stop, and deletion commands.
+- Each session has one actor that serializes load, prompt, permission, cancellation, stop, deletion, and user-title adoption commands.
 - Sessions targeting the same CLI share its process and connection; sessions targeting different CLIs or different actors can progress concurrently.
 - Prompts preserve the public ACP `ContentBlock` sequence, so one turn can contain text, images, audio, and linked or embedded resources instead of being reduced to plain text.
 - Model discovery runs each CLI's bounded command independently and returns only successful groups.
 - CLI executables are located with the same semantics on every platform: each directory on the process `PATH` is searched first, then the CLI's fixed per-user install directory (`~/.{cli}/bin`) as a fallback. PATH wins so the resolved binary matches what `which` reports in the user's terminal; the fallback keeps official install-script setups working when a desktop-launched GUI process inherits a minimal PATH. Known limitation: PATH entries added only by shell rc files (nvm, bun) may be invisible to a GUI-launched process; the not-found error enumerates every searched location to keep that diagnosable.
 - Session cwd for project-root tasks and warm project-root chats is resolved against the bootstrap path base, not live process cwd.
-- A newly attached session has a non-persisted title-acquisition window. It accepts valid ACP `session_info_update` titles from attach onward and, after the first eligible prompt (`EndTurn`, `MaxTokens`, or `MaxTurnRequests`), schedules bounded `session/list` fallbacks at three and ten seconds when the CLI advertises that capability. Restored sessions start with acquisition disabled.
+- A newly attached session has a non-persisted title-acquisition window. It accepts valid ACP `session_info_update` titles from attach onward and, after the first eligible prompt (`EndTurn`, `MaxTokens`, or `MaxTurnRequests`), schedules bounded `session/list` fallbacks at three and ten seconds when the CLI advertises that capability. A user-driven rename locks that window so a later agent title cannot overwrite the chosen name. Restored sessions start with acquisition disabled.
 
 ## Flow control and failure isolation
 
@@ -43,7 +43,7 @@ Prompt validation rejects an empty content-block sequence or one containing only
 
 Cancellation sends `session/cancel` and waits for bounded settlement. Explicit stop may call `session/close` when supported, unloads routing, and retains provider history. A failed history write moves the session into a degraded state and refuses later prompts until history is resumed. Switching creates the new provider session before releasing the old binding, then injects the recorded transcript into the next prompt. That injection is only settled once the provider accepts the prompt carrying it, and the settlement is written to the history file, so a request that failed on the way out leaves the binding still owing its transcript even after the actor holding that knowledge is gone. Deletion removes Ora's stopped record and its Ora-owned history after serialized unload; it does not delete provider history.
 
-Session titles are validated as the domain `SessionTitle` value object, persisted through a title-only repository operation taking `&SessionTitle`, and published through `AppEventHub` only after a successful database commit. The event contains only the Ora session id; clients refetch the authoritative `Session.title`. Title acquisition is never restored after process restart, agent switch, explicit stop, connection loss, or actor termination, and a late provider update cannot change a locked title.
+Session titles are validated as the domain `SessionTitle` value object, persisted through a title-only repository operation taking `&SessionTitle`, and published through `AppEventHub` only after a successful database commit. The event contains only the Ora session id; clients refetch the authoritative `Session.title`. Title acquisition is never restored after process restart, agent switch, explicit stop, connection loss, actor termination, or a user-driven rename, and a late provider update cannot change a locked title.
 
 Supervisors retry failed providers independently with capped backoff and reap the old process tree before replacement. Ora remains available when one or all providers are unavailable.
 

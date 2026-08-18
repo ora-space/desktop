@@ -97,6 +97,12 @@ impl RuntimeActor {
                             let _ = response.send(());
                             return;
                         }
+                        RuntimeCommand::AdoptUserTitle { title, response } => {
+                            self.channel = Some(channel);
+                            self.adopt_user_title(title);
+                            let _ = response.send(());
+                            return;
+                        }
                         RuntimeCommand::TitleUpdate { update } => {
                             self.observe_session_update(&update);
                         }
@@ -258,8 +264,28 @@ impl RuntimeActor {
         self.persist_agent_title(title);
     }
 
+    /// Locks acquisition and records the user-chosen title so later agent titles cannot win.
+    pub(super) fn adopt_user_title(&mut self, title: SessionTitle) {
+        self.title_acquisition.close();
+        self.session = self.session.clone().with_title(Some(title.clone()));
+        match self.repository.update_session_title(
+            &self.session.id,
+            &title,
+            self.clock.now_timestamp_millis(),
+        ) {
+            Ok(session) => self.session = session,
+            Err(error) => {
+                ora_warn!(
+                    session_id = %self.session.id,
+                    error = %error,
+                    "failed to re-persist user session title after rename",
+                );
+            }
+        }
+    }
+
     /// Validates and persists a title, publishing invalidation only after the write succeeds.
-    fn persist_agent_title(&mut self, raw_title: &str) {
+    pub(super) fn persist_agent_title(&mut self, raw_title: &str) {
         if !self.title_acquisition.accepts_title() {
             return;
         }

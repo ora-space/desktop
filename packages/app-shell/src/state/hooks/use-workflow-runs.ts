@@ -181,24 +181,45 @@ export function useUpdateWorkflowRunInput() {
  * Renames one persisted workflow run through its run-task title.
  *
  * The run's display name is the run-task title, so the adapter resolves the run-task id
- * from the run detail and updates the task while preserving its status.
+ * from the run detail and updates that task.
  */
 export function useRenameWorkflowRun() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { runId: string; name: string }) => {
+    mutationFn: async (input: {
+      runId: string;
+      name: string;
+      projectId?: string;
+    }) => {
       const detail = await client.workflowRun.get({ runId: input.runId });
-      const task = await client.task.get({ taskId: detail.taskId });
       await client.task.update({
         taskId: detail.taskId,
         title: input.name,
-        status: task.task.status,
+      });
+      return input;
+    },
+    onSuccess: (_result, variables) => {
+      if (variables.projectId) {
+        queryClient.setQueryData<WorkflowRunSummary[]>(
+          runsByProjectKey(variables.projectId),
+          (current) =>
+            current?.map((run) =>
+              run.id === variables.runId
+                ? { ...run, name: variables.name }
+                : run,
+            ),
+        );
+      }
+      void queryClient.invalidateQueries({
+        queryKey: runDetailKey(variables.runId),
       });
       void queryClient.invalidateQueries({
-        queryKey: runDetailKey(input.runId),
+        queryKey: ["workflowRun", "byProject"],
       });
-      return input.name;
+      void queryClient.invalidateQueries({
+        queryKey: ["workflowRun", "byWorkflow"],
+      });
     },
   });
 }

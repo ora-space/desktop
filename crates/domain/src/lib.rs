@@ -37,7 +37,7 @@ pub use skill::{
     BACKUP_DIR_NAME, JOURNAL_DIR_NAME, STAGING_DIR_NAME, Skill, SkillDescriptionError,
     SkillNameError, validate_skill_description, validate_skill_name,
 };
-pub use task::{Task, TaskStatus, TaskType};
+pub use task::{Task, TaskType};
 pub use task_diff_comment::{
     TaskDiffAnchor, TaskDiffComment, TaskDiffCommentKind, TaskDiffSide, TaskDiffThreadStatus,
 };

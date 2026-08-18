@@ -147,7 +147,7 @@ mod tests {
         DatabaseBootstrapper, DatabaseLocation, SqliteAgentDefinitionRepository,
         default_migration_catalog,
     };
-    use ora_domain::{AgentDefinition, AgentDefinitionId, AuditFields, Namespace};
+    use ora_domain::{AgentDefinition, AgentDefinitionId, AuditFields, Namespace, SkillId};
     use ora_logging::with_trace_logging;
     use ora_utils::path::StrictRelativePath;
     use pretty_assertions::assert_eq;
@@ -169,9 +169,10 @@ mod tests {
         fn commit_create(
             &self,
             name: &str,
+            skill_id: &SkillId,
             staging: &Path,
         ) -> Result<CreateHandle, SkillStorageError> {
-            let handle = self.inner.commit_create(name, staging)?;
+            let handle = self.inner.commit_create(name, skill_id, staging)?;
             // Enter the promote window, then hold it until the observing thread releases it.
             self.promote.wait();
             self.promote.wait();
@@ -220,9 +221,12 @@ mod tests {
             &self,
             name: &str,
             from_name: &str,
+            skill_id: &SkillId,
+            previous_updated_at: Option<i64>,
             staging: &Path,
         ) -> Result<SwapHandle, SkillStorageError> {
-            self.inner.commit_swap(name, from_name, staging)
+            self.inner
+                .commit_swap(name, from_name, skill_id, previous_updated_at, staging)
         }
 
         fn rollback_swap(&self, handle: &SwapHandle) -> Result<(), SkillStorageError> {
@@ -233,8 +237,12 @@ mod tests {
             self.inner.finish_swap(handle)
         }
 
-        fn commit_delete(&self, name: &str) -> Result<DeleteHandle, SkillStorageError> {
-            self.inner.commit_delete(name)
+        fn commit_delete(
+            &self,
+            name: &str,
+            skill_id: &SkillId,
+        ) -> Result<DeleteHandle, SkillStorageError> {
+            self.inner.commit_delete(name, skill_id)
         }
 
         fn rollback_delete(&self, handle: &DeleteHandle) -> Result<(), SkillStorageError> {

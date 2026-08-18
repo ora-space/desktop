@@ -111,6 +111,24 @@ fn update_rejects_non_slug_name_without_mutating_catalog_or_package() {
 }
 
 #[test]
+fn update_advances_timestamp_past_the_previous_database_version() {
+    let repository = Rc::new(FakeSkillRepository::with_skills(vec![skill(
+        "skill-1", "review", "Reviews", 10, 20, false,
+    )]));
+    let storage = Rc::new(FakeSkillStorage::with_manifest("review", "Reviews"));
+
+    UpdateSkillHandler::new(repository.clone(), storage, FixedClock(20))
+        .handle(UpdateSkillRequest {
+            skill_id: "skill-1".to_string(),
+            name: "review".to_string(),
+            description: "Updated".to_string(),
+            content: None,
+        })
+        .unwrap();
+
+    assert_eq!(repository.skills.borrow()[0].audit_fields.updated_at, 21);
+}
+#[test]
 fn preserves_or_clears_skill_body_without_losing_unknown_front_matter() {
     let repository = Rc::new(FakeSkillRepository::with_skills(vec![skill(
         "skill-1", "review", "Reviews", 10, 20, false,
@@ -973,7 +991,12 @@ impl SkillStorage for Rc<FakeSkillStorage> {
             .insert(staging.to_path_buf(), content.to_vec());
         Ok(())
     }
-    fn commit_create(&self, name: &str, staging: &Path) -> Result<CreateHandle, SkillStorageError> {
+    fn commit_create(
+        &self,
+        name: &str,
+        _skill_id: &SkillId,
+        staging: &Path,
+    ) -> Result<CreateHandle, SkillStorageError> {
         self.take_fail()?;
         if self.formal.borrow().contains_key(name) {
             return Err(SkillStorageError::FormalDirectoryExists {
@@ -1000,6 +1023,8 @@ impl SkillStorage for Rc<FakeSkillStorage> {
         &self,
         name: &str,
         from_name: &str,
+        _skill_id: &SkillId,
+        _previous_updated_at: Option<i64>,
         staging: &Path,
     ) -> Result<SwapHandle, SkillStorageError> {
         self.take_fail()?;
@@ -1055,7 +1080,11 @@ impl SkillStorage for Rc<FakeSkillStorage> {
     fn finish_swap(&self, _handle: &SwapHandle) -> Result<(), SkillStorageError> {
         Ok(())
     }
-    fn commit_delete(&self, name: &str) -> Result<DeleteHandle, SkillStorageError> {
+    fn commit_delete(
+        &self,
+        name: &str,
+        _skill_id: &SkillId,
+    ) -> Result<DeleteHandle, SkillStorageError> {
         self.take_fail()?;
         if !self.formal.borrow().contains_key(name) {
             return Err(SkillStorageError::FormalDirectoryMissing {

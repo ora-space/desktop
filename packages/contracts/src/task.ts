@@ -6,7 +6,6 @@
 export type CreateTaskRequest = {
   projectId: string;
   title: string;
-  status: TaskStatus;
   workspaceMode?: TaskWorkspaceMode;
   baseBranch?: string;
 };
@@ -63,16 +62,10 @@ export type Task = {
   id: string;
   projectId: string;
   title: string;
-  status: TaskStatus;
   workspaceMode: TaskWorkspaceMode;
   type: TaskType;
   workflowRunId: string | null;
 };
-
-/**
- * Describes the public task status shared across adapter boundaries.
- */
-export type TaskStatus = "todo" | "doing" | "done";
 
 /**
  * Selects the task kind so the frontend can distinguish workflow-run tasks from ordinary tasks.
@@ -92,11 +85,7 @@ export type TaskWorkspaceMode = "worktree" | "project_root";
 /**
  * Carries the full replacement payload for task updates in the first slice.
  */
-export type UpdateTaskRequest = {
-  taskId: string;
-  title: string;
-  status: TaskStatus;
-};
+export type UpdateTaskRequest = { taskId: string; title: string };
 
 /**
  * Returns the updated task after a successful update request.

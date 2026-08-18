@@ -1,3 +1,4 @@
+mod durability;
 mod filesystem_storage;
 mod handlers;
 mod id_generator;
@@ -10,6 +11,7 @@ mod storage;
 mod tests;
 
 pub use filesystem_storage::FilesystemSkillStorage;
+pub(crate) use handlers::next_updated_at;
 pub use handlers::{
     CreateSkillHandler, DeleteSkillHandler, GetSkillHandler, ListSkillsHandler, UpdateSkillHandler,
 };

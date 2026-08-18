@@ -1,8 +1,8 @@
 use crate::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, BACKUP_DIR_NAME, DomainModelError,
     HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, Session,
-    SessionId, SessionStatus, Skill, SkillId, Task, TaskId, TaskStatus, TaskType, Worktree,
-    WorktreeActivity, WorktreeBaseline, WorktreeId,
+    SessionId, SessionStatus, Skill, SkillId, Task, TaskId, TaskType, Worktree, WorktreeActivity,
+    WorktreeBaseline, WorktreeId,
 };
 use pretty_assertions::assert_eq;
 
@@ -29,7 +29,6 @@ fn constructs_schema_backed_entities() {
         TaskId::new("task-1"),
         project.id.clone(),
         "Implement domain models",
-        TaskStatus::Doing,
         Some(worktree.id.clone()),
         audit_fields.clone(),
     );
@@ -86,7 +85,6 @@ fn constructs_schema_backed_entities() {
             id: TaskId::new("task-1"),
             project_id: ProjectId::new("project-1"),
             title: "Implement domain models".to_string(),
-            status: TaskStatus::Doing,
             task_type: TaskType::Default,
             workflow_run_id: None,
             worktree_id: Some(WorktreeId::new("worktree-1")),
@@ -273,10 +271,6 @@ fn maps_agent_cli_launch_arguments() {
 /// Confirms every categorical enum round-trips to the integer encoding expected by SQLite.
 #[test]
 fn round_trips_database_backed_enums() {
-    assert_eq!(TaskStatus::from_database_value(0), Ok(TaskStatus::Todo));
-    assert_eq!(TaskStatus::Doing.database_value(), 1);
-    assert_eq!(TaskStatus::Done.database_value(), 2);
-
     assert_eq!(
         WorktreeActivity::from_database_value(1),
         Ok(WorktreeActivity::Active)
@@ -296,10 +290,6 @@ fn rejects_invalid_database_values() {
     assert_eq!(
         WorktreeBaseline::recorded("  "),
         Err(DomainModelError::EmptyWorktreeBaseline)
-    );
-    assert_eq!(
-        TaskStatus::from_database_value(7),
-        Err(DomainModelError::InvalidTaskStatus(7))
     );
     assert_eq!(
         WorktreeActivity::from_database_value(-1),

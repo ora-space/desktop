@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use ora_contracts::{ListProjectBranchesRequest, ListProjectBranchesResponse, ProjectBranch};
 use ora_domain::{
-    AuditFields, Project, ProjectId, Task, TaskId, TaskStatus, Worktree, WorktreeActivity,
-    WorktreeBaseline, WorktreeId,
+    AuditFields, Project, ProjectId, Task, TaskId, Worktree, WorktreeActivity, WorktreeBaseline,
+    WorktreeId,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -173,7 +173,6 @@ fn task_fixture(task_id: &str, project_id: &str, title: &str) -> Task {
         TaskId::new(task_id),
         ProjectId::new(project_id),
         title,
-        TaskStatus::Todo,
         None,
         AuditFields::new(1, 1, false),
     )

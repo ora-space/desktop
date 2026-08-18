@@ -20,10 +20,9 @@ use ora_contracts::{StartWorkflowRunRequest, WorkflowRunStatus as ContractRunSta
 use ora_domain::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, HistoryState, Namespace, Project,
     ProjectId, Session, SessionId, SessionStatus, SessionTitle, Skill, SkillId, Task, TaskId,
-    TaskStatus, Workflow, WorkflowId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun,
-    WorkflowRunDetail, WorkflowRunId, WorkflowRunStatus, WorkflowRunSummary, WorkflowSnapshot,
-    WorkflowSnapshotId, Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
-    WorktreeProvisioningLeaseId,
+    Workflow, WorkflowId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun, WorkflowRunDetail,
+    WorkflowRunId, WorkflowRunStatus, WorkflowRunSummary, WorkflowSnapshot, WorkflowSnapshotId,
+    Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId, WorktreeProvisioningLeaseId,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -695,7 +694,6 @@ fn workflow_run_repository_creates_and_reads_run() {
         task_id.clone(),
         ProjectId::new("project-1"),
         "Workflow workflow-a 30",
-        TaskStatus::Todo,
         run_id.clone(),
         worktree_id.clone(),
         AuditFields::new(30, 30, /*is_deleted*/ false),
@@ -773,8 +771,8 @@ fn workflow_run_repository_requires_run_row_before_task_row() {
 
     let result = pool.with_connection(|connection| {
         connection.execute(
-            "INSERT INTO tasks (id, project_id, title, status, type, workflow_run_id, created_at, updated_at, is_deleted)
-             VALUES ('task-orphan', 'project-1', 'orphan', 0, 1, 'run-missing', 1, 1, 0)",
+            "INSERT INTO tasks (id, project_id, title, type, workflow_run_id, created_at, updated_at, is_deleted)
+             VALUES ('task-orphan', 'project-1', 'orphan', 1, 'run-missing', 1, 1, 0)",
             [],
         )?;
         Ok(())
@@ -827,7 +825,6 @@ fn create_pending_run_fixture(pool: &RepositoryPool) -> (WorkflowRunId, TaskId, 
         task_id.clone(),
         ProjectId::new("project-1"),
         "Workflow workflow-a 30",
-        TaskStatus::Todo,
         run_id.clone(),
         worktree_id.clone(),
         AuditFields::new(30, 30, /*is_deleted*/ false),
@@ -1673,7 +1670,6 @@ fn create_pending_run_with_graph(
         task_id.clone(),
         ProjectId::new("project-1"),
         "Workflow workflow-engine 30",
-        TaskStatus::Todo,
         run_id.clone(),
         worktree_id.clone(),
         AuditFields::new(30, 30, /*is_deleted*/ false),
@@ -2359,7 +2355,6 @@ fn task_repository_supports_crud_and_soft_delete() {
         TaskId::new("task-1"),
         ProjectId::new("project-1"),
         "Wire the pool",
-        TaskStatus::Todo,
         Some(WorktreeId::new("worktree-1")),
         AuditFields::new(11, 11, false),
     );
@@ -2378,7 +2373,6 @@ fn task_repository_supports_crud_and_soft_delete() {
         created_task.id.clone(),
         created_task.project_id.clone(),
         "Wire the repository pool",
-        TaskStatus::Doing,
         None,
         AuditFields::new(11, 21, false),
     );
@@ -2421,7 +2415,6 @@ fn session_repository_supports_crud_and_soft_delete() {
             TaskId::new("task-1"),
             ProjectId::new("project-1"),
             "Test sessions",
-            TaskStatus::Todo,
             None,
             AuditFields::new(11, 11, false),
         ))
@@ -2713,7 +2706,6 @@ fn repository_pool_composes_all_repository_adapters() {
         TaskId::new("task-1"),
         project.id.clone(),
         "Implement pool composition",
-        TaskStatus::Todo,
         Some(WorktreeId::new("worktree-1")),
         AuditFields::new(41, 41, false),
     );
@@ -2817,8 +2809,8 @@ fn insert_cascade_fixture(pool: &RepositoryPool, session_status: SessionStatus) 
     pool.with_connection(|connection| {
         connection.execute_batch(
             "INSERT INTO projects VALUES ('project-1', 'Ora', '/not/a/repository', 1, 1, 0);
-             INSERT INTO tasks (id, project_id, title, status, worktree_id, created_at, updated_at, is_deleted)
-             VALUES ('task-1', 'project-1', 'Task', 0, 'worktree-1', 1, 1, 0);
+             INSERT INTO tasks (id, project_id, title, worktree_id, created_at, updated_at, is_deleted)
+             VALUES ('task-1', 'project-1', 'Task', 'worktree-1', 1, 1, 0);
              INSERT INTO worktrees (
                  id, task_id, branch_name, is_active, created_at, updated_at, is_deleted, base_commit_id
              ) VALUES ('worktree-1', 'task-1', 'ora/task-1', 1, 1, 1, 0, 'base-commit');",
@@ -2884,7 +2876,7 @@ fn project_repository_reports_sqlite_failures() {
     );
 }
 
-/// Verifies task repositories translate invalid persisted status values into application-owned errors.
+/// Verifies task repositories translate invalid persisted type values into application-owned errors.
 #[test]
 fn task_repository_reports_row_mapping_failures() {
     let (_temp_dir, pool) = bootstrapped_repository_pool();
@@ -2896,7 +2888,7 @@ fn task_repository_reports_row_mapping_failures() {
         repository
             .find_task(&TaskId::new("task-invalid"))
             .unwrap_err(),
-        "domain model error: invalid task status value: 99",
+        "domain model error: invalid task type value: 99",
     );
 }
 
@@ -2963,11 +2955,11 @@ fn database_path(temp_dir: &TempDir) -> PathBuf {
     temp_dir.path().join("repository.sqlite3")
 }
 
-/// Inserts one task row with an invalid status integer for row-mapping error coverage.
+/// Inserts one task row with an invalid type integer for row-mapping error coverage.
 fn insert_invalid_task_row(pool: &RepositoryPool) {
     pool.with_connection(|connection| {
         connection.execute(
-            "INSERT INTO tasks (id, project_id, title, status, worktree_id, created_at, updated_at, is_deleted)
+            "INSERT INTO tasks (id, project_id, title, type, worktree_id, created_at, updated_at, is_deleted)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 "task-invalid",

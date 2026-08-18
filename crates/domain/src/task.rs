@@ -1,43 +1,6 @@
 use crate::{AuditFields, DomainModelError, ProjectId, WorkflowRunId, WorktreeId};
 use serde::{Deserialize, Serialize};
 
-/// Captures the lifecycle state for a task without exposing database integer codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TaskStatus {
-    Todo,
-    Doing,
-    Done,
-}
-
-impl TaskStatus {
-    /// Returns the integer code used by persistence adapters for this task status.
-    pub fn database_value(self) -> i64 {
-        match self {
-            Self::Todo => 0,
-            Self::Doing => 1,
-            Self::Done => 2,
-        }
-    }
-
-    /// Converts a persisted integer into a strongly typed task status.
-    pub fn from_database_value(value: i64) -> Result<Self, DomainModelError> {
-        match value {
-            0 => Ok(Self::Todo),
-            1 => Ok(Self::Doing),
-            2 => Ok(Self::Done),
-            _ => Err(DomainModelError::InvalidTaskStatus(value)),
-        }
-    }
-}
-
-impl TryFrom<i64> for TaskStatus {
-    type Error = DomainModelError;
-
-    fn try_from(value: i64) -> Result<Self, Self::Error> {
-        Self::from_database_value(value)
-    }
-}
-
 /// Captures the task kind so the frontend can tell ordinary tasks from workflow runs
 /// without resolving run detail.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,12 +40,14 @@ impl TryFrom<i64> for TaskType {
 }
 
 /// Represents a logical unit of work inside a project.
+///
+/// Tasks do not carry a kanban status: session rows show conversation activity,
+/// and workflow-run progress lives on `WorkflowRunStatus`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub id: crate::TaskId,
     pub project_id: ProjectId,
     pub title: String,
-    pub status: TaskStatus,
     pub task_type: TaskType,
     pub workflow_run_id: Option<WorkflowRunId>,
     pub worktree_id: Option<WorktreeId>,
@@ -95,7 +60,6 @@ impl Task {
         id: crate::TaskId,
         project_id: ProjectId,
         title: impl Into<String>,
-        status: TaskStatus,
         worktree_id: Option<WorktreeId>,
         audit_fields: AuditFields,
     ) -> Self {
@@ -103,7 +67,6 @@ impl Task {
             id,
             project_id,
             title: title.into(),
-            status,
             task_type: TaskType::Default,
             workflow_run_id: None,
             worktree_id,
@@ -117,7 +80,6 @@ impl Task {
         id: crate::TaskId,
         project_id: ProjectId,
         title: impl Into<String>,
-        status: TaskStatus,
         workflow_run_id: WorkflowRunId,
         worktree_id: WorktreeId,
         audit_fields: AuditFields,
@@ -126,7 +88,6 @@ impl Task {
             id,
             project_id,
             title: title.into(),
-            status,
             task_type: TaskType::Workflow,
             workflow_run_id: Some(workflow_run_id),
             worktree_id: Some(worktree_id),

@@ -10,10 +10,38 @@ import {
 } from "../../test/hook-harness";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { queryKeys } from "./query-keys";
-import { useCreateTask } from "./use-workspace-mutations";
+import { useCreateTask, useRenameSession } from "./use-workspace-mutations";
 
 beforeEach(() => {
   useWorkspaceSelectionStore.getState().selectProject("p1");
+});
+
+describe("useRenameSession", () => {
+  it("persists the new title onto the mock session", async () => {
+    const state = createMockClientState();
+    state.sessions = [
+      {
+        id: "s1",
+        taskId: "t1",
+        agentCli: "open_code",
+        status: "running",
+        title: "Old",
+        historyState: { type: "writable" },
+      },
+    ];
+    const client = createMockClient(state);
+    const { result } = renderHookWithClient(
+      () => useRenameSession(),
+      client,
+      createTestQueryClient(),
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync({ sessionId: "s1", title: "New title" });
+    });
+
+    expect(state.sessions[0]?.title).toBe("New title");
+  });
 });
 
 describe("useCreateTask", () => {
@@ -35,7 +63,6 @@ describe("useCreateTask", () => {
         await result.current.mutateAsync({
           projectId: "p1",
           title: "Task",
-          status: "todo",
           workspaceMode,
         });
       });
@@ -75,7 +102,6 @@ describe("useCreateTask", () => {
       await result.current.mutateAsync({
         projectId: "p1",
         title: "Task",
-        status: "todo",
         workspaceMode: "worktree",
         baseBranch: "main",
       });

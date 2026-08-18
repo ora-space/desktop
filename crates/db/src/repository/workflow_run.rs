@@ -73,13 +73,12 @@ impl WorkflowRunRepository for SqliteWorkflowRunRepository {
                     ],
                 )?;
                 transaction.execute(
-                    "INSERT INTO tasks (id, project_id, title, status, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    "INSERT INTO tasks (id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     params![
                         task.id.as_ref(),
                         task.project_id.as_ref(),
                         &task.title,
-                        task.status.database_value(),
                         task.task_type.database_value(),
                         task.workflow_run_id.as_ref().map(AsRef::as_ref),
                         task.worktree_id.as_ref().map(AsRef::as_ref),

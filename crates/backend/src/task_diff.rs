@@ -306,7 +306,7 @@ fn task_diff_internal(source: impl std::error::Error + Send + Sync + 'static) ->
 mod tests {
     use crate::{Backend, BackendPaths};
     use ora_contracts::{
-        CreateProjectRequest, CreateTaskRequest, GetTaskDiffRequest, TaskDiffScope, TaskStatus,
+        CreateProjectRequest, CreateTaskRequest, GetTaskDiffRequest, TaskDiffScope,
         TaskWorkspaceMode,
     };
     use std::fs;
@@ -326,7 +326,6 @@ mod tests {
             .create_task(CreateTaskRequest {
                 project_id,
                 title: "Direct chat".to_string(),
-                status: TaskStatus::Todo,
                 workspace_mode: Some(TaskWorkspaceMode::ProjectRoot),
                 base_branch: None,
             })
@@ -362,7 +361,6 @@ mod tests {
             .create_task(CreateTaskRequest {
                 project_id,
                 title: "Isolated task".to_string(),
-                status: TaskStatus::Todo,
                 workspace_mode: Some(TaskWorkspaceMode::Worktree),
                 base_branch: Some("main".to_string()),
             })

@@ -417,6 +417,16 @@ impl From<ApplicationError> for BackendError {
                 PublicError::SessionNotFound(EmptyErrorParams {}),
                 "session not found",
             ),
+            ApplicationError::SessionTitleBlank => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "session title must not be blank",
+            ),
+            ApplicationError::SessionTitleTooLong => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "session title exceeds the maximum length",
+            ),
             ApplicationError::SkillRepository { .. }
             | ApplicationError::SkillStorage { .. }
             | ApplicationError::AgentDefinitionRepository { .. }

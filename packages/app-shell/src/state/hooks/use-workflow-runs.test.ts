@@ -40,7 +40,6 @@ function seededState(): MockClientState {
       id: "t1",
       projectId: "p1",
       title: "审查流程 1",
-      status: "todo",
       workspaceMode: "worktree",
       type: "workflow",
       workflowRunId: "run-1",
@@ -321,6 +320,7 @@ describe("persisted run hooks", () => {
     expect(state.tasks.find((task) => task.id === "t1")?.title).toBe(
       "审查流程 v2",
     );
+    expect(state.workflowRuns[0]?.name).toBe("审查流程 v2");
   });
 
   it("deletes a run and refreshes its project list", async () => {

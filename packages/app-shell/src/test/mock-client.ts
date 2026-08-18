@@ -8,7 +8,6 @@ import type {
   Session,
   Skill,
   Task,
-  TaskStatus,
   Workflow,
   WorkflowRun,
   WorkflowSnapshot,
@@ -176,7 +175,6 @@ export function createMockClient(state: MockClientState): ContractsClient {
           id: nextId("t", state.tasks.length),
           projectId: req.projectId,
           title: req.title,
-          status: req.status as TaskStatus,
           workspaceMode: req.workspaceMode ?? "worktree",
           type: "default",
           workflowRunId: null,
@@ -190,9 +188,12 @@ export function createMockClient(state: MockClientState): ContractsClient {
         const updated: Task = {
           ...state.tasks[idx]!,
           title: req.title,
-          status: req.status as TaskStatus,
         };
         state.tasks[idx] = updated;
+        // Production lists derive the run display name from the run-task title.
+        for (const run of state.workflowRuns) {
+          if (run.taskId === req.taskId) run.name = req.title;
+        }
         return { task: updated };
       },
       delete: async (req) => {
@@ -299,6 +300,13 @@ export function createMockClient(state: MockClientState): ContractsClient {
         const idx = state.sessions.findIndex((s) => s.id === req.sessionId);
         if (idx >= 0) state.sessions.splice(idx, 1);
         return { sessionId: req.sessionId };
+      },
+      rename: async (req) => {
+        const idx = state.sessions.findIndex((s) => s.id === req.sessionId);
+        const current = state.sessions[idx]!;
+        const session = { ...current, title: req.title };
+        state.sessions[idx] = session;
+        return { session };
       },
     },
     appEvents: {

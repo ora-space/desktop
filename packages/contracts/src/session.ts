@@ -127,6 +127,16 @@ export type PromptSessionRequest = {
 };
 
 /**
+ * Renames one persisted session with a user-supplied display title.
+ */
+export type RenameSessionRequest = { sessionId: string; title: string };
+
+/**
+ * Returns the session after its display title was replaced.
+ */
+export type RenameSessionResponse = { session: Session };
+
+/**
  * Selects one option for a still-pending permission request.
  */
 export type RespondToPermissionRequest = {

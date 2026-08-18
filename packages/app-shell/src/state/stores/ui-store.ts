@@ -1,15 +1,16 @@
 import { create } from "zustand";
-import type { Project, Session, Task } from "@ora/contracts";
+import type { Session, Task } from "@ora/contracts";
 
-/** Shape of the create/edit dialog currently driven from the workspace tree. */
+/** Shape of the create dialog currently driven from the workspace tree. */
 export type DialogState =
-  | { kind: "project"; entity?: Project }
-  | { kind: "task"; projectId: string; entity?: Task }
+  | { kind: "project" }
+  | { kind: "task"; projectId: string }
   | { kind: "session"; taskId: string; entity?: Session }
   | {
-      kind: "workflowRun";
-      projectId: string;
-      entity: { id: string; name: string };
+      kind: "deployWorkflow";
+      projectId: string | null;
+      workflowId: string;
+      workflowName: string;
     };
 
 /** Shape of the delete-confirmation dialog driven from the workspace tree. */

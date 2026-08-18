@@ -1,7 +1,7 @@
 use super::storage::{CreateHandle, JournalOp, SkillStorage, SwapHandle};
 use crate::ApplicationError;
 use ora_contracts::SkillAvailability;
-use ora_domain::Namespace;
+use ora_domain::{Namespace, SkillId};
 use ora_skill_package::Limits;
 use ora_skill_package::manifest::parse_manifest;
 use std::path::Path;
@@ -90,6 +90,7 @@ pub(crate) fn claim_untracked_name<Storage: SkillStorage>(
 /// database write commits.
 pub(crate) fn commit_unclaimed_package<Storage: SkillStorage>(
     storage: &Storage,
+    skill_id: &SkillId,
     name: &str,
     staging: &Path,
 ) -> Result<PromotedPackage, ApplicationError> {
@@ -99,7 +100,7 @@ pub(crate) fn commit_unclaimed_package<Storage: SkillStorage>(
             .map_err(ApplicationError::from_skill_storage_error)?
             .iter()
             .any(|journal| {
-                matches!(journal.op, JournalOp::Create | JournalOp::Swap)
+                matches!(journal.op, JournalOp::Create | JournalOp::Swap { .. })
                     && (journal.name == name || journal.from_name == name)
             })
     {
@@ -107,7 +108,7 @@ pub(crate) fn commit_unclaimed_package<Storage: SkillStorage>(
             name: name.to_string(),
         });
     }
-    promote_staging(storage, name, staging)
+    promote_staging(storage, skill_id, name, staging)
 }
 
 /// Promotes staging for an unavailable catalog row, optionally renaming its old package.
@@ -119,6 +120,8 @@ pub(crate) fn commit_unclaimed_package<Storage: SkillStorage>(
 pub(crate) fn commit_restored_package<Storage: SkillStorage>(
     storage: &Storage,
     namespace: &Namespace,
+    skill_id: &SkillId,
+    previous_updated_at: i64,
     name: &str,
     previous_name: &str,
     staging: &Path,
@@ -136,7 +139,15 @@ pub(crate) fn commit_restored_package<Storage: SkillStorage>(
         });
     }
 
-    promote_from(storage, name, previous_name, staging).map_err(|error| match error {
+    promote_from(
+        storage,
+        skill_id,
+        Some(previous_updated_at),
+        name,
+        previous_name,
+        staging,
+    )
+    .map_err(|error| match error {
         super::storage::SkillStorageError::FormalDirectoryExists { .. } => {
             ApplicationError::SkillNameConflict {
                 namespace: namespace.to_string(),
@@ -150,12 +161,21 @@ pub(crate) fn commit_restored_package<Storage: SkillStorage>(
 /// Promotes staging over an existing package when import overwrite has already revalidated it.
 pub(crate) fn commit_existing_package<Storage: SkillStorage>(
     storage: &Storage,
+    skill_id: &SkillId,
+    previous_updated_at: i64,
     name: &str,
     previous_name: &str,
     staging: &Path,
 ) -> Result<PromotedPackage, ApplicationError> {
-    promote_from(storage, name, previous_name, staging)
-        .map_err(ApplicationError::from_skill_storage_error)
+    promote_from(
+        storage,
+        skill_id,
+        Some(previous_updated_at),
+        name,
+        previous_name,
+        staging,
+    )
+    .map_err(ApplicationError::from_skill_storage_error)
 }
 
 /// Couples a promoted package with its repository write.
@@ -192,17 +212,18 @@ where
 /// Promotes staging into `<name>`, swapping when a leftover directory is already present.
 fn promote_staging<Storage: SkillStorage>(
     storage: &Storage,
+    skill_id: &SkillId,
     name: &str,
     staging: &Path,
 ) -> Result<PromotedPackage, ApplicationError> {
     if storage.formal_exists(name) {
         storage
-            .commit_swap(name, name, staging)
+            .commit_swap(name, name, skill_id, None, staging)
             .map(PromotedPackage::Replaced)
             .map_err(ApplicationError::from_skill_storage_error)
     } else {
         storage
-            .commit_create(name, staging)
+            .commit_create(name, skill_id, staging)
             .map(PromotedPackage::Created)
             .map_err(ApplicationError::from_skill_storage_error)
     }
@@ -211,17 +232,19 @@ fn promote_staging<Storage: SkillStorage>(
 /// Promotes staging from `previous_name`, using a journaled rename when that directory exists.
 fn promote_from<Storage: SkillStorage>(
     storage: &Storage,
+    skill_id: &SkillId,
+    previous_updated_at: Option<i64>,
     name: &str,
     previous_name: &str,
     staging: &Path,
 ) -> Result<PromotedPackage, super::storage::SkillStorageError> {
     if storage.formal_exists(previous_name) {
         storage
-            .commit_swap(name, previous_name, staging)
+            .commit_swap(name, previous_name, skill_id, previous_updated_at, staging)
             .map(PromotedPackage::Replaced)
     } else {
         storage
-            .commit_create(name, staging)
+            .commit_create(name, skill_id, staging)
             .map(PromotedPackage::Created)
     }
 }

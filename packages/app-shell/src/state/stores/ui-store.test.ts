@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useUiStore } from "./ui-store";
-import type { Project, Session, Task } from "@ora/contracts";
+import type { Session } from "@ora/contracts";
 
 beforeEach(() => {
   useUiStore.setState({
@@ -54,20 +54,6 @@ describe("useUiStore", () => {
   });
 
   it("stores the active dialog and delete target verbatim", () => {
-    const project: Project = {
-      id: "p1",
-      name: "Ora",
-      rootPath: "/ora",
-    };
-    const task: Task = {
-      id: "t1",
-      projectId: "p1",
-      title: "Refactor",
-      status: "todo",
-      workspaceMode: "worktree",
-      type: "default",
-      workflowRunId: null,
-    };
     const session: Session = {
       id: "s1",
       taskId: "t1",
@@ -77,7 +63,7 @@ describe("useUiStore", () => {
       historyState: { type: "writable" },
     };
 
-    useUiStore.getState().setDialog({ kind: "project", entity: project });
+    useUiStore.getState().setDialog({ kind: "project" });
     useUiStore.getState().setDeleteTarget({
       kind: "project",
       id: "p1",
@@ -87,7 +73,6 @@ describe("useUiStore", () => {
 
     expect(useUiStore.getState().dialog).toEqual({
       kind: "project",
-      entity: project,
     });
     expect(useUiStore.getState().deleteTarget).toEqual({
       kind: "project",
@@ -97,13 +82,10 @@ describe("useUiStore", () => {
     });
 
     // Dialog state with task/session kinds preserves their lineage fields.
-    useUiStore
-      .getState()
-      .setDialog({ kind: "task", projectId: "p1", entity: task });
+    useUiStore.getState().setDialog({ kind: "task", projectId: "p1" });
     expect(useUiStore.getState().dialog).toEqual({
       kind: "task",
       projectId: "p1",
-      entity: task,
     });
     useUiStore
       .getState()

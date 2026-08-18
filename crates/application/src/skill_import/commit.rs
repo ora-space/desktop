@@ -4,7 +4,7 @@ use super::ports::{
 };
 use crate::skill::{
     SkillStorage, commit_existing_package, commit_restored_package, commit_unclaimed_package,
-    has_usable_package, persist_promoted_package,
+    has_usable_package, next_updated_at, persist_promoted_package,
 };
 use crate::{ApplicationError, Clock, SkillRepository};
 use ora_domain::{AuditFields, Namespace, Skill, SkillId};
@@ -191,6 +191,9 @@ where
         }
     };
 
+    let updated_at = existing.as_ref().map_or(now, |skill| {
+        next_updated_at(skill.audit_fields.updated_at, now)
+    });
     let skill = match Skill::new(
         existing
             .as_ref()
@@ -204,7 +207,7 @@ where
                 .as_ref()
                 .map(|skill| skill.audit_fields.created_at)
                 .unwrap_or(now),
-            now,
+            updated_at,
             /*is_deleted*/ false,
         ),
     ) {
@@ -240,6 +243,8 @@ where
         match commit_restored_package(
             storage,
             &skill.namespace,
+            &skill.id,
+            existing.audit_fields.updated_at,
             &skill.name,
             &existing.name,
             &staging,
@@ -248,7 +253,7 @@ where
             Err(error) => return promote_failure(storage, &staging, error),
         }
     } else {
-        match commit_unclaimed_package(storage, &skill.name, &staging) {
+        match commit_unclaimed_package(storage, &skill.id, &skill.name, &staging) {
             Ok(promoted) => promoted,
             Err(error) => return promote_failure(storage, &staging, error),
         }
@@ -297,7 +302,11 @@ where
         frozen.namespace.clone(),
         candidate.name.clone(),
         candidate.description.clone(),
-        AuditFields::new(frozen.created_at, now, /*is_deleted*/ false),
+        AuditFields::new(
+            frozen.created_at,
+            next_updated_at(frozen.updated_at, now),
+            /*is_deleted*/ false,
+        ),
     ) {
         Ok(skill) => skill,
         Err(_) => {
@@ -319,8 +328,14 @@ where
         let _ = storage.remove_temp(&staging);
         return CandidateOutcome::Failed { error_code };
     }
-    let promoted = match commit_existing_package(storage, &candidate.name, &existing.name, &staging)
-    {
+    let promoted = match commit_existing_package(
+        storage,
+        &skill.id,
+        frozen.updated_at,
+        &candidate.name,
+        &existing.name,
+        &staging,
+    ) {
         Ok(promoted) => promoted,
         Err(error) => return promote_failure(storage, &staging, error),
     };
@@ -358,6 +373,7 @@ where
         id: current.id,
         namespace: current.namespace,
         created_at: current.audit_fields.created_at,
+        updated_at: current.audit_fields.updated_at,
     })
 }
 
@@ -366,6 +382,7 @@ struct SkillSnapshot {
     id: SkillId,
     namespace: Namespace,
     created_at: i64,
+    updated_at: i64,
 }
 
 /// Maps a promotion failure onto the candidate result and drops leftover staging.

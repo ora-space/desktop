@@ -387,7 +387,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           const response = await client.task.create({
             projectId,
             title: directChatTitle(displayText),
-            status: "todo",
             workspaceMode: "project_root",
           });
           const createdTask = response.task;
