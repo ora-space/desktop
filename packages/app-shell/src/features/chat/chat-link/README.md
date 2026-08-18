@@ -26,6 +26,8 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 - Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists. A bare filename must not replace a nested index path.
 - Absolute ACP paths are stripped with the task cwd (`getWorkspace`, plus desktop `resolveTaskCwd`) before Diff/Files requests.
 - If a requested diff file is not in the active task patch, navigation falls back to Files. A line missing from a file that **is** in the patch still opens that file in Changes, with no toast.
+- Changes must keep the requested file selected. Scroll-position highlighting must not replace a chat-driven `fileRequest` with the first or last file in the patch.
+- Switching tasks drops the previous task’s Diff/Files request so a leftover path cannot open in the new worktree.
 - The index must not call `diffLines` or read diff text; streaming rebuilds stay cheap.
 
 ## Interactions

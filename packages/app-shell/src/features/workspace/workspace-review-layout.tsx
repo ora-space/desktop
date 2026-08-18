@@ -103,6 +103,7 @@ export function WorkspaceReviewLayout({
       : context.kind === "project"
         ? `project:${context.projectId}`
         : `task:${context.taskId}`;
+  const [previousContextKey, setPreviousContextKey] = useState(contextKey);
 
   // Keep the latest open-change listener for effect notifications.
   useEffect(() => {
@@ -191,6 +192,13 @@ export function WorkspaceReviewLayout({
       setClosing(false);
       setViewType("unified");
     }
+  }
+  if (contextKey !== previousContextKey) {
+    setPreviousContextKey(contextKey);
+    // Chat links and Files previews are task-scoped; keep them from opening a
+    // path that only existed in the previous worktree.
+    setFileRequest(undefined);
+    setWorkspaceFileRequest(undefined);
   }
 
   const openDiff = useCallback(
@@ -371,6 +379,7 @@ export function WorkspaceReviewLayout({
     context.kind === "none" ? null : panel === "changes" &&
       context.kind === "task" ? (
       <TaskDiffView
+        key={context.taskId}
         taskId={context.taskId}
         viewType={viewType}
         fileTreeOpen={fileTreeOpen}

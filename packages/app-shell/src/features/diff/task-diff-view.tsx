@@ -136,11 +136,17 @@ export function TaskDiffView({
     null,
   );
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [appliedFileRequestId, setAppliedFileRequestId] = useState<
+    number | null
+  >(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const fileElementsRef = useRef(new Map<string, HTMLDivElement>());
   const fileTreePanelRef = useRef<ResizablePanelHandle | null>(null);
   const fileTreeAnimationRef = useRef<number | null>(null);
   const fileTreeWidthRef = useRef(FILE_TREE_WIDTH);
+  // Programmatic jumps (chat links, tree clicks) must not be overwritten by the
+  // scroll spy: on mount it treats an empty viewport as "scrolled to the end".
+  const suppressScrollSyncRef = useRef(false);
 
   const files = useMemo(
     () =>
@@ -162,45 +168,85 @@ export function TaskDiffView({
         ? selectedFilePath!
         : filePaths[0]!;
 
+  if (
+    fileRequest !== undefined &&
+    !diffQuery.isLoading &&
+    fileRequest.requestId !== appliedFileRequestId
+  ) {
+    setAppliedFileRequestId(fileRequest.requestId);
+    const matchingPath = filePaths.find((path) =>
+      pathsMatchForWorkspace(fileRequest.path, path),
+    );
+    if (matchingPath !== undefined) {
+      setSelectedAnchor(null);
+      setSelectedFilePath(matchingPath);
+    }
+  }
+
+  /** Scrolls the Diff viewport so `path` sits near the top, if the node is mounted. */
+  const scrollToPath = useCallback((path: string, behavior: ScrollBehavior) => {
+    const root = scrollContainerRef.current;
+    const element = fileElementsRef.current.get(path);
+    if (
+      root === null ||
+      element === undefined ||
+      typeof root.scrollTo !== "function"
+    ) {
+      requestAnimationFrame(() => {
+        suppressScrollSyncRef.current = false;
+      });
+      return;
+    }
+    const top =
+      element.getBoundingClientRect().top -
+      root.getBoundingClientRect().top +
+      root.scrollTop -
+      16;
+    root.scrollTo({ top: Math.max(0, top), behavior });
+  }, []);
+
   /** Selects a changed file and aligns its first line with the top of the Diff viewport. */
   const selectFile = useCallback(
     (path: string, behavior: ScrollBehavior = "smooth") => {
+      suppressScrollSyncRef.current = true;
       setSelectedAnchor(null);
       setSelectedFilePath(path);
-      const root = scrollContainerRef.current;
-      const element = fileElementsRef.current.get(path);
-      if (root === null || element === undefined) return;
-      const top =
-        element.getBoundingClientRect().top -
-        root.getBoundingClientRect().top +
-        root.scrollTop -
-        16;
-      root.scrollTo({ top: Math.max(0, top), behavior });
+      scrollToPath(path, behavior);
     },
-    [],
+    [scrollToPath],
   );
 
+  useLayoutEffect(() => {
+    if (fileRequest === undefined || diffQuery.isLoading) return;
+    if (fileRequest.requestId !== appliedFileRequestId) return;
+    const matchingPath = filePaths.find((path) =>
+      pathsMatchForWorkspace(fileRequest.path, path),
+    );
+    if (matchingPath === undefined || matchingPath !== selectedFilePath) return;
+    suppressScrollSyncRef.current = true;
+    scrollToPath(matchingPath, "auto");
+  }, [
+    appliedFileRequestId,
+    diffQuery.isLoading,
+    filePaths,
+    fileRequest,
+    scrollToPath,
+    selectedFilePath,
+  ]);
+
   useEffect(() => {
-    if (fileRequest === undefined) return;
-    if (diffQuery.isLoading) return;
-    if (files.length === 0) {
-      onFileNotFound?.(fileRequest.path, fileRequest.line);
-      return;
-    }
+    if (fileRequest === undefined || diffQuery.isLoading) return;
+    if (fileRequest.requestId !== appliedFileRequestId) return;
     const matchingPath = filePaths.find((path) =>
       pathsMatchForWorkspace(fileRequest.path, path),
     );
     if (matchingPath === undefined) {
       onFileNotFound?.(fileRequest.path, fileRequest.line);
-      return;
     }
-    const frame = requestAnimationFrame(() => selectFile(matchingPath, "auto"));
-    return () => cancelAnimationFrame(frame);
   }, [
     fileRequest,
+    appliedFileRequestId,
     filePaths,
-    files.length,
-    selectFile,
     diffQuery.isLoading,
     onFileNotFound,
   ]);
@@ -239,6 +285,10 @@ export function TaskDiffView({
     if (root === null || filePaths.length === 0) return;
     let frame: number | null = null;
     const updateActiveFile = () => {
+      if (suppressScrollSyncRef.current) {
+        suppressScrollSyncRef.current = false;
+        return;
+      }
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
@@ -263,7 +313,6 @@ export function TaskDiffView({
       });
     };
 
-    updateActiveFile();
     root.addEventListener("scroll", updateActiveFile, { passive: true });
     return () => {
       root.removeEventListener("scroll", updateActiveFile);

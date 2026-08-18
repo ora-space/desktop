@@ -350,4 +350,43 @@ describe("WorkspaceReviewLayout", () => {
       "src/missing.ts:10",
     );
   });
+
+  it("drops a previous task's file request when switching tasks", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <WorkspaceReviewLayout context={taskContext}>
+            <OpenWorkspaceFileButton />
+          </WorkspaceReviewLayout>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Open workspace file" }),
+    );
+    expect(screen.getByTestId("files-request")).toHaveTextContent(
+      "src/lib.ts:8",
+    );
+
+    rerender(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <WorkspaceReviewLayout
+            context={{
+              kind: "task",
+              taskId: "task-2",
+              projectId: "project-1",
+            }}
+          >
+            <OpenWorkspaceFileButton />
+          </WorkspaceReviewLayout>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+
+    expect(screen.getByTestId("files-target")).toHaveTextContent("task-2");
+    expect(screen.getByTestId("files-request").textContent).toBe("");
+  });
 });
