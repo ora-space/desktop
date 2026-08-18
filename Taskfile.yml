@@ -142,6 +142,11 @@ tasks:
 
   test:crates:
     desc: Run all Rust workspace package test suites
+    preconditions:
+      - sh: command -v rg >/dev/null 2>&1
+        msg: "Ripgrep (rg) is not available on PATH. Install it before running Rust tests."
+      - sh: command -v deno >/dev/null 2>&1
+        msg: "Deno is not available on PATH. Install it before running Rust tests."
     cmds:
       - task: lint:crates
       - cargo test --workspace
@@ -152,6 +157,11 @@ tasks:
 
   run:desktop:
     desc: Run the desktop Tauri app in development mode
+    preconditions:
+      - sh: command -v rg >/dev/null 2>&1
+        msg: "Ripgrep (rg) is not available on PATH. Install it before running Desktop."
+      - sh: command -v deno >/dev/null 2>&1
+        msg: "Deno is not available on PATH. Install it before running Desktop."
     env:
       ORA_DATA_DIR: "{{.ROOT_DIR}}/.data"
       VSLANG: "1033"
