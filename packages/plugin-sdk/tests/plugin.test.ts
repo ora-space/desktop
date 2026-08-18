@@ -59,7 +59,7 @@ Deno.test(
     assertEquals((await harness.responses.next()).value, {
       jsonrpc: "2.0",
       method: "ora/register",
-      params: { methods: ["example.echo"] },
+      params: { methods: ["example.echo"], emits: [] },
     });
     await harness.send({
       jsonrpc: "2.0",
@@ -101,7 +101,7 @@ Deno.test("rejects duplicate and late method registration", async () => {
   await harness.responses.next();
   assertThrows(
     () => plugin.registerMethod("example.other", (input) => input),
-    /cannot be registered/,
+    /cannot change/,
   );
   await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
   await run;

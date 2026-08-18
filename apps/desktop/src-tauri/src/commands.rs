@@ -756,6 +756,14 @@ backend_command!(
     "Reports the live detection status of every application-scoped CLI runtime through the shared Backend."
 );
 
+backend_command!(
+    list_agent_models,
+    ListAgentModelsRequest,
+    ListAgentModelsResponse,
+    list_agent_models,
+    "Lists the models one agent advertises outside any session through the shared Backend."
+);
+
 // =============================================================================
 // skill
 // =============================================================================

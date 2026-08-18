@@ -4,6 +4,7 @@ mod connection;
 mod events;
 mod handoff;
 mod history;
+mod plugin_agent;
 mod replay;
 mod routing;
 mod scheduling;
@@ -23,6 +24,7 @@ pub use stream::SessionEventStream;
 use support::*;
 use title_acquisition::TitleAcquisition;
 
+use crate::bootstrap::AgentPluginPackage;
 use crate::clock::SystemClock;
 use crate::task::{resolve_project_cwd, resolve_task_cwd};
 use crate::{BackendError, ErrorClassification};
@@ -50,6 +52,7 @@ use ora_domain::{
 use ora_history::{HistoryIntegrity, binding_needs_handoff, read_session_history};
 use ora_logging::{ora_debug, ora_warn};
 use ora_scheduler::Scheduler;
+use plugin_agent::PluginAgentSpec;
 use routing::{SessionChannel, SessionEvent};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -196,19 +199,42 @@ struct OpenedRecorder {
     failure: Option<String>,
 }
 
+/// Groups the fixed dependencies the agent runtime is constructed from.
+pub(crate) struct AgentRuntimeSetup {
+    /// Agent plugins that join the built-in CLIs as providers, already discovered and validated.
+    pub agent_plugins: Vec<AgentPluginPackage>,
+    pub pool: RepositoryPool,
+    pub home_directory: PathBuf,
+    pub relative_path_base: PathBuf,
+    pub sessions_root: PathBuf,
+    pub clock: SystemClock,
+    pub scheduler: Scheduler,
+    pub app_events: AppEventPublisher,
+}
+
 impl AgentRuntimeManager {
     /// Builds the manager, reconciles stale rows, and immediately starts the shared supervisor.
-    pub(crate) fn new(
-        pool: RepositoryPool,
-        home_directory: PathBuf,
-        relative_path_base: PathBuf,
-        sessions_root: PathBuf,
-        clock: SystemClock,
-        scheduler: Scheduler,
-        app_events: AppEventPublisher,
-    ) -> Result<Self, BackendError> {
+    pub(crate) fn new(setup: AgentRuntimeSetup) -> Result<Self, BackendError> {
+        let AgentRuntimeSetup {
+            agent_plugins,
+            pool,
+            home_directory,
+            relative_path_base,
+            sessions_root,
+            clock,
+            scheduler,
+            app_events,
+        } = setup;
         reconcile_running_sessions(&pool, clock)?;
-        let connections = ConnectionSupervisors::start(pool.clone(), home_directory.clone(), clock);
+        let connections = ConnectionSupervisors::start(
+            agent_plugins
+                .into_iter()
+                .map(PluginAgentSpec::from)
+                .collect(),
+            pool.clone(),
+            home_directory.clone(),
+            clock,
+        );
         Ok(Self {
             inner: Arc::new(ManagerInner {
                 pool,
@@ -261,6 +287,33 @@ impl AgentRuntimeManager {
         })
     }
 
+    /// Reports the models one agent advertises before any session exists.
+    ///
+    /// The list is whatever the agent published when its current connection came up. An agent
+    /// that has no pre-session model list returns an empty one rather than an error, because
+    /// "this agent does not advertise models" is a normal answer for built-in CLIs.
+    pub(crate) fn agent_models(
+        &self,
+        request: ora_contracts::ListAgentModelsRequest,
+    ) -> Result<ora_contracts::ListAgentModelsResponse, BackendError> {
+        let supervisor = self
+            .inner
+            .connections
+            .for_agent(domain_agent_cli(request.agent_cli))?;
+        let connection = supervisor.current()?;
+        Ok(ora_contracts::ListAgentModelsResponse {
+            models: connection
+                .models
+                .iter()
+                .map(|model| ora_contracts::AgentModel {
+                    id: model.id.clone(),
+                    display_name: model.display_name.clone(),
+                    default: model.default,
+                })
+                .collect(),
+        })
+    }
+
     /// Reports the live ACP handshake status of every application-scoped CLI runtime.
     pub(crate) fn agent_runtime_status(&self) -> ora_contracts::GetAgentRuntimeStatusResponse {
         ora_contracts::GetAgentRuntimeStatusResponse {
@@ -268,10 +321,19 @@ impl AgentRuntimeManager {
                 .into_iter()
                 .map(|agent_cli| ora_contracts::AgentCliRuntimeStatus {
                     agent_cli: contract_agent_cli(agent_cli),
-                    status: match self.inner.connections.for_agent(agent_cli).status() {
-                        ConnectionStatus::Ready => ora_contracts::AgentCliStatus::Ready,
-                        ConnectionStatus::Starting => ora_contracts::AgentCliStatus::Starting,
-                        ConnectionStatus::Unavailable => ora_contracts::AgentCliStatus::Unavailable,
+                    // An agent with no supervisor is one this installation cannot reach at
+                    // all, which the UI shows the same way as one that failed to start.
+                    status: match self
+                        .inner
+                        .connections
+                        .for_agent(agent_cli)
+                        .map(|supervisor| supervisor.status())
+                    {
+                        Ok(ConnectionStatus::Ready) => ora_contracts::AgentCliStatus::Ready,
+                        Ok(ConnectionStatus::Starting) => ora_contracts::AgentCliStatus::Starting,
+                        Ok(ConnectionStatus::Unavailable) | Err(_) => {
+                            ora_contracts::AgentCliStatus::Unavailable
+                        }
                     },
                 })
                 .collect(),
@@ -372,7 +434,7 @@ impl AgentRuntimeManager {
 
         let response = async {
             let _lifecycle = self.inner.lifecycle.lock().await;
-            let supervisor = self.inner.connections.for_agent(agent_cli);
+            let supervisor = self.inner.connections.for_agent(agent_cli)?;
             let channel =
                 supervisor.open_session_channel(&agent_session_id, session_id.as_ref())?;
             let now = self.inner.clock.now_timestamp_millis();
@@ -486,7 +548,7 @@ impl AgentRuntimeManager {
 
         let response = async {
             let _lifecycle = self.inner.lifecycle.lock().await;
-            let supervisor = self.inner.connections.for_agent(target);
+            let supervisor = self.inner.connections.for_agent(target)?;
             let channel =
                 supervisor.open_session_channel(&agent_session_id, session.id.as_ref())?;
             let (session, recorder) = self
@@ -898,7 +960,7 @@ impl AgentRuntimeManager {
             return Ok(handle);
         }
         let cwd = self.task_cwd(&session.task_id)?;
-        let connection = self.inner.connections.for_agent(session.agent_cli);
+        let connection = self.inner.connections.for_agent(session.agent_cli)?;
         let mut opened = self.open_recorder(&session)?;
         let session = match opened.failure.take() {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),

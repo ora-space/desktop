@@ -2909,6 +2909,8 @@ dependencies = [
  "ora-history",
  "ora-logging",
  "ora-plugin-lifecycle",
+ "ora-plugin-manager",
+ "ora-plugin-runtime",
  "ora-process",
  "ora-scheduler",
  "ora-skill-package",

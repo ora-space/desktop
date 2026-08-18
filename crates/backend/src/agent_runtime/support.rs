@@ -1,9 +1,9 @@
+use super::connection::AgentAcpClient;
 use crate::{BackendError, ErrorClassification};
 use agent_client_protocol_schema::v1::{
     PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
     RequestPermissionResponse, SelectedPermissionOutcome,
 };
-use ora_acp::AcpClient;
 use ora_contracts::{
     AgentCli as ContractAgentCli, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
@@ -12,11 +12,10 @@ use ora_contracts::{
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_domain::{AgentCli, HistoryState, Session, SessionStatus};
 use std::collections::HashMap;
-use tokio::process::ChildStdin;
 
 /// Responds to a pending permission after validating the public request ownership.
 pub(super) async fn respond_permission(
-    client: &AcpClient<ChildStdin>,
+    client: &AgentAcpClient,
     request: RespondToPermissionRequest,
     permissions: &mut HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
 ) -> Result<RespondToPermissionResponse, BackendError> {

@@ -1,5 +1,7 @@
 use crate::agent::AgentApi;
-use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream, SessionLocator};
+use crate::agent_runtime::{
+    AgentRuntimeManager, AgentRuntimeSetup, SessionEventStream, SessionLocator,
+};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
@@ -24,6 +26,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
+
+/// Describes one installed agent plugin the runtime should supervise.
+///
+/// Discovery and validation belong to the caller, which owns the plugin catalogue; the backend
+/// receives an already-resolved package so it never rediscovers or re-validates plugins itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentPluginPackage {
+    /// Plugin package id, which is also this agent's persisted identity.
+    pub id: String,
+    /// Deno executable used to run this plugin's process.
+    pub deno_path: PathBuf,
+    /// Absolute path to the plugin's JavaScript entrypoint.
+    pub entrypoint: PathBuf,
+}
 
 /// Names the persistent paths required to construct the shared backend.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,7 +113,13 @@ pub struct Backend {
 
 impl Backend {
     /// Opens persistent storage and constructs every shared CRUD API.
-    pub fn open(paths: BackendPaths) -> Result<Self, BackendBootstrapError> {
+    ///
+    /// `agent_plugins` joins the built-in CLIs as agent providers; supplying an empty list keeps
+    /// the runtime to built-in agents only.
+    pub fn open(
+        paths: BackendPaths,
+        agent_plugins: Vec<AgentPluginPackage>,
+    ) -> Result<Self, BackendBootstrapError> {
         ensure_directory(
             paths
                 .database_path
@@ -130,15 +152,16 @@ impl Backend {
         let sessions_root = paths.sessions_root;
         let relative_path_base = paths.relative_path_base;
         let agent_runtime = Arc::new(
-            AgentRuntimeManager::new(
-                pool.clone(),
-                paths.home_directory,
-                relative_path_base.clone(),
-                sessions_root.clone(),
+            AgentRuntimeManager::new(AgentRuntimeSetup {
+                agent_plugins,
+                pool: pool.clone(),
+                home_directory: paths.home_directory,
+                relative_path_base: relative_path_base.clone(),
+                sessions_root: sessions_root.clone(),
                 clock,
                 scheduler,
-                app_events.publisher(),
-            )
+                app_events: app_events.publisher(),
+            })
             .map_err(BackendBootstrapError::AgentRuntime)?,
         );
         // Crash recovery: fail orphaned node runs and running runs left by a previous process
@@ -752,6 +775,14 @@ impl Backend {
         Ok(self.agent_runtime.agent_runtime_status())
     }
 
+    /// Lists the models one agent advertises outside any session.
+    pub fn list_agent_models(
+        &self,
+        request: ListAgentModelsRequest,
+    ) -> Result<ListAgentModelsResponse, BackendError> {
+        self.agent_runtime.agent_models(request)
+    }
+
     /// Resolves one Ora session id to its private agent session identifier and worktree cwd.
     ///
     /// Backend-only: the returned `agent_session_id` is never exposed to the frontend. The
@@ -1141,18 +1172,21 @@ mod tests {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let database_path = temporary.path().join("data").join("ora.sqlite3");
         let worktree_root = temporary.path().join("worktrees");
-        let backend = Backend::open(BackendPaths {
-            database_path: database_path.clone(),
-            data_directory: temporary.path().to_path_buf(),
-            deno_path: std::path::PathBuf::from("deno"),
-            worktree_root: worktree_root.clone(),
-            home_directory: temporary.path().to_path_buf(),
-            relative_path_base: temporary.path().to_path_buf(),
-            sessions_root: temporary.path().join("sessions"),
-            skills_root: temporary.path().join("atoms").join("skills"),
-            ripgrep_path: std::path::PathBuf::from("rg"),
-            timezone: chrono_tz::UTC,
-        })
+        let backend = Backend::open(
+            BackendPaths {
+                database_path: database_path.clone(),
+                data_directory: temporary.path().to_path_buf(),
+                deno_path: std::path::PathBuf::from("deno"),
+                worktree_root: worktree_root.clone(),
+                home_directory: temporary.path().to_path_buf(),
+                relative_path_base: temporary.path().to_path_buf(),
+                sessions_root: temporary.path().join("sessions"),
+                skills_root: temporary.path().join("atoms").join("skills"),
+                ripgrep_path: std::path::PathBuf::from("rg"),
+                timezone: chrono_tz::UTC,
+            },
+            Vec::new(),
+        )
         .expect("open shared backend");
 
         assert!(database_path.is_file());
@@ -1262,18 +1296,21 @@ mod tests {
     fn update_preserves_other_package_files() {
         let temporary = TempDir::new().expect("create temporary backend directory");
         let skills_root = temporary.path().join("atoms").join("skills");
-        let backend = Backend::open(BackendPaths {
-            database_path: temporary.path().join("ora.sqlite3"),
-            data_directory: temporary.path().to_path_buf(),
-            deno_path: std::path::PathBuf::from("deno"),
-            worktree_root: temporary.path().join("worktrees"),
-            home_directory: temporary.path().to_path_buf(),
-            relative_path_base: temporary.path().to_path_buf(),
-            sessions_root: temporary.path().join("sessions"),
-            skills_root: skills_root.clone(),
-            ripgrep_path: std::path::PathBuf::from("rg"),
-            timezone: chrono_tz::UTC,
-        })
+        let backend = Backend::open(
+            BackendPaths {
+                database_path: temporary.path().join("ora.sqlite3"),
+                data_directory: temporary.path().to_path_buf(),
+                deno_path: std::path::PathBuf::from("deno"),
+                worktree_root: temporary.path().join("worktrees"),
+                home_directory: temporary.path().to_path_buf(),
+                relative_path_base: temporary.path().to_path_buf(),
+                sessions_root: temporary.path().join("sessions"),
+                skills_root: skills_root.clone(),
+                ripgrep_path: std::path::PathBuf::from("rg"),
+                timezone: chrono_tz::UTC,
+            },
+            Vec::new(),
+        )
         .expect("open shared backend");
 
         let skill = backend
@@ -1312,18 +1349,21 @@ mod tests {
         let repository_root = temporary.path().join("repository");
         initialize_repository(&repository_root);
         let original_worktree_root = temporary.path().join("original-worktrees");
-        let backend = Backend::open(BackendPaths {
-            database_path: temporary.path().join("ora.sqlite3"),
-            data_directory: temporary.path().to_path_buf(),
-            deno_path: std::path::PathBuf::from("deno"),
-            worktree_root: original_worktree_root.clone(),
-            home_directory: temporary.path().to_path_buf(),
-            relative_path_base: temporary.path().to_path_buf(),
-            sessions_root: temporary.path().join("sessions"),
-            skills_root: temporary.path().join("atoms").join("skills"),
-            ripgrep_path: std::path::PathBuf::from("rg"),
-            timezone: chrono_tz::UTC,
-        })
+        let backend = Backend::open(
+            BackendPaths {
+                database_path: temporary.path().join("ora.sqlite3"),
+                data_directory: temporary.path().to_path_buf(),
+                deno_path: std::path::PathBuf::from("deno"),
+                worktree_root: original_worktree_root.clone(),
+                home_directory: temporary.path().to_path_buf(),
+                relative_path_base: temporary.path().to_path_buf(),
+                sessions_root: temporary.path().join("sessions"),
+                skills_root: temporary.path().join("atoms").join("skills"),
+                ripgrep_path: std::path::PathBuf::from("rg"),
+                timezone: chrono_tz::UTC,
+            },
+            Vec::new(),
+        )
         .expect("open shared backend");
         let project = backend
             .create_project(CreateProjectRequest {

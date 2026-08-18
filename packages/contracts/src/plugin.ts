@@ -41,7 +41,7 @@ export type InstalledPlugin =
     version: string;
     kind: string;
     main: string;
-    agents: Array<InstalledPluginAgent>;
+    agent: InstalledPluginAgent;
     enabled: boolean;
   }
   & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
@@ -49,10 +49,11 @@ export type InstalledPlugin =
   } | { "runtime": "failed"; failureReason: string });
 
 /**
- * Describes one agent contribution from an installed plugin package.
+ * Describes the single agent contributed by an installed agent plugin package.
+ *
+ * The agent carries no id: one package provides exactly one agent, identified by the package.
  */
 export type InstalledPluginAgent = {
-  id: string;
   displayName: string;
   contractVersion: number;
 };

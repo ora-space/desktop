@@ -11,11 +11,12 @@ mod workspace_files;
 use crate::config::DesktopConfigStore;
 use crate::error::DesktopBootstrapError;
 use crate::state::{BundledBinaryPaths, DesktopRuntimeGuard, DesktopState};
-use ora_backend::{Backend, BackendPaths};
+use ora_backend::{AgentPluginPackage, Backend, BackendPaths};
 use ora_logging::{
     FileLoggingConfig, LogLevel, LogOutput, LoggingConfig, RotationPolicy, init_logging, ora_error,
     ora_info, ora_warn, register_gitlancer_logger,
 };
+use ora_plugin_manager::{PluginContribution, PluginManager};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
@@ -92,6 +93,7 @@ pub fn run() {
             // agentRuntime
             // =============================================================================
             commands::get_agent_runtime_status,
+            commands::list_agent_models,
             // =============================================================================
             // skill
             // =============================================================================
@@ -226,18 +228,33 @@ fn bootstrap_desktop(
         }
     };
     let ripgrep_path = binary_paths.ripgrep_path().to_path_buf();
-    let backend = Backend::open(BackendPaths {
-        database_path: app_data_directory.join("ora.sqlite3"),
-        data_directory: app_data_directory.clone(),
-        deno_path: binary_paths.deno_path().to_path_buf(),
-        worktree_root: config_snapshot.worktree_root().to_path_buf(),
-        home_directory,
-        relative_path_base: desktop_relative_path_base(&app_data_directory),
-        sessions_root: app_data_directory.join("sessions"),
-        skills_root: app_data_directory.join("atoms").join("skills"),
-        ripgrep_path: ripgrep_path.clone(),
-        timezone: resolved_timezone.timezone,
-    })?;
+    let plugin_manager = PluginManager::discover(&app_data_directory);
+    for issue in plugin_manager.discovery_issues() {
+        ora_warn!(
+            message = "installed plugin manifest skipped during discovery",
+            path = %issue.path().display(),
+            issue_kind = issue.kind().as_str(),
+            field_path = issue.field_path().unwrap_or(""),
+            reason = issue.message(),
+        );
+    }
+
+    let agent_plugins = agent_plugin_packages(&plugin_manager, binary_paths.deno_path());
+    let backend = Backend::open(
+        BackendPaths {
+            database_path: app_data_directory.join("ora.sqlite3"),
+            data_directory: app_data_directory.clone(),
+            deno_path: binary_paths.deno_path().to_path_buf(),
+            worktree_root: config_snapshot.worktree_root().to_path_buf(),
+            home_directory,
+            relative_path_base: desktop_relative_path_base(&app_data_directory),
+            sessions_root: app_data_directory.join("sessions"),
+            skills_root: app_data_directory.join("atoms").join("skills"),
+            ripgrep_path: ripgrep_path.clone(),
+            timezone: resolved_timezone.timezone,
+        },
+        agent_plugins,
+    )?;
     let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
     Ok((
         DesktopState {
@@ -250,6 +267,29 @@ fn bootstrap_desktop(
         },
         DesktopRuntimeGuard { _logging: logging },
     ))
+}
+
+/// Selects the installed plugins that contribute an agent the runtime should supervise.
+///
+/// Every discovered plugin is already validated, so the entrypoint is resolved against the package
+/// root here rather than re-checked; a package that contributes no agent simply has nothing to
+/// supervise.
+fn agent_plugin_packages(
+    plugin_manager: &PluginManager,
+    deno_path: &std::path::Path,
+) -> Vec<AgentPluginPackage> {
+    plugin_manager
+        .installed_plugins()
+        .iter()
+        .map(|plugin| {
+            let PluginContribution::Agent(_) = &plugin.contributes;
+            AgentPluginPackage {
+                id: plugin.id.clone(),
+                deno_path: deno_path.to_path_buf(),
+                entrypoint: plugin.package_root.join(&plugin.main),
+            }
+        })
+        .collect()
 }
 
 /// Resolves the configured Desktop data root or falls back to Tauri's application data directory.

@@ -226,7 +226,7 @@ mod tests {
     use agent_client_protocol_schema::v1::SessionNotification;
     use agent_client_protocol_schema::v1::{SessionInfoUpdate, SessionUpdate};
     use agent_client_protocol_schema::v1::{ToolCallUpdate, ToolCallUpdateFields};
-    use ora_acp::{AcpInboundEvent, AcpPeer, PermissionRequest};
+    use ora_acp::{AcpInboundEvent, AcpPeer, NdjsonTransport, PermissionRequest};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::sync::Arc;
@@ -270,7 +270,8 @@ mod tests {
         let (ora_reader, ora_writer) = split(ora_stream);
         let (agent_reader, mut agent_writer) = split(agent_stream);
         let mut agent_reader = BufReader::new(agent_reader);
-        let mut peer = AcpPeer::spawn(ora_reader, ora_writer);
+        let (transport, messages) = NdjsonTransport::spawn(ora_reader, ora_writer);
+        let mut peer = AcpPeer::spawn(messages, transport);
         let session_id = SessionId::new("session-1");
         let _pending = peer
             .client
@@ -444,7 +445,8 @@ mod tests {
         let (ora_reader, ora_writer) = split(ora_stream);
         let (agent_reader, mut agent_writer) = split(agent_stream);
         let mut agent_reader = BufReader::new(agent_reader);
-        let mut peer = AcpPeer::spawn(ora_reader, ora_writer);
+        let (transport, messages) = NdjsonTransport::spawn(ora_reader, ora_writer);
+        let mut peer = AcpPeer::spawn(messages, transport);
         let session_id = SessionId::new("session-1");
         let _pending = peer
             .client

@@ -1,5 +1,6 @@
 use super::{
-    MAX_MANIFEST_BYTES, PluginDiscoveryIssueKind, PluginKind, PluginManager, PluginPackageType,
+    InstalledPluginAgent, MAX_MANIFEST_BYTES, PluginContribution, PluginDiscoveryIssueKind,
+    PluginManager, PluginPackageType,
 };
 use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
@@ -30,8 +31,7 @@ fn discovers_complete_manifest() {
     assert_eq!(plugin.manifest_version, 1);
     assert_eq!(plugin.id, "ora.claude-code");
     assert_eq!(plugin.display_name, "Claude Code");
-    assert_eq!(plugin.kind, PluginKind::Agent);
-    assert_eq!(plugin.kind.as_str(), "agent");
+    assert_eq!(plugin.contributes.kind(), "agent");
     assert_eq!(
         plugin.main,
         PortableRelativePath::parse("dist/index.js").expect("parse expected entrypoint")
@@ -39,10 +39,13 @@ fn discovers_complete_manifest() {
     assert_eq!(plugin.engines.ora, ">=0.1.0 <0.2.0");
     assert_eq!(plugin.engines.plugin_api, 1);
     assert_eq!(plugin.engines.bun, ">=1.0.0 <2.0.0");
-    assert_eq!(plugin.agents.len(), 1);
-    assert_eq!(plugin.agents[0].id, "claude-code");
-    assert_eq!(plugin.agents[0].display_name, "Claude Code");
-    assert_eq!(plugin.agents[0].contract_version, 1);
+    assert_eq!(
+        plugin.contributes,
+        PluginContribution::Agent(InstalledPluginAgent {
+            display_name: "Claude Code".to_string(),
+            contract_version: 1,
+        })
+    );
 }
 
 /// Verifies a missing plugin root represents an empty installation.
@@ -62,7 +65,6 @@ fn sorts_plugins_by_identifier_and_accepts_extended_metadata() {
     let temp_dir = TempDir::new().unwrap();
     let mut zeta = valid_manifest("ora.zeta", "工具箱", "1.2.3-alpha.1+build.7");
     zeta["description"] = json!("ignored npm metadata");
-    zeta["ora"]["contributes"]["agents"] = json!([]);
     write_manifest(temp_dir.path(), "created-first", zeta);
     write_manifest(
         temp_dir.path(),
@@ -85,7 +87,6 @@ fn sorts_plugins_by_identifier_and_accepts_extended_metadata() {
         manager.installed_plugins()[1].version.to_string(),
         "1.2.3-alpha.1+build.7"
     );
-    assert_eq!(manager.installed_plugins()[1].agents, &[]);
 }
 
 /// Verifies malformed packages are isolated while valid siblings remain visible.
@@ -230,9 +231,9 @@ fn rejects_unsupported_manifest_contract_values() {
             "ora.engines.pluginApi",
         ),
         (
-            vec!["ora", "contributes", "agents", "0", "contractVersion"],
+            vec!["ora", "contributes", "agent", "contractVersion"],
             json!(2),
-            "ora.contributes.agents[].contractVersion",
+            "ora.contributes.agent.contractVersion",
         ),
     ];
 
@@ -264,12 +265,8 @@ fn rejects_empty_required_strings() {
         (vec!["ora", "engines", "ora"], "ora.engines.ora"),
         (vec!["ora", "engines", "bun"], "ora.engines.bun"),
         (
-            vec!["ora", "contributes", "agents", "0", "id"],
-            "ora.contributes.agents[].id",
-        ),
-        (
-            vec!["ora", "contributes", "agents", "0", "displayName"],
-            "ora.contributes.agents[].displayName",
+            vec!["ora", "contributes", "agent", "displayName"],
+            "ora.contributes.agent.displayName",
         ),
     ];
 
@@ -388,21 +385,27 @@ fn rejects_entrypoint_symlink_escape() {
     assert_eq!(manager.discovery_issues()[0].field_path(), Some("ora.main"));
 }
 
-/// Verifies duplicate contribution and plugin identifiers are diagnosed deterministically.
+/// Verifies an agent package that declares no agent is rejected with a stable field path.
 #[test]
-fn rejects_duplicate_agent_and_plugin_ids() {
+fn rejects_agent_package_without_an_agent_contribution() {
     let temp_dir = TempDir::new().unwrap();
-    let duplicate_agent = json!({
-        "id": "claude-code",
-        "displayName": "Claude Code Copy",
-        "contractVersion": 1
-    });
-    let mut manifest = valid_manifest("ora.agents", "Agents", "1.0.0");
-    manifest["ora"]["contributes"]["agents"]
-        .as_array_mut()
-        .unwrap()
-        .push(duplicate_agent);
-    write_manifest(temp_dir.path(), "00-duplicate-agent", manifest);
+    let mut manifest = valid_manifest("ora.agentless", "Agentless", "1.0.0");
+    manifest["ora"]["contributes"] = json!({});
+    write_manifest(temp_dir.path(), "agentless", manifest);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.installed_plugins(), &[]);
+    assert_eq!(
+        manager.discovery_issues()[0].field_path(),
+        Some("ora.contributes.agent")
+    );
+}
+
+/// Verifies duplicate plugin identifiers are diagnosed deterministically.
+#[test]
+fn rejects_duplicate_plugin_ids() {
+    let temp_dir = TempDir::new().unwrap();
     write_manifest(
         temp_dir.path(),
         "01-first-plugin",
@@ -424,10 +427,7 @@ fn rejects_duplicate_agent_and_plugin_ids() {
             .iter()
             .map(|issue| issue.kind())
             .collect::<Vec<_>>(),
-        vec![
-            PluginDiscoveryIssueKind::InvalidManifest,
-            PluginDiscoveryIssueKind::DuplicatePluginId,
-        ]
+        vec![PluginDiscoveryIssueKind::DuplicatePluginId]
     );
 }
 
@@ -499,11 +499,10 @@ fn valid_manifest(id: &str, display_name: &str, version: &str) -> Value {
                 "bun": ">=1.0.0 <2.0.0"
             },
             "contributes": {
-                "agents": [{
-                    "id": "claude-code",
+                "agent": {
                     "displayName": "Claude Code",
                     "contractVersion": 1
-                }]
+                }
             }
         }
     })

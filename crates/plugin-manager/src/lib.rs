@@ -10,7 +10,7 @@ mod tests;
 
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use validation::{
-    InstalledPlugin, InstalledPluginAgent, PluginEngines, PluginKind, PluginPackageType,
+    InstalledPlugin, InstalledPluginAgent, PluginContribution, PluginEngines, PluginPackageType,
 };
 
 use std::path::Path;
