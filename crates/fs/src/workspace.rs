@@ -265,7 +265,7 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
 
-    /// Verifies listings stay relative, hide Git internals, and sort directories before files.
+    /// DT[directory-listing][happy] Listings are workspace-relative, hide .git, and place directories before files.
     #[test]
     fn lists_workspace_directory() {
         let workspace =
@@ -301,7 +301,7 @@ mod tests {
         );
     }
 
-    /// Verifies UTF-8 reads include a metadata-derived version token.
+    /// DT[file-read][happy] A UTF-8 file read returns its content, byte size, and a metadata-derived version token.
     #[test]
     fn reads_workspace_file() {
         let workspace =
@@ -320,7 +320,7 @@ mod tests {
         assert!(file.version.ends_with(":13"));
     }
 
-    /// Verifies parent traversal is rejected before touching the host filesystem.
+    /// DT[path-containment][error] A parent-traversal path is rejected as not relative before the host filesystem is touched.
     #[test]
     fn rejects_parent_traversal() {
         let workspace =

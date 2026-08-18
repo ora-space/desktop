@@ -46,6 +46,32 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
 - `crates/contracts`, `crates/domain`, and `crates/pty`, including their descendant modules, are intentional exceptions. Their type definitions and code-level documentation are the primary documentation because they do not own architectural orchestration that benefits from separate README files.
 - When adding a crate or directory-based module, add its README in the same change. When changing a module's responsibilities, boundaries, core flows, or interactions, update the corresponding README in the same change.
 - READMEs document stable facts that should remain true across internal refactors: responsibilities, non-responsibilities, public boundaries, key invariants, lifecycle, important failure semantics, and module interactions. Put local implementation rationale, algorithm details, data-structure choices, specialized branches, performance trade-offs, and temporary implementation constraints in English code comments instead.
+- A README that owns tests must also contain a `## Feature points` section; see "Developer test (DT) declarations".
+
+## Developer test (DT) declarations
+
+Every Rust test function under `crates/` carries a one-line structured declaration as the first line of its doc comment. `task lint:dt` (optionally scoped: `task lint:dt -- crates/fs`) rejects any test that lacks or misspells it. The declaration itself cannot be omitted; the only escape hatch is the reserved word `todo` in either field.
+
+```rust
+/// DT[<feature>][<kind>] <statement>
+#[test]
+fn …() { … }
+```
+
+- `<feature>` is a kebab-case feature point declared in the owning module README under `## Feature points`. The owning README is the nearest `README.md` walking up from the test file; crate-level `tests/` files resolve to the crate root README. Prefix with a `src/`-relative module path (`parse::commit-readback`) only when the test must attach to another module's catalog in the same crate; never qualify with the module the file already lives in.
+- `<kind>` is exactly one of `happy` (nominal path), `edge` (boundary of valid input: empty, max, repeat, ordering, exhaustive combinations), `error` (rejection, failure handling, compensation, no dirty state), `concurrency` (interleaving, cancellation, timeouts, locks, leases). Do not encode provenance such as "regression" here; put it in the statement if it matters.
+- `todo` may replace `<feature>`, `<kind>`, or both when no existing entry fits and reworking the catalog does not belong in the current change. It passes the check, is counted as governance debt, and must never be a default. Never add `todo` to a README catalog.
+- `<statement>` is one English sentence in present tense: under what condition, what outcome. Describe the behavior, not the test ("A stale lease is reclaimed…", not "Verifies that…"). Do not repeat the feature point, the kind, or the function name.
+
+Rules:
+
+- One declaration per test function, on the first `///` line, before any `#[…]` attribute. Additional `///` lines may follow and are ignored by tooling.
+- Helpers, fixtures, and non-test functions must not carry a DT line.
+- Every test attaches to exactly one feature point and one kind. If a test spans several feature points, pick the primary one; if that happens often, split the test.
+- Before using a new feature point, add it to the owning README's `## Feature points` section as ``- `id`: description``. Read the existing entries first and reuse one when the meaning overlaps. Name behavior areas with noun phrases (`branch-listing`), not test actions, and do not prefix with the module name.
+- Every crate that has tests must have a crate root `README.md` with a `## Feature points` section, including `crates/contracts`, `crates/domain`, and `crates/pty`; their exemption from module-level READMEs is unchanged.
+- Do not generate test functions with `macro_rules!`; the checker treats a DT line inside a macro body as one declaration shared by every expansion.
+- Renaming or removing a feature point is a single change that updates the README and every declaration referring to it.
 
 ## Tests
 
@@ -59,6 +85,7 @@ authoritative list of available tasks.
 - Frontend tests: `task test:frontend`
 - Rust workspace lint: `task lint:crates`
 - Rust workspace tests: `task test:crates`
+- DT declaration check (standalone, scoped by path): `task lint:dt -- crates/fs`
 - All lint tasks: `task lint`
 - All lint and test tasks (long-running): `task test`
 

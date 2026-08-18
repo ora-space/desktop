@@ -16,3 +16,14 @@
 - The `spec` module discovers Markdown/MDX through the same injected bundled ripgrep, supports explicit ignored sources, and resolves platform-selected directories without allowing workspace escape.
 
 The adapters are documented in [Task Workspace Files](../../docs/task-workspace-files.md) and [Specification management](../../docs/spec-management.md). Tests can inject a `ProcessSpawner` rather than starting ripgrep.
+
+## Feature points
+
+Stable identifiers that DT declarations in this crate attach to. Tests under `src/spec/` use the
+catalog in `src/spec/README.md` instead.
+
+- `directory-listing`: Workspace-relative directory listings that hide Git internals and order directories before files.
+- `file-read`: Bounded UTF-8 file reads that return content, size, and a metadata-derived version token.
+- `path-containment`: Rejecting traversal and workspace escapes before any host filesystem access.
+- `content-search`: ripgrep argument construction and JSON match parsing for workspace search.
+- `change-watching`: Normalizing native watcher events into workspace-relative change batches.

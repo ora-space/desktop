@@ -141,7 +141,7 @@ mod tests {
     use std::time::Duration;
     use tempfile::TempDir;
 
-    /// Verifies native callbacks are normalized to workspace-relative paths.
+    /// DT[change-watching][happy] A native write event surfaces as a workspace-relative change path.
     #[test]
     fn observes_workspace_file_changes() {
         let workspace =

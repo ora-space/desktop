@@ -118,6 +118,11 @@ tasks:
       - cargo fmt --all -- --check
       - cargo clippy --workspace -- -D warnings
 
+  lint:dt:
+    desc: Check DT declarations and feature point catalogs (optionally scoped, e.g. `task lint:dt -- crates/fs`)
+    cmds:
+      - cargo xtask check-dt {{.CLI_ARGS}}
+
   test:
     desc: Run all frontend and Rust workspace checks (may take a long time)
     silent: true
