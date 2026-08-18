@@ -170,11 +170,12 @@ mod tests {
     use super::*;
     use crate::RepositoryError;
     use ora_contracts::{
-        AgentCli as ContractAgentCli, RenameSessionResponse, Session as ContractSession,
+        RenameSessionResponse, Session as ContractSession,
         SessionHistoryState as ContractHistoryState, SessionStatus as ContractSessionStatus,
     };
     use ora_domain::{
-        AgentCli, AuditFields, HistoryState, MAX_SESSION_TITLE_CHARS, Session, SessionStatus,
+        AgentCli, AgentRef, AuditFields, HistoryState, MAX_SESSION_TITLE_CHARS, Session,
+        SessionStatus,
     };
     use pretty_assertions::assert_eq;
     use std::sync::Mutex;
@@ -241,7 +242,7 @@ mod tests {
         fn update_session_binding(
             &self,
             _session_id: &SessionId,
-            _agent_cli: AgentCli,
+            _agent_ref: AgentRef,
             _agent_session_id: &str,
             _now: i64,
         ) -> Result<Session, RepositoryError> {
@@ -306,7 +307,7 @@ mod tests {
                     id: "s1".to_owned(),
                     task_id: "t1".to_owned(),
                     title: Some("Review auth".to_owned()),
-                    agent_cli: ContractAgentCli::OpenCode,
+                    agent_ref: "ora-space.opencode".to_string(),
                     status: ContractSessionStatus::Running,
                     history_state: ContractHistoryState::Writable,
                 },
@@ -340,7 +341,7 @@ mod tests {
         Session::new(
             SessionId::new("s1"),
             ora_domain::TaskId::new("t1"),
-            AgentCli::OpenCode,
+            AgentCli::OpenCode.agent_ref(),
             "provider-1",
             SessionStatus::Running,
             AuditFields::new(1, 1, false),

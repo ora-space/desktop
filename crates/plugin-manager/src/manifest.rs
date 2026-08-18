@@ -34,16 +34,21 @@ pub(crate) struct EngineManifest {
 }
 
 /// Mirrors contributions declared by one plugin package.
+///
+/// Every contribution is optional here because the required set depends on `ora.kind`; semantic
+/// validation resolves which one this package had to declare.
 #[derive(Debug, Deserialize)]
 pub(crate) struct ContributionManifest {
-    pub agents: Vec<AgentManifest>,
+    pub agent: Option<AgentManifest>,
 }
 
-/// Mirrors one contributed agent declaration.
+/// Mirrors the single agent an agent-kind package contributes.
+///
+/// The agent carries no id of its own: one package provides exactly one agent, whose identity is
+/// the package's `ora.id`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentManifest {
-    pub id: String,
     pub display_name: String,
     pub contract_version: u32,
 }

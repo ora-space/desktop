@@ -1,7 +1,6 @@
 use crate::manifest::{AgentManifest, PackageManifest};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -15,17 +14,21 @@ pub enum PluginPackageType {
     Module,
 }
 
-/// Identifies the supported contribution family of an installed plugin.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluginKind {
-    Agent,
+/// Holds the validated contribution of one installed plugin.
+///
+/// `ora.kind` selects the variant, and each variant carries everything that kind must declare.
+/// Keeping the kind and its contribution in one value is what makes an agent package without an
+/// agent declaration unrepresentable rather than a case every consumer has to re-check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginContribution {
+    Agent(InstalledPluginAgent),
 }
 
-impl PluginKind {
-    /// Returns the package manifest spelling used on the frontend wire contract.
-    pub fn as_str(self) -> &'static str {
+impl PluginContribution {
+    /// Returns the `ora.kind` spelling used on the frontend wire contract.
+    pub fn kind(&self) -> &'static str {
         match self {
-            Self::Agent => "agent",
+            Self::Agent(_) => "agent",
         }
     }
 }
@@ -38,10 +41,12 @@ pub struct PluginEngines {
     pub bun: String,
 }
 
-/// Holds one validated agent contribution.
+/// Holds the single validated agent contributed by one agent-kind package.
+///
+/// The agent has no identifier of its own: one package provides exactly one agent, so the
+/// package's `ora.id` is that agent's identity everywhere in the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledPluginAgent {
-    pub id: String,
     pub display_name: String,
     pub contract_version: u32,
 }
@@ -56,10 +61,9 @@ pub struct InstalledPlugin {
     pub manifest_version: u32,
     pub id: String,
     pub display_name: String,
-    pub kind: PluginKind,
     pub main: PortableRelativePath,
     pub engines: PluginEngines,
-    pub agents: Vec<InstalledPluginAgent>,
+    pub contributes: PluginContribution,
 }
 
 /// Reports a semantic manifest constraint after structural deserialization succeeds.
@@ -103,15 +107,7 @@ pub(crate) fn validate(
     }
     require_non_empty("ora.id", &manifest.ora.id)?;
     require_non_empty("ora.displayName", &manifest.ora.display_name)?;
-    let kind = match manifest.ora.kind.as_str() {
-        "agent" => PluginKind::Agent,
-        value => {
-            return Err(invalid(
-                "ora.kind",
-                format!("unsupported plugin kind `{value}`; expected `agent`"),
-            ));
-        }
-    };
+    let contributes = validate_contribution(&manifest.ora.kind, manifest.ora.contributes.agent)?;
     let main = validate_main_path(package_root, &manifest.ora.main)?;
     require_non_empty("ora.engines.ora", &manifest.ora.engines.ora)?;
     if manifest.ora.engines.plugin_api != SUPPORTED_PLUGIN_API_VERSION {
@@ -125,8 +121,6 @@ pub(crate) fn validate(
     }
     require_non_empty("ora.engines.bun", &manifest.ora.engines.bun)?;
 
-    let agents = validate_agents(manifest.ora.contributes.agents)?;
-
     Ok(InstalledPlugin {
         package_root: package_root.to_path_buf(),
         package_name: manifest.name,
@@ -135,14 +129,13 @@ pub(crate) fn validate(
         manifest_version: manifest.ora.manifest_version,
         id: manifest.ora.id,
         display_name: manifest.ora.display_name,
-        kind,
         main,
         engines: PluginEngines {
             ora: manifest.ora.engines.ora,
             plugin_api: manifest.ora.engines.plugin_api,
             bun: manifest.ora.engines.bun,
         },
-        agents,
+        contributes,
     })
 }
 
@@ -194,40 +187,39 @@ fn validate_main_path(
     Ok(main)
 }
 
-/// Validates agent contract versions and uniqueness inside one package.
-fn validate_agents(
-    agents: Vec<AgentManifest>,
-) -> Result<Vec<InstalledPluginAgent>, ManifestValidationError> {
-    let mut seen_ids = HashSet::new();
-    let mut installed = Vec::with_capacity(agents.len());
-
-    for agent in agents {
-        require_non_empty("ora.contributes.agents[].id", &agent.id)?;
-        require_non_empty("ora.contributes.agents[].displayName", &agent.display_name)?;
-        if agent.contract_version != SUPPORTED_AGENT_CONTRACT_VERSION {
-            return Err(invalid(
-                "ora.contributes.agents[].contractVersion",
-                format!(
-                    "unsupported agent contract version {}; expected {SUPPORTED_AGENT_CONTRACT_VERSION}",
-                    agent.contract_version
-                ),
-            ));
+/// Pairs the declared kind with the contribution that kind is required to carry.
+fn validate_contribution(
+    kind: &str,
+    agent: Option<AgentManifest>,
+) -> Result<PluginContribution, ManifestValidationError> {
+    match kind {
+        "agent" => {
+            let agent = agent.ok_or_else(|| {
+                invalid(
+                    "ora.contributes.agent",
+                    "an agent plugin must contribute one agent",
+                )
+            })?;
+            require_non_empty("ora.contributes.agent.displayName", &agent.display_name)?;
+            if agent.contract_version != SUPPORTED_AGENT_CONTRACT_VERSION {
+                return Err(invalid(
+                    "ora.contributes.agent.contractVersion",
+                    format!(
+                        "unsupported agent contract version {}; expected {SUPPORTED_AGENT_CONTRACT_VERSION}",
+                        agent.contract_version
+                    ),
+                ));
+            }
+            Ok(PluginContribution::Agent(InstalledPluginAgent {
+                display_name: agent.display_name,
+                contract_version: agent.contract_version,
+            }))
         }
-        if !seen_ids.insert(agent.id.clone()) {
-            return Err(invalid(
-                "ora.contributes.agents[].id",
-                format!("duplicate agent id `{}`", agent.id),
-            ));
-        }
-
-        installed.push(InstalledPluginAgent {
-            id: agent.id,
-            display_name: agent.display_name,
-            contract_version: agent.contract_version,
-        });
+        value => Err(invalid(
+            "ora.kind",
+            format!("unsupported plugin kind `{value}`; expected `agent`"),
+        )),
     }
-
-    Ok(installed)
 }
 
 /// Rejects required strings that contain only whitespace while preserving valid values verbatim.

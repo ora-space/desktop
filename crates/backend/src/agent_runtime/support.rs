@@ -1,22 +1,21 @@
+use super::connection::AgentAcpClient;
 use crate::{BackendError, ErrorClassification};
 use agent_client_protocol_schema::v1::{
     PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
     RequestPermissionResponse, SelectedPermissionOutcome,
 };
-use ora_acp::AcpClient;
 use ora_contracts::{
-    AgentCli as ContractAgentCli, RespondToPermissionRequest, RespondToPermissionResponse,
+    AgentRef as ContractAgentRef, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
     SessionStatus as ContractSessionStatus,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_domain::{AgentCli, HistoryState, Session, SessionStatus};
+use ora_domain::{AgentRef, HistoryState, Session, SessionStatus};
 use std::collections::HashMap;
-use tokio::process::ChildStdin;
 
 /// Responds to a pending permission after validating the public request ownership.
 pub(super) async fn respond_permission(
-    client: &AcpClient<ChildStdin>,
+    client: &AgentAcpClient,
     request: RespondToPermissionRequest,
     permissions: &mut HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
 ) -> Result<RespondToPermissionResponse, BackendError> {
@@ -66,7 +65,7 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
         id: session.id.to_string(),
         task_id: session.task_id.to_string(),
         title: session.title.map(|title| title.as_str().to_owned()),
-        agent_cli: contract_agent_cli(session.agent_cli),
+        agent_ref: session.agent_ref.into(),
         status: match session.status {
             SessionStatus::Running => ContractSessionStatus::Running,
             SessionStatus::Stopped => ContractSessionStatus::Stopped,
@@ -78,26 +77,14 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
     }
 }
 
-/// Maps the stable persisted CLI identity into its transport representation.
-pub(super) fn contract_agent_cli(agent_cli: AgentCli) -> ContractAgentCli {
-    match agent_cli {
-        AgentCli::OpenCode => ContractAgentCli::OpenCode,
-        AgentCli::Nga => ContractAgentCli::Nga,
-        AgentCli::CodeAgentCli => ContractAgentCli::CodeAgentCli,
-        AgentCli::Claude => ContractAgentCli::Claude,
-        AgentCli::Codex => ContractAgentCli::Codex,
-    }
-}
-
-/// Maps the transport CLI identity into its stable persisted form.
-pub(super) fn domain_agent_cli(agent_cli: ContractAgentCli) -> AgentCli {
-    match agent_cli {
-        ContractAgentCli::OpenCode => AgentCli::OpenCode,
-        ContractAgentCli::Nga => AgentCli::Nga,
-        ContractAgentCli::CodeAgentCli => AgentCli::CodeAgentCli,
-        ContractAgentCli::Claude => AgentCli::Claude,
-        ContractAgentCli::Codex => AgentCli::Codex,
-    }
+/// Validates a client-supplied agent identity before it is used to select a runtime.
+///
+/// The transport carries an open string because which agents exist depends on installed plugins,
+/// so structural validation happens here. Whether the named agent is actually installed is a
+/// separate, later question answered by the supervisor lookup.
+pub(super) fn domain_agent_ref(agent_ref: ContractAgentRef) -> Result<AgentRef, BackendError> {
+    AgentRef::parse(&agent_ref)
+        .map_err(|error| runtime_internal("agent_cli_not_found", error.to_string()))
 }
 
 /// Drains child stderr so provider diagnostics can never block the shared process.

@@ -814,7 +814,7 @@ describe("WorkflowSettings", () => {
     const configuredParameters = within(reviewNode).getByLabelText("配置参数");
     expect(configuredParameters).toHaveTextContent("角色Reviewer");
     expect(configuredParameters).toHaveTextContent(
-      "code_agent_cli · opencode/big-pickle",
+      "ora-space.codeagentcli · opencode/big-pickle",
     );
     expect(configuredParameters).toHaveTextContent(
       "Skillsopenspec-verify-change",
@@ -928,7 +928,7 @@ describe("WorkflowSettings", () => {
     // NGA exists as a CLI but its warm session reports no model catalog, so
     // picking it must keep the node on NGA instead of snapping back to the
     // first CLI with discovered models.
-    state.warmModelsByCli = { nga: null };
+    state.warmModelsByCli = { "ora-space.nga": null };
     renderSettings(<WorkflowSettings />, state);
 
     const reviewNode = await screen.findByLabelText("Agent节点: 审查 Agent");
@@ -962,7 +962,7 @@ describe("WorkflowSettings", () => {
       await screen.findByLabelText("Agent节点: Agent 1"),
     ).toBeInTheDocument();
     expect(
-      screen.getAllByText("open_code · opencode/big-pickle").length,
+      screen.getAllByText("ora-space.opencode · opencode/big-pickle").length,
     ).toBeGreaterThan(0);
   });
 

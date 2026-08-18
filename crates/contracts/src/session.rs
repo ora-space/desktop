@@ -5,49 +5,76 @@ use agent_client_protocol_schema::v1::{
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Identifies the shared CLI runtime selected for a provider-backed session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "session.ts")]
-pub enum AgentCli {
-    OpenCode,
-    Nga,
-    CodeAgentCli,
-    Claude,
-    Codex,
-}
+/// Identifies the agent provider selected for a provider-backed session.
+///
+/// This is the provider's namespaced package id, and it is deliberately an open string rather
+/// than a closed set: agents arrive with installed plugins, so which ones exist is not knowable
+/// at build time. Clients must be able to render an identity they do not recognize instead of
+/// treating it as invalid.
+pub type AgentRef = String;
 
-/// Describes the live ACP handshake state of one application-scoped CLI runtime.
+/// Describes the live ACP handshake state of one application-scoped agent runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub enum AgentCliStatus {
+pub enum AgentStatus {
     Ready,
     Starting,
     Unavailable,
 }
 
-/// Pairs one CLI identity with its current runtime detection status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Pairs one agent identity with its current runtime detection status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
-pub struct AgentCliRuntimeStatus {
-    pub agent_cli: AgentCli,
-    pub status: AgentCliStatus,
+pub struct AgentRuntimeStatus {
+    pub agent_ref: AgentRef,
+    pub status: AgentStatus,
 }
 
-/// Requests the live detection status of every application-scoped CLI runtime.
+/// Describes one model an agent offers before any session exists.
+///
+/// This is separate from the session config options an agent sends after `session/new`: the agent
+/// and model pickers must render before any session has been created. Agents that expose models
+/// only through session config options contribute nothing here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct AgentModel {
+    pub id: String,
+    pub display_name: String,
+    /// Whether the agent would select this model when the user expresses no preference.
+    pub default: bool,
+}
+
+/// Requests the pre-session model list of one application-scoped agent runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct ListAgentModelsRequest {
+    pub agent_ref: AgentRef,
+}
+
+/// Returns the models one agent advertises outside any session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "session.ts")]
+pub struct ListAgentModelsResponse {
+    pub models: Vec<AgentModel>,
+}
+
+/// Requests the live detection status of every application-scoped agent runtime.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct GetAgentRuntimeStatusRequest {}
 
-/// Returns the live detection status of every application-scoped CLI runtime.
+/// Returns the live detection status of every application-scoped agent runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct GetAgentRuntimeStatusResponse {
-    pub statuses: Vec<AgentCliRuntimeStatus>,
+    pub statuses: Vec<AgentRuntimeStatus>,
 }
 
 /// Describes whether a persisted session is registered on its shared CLI connection.
@@ -85,8 +112,8 @@ pub struct Session {
     pub task_id: String,
     /// The persisted display title, or `null` until the first acquisition succeeds.
     pub title: Option<String>,
-    /// The CLI this conversation currently runs on, which switching replaces.
-    pub agent_cli: AgentCli,
+    /// The agent this conversation currently runs on, which switching replaces.
+    pub agent_ref: AgentRef,
     pub status: SessionStatus,
     pub history_state: SessionHistoryState,
 }
@@ -121,7 +148,7 @@ pub enum WarmSessionTarget {
 #[ts(export_to = "session.ts")]
 pub struct WarmSessionRequest {
     pub target: WarmSessionTarget,
-    pub agent_cli: AgentCli,
+    pub agent_ref: AgentRef,
 }
 
 /// Returns the warm session identifier together with the agent's current configuration.
@@ -325,25 +352,25 @@ pub struct StopSessionResponse {
     pub session: Session,
 }
 
-/// Moves one existing conversation onto a different agent CLI.
+/// Moves one existing conversation onto a different agent.
 ///
 /// Only the binding changes: the session keeps its identifier, its task, and the
-/// history it has accumulated. The new CLI starts with no context, so Ora's
+/// history it has accumulated. The new agent starts with no context, so Ora's
 /// recorded transcript is prepended to the next prompt sent into it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct SwitchSessionAgentRequest {
     pub session_id: String,
-    pub agent_cli: AgentCli,
+    pub agent_ref: AgentRef,
 }
 
-/// Returns the session rebound to its new CLI.
+/// Returns the session rebound to its new agent.
 ///
-/// The new CLI reports its own commands and configuration during the handshake
+/// The new agent reports its own commands and configuration during the handshake
 /// that the switch performs, so both travel back with the rebound session. A
 /// client that only heard about the session would otherwise keep offering the
-/// previous CLI's models, which the new one cannot honour.
+/// previous agent's models, which the new one cannot honour.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
@@ -409,9 +436,11 @@ pub struct RenameSessionResponse {
 
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
-    AgentCli::export(config)?;
-    AgentCliStatus::export(config)?;
-    AgentCliRuntimeStatus::export(config)?;
+    AgentStatus::export(config)?;
+    AgentRuntimeStatus::export(config)?;
+    AgentModel::export(config)?;
+    ListAgentModelsRequest::export(config)?;
+    ListAgentModelsResponse::export(config)?;
     GetAgentRuntimeStatusRequest::export(config)?;
     GetAgentRuntimeStatusResponse::export(config)?;
     SessionStatus::export(config)?;

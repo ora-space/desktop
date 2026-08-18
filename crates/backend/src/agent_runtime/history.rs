@@ -1,7 +1,7 @@
 use agent_client_protocol_schema::v1::ContentBlock;
 use agent_client_protocol_schema::v1::SessionUpdate;
 use agent_client_protocol_schema::v1::StopReason;
-use ora_domain::{AgentCli, HistoryState, Session};
+use ora_domain::{AgentRef, HistoryState, Session};
 use ora_history::{
     AgentSwitch, AssembledRecord, HistoryAssembler, HistoryClock, HistoryError, HistoryRecord,
     HistoryWriter, SCHEMA_VERSION, SessionMeta,
@@ -90,7 +90,7 @@ impl<C: HistoryClock> SessionRecorder<C> {
             schema_version: SCHEMA_VERSION,
             session_id: session.id.to_string(),
             task_id: session.task_id.to_string(),
-            agent_cli: session.agent_cli,
+            agent_ref: session.agent_ref.clone(),
             agent_session_id: session.agent_session_id.clone(),
             cwd: cwd.to_path_buf(),
         }))
@@ -114,11 +114,11 @@ impl<C: HistoryClock> SessionRecorder<C> {
         self.append(&records)
     }
 
-    /// Records that the conversation moved to another CLI.
+    /// Records that the conversation moved to another agent.
     pub(super) fn record_agent_switch(
         &mut self,
-        from: AgentCli,
-        to: AgentCli,
+        from: AgentRef,
+        to: AgentRef,
         agent_session_id: String,
     ) -> RecordOutcome {
         self.append_standalone(HistoryRecord::AgentSwitched(AgentSwitch {

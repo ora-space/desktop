@@ -2422,7 +2422,7 @@ fn session_repository_supports_crud_and_soft_delete() {
     let created_session = Session::new(
         SessionId::new("session-1"),
         TaskId::new("task-1"),
-        AgentCli::OpenCode,
+        AgentCli::OpenCode.agent_ref(),
         "provider-1",
         SessionStatus::Running,
         AuditFields::new(12, 12, false),
@@ -2457,7 +2457,7 @@ fn session_repository_supports_crud_and_soft_delete() {
     let updated_session = Session::new(
         created_session.id.clone(),
         created_session.task_id.clone(),
-        created_session.agent_cli,
+        created_session.agent_ref.clone(),
         created_session.agent_session_id.clone(),
         SessionStatus::Stopped,
         AuditFields::new(12, 22, false),
@@ -2505,9 +2505,15 @@ fn session_repository_updates_do_not_overwrite_unrelated_columns() {
     assert_eq!(titled, expected_titled);
 
     let rebound = repository
-        .update_session_binding(&session_id, AgentCli::Nga, "provider-2", /*now*/ 41)
+        .update_session_binding(
+            &session_id,
+            AgentCli::Nga.agent_ref(),
+            "provider-2",
+            /*now*/ 41,
+        )
         .unwrap();
-    let expected_rebound = expected_titled.with_binding(AgentCli::Nga, "provider-2", 41);
+    let expected_rebound =
+        expected_titled.with_binding(AgentCli::Nga.agent_ref(), "provider-2", 41);
     assert_eq!(rebound, expected_rebound);
 
     let running = repository
@@ -2528,7 +2534,7 @@ fn session_repository_updates_do_not_overwrite_unrelated_columns() {
 
 /// Verifies switching agents rewrites the provider binding while the conversation keeps its identity.
 #[test]
-fn session_repository_rebinds_a_session_to_another_agent_cli() {
+fn session_repository_rebinds_a_session_to_another_agent() {
     let (_temp_dir, pool) = bootstrapped_repository_pool();
     insert_cascade_fixture(&pool, SessionStatus::Stopped);
     let repository = SqliteSessionRepository::new(pool);
@@ -2537,16 +2543,17 @@ fn session_repository_rebinds_a_session_to_another_agent_cli() {
         .unwrap()
         .expect("fixture session");
 
-    let rebound =
-        existing
-            .clone()
-            .with_binding(AgentCli::Nga, "provider-2", /*updated_at*/ 40);
+    let rebound = existing.clone().with_binding(
+        AgentCli::Nga.agent_ref(),
+        "provider-2",
+        /*updated_at*/ 40,
+    );
 
     assert_eq!(
         repository
             .update_session_binding(
                 &rebound.id,
-                rebound.agent_cli,
+                rebound.agent_ref.clone(),
                 &rebound.agent_session_id,
                 /*now*/ 40,
             )
@@ -2612,7 +2619,7 @@ fn session_repository_rejects_soft_deleted_task() {
     let session = Session::new(
         SessionId::new("session-after-delete"),
         TaskId::new("task-1"),
-        AgentCli::OpenCode,
+        AgentCli::OpenCode.agent_ref(),
         "provider-after-delete",
         SessionStatus::Running,
         AuditFields::new(21, 21, false),
@@ -2712,7 +2719,7 @@ fn repository_pool_composes_all_repository_adapters() {
     let session = Session::new(
         SessionId::new("session-1"),
         task.id.clone(),
-        AgentCli::OpenCode,
+        AgentCli::OpenCode.agent_ref(),
         "provider-1",
         SessionStatus::Running,
         AuditFields::new(42, 42, false),
@@ -2987,7 +2994,7 @@ fn insert_invalid_session_row(pool: &RepositoryPool) {
             rusqlite::params![
                 "session-invalid",
                 "task-1",
-                AgentCli::OpenCode.database_value(),
+                AgentCli::OpenCode.agent_ref().as_str(),
                 "provider-invalid",
                 99,
                 61,

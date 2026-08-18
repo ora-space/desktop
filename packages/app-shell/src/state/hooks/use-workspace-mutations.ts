@@ -1,11 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type {
-  AgentCli,
-  Project,
-  Session,
-  Task,
-  TaskWorkspaceMode,
-} from "@ora/contracts";
+import type { Project, Session, Task, TaskWorkspaceMode } from "@ora/contracts";
+import type { KnownAgentCli } from "../../features/chat/model-catalog";
 import { useContractsClient } from "../../contracts-client-context";
 import { queryKeys } from "./query-keys";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
@@ -207,11 +202,11 @@ export function useCreateSession() {
       agentCli,
     }: {
       taskId: string;
-      agentCli: AgentCli;
+      agentCli: KnownAgentCli;
     }) => {
       const warmed = await client.session.warm({
         target: { type: "task", taskId },
-        agentCli,
+        agentRef: agentCli,
       });
       const response = await client.session.attach({
         sessionId: warmed.sessionId,

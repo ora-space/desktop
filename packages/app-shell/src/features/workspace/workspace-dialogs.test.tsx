@@ -313,7 +313,7 @@ describe("WorkspaceDialogs project deletion", () => {
       {
         id: "s1",
         taskId: "t1",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -321,7 +321,7 @@ describe("WorkspaceDialogs project deletion", () => {
       {
         id: "s2",
         taskId: "t2",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "writable" },
@@ -412,7 +412,7 @@ describe("WorkspaceDialogs task deletion", () => {
       state.sessions = sessionIds.map((id): Session => ({
         id,
         taskId: "t1",
-        agentCli: "open_code",
+        agentRef: "ora-space.opencode",
         status: "running",
         title: null,
         historyState: { type: "writable" },

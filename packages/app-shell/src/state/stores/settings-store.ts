@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { AgentCli } from "@ora/contracts";
+import {
+  AGENT_CLI_LABELS,
+  type KnownAgentCli,
+} from "../../features/chat/model-catalog";
 
 export type ThemeMode = "system" | "light" | "dark";
 export type InterfaceDensity = "comfortable" | "compact";
@@ -10,7 +13,7 @@ export type HistoryRetention = "30-days" | "90-days" | "forever";
 export interface SettingsPreferences {
   theme: ThemeMode;
   density: InterfaceDensity;
-  agentCli: AgentCli;
+  agentCli: KnownAgentCli;
   approvalPolicy: ApprovalPolicy;
   terminalAccess: boolean;
   fileWriteAccess: boolean;
@@ -25,7 +28,7 @@ const SETTINGS_STORAGE_KEY = "ora.settings.v1";
 export const DEFAULT_SETTINGS: SettingsPreferences = {
   theme: "system",
   density: "comfortable",
-  agentCli: "open_code",
+  agentCli: "ora-space.opencode",
   approvalPolicy: "trusted",
   terminalAccess: true,
   fileWriteAccess: true,
@@ -58,10 +61,15 @@ export const useSettingsStore = create<SettingsState>()(
         const persistedSettings = (
           persisted as Partial<SettingsState> | undefined
         )?.settings;
-        return {
-          ...current,
-          settings: { ...DEFAULT_SETTINGS, ...(persistedSettings ?? {}) },
-        };
+        const settings = { ...DEFAULT_SETTINGS, ...(persistedSettings ?? {}) };
+        // An agent this build cannot offer is dropped rather than carried forward: agent
+        // identities are open strings now, so a stored one can name an agent written before
+        // identities were namespaced, or a plugin that has since been uninstalled. Either way
+        // the picker has no entry for it and every warm request against it would fail.
+        if (!(settings.agentCli in AGENT_CLI_LABELS)) {
+          settings.agentCli = DEFAULT_SETTINGS.agentCli;
+        }
+        return { ...current, settings };
       },
     },
   ),

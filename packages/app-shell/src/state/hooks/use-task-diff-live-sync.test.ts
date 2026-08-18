@@ -18,7 +18,7 @@ import { useTaskDiffLiveSync } from "./use-task-diff-live-sync";
 const SESSION: Session = {
   id: "session-1",
   taskId: "task-1",
-  agentCli: "code_agent_cli",
+  agentRef: "ora-space.codeagentcli",
   status: "running",
   title: null,
   historyState: { type: "writable" },

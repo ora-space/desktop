@@ -88,6 +88,7 @@ const tauriCommands = {
   // agentRuntime
   // =============================================================================
   getAgentRuntimeStatus: "get_agent_runtime_status",
+  listAgentModels: "list_agent_models",
 
   // =============================================================================
   // skill

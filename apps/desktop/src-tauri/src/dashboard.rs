@@ -12,7 +12,7 @@
 use crate::error::CommandError;
 use crate::state::DesktopState;
 use ora_backend::{BackendError, ErrorClassification};
-use ora_contracts::{AgentCli as ContractAgentCli, EmptyErrorParams, PublicError};
+use ora_contracts::{EmptyErrorParams, PublicError};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::State;
@@ -35,16 +35,20 @@ impl DashboardAgentType {
     }
 }
 
-/// Normalizes the persisted contract CLI selection into the dashboard agent family.
-pub fn dashboard_agent_type(agent_cli: ContractAgentCli) -> DashboardAgentType {
-    match agent_cli {
-        ContractAgentCli::OpenCode | ContractAgentCli::Nga => DashboardAgentType::Opencode,
+/// Normalizes one built-in agent's persisted identity into the dashboard agent family.
+///
+/// Returns `None` outside Ora's five bundled CLIs: which agents exist is no longer fixed at
+/// build time, and a plugin-provided agent has no known trace format for the dashboard to render.
+pub fn dashboard_agent_type(agent_ref: &str) -> Option<DashboardAgentType> {
+    match agent_ref {
+        "ora-space.opencode" | "ora-space.nga" => Some(DashboardAgentType::Opencode),
         // Claude, CodeAgentCli, and Codex all emit Claude-Code-compatible transcripts
         // (JSONL / stream-json), so the claude_code parser covers them until a dedicated
         // Codex trace format is introduced.
-        ContractAgentCli::CodeAgentCli | ContractAgentCli::Claude | ContractAgentCli::Codex => {
-            DashboardAgentType::ClaudeCode
+        "ora-space.codeagentcli" | "ora-space.claude" | "ora-space.codex" => {
+            Some(DashboardAgentType::ClaudeCode)
         }
+        _ => None,
     }
 }
 
@@ -112,19 +116,17 @@ pub fn write_locator(
 /// recomputing, so this scans every project directory under the CLI's projects
 /// root and matches by file name (the agent session id).
 pub fn resolve_claude_code_trace(
-    agent_cli: ContractAgentCli,
+    agent_ref: &str,
     home_directory: &Path,
     agent_session_id: &str,
 ) -> Result<Option<PathBuf>, std::io::Error> {
-    let config_directory = match agent_cli {
-        ContractAgentCli::CodeAgentCli => ".cac",
-        // Stock Claude and Codex use `.claude`; the opencode family never reaches
-        // here (routed to `resolve_opencode_trace`) but is listed for an exhaustive
-        // match over the contract enum.
-        ContractAgentCli::Claude
-        | ContractAgentCli::Codex
-        | ContractAgentCli::OpenCode
-        | ContractAgentCli::Nga => ".claude",
+    let config_directory = match agent_ref {
+        "ora-space.codeagentcli" => ".cac",
+        // Stock Claude and Codex use `.claude`. Any other identity reaching this function is a
+        // caller bug (the opencode family and unrecognized agents are filtered out by
+        // `dashboard_agent_type` before this is called), so it falls back to the common default
+        // rather than being rejected here.
+        _ => ".claude",
     };
     let projects_root = home_directory.join(config_directory).join("projects");
     if !projects_root.is_dir() {
@@ -169,15 +171,20 @@ pub fn resolve_opencode_trace(
 /// fork-specific projects root, so the contract CLI is threaded in directly
 /// rather than the collapsed `DashboardAgentType`.
 pub fn resolve_trace_file(
-    agent_cli: ContractAgentCli,
+    agent_ref: &str,
     home_directory: &Path,
     agent_session_id: &str,
 ) -> Result<Option<PathBuf>, std::io::Error> {
-    match dashboard_agent_type(agent_cli) {
-        DashboardAgentType::ClaudeCode => {
-            resolve_claude_code_trace(agent_cli, home_directory, agent_session_id)
+    match dashboard_agent_type(agent_ref) {
+        Some(DashboardAgentType::ClaudeCode) => {
+            resolve_claude_code_trace(agent_ref, home_directory, agent_session_id)
         }
-        DashboardAgentType::Opencode => resolve_opencode_trace(home_directory, agent_session_id),
+        Some(DashboardAgentType::Opencode) => {
+            resolve_opencode_trace(home_directory, agent_session_id)
+        }
+        // No known trace format for this agent; the caller reports that distinctly from a known
+        // format whose file simply has not appeared yet.
+        None => Ok(None),
     }
 }
 
@@ -287,10 +294,16 @@ pub async fn get_dashboard_url(
         .backend
         .resolve_session_locator(&request.session_id)
         .map_err(CommandError::from)?;
-    let agent_type = dashboard_agent_type(locator_info.agent_cli);
+    let Some(agent_type) = dashboard_agent_type(&locator_info.agent_ref) else {
+        return Err(CommandError::from_backend(BackendError::new(
+            ErrorClassification::Internal,
+            PublicError::InternalError(EmptyErrorParams {}),
+            "this agent has no known trace format for the dashboard",
+        )));
+    };
 
     let trace_file_path = match resolve_trace_file(
-        locator_info.agent_cli,
+        &locator_info.agent_ref,
         &locator_info.home_directory,
         &locator_info.agent_session_id,
     ) {
@@ -391,29 +404,35 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    /// Verifies each persisted AgentCli maps to its dashboard agent family.
+    /// Verifies each built-in agent identity maps to its dashboard agent family.
     #[test]
-    fn normalizes_agent_cli_to_dashboard_family() {
+    fn normalizes_agent_ref_to_dashboard_family() {
         assert_eq!(
-            dashboard_agent_type(ContractAgentCli::OpenCode),
-            DashboardAgentType::Opencode
+            dashboard_agent_type("ora-space.opencode"),
+            Some(DashboardAgentType::Opencode)
         );
         assert_eq!(
-            dashboard_agent_type(ContractAgentCli::Nga),
-            DashboardAgentType::Opencode
+            dashboard_agent_type("ora-space.nga"),
+            Some(DashboardAgentType::Opencode)
         );
         assert_eq!(
-            dashboard_agent_type(ContractAgentCli::CodeAgentCli),
-            DashboardAgentType::ClaudeCode
+            dashboard_agent_type("ora-space.codeagentcli"),
+            Some(DashboardAgentType::ClaudeCode)
         );
         assert_eq!(
-            dashboard_agent_type(ContractAgentCli::Claude),
-            DashboardAgentType::ClaudeCode
+            dashboard_agent_type("ora-space.claude"),
+            Some(DashboardAgentType::ClaudeCode)
         );
         assert_eq!(
-            dashboard_agent_type(ContractAgentCli::Codex),
-            DashboardAgentType::ClaudeCode
+            dashboard_agent_type("ora-space.codex"),
+            Some(DashboardAgentType::ClaudeCode)
         );
+    }
+
+    /// Verifies an agent this build does not recognize gets no dashboard trace format.
+    #[test]
+    fn plugin_provided_agent_has_no_known_dashboard_family() {
+        assert_eq!(dashboard_agent_type("acme.my-agent"), None);
     }
 
     /// Verifies the iframe URL carries only the Ora session id and canonical agent type.
@@ -485,13 +504,13 @@ mod tests {
         fs::write(p1.join("other-session.jsonl"), b"{}").expect("write other session");
         fs::write(p2.join("target-session.jsonl"), b"{}").expect("write target session");
 
-        let resolved = resolve_claude_code_trace(ContractAgentCli::Claude, &home, "target-session")
+        let resolved = resolve_claude_code_trace("ora-space.claude", &home, "target-session")
             .expect("scan transcripts")
             .expect("target session should be found");
         assert_eq!(resolved, p2.join("target-session.jsonl"));
 
         assert!(
-            resolve_claude_code_trace(ContractAgentCli::Claude, &home, "missing")
+            resolve_claude_code_trace("ora-space.claude", &home, "missing")
                 .expect("scan transcripts")
                 .is_none(),
             "missing session resolves to None"
@@ -504,7 +523,7 @@ mod tests {
         let temporary = TempDir::new().expect("create temporary home directory");
         let home = temporary.path().to_path_buf();
         assert!(
-            resolve_claude_code_trace(ContractAgentCli::Claude, &home, "any")
+            resolve_claude_code_trace("ora-space.claude", &home, "any")
                 .expect("scan transcripts")
                 .is_none()
         );
@@ -531,18 +550,16 @@ mod tests {
         fs::write(claude_projects.join("xc-session.jsonl"), b"{}")
             .expect("write stock claude transcript");
 
-        let resolved =
-            resolve_claude_code_trace(ContractAgentCli::CodeAgentCli, &home, "xc-session")
-                .expect("scan transcripts")
-                .expect("codeagentcli session should be found under .cac");
+        let resolved = resolve_claude_code_trace("ora-space.codeagentcli", &home, "xc-session")
+            .expect("scan transcripts")
+            .expect("codeagentcli session should be found under .cac");
         assert_eq!(resolved, cac_projects.join("xc-session.jsonl"));
 
         // Stock Claude must still resolve from .claude, proving the two CLIs are
         // isolated by their fork-specific projects root.
-        let claude_resolved =
-            resolve_claude_code_trace(ContractAgentCli::Claude, &home, "xc-session")
-                .expect("scan transcripts")
-                .expect("stock claude session should be found under .claude");
+        let claude_resolved = resolve_claude_code_trace("ora-space.claude", &home, "xc-session")
+            .expect("scan transcripts")
+            .expect("stock claude session should be found under .claude");
         assert_eq!(claude_resolved, claude_projects.join("xc-session.jsonl"));
     }
 
@@ -608,7 +625,7 @@ mod tests {
             .join("trace");
         fs::create_dir_all(&oc_dir).expect("create opencode trace dir");
         fs::write(oc_dir.join("ses_oc.ndjson"), b"{}").expect("write opencode trace");
-        let oc = resolve_trace_file(ContractAgentCli::OpenCode, &home, "ses_oc")
+        let oc = resolve_trace_file("ora-space.opencode", &home, "ses_oc")
             .expect("dispatch opencode")
             .expect("opencode trace should be found");
         assert_eq!(oc, oc_dir.join("ses_oc.ndjson"));
@@ -617,7 +634,7 @@ mod tests {
         let cc_dir = home.join(".claude").join("projects").join("hash-one");
         fs::create_dir_all(&cc_dir).expect("create claude project dir");
         fs::write(cc_dir.join("cc-sess.jsonl"), b"{}").expect("write claude transcript");
-        let cc = resolve_trace_file(ContractAgentCli::Claude, &home, "cc-sess")
+        let cc = resolve_trace_file("ora-space.claude", &home, "cc-sess")
             .expect("dispatch claude")
             .expect("claude transcript should be found");
         assert_eq!(cc, cc_dir.join("cc-sess.jsonl"));
@@ -626,7 +643,7 @@ mod tests {
         let xc_dir = home.join(".cac").join("projects").join("hash-two");
         fs::create_dir_all(&xc_dir).expect("create codeagentcli project dir");
         fs::write(xc_dir.join("xc-sess.jsonl"), b"{}").expect("write codeagentcli transcript");
-        let xc = resolve_trace_file(ContractAgentCli::CodeAgentCli, &home, "xc-sess")
+        let xc = resolve_trace_file("ora-space.codeagentcli", &home, "xc-sess")
             .expect("dispatch codeagentcli")
             .expect("codeagentcli transcript should be found");
         assert_eq!(xc, xc_dir.join("xc-sess.jsonl"));

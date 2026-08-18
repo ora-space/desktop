@@ -62,13 +62,14 @@ impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
                     plugin_id: request.plugin_id.to_string(),
                     deno_path: request.deno_path,
                     entrypoint: request.entrypoint,
+                    permissions: Vec::new(),
                     ready_timeout: timeouts.ready,
                     call_timeout: timeouts.call,
                     shutdown_timeout: timeouts.shutdown,
                 },
             )
             .await
-            .map(|runtime| DenoPluginRuntime { runtime })
+            .map(|(runtime, _notifications)| DenoPluginRuntime { runtime })
             .map_err(|error| PluginRuntimeFailure::new(error.to_string()))
         }
     }
@@ -79,7 +80,8 @@ impl PluginRuntime for DenoPluginRuntime {
     fn stop(&self) -> impl Future<Output = Result<(), PluginRuntimeFailure>> + Send {
         let runtime = self.runtime.clone();
         async move {
-            runtime.shutdown().await;
+            runtime.shutdown();
+            runtime.wait_for_exit().await;
             Ok(())
         }
     }

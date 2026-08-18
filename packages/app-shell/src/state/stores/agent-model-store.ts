@@ -1,13 +1,13 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { create } from "zustand";
-import type { AgentCli } from "@ora/contracts";
+import type { KnownAgentCli } from "../../features/chat/model-catalog";
 
 interface AgentModelState {
   /** The configuration options each CLI reported most recently, keyed by that CLI. */
-  known: Partial<Record<AgentCli, acp.SessionConfigOption[]>>;
+  known: Partial<Record<KnownAgentCli, acp.SessionConfigOption[]>>;
   /** Records what one CLI last reported, so the next surface opening on it renders at once. */
   remember: (
-    agentCli: AgentCli,
+    agentCli: KnownAgentCli,
     configOptions: acp.SessionConfigOption[],
   ) => void;
 }
@@ -20,7 +20,7 @@ interface AgentModelState {
  * handshake before it can name a single model. That handshake is the slow part
  * of opening a chat, and it answers a question that barely changes: which models
  * a CLI offers is a property of that CLI's install and provider configuration,
- * not of the surface being opened. Keying on `AgentCli` alone is what lets one
+ * not of the surface being opened. Keying on `KnownAgentCli` alone is what lets one
  * surface's answer serve the next one's first paint.
  *
  * What is cached is a *display* answer, never an authoritative one. The real

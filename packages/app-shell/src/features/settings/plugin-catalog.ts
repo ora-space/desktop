@@ -16,7 +16,7 @@ import {
   IconTestPipe,
   IconTicket,
 } from "@tabler/icons-react";
-import type { AgentCli } from "@ora/contracts";
+import type { KnownAgentCli } from "../chat/model-catalog";
 import { OpenAiLogo } from "../chat/provider-logos";
 import {
   ClaudeMark,
@@ -60,7 +60,7 @@ export interface PluginEntry {
    * `useAgentRuntimeStatus`) instead of the local install/uninstall toggle, and its
    * card renders read-only.
    */
-  detectionAgentCli?: AgentCli;
+  detectionAgentCli?: KnownAgentCli;
 }
 
 /** Category shared by the coding-agent CLI plugins, kept separate so composer surfaces can exclude them. */
@@ -91,7 +91,7 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-neutral-900 dark:text-neutral-100",
     summaryKey: "settings.plugins.catalog.opencode",
     skills: ["OpenCode", "Terminal"],
-    detectionAgentCli: "open_code",
+    detectionAgentCli: "ora-space.opencode",
   },
   {
     id: "nga",
@@ -113,7 +113,7 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-sky-600 dark:text-sky-400",
     summaryKey: "settings.plugins.catalog.nga",
     skills: ["NGA"],
-    detectionAgentCli: "nga",
+    detectionAgentCli: "ora-space.nga",
   },
   {
     id: "codeagentcli",
@@ -135,7 +135,7 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-orange-600 dark:text-orange-400",
     summaryKey: "settings.plugins.catalog.codeagentcli",
     skills: ["CodeAgentCLI"],
-    detectionAgentCli: "code_agent_cli",
+    detectionAgentCli: "ora-space.codeagentcli",
   },
   {
     id: "claude",
@@ -157,7 +157,7 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-[#D97757]",
     summaryKey: "settings.plugins.catalog.claude",
     skills: ["Claude Code", "Subagents", "Skills"],
-    detectionAgentCli: "claude",
+    detectionAgentCli: "ora-space.claude",
   },
   {
     id: "codex",
@@ -178,7 +178,7 @@ export const PLUGIN_CATALOG: PluginEntry[] = [
     tone: "text-emerald-600 dark:text-emerald-400",
     summaryKey: "settings.plugins.catalog.codex",
     skills: ["Codex", "Code Review"],
-    detectionAgentCli: "codex",
+    detectionAgentCli: "ora-space.codex",
   },
   {
     id: "rtk",

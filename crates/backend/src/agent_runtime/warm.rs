@@ -25,7 +25,7 @@ use agent_client_protocol_schema::v1::{
 };
 use ora_application::{Clock, SessionIdGenerator, UuidSessionIdGenerator};
 use ora_contracts::WarmSessionTarget;
-use ora_domain::{AgentCli, SessionId};
+use ora_domain::{AgentRef, SessionId};
 use ora_logging::{ora_debug, ora_warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -58,7 +58,7 @@ pub(super) struct WarmSessions {
 
 /// A warm session ready to be bound to an Ora session.
 pub(super) struct WarmAttachment {
-    pub agent_cli: AgentCli,
+    pub agent_ref: AgentRef,
     pub agent_session_id: String,
     pub cwd: PathBuf,
     pub available_commands: Vec<AvailableCommand>,
@@ -168,7 +168,7 @@ impl WarmSessions {
         let gate = self.gate(&key);
         let _guard = gate.lock().await;
 
-        let supervisor = self.connections.for_agent(key.agent_cli);
+        let supervisor = self.connections.for_agent(&key.agent_ref)?;
         let connection = supervisor.current()?;
         let now = self.clock.now_timestamp_millis();
         let (decision, released) =
@@ -192,9 +192,9 @@ impl WarmSessions {
                     agent_session_id,
                     config_options,
                     available_commands,
-                } = self.create(key.agent_cli, &session_id, &cwd).await?;
+                } = self.create(&key.agent_ref, &session_id, &cwd).await?;
                 let config_options = self
-                    .replay(key.agent_cli, &agent_session_id, replay, config_options)
+                    .replay(&key.agent_ref, &agent_session_id, replay, config_options)
                     .await;
                 let installed = lock_pool(&self.pool).commit_created(
                     &session_id,
@@ -209,7 +209,7 @@ impl WarmSessions {
                 let orphan = match installed {
                     Install::Accepted(superseded) => superseded,
                     Install::Refused => Some(ReleasedSession {
-                        agent_cli: key.agent_cli,
+                        agent_ref: key.agent_ref,
                         agent_session_id,
                         generation: connection.generation,
                     }),
@@ -238,11 +238,11 @@ impl WarmSessions {
         let reported = match target {
             ConfigTarget::Deferred => None,
             ConfigTarget::Live {
-                agent_cli,
+                agent_ref,
                 agent_session_id,
             } => match request_config_option(
                 &self.connections,
-                agent_cli,
+                &agent_ref,
                 &agent_session_id,
                 &config_id,
                 &value,
@@ -284,7 +284,7 @@ impl WarmSessions {
     ) -> Result<WarmReservation<'_>, BackendError> {
         self.refresh_generations().await;
         let Some(RebuildPlan {
-            agent_cli, replay, ..
+            agent_ref, replay, ..
         }) = lock_pool(&self.pool).rebuild_plan(session_id)
         else {
             return Err(runtime_internal(
@@ -302,7 +302,7 @@ impl WarmSessions {
                     &self.pool,
                     session_id.clone(),
                     WarmAttachment {
-                        agent_cli: attached.agent_cli,
+                        agent_ref: attached.agent_ref,
                         agent_session_id: attached.agent_session_id,
                         cwd: attached.cwd,
                         available_commands: attached.available_commands,
@@ -314,11 +314,11 @@ impl WarmSessions {
             Reservation::NeedsRebuild => {}
         }
 
-        let connection = self.connections.for_agent(agent_cli).current()?;
-        let created = self.create(agent_cli, session_id, cwd).await?;
+        let connection = self.connections.for_agent(&agent_ref)?.current()?;
+        let created = self.create(&agent_ref, session_id, cwd).await?;
         let config_options = self
             .replay(
-                agent_cli,
+                &agent_ref,
                 &created.agent_session_id,
                 replay,
                 created.config_options,
@@ -339,7 +339,7 @@ impl WarmSessions {
             // Another attach took the entry during the handshake above, so the
             // session just created belongs to nobody.
             self.release(Some(ReleasedSession {
-                agent_cli,
+                agent_ref,
                 agent_session_id: created.agent_session_id,
                 generation: connection.generation,
             }))
@@ -352,7 +352,7 @@ impl WarmSessions {
             &self.pool,
             session_id.clone(),
             WarmAttachment {
-                agent_cli,
+                agent_ref,
                 agent_session_id: created.agent_session_id,
                 cwd: cwd.to_path_buf(),
                 available_commands: created.available_commands,
@@ -385,7 +385,7 @@ impl WarmSessions {
         let gate = self.gate(&key);
         let _guard = gate.lock().await;
 
-        let connection = self.connections.for_agent(key.agent_cli).current()?;
+        let connection = self.connections.for_agent(&key.agent_ref)?.current()?;
         let now = self.clock.now_timestamp_millis();
         let (decision, released) =
             lock_pool(&self.pool).lookup_and_reserve(&key, cwd, connection.generation, now, || {
@@ -403,7 +403,7 @@ impl WarmSessions {
                     &self.pool,
                     attached.session_id,
                     WarmAttachment {
-                        agent_cli: attached.agent_cli,
+                        agent_ref: attached.agent_ref,
                         agent_session_id: attached.agent_session_id,
                         cwd: attached.cwd,
                         available_commands: attached.available_commands,
@@ -414,10 +414,10 @@ impl WarmSessions {
             ClaimDecision::Create(plan) => plan,
         };
 
-        let created = self.create(key.agent_cli, &session_id, &cwd).await?;
+        let created = self.create(&key.agent_ref, &session_id, &cwd).await?;
         let config_options = self
             .replay(
-                key.agent_cli,
+                &key.agent_ref,
                 &created.agent_session_id,
                 replay,
                 created.config_options,
@@ -438,7 +438,7 @@ impl WarmSessions {
             // An attach reserved the entry during the handshake above, so the
             // session just created belongs to nobody.
             self.release(Some(ReleasedSession {
-                agent_cli: key.agent_cli,
+                agent_ref: key.agent_ref,
                 agent_session_id: created.agent_session_id,
                 generation: connection.generation,
             }))
@@ -451,7 +451,7 @@ impl WarmSessions {
             &self.pool,
             session_id,
             WarmAttachment {
-                agent_cli: key.agent_cli,
+                agent_ref: key.agent_ref,
                 agent_session_id: created.agent_session_id,
                 cwd,
                 available_commands: created.available_commands,
@@ -472,9 +472,13 @@ impl WarmSessions {
     /// clients already hold keep resolving.
     async fn refresh_generations(&self) {
         let mut pool = lock_pool(&self.pool);
-        for agent_cli in AgentCli::ALL {
-            if let Ok(connection) = self.connections.for_agent(agent_cli).current() {
-                pool.invalidate_generation(agent_cli, connection.generation);
+        for (agent_ref, _status) in self.connections.statuses() {
+            if let Ok(connection) = self
+                .connections
+                .for_agent(&agent_ref)
+                .and_then(|supervisor| supervisor.current())
+            {
+                pool.invalidate_generation(&agent_ref, connection.generation);
             }
         }
     }
@@ -508,11 +512,11 @@ impl WarmSessions {
     /// before it is attached.
     async fn create(
         &self,
-        agent_cli: AgentCli,
+        agent_ref: &AgentRef,
         ora_session_id: &SessionId,
         cwd: &Path,
     ) -> Result<CreatedProvider, BackendError> {
-        let supervisor = self.connections.for_agent(agent_cli);
+        let supervisor = self.connections.for_agent(agent_ref)?;
         let connection = supervisor.current()?;
         let _setup = supervisor.begin_session_setup();
         let response = timeout(
@@ -531,7 +535,7 @@ impl WarmSessions {
         })?
         .map_err(map_acp_error)?;
         ora_debug!(
-            agent_cli = agent_cli.database_value(),
+            agent = %agent_ref,
             agent_session_id = %response.session_id,
             "warm session created",
         );
@@ -553,7 +557,7 @@ impl WarmSessions {
     /// the agent actually has, so the client corrects itself.
     async fn replay(
         &self,
-        agent_cli: AgentCli,
+        agent_ref: &AgentRef,
         agent_session_id: &str,
         replay: Vec<(SessionConfigId, SessionConfigOptionValue)>,
         mut config_options: Vec<SessionConfigOption>,
@@ -561,7 +565,7 @@ impl WarmSessions {
         for (config_id, value) in replay {
             match request_config_option(
                 &self.connections,
-                agent_cli,
+                agent_ref,
                 agent_session_id,
                 &config_id,
                 &value,
@@ -570,7 +574,7 @@ impl WarmSessions {
             {
                 Ok(updated) => config_options = updated,
                 Err(error) => ora_warn!(
-                    agent_cli = agent_cli.database_value(),
+                    agent = %agent_ref,
                     config_id = %config_id,
                     error = %error,
                     "warm session configuration replay failed",
@@ -589,7 +593,11 @@ impl WarmSessions {
         let Some(released) = released else {
             return;
         };
-        let Ok(connection) = self.connections.for_agent(released.agent_cli).current() else {
+        let Ok(connection) = self
+            .connections
+            .for_agent(&released.agent_ref)
+            .and_then(|supervisor| supervisor.current())
+        else {
             return;
         };
         if connection.generation != released.generation {
@@ -634,12 +642,12 @@ impl WarmSessions {
 /// actor and cannot be blocked by a prompt already streaming there.
 pub(super) async fn request_config_option(
     connections: &ConnectionSupervisors,
-    agent_cli: AgentCli,
+    agent_ref: &AgentRef,
     agent_session_id: &str,
     config_id: &SessionConfigId,
     value: &SessionConfigOptionValue,
 ) -> Result<Vec<SessionConfigOption>, BackendError> {
-    let connection = connections.for_agent(agent_cli).current()?;
+    let connection = connections.for_agent(agent_ref)?.current()?;
     let response = timeout(
         SESSION_SETUP_TIMEOUT,
         connection
@@ -684,7 +692,7 @@ mod tests {
             target: WarmSessionTarget::Task {
                 task_id: "task-1".to_string(),
             },
-            agent_cli: AgentCli::OpenCode,
+            agent_ref: AgentCli::OpenCode.agent_ref(),
             owner: WarmOwner::Interactive,
         };
         let session_id = SessionId::new("session-1");
@@ -707,7 +715,7 @@ mod tests {
 
     fn attachment() -> WarmAttachment {
         WarmAttachment {
-            agent_cli: AgentCli::OpenCode,
+            agent_ref: AgentCli::OpenCode.agent_ref(),
             agent_session_id: "agent-session-1".to_string(),
             cwd: PathBuf::from("/repo"),
             available_commands: Vec::new(),
@@ -732,7 +740,7 @@ mod tests {
             lock_pool(&pool).reserve_for_attach(&session_id, Path::new("/repo")),
             Reservation::Held(AttachedWarm {
                 session_id,
-                agent_cli: AgentCli::OpenCode,
+                agent_ref: AgentCli::OpenCode.agent_ref(),
                 agent_session_id: "agent-session-1".to_string(),
                 cwd: PathBuf::from("/repo"),
                 available_commands: vec![],

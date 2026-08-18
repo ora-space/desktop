@@ -1,14 +1,18 @@
 # ACP Agent Runtime
 
-This module owns the application-scoped runtime for supported agent CLIs and the serialized lifecycle actor for each persisted Ora session.
+This module owns the application-scoped runtime for every agent Ora can reach and the serialized lifecycle actor for each persisted Ora session.
+
+An agent comes from one of two sources: a built-in CLI Ora launches itself and speaks NDJSON ACP to over stdio, or an installed [agent plugin](plugin_agent/README.md) that owns its agent process and relays ACP frames. The two differ only in how a connection is started and torn down. Once a connection is ready, every caller sees the same `RuntimeConnection` and cannot tell which source produced it.
 
 ## Runtime model
 
-- `AgentRuntimeManager` owns one independently supervised ACP child connection per supported CLI and routes sessions to the supervisor selected by their current `agent_cli` binding. Switching replaces that binding while preserving the Ora session and its recorded history.
+- `AgentRuntimeManager` owns one independently supervised ACP connection per agent and routes sessions to the supervisor selected by their current `agent_ref` binding. Switching replaces that binding while preserving the Ora session and its recorded history.
+- Supervisors are keyed by the agent's persisted namespaced identity rather than by a closed enum, so a plugin-provided agent is reachable through the same lookup as a built-in CLI. A plugin that would shadow an identity already supervised is ignored rather than allowed to replace it. A lookup miss is a normal runtime state — a session can outlive the plugin that provided its agent — and is reported as an unavailable runtime.
 - Each session has one actor that serializes load, prompt, permission, cancellation, stop, deletion, and user-title adoption commands.
-- Sessions targeting the same CLI share its process and connection; sessions targeting different CLIs or different actors can progress concurrently.
+- Sessions targeting the same agent share its process and connection; sessions targeting different agents or different actors can progress concurrently.
 - Prompts preserve the public ACP `ContentBlock` sequence, so one turn can contain text, images, audio, and linked or embedded resources instead of being reduced to plain text.
 - Model discovery runs each CLI's bounded command independently and returns only successful groups.
+- Agents that advertise models before any session exists publish them once per connection generation, so a reconnect is what refreshes the list. Built-in CLIs advertise none: their models arrive as ACP session config options after a session exists.
 - CLI executables are located with the same semantics on every platform: each directory on the process `PATH` is searched first, then the CLI's fixed per-user install directory (`~/.{cli}/bin`) as a fallback. PATH wins so the resolved binary matches what `which` reports in the user's terminal; the fallback keeps official install-script setups working when a desktop-launched GUI process inherits a minimal PATH. Known limitation: PATH entries added only by shell rc files (nvm, bun) may be invisible to a GUI-launched process; the not-found error enumerates every searched location to keep that diagnosable.
 - Session cwd for project-root tasks and warm project-root chats is resolved against the bootstrap path base, not live process cwd.
 - A newly attached session has a non-persisted title-acquisition window. It accepts valid ACP `session_info_update` titles from attach onward and, after the first eligible prompt (`EndTurn`, `MaxTokens`, or `MaxTurnRequests`), schedules bounded `session/list` fallbacks at three and ten seconds when the CLI advertises that capability. A user-driven rename locks that window so a later agent title cannot overwrite the chosen name. Restored sessions start with acquisition disabled.
@@ -18,7 +22,7 @@ This module owns the application-scoped runtime for supported agent CLIs and the
 - The central connection router receives one unbounded, ordered connection-wide event stream, then forwards updates, permission requests, and terminating responses into a bounded per-session FIFO of 256 items.
 - While `session/new` is waiting to reveal its provider session id, the router temporarily buffers otherwise-unrouted setup updates. Registration drains matching updates into the new session route; unmatched setup updates are discarded when the last concurrent setup finishes. Permission requests and responses are never treated as setup updates and are cancelled or discarded when no route exists.
 - An active actor grants every permission request it receives immediately, preferring the offered option that also remembers the choice for later calls in the same turn. Ora runs with no human-in-the-loop review of tool calls; the `RespondToPermission` command remains for a request that arrives outside an active prompt, where it fails with "not pending" since nothing was left unanswered.
-- Session overflow, prompt timeout, or cancellation stops only the affected session. Connection framing, correlation, or stdio failure invalidates the connection generation and stops only sessions registered on that CLI.
+- Session overflow, prompt timeout, or cancellation stops only the affected session. Connection framing, correlation, or transport failure invalidates the connection generation and stops only sessions registered on that agent. The blast radius of a plugin process dying is therefore identical to that of a CLI process dying: one agent.
 - Connection loss and queue overflow use an independent control channel, so a terminal failure cannot be hidden behind the bounded event FIFO. An active actor drains already accepted events before applying that control and polls its command channel after a bounded event burst.
 - A load or prompt completes only after consuming its matching response fence. This keeps updates that precede the response in the same operation and prevents tail events from leaking into the next prompt.
 - Routes are generation-bound. Updates from old connections or unloaded sessions are discarded as stale.

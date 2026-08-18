@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import type { AgentCli, WarmSessionTarget } from "@ora/contracts";
+import type { WarmSessionTarget } from "@ora/contracts";
+import type { KnownAgentCli } from "../../features/chat/model-catalog";
 import { findModelOption, selectableValues } from "@ora/chat";
 import type { WorkflowAgentModel } from "@ora/workflow-mock";
 import { useContractsClient } from "../../contracts-client-context";
@@ -22,9 +23,9 @@ export interface WorkflowAgentCliStatus {
 export interface WorkflowAgentModelsCatalog {
   agentModels: WorkflowAgentModel[];
   /** Models grouped by CLI, mirroring the two-section picker in chat. */
-  modelsByCli: ReadonlyMap<AgentCli, WorkflowAgentModel[]>;
+  modelsByCli: ReadonlyMap<KnownAgentCli, WorkflowAgentModel[]>;
   /** Loading/error state for every configured CLI, keyed by CLI. */
-  cliStatus: Readonly<Record<AgentCli, WorkflowAgentCliStatus>>;
+  cliStatus: Readonly<Record<KnownAgentCli, WorkflowAgentCliStatus>>;
   isLoading: boolean;
   isError: boolean;
   refetch: () => void;
@@ -58,7 +59,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
       queryFn: () =>
         client.session.warm({
           target: target!,
-          agentCli,
+          agentRef: agentCli,
         }),
       staleTime: Infinity,
       gcTime: Infinity,
@@ -91,9 +92,9 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
   }, [warmQueries]);
 
   const modelsByCli = useMemo(() => {
-    const byCli = new Map<AgentCli, WorkflowAgentModel[]>();
+    const byCli = new Map<KnownAgentCli, WorkflowAgentModel[]>();
     for (const model of agentModels) {
-      const cli = model.agentCli as AgentCli;
+      const cli = model.agentCli as KnownAgentCli;
       const existing = byCli.get(cli);
       if (existing === undefined) {
         byCli.set(cli, [model]);
@@ -117,7 +118,7 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
             },
           ];
         }),
-      ) as Readonly<Record<AgentCli, WorkflowAgentCliStatus>>,
+      ) as Readonly<Record<KnownAgentCli, WorkflowAgentCliStatus>>,
     [warmQueries],
   );
 

@@ -29,6 +29,7 @@ ora-backend = { path = "../../../crates/backend" }
 ora-contracts = { path = "../../../crates/contracts" }
 ora-fs = { path = "../../../crates/fs" }
 ora-logging = { path = "../../../crates/logging" }
+ora-plugin-manager = { path = "../../../crates/plugin-manager" }
 ora-runtime-settings = { path = "../../../crates/runtime-settings" }
 tempfile = "3"
 thiserror = "2"

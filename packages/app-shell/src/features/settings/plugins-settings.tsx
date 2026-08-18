@@ -26,7 +26,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
-import type { AgentCliStatus } from "@ora/contracts";
+import type { AgentStatus } from "@ora/contracts";
 import { useAgentRuntimeStatus } from "../../state/hooks/use-agent-runtime-status";
 import { usePluginInstallStore } from "../../state/stores/plugin-install-store";
 import {
@@ -87,11 +87,11 @@ export function PluginsSettings() {
   // when the backend's live ACP handshake for that CLI is ready. Every other plugin keeps
   // the manual, non-persisted install toggle.
   const detectionStatusByPluginId = useMemo(() => {
-    const statuses = new Map<string, AgentCliStatus>();
+    const statuses = new Map<string, AgentStatus>();
     for (const plugin of PLUGIN_CATALOG) {
       if (!plugin.detectionAgentCli) continue;
       const match = agentRuntimeStatuses?.find(
-        (status) => status.agentCli === plugin.detectionAgentCli,
+        (status) => status.agentRef === plugin.detectionAgentCli,
       );
       statuses.set(plugin.id, match?.status ?? "starting");
     }
@@ -441,7 +441,7 @@ function PluginGrid({
   items: PluginEntry[];
   installedIds: string[];
   pendingInstallIds: string[];
-  detectionStatusByPluginId: Map<string, AgentCliStatus>;
+  detectionStatusByPluginId: Map<string, AgentStatus>;
   onOpen: (id: string) => void;
   onToggleInstall: (id: string) => void;
 }) {

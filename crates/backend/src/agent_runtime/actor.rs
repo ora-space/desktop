@@ -1,3 +1,4 @@
+use super::connection::AgentAcpClient;
 use super::events::{
     drain_idle_events, drain_queued_prompt_events, settle_abandoned_session_response,
     settle_cancelled_prompt,
@@ -19,9 +20,7 @@ use agent_client_protocol_schema::v1::{
 };
 use agent_client_protocol_schema::v1::{PromptRequest, PromptResponse, StopReason};
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
-use ora_acp::AcpClient;
 use ora_logging::{ora_debug, ora_warn};
-use tokio::process::ChildStdin;
 use tokio::time::{Instant, timeout};
 
 /// How far replaying Ora's record got before it stopped.
@@ -764,7 +763,7 @@ impl RuntimeActor {
     /// Cancels the provider turn and settles every outstanding permission request.
     async fn cancel(
         &self,
-        client: &AcpClient<ChildStdin>,
+        client: &AgentAcpClient,
         permissions: &HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
     ) {
         ora_debug!(session_id = %self.session.id, pending_permissions = permissions.len(), "cancelling prompt");
@@ -902,6 +901,7 @@ impl Drop for RuntimeActor {
 
 #[cfg(test)]
 mod tests {
+    use super::super::connection::AgentSource;
     use super::*;
     use crate::agent_runtime::connection::ConnectionSupervisor;
     use crate::agent_runtime::title_acquisition::TitleAcquisition;
@@ -925,7 +925,8 @@ mod tests {
         .expect("create repository pool");
         let scheduler = Scheduler::new(chrono_tz::UTC);
         let connection = ConnectionSupervisor::start(
-            AgentCli::Codex,
+            AgentCli::Codex.agent_ref(),
+            AgentSource::Cli(AgentCli::Codex),
             pool.clone(),
             temporary.path().to_path_buf(),
             SystemClock,
@@ -941,7 +942,7 @@ mod tests {
         let session = ora_domain::Session::new(
             SessionId::new("session-1"),
             TaskId::new("task-1"),
-            AgentCli::Codex,
+            AgentCli::Codex.agent_ref(),
             "provider-session-1",
             SessionStatus::Stopped,
             AuditFields::new(0, 0, false),
@@ -987,7 +988,8 @@ mod tests {
         .expect("create repository pool");
         let scheduler = Scheduler::new(chrono_tz::UTC);
         let connection = ConnectionSupervisor::start(
-            AgentCli::Codex,
+            AgentCli::Codex.agent_ref(),
+            AgentSource::Cli(AgentCli::Codex),
             pool.clone(),
             temporary.path().to_path_buf(),
             SystemClock,
@@ -1003,7 +1005,7 @@ mod tests {
         let session = ora_domain::Session::new(
             SessionId::new("session-1"),
             TaskId::new("task-1"),
-            AgentCli::Codex,
+            AgentCli::Codex.agent_ref(),
             "provider-session-1",
             SessionStatus::Stopped,
             AuditFields::new(0, 0, false),

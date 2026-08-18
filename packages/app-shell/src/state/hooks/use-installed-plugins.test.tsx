@@ -18,7 +18,7 @@ describe("useInstalledPlugins", () => {
       version: "0.1.0",
       kind: "agent",
       main: "dist/index.js",
-      agents: [],
+      agent: { displayName: "Reviewer", contractVersion: 1 },
       enabled: false,
       runtime: "stopped",
     });

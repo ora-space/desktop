@@ -4,7 +4,7 @@ use agent_client_protocol_schema::v1::ContentBlock;
 use agent_client_protocol_schema::v1::SessionUpdate;
 use agent_client_protocol_schema::v1::StopReason;
 use agent_client_protocol_schema::v1::ToolCallStatus;
-use ora_domain::AgentCli;
+use ora_domain::AgentRef;
 use std::fmt::Write as _;
 
 /// Wraps the transcript so the receiving agent can tell it from the user's words.
@@ -35,7 +35,7 @@ pub fn render_handoff(history: &SessionHistory) -> Option<String> {
     rendered.push_str(OPEN_MARKER);
     rendered.push_str("\nThis conversation was previously handled by a different coding agent");
     if let Some(previous) = previous_agent(history) {
-        let _ = write!(rendered, " ({name})", name = previous.executable_name());
+        let _ = write!(rendered, " ({previous})");
     }
     match history.integrity {
         HistoryIntegrity::Complete => rendered.push_str(
@@ -105,15 +105,15 @@ pub fn binding_needs_handoff(history: &SessionHistory) -> bool {
 /// Names the agent whose work the transcript describes.
 ///
 /// The most recent switch says which agent was handling the conversation before
-/// it; a session that never switched has only the CLI it opened on.
-fn previous_agent(history: &SessionHistory) -> Option<AgentCli> {
+/// it; a session that never switched has only the agent it opened on.
+fn previous_agent(history: &SessionHistory) -> Option<AgentRef> {
     history
         .lines
         .iter()
         .rev()
         .find_map(|line| match &line.record {
-            HistoryRecord::AgentSwitched(switch) => Some(switch.from),
-            HistoryRecord::Meta(meta) => Some(meta.agent_cli),
+            HistoryRecord::AgentSwitched(switch) => Some(switch.from.clone()),
+            HistoryRecord::Meta(meta) => Some(meta.agent_ref.clone()),
             HistoryRecord::Update { .. }
             | HistoryRecord::TurnEnded { .. }
             | HistoryRecord::HandoffDelivered { .. }
@@ -214,8 +214,8 @@ fn collect_turns(history: &SessionHistory) -> Vec<HandoffTurn> {
             }
             HistoryRecord::AgentSwitched(switch) => current.notes.push(format!(
                 "The conversation moved from {from} to {to} at this point.",
-                from = switch.from.executable_name(),
-                to = switch.to.executable_name(),
+                from = switch.from,
+                to = switch.to,
             )),
             HistoryRecord::Gap { reason } => current.notes.push(format!(
                 "Part of the conversation is missing here because it could not be recorded ({reason})."

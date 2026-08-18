@@ -43,7 +43,7 @@ pub struct AgentConfig {
 
 /// The agent CLI and model an `agent` node must run with.
 ///
-/// `agent_cli` stays a string here; mapping it to the contract `AgentCli` enum and checking
+/// `agent_cli` stays a string here; validating it as an agent identity and checking
 /// runtime availability happens in the session driver (phase 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentExecutor {

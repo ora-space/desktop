@@ -278,14 +278,14 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       // arriving back where they started, and committing it would be refused.
       const recorded = usePendingAgentStore.getState().switches[session.id];
       const pendingSwitch =
-        recorded === session.agentCli ? undefined : recorded;
+        recorded === session.agentRef ? undefined : recorded;
       const prepare =
         pendingSwitch === undefined
           ? undefined
           : async () => {
               const response = await client.session.switchAgent({
                 sessionId: session.id,
-                agentCli: pendingSwitch,
+                agentRef: pendingSwitch,
               });
               usePendingAgentStore.getState().clearPendingSwitch(session.id);
               // The claim consumed the warm entry, so this surface must warm a

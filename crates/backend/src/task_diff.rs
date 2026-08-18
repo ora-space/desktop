@@ -400,18 +400,21 @@ mod tests {
 
     /// Opens one isolated backend whose worktrees stay inside the test fixture.
     fn open_backend(temporary: &TempDir) -> Backend {
-        Backend::open(BackendPaths {
-            database_path: temporary.path().join("ora.sqlite3"),
-            data_directory: temporary.path().to_path_buf(),
-            deno_path: std::path::PathBuf::from("deno"),
-            worktree_root: temporary.path().join("worktrees"),
-            home_directory: temporary.path().to_path_buf(),
-            relative_path_base: temporary.path().to_path_buf(),
-            sessions_root: temporary.path().join("sessions"),
-            skills_root: temporary.path().join("atoms").join("skills"),
-            ripgrep_path: std::path::PathBuf::from("rg"),
-            timezone: chrono_tz::UTC,
-        })
+        Backend::open(
+            BackendPaths {
+                database_path: temporary.path().join("ora.sqlite3"),
+                data_directory: temporary.path().to_path_buf(),
+                deno_path: std::path::PathBuf::from("deno"),
+                worktree_root: temporary.path().join("worktrees"),
+                home_directory: temporary.path().to_path_buf(),
+                relative_path_base: temporary.path().to_path_buf(),
+                sessions_root: temporary.path().join("sessions"),
+                skills_root: temporary.path().join("atoms").join("skills"),
+                ripgrep_path: std::path::PathBuf::from("rg"),
+                timezone: chrono_tz::UTC,
+            },
+            Vec::new(),
+        )
         .expect("open shared backend")
     }
 
