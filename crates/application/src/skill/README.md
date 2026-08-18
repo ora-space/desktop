@@ -8,7 +8,16 @@ on-disk packages.
 - Creation assigns a `SkillId`, applies backend timestamps, validates the domain entity, and
   atomically persists the database row together with a minimal `SKILL.md` under
   `<skills_root>/<name>/`.
-- Get and list operations expose only visible records.
+- Get and list operations expose every visible catalog row and report `availability` from
+  the on-disk package. A missing directory, missing root `SKILL.md`, or `SKILL.md` that
+  cannot be loaded as YAML front matter marks the skill unavailable instead of deleting
+  it or failing the request.
+- Creating or importing the same name as an unavailable skill restores that row's package
+  while keeping its identifier. Incomplete leftover directories may be cleared first. A
+  complete untracked package is left in place at startup and when renaming onto that name;
+  creating or importing an unclaimed name replaces any leftover at that path through a
+  journaled swap so a failed persist restores the original package. Delete still succeeds
+  when the formal directory is already gone.
 - Update preserves identity and creation time, copies the existing package into a transaction
   staging directory, rewrites only the manifest (preserving unknown front matter values and the
   Markdown body), renames the formal directory when the name changes, and keeps the database and
@@ -21,6 +30,10 @@ on-disk packages.
   on one filesystem and interrupted transactions can be recovered at startup.
 - `SkillRepository` supplies case-insensitive name lookups used for global uniqueness and import
   conflict detection.
+- A destination claimed by another in-flight package transaction is a `SkillFolderConflict`,
+  whether the journal is observed before promotion or the rename loses its final race. A static
+  untracked package remains recoverable through a journaled swap, while a missing formal directory
+  that a mutation still expected is `SkillStorageInconsistent`.
 - Domain validation (`ora-domain::Skill`) enforces the ASCII slug name rules and the 4096-byte
   description limit shared by create, update, and import.
 

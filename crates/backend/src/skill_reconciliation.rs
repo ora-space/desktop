@@ -4,16 +4,18 @@ use ora_application::{
 };
 use ora_db::{RepositoryPool, SqliteSkillRepository};
 use ora_domain::Namespace;
+use ora_logging::ora_warn;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use thiserror::Error;
 
 /// Reports startup reconciliation failures that must block backend readiness.
+///
+/// Missing or incomplete packages stay in the catalog as unavailable and never surface
+/// here. Only I/O or repository failures during recovery remain fatal.
 #[derive(Debug, Error)]
 pub enum SkillStorageReconciliationError {
-    #[error("skill storage inconsistency for skills: {names:?}")]
-    Inconsistent { names: Vec<String> },
     #[error("skill storage reconciliation failed: {message}")]
     OperationFailed { message: String },
 }
@@ -21,8 +23,9 @@ pub enum SkillStorageReconciliationError {
 /// Reconciles formal skill storage with the database before the backend serves requests.
 ///
 /// First interrupted transactions are restored or cleaned from their journal markers, then
-/// leftover transaction directories are removed, then orphan formal directories are cleaned
-/// and any visible record without its formal directory or root `SKILL.md` blocks startup.
+/// leftover transaction directories are removed. Visible records whose formal directory or
+/// root `SKILL.md` is missing stay in the catalog as unavailable. Unowned directories
+/// without a root `SKILL.md` are removed; untracked complete packages are left in place.
 pub(crate) fn reconcile_skill_storage(
     pool: &RepositoryPool,
     skills_root: &Path,
@@ -39,35 +42,41 @@ pub(crate) fn reconcile_skill_storage(
     cleanup_reserved_transactions(&storage, skills_root)?;
 
     let visible = repository.list_skills().map_err(operation_failed)?;
-    let claimed = visible
-        .iter()
-        .map(|skill| skill.name.clone())
-        .collect::<BTreeSet<_>>();
-    let formal_names = storage.list_formal_names().map_err(operation_failed)?;
-
-    let mut inconsistent = Vec::new();
-    for name in &claimed {
-        let has_directory = storage.formal_exists(name);
+    let mut claimed = BTreeSet::new();
+    for skill in visible {
+        let has_directory = storage.formal_exists(&skill.name);
         let has_manifest = storage
-            .read_manifest(name)
+            .read_manifest(&skill.name)
             .map_err(operation_failed)?
             .is_some();
         if !has_directory || !has_manifest {
-            inconsistent.push(name.clone());
+            ora_warn!(
+                message = "skill package is missing or incomplete; catalog row stays unavailable",
+                skill_id = skill.id.to_string(),
+                skill_name = skill.name.clone(),
+            );
         }
+        claimed.insert(skill.name);
     }
-    if !inconsistent.is_empty() {
-        return Err(SkillStorageReconciliationError::Inconsistent {
-            names: inconsistent,
-        });
-    }
-
+    let formal_names = storage.list_formal_names().map_err(operation_failed)?;
     for name in formal_names {
-        if !claimed.contains(&name) {
-            storage
-                .remove_dir(&skills_root.join(&name))
-                .map_err(operation_failed)?;
+        if claimed.contains(&name) {
+            continue;
         }
+        let has_manifest = storage
+            .read_manifest(&name)
+            .map_err(operation_failed)?
+            .is_some();
+        if has_manifest {
+            ora_warn!(
+                message = "leaving untracked skill package in place",
+                skill_name = name.clone(),
+            );
+            continue;
+        }
+        storage
+            .remove_dir(&skills_root.join(&name))
+            .map_err(operation_failed)?;
     }
     Ok(())
 }
@@ -123,15 +132,12 @@ fn recover_journal(
                 remove_if_present(storage, &staging)?;
             }
             JournalPhase::Swapped => {
-                let from_visible = repository
-                    .find_skill_by_name(&Namespace::local(), &journal.from_name)
-                    .map_err(operation_failed)?
-                    .is_some();
                 if target_visible {
                     // Fully committed; only the compensation backup remains.
                     remove_if_present(storage, &backup)?;
-                } else if from_visible {
-                    // Database write never happened; restore the original directory.
+                } else {
+                    // Database write never happened. Restore the original directory whether
+                    // a catalog row still owns `from_name` or the leftover was untracked.
                     if storage.formal_exists(&journal.name) {
                         storage
                             .remove_dir(&formal_path(&journal.name))
@@ -142,14 +148,6 @@ fn recover_journal(
                             .restore_backup(&backup, &journal.from_name)
                             .map_err(operation_failed)?;
                     }
-                } else {
-                    // No record claims either name; drop both leftovers.
-                    if storage.formal_exists(&journal.name) {
-                        storage
-                            .remove_dir(&formal_path(&journal.name))
-                            .map_err(operation_failed)?;
-                    }
-                    remove_if_present(storage, &backup)?;
                 }
                 remove_if_present(storage, &staging)?;
             }
@@ -471,10 +469,10 @@ mod tests {
     }
 
     #[test]
-    fn removes_orphan_formal_directories() {
+    fn removes_untracked_directories_without_a_manifest() {
         let temp = TempDir::new().unwrap();
         let skills_root = temp.path().join("atoms").join("skills");
-        create_formal(&skills_root, "orphan", "no database record");
+        fs::create_dir_all(skills_root.join("orphan")).unwrap();
 
         reconcile_skill_storage(&pool(&temp.path().join("ora.sqlite3")), &skills_root).unwrap();
 
@@ -482,7 +480,60 @@ mod tests {
     }
 
     #[test]
-    fn blocks_startup_when_visible_record_lacks_formal_directory() {
+    fn restores_untracked_package_after_interrupted_claim_swap() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        create_formal(&skills_root, "stray", "untracked body");
+        let staging = skills_root.join(".ora-staging").join("txn");
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(staging.join("SKILL.md"), "new body").unwrap();
+        let backup = skills_root.join(".ora-backup").join("txn");
+        fs::create_dir_all(&backup).unwrap();
+        fs::write(backup.join("SKILL.md"), "untracked body").unwrap();
+        fs::remove_dir_all(skills_root.join("stray")).unwrap();
+        create_formal(&skills_root, "stray", "new body");
+
+        let journal = TransactionJournal {
+            op: ora_application::JournalOp::Swap,
+            name: "stray".to_string(),
+            from_name: "stray".to_string(),
+            staging: staging.to_string_lossy().into_owned(),
+            backup: backup.to_string_lossy().into_owned(),
+            phase: ora_application::JournalPhase::Swapped,
+            file: skills_root
+                .join(".ora-journal")
+                .join("txn.json")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        write_journal(&journal);
+
+        reconcile_skill_storage(&pool(&temp.path().join("ora.sqlite3")), &skills_root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(skills_root.join("stray").join("SKILL.md")).unwrap(),
+            "untracked body"
+        );
+        assert!(!backup.exists());
+        assert!(!staging.exists());
+        assert!(!skills_root.join(".ora-journal").join("txn.json").exists());
+    }
+
+    #[test]
+    fn keeps_untracked_packages_that_still_have_a_manifest() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        create_formal(&skills_root, "stray", "untracked");
+
+        ora_logging::with_trace_logging(|| {
+            reconcile_skill_storage(&pool(&temp.path().join("ora.sqlite3")), &skills_root).unwrap();
+        });
+
+        assert!(skills_root.join("stray").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn keeps_visible_record_when_formal_directory_is_missing() {
         let temp = TempDir::new().unwrap();
         let skills_root = temp.path().join("atoms").join("skills");
         fs::create_dir_all(&skills_root).unwrap();
@@ -501,11 +552,86 @@ mod tests {
             )
             .unwrap();
 
-        let error = reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap_err();
-        assert!(matches!(
-            error,
-            super::SkillStorageReconciliationError::Inconsistent { names } if names == vec!["missing-dir".to_string()]
-        ));
+        ora_logging::with_trace_logging(|| {
+            reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+        });
+
+        assert!(
+            repository
+                .find_skill_by_name(&Namespace::local(), "missing-dir")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn keeps_visible_record_when_root_manifest_is_missing() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        let leftover = skills_root.join("broken");
+        fs::create_dir_all(&leftover).unwrap();
+        fs::write(leftover.join("notes.md"), "not a manifest").unwrap();
+        let database_path = temp.path().join("ora.sqlite3");
+        let repository = SqliteSkillRepository::new(pool(&database_path));
+        repository
+            .create_skill(
+                Skill::new(
+                    SkillId::new("skill-1"),
+                    Namespace::local(),
+                    "broken",
+                    "Reviews",
+                    AuditFields::new(100, 100, false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        ora_logging::with_trace_logging(|| {
+            reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+        });
+
+        assert!(
+            repository
+                .find_skill_by_name(&Namespace::local(), "broken")
+                .unwrap()
+                .is_some()
+        );
+        assert!(leftover.exists());
+    }
+
+    #[test]
+    fn keeps_visible_record_when_root_manifest_is_damaged() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("atoms").join("skills");
+        let leftover = skills_root.join("damaged");
+        fs::create_dir_all(&leftover).unwrap();
+        fs::write(leftover.join("SKILL.md"), "---\nname: [unterminated").unwrap();
+        let database_path = temp.path().join("ora.sqlite3");
+        let repository = SqliteSkillRepository::new(pool(&database_path));
+        repository
+            .create_skill(
+                Skill::new(
+                    SkillId::new("skill-2"),
+                    Namespace::local(),
+                    "damaged",
+                    "Reviews",
+                    AuditFields::new(100, 100, false),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        ora_logging::with_trace_logging(|| {
+            reconcile_skill_storage(&pool(&database_path), &skills_root).unwrap();
+        });
+
+        assert!(
+            repository
+                .find_skill_by_name(&Namespace::local(), "damaged")
+                .unwrap()
+                .is_some()
+        );
+        assert!(leftover.exists());
     }
 
     #[test]

@@ -246,16 +246,6 @@ export type StopSessionResponse = { session: Session };
 export type SwitchSessionAgentRequest = {
   sessionId: string;
   agentCli: AgentCli;
-  /**
-   * Identifies the client surface whose warm session this switch claims.
-   *
-   * The provider session the new CLI runs on is the one this client already
-   * warmed while its picker was showing that CLI's models, and warm entries
-   * are keyed by client. Carrying the same value here is what makes the
-   * switch claim that entry — including any model chosen on it — rather than
-   * build a second session the user never configured.
-   */
-  clientId: string;
 };
 
 /**
@@ -282,15 +272,6 @@ export type SwitchSessionAgentResponse = {
 export type WarmSessionRequest = {
   target: WarmSessionTarget;
   agentCli: AgentCli;
-  /**
-   * Identifies the client surface that will own the returned session.
-   *
-   * Warm entries are keyed by this value because one backend can serve
-   * several clients (browser tabs against the Web server). Without it two
-   * tabs showing the same selection would share one provider session, and
-   * whichever attached first would take the other tab's conversation.
-   */
-  clientId: string;
 };
 
 /**

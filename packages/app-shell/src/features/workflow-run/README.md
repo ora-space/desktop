@@ -112,17 +112,17 @@ Keep these stacks separate — shared chrome only where noted.
   the run — not a single node session. Stage-scoped Diff is deferred until a
   session-level Git Diff API (or turn-level filter) exists; `nodeStates.sessionId`
   is projected for that follow-up.
-- **Open location (Desktop)**: the run header reuses `LocationActionsButton`
+- **Open location**: the run header reuses `LocationActionsButton`
   (File Manager / Terminal / VS Code / Copy Path). Prefer
   `GetWorkflowRunResponse.taskId` so opens target the run worktree; fall back to
-  the project root until that id is available. Hidden on Web (`unsupported`).
+  the project root until that id is available.
 - Lists: react-query via `queryKeys.workflowMounts` /
   `workflowMountsByDefinition` / `workflowRuns`.
 - Runtime: `WorkflowRuntimeProvider` in `AppShell` injects
   `@ora/workflow-runtime` (`createMemoryWorkflowRuntime` today).
-  Web/Desktop hosts can supply `AppShell.workflowRuntime`; the future production
-  adapter will wrap the repository-wide generated contracts transport (HTTP +
-  NDJSON on Web, Tauri commands + channels on Desktop).
+  The Desktop AppShell can supply `AppShell.workflowRuntime`; the future
+  production adapter will wrap the repository-wide generated contracts client
+  over Tauri commands and channels.
   `useGraphWorkflowRunLiveSync` patches run caches via `runs.watch`.
   Per-run UI side effects (artifacts cache, HITL toast, result-act focus)
   share one cursor-aware `runs.subscribe` inside `useGraphWorkflowRunLive`.
@@ -192,7 +192,7 @@ Keep these stacks separate — shared chrome only where noted.
   The frontend applies incremental id-based upserts and does not globally re-sort
   conversation items.
 - Each node state exposes an opaque `sessionId`; conversation items repeat that
-  identity so a future HTTP/NDJSON adapter can map the run node to its real
+  identity so the future Desktop adapter can map the run node to its real
   session.
 - The memory engine creates deterministic node session IDs, mock user/Agent
   messages, and collapsed thought/tool activity. Production adapters can feed

@@ -324,6 +324,7 @@ describe("Composer", () => {
             namespace: "local",
             name: "code-review",
             description: "Review the current diff",
+            availability: "available",
           },
         ]}
         availableCommands={[{ name: "test", description: "Run tests" }]}
@@ -338,6 +339,40 @@ describe("Composer", () => {
 
     expect(screen.getByRole("textbox")).toHaveValue("$code-review ");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("hides unavailable skills from the composer palette", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <Composer
+        onSend={() => {}}
+        isResponding={false}
+        skills={[
+          {
+            id: "skill-1",
+            namespace: "local",
+            name: "code-review",
+            description: "Review the current diff",
+            availability: "available",
+          },
+          {
+            id: "skill-2",
+            namespace: "local",
+            name: "missing-skill",
+            description: "Lost package",
+            availability: "unavailable",
+          },
+        ]}
+        availableCommands={[]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开快捷操作" }));
+
+    expect(screen.getByRole("option", { name: "code-review" })).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: "missing-skill" }),
+    ).not.toBeInTheDocument();
   });
 
   it("previews a selected image and sends it as ACP image content", async () => {

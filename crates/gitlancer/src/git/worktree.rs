@@ -7,6 +7,7 @@ use crate::exec::command::{GitCommand, GitIntent};
 use crate::exec::env::GitEnv;
 use crate::exec::runner::GitRunner;
 use crate::git::Git;
+use ora_utils::path::canonicalize_longest_existing_prefix;
 
 /// Carries the information needed to select one worktree from a repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,7 +140,7 @@ impl<R: GitRunner> Git<R> {
         &self,
         request: FindWorktreeRequest<'_>,
     ) -> Result<WorktreeHandle, GitlancerError> {
-        let candidate = normalize_path_for_worktree_match(request.candidate_path);
+        let candidate = canonicalize_longest_existing_prefix(request.candidate_path);
         let worktrees = self
             .list_worktrees(crate::git::repository::ListWorktreesRequest {
                 repository: request.repository,
@@ -150,7 +151,7 @@ impl<R: GitRunner> Git<R> {
             .into_iter()
             .filter_map(|worktree| {
                 let normalized_root =
-                    normalize_path_for_worktree_match(worktree.worktree_root().as_path());
+                    canonicalize_longest_existing_prefix(worktree.worktree_root().as_path());
                 candidate
                     .starts_with(&normalized_root)
                     .then_some((worktree, normalized_root))
@@ -236,50 +237,6 @@ fn worktree_name(worktree: &WorktreeHandle) -> &str {
     match worktree.kind() {
         crate::domain::worktree::WorktreeKind::Main => "main",
         crate::domain::worktree::WorktreeKind::Linked { name } => name.as_str(),
-    }
-}
-
-/// Normalizes a candidate path lexically so worktree comparisons do not depend on filesystem canonicalization.
-fn normalize_candidate_path(path: &std::path::Path) -> std::path::PathBuf {
-    let mut normalized = std::path::PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            std::path::Component::RootDir => normalized.push(component.as_os_str()),
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                let _ = normalized.pop();
-            }
-            std::path::Component::Normal(part) => normalized.push(part),
-        }
-    }
-
-    normalized
-}
-
-/// Resolves existing path prefixes so Windows short names and Git-reported long paths compare identically.
-fn normalize_path_for_worktree_match(path: &std::path::Path) -> std::path::PathBuf {
-    let mut current = path;
-    let mut suffix_parts = Vec::new();
-
-    loop {
-        if let Ok(canonical_path) = std::fs::canonicalize(current) {
-            let mut normalized = normalize_candidate_path(&canonical_path);
-            for suffix_part in suffix_parts.iter().rev() {
-                normalized.push(suffix_part);
-            }
-
-            return normalize_candidate_path(&normalized);
-        }
-
-        match (current.parent(), current.file_name()) {
-            (Some(parent), Some(file_name)) => {
-                suffix_parts.push(file_name.to_os_string());
-                current = parent;
-            }
-            _ => return normalize_candidate_path(path),
-        }
     }
 }
 

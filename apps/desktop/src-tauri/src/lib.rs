@@ -277,7 +277,7 @@ fn desktop_data_directory(app: &tauri::App) -> Result<std::path::PathBuf, Deskto
 /// Resolves relative project roots against a stable directory, not process cwd.
 ///
 /// `task run:desktop` points `ORA_DATA_DIR` at the repo `.data` directory shared
-/// with the web server. Project roots in that database are stored relative to
+/// with the Desktop development environment. Project roots in that database are stored relative to
 /// the repo root (the data directory's parent). Tauri starts in `src-tauri`, so
 /// joining against live `current_dir()` would miss those roots.
 fn desktop_relative_path_base(app_data_directory: &Path) -> PathBuf {

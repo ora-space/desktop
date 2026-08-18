@@ -1,4 +1,5 @@
-use ora_skill_package::PrepareError;
+use ora_skill_package::ArchiveError;
+use ora_utils::path::StrictRelativePathError;
 use thiserror::Error;
 
 /// Reports one import-session failure that adapters translate into a stable public code.
@@ -76,26 +77,31 @@ pub struct DuplicateSkillName {
     pub source_paths: Vec<String>,
 }
 
-impl From<PrepareError> for SkillImportError {
+impl From<ArchiveError> for SkillImportError {
     /// Converts snapshot-level source failures into stable import errors.
-    fn from(error: PrepareError) -> Self {
+    ///
+    /// The public error codes are unchanged by where the safety checks live; only this mapping
+    /// knows that path failures arrive nested inside `ArchiveError::Path`.
+    fn from(error: ArchiveError) -> Self {
         match error {
-            PrepareError::ArchiveFormatUnsupported => Self::ArchiveFormatUnsupported,
-            PrepareError::ArchiveFormatMismatch => Self::ArchiveFormatMismatch,
-            PrepareError::ArchiveCorrupt => Self::ArchiveCorrupt,
-            PrepareError::ArchiveTooLarge => Self::ArchiveTooLarge,
-            PrepareError::ArchiveEncryptedUnsupported => Self::ArchiveEncryptedUnsupported,
-            PrepareError::ArchiveSpecialEntryUnsupported => Self::ArchiveSpecialEntryUnsupported,
-            PrepareError::ArchivePathEncodingInvalid => Self::ArchivePathEncodingInvalid,
-            PrepareError::ArchivePathCaseConflict => Self::ArchivePathCaseConflict,
-            PrepareError::PathSegmentTooLong => Self::PathSegmentTooLong,
-            PrepareError::PathTooLong => Self::PathTooLong,
-            PrepareError::PathTooDeep => Self::PathTooDeep,
-            PrepareError::UnsafePath => Self::UnsafePath,
-            PrepareError::ArchiveExpansionRatioExceeded => Self::ArchiveExpansionRatioExceeded,
-            PrepareError::TotalBytesExceeded => Self::TotalBytesExceeded,
-            PrepareError::TooManyEntries { max_entries } => Self::TooManyEntries { max_entries },
-            PrepareError::Io { message } => Self::Internal { message },
+            ArchiveError::FormatMismatch => Self::ArchiveFormatMismatch,
+            ArchiveError::Corrupt => Self::ArchiveCorrupt,
+            ArchiveError::TooLarge => Self::ArchiveTooLarge,
+            ArchiveError::EncryptedUnsupported => Self::ArchiveEncryptedUnsupported,
+            ArchiveError::SpecialEntryUnsupported => Self::ArchiveSpecialEntryUnsupported,
+            ArchiveError::PathEncodingInvalid => Self::ArchivePathEncodingInvalid,
+            ArchiveError::PathCaseConflict => Self::ArchivePathCaseConflict,
+            ArchiveError::Path(StrictRelativePathError::EncodingInvalid) => {
+                Self::ArchivePathEncodingInvalid
+            }
+            ArchiveError::Path(StrictRelativePathError::Unsafe) => Self::UnsafePath,
+            ArchiveError::Path(StrictRelativePathError::SegmentTooLong) => Self::PathSegmentTooLong,
+            ArchiveError::Path(StrictRelativePathError::TooLong) => Self::PathTooLong,
+            ArchiveError::Path(StrictRelativePathError::TooDeep) => Self::PathTooDeep,
+            ArchiveError::ExpansionRatioExceeded => Self::ArchiveExpansionRatioExceeded,
+            ArchiveError::TotalBytesExceeded => Self::TotalBytesExceeded,
+            ArchiveError::TooManyEntries { max_entries } => Self::TooManyEntries { max_entries },
+            ArchiveError::Io { message } => Self::Internal { message },
         }
     }
 }

@@ -84,7 +84,7 @@ export function normalizeWorkflowDefinition(
 
 /**
  * Rejects graph shapes that the DAG scheduler cannot execute deterministically.
- * Keeping this validation transport-neutral lets memory, HTTP, and Tauri
+ * Keeping this validation transport-neutral lets memory and Tauri
  * adapters enforce the same client-side deployment contract.
  */
 export function validateWorkflowDefinition(

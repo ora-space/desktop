@@ -1,6 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Skill } from "@ora/contracts";
 import type { PluginEntry } from "../settings/plugin-catalog";
+import { availableSkills } from "../../state/hooks/use-skills";
 
 export type ComposerActionGroup = "skills" | "commands" | "plugins" | "actions";
 
@@ -61,7 +62,7 @@ export function buildComposerActions({
   attachmentDescription: string;
 }): ComposerAction[] {
   return [
-    ...skills.map((skill): ComposerAction => ({
+    ...availableSkills(skills).map((skill): ComposerAction => ({
       id: `skill:${skill.id}`,
       group: "skills",
       label: skill.name,

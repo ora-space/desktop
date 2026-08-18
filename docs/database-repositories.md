@@ -4,21 +4,21 @@
 
 ## Implemented ports
 
-| Adapter | Port |
-| --- | --- |
-| `SqliteProjectRepository` | `ProjectRepository` |
-| `SqliteTaskRepository` | `TaskRepository` |
-| `SqliteSessionRepository` | `SessionRepository` |
-| `SqliteWorktreeRepository` | `WorktreeRepository` |
-| `SqliteSkillRepository` | `SkillRepository` |
-| `SqliteAgentDefinitionRepository` | `AgentDefinitionRepository` |
-| `SqliteTaskDiffCommentRepository` | `TaskDiffCommentRepository` |
-| `SqliteWorkflowRepository` | `WorkflowRepository` |
-| `SqliteWorkflowRunRepository` | `WorkflowRunRepository` |
-| `SqliteCascadeRepository` | aggregate deletion used by `ora-backend` |
-| `SqliteTaskWorkspaceRepository` | `TaskWorkspaceCommit` |
-| `SqliteWorktreeProvisioningLeaseRepository` | `WorktreeProvisioningLeaseStore` |
-| `SqliteGitCleanupJobRepository` | durable Git cleanup queue used by `ora-backend` |
+| Adapter                                     | Port                                            |
+| ------------------------------------------- | ----------------------------------------------- |
+| `SqliteProjectRepository`                   | `ProjectRepository`                             |
+| `SqliteTaskRepository`                      | `TaskRepository`                                |
+| `SqliteSessionRepository`                   | `SessionRepository`                             |
+| `SqliteWorktreeRepository`                  | `WorktreeRepository`                            |
+| `SqliteSkillRepository`                     | `SkillRepository`                               |
+| `SqliteAgentDefinitionRepository`           | `AgentDefinitionRepository`                     |
+| `SqliteTaskDiffCommentRepository`           | `TaskDiffCommentRepository`                     |
+| `SqliteWorkflowRepository`                  | `WorkflowRepository`                            |
+| `SqliteWorkflowRunRepository`               | `WorkflowRunRepository`                         |
+| `SqliteCascadeRepository`                   | aggregate deletion used by `ora-backend`        |
+| `SqliteTaskWorkspaceRepository`             | `TaskWorkspaceCommit`                           |
+| `SqliteWorktreeProvisioningLeaseRepository` | `WorktreeProvisioningLeaseStore`                |
+| `SqliteGitCleanupJobRepository`             | durable Git cleanup queue used by `ora-backend` |
 
 Adding an adapter never changes a port signature. Handlers keep depending on the traits they own, so a composition root can swap in fakes without touching use-case code.
 
@@ -32,7 +32,7 @@ Adding an adapter never changes a port signature. Handlers keep depending on the
 
 Those PRAGMAs are applied in the connection manager rather than at call sites, so no repository can accidentally run with a different durability or concurrency profile. Pooling requires a file-backed `DatabaseLocation::Path`; `DatabaseLocation::InMemory` is for bootstrap and migration tests and returns `UnsupportedPooledLocation` if pooled.
 
-File-backed parent directories are not created here. The composition root prepares them — `ora-backend::Backend::open` does this for both Web and Desktop.
+File-backed parent directories are not created here. The Desktop composition root prepares them before opening `ora-backend::Backend`.
 
 ## Visibility and soft deletion
 
@@ -75,4 +75,4 @@ Skill import reuses `SqliteSkillRepository` for record reads and writes. Cross-f
 
 Timestamps used by migration bookkeeping come from an injected `TimestampSource` so tests can be deterministic; `SystemTimestampSource` reads Unix epoch milliseconds from the system clock. Entity `created_at`/`updated_at` values are supplied from above through the application `Clock`, not generated inside the repositories.
 
-See [Application and Contracts Boundary](application-contracts.md) and [Database Migrations](database-migrations.md).
+See [Application and Contracts Boundary](application-contracts-boundary.md) and [Database Migrations](database-migrations.md).

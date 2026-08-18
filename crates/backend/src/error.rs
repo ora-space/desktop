@@ -1,7 +1,6 @@
 use ora_application::{ApplicationError, SkillImportError};
 use ora_contracts::{
     ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
-    SkillUploadTooManyFilesParams,
 };
 use std::error::Error;
 use std::fmt;
@@ -9,7 +8,7 @@ use std::sync::Arc;
 
 type SharedError = Arc<dyn Error + Send + Sync + 'static>;
 
-/// Classifies public failures without coupling the shared runtime to HTTP status codes.
+/// Classifies public failures without coupling the shared runtime to adapter-specific status codes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorClassification {
     InvalidRequest,
@@ -285,28 +284,6 @@ impl From<ApplicationError> for BackendError {
                 ErrorClassification::NotFound,
                 PublicError::SkillNotFound(EmptyErrorParams {}),
                 "skill not found",
-            ),
-            ApplicationError::SkillUploadEmpty => (
-                ErrorClassification::Unprocessable,
-                PublicError::SkillUploadEmpty(EmptyErrorParams {}),
-                "skill upload contained no files",
-            ),
-            ApplicationError::SkillUploadTooManyFiles { max_files } => (
-                ErrorClassification::Unprocessable,
-                PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
-                    max_files: *max_files,
-                }),
-                "skill upload contains too many files",
-            ),
-            ApplicationError::SkillUploadPathInvalid => (
-                ErrorClassification::Unprocessable,
-                PublicError::SkillUploadPathInvalid(EmptyErrorParams {}),
-                "skill upload contains an unsafe path",
-            ),
-            ApplicationError::SkillUploadPathDuplicate => (
-                ErrorClassification::Unprocessable,
-                PublicError::SkillUploadPathDuplicate(EmptyErrorParams {}),
-                "skill upload contains a duplicate path",
             ),
             ApplicationError::SkillManifestMissing => (
                 ErrorClassification::Unprocessable,
@@ -599,9 +576,7 @@ impl From<ApplicationError> for BackendError {
 mod tests {
     use super::{BackendError, ErrorClassification};
     use ora_application::{ApplicationError, RepositoryError, SkillImportError};
-    use ora_contracts::{
-        EmptyErrorParams, PublicError, SkillFolderConflictParams, SkillUploadTooManyFilesParams,
-    };
+    use ora_contracts::{EmptyErrorParams, PublicError, SkillFolderConflictParams};
     use pretty_assertions::assert_eq;
     use std::error::Error;
 
@@ -621,27 +596,16 @@ mod tests {
         );
     }
 
-    /// Verifies skill import validation and conflicts expose only bounded typed parameters.
+    /// Verifies skill conflicts expose only bounded typed parameters.
     #[test]
     fn maps_skill_import_semantics_to_public_contracts() {
-        let too_many =
-            BackendError::from(ApplicationError::SkillUploadTooManyFiles { max_files: 1000 });
         let conflict = BackendError::from(ApplicationError::SkillFolderConflict {
             name: "grilling".to_string(),
         });
 
         assert_eq!(
+            (conflict.classification(), conflict.public_error().clone()),
             (
-                too_many.classification(),
-                too_many.public_error().clone(),
-                conflict.classification(),
-                conflict.public_error().clone(),
-            ),
-            (
-                ErrorClassification::Unprocessable,
-                PublicError::SkillUploadTooManyFiles(SkillUploadTooManyFilesParams {
-                    max_files: 1000,
-                }),
                 ErrorClassification::Conflict,
                 PublicError::SkillFolderConflict(SkillFolderConflictParams {
                     name: "grilling".to_string(),

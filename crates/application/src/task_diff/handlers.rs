@@ -16,7 +16,7 @@ use ora_domain::{
     AuditFields, Task, TaskDiffAnchor, TaskDiffComment, TaskDiffCommentId, TaskDiffCommentKind,
     TaskDiffThreadStatus, TaskId, Worktree,
 };
-use ora_fs::PortableRelativePath;
+use ora_utils::path::PortableRelativePath;
 use std::path::PathBuf;
 
 /// Lists persisted root discussions and replies for one visible task.

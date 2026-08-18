@@ -10,7 +10,6 @@ import type {
 import type { ChatStore } from "@ora/chat";
 import { useContractsClient } from "../../contracts-client-context";
 import { useChatStore } from "../../chat-store-context";
-import { clientId } from "../client-id";
 import { queryKeys } from "./query-keys";
 import { useSessions } from "./use-sessions";
 import { usePendingSwitch } from "../stores/pending-agent-store";
@@ -113,8 +112,7 @@ export function useWarmSession(
   // same request would hand the backend two provider sessions for one surface.
   const queryOptions = {
     queryKey: queryKeys.warmSession(target, agentCli),
-    queryFn: () =>
-      client.session.warm({ target: target!, agentCli, clientId: clientId() }),
+    queryFn: () => client.session.warm({ target: target!, agentCli }),
     // A warm session is owned by the backend and only changes when this client
     // asks it to, so re-fetching it on remount would only risk creating another.
     staleTime: Infinity,

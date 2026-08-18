@@ -1,11 +1,13 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@ora/ui";
-import { RemoteContractError } from "@ora/contracts";
-import { PlatformProvider } from "@ora/platform";
+import { RemoteContractError, type SkillImportSession } from "@ora/contracts";
+import { PlatformProvider } from "../../platform";
 import { createChatStore } from "@ora/chat";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { appI18n } from "../../i18n/i18n-instance";
 import {
   createMockClient,
   createMockClientState,
@@ -15,7 +17,11 @@ import {
   createTestQueryClient,
 } from "../../test/hook-harness";
 import { createStubPlatform } from "../../test/stub-platform";
-import { RolesSettings, SkillsSettings } from "./atoms-settings";
+import {
+  RolesSettings,
+  SkillImportDialog,
+  SkillsSettings,
+} from "./atoms-settings";
 
 function renderSettings(
   kind: "agent" | "skill",
@@ -38,6 +44,7 @@ function renderSettings(
         namespace: "local",
         name: "review-skill",
         description: "Reviews changes",
+        availability: "available",
       },
     ];
   }
@@ -116,6 +123,7 @@ describe("atom settings content", () => {
         namespace: "local",
         name: "review-skill",
         description: "Reviews changes",
+        availability: "available" as const,
       },
     }));
     renderSettings("skill", (client) => {
@@ -194,6 +202,7 @@ describe("atom settings content", () => {
             namespace: "local",
             name: request.name,
             description: request.description,
+            availability: "available" as const,
           },
         }),
       );
@@ -227,7 +236,6 @@ describe("atom settings content", () => {
             params: {},
             requestId: "550e8400-e29b-41d4-a716-446655440000",
           },
-          409,
           null,
         );
       };
@@ -259,6 +267,64 @@ describe("atom settings content", () => {
     expect(await screen.findByText("无法加载内容。")).toBeInTheDocument();
     expect(save).toBeDisabled();
   });
+
+  it("offers delete or re-upload when a skill package is unavailable", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.skills = [
+      {
+        id: "skill-1",
+        name: "review-skill",
+        namespace: "local",
+        description: "Reviews changes",
+        availability: "unavailable",
+      },
+    ];
+    const client = createMockClient(state);
+    client.skill.get = async ({ skillId }) => ({
+      skill: {
+        ...state.skills.find((skill) => skill.id === skillId)!,
+        content: "",
+      },
+    });
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <SkillsSettings />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    expect(await screen.findByText("不可用")).toBeInTheDocument();
+    expect(
+      screen.getByText("1 个技能的本地文件已丢失，请删除或重新上传。"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "处理" }));
+    expect(
+      await screen.findByText("“review-skill”的技能包已丢失"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "这个技能还在列表里，但本地文件找不到了。请删除，或重新上传同名技能包。",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新上传" }));
+    const importDialog = await screen.findByRole("dialog");
+    expect(importDialog).toHaveTextContent("导入技能");
+    expect(importDialog).toHaveTextContent(
+      "请导入名为“review-skill”的技能包以恢复。",
+    );
+  });
+
   it("imports one Agent Markdown file with an overwrite decision", async () => {
     const user = userEvent.setup();
     const markdown =
@@ -390,4 +456,297 @@ describe("atom settings content", () => {
     ).toBeDisabled();
     expect(prepare).toHaveBeenCalledTimes(2);
   });
+
+  it("shows a localized reason when a skill import candidate is invalid", () => {
+    renderSkillImportDialog({
+      sessionId: "import-1",
+      status: "prepared",
+      createdAt: 1n,
+      candidates: [
+        {
+          candidateId: "candidate-1",
+          name: "",
+          description: "",
+          sourcePath: "broken/SKILL.md",
+          fileCount: 1,
+          totalSize: 12n,
+          status: "invalid",
+          errorCode: "name_missing",
+          existingSkill: null,
+        },
+      ],
+      progress: { total: 0, processed: 0, results: [] },
+    });
+
+    expect(screen.getByText("无效")).toBeInTheDocument();
+    expect(screen.getByText("SKILL.md 缺少名称。")).toBeInTheDocument();
+  });
+
+  it("shows a localized reason when a skill import result fails", () => {
+    renderSkillImportDialog({
+      sessionId: "import-1",
+      status: "completed",
+      createdAt: 1n,
+      candidates: [
+        {
+          candidateId: "candidate-1",
+          name: "review",
+          description: "Reviews changes",
+          sourcePath: "review/SKILL.md",
+          fileCount: 1,
+          totalSize: 12n,
+          status: "ready",
+          errorCode: null,
+          existingSkill: null,
+        },
+      ],
+      progress: {
+        total: 1,
+        processed: 1,
+        results: [
+          {
+            candidateId: "candidate-1",
+            name: "review",
+            status: "failed",
+            errorCode: "skill_storage_error",
+          },
+        ],
+      },
+    });
+
+    expect(screen.getByText("导入失败")).toBeInTheDocument();
+    expect(screen.queryByText("待导入")).not.toBeInTheDocument();
+    expect(screen.queryByText(/正在处理/)).not.toBeInTheDocument();
+    expect(screen.getByText("无法写入技能文件。")).toBeInTheDocument();
+    expect(screen.getByText("1 个技能导入失败。")).toBeInTheDocument();
+  });
+
+  it("shows localized importing copy while a skill import is committing", async () => {
+    renderSkillImportDialog({
+      sessionId: "import-1",
+      status: "committing",
+      createdAt: 1n,
+      candidates: [
+        {
+          candidateId: "candidate-1",
+          name: "review",
+          description: "Reviews changes",
+          sourcePath: "review/SKILL.md",
+          fileCount: 1,
+          totalSize: 12n,
+          status: "ready",
+          errorCode: null,
+          existingSkill: null,
+        },
+      ],
+      progress: { total: 1, processed: 0, results: [] },
+    });
+
+    expect(await screen.findByText("导入中")).toBeInTheDocument();
+    expect(screen.getByText("导入中… 0 / 1")).toBeInTheDocument();
+    expect(screen.queryByText("待导入")).not.toBeInTheDocument();
+    expect(screen.queryByText("committing")).not.toBeInTheDocument();
+  });
+
+  it("shows English import failure copy when the UI language is English", async () => {
+    await act(async () => {
+      await appI18n.changeLanguage("en-US");
+    });
+    try {
+      renderSkillImportDialog({
+        sessionId: "import-1",
+        status: "completed",
+        createdAt: 1n,
+        candidates: [
+          {
+            candidateId: "candidate-1",
+            name: "review",
+            description: "Reviews changes",
+            sourcePath: "review/SKILL.md",
+            fileCount: 1,
+            totalSize: 12n,
+            status: "ready",
+            errorCode: null,
+            existingSkill: null,
+          },
+        ],
+        progress: {
+          total: 1,
+          processed: 1,
+          results: [
+            {
+              candidateId: "candidate-1",
+              name: "review",
+              status: "failed",
+              errorCode: "skill_storage_error",
+            },
+          ],
+        },
+      });
+
+      expect(screen.getByText("Import failed")).toBeInTheDocument();
+      expect(
+        screen.getByText("The skill files could not be written."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("1 skill(s) failed to import."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("导入失败")).not.toBeInTheDocument();
+      expect(screen.queryByText("无法写入技能文件。")).not.toBeInTheDocument();
+    } finally {
+      await act(async () => {
+        await appI18n.changeLanguage("zh-CN");
+      });
+    }
+  });
+
+  it("blocks confirm when a restore import is missing the target skill", () => {
+    renderSkillImportDialog(
+      {
+        sessionId: "import-1",
+        status: "prepared",
+        createdAt: 1n,
+        candidates: [
+          {
+            candidateId: "candidate-1",
+            name: "other-skill",
+            description: "Something else",
+            sourcePath: "other-skill/SKILL.md",
+            fileCount: 1,
+            totalSize: 12n,
+            status: "ready",
+            errorCode: null,
+            existingSkill: null,
+          },
+        ],
+        progress: { total: 0, processed: 0, results: [] },
+      },
+      { restoreName: "web-tools-guide" },
+    );
+
+    expect(
+      screen.getByText("请导入名为“web-tools-guide”的技能包以恢复。"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("导入内容里没有名为“web-tools-guide”的技能。"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认导入" })).toBeDisabled();
+  });
+
+  it("clears restore mode after a successful import and Import another", async () => {
+    const user = userEvent.setup();
+    renderRestoreImportDialog({
+      sessionId: "import-1",
+      status: "completed",
+      createdAt: 1n,
+      candidates: [
+        {
+          candidateId: "candidate-1",
+          name: "web-tools-guide",
+          description: "Web tools",
+          sourcePath: "SKILL.md",
+          fileCount: 5,
+          totalSize: 12n,
+          status: "ready",
+          errorCode: null,
+          existingSkill: null,
+        },
+      ],
+      progress: {
+        total: 1,
+        processed: 1,
+        results: [
+          {
+            candidateId: "candidate-1",
+            name: "web-tools-guide",
+            status: "imported",
+            errorCode: null,
+          },
+        ],
+      },
+    });
+
+    expect(await screen.findByText("导入已完成。")).toBeInTheDocument();
+    expect(screen.getByText("已导入")).toBeInTheDocument();
+    expect(screen.queryByText("待导入")).not.toBeInTheDocument();
+    expect(screen.queryByText(/正在处理/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/请导入名为/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "继续导入" }));
+    expect(
+      screen.getByRole("button", { name: "选择文件夹" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "选择一个技能文件夹或 ZIP、.skill、.tar.gz、.tgz 压缩包。导入前会先检查所有候选项。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/请导入名为/)).not.toBeInTheDocument();
+  });
 });
+
+/** Opens the skill import dialog on a frozen session so failure copy can be asserted. */
+function renderSkillImportDialog(
+  session: SkillImportSession,
+  extras?: { restoreName?: string },
+) {
+  const client = createMockClient(createMockClientState());
+  client.skillImport.get = async () => ({ session });
+  const Wrapper = createHookWrapper(
+    client,
+    createTestQueryClient(),
+    createChatStore(client.session),
+  );
+  return render(
+    <Wrapper>
+      <AppI18nProvider>
+        <PlatformProvider adapter={createStubPlatform()}>
+          <SkillImportDialog
+            open
+            onOpenChange={() => undefined}
+            onCompleted={() => undefined}
+            initialSession={session}
+            restoreName={extras?.restoreName}
+          />
+        </PlatformProvider>
+      </AppI18nProvider>
+    </Wrapper>,
+  );
+}
+
+/** Keeps restoreName in React state so successful restore can drop the name constraint. */
+function renderRestoreImportDialog(session: SkillImportSession) {
+  const client = createMockClient(createMockClientState());
+  client.skillImport.get = async () => ({ session });
+  const Wrapper = createHookWrapper(
+    client,
+    createTestQueryClient(),
+    createChatStore(client.session),
+  );
+
+  function Harness() {
+    const [restoreName, setRestoreName] = useState<string | null>(
+      "web-tools-guide",
+    );
+    return (
+      <SkillImportDialog
+        open
+        restoreName={restoreName}
+        onClearRestore={() => setRestoreName(null)}
+        onOpenChange={() => undefined}
+        onCompleted={() => undefined}
+        initialSession={session}
+      />
+    );
+  }
+
+  return render(
+    <Wrapper>
+      <AppI18nProvider>
+        <PlatformProvider adapter={createStubPlatform()}>
+          <Harness />
+        </PlatformProvider>
+      </AppI18nProvider>
+    </Wrapper>,
+  );
+}

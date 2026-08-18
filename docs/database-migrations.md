@@ -11,15 +11,15 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 
 ## Shipped catalog
 
-| Version | Adds |
-| --- | --- |
-| `0001` | Core `projects`, `tasks`, `worktrees`, and `sessions` tables plus migration bookkeeping. Worktree baseline/checkout identity and session title/history state are part of this base schema. |
-| `0002` | `skills` and configurable `agents`, including persisted agent content. |
-| `0003` | Constrained `task_diff_comments`, its lookup indexes, and the root-parent trigger. |
-| `0004` | Workflow definitions, snapshots, runs, node runs, and the task type/workflow-run association. |
-| `0005` | Durable Git cleanup jobs, their dispatch index, and worktree provisioning leases. |
+| Version | Adds                                                                                                                                                                                       |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0001`  | Core `projects`, `tasks`, `worktrees`, and `sessions` tables plus migration bookkeeping. Worktree baseline/checkout identity and session title/history state are part of this base schema. |
+| `0002`  | `skills` and configurable `agents`, including persisted agent content.                                                                                                                     |
+| `0003`  | Constrained `task_diff_comments`, its lookup indexes, and the root-parent trigger.                                                                                                         |
+| `0004`  | Workflow definitions, snapshots, runs, node runs, and the task type/workflow-run association.                                                                                              |
+| `0005`  | Durable Git cleanup jobs, their dispatch index, and worktree provisioning leases.                                                                                                          |
 
-`default_migration_catalog()` returns all five with every version as the active target.
+`default_migration_catalog()` returns all migrations with every version as the active target.
 
 ## Reconciliation model
 

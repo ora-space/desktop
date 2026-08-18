@@ -9,8 +9,12 @@ from one folder tree or one supported archive (`.zip`, `.skill`, `.tar.gz`, `.tg
   archive and path-safety constraints, discovers non-overlapping `SKILL.md` boundaries, parses
   each manifest, and queries the repository for existing names. It never mutates formal storage.
 - Preview exposes every candidate with its safe source-relative path, file count, size, and
-  `ready`/`conflict`/`invalid` status. `conflict` candidates carry the existing skill's identity
-  and description for the user's `skip`/`overwrite` decision.
+  `ready`/`conflict`/`invalid` status. An existing catalog row with a usable package is a
+  `conflict` and carries that skill's identity for the user's `skip`/`overwrite` decision.
+  An existing row whose package is missing is `ready`: importing the same name restores that
+  row instead of asking for a conflict decision. A leftover package with no catalog row is
+  replaced through a journaled swap: the user is claiming that name, and a failed persist
+  restores the original leftover.
 - Commit (`commit`) validates that every conflict candidate has a decision, freezes the decisions,
   and starts a detached background task that processes candidates in stable source-path order.
   Each skill is staged under the formal skills root and promoted atomically with its database
@@ -25,7 +29,8 @@ from one folder tree or one supported archive (`.zip`, `.skill`, `.tar.gz`, `.tg
 ## Non-responsibilities
 
 This module does not read archives itself (`ora-skill-package` owns snapshot materialization,
-path security, limits, scanning, and manifest parsing), does not implement the concrete
+skill-level limits, scanning, and manifest parsing on top of the `ora-utils` archive and path
+safety primitives), does not implement the concrete
 filesystem port (see the `skill` module), and does not decide HTTP or IPC semantics.
 
 ## Key invariants
@@ -40,5 +45,8 @@ filesystem port (see the `skill` module), and does not decide HTTP or IPC semant
   transaction stays open across the rename and a slow skills root cannot block unrelated writers.
   See the [skill module's atomicity and recovery model](../skill/README.md) for the journal and
   startup reconciliation that make this ordering crash-safe.
+- A `ready` candidate whose name is claimed in the database or whose formal directory appears
+  before promotion completes is recorded as `staleConflict`. That occupancy is a permanent
+  conflict, not a retryable `skill_storage_error`.
 
 See the [ora-application overview](../../README.md).

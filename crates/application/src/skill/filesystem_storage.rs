@@ -2,8 +2,9 @@ use super::storage::{
     BACKUP_DIR_NAME, CreateHandle, DeleteHandle, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
     STAGING_DIR_NAME, SkillStorage, SkillStorageError, SwapHandle, TransactionJournal,
 };
-use ora_skill_package::path::RelativePath;
+use ora_utils::path::StrictRelativePath;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// Default filesystem implementation of [`SkillStorage`] rooted at the formal skills tree.
@@ -127,7 +128,7 @@ impl SkillStorage for FilesystemSkillStorage {
     fn write_file(
         &self,
         staging: &Path,
-        relative: &RelativePath,
+        relative: &StrictRelativePath,
         bytes: &[u8],
     ) -> Result<(), SkillStorageError> {
         let destination = relative.to_path(staging);
@@ -143,7 +144,7 @@ impl SkillStorage for FilesystemSkillStorage {
     fn copy_file(
         &self,
         staging: &Path,
-        relative: &RelativePath,
+        relative: &StrictRelativePath,
         source: &Path,
     ) -> Result<(), SkillStorageError> {
         let destination = relative.to_path(staging);
@@ -174,7 +175,7 @@ impl SkillStorage for FilesystemSkillStorage {
         self.write_journal(&journal)?;
         if let Err(error) = fs::rename(staging, &formal) {
             let _ = fs::remove_file(&journal.file);
-            return Err(map_storage_error(error));
+            return Err(map_promote_error(error, name));
         }
         self.update_journal_phase(&mut journal, JournalPhase::Swapped)?;
         Ok(CreateHandle {
@@ -240,7 +241,7 @@ impl SkillStorage for FilesystemSkillStorage {
         if let Err(error) = fs::rename(staging, &target_formal) {
             let _ = fs::rename(&backup, &from_formal);
             let _ = fs::remove_file(&journal.file);
-            return Err(map_storage_error(error));
+            return Err(map_promote_error(error, name));
         }
         self.update_journal_phase(&mut journal, JournalPhase::Swapped)?;
         Ok(SwapHandle {
@@ -360,6 +361,14 @@ impl SkillStorage for FilesystemSkillStorage {
         fs::remove_dir_all(path).map_err(map_storage_error)
     }
 
+    fn remove_formal(&self, name: &str) -> Result<(), SkillStorageError> {
+        let path = self.formal_path(name);
+        if path.exists() {
+            fs::remove_dir_all(&path).map_err(map_storage_error)?;
+        }
+        Ok(())
+    }
+
     fn list_journals(&self) -> Result<Vec<TransactionJournal>, SkillStorageError> {
         let root = self.reserved_root(JOURNAL_DIR_NAME);
         let mut journals = Vec::new();
@@ -445,8 +454,82 @@ fn copy_dir_contents(source: &Path, destination: &Path) -> std::io::Result<()> {
 }
 
 /// Converts filesystem failures into stable storage-port errors.
-fn map_storage_error(error: std::io::Error) -> SkillStorageError {
+fn map_storage_error(error: io::Error) -> SkillStorageError {
     SkillStorageError::OperationFailed {
         message: error.to_string(),
+    }
+}
+
+/// Maps a promotion rename failure, keeping destination occupancy typed.
+///
+/// `exists()` and `rename` are not atomic. A concurrent promoter can create the
+/// destination in that window; Unix then typically reports `DirectoryNotEmpty` and
+/// Windows `AlreadyExists`. Those kinds stay `FormalDirectoryExists` so callers can
+/// project a conflict instead of an internal storage failure.
+fn map_promote_error(error: io::Error, name: &str) -> SkillStorageError {
+    match error.kind() {
+        io::ErrorKind::AlreadyExists | io::ErrorKind::DirectoryNotEmpty => {
+            SkillStorageError::FormalDirectoryExists {
+                name: name.to_string(),
+            }
+        }
+        _ => map_storage_error(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FilesystemSkillStorage, map_promote_error};
+    use crate::skill::{SkillStorage, SkillStorageError};
+    use pretty_assertions::assert_eq;
+    use std::fs;
+    use std::io;
+    use tempfile::TempDir;
+
+    #[test]
+    fn commit_create_returns_typed_conflict_when_destination_exists() {
+        let temp = TempDir::new().unwrap();
+        let storage = FilesystemSkillStorage::new(temp.path().to_path_buf());
+        let destination = temp.path().join("grilling");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("SKILL.md"), "existing").unwrap();
+        let staging = storage.create_staging().unwrap();
+        fs::write(staging.join("SKILL.md"), "incoming").unwrap();
+
+        assert_eq!(
+            storage.commit_create("grilling", &staging).unwrap_err(),
+            SkillStorageError::FormalDirectoryExists {
+                name: "grilling".to_string(),
+            }
+        );
+        assert!(staging.exists());
+    }
+
+    #[test]
+    fn maps_destination_occupied_rename_kinds_to_typed_conflict() {
+        assert_eq!(
+            map_promote_error(
+                io::Error::new(io::ErrorKind::AlreadyExists, "exists"),
+                "grilling",
+            ),
+            SkillStorageError::FormalDirectoryExists {
+                name: "grilling".to_string(),
+            }
+        );
+        assert_eq!(
+            map_promote_error(
+                io::Error::new(io::ErrorKind::DirectoryNotEmpty, "not empty"),
+                "grilling",
+            ),
+            SkillStorageError::FormalDirectoryExists {
+                name: "grilling".to_string(),
+            }
+        );
+        assert_eq!(
+            map_promote_error(io::Error::other("disk full"), "grilling"),
+            SkillStorageError::OperationFailed {
+                message: "disk full".to_string(),
+            }
+        );
     }
 }

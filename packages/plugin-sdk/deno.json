@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.ns", "dom", "esnext"],
+    "strict": true
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "semiColons": true,
+    "singleQuote": false
+  }
+}

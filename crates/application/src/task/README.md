@@ -19,4 +19,4 @@ Branch creation uses a short task-id prefix, so creation checks both existing ta
 
 The frontend lists local project refs before creation. Ora-managed `ora/<prefix>` branches retain their Git identity in requests but use the owning task title as their display label, so an existing worktree can seed another one without any implicit remote refresh.
 
-See the [ora-application overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts.md).
+See the [ora-application overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts-boundary.md).

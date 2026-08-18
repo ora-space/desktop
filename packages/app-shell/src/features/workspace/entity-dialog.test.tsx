@@ -1,4 +1,4 @@
-import { PlatformProvider, type PlatformAdapter } from "@ora/platform";
+import { PlatformProvider, type PlatformAdapter } from "../../platform";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";

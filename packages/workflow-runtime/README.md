@@ -16,7 +16,7 @@ Transport-neutral Host/Run ports and an in-memory adapter for **graph workflow r
 - Provide `createMemoryWorkflowRuntime` that mounts `DemoWorkflow` snapshots,
   creates frozen-definition runs, and drives timed mock progression.
 - Attach sequence/cursor/timestamp metadata to events and pair initial state
-  with a live cursor so a future NDJSON transport can reconnect without gaps.
+  with a live cursor so the Desktop channel adapter can reconnect without gaps.
 
 ## Non-responsibilities
 
@@ -50,9 +50,9 @@ stays in app-shell so this package remains UI-free).
 
 Workflow will follow the same stack as project/task/session: Rust domain and
 application handlers persisted in SQLite, DTOs generated from `crates/contracts`,
-JSON HTTP plus NDJSON `AsyncIterable` streams on Web, and the same operations
-over Tauri commands/channels on Desktop. Both transports already share typed
-errors, `AbortSignal`, bounded stream queues, and request correlation.
+and operations delivered through the Desktop contracts client and Tauri
+commands/channels. The adapter will preserve typed errors, `AbortSignal`, bounded
+stream queues, and request correlation.
 
 The future adapter will implement these ports around `ContractsClient.workflow`.
 The host passes it through `AppShell.workflowRuntime`; the current memory adapter
@@ -61,7 +61,7 @@ remains the explicit prototype default until those contracts exist.
 `getLiveSnapshot` returns an atomic run/artifact snapshot plus a cursor.
 `subscribe(..., { afterCursor })` replays later envelopes before live delivery,
 which closes the initial-query/subscription race and provides the same semantics
-the NDJSON adapter must preserve. The handoff registers live delivery before
+the channel adapter must preserve. The handoff registers live delivery before
 replay and queues interleaving events, so observer-triggered synchronous writes
 cannot create a gap or reorder the stream. UI caches advance the cursor for
 every envelope and therefore do not repeat historical side effects on remount.

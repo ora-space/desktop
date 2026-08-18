@@ -4,13 +4,11 @@ Reads and validates skill packages before they reach the application layer.
 
 ## Responsibilities and boundaries
 
-- Materializes a validated snapshot of a skill source into OS temporary storage. A source is
-  either a folder tree or one supported archive (`.zip`, `.skill`, `.tar.gz`, `.tgz`).
-- Enforces all archive and path security rules: zip-slip defenses, portable Unicode/case
-  conflict detection, path segment/depth limits, special-entry rejection, and encrypted-archive
-  rejection.
-- Enforces session resource limits: raw archive size, cumulative extracted bytes, entry counts,
-  and the archive expansion-ratio budget.
+- Materializes a validated snapshot of a skill source into OS temporary storage through
+  `ora-utils::archive`. A source is either a folder tree or one supported archive (`.zip`,
+  `.skill`, `.tar.gz`, `.tgz`), selected by the caller as a `SkillSource`.
+- Owns the skill-level resource limits layered on top of the shared extraction limits: maximum
+  discoverable skills, files per skill, and manifest bytes.
 - Scans a snapshot for exact `SKILL.md` files and computes non-overlapping skill boundaries using
   the nearest-manifest-ownership rule.
 - Parses and validates the YAML front matter of a `SKILL.md` manifest, returning structured
@@ -18,17 +16,17 @@ Reads and validates skill packages before they reach the application layer.
 
 ## Non-responsibilities
 
-This crate does not persist database records, does not own import session lifecycle or timing,
-does not write into the formal skill directory tree, and does not decide HTTP or IPC transport
-semantics. It only materializes and validates a source snapshot inside the caller-provided
-destination directory.
+This crate does not implement archive or path safety itself; zip-slip defenses, encrypted and
+special-entry rejection, portable case-conflict detection, path limits, and entry/byte budgets
+are `ora-utils::archive` and `ora-utils::path` guarantees. It does not persist database records,
+does not own import session lifecycle or timing, does not write into the formal skill directory
+tree, and does not decide HTTP or IPC transport semantics.
 
 ## Key invariants
 
-- Every relative path stored in a `RelativePath` is a safe, validated, `\`-normalized UTF-8 path
-  with no empty, `.`, or `..` segments or Windows reserved device names. Portable filename safety
-  is inherited from `ora-fs`; this crate adds package-specific depth and length limits.
-- Resource-limit and path-safety failures reject the whole source; a malformed manifest only
-  invalidates that one candidate and is surfaced as a `ManifestError`.
-- Archive entries are never followed as links and never written before their paths pass
-  validation.
+- Snapshot paths are `StrictRelativePath` values from `ora-utils`; every file in an
+  `ExtractedTree` already passed validation before it was written.
+- Resource-limit and path-safety failures reject the whole source as an `ArchiveError`; a
+  malformed manifest only invalidates that one candidate and is surfaced as a `ManifestError`.
+- Skill boundaries are computed only from files whose exact name is `SKILL.md`, and every file
+  belongs to the deepest ancestor directory that owns a manifest.

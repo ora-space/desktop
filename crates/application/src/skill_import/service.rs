@@ -5,7 +5,7 @@ use super::ports::{
     CandidateDecision, CandidateStatus, ConflictSkillInfo, ImportCandidate, ImportSessionState,
     SkillImportConfig, SkillImportIdGenerator, SkillImportProgressPublisher,
 };
-use crate::skill::SkillStorage;
+use crate::skill::{SkillStorage, has_usable_package};
 use crate::{ApplicationError, Clock, SkillRepository};
 use ora_contracts::{
     CancelSkillImportRequest, CancelSkillImportResponse, CommitSkillImportRequest,
@@ -14,7 +14,11 @@ use ora_contracts::{
 };
 use ora_domain::Namespace;
 use ora_skill_package::manifest::{ManifestError, parse_manifest};
-use ora_skill_package::{ArchiveFormat, copy_folder_to, extract_archive, scan_skill_boundaries};
+use ora_skill_package::{
+    ArchiveFormat, ExtractedTree, Limits, SkillBoundary, SkillSource, materialize_source,
+    scan_skill_boundaries,
+};
+use ora_utils::path::StrictRelativePath;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
@@ -22,7 +26,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Owns the in-memory import session lifecycle shared by Web and Desktop adapters.
+/// Owns the in-memory import session lifecycle used by the Desktop adapter.
 pub struct SkillImportService<Repository, Storage, IdGenerator, ClockSource, Progress> {
     repository: Repository,
     storage: Storage,
@@ -78,6 +82,7 @@ where
         fs::create_dir_all(&session_root).map_err(map_io_error)?;
 
         let repository = self.repository.clone();
+        let storage = self.storage.clone();
         let id_generator = self.id_generator.clone();
         let limits = self.config.limits.clone();
         let preparation_timeout = self.config.preparation_timeout;
@@ -88,6 +93,7 @@ where
         let _ = std::thread::spawn(move || {
             let result = prepare_candidates(
                 &repository,
+                &storage,
                 &id_generator,
                 &limits,
                 &thread_session_root,
@@ -418,27 +424,38 @@ where
 }
 
 /// Materializes and scans one source into prepared candidates (runs under the timeout budget).
-fn prepare_candidates<Repository, IdGenerator>(
+fn prepare_candidates<Repository, Storage, IdGenerator>(
     repository: &Repository,
+    storage: &Storage,
     id_generator: &IdGenerator,
-    limits: &ora_skill_package::Limits,
+    limits: &Limits,
     session_root: &Path,
     source: &SkillImportSource,
 ) -> Result<Vec<ImportCandidate>, SkillImportError>
 where
     Repository: SkillRepository,
+    Storage: SkillStorage,
     IdGenerator: SkillImportIdGenerator,
 {
+    let snapshot_root = session_root.join("snapshot");
     let snapshot = match source {
-        SkillImportSource::Folder { path } => {
-            copy_folder_to(Path::new(path), &session_root.join("snapshot"), limits)?
-        }
+        SkillImportSource::Folder { path } => materialize_source(
+            SkillSource::Folder {
+                path: Path::new(path),
+            },
+            &snapshot_root,
+            limits,
+        )?,
         SkillImportSource::Archive { path, file_name } => {
             let format = ArchiveFormat::from_extension(file_name)
                 .ok_or(SkillImportError::ArchiveFormatUnsupported)?;
             let raw = session_root.join("source-upload");
-            copy_archive_with_limit(Path::new(path), &raw, limits.max_archive_bytes)?;
-            extract_archive(format, &raw, &session_root.join("snapshot"), limits)?
+            copy_archive_with_limit(Path::new(path), &raw, limits.extract.max_archive_bytes)?;
+            materialize_source(
+                SkillSource::Archive { path: &raw, format },
+                &snapshot_root,
+                limits,
+            )?
         }
     };
 
@@ -463,6 +480,7 @@ where
             &snapshot,
             boundary,
             repository,
+            storage,
             id_generator,
             limits,
         )?);
@@ -472,15 +490,17 @@ where
 }
 
 /// Builds one candidate from its boundary, parsing the manifest and querying conflicts.
-fn build_candidate<Repository, IdGenerator>(
-    snapshot: &ora_skill_package::Snapshot,
-    boundary: &ora_skill_package::SkillBoundary,
+fn build_candidate<Repository, Storage, IdGenerator>(
+    snapshot: &ExtractedTree,
+    boundary: &SkillBoundary,
     repository: &Repository,
+    storage: &Storage,
     id_generator: &IdGenerator,
-    limits: &ora_skill_package::Limits,
+    limits: &Limits,
 ) -> Result<ImportCandidate, SkillImportError>
 where
     Repository: SkillRepository,
+    Storage: SkillStorage,
     IdGenerator: SkillImportIdGenerator,
 {
     let candidate_id = id_generator.generate_import_id();
@@ -495,7 +515,15 @@ where
                 .map_err(|error| SkillImportError::Repository {
                     message: error.to_string(),
                 })?;
-            let existing_skill = existing.map(|skill| ConflictSkillInfo {
+            let usable = existing
+                .as_ref()
+                .map(|skill| has_usable_package(storage, &skill.name))
+                .transpose()
+                .map_err(|error| SkillImportError::Storage {
+                    message: error.to_string(),
+                })?
+                .unwrap_or(false);
+            let existing_skill = existing.filter(|_| usable).map(|skill| ConflictSkillInfo {
                 skill_id: skill.id,
                 name: skill.name,
                 updated_at: skill.audit_fields.updated_at,
@@ -566,8 +594,8 @@ fn reject_duplicate_names(candidates: &[ImportCandidate]) -> Result<(), SkillImp
 /// One byte above the limit is enough to prove the manifest exceeds the budget; `parse_manifest`
 /// then reports `skill_manifest_too_large`.
 fn read_manifest_capped(
-    snapshot: &ora_skill_package::Snapshot,
-    path: &ora_skill_package::path::RelativePath,
+    snapshot: &ExtractedTree,
+    path: &StrictRelativePath,
     max_bytes: u64,
 ) -> Result<Vec<u8>, SkillImportError> {
     use std::io::Read;

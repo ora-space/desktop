@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { TooltipProvider } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createStubPlatform } from "../../test/stub-platform";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";

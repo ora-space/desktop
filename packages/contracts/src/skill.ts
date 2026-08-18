@@ -52,7 +52,13 @@ export type Skill = {
   namespace: string;
   name: string;
   description: string;
+  availability: SkillAvailability;
 };
+
+/**
+ * Reports whether a catalog skill still has a loadable on-disk package.
+ */
+export type SkillAvailability = "available" | "unavailable";
 
 /**
  * Describes one skill together with the Markdown body from its SKILL.md.
@@ -63,6 +69,7 @@ export type SkillDetails = {
   name: string;
   description: string;
   content: string;
+  availability: SkillAvailability;
 };
 
 /**

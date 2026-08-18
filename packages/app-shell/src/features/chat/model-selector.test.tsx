@@ -1,7 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@ora/ui";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import { describe, expect, it, beforeEach } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {

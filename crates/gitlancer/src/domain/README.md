@@ -11,7 +11,7 @@ This module models the repository and worktree facts required by typed Git opera
 - `WorktreeKind` distinguishes the main checkout from linked worktrees.
 - `BranchName`, `CommitId`, and `RepoRelativePath` prevent unrelated string and path concepts from being mixed at call sites.
 
-`WorktreeHandle::resolve_repo_relative_path` lexically normalizes caller paths and rejects absolute or relative traversal outside the worktree. It does not require the target to exist and does not canonicalize through the filesystem. Callers obtain `RepoRelativePath` only through this worktree-aware boundary.
+`WorktreeHandle::resolve_repo_relative_path` lexically normalizes caller paths through the shared `ora-utils` path helpers and rejects absolute or relative traversal outside the worktree. It does not require the target to exist and does not canonicalize through the filesystem. Callers obtain `RepoRelativePath` only through this worktree-aware boundary.
 
 Constructors for repository and worktree roots assume their callers already validated Git identity. Discovery and validation belong to the `git` module; CLI invocation belongs to `exec`.
 

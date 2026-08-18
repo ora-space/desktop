@@ -1,7 +1,8 @@
+use crate::WorkspaceFileSystemError;
 use crate::workspace::{canonical_root, relative_string};
-use crate::{CanonicalPathRoot, WorkspaceFileSystemError};
 use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use ora_utils::path::CanonicalPathRoot;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};

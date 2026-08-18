@@ -48,12 +48,14 @@ function renderInspector() {
       namespace: "local",
       name: "openspec-explore",
       description: "探索仓库结构与约束",
+      availability: "available",
     },
     {
       id: "sk-disabled",
       namespace: "local",
       name: "hidden-skill",
       description: "Should not appear",
+      availability: "available",
     },
   ];
   const client = createMockClient(state);

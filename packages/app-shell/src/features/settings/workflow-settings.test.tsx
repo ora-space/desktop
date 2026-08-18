@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { createChatStore } from "@ora/chat";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import {
   createMockWorkflowVersions,
   createMockWorkflows,
@@ -170,24 +170,35 @@ function renderSettings(
       namespace: "local",
       name: "openspec-verify-change",
       description: "skill",
+      availability: "available",
     },
     {
       id: "openspec-archive-change",
       namespace: "local",
       name: "openspec-archive-change",
       description: "skill",
+      availability: "available",
     },
     {
       id: "openspec-explore",
       namespace: "local",
       name: "openspec-explore",
       description: "skill",
+      availability: "available",
     },
     {
       id: "cdase:sfmea_review",
       namespace: "local",
       name: "cdase:sfmea_review",
       description: "skill",
+      availability: "available",
+    },
+    {
+      id: "missing-skill",
+      namespace: "local",
+      name: "missing-skill",
+      description: "skill",
+      availability: "unavailable",
     },
   ];
   // Warm-session model catalog consumed by the workflow inspector's model selector.
@@ -911,6 +922,7 @@ describe("WorkflowSettings", () => {
         namespace: "local",
         name: "openspec-verify-change",
         description: "skill",
+        availability: "available",
       },
     ];
     // NGA exists as a CLI but its warm session reports no model catalog, so
@@ -967,6 +979,7 @@ describe("WorkflowSettings", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "添加 Skill" }));
+    expect(screen.queryByText("missing-skill")).not.toBeInTheDocument();
     const skillSearch = screen.getByLabelText("搜索可添加的 Skill");
     await user.type(skillSearch, "archive");
     await user.click(screen.getByText("openspec-archive-change"));

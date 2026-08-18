@@ -8,7 +8,7 @@ import {
   type SessionConversation,
 } from "@ora/chat";
 import { TooltipProvider } from "@ora/ui";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {
   createMockClient,

@@ -66,7 +66,7 @@ pub enum BackendBootstrapError {
     ),
 }
 
-/// Owns the concrete persisted use-case composition shared by Web and Tauri adapters.
+/// Owns the concrete persisted use-case composition used by the Desktop adapter.
 #[derive(Clone)]
 pub struct Backend {
     pool: RepositoryPool,

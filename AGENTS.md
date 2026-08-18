@@ -35,7 +35,8 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
     the new implementation so the invariants stay close to the code that owns them.
 - Use local time instead of UTC time.
 - Use ora-logging wrapper macros instead of `tracing` macros. Use `ora_logging::clock::now_local` instead of `OffsetDateTime::now_local()`.
-- Before implementing path validation or normalization, prefer the shared `ora-fs` path capabilities over crate-local logic. If `ora-fs` does not yet provide the required capability, prefer extending `ora-fs` and then consuming that shared capability instead of implementing it locally in the caller.
+- Put logic that is generic — independent of any Ora domain concept, transport, or runtime — in `ora-utils` (`crates/utils`) instead of the calling crate. If you believe a piece of logic is generic, default to placing it in `ora-utils`. `ora-utils` must not depend on any other `ora-*` crate and must not carry domain vocabulary; gate heavier optional dependencies (such as archive formats) behind Cargo features so path-only consumers stay light.
+- Before implementing path validation, normalization, or archive extraction, prefer the shared `ora-utils::path` and `ora-utils::archive` capabilities over crate-local logic. If `ora-utils` does not yet provide the required capability, extend `ora-utils` and then consume it instead of implementing it locally in the caller.
 
 ## Module READMEs
 
@@ -48,7 +49,7 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
 
 ## Tests
 
-`task test` runs the frontend, backend, and Desktop lint and test tasks. It can take a
+`task test` runs the frontend and Rust workspace lint and test tasks. It can take a
 long time, so prefer the smallest relevant task while iterating and run the full task
 before considering a repository-wide change complete. Use `task --list` to see the
 authoritative list of available tasks.
@@ -56,10 +57,8 @@ authoritative list of available tasks.
 - Format changed files: `task format`
 - Frontend lint: `task lint:frontend`
 - Frontend tests: `task test:frontend`
-- Backend lint: `task lint:backend`
-- Backend tests: `task test:backend`
-- Desktop lint: `task lint:desktop`
-- Desktop tests: `task test:desktop`
+- Rust workspace lint: `task lint:crates`
+- Rust workspace tests: `task test:crates`
 - All lint tasks: `task lint`
 - All lint and test tasks (long-running): `task test`
 

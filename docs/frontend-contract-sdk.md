@@ -1,20 +1,17 @@
 # Frontend Contract SDK
 
-`@ora/contracts` is the frontend's only view of the backend API. Rust owns the DTO shapes and shared HTTP paths; TypeScript owns the client and the transports.
+`@ora/contracts` is the frontend's only view of the Desktop IPC API. Rust owns the DTO shapes and operation catalog; TypeScript owns the client and the Tauri transport.
 
 ## Generation-only endpoint metadata
 
-The `xtask` crate declares every frontend-facing HTTP operation as a `FrontendEndpoint` in namespace-scoped catalog modules. Its internal `frontend_endpoints()` function flattens those modules only while `cargo xtask export-contracts` renders the generated manifest. Each entry carries:
+The `xtask` crate declares every frontend-facing IPC operation as a `FrontendEndpoint` in namespace-scoped catalog modules. Its internal `frontend_endpoints()` function flattens those modules only while `cargo xtask export-contracts` renders the generated manifest. Each entry carries:
 
 - `operation_name` — the flat wire-level identifier (`createTask`)
 - `namespace` and `member_name` — where the operation sits on the generated client (`client.task.create`)
-- `method` and `path_template` — for example `PUT /api/tasks/{taskId}`
 - `request_type` and `response_type` — the TypeScript DTO names
-- `path_params` — each with its Rust field name and wire name, so the transport knows what to interpolate
-- `has_json_body` — whether the remaining request fields serialize as a JSON body
-- `query_params()` and `response_mode()` — optional query fields, and whether the operation is `unary` or `stream`
+- `response_mode()` — whether the operation is `unary` or `stream`
 
-Path templates are also exported as constants (`TASKS_PATH`, `TASK_PATH`, …) and the Web server builds its Axum routes from those same constants, so a route and its manifest entry cannot drift apart.
+The manifest contains no transport-specific route, query, or serialization metadata.
 
 Frontend types never come from domain entities or adapter-local structs. They are generated from `ora-contracts` DTOs.
 
@@ -26,7 +23,7 @@ Frontend types never come from domain entities or adapter-local structs. They ar
 - `error.ts`, the generated request-id and discriminated public-error contract
 - `endpoints.ts`, the generated endpoint manifest
 
-Both carry a do-not-edit header. Everything else in the package — `client.ts`, `transport.ts`, `fetch.ts`, and `index.ts` — is hand-written and is not overwritten by the export.
+Both carry a do-not-edit header. Everything else in the package — `client.ts`, `transport.ts`, and `index.ts` — is hand-written and is not overwritten by the export.
 
 `task export-contracts` wraps the Rust export and then runs `ts-to-zod` to derive `error.schema.ts` from `error.ts`. `task test:frontend` refreshes both generated layers before linting and testing. Contract generation is never a side effect of running tests.
 
@@ -36,17 +33,15 @@ Both carry a do-not-edit header. Everything else in the package — `client.ts`,
 
 Namespaces are `project`, `task`, `session`, `appEvents`, `agentRuntime`, `skill`, `skillImport`, `agent`, `fileSystem`, `gitIdentity`, `spec`, `workflow`, and `workflowRun`. The `appEvents` namespace exposes `client.appEvents.watch({})`; the stream begins with `Ready`, then carries best-effort invalidations such as `SessionTitleUpdated`. The `spec` namespace keeps unary catalog/read/configuration calls and its workspace-event stream behind one target-tagged API.
 
-For each call the client builds the URL from the endpoint's path parameters, appends declared query parameters, serializes the remaining fields as a JSON body when `hasJsonBody` is set, and then delegates execution to the injected transport. It hard-codes no runtime: the same client works in a browser, in Tauri, or in a test.
+For each call the client sends the operation name and the complete request DTO to the injected transport. It does not split, rename, or serialize request fields for a transport.
 
-Every `ContractTransportRequest` also carries the original complete request DTO alongside the derived method, path, body, and headers. The fetch transport ignores that field; the Tauri transport forwards it unchanged to the matching command.
+Every `ContractTransportRequest` carries only the operation name and original complete request DTO, which the Tauri transport forwards unchanged to the matching command.
 
 ## Transports
 
 `ContractTransport` has two methods, `send` and `stream`, both accepting an optional `AbortSignal` through `ContractCallOptions`. Streams are cold and single-use — a second iteration of the same `AsyncIterable` throws `stream_already_consumed`.
 
-**Browser** — `@ora/contracts/fetch` exports `createFetchTransport`. `baseUrl` is the server base, not a pre-expanded API prefix. Non-success unary responses and stream error frames are decoded through the shared `decodeRemoteError` boundary. Remote Web errors may retain the HTTP status; local failures do not fabricate remote metadata. Streaming reads newline-delimited `data`, `error`, and `end` frames with an 8 MiB frame limit.
-
-**Desktop** — `apps/desktop/web` exports `createTauriTransport`, injected as `createContractsClient(createTauriTransport())`. It maps operation names to snake-case Tauri commands and drives streams over a Tauri Channel using the same private frame shape. Unary failures and stream error frames use the same decoder as Web. Desktop rejects `listDirectory` with the local `unsupported_operation` kind before invoking a command.
+**Desktop** — `apps/desktop/web` exports `createTauriTransport`, injected as `createContractsClient(createTauriTransport())`. It maps operation names to snake-case Tauri commands and drives streams over a Tauri Channel using the same private frame shape. Unary failures and stream error frames use the shared decoder.
 
 `watchAppEvents` is a best-effort invalidation broadcast, not a replayable event log. It carries no browser ownership metadata and permits concurrent transport subscribers. Before the Web App Shell mounts normal queries or opens this stream, its platform adapter acquires the same-origin `ora:app-window` Web Lock. A second tab waits for that lock and enters automatically when the active document closes or reloads. The Desktop adapter grants ownership immediately because the native host owns one main application window.
 
@@ -59,10 +54,10 @@ Rust exports the direct `{ code, params, requestId }` payload. `decodeRemoteErro
 - A missing or invalid request id, or invalid parameters for a known code, becomes `LocalTransportError` with kind `malformed_response`.
 - Network, Tauri invocation, framing, stream consumption, unsupported-operation, and cancellation failures use finite local kinds and never invent a request id.
 
-The app shell uses one `localizeContractError` path and matching English and Chinese `errors.<code>`, `errors.unknown`, and `errors.transport.<kind>` resources. Internal and unknown remote errors include the valid request id for support; local transport errors do not display a fabricated id. UI components do not render technical `Error.message` values, and the existing restricted-syntax lint rule enforces that boundary.
+The app shell uses one `localizeContractError` path and matching English and Chinese `errors.<code>`, `errors.unknown`, and `errors.transport.<kind>` resources. Internal and unknown errors include the valid request id for support; local transport errors do not display a fabricated id. UI components do not render technical `Error.message` values, and the existing restricted-syntax lint rule enforces that boundary.
 
 ## Excluded operations
 
 The generated SDK exposes only supported public operations. Because task worktrees are backend-owned internal state, there are no `/api/worktrees` endpoints in the manifest and no standalone worktree client methods — a task's filesystem context is selected by `workspaceMode` at creation instead. See [Task Worktrees](task-worktrees.md).
 
-See [Application and Contracts Boundary](application-contracts.md) and [Web Server Runtime](web-server-runtime.md).
+See [Application and Contracts Boundary](application-contracts-boundary.md) and [Desktop Runtime](desktop-runtime.md).

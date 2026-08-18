@@ -1,4 +1,4 @@
-use crate::agent_runtime::AgentRuntimeManager;
+use crate::agent_runtime::{AgentRuntimeManager, WarmOwner};
 use crate::clock::SystemClock;
 use crate::error::BackendError;
 use crate::workflow_run_prerequisites::resolve_executable_skill_name;
@@ -244,13 +244,18 @@ async fn drive_agent_node(
 
     // Warm a reusable provider session for this run's task.
     let warm = agent_runtime
-        .warm_session(WarmSessionRequest {
-            target: WarmSessionTarget::Task {
-                task_id: context.task.id.to_string(),
+        .warm_session_for_owner(
+            WarmSessionRequest {
+                target: WarmSessionTarget::Task {
+                    task_id: context.task.id.to_string(),
+                },
+                agent_cli,
             },
-            agent_cli,
-            client_id: format!("{}:{}", context.run.id, node.id),
-        })
+            WarmOwner::WorkflowNode {
+                run_id: context.run.id.to_string(),
+                node_id: node.id.clone(),
+            },
+        )
         .await?;
 
     // Attach the warm session to the run task and bind it to the node run immediately, so the

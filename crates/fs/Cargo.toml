@@ -9,6 +9,7 @@ workspace = true
 [dependencies]
 notify = { workspace = true }
 ora-process = { workspace = true }
+ora-utils = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

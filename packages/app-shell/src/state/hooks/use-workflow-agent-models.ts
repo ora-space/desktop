@@ -9,7 +9,6 @@ import {
   AGENT_CLI_ORDER,
 } from "../../features/chat/model-catalog";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
-import { clientId } from "../client-id";
 import { queryKeys } from "./query-keys";
 import { useProjects } from "./use-projects";
 
@@ -60,7 +59,6 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
         client.session.warm({
           target: target!,
           agentCli,
-          clientId: clientId(),
         }),
       staleTime: Infinity,
       gcTime: Infinity,

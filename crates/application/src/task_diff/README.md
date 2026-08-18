@@ -8,7 +8,7 @@ This module owns the transport- and storage-independent use cases behind task ch
 - Stage, commit, and push changes only after the caller's task, worktree, and persisted branch identity have been verified.
 - Create root line discussions, replies, and resolution changes while making invalid comment states unrepresentable with `TaskDiffCommentKind`.
 - Reject stale or structurally invalid anchors before persisting a comment.
-- Normalize anchor paths through `ora-fs` portable relative-path validation before matching or
+- Normalize anchor paths through `ora-utils` portable relative-path validation before matching or
   persistence, so Git paths retain one platform-independent slash representation.
 - Map domain comments into the shared `ora-contracts` DTOs.
 
@@ -30,6 +30,6 @@ The diff reader enforces a bounded patch response. Oversized patches become the 
 - A comment can be created only when its `diff_id`, path, hunk, line range, side, and first-line content still match the current patch.
 - Comment paths cannot be rooted, carry platform prefixes, or traverse to a parent component.
 - Commit and push operations require an active task-owned worktree and verify its path and branch against Git metadata immediately before mutation.
-- The application module does not choose HTTP status codes, Tauri behavior, public error codes, or log levels.
+- The application module does not choose adapter status, Tauri behavior, public error codes, or log levels.
 
-See [Application and Contracts Boundary](../../../../docs/application-contracts.md) and [Task Worktree / Gitlancer Diff Flow](../../../../docs/task-worktree-gitlancer-frontend-flow.md).
+See [Application and Contracts Boundary](../../../../docs/application-contracts-boundary.md) and [Task Worktree / Gitlancer Diff Flow](../../../../docs/task-worktree-gitlancer-frontend-flow.md).

@@ -1,6 +1,15 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// Reports whether a catalog skill still has a loadable on-disk package.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "skill.ts")]
+pub enum SkillAvailability {
+    Available,
+    Unavailable,
+}
+
 /// Describes a public skill payload without persistence audit metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -10,6 +19,7 @@ pub struct Skill {
     pub namespace: String,
     pub name: String,
     pub description: String,
+    pub availability: SkillAvailability,
 }
 
 /// Describes one skill together with the Markdown body from its SKILL.md.
@@ -22,6 +32,7 @@ pub struct SkillDetails {
     pub name: String,
     pub description: String,
     pub content: String,
+    pub availability: SkillAvailability,
 }
 
 /// Carries the public fields required to create a skill.
@@ -113,6 +124,7 @@ pub struct DeleteSkillResponse {
 
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    SkillAvailability::export(config)?;
     Skill::export(config)?;
     SkillDetails::export(config)?;
     CreateSkillRequest::export(config)?;
@@ -133,7 +145,7 @@ mod tests {
     use super::{
         CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse,
         GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, Skill,
-        UpdateSkillRequest, UpdateSkillResponse,
+        SkillAvailability, UpdateSkillRequest, UpdateSkillResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -146,6 +158,7 @@ mod tests {
             namespace: "local".to_string(),
             name: "review".to_string(),
             description: "Reviews implementation changes".to_string(),
+            availability: SkillAvailability::Available,
         };
 
         assert_eq!(
@@ -155,6 +168,7 @@ mod tests {
                 "namespace": "local",
                 "name": "review",
                 "description": "Reviews implementation changes",
+                "availability": "available",
             })
         );
     }
@@ -167,6 +181,7 @@ mod tests {
             namespace: "local".to_string(),
             name: "review".to_string(),
             description: "Reviews implementation changes".to_string(),
+            availability: SkillAvailability::Available,
         };
 
         assert_serialized_json(
@@ -181,7 +196,7 @@ mod tests {
             &CreateSkillResponse {
                 skill: skill.clone(),
             },
-            json!({ "skill": { "id": "skill-1", "namespace": "local", "name": "review", "description": "Reviews implementation changes" } }),
+            json!({ "skill": { "id": "skill-1", "namespace": "local", "name": "review", "description": "Reviews implementation changes", "availability": "available" } }),
         );
         assert_serialized_json(
             &GetSkillRequest {
@@ -197,16 +212,17 @@ mod tests {
                     name: skill.name.clone(),
                     description: skill.description.clone(),
                     content: "# Instructions".to_string(),
+                    availability: SkillAvailability::Available,
                 },
             },
-            json!({ "skill": { "id": "skill-1", "namespace": "local", "name": "review", "description": "Reviews implementation changes", "content": "# Instructions" } }),
+            json!({ "skill": { "id": "skill-1", "namespace": "local", "name": "review", "description": "Reviews implementation changes", "content": "# Instructions", "availability": "available" } }),
         );
         assert_serialized_json(&ListSkillsRequest {}, json!({}));
         assert_serialized_json(
             &ListSkillsResponse {
                 skills: vec![skill.clone()],
             },
-            json!({ "skills": [{ "id": "skill-1", "namespace": "local", "name": "review", "description": "Reviews implementation changes" }] }),
+            json!({ "skills": [{ "id": "skill-1", "namespace": "local", "name": "review", "description": "Reviews implementation changes", "availability": "available" }] }),
         );
         assert_serialized_json(
             &UpdateSkillRequest {
@@ -237,9 +253,10 @@ mod tests {
                     namespace: "local".to_string(),
                     name: "code-review".to_string(),
                     description: "Reviews code changes".to_string(),
+                    availability: SkillAvailability::Available,
                 },
             },
-            json!({ "skill": { "id": "skill-1", "namespace": "local", "name": "code-review", "description": "Reviews code changes" } }),
+            json!({ "skill": { "id": "skill-1", "namespace": "local", "name": "code-review", "description": "Reviews code changes", "availability": "available" } }),
         );
         assert_serialized_json(
             &DeleteSkillRequest {

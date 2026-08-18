@@ -310,7 +310,7 @@ export type WorkflowRunEvent =
     }
   | { type: "run_finished"; runId: string; status: GraphWorkflowRunStatus };
 
-/** Opaque resume marker returned to a future NDJSON transport unchanged. */
+/** Opaque resume marker returned to a future Desktop channel adapter unchanged. */
 export type WorkflowEventCursor = string;
 
 /** Durable event metadata used for ordering, deduplication, and reconnect. */

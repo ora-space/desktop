@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type SkillImportSession } from "@ora/contracts";
-import { usePlatform, type SkillMarketplaceStatus } from "@ora/platform";
+import { usePlatform, type SkillMarketplaceStatus } from "../../platform";
 import { toast } from "@ora/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useContractsClient } from "../../contracts-client-context";
 import { localizeContractError } from "../../i18n/contract-error";
+import {
+  localizeSkillImportResultReason,
+  localizeSkillImportStatus,
+} from "../../i18n/skill-import-reason";
 import { queryKeys } from "../../state/hooks/query-keys";
 import { SkillImportDialog } from "./atoms-settings";
 
@@ -56,7 +60,6 @@ export function SkillMarketplaceInstallController() {
           description: archive.archivePath,
         },
       );
-
       try {
         const prepared = await client.skillImport.prepare({
           source: {
@@ -99,10 +102,26 @@ export function SkillMarketplaceInstallController() {
             result.status !== "imported" && result.status !== "overwritten",
         );
         if (incomplete) {
+          const reasons = completed.progress.results
+            .filter(
+              (result) =>
+                result.status !== "imported" && result.status !== "overwritten",
+            )
+            .map((result) => {
+              const reason =
+                localizeSkillImportResultReason(result, t) ??
+                localizeSkillImportStatus(result.status, t);
+              return t("settings.skills.importResultLine", {
+                name: result.name,
+                reason,
+              });
+            })
+            .join("\n");
           toast.error(
             t("settings.skills.marketplaceInstallIncomplete", {
               fileName: archive.fileName,
             }),
+            { description: reasons },
           );
           await requestReview(archive, completed);
           return;
@@ -128,8 +147,6 @@ export function SkillMarketplaceInstallController() {
   );
 
   useEffect(() => {
-    if (skillMarketplace.kind !== "supported") return undefined;
-
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
     void skillMarketplace

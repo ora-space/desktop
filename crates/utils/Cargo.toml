@@ -1,0 +1,25 @@
+[package]
+name = "ora-utils"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+archive = ["dep:zip", "dep:tar", "dep:flate2"]
+
+[dependencies]
+flate2 = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
+thiserror = { workspace = true }
+unicode-normalization = { workspace = true }
+zip = { workspace = true, optional = true }
+
+[dev-dependencies]
+flate2 = { workspace = true }
+pretty_assertions = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
+zip = { workspace = true }

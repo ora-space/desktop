@@ -23,7 +23,7 @@ pub(crate) struct SkillApi {
         SystemClock,
     >,
     get: GetSkillHandler<SqliteSkillRepository, FilesystemSkillStorage>,
-    list: ListSkillsHandler<SqliteSkillRepository>,
+    list: ListSkillsHandler<SqliteSkillRepository, FilesystemSkillStorage>,
     update: UpdateSkillHandler<SqliteSkillRepository, FilesystemSkillStorage, SystemClock>,
     delete: DeleteSkillHandler<SqliteSkillRepository, FilesystemSkillStorage, SystemClock>,
     import: SkillImportService<
@@ -49,7 +49,7 @@ impl SkillApi {
                 clock,
             ),
             get: GetSkillHandler::new(repository.clone(), storage.clone()),
-            list: ListSkillsHandler::new(repository.clone()),
+            list: ListSkillsHandler::new(repository.clone(), storage.clone()),
             update: UpdateSkillHandler::new(repository.clone(), storage.clone(), clock),
             delete: DeleteSkillHandler::new(repository.clone(), storage, clock),
             import: SkillImportService::new(
@@ -149,7 +149,7 @@ mod tests {
     };
     use ora_domain::{AgentDefinition, AgentDefinitionId, AuditFields, Namespace};
     use ora_logging::with_trace_logging;
-    use ora_skill_package::path::RelativePath;
+    use ora_utils::path::StrictRelativePath;
     use pretty_assertions::assert_eq;
     use std::path::Path;
     use std::sync::{Arc, Barrier};
@@ -189,7 +189,7 @@ mod tests {
         fn write_file(
             &self,
             staging: &Path,
-            relative: &RelativePath,
+            relative: &StrictRelativePath,
             bytes: &[u8],
         ) -> Result<(), SkillStorageError> {
             self.inner.write_file(staging, relative, bytes)
@@ -198,7 +198,7 @@ mod tests {
         fn copy_file(
             &self,
             staging: &Path,
-            relative: &RelativePath,
+            relative: &StrictRelativePath,
             source: &Path,
         ) -> Result<(), SkillStorageError> {
             self.inner.copy_file(staging, relative, source)
@@ -267,6 +267,10 @@ mod tests {
 
         fn remove_dir(&self, path: &Path) -> Result<(), SkillStorageError> {
             self.inner.remove_dir(path)
+        }
+
+        fn remove_formal(&self, name: &str) -> Result<(), SkillStorageError> {
+            self.inner.remove_formal(name)
         }
 
         fn list_journals(&self) -> Result<Vec<TransactionJournal>, SkillStorageError> {

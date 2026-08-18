@@ -48,10 +48,10 @@ import {
   serializeWorkflowGraph,
   workflowTimestampToIso,
 } from "@ora/workflow-runtime";
-import { usePlatform } from "@ora/platform";
+import { usePlatform } from "../../platform";
 import { useContractsClient } from "../../contracts-client-context";
 import { useAgents } from "../../state/hooks/use-agents";
-import { useSkills } from "../../state/hooks/use-skills";
+import { availableSkills, useSkills } from "../../state/hooks/use-skills";
 import { useWorkflowAgentModels } from "../../state/hooks/use-workflow-agent-models";
 import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
@@ -189,7 +189,7 @@ function WorkflowSettingsContent({
       value: agent.name,
       label: agent.name,
     }));
-    const skills = (skillsQuery.data ?? []).map((skill) => ({
+    const skills = availableSkills(skillsQuery.data ?? []).map((skill) => ({
       value: skill.name,
       label: skill.name,
     }));

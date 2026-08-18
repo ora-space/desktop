@@ -1,6 +1,6 @@
 # Desktop Runtime
 
-`apps/desktop/src-tauri` is an independent Cargo workspace that hosts the same persisted operations and ACP streaming capabilities as the Web server without running an HTTP server.
+`apps/desktop/src-tauri` is the root Cargo workspace member that hosts Ora's persisted operations and ACP streaming capabilities through Tauri commands.
 
 ## Shared Backend and Commands
 
@@ -10,21 +10,15 @@ records at most one completion event. Session load, prompt, and `watchAppEvents`
 forwards ordered `data`, `error`, and `end` frames over a Tauri Channel. A private call id allows an
 `AbortSignal` to cancel only that stream, while one separate request id correlates the complete stream.
 
-The frontend injects `createTauriTransport()` into `createContractsClient`. The transport maps contract operation names to Tauri commands and forwards the original request DTO unchanged. Shared backend failures use the same direct `{ code, params, requestId }` payload as Web, without a public message or outer envelope. Tauri and fetch reuse the same runtime decoder; local Tauri invocation failures have no HTTP status and never invent a request id.
+The frontend injects `createTauriTransport()` into `createContractsClient`. The transport maps contract operation names to Tauri commands and forwards the original request DTO unchanged. Backend failures use the direct `{ code, params, requestId }` payload without a public message or outer envelope. Local Tauri invocation failures never invent a request id.
 
 Task workspace lookup and Spec review are part of that shared contract surface. `get_task_workspace` returns the authoritative task root with an optional branch, while `get_spec_catalog` and `read_spec` delegate unary work to the shared backend. `watch_specs` and `watchAppEvents` use the same channel framing, cancellation, and exactly-once completion lifecycle as other Desktop streams.
 
 Backend construction immediately attempts supervised `opencode acp`, `nga acp`, `codeagentcli acp`, `claude-agent-acp`, and `codex-acp` children in the user's home directory. Sessions share the connection selected by their current `agentCli` while retaining their own ACP session id and Task worktree `cwd`. `switch_session_agent` moves a live conversation to another CLI and `resume_session_history` recovers one whose history writes failed. Each CLI retries independently; failures leave the Desktop shell and healthy CLIs available, while operations targeting an unavailable CLI report `agent_runtime_unavailable`. Executable lookup is platform-specific — see [ACP Agent Runtime](agent-runtime.md).
 
-The Desktop App Shell waits for the `Ready` frame before mounting normal queries and watchers. The native platform adapter grants application-window ownership immediately because Tauri owns one main window; browser hosts implement the same frontend seam with a Web Lock. The application stream itself is a multi-subscriber, best-effort session-title invalidation broadcast rather than a page lease or persisted event log.
+The Desktop App Shell waits for the `Ready` frame before mounting normal queries and watchers. The application stream is a multi-subscriber, best-effort session-title invalidation broadcast rather than a persisted event log.
 
-Beyond the shared contract surface, Desktop registers four platform-only commands with no HTTP counterpart: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`.
-
-One contract operation is not implemented on Desktop:
-
-- listing a server filesystem directory.
-
-No Tauri command exists for it. The contracts transport rejects it with `unsupported_operation` before any IPC call is made, so the exclusion is enforced client-side rather than by a stub command.
+Beyond the shared contract surface, Desktop registers four platform-only commands: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`.
 
 ## Skill imports
 
@@ -33,7 +27,7 @@ Desktop exposes the shared import session lifecycle through four unary Tauri com
 The frontend sends the system picker's local path inside `PrepareSkillImportRequest`; the Rust
 side reads the folder or archive, so file bytes (up to 200 MiB) are never serialized over Tauri
 IPC. Preparation, preview, conflict decisions, background commit, and result retention behave
-identically to the Web runtime because both adapters call the same `ora-backend` composition.
+through the shared `ora-backend` composition.
 
 The configured root is only a creation target. Existing worktree locations are resolved from the stored branch name and `git worktree list --porcelain` when an agent Session starts or loads. Task and project deletion never mutate Git.
 
@@ -46,11 +40,11 @@ The Tauri identifier is `space.ora.desktop`. Tauri's system `app_data_dir` owns 
 - Logs: `app_data_dir/logs/ora.log`
 - Default new-worktree root: `~/.ora/worktrees`
 - Session history: `app_data_dir/sessions`
- - Skill packages root: `app_data_dir/atoms/skills`
+- Skill packages root: `app_data_dir/atoms/skills`
 
 On first launch, Desktop creates the app data directory, `~/.ora/worktrees`, and a versioned configuration file using an atomic sibling-temporary-file replacement. `config.json` currently holds version `1` and the `worktreeRoot`. Existing malformed, unknown-version, or otherwise invalid configuration is fatal; Desktop does not silently reset it.
 
-`ORA_DATA_DIR` controls Desktop's runtime data root. `task run:desktop` points it at the repo `.data` directory so Desktop shares the web server's database. Relative project roots stored in that database are resolved against the data directory's parent (the repo root), not the Tauri process cwd — `tauri dev` starts in `apps/desktop/src-tauri`, which would otherwise miss paths such as `.data/rustun`. Without `ORA_DATA_DIR`, runtime data paths come from Tauri's `app_data_dir`; the first-run worktree root remains `~/.ora/worktrees`, and folder-picker selections are already absolute.
+`ORA_DATA_DIR` controls Desktop's runtime data root. `task run:desktop` points it at the repo `.data` directory for local development. Relative project roots stored in that database are resolved against the data directory's parent (the repo root), not the Tauri process cwd — `tauri dev` starts in `apps/desktop/src-tauri`, which would otherwise miss paths such as `.data/rustun`. Without `ORA_DATA_DIR`, runtime data paths come from Tauri's `app_data_dir`; the first-run worktree root remains `~/.ora/worktrees`, and folder-picker selections are already absolute.
 
 The worktree root is non-sensitive configuration. Users can change it from Settings → Data & privacy on Desktop. A selected value must be an absolute path to an existing directory. The new value affects task creations that start after the update; in-flight operations retain their original snapshot, and existing worktrees are not moved.
 
@@ -75,4 +69,4 @@ effect after Ora restarts. Daily log files continue to rotate at UTC boundaries.
 
 ## Verification
 
-The Tauri Rust crate keeps its own `Cargo.lock` and is intentionally excluded from the root Cargo workspace. `task test:desktop` checks the Desktop transport, formatting, Clippy, and the independent Rust tests. `task test` includes this task explicitly.
+The Tauri Rust crate shares the root `Cargo.lock`, dependency graph, and target directory with the reusable Rust crates. `task test:frontend` includes the Desktop TypeScript transport tests, while `task test:crates` includes `ora-desktop` alongside every other Rust workspace package. `task test` runs both groups.

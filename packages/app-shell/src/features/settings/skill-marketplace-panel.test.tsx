@@ -6,7 +6,7 @@ import {
   type LocationActionsCapability,
   type SkillMarketplaceCapability,
   type SkillMarketplaceStatus,
-} from "@ora/platform";
+} from "../../platform";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { createStubPlatform } from "../../test/stub-platform";
 import { SkillMarketplacePanel } from "./skill-marketplace-panel";
@@ -14,7 +14,10 @@ import { SkillMarketplacePanel } from "./skill-marketplace-panel";
 /** Renders the marketplace panel with one explicitly injected host capability. */
 function renderMarketplace(
   skillMarketplace: SkillMarketplaceCapability,
-  locationActions: LocationActionsCapability = { kind: "unsupported" },
+  locationActions: LocationActionsCapability = {
+    resolveTaskCwd: vi.fn(),
+    open: vi.fn(),
+  },
 ) {
   const platform = {
     ...createStubPlatform(),
@@ -44,9 +47,8 @@ describe("SkillMarketplacePanel", () => {
     );
     const openLocation = vi.fn().mockResolvedValue(undefined);
     const view = renderMarketplace(
-      { kind: "supported", open, onStatus },
+      { open, onStatus },
       {
-        kind: "supported",
         resolveTaskCwd: vi.fn(),
         open: openLocation,
       },
@@ -103,7 +105,6 @@ describe("SkillMarketplacePanel", () => {
   it("shows native download failures without reporting a completed archive", async () => {
     let listener: ((status: SkillMarketplaceStatus) => void) | undefined;
     renderMarketplace({
-      kind: "supported",
       open: vi.fn().mockResolvedValue(undefined),
       onStatus: async (nextListener) => {
         listener = nextListener;
@@ -132,7 +133,6 @@ describe("SkillMarketplacePanel", () => {
     const user = userEvent.setup();
     const open = vi.fn().mockResolvedValue(undefined);
     renderMarketplace({
-      kind: "supported",
       open,
       onStatus: async () => () => {},
     });
@@ -145,22 +145,5 @@ describe("SkillMarketplacePanel", () => {
 
     expect(open).toHaveBeenCalledWith("huaweiAgentCenter");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
-  it("keeps native launch actions disabled on unsupported hosts", () => {
-    renderMarketplace({ kind: "unsupported" });
-
-    expect(
-      screen.getByRole("button", { name: /打开技能市场|Open marketplace/ }),
-    ).toBeDisabled();
-    expect(screen.getAllByRole("status")).toHaveLength(2);
-    expect(screen.getAllByRole("status")[0]).toHaveTextContent(
-      /仅在 Ora 桌面端可用|Ora Desktop only/,
-    );
-    expect(
-      screen.getByRole("button", {
-        name: /打开内网 Skill Market|Open internal Skill Market/,
-      }),
-    ).toBeDisabled();
   });
 });
