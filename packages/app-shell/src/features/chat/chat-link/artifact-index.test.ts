@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ChatToolCall, ChatTurn } from "@ora/chat";
-import { collectSessionArtifactIndex } from "./artifact-index";
+import {
+  collectCumulativeArtifactIndices,
+  collectSessionArtifactIndex,
+} from "./artifact-index";
 
 /** Builds a tool call without involving the ACP transport. */
 function tool(
@@ -115,7 +118,34 @@ describe("collectSessionArtifactIndex", () => {
     expect(index.edited).toEqual(["src/new.ts"]);
   });
 
-  it("lets a later edit win over an earlier read of the same path", () => {
+  it("keeps an earlier read-only turn on Files after a later edit of the same path", () => {
+    const indices = collectCumulativeArtifactIndices([
+      turn("t1", [
+        tool({
+          id: "read-1",
+          toolKind: "read",
+          locations: [{ path: "src/main.rs" }],
+        }),
+      ]),
+      turn("t2", [
+        tool({
+          id: "edit-1",
+          toolKind: "edit",
+          content: [
+            { type: "diff", path: "src/main.rs", oldText: "a", newText: "b" },
+          ],
+          locations: [{ path: "src/main.rs" }],
+        }),
+      ]),
+    ]);
+
+    expect(indices).toEqual([
+      { edited: [], referenced: ["src/main.rs"] },
+      { edited: ["src/main.rs"], referenced: [] },
+    ]);
+  });
+
+  it("lets a later edit win over an earlier read in the session-wide snapshot", () => {
     const index = collectSessionArtifactIndex([
       turn("t1", [
         tool({

@@ -19,15 +19,18 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 
 ## Invariants
 
-- Inline code becomes a link only when it is path-like **and** hits the session index.
-- Path tokens are indexed cumulatively per turn: turns where a path was only read open Files, while turns with edits open Changes.
-- If a requested diff file is not found in the active task patch, navigation falls back to opening the file in Files.
-- Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists.
-- Absolute ACP paths are stripped with the task cwd before Diff/Files requests.
+- Inline code becomes a link only when it is path-like **and** hits that turn’s index.
+- Each assistant turn receives a **cumulative** index of tools up to that turn (`collectCumulativeArtifactIndices`). A path that was only read still opens Files on that turn, even if a later turn edits it. Mentions from the edit turn onward open Changes.
+- Failed and cancelled tool calls are not indexed.
+- When ACP omits `locations`, read tools may still contribute referenced paths from `rawInput` (`filePath`, `path`, `AbsolutePath`, …).
+- Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists. A bare filename must not replace a nested index path.
+- Absolute ACP paths are stripped with the task cwd (`getWorkspace`, plus desktop `resolveTaskCwd`) before Diff/Files requests.
+- If a requested diff file is not in the active task patch, navigation falls back to Files. A line missing from a file that **is** in the patch still opens that file in Changes, with no toast.
 - The index must not call `diffLines` or read diff text; streaming rebuilds stay cheap.
 
 ## Interactions
 
+- `MessageList` provides a per-turn `ChatLinkContext` around each `ResponseTurn`
 - `TaskChangesNavigation.openDiff` / `openWorkspaceFile` in the review layout
 - Desktop `locationActions` for Explorer, VS Code, and copying an OS-absolute path
 - Shared slash matching in `packages/app-shell/src/lib/workspace-path.ts`
