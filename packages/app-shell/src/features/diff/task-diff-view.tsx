@@ -96,6 +96,7 @@ interface TaskDiffViewProps {
   fileRequest?: TaskDiffFileRequest;
   toolbar?: ReactNode;
   onFileTreeOpenChange: (open: boolean) => void;
+  onFileNotFound?: (path: string, line?: number) => void;
 }
 
 export type TaskDiffViewType = "unified" | "split";
@@ -119,6 +120,7 @@ export function TaskDiffView({
   fileRequest,
   toolbar,
   onFileTreeOpenChange,
+  onFileNotFound,
 }: TaskDiffViewProps) {
   const { i18n, t } = useTranslation();
   const client = useContractsClient();
@@ -179,14 +181,29 @@ export function TaskDiffView({
   );
 
   useEffect(() => {
-    if (fileRequest === undefined || files.length === 0) return;
+    if (fileRequest === undefined) return;
+    if (diffQuery.isLoading) return;
+    if (files.length === 0) {
+      onFileNotFound?.(fileRequest.path, fileRequest.line);
+      return;
+    }
     const matchingPath = filePaths.find((path) =>
       pathsMatchForWorkspace(fileRequest.path, path),
     );
-    if (matchingPath === undefined) return;
+    if (matchingPath === undefined) {
+      onFileNotFound?.(fileRequest.path, fileRequest.line);
+      return;
+    }
     const frame = requestAnimationFrame(() => selectFile(matchingPath, "auto"));
     return () => cancelAnimationFrame(frame);
-  }, [fileRequest, filePaths, files.length, selectFile]);
+  }, [
+    fileRequest,
+    filePaths,
+    files.length,
+    selectFile,
+    diffQuery.isLoading,
+    onFileNotFound,
+  ]);
 
   useEffect(() => {
     // The tree panel mounts collapsed alongside the diff, so toggling (or a late

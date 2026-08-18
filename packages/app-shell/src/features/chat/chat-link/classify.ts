@@ -93,7 +93,8 @@ export function toNavigationPath(
     if (
       clicked !== "" &&
       !isAbsoluteWorkspacePath(clickedPath) &&
-      !isAbsoluteWorkspacePath(clicked)
+      !isAbsoluteWorkspacePath(clicked) &&
+      clicked.includes("/")
     ) {
       return clicked;
     }

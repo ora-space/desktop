@@ -58,6 +58,24 @@ function fallbackEditPath(tool: ChatToolCall): string | null {
   );
 }
 
+/** Extracts candidate read/reference paths from tool inputs when ACP emitted no locations. */
+function fallbackReadPath(tool: ChatToolCall): string | null {
+  if (tool.toolKind === "edit" || !isRecord(tool.rawInput)) return null;
+  return (
+    tool.locations.at(-1)?.path ??
+    stringField(tool.rawInput, [
+      "filePath",
+      "file_path",
+      "path",
+      "AbsolutePath",
+      "absolute_path",
+      "targetFile",
+      "target_file",
+      "uri",
+    ])
+  );
+}
+
 /** Collects edited and referenced paths for one turn without reading diff text. */
 export function collectTurnArtifactPaths(turn: ChatTurn): {
   edited: string[];
@@ -66,7 +84,12 @@ export function collectTurnArtifactPaths(turn: ChatTurn): {
   const edited = new Map<string, string>();
 
   for (const item of turn.items) {
-    if (item.kind !== "toolCall") continue;
+    if (
+      item.kind !== "toolCall" ||
+      item.status === "failed" ||
+      item.status === "cancelled"
+    )
+      continue;
     let receivedProtocolDiff = false;
     for (const content of item.content) {
       if (content.type !== "diff") continue;
@@ -85,13 +108,28 @@ export function collectTurnArtifactPaths(turn: ChatTurn): {
 
   const referenced = new Map<string, string>();
   for (const item of turn.items) {
-    if (item.kind !== "toolCall") continue;
+    if (
+      item.kind !== "toolCall" ||
+      item.status === "failed" ||
+      item.status === "cancelled"
+    )
+      continue;
     for (const location of item.locations) {
       if (isDirectoryPath(location.path)) continue;
       const path = storedArtifactPath(location.path);
       const key = path.toLowerCase();
       if (edited.has(key)) continue;
       referenced.set(key, path);
+    }
+    if (item.locations.length === 0) {
+      const fallback = fallbackReadPath(item);
+      if (fallback !== null && !isDirectoryPath(fallback)) {
+        const path = storedArtifactPath(fallback);
+        const key = path.toLowerCase();
+        if (!edited.has(key)) {
+          referenced.set(key, path);
+        }
+      }
     }
   }
 
@@ -108,26 +146,28 @@ function turnArtifactFingerprint(turn: ChatTurn): string {
     .map((item) => {
       const diffs = item.content
         .filter((content) => content.type === "diff")
-        .map((content) => content.path)
+        .map((diff) => diff.path)
         .join(",");
-      const locations = item.locations
-        .map((location) => location.path)
-        .join(",");
-      return `${item.id}:${item.status ?? ""}:${diffs}:${locations}`;
+      const locations = item.locations.map((loc) => loc.path).join(",");
+      const editFallback = fallbackEditPath(item) ?? "";
+      const readFallback = fallbackReadPath(item) ?? "";
+      return `${item.id}:${item.status ?? ""}:${diffs}:${locations}:${editFallback}:${readFallback}`;
     })
     .join(";");
 }
 
 /**
- * Builds the session-wide edited/referenced sets. Pass a cache Map so only the
- * live streaming turn is recomputed while earlier turns stay memoized.
+ * Builds cumulative artifact indices for each turn in order.
+ * Turn i only includes files edited or referenced up to turn i, so prior turns
+ * where a file was only read maintain read-only links to Files.
  */
-export function collectSessionArtifactIndex(
+export function collectCumulativeArtifactIndices(
   turns: ChatTurn[],
   cache?: Map<string, TurnArtifactCacheEntry>,
-): SessionArtifactIndex {
+): SessionArtifactIndex[] {
   const edited = new Map<string, string>();
   const referenced = new Map<string, string>();
+  const indices: SessionArtifactIndex[] = [];
 
   for (const turn of turns) {
     const fingerprint = turnArtifactFingerprint(turn);
@@ -144,14 +184,29 @@ export function collectSessionArtifactIndex(
     for (const path of entry.referenced) {
       referenced.set(path.toLowerCase(), path);
     }
+
+    const currentReferenced = new Map(referenced);
+    for (const key of edited.keys()) {
+      currentReferenced.delete(key);
+    }
+
+    indices.push({
+      edited: [...edited.values()],
+      referenced: [...currentReferenced.values()],
+    });
   }
 
-  for (const key of edited.keys()) {
-    referenced.delete(key);
-  }
+  return indices;
+}
 
-  return {
-    edited: [...edited.values()],
-    referenced: [...referenced.values()],
-  };
+/**
+ * Builds the session-wide edited/referenced sets. Pass a cache Map so only the
+ * live streaming turn is recomputed while earlier turns stay memoized.
+ */
+export function collectSessionArtifactIndex(
+  turns: ChatTurn[],
+  cache?: Map<string, TurnArtifactCacheEntry>,
+): SessionArtifactIndex {
+  const cumulative = collectCumulativeArtifactIndices(turns, cache);
+  return cumulative.at(-1) ?? { edited: [], referenced: [] };
 }

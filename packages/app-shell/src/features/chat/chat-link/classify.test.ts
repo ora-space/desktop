@@ -142,4 +142,43 @@ describe("classifyChatCandidate", () => {
       }),
     ).toMatchObject({ kind: "diff", path: "src/main.rs", line: 12 });
   });
+
+  it("links a bare filename to the full relative path in the index", () => {
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "chat-file-link.test.tsx",
+        index: {
+          edited: [],
+          referenced: [
+            "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx",
+          ],
+        },
+        hasNavigation: true,
+      }),
+    ).toMatchObject({
+      kind: "files",
+      path: "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx",
+    });
+  });
+
+  it("strips cwd when linking a bare filename to an absolute index path", () => {
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "chat-file-link.test.tsx",
+        index: {
+          edited: [],
+          referenced: [
+            "E:/claude_code_project/desktop/packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx",
+          ],
+        },
+        hasNavigation: true,
+        cwd: "E:/claude_code_project/desktop",
+      }),
+    ).toMatchObject({
+      kind: "files",
+      path: "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx",
+    });
+  });
 });

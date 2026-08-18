@@ -14,3 +14,8 @@ export function useContractsClient(): ContractsClient {
 
   return client;
 }
+
+/** Returns the backend client when present, or null when rendering in lightweight test harnesses. */
+export function useOptionalContractsClient(): ContractsClient | null {
+  return useContext(ContractsClientContext);
+}

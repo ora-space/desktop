@@ -13,9 +13,11 @@ vi.mock("./task-diff-view", () => ({
   TaskDiffView: ({
     toolbar,
     fileRequest,
+    onFileNotFound,
   }: {
     toolbar?: ReactNode;
     fileRequest?: { path: string; requestId: number; line?: number };
+    onFileNotFound?: (path: string, line?: number) => void;
   }) => (
     <section aria-label="Task diff">
       <header data-diff-toolbar>
@@ -24,6 +26,13 @@ vi.mock("./task-diff-view", () => ({
       </header>
       <span data-testid="requested-file">{fileRequest?.path}</span>
       <span data-testid="requested-line">{fileRequest?.line ?? ""}</span>
+      <button
+        type="button"
+        data-testid="simulate-not-found"
+        onClick={() => onFileNotFound?.("src/missing.ts", 10)}
+      >
+        Simulate Not Found
+      </button>
     </section>
   ),
 }));
@@ -316,5 +325,29 @@ describe("WorkspaceReviewLayout", () => {
       ).getByRole("button", { name: /^变更$|^Changes$/ }),
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("falls back to the Files panel when a requested file is not found in the diff", async () => {
+    const user = userEvent.setup();
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <WorkspaceReviewLayout context={taskContext}>
+            <OpenChangedFileButton />
+          </WorkspaceReviewLayout>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open changed file" }));
+    expect(
+      screen.getByRole("region", { name: "Task diff" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("simulate-not-found"));
+    expect(screen.getByTestId("files-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("files-request")).toHaveTextContent(
+      "src/missing.ts:10",
+    );
   });
 });

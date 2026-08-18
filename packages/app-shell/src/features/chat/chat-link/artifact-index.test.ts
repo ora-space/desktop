@@ -204,4 +204,48 @@ describe("collectSessionArtifactIndex", () => {
     expect(cache.get("done")).toBe(cached);
     expect(cache.get("live")?.referenced).toEqual(["src/b.ts", "src/c.ts"]);
   });
+
+  it("ignores failed and cancelled tool calls", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "edit-failed",
+          toolKind: "edit",
+          status: "failed",
+          content: [
+            { type: "diff", path: "src/fail.ts", oldText: "", newText: "f" },
+          ],
+          locations: [{ path: "src/fail.ts" }],
+        }),
+        tool({
+          id: "read-cancelled",
+          toolKind: "read",
+          status: "cancelled",
+          locations: [{ path: "src/cancel.ts" }],
+        }),
+      ]),
+    ]);
+
+    expect(index).toEqual({ edited: [], referenced: [] });
+  });
+
+  it("extracts referenced paths from read tool rawInput when locations are empty", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "read-1",
+          toolKind: "read",
+          locations: [],
+          rawInput: {
+            filePath:
+              "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx",
+          },
+        }),
+      ]),
+    ]);
+
+    expect(index.referenced).toEqual([
+      "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx",
+    ]);
+  });
 });

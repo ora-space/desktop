@@ -28,6 +28,12 @@ import {
 import { useTranslation } from "react-i18next";
 import { useContractsClient } from "../../contracts-client-context";
 import { queryKeys } from "../../state/hooks/query-keys";
+import { displayPath } from "../chat/turn-diff-files";
+import {
+  normalizeDiffPath,
+  stripTaskCwdPrefix,
+} from "../../lib/workspace-path";
+import { useTaskWorkspace } from "../../state/hooks/use-task-workspace";
 import { useComposerFileContextStore } from "../../state/stores/composer-file-context-store";
 import {
   WorkspaceFileViewer,
@@ -81,6 +87,8 @@ export function WorkspaceFilesView({
   const { t } = useTranslation();
   const client = useContractsClient();
   const queryClient = useQueryClient();
+  const workspaceQuery = useTaskWorkspace(taskId);
+  const cwd = workspaceQuery.data?.rootPath;
   const [internalSurface, setInternalSurface] = useState<"explorer" | "search">(
     "explorer",
   );
@@ -107,7 +115,25 @@ export function WorkspaceFilesView({
     fileRequest.requestId !== appliedFileRequestId
   ) {
     setAppliedFileRequestId(fileRequest.requestId);
-    setSelectedPath(fileRequest.path);
+    const rawPath = fileRequest.path;
+    const stripped = cwd
+      ? (stripTaskCwdPrefix(rawPath, cwd) ??
+        stripTaskCwdPrefix(normalizeDiffPath(rawPath), cwd))
+      : null;
+    const targetPath = stripped ?? normalizeDiffPath(displayPath(rawPath));
+    setSelectedPath(targetPath);
+    const parts = targetPath.split("/");
+    if (parts.length > 1) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        let current = "";
+        for (let i = 0; i < parts.length - 1; i++) {
+          current = current === "" ? parts[i]! : `${current}/${parts[i]!}`;
+          next.add(current);
+        }
+        return next;
+      });
+    }
     setSelectedTarget(
       fileRequest.line === undefined
         ? null

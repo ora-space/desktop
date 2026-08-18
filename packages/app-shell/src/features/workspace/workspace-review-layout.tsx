@@ -1,4 +1,4 @@
-﻿import {
+import {
   useCallback,
   useEffect,
   useRef,
@@ -377,6 +377,7 @@ export function WorkspaceReviewLayout({
         fileRequest={fileRequest}
         toolbar={controls}
         onFileTreeOpenChange={setFileTreeOpen}
+        onFileNotFound={openWorkspaceFile}
       />
     ) : (
       <WorkspaceReviewFilesPanel

@@ -69,6 +69,7 @@ export function ChatFileLink({
     raw,
     index: chatLink?.index ?? { edited: [], referenced: [] },
     hasNavigation: navigation !== null && chatLink !== null,
+    cwd: chatLink?.cwd,
   });
 
   if (classified.kind === "none" || chatLink === null || navigation === null) {
@@ -125,7 +126,7 @@ function LinkedChatFile({
   const chatLink = useChatLinkContext()!;
   const navigation = useTaskChangesNavigation()!;
   const { locationActions } = usePlatform();
-  const [cwd, setCwd] = useState<string | null>(null);
+  const [desktopCwd, setDesktopCwd] = useState<string | null>(null);
 
   useEffect(() => {
     if (locationActions.kind !== "supported") return;
@@ -133,16 +134,17 @@ function LinkedChatFile({
     void locationActions
       .resolveTaskCwd(chatLink.taskId)
       .then((path) => {
-        if (!cancelled) setCwd(path);
+        if (!cancelled) setDesktopCwd(path);
       })
       .catch(() => {
-        if (!cancelled) setCwd(null);
+        if (!cancelled) setDesktopCwd(null);
       });
     return () => {
       cancelled = true;
     };
   }, [chatLink.taskId, locationActions]);
 
+  const cwd = desktopCwd ?? chatLink.cwd ?? null;
   const refreshed = classifyChatCandidate({
     source,
     raw,

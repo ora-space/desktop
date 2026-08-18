@@ -4,6 +4,7 @@ import type { SessionArtifactIndex } from "./artifact-index";
 export interface ChatLinkContextValue {
   index: SessionArtifactIndex;
   taskId: string;
+  cwd?: string | null;
 }
 
 export const ChatLinkContext = createContext<ChatLinkContextValue | null>(null);

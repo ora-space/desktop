@@ -20,7 +20,8 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 ## Invariants
 
 - Inline code becomes a link only when it is path-like **and** hits the session index.
-- Edited paths anywhere in the conversation open Changes; read-only referenced paths open Files.
+- Path tokens are indexed cumulatively per turn: turns where a path was only read open Files, while turns with edits open Changes.
+- If a requested diff file is not found in the active task patch, navigation falls back to opening the file in Files.
 - Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists.
 - Absolute ACP paths are stripped with the task cwd before Diff/Files requests.
 - The index must not call `diffLines` or read diff text; streaming rebuilds stay cheap.

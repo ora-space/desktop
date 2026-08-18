@@ -7,8 +7,9 @@ import { useConversationNavigation } from "./conversation-navigation";
 import { MessageBubble } from "./message-bubble";
 import { ResponseTurn } from "./response-turn";
 import type { ChatModelChange, ChatTurn } from "@ora/chat";
+import { useTaskWorkspace } from "../../state/hooks/use-task-workspace";
 import {
-  collectSessionArtifactIndex,
+  collectCumulativeArtifactIndices,
   type TurnArtifactCacheEntry,
 } from "./chat-link/artifact-index";
 import { ChatLinkContext } from "./chat-link/context";
@@ -32,16 +33,22 @@ export function MessageList({
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const workspaceQuery = useTaskWorkspace(taskId);
+  const cwd = workspaceQuery.data?.rootPath ?? null;
   const [artifactCache] = useState(
     () => new Map<string, TurnArtifactCacheEntry>(),
   );
-  const artifactIndex = useMemo(
-    () => collectSessionArtifactIndex(turns, artifactCache),
+  const artifactIndices = useMemo(
+    () => collectCumulativeArtifactIndices(turns, artifactCache),
     [artifactCache, turns],
   );
+  const artifactIndex = useMemo(
+    () => artifactIndices.at(-1) ?? { edited: [], referenced: [] },
+    [artifactIndices],
+  );
   const chatLinkValue = useMemo(
-    () => (taskId === undefined ? null : { index: artifactIndex, taskId }),
-    [artifactIndex, taskId],
+    () => (taskId === undefined ? null : { index: artifactIndex, taskId, cwd }),
+    [artifactIndex, cwd, taskId],
   );
   const lastTurn = turns.at(-1);
   const lastAnchorId =
@@ -84,40 +91,50 @@ export function MessageList({
             ref={contentRef}
             className="mx-auto w-full max-w-[760px] px-3 pb-4 pt-5 sm:px-5 sm:pt-8"
           >
-            {turns.map((turn, index) => (
-              <div key={turn.id}>
-                {/* Markers sit between turns rather than inside them, so they are
-                  rendered here instead of carrying a turn anchor: the navigator
-                  maps prompts and responses, and a divider is neither. */}
-                {modelChangesAt(modelChanges, index).map((change) => (
-                  <ModelChangeDivider
-                    key={change.id}
-                    modelName={change.modelName}
-                  />
-                ))}
-                <div data-turn-anchor={turn.id}>
-                  <div
-                    data-turn-user
-                    data-conversation-anchor={`${turn.id}:user`}
-                  >
-                    <MessageBubble
-                      message={turn.userMessage}
-                      userName={userName}
+            {turns.map((turn, index) => {
+              const turnIndex = artifactIndices[index] ?? {
+                edited: [],
+                referenced: [],
+              };
+              const turnChatLinkValue =
+                taskId === undefined ? null : { index: turnIndex, taskId, cwd };
+              return (
+                <div key={turn.id}>
+                  {/* Markers sit between turns rather than inside them, so they are
+                    rendered here instead of carrying a turn anchor: the navigator
+                    maps prompts and responses, and a divider is neither. */}
+                  {modelChangesAt(modelChanges, index).map((change) => (
+                    <ModelChangeDivider
+                      key={change.id}
+                      modelName={change.modelName}
                     />
-                  </div>
-                  {(turn.items.length > 0 || turn.status !== "streaming") && (
+                  ))}
+                  <div data-turn-anchor={turn.id}>
                     <div
-                      data-turn-response
-                      data-conversation-anchor={`${turn.id}:response`}
-                      className="relative overflow-visible rounded-xl"
+                      data-turn-user
+                      data-conversation-anchor={`${turn.id}:user`}
                     >
-                      <AnchorHighlight />
-                      <ResponseTurn turn={turn} userName={userName} />
+                      <MessageBubble
+                        message={turn.userMessage}
+                        userName={userName}
+                      />
                     </div>
-                  )}
+                    {(turn.items.length > 0 || turn.status !== "streaming") && (
+                      <ChatLinkContext.Provider value={turnChatLinkValue}>
+                        <div
+                          data-turn-response
+                          data-conversation-anchor={`${turn.id}:response`}
+                          className="relative overflow-visible rounded-xl"
+                        >
+                          <AnchorHighlight />
+                          <ResponseTurn turn={turn} userName={userName} />
+                        </div>
+                      </ChatLinkContext.Provider>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {modelChangesAt(modelChanges, turns.length).map((change) => (
               <ModelChangeDivider
                 key={change.id}

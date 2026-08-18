@@ -6,6 +6,8 @@ describe("isPathLikeToken", () => {
     expect(isPathLikeToken("cargo test")).toBe(false);
     expect(isPathLikeToken("Option<T>")).toBe(false);
     expect(isPathLikeToken("READY")).toBe(false);
+    expect(isPathLikeToken("Summary of artifact-index.test.ts")).toBe(false);
+    expect(isPathLikeToken("Step 1.2")).toBe(false);
   });
 
   it("accepts separators, known filenames, extensions, line suffixes, and absolute paths", () => {

@@ -95,10 +95,13 @@ function isNamedWorkspaceFile(path: string): boolean {
   const filename = path.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
   if (filename === "") return false;
   if (NAMED_WORKSPACE_FILES.has(filename)) return true;
+  if (!path.includes("/") && !path.includes("\\") && /\s/.test(filename)) {
+    return false;
+  }
   const extension = filename.includes(".")
     ? (filename.split(".").at(-1) ?? "")
     : "";
-  return extension.length > 0;
+  return extension.length > 0 && !/\s/.test(extension);
 }
 
 /**
