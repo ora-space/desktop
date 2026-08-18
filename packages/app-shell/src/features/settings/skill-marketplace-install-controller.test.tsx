@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { createChatStore } from "@ora/chat";
 import { type SkillImportSession } from "@ora/contracts";
-import { PlatformProvider, type SkillMarketplaceStatus } from "@ora/platform";
+import { PlatformProvider, type SkillMarketplaceStatus } from "../../platform";
 import { toast } from "@ora/ui";
 import {
   createHookWrapper,
@@ -89,7 +89,6 @@ function renderController(
   const platform = {
     ...createStubPlatform(),
     skillMarketplace: {
-      kind: "supported" as const,
       open: vi.fn(async () => undefined),
       onStatus: vi.fn(
         async (nextListener: (status: SkillMarketplaceStatus) => void) => {

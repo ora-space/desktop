@@ -709,6 +709,63 @@ fn marks_stale_conflict_when_target_changes_before_commit() {
 }
 
 #[test]
+fn concurrent_same_name_imports_do_not_report_storage_failure() {
+    let temp = TempDir::new().unwrap();
+    let repository = FakeSkillRepository::new();
+    let source_a = temp.path().join("source-a");
+    let source_b = temp.path().join("source-b");
+    write_manifest(&source_a, "SKILL.md", "grilling", "First");
+    write_manifest(&source_b, "SKILL.md", "grilling", "Second");
+
+    let (service, _) = test_service(repository.clone(), &temp, Duration::from_secs(30));
+    let session_a = prepare_folder(&service, &source_a);
+    let session_b = prepare_folder(&service, &source_b);
+    assert_eq!(
+        session_a.candidates[0].status,
+        ora_contracts::SkillImportCandidateStatus::Ready
+    );
+    assert_eq!(
+        session_b.candidates[0].status,
+        ora_contracts::SkillImportCandidateStatus::Ready
+    );
+
+    service
+        .commit(CommitSkillImportRequest {
+            session_id: session_a.session_id.clone(),
+            decisions: vec![],
+        })
+        .unwrap();
+    service
+        .commit(CommitSkillImportRequest {
+            session_id: session_b.session_id.clone(),
+            decisions: vec![],
+        })
+        .unwrap();
+
+    let completed_a = wait_for_completion(&service, &session_a.session_id);
+    let completed_b = wait_for_completion(&service, &session_b.session_id);
+    let statuses = [
+        completed_a.progress.results[0].status.clone(),
+        completed_b.progress.results[0].status.clone(),
+    ];
+    let imported = statuses
+        .iter()
+        .filter(|status| **status == ora_contracts::SkillImportResultStatus::Imported)
+        .count();
+    let stale = statuses
+        .iter()
+        .filter(|status| **status == ora_contracts::SkillImportResultStatus::StaleConflict)
+        .count();
+
+    assert_eq!((imported, stale), (1, 1));
+    assert_eq!(repository.snapshot().len(), 1);
+    assert!(
+        completed_a.progress.results[0].error_code.is_none()
+            && completed_b.progress.results[0].error_code.is_none()
+    );
+}
+
+#[test]
 fn continues_after_individual_candidate_failure() {
     let temp = TempDir::new().unwrap();
     let repository = FakeSkillRepository::new();

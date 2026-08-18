@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { LocationTarget } from "@ora/platform";
+import type { LocationTarget } from "../../platform";
 
 /**
  * The opener the split button repeats when its main (icon) half is clicked. Every

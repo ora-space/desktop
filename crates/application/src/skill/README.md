@@ -30,6 +30,10 @@ on-disk packages.
   on one filesystem and interrupted transactions can be recovered at startup.
 - `SkillRepository` supplies case-insensitive name lookups used for global uniqueness and import
   conflict detection.
+- A destination claimed by another in-flight package transaction is a `SkillFolderConflict`,
+  whether the journal is observed before promotion or the rename loses its final race. A static
+  untracked package remains recoverable through a journaled swap, while a missing formal directory
+  that a mutation still expected is `SkillStorageInconsistent`.
 - Domain validation (`ora-domain::Skill`) enforces the ASCII slug name rules and the 4096-byte
   description limit shared by create, update, and import.
 

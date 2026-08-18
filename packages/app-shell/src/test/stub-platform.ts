@@ -1,25 +1,27 @@
-import type { PlatformAdapter } from "@ora/platform";
+import type { PlatformAdapter } from "../platform";
 
 /**
  * A no-op platform adapter for component tests.
  *
  * Any component that reaches the title bar now reads `usePlatform()`, so tests
- * that render the workspace shell need a provider. This reports every capability
- * as absent, which keeps the custom window controls unrendered and matches how
- * the Web host behaves.
+ * that render the workspace shell need a provider. Native capabilities are
+ * harmless test doubles; tests that exercise them inject a recording adapter.
  */
 export function createStubPlatform(): PlatformAdapter {
   return {
-    appWindowOwnership: {
-      acquire: async ({ signal }) => {
-        if (signal.aborted) throw signal.reason;
-        return { release: () => undefined };
-      },
+    worktreeStorage: {
+      getRoot: async () => "",
+      setRoot: async () => undefined,
     },
-    worktreeStorage: { kind: "unsupported" },
     windowControls: { kind: "none" },
-    locationActions: { kind: "unsupported" },
-    skillMarketplace: { kind: "unsupported" },
+    locationActions: {
+      resolveTaskCwd: async () => "",
+      open: async () => undefined,
+    },
+    skillMarketplace: {
+      open: async () => undefined,
+      onStatus: async () => () => undefined,
+    },
     selectPath: async () => null,
     saveTextFile: async () => false,
   };

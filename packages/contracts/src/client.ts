@@ -1,8 +1,6 @@
 import {
   endpoints,
   type EndpointOperation,
-  type EndpointPathParam,
-  type EndpointQueryParam,
   type RequestByOperation,
   type ResponseByOperation,
 } from "./endpoints.js";
@@ -11,8 +9,6 @@ import type {
   ContractTransport,
   ContractTransportRequest,
 } from "./transport.js";
-
-type ClientRequestShape = object;
 
 type ClientOperation<Operation extends EndpointOperation> = (
   request: RequestByOperation[Operation],
@@ -184,8 +180,6 @@ export function createContractsClient(
         executeOperation("listInstalledPlugins", request, transport, options),
     },
     fileSystem: {
-      listDirectory: (request, options) =>
-        executeOperation("listDirectory", request, transport, options),
       listWorkspaceDirectory: (request, options) =>
         executeOperation("listWorkspaceDirectory", request, transport, options),
       readWorkspaceFile: (request, options) =>
@@ -274,25 +268,9 @@ async function executeOperation<Operation extends EndpointOperation>(
   options?: ContractCallOptions,
 ): Promise<ResponseByOperation[Operation]> {
   const endpoint = endpoints[operation];
-  const path = buildPath(
-    endpoint.pathTemplate,
-    endpoint.pathParams,
-    endpoint.queryParams,
-    request as ClientRequestShape,
-  );
-  const body = buildJsonBody(
-    endpoint.pathParams,
-    endpoint.queryParams,
-    endpoint.hasJsonBody,
-    request as ClientRequestShape,
-  );
   const transportRequest: ContractTransportRequest = {
     operationName: endpoint.operationName,
     request,
-    method: endpoint.method,
-    path,
-    body,
-    headers: buildHeaders(endpoint.hasJsonBody),
   };
 
   return transport.send<ResponseByOperation[Operation]>(
@@ -309,99 +287,11 @@ function executeStreamOperation<Operation extends EndpointOperation>(
   options?: ContractCallOptions,
 ): AsyncIterable<ResponseByOperation[Operation]> {
   const endpoint = endpoints[operation];
-  const requestShape = request as ClientRequestShape;
   return transport.stream<ResponseByOperation[Operation]>(
     {
       operationName: endpoint.operationName,
       request,
-      method: endpoint.method,
-      path: buildPath(
-        endpoint.pathTemplate,
-        endpoint.pathParams,
-        endpoint.queryParams,
-        requestShape,
-      ),
-      body: buildJsonBody(
-        endpoint.pathParams,
-        endpoint.queryParams,
-        endpoint.hasJsonBody,
-        requestShape,
-      ),
-      headers: buildHeaders(endpoint.hasJsonBody),
     },
     options,
   );
-}
-
-function buildPath(
-  pathTemplate: string,
-  pathParams: readonly EndpointPathParam[],
-  queryParams: readonly EndpointQueryParam[],
-  request: ClientRequestShape,
-): string {
-  const requestRecord = request as Record<string, unknown>;
-  let path = pathTemplate;
-
-  for (const pathParam of pathParams) {
-    const value = requestRecord[pathParam.wireName];
-
-    if (value === undefined || value === null) {
-      throw new Error(`missing path parameter ${pathParam.wireName}`);
-    }
-
-    path = path.replace(
-      `{${pathParam.wireName}}`,
-      encodeURIComponent(String(value)),
-    );
-  }
-
-  const query = new URLSearchParams();
-
-  for (const queryParam of queryParams) {
-    const value = requestRecord[queryParam.wireName];
-
-    if (value !== undefined && value !== null) {
-      query.append(queryParam.wireName, String(value));
-    }
-  }
-
-  const queryString = query.toString();
-  return queryString === "" ? path : `${path}?${queryString}`;
-}
-
-function buildJsonBody(
-  pathParams: readonly EndpointPathParam[],
-  queryParams: readonly EndpointQueryParam[],
-  hasJsonBody: boolean,
-  request: ClientRequestShape,
-): Record<string, unknown> | undefined {
-  if (!hasJsonBody) {
-    return undefined;
-  }
-
-  const requestRecord = request as Record<string, unknown>;
-  const pathParamNames = new Set(
-    pathParams.map((pathParam) => pathParam.wireName),
-  );
-
-  const queryParamNames = new Set(
-    queryParams.map((queryParam) => queryParam.wireName),
-  );
-
-  return Object.fromEntries(
-    Object.entries(requestRecord).filter(
-      ([fieldName]) =>
-        !pathParamNames.has(fieldName) && !queryParamNames.has(fieldName),
-    ),
-  );
-}
-
-function buildHeaders(hasJsonBody: boolean): Record<string, string> {
-  if (!hasJsonBody) {
-    return {};
-  }
-
-  return {
-    "content-type": "application/json",
-  };
 }

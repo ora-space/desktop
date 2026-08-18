@@ -8,7 +8,6 @@ import type {
   TaskWorkspaceMode,
 } from "@ora/contracts";
 import { useContractsClient } from "../../contracts-client-context";
-import { clientId } from "../client-id";
 import { queryKeys } from "./query-keys";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { useUiStore } from "../stores/ui-store";
@@ -21,7 +20,7 @@ function readCache<T>(queryClient: QueryClient, key: readonly string[]): T[] {
   return (queryClient.getQueryData(key) as T[] | undefined) ?? [];
 }
 
-/** Creates a project and selects it once the server confirms the id. */
+/** Creates a project and selects it once the backend confirms the id. */
 export function useCreateProject() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -78,7 +77,7 @@ export function useDeleteProject() {
   });
 }
 
-/** Creates a task under a project and selects it once the server confirms the id. */
+/** Creates a task under a project and selects it once the backend confirms the id. */
 export function useCreateTask() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -186,7 +185,6 @@ export function useCreateSession() {
       const warmed = await client.session.warm({
         target: { type: "task", taskId },
         agentCli,
-        clientId: clientId(),
       });
       const response = await client.session.attach({
         sessionId: warmed.sessionId,

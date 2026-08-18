@@ -1,0 +1,22 @@
+[package]
+name = "ora-plugin-runtime"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_plugin_runtime"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ora-logging = { workspace = true }
+ora-process = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

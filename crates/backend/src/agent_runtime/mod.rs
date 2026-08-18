@@ -65,6 +65,18 @@ const CANCELLATION_GRACE: Duration = Duration::from_secs(5);
 const CONTRACT_QUEUE_CAPACITY: usize = 256;
 const MAX_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 
+/// Identifies the internal owner of a warm provider session.
+///
+/// Interactive sessions are single-window Desktop state. Workflow nodes keep
+/// their run and node identity so concurrent graph branches cannot claim one
+/// another's configured provider session without exposing that ownership in a
+/// frontend contract.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum WarmOwner {
+    Interactive,
+    WorkflowNode { run_id: String, node_id: String },
+}
+
 /// Coordinates one serialized actor per Ora session on its selected supervised CLI connection.
 #[derive(Clone)]
 pub(crate) struct AgentRuntimeManager {
@@ -220,12 +232,22 @@ impl AgentRuntimeManager {
         &self,
         request: WarmSessionRequest,
     ) -> Result<WarmSessionResponse, BackendError> {
+        self.warm_session_for_owner(request, WarmOwner::Interactive)
+            .await
+    }
+
+    /// Returns a warm provider session for an explicitly owned internal workflow surface.
+    pub(crate) async fn warm_session_for_owner(
+        &self,
+        request: WarmSessionRequest,
+        owner: WarmOwner,
+    ) -> Result<WarmSessionResponse, BackendError> {
         let agent_cli = domain_agent_cli(request.agent_cli);
         let cwd = self.resolve_warm_cwd(&request.target)?;
         let key = WarmKey {
             target: request.target,
             agent_cli,
-            client_id: request.client_id,
+            owner,
         };
         let (session_id, config_options) = self.inner.warm.warm(key, cwd).await?;
         Ok(WarmSessionResponse {
@@ -423,7 +445,7 @@ impl AgentRuntimeManager {
                         task_id: session.task_id.to_string(),
                     },
                     agent_cli: target,
-                    client_id: request.client_id,
+                    owner: WarmOwner::Interactive,
                 },
                 &cwd,
             )

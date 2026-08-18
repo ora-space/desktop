@@ -23,4 +23,4 @@ Handlers accept `ora-contracts` requests, operate on `ora-domain` models, and ma
 
 Aggregate deletion, SQLite composition, ACP process supervision, and transport-neutral public error normalization belong to `ora-backend` and `ora-db`. Contract serialization and endpoint metadata belong to `ora-contracts`.
 
-See [Application and Contracts Boundary](../../docs/application-contracts.md) for the cross-crate ownership model.
+See [Application and Contracts Boundary](../../docs/application-contracts-boundary.md) for the cross-crate ownership model.

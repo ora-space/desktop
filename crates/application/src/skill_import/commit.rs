@@ -233,6 +233,7 @@ where
         };
     }
     if let Err(error_code) = stage_boundary(storage, &staging, snapshot, candidate) {
+        let _ = storage.remove_temp(&staging);
         return CandidateOutcome::Failed { error_code };
     }
     let promoted = if let Some(existing) = &existing {
@@ -244,23 +245,12 @@ where
             &staging,
         ) {
             Ok(promoted) => promoted,
-            Err(ApplicationError::SkillNameConflict { .. }) => {
-                return CandidateOutcome::StaleConflict;
-            }
-            Err(_) => {
-                return CandidateOutcome::Failed {
-                    error_code: "skill_storage_error".to_string(),
-                };
-            }
+            Err(error) => return promote_failure(storage, &staging, error),
         }
     } else {
         match commit_unclaimed_package(storage, &skill.name, &staging) {
             Ok(promoted) => promoted,
-            Err(_) => {
-                return CandidateOutcome::Failed {
-                    error_code: "skill_storage_error".to_string(),
-                };
-            }
+            Err(error) => return promote_failure(storage, &staging, error),
         }
     };
     let persisted = if existing.is_some() {
@@ -326,16 +316,13 @@ where
         }
     };
     if let Err(error_code) = stage_boundary(storage, &staging, snapshot, candidate) {
+        let _ = storage.remove_temp(&staging);
         return CandidateOutcome::Failed { error_code };
     }
     let promoted = match commit_existing_package(storage, &candidate.name, &existing.name, &staging)
     {
         Ok(promoted) => promoted,
-        Err(_) => {
-            return CandidateOutcome::Failed {
-                error_code: "skill_storage_error".to_string(),
-            };
-        }
+        Err(error) => return promote_failure(storage, &staging, error),
     };
     if persist_promoted_package(storage, &promoted, || repository.update_skill(skill)).is_err() {
         return CandidateOutcome::Failed {
@@ -379,6 +366,25 @@ struct SkillSnapshot {
     id: SkillId,
     namespace: Namespace,
     created_at: i64,
+}
+
+/// Maps a promotion failure onto the candidate result and drops leftover staging.
+///
+/// Both application conflict variants represent a permanent name claim discovered after preview;
+/// other promotion failures remain retryable storage failures.
+fn promote_failure<Storage: SkillStorage>(
+    storage: &Storage,
+    staging: &Path,
+    error: ApplicationError,
+) -> CandidateOutcome {
+    let _ = storage.remove_temp(staging);
+    match error {
+        ApplicationError::SkillFolderConflict { .. }
+        | ApplicationError::SkillNameConflict { .. } => CandidateOutcome::StaleConflict,
+        _ => CandidateOutcome::Failed {
+            error_code: "skill_storage_error".to_string(),
+        },
+    }
 }
 
 /// Copies every boundary file from the snapshot into a staging directory.

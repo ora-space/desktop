@@ -27,7 +27,6 @@ import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useTargetAgentCli } from "../../state/hooks/use-target-agent-cli";
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
-import { clientId } from "../../state/client-id";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import {
   buildWorkflowReminder,
@@ -278,7 +277,6 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               const response = await client.session.switchAgent({
                 sessionId: session.id,
                 agentCli: pendingSwitch,
-                clientId: clientId(),
               });
               usePendingAgentStore.getState().clearPendingSwitch(session.id);
               // The claim consumed the warm entry, so this surface must warm a

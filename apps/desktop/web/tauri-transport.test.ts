@@ -11,10 +11,6 @@ describe("createTauriTransport", () => {
     const request = {
       operationName: "listProjects",
       request: {},
-      method: "GET" as const,
-      path: "/api/projects",
-      body: undefined,
-      headers: {},
     };
 
     await expect(transport.send(request)).resolves.toEqual({ projects: [] });
@@ -30,10 +26,6 @@ describe("createTauriTransport", () => {
       transport.send({
         operationName: "listInstalledPlugins",
         request: {},
-        method: "GET",
-        path: "/api/plugins/installed",
-        body: undefined,
-        headers: {},
       }),
     ).resolves.toEqual(response);
     expect(invoke).toHaveBeenCalledWith("list_installed_plugins", {
@@ -49,10 +41,6 @@ describe("createTauriTransport", () => {
       transport.send({
         operationName: "listWorkspaceDirectory",
         request: { taskId: "task-1", path: "src" },
-        method: "POST",
-        path: "/api/tasks/task-1/files/list",
-        body: { taskId: "task-1", path: "src" },
-        headers: { "content-type": "application/json" },
       }),
     ).resolves.toEqual(response);
     expect(invoke).toHaveBeenCalledWith("list_workspace_directory", {
@@ -75,10 +63,6 @@ describe("createTauriTransport", () => {
       transport.send({
         operationName: "getTaskDiff",
         request,
-        method: "GET",
-        path: "/api/tasks/task-1/diff?scope=branch",
-        body: undefined,
-        headers: {},
       }),
     ).resolves.toEqual(response);
     expect(invoke).toHaveBeenCalledWith("get_task_diff", { request });
@@ -121,10 +105,6 @@ describe("createTauriTransport", () => {
       await transport.send({
         operationName,
         request,
-        method: "POST",
-        path: "/api/contract",
-        body: request,
-        headers: {},
       });
 
       expect(invoke).toHaveBeenCalledWith(command, { request });
@@ -145,20 +125,12 @@ describe("createTauriTransport", () => {
       transport.send({
         operationName: "getTaskWorkspace",
         request: { taskId: "task-1" },
-        method: "GET",
-        path: "/api/tasks/task-1/workspace",
-        body: undefined,
-        headers: {},
       }),
     ).resolves.toMatchObject({ branchName: "ora/task-1" });
     await expect(
       transport.send({
         operationName: "getSpecCatalog",
         request: { target: { kind: "task", taskId: "task-1" } },
-        method: "POST",
-        path: "/api/specs/catalog",
-        body: { target: { kind: "task", taskId: "task-1" } },
-        headers: { "content-type": "application/json" },
       }),
     ).resolves.toEqual({ documents: [], truncated: false });
     expect(invoke).toHaveBeenNthCalledWith(1, "get_task_workspace", {
@@ -167,25 +139,6 @@ describe("createTauriTransport", () => {
     expect(invoke).toHaveBeenNthCalledWith(2, "get_spec_catalog", {
       request: { target: { kind: "task", taskId: "task-1" } },
     });
-  });
-
-  it("rejects explicitly unsupported operations before invoking Rust", async () => {
-    const invoke = vi.fn();
-    const transport = createTauriTransport(invoke, () => ({
-      onmessage: () => undefined,
-    }));
-
-    await expect(
-      transport.send({
-        operationName: "listDirectory",
-        request: { path: "/tmp" },
-        method: "GET",
-        path: "/api/file-system/directory?path=%2Ftmp",
-        body: undefined,
-        headers: {},
-      }),
-    ).rejects.toMatchObject({ kind: "unsupported_operation" });
-    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("streams spec watcher events through the shared channel lifecycle", async () => {
@@ -213,10 +166,6 @@ describe("createTauriTransport", () => {
     })).stream<{ changes: Array<{ kind: string; path: string }> }>({
       operationName: "watchSpecs",
       request: { target: { kind: "project", projectId: "project-1" } },
-      method: "POST",
-      path: "/api/specs/watch",
-      body: { target: { kind: "project", projectId: "project-1" } },
-      headers: { "content-type": "application/json" },
     });
 
     const events = [];
@@ -243,18 +192,13 @@ describe("createTauriTransport", () => {
       await transport.send({
         operationName: "getProject",
         request: { projectId: "project-1" },
-        method: "GET",
-        path: "/api/projects/project-1",
-        body: undefined,
-        headers: {},
       });
       throw new Error("expected transport to reject");
     } catch (error) {
       expect(error).toBeInstanceOf(RemoteContractError);
       expect(error).toMatchObject({
         code: "project_not_found",
-        status: null,
-        responseBody: {
+        rawPayload: {
           code: "project_not_found",
           params: {},
           requestId: "550e8400-e29b-41d4-a716-446655440000",
@@ -285,10 +229,6 @@ describe("createTauriTransport", () => {
     const stream = transport.stream<{ value: number }>({
       operationName: "loadSession",
       request: { sessionId: "session-1" },
-      method: "POST",
-      path: "/api/sessions/session-1/load",
-      body: undefined,
-      headers: {},
     });
 
     expect(invoke).not.toHaveBeenCalled();
@@ -335,10 +275,6 @@ describe("createTauriTransport", () => {
         sessionId: "session-1",
         prompt: [{ type: "text", text: "hello" }],
       },
-      method: "POST",
-      path: "/api/sessions/session-1/prompt",
-      body: { prompt: [{ type: "text", text: "hello" }] },
-      headers: { "content-type": "application/json" },
     });
 
     await expect(async () => {

@@ -2,15 +2,9 @@ import { z } from "zod";
 import type { ContractError } from "./error.js";
 import { contractErrorSchema, publicErrorSchema } from "./error.schema.js";
 
-export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
-
 export type ContractTransportRequest = {
   operationName: string;
   request: unknown;
-  method: HttpMethod;
-  path: string;
-  body: unknown | undefined;
-  headers: Record<string, string>;
 };
 
 export type ContractCallOptions = {
@@ -34,15 +28,10 @@ export type ContractStreamFrame<TEvent> =
   | { type: "end" };
 
 export const localTransportErrorKinds = [
-  "network_failure",
   "tauri_invoke_failure",
   "malformed_response",
-  "malformed_stream_frame",
-  "stream_interrupted",
-  "stream_frame_too_large",
   "stream_queue_overflow",
   "stream_already_consumed",
-  "unsupported_operation",
   "cancelled",
 ] as const;
 
@@ -51,21 +40,15 @@ export type LocalTransportErrorKind = (typeof localTransportErrorKinds)[number];
 /** Carries one runtime-validated error produced by an Ora adapter. */
 export class RemoteContractError extends Error {
   readonly payload: ContractError;
-  readonly status: number | null;
-  readonly responseBody: unknown;
+  readonly rawPayload: unknown;
 
-  constructor(
-    payload: ContractError,
-    status: number | null,
-    responseBody: unknown,
-  ) {
+  constructor(payload: ContractError, rawPayload: unknown) {
     super(
       `Remote Ora request failed with ${payload.code} (${payload.requestId})`,
     );
     this.name = "RemoteContractError";
     this.payload = payload;
-    this.status = status;
-    this.responseBody = responseBody;
+    this.rawPayload = rawPayload;
   }
 
   get code(): ContractError["code"] {
@@ -81,25 +64,18 @@ export class RemoteContractError extends Error {
 export class UnknownRemoteError extends Error {
   readonly rawCode: string;
   readonly requestId: string;
-  readonly status: number | null;
-  readonly responseBody: unknown;
+  readonly rawPayload: unknown;
 
-  constructor(
-    rawCode: string,
-    requestId: string,
-    status: number | null,
-    responseBody: unknown,
-  ) {
+  constructor(rawCode: string, requestId: string, rawPayload: unknown) {
     super(`Remote Ora request returned unknown code ${rawCode} (${requestId})`);
     this.name = "UnknownRemoteError";
     this.rawCode = rawCode;
     this.requestId = requestId;
-    this.status = status;
-    this.responseBody = responseBody;
+    this.rawPayload = rawPayload;
   }
 }
 
-/** Represents a finite failure of the local Web or Tauri transport itself. */
+/** Represents a finite failure of the local Desktop transport itself. */
 export class LocalTransportError extends Error {
   readonly kind: LocalTransportErrorKind;
   readonly causeValue: unknown;
@@ -125,35 +101,32 @@ const knownCodes: ReadonlySet<string> = new Set(
   publicErrorSchema.options.map((option) => option.shape.code.value),
 );
 
-/** Validates the shared remote payload and distinguishes unknown codes from malformed responses. */
+/** Validates one IPC payload and distinguishes known, unknown, and malformed errors. */
 export function decodeRemoteError(
   value: unknown,
-  status: number | null,
-  responseBody: unknown = value,
 ): RemoteContractError | UnknownRemoteError | LocalTransportError {
   const base = remoteBaseSchema.safeParse(value);
   if (!base.success) {
     return new LocalTransportError(
       "malformed_response",
       "Ora returned a malformed error response",
-      responseBody,
+      value,
     );
   }
   const known = contractErrorSchema.safeParse(value);
   if (known.success) {
-    return new RemoteContractError(known.data, status, responseBody);
+    return new RemoteContractError(known.data, value);
   }
   if (knownCodes.has(base.data.code)) {
     return new LocalTransportError(
       "malformed_response",
       "Ora returned invalid parameters for a known error",
-      responseBody,
+      value,
     );
   }
   return new UnknownRemoteError(
     base.data.code,
     base.data.requestId,
-    status,
-    responseBody,
+    value,
   );
 }

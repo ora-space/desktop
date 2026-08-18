@@ -92,7 +92,7 @@ export interface WorkflowRunRepository {
   watch: (onChange: (run: GraphWorkflowRun) => void) => Unsubscribe;
 }
 
-/** Combined runtime port so the shell can inject one memory (or future HTTP) impl. */
+/** Combined runtime port so the shell can inject one memory or Desktop implementation. */
 export interface WorkflowRuntime {
   host: WorkflowHostRepository;
   runs: WorkflowRunRepository;

@@ -20,21 +20,13 @@ type ChannelFactory = <TEvent>() => ChannelLike<TEvent>;
 
 const MAX_QUEUED_FRAMES = 256;
 
-const unsupportedOperations = {
-  listDirectory: true,
-} as const satisfies Partial<Record<EndpointOperation, true>>;
-
-type UnsupportedTauriOperation = keyof typeof unsupportedOperations;
 type TauriStreamOperation =
   | "loadSession"
   | "promptSession"
   | "watchAppEvents"
   | "watchSpecs"
   | "watchWorkspace";
-type SupportedTauriOperation = Exclude<
-  EndpointOperation,
-  UnsupportedTauriOperation | TauriStreamOperation
->;
+type SupportedTauriOperation = Exclude<EndpointOperation, TauriStreamOperation>;
 
 const tauriCommands = {
   // =============================================================================
@@ -173,14 +165,13 @@ export function createTauriTransport(
       options?: ContractCallOptions,
     ): Promise<TResponse> {
       const operation = request.operationName as EndpointOperation;
-      if (
-        operation in unsupportedOperations ||
-        isTauriStreamOperation(operation)
-      ) {
-        throw unsupportedOperation(operation);
+      if (isTauriStreamOperation(operation)) {
+        throw transportError(
+          "tauri_invoke_failure",
+          `Stream operation ${operation} must use stream()`,
+        );
       }
-      const command = tauriCommands[operation as SupportedTauriOperation];
-      if (!command) throw unsupportedOperation(request.operationName);
+      const command = tauriCommands[operation];
 
       try {
         return await abortable(
@@ -293,7 +284,7 @@ async function* streamFromChannel<TEvent>(
       }
       if (frame.type === "data") yield frame.data;
       if (frame.type === "error") {
-        throw decodeRemoteError(frame.error, null, frame);
+        throw decodeRemoteError(frame.error);
       }
       if (frame.type === "end") return;
     }
@@ -350,17 +341,9 @@ function transportError(
   return new LocalTransportError(kind, message);
 }
 
-/** Builds the stable failure used for intentionally excluded Desktop operations. */
-function unsupportedOperation(operationName: string): LocalTransportError {
-  return transportError(
-    "unsupported_operation",
-    `Desktop does not support operation ${operationName}`,
-  );
-}
-
 /** Normalizes serialized Rust command errors and opaque Tauri invocation failures. */
 function normalizeInvokeError(error: unknown): Error {
-  const decoded = decodeRemoteError(error, null, error);
+  const decoded = decodeRemoteError(error);
   if (
     !(decoded instanceof LocalTransportError) ||
     decoded.kind !== "malformed_response"

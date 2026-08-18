@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createChatStore } from "@ora/chat";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import { createMemoryWorkflowRuntime } from "@ora/workflow-runtime/memory";
 import {
   createHookWrapper,
@@ -171,7 +171,6 @@ describe("WorkflowRunWorkspace", () => {
     const platform = {
       ...createStubPlatform(),
       locationActions: {
-        kind: "supported" as const,
         resolveTaskCwd,
         open,
       },

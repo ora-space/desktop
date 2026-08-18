@@ -1,7 +1,6 @@
 import { AppShell } from "@ora/app-shell";
 import { createChatStore } from "@ora/chat";
 import { createContractsClient } from "@ora/contracts";
-import { createTauriPlatformAdapter } from "@ora/platform/tauri";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   DashboardCompareResolver,
@@ -9,6 +8,7 @@ import type {
   DashboardResolver,
 } from "@ora/app-shell";
 import { createTauriTransport } from "./tauri-transport";
+import { createTauriPlatformAdapter } from "./tauri-platform-adapter";
 
 const client = createContractsClient(createTauriTransport());
 const chatStore = createChatStore(client.session);

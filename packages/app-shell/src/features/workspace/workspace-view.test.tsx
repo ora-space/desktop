@@ -7,7 +7,7 @@ import type {
   WarmSessionResponse,
 } from "@ora/contracts";
 import { TooltipProvider } from "@ora/ui";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {
@@ -1220,9 +1220,7 @@ describe("WorkspaceView", () => {
     await user.keyboard("{Enter}");
 
     await waitFor(() => expect(state.sessions[0]?.agentCli).toBe("claude"));
-    expect(switched).toEqual([
-      { sessionId: "s1", agentCli: "claude", clientId: expect.any(String) },
-    ]);
+    expect(switched).toEqual([{ sessionId: "s1", agentCli: "claude" }]);
   });
 
   it("sends without rebinding when the picker returns to the session's own agent", async () => {

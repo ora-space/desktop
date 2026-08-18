@@ -49,7 +49,7 @@ Ora is an IDE for AI Agent. In the crates folder where the rust code lives:
 
 ## Tests
 
-`task test` runs the frontend, backend, and Desktop lint and test tasks. It can take a
+`task test` runs the frontend and Rust workspace lint and test tasks. It can take a
 long time, so prefer the smallest relevant task while iterating and run the full task
 before considering a repository-wide change complete. Use `task --list` to see the
 authoritative list of available tasks.
@@ -57,10 +57,8 @@ authoritative list of available tasks.
 - Format changed files: `task format`
 - Frontend lint: `task lint:frontend`
 - Frontend tests: `task test:frontend`
-- Backend lint: `task lint:backend`
-- Backend tests: `task test:backend`
-- Desktop lint: `task lint:desktop`
-- Desktop tests: `task test:desktop`
+- Rust workspace lint: `task lint:crates`
+- Rust workspace tests: `task test:crates`
 - All lint tasks: `task lint`
 - All lint and test tasks (long-running): `task test`
 

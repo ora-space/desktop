@@ -314,9 +314,7 @@ mod tests {
             ),
             (
                 ErrorClassification::PayloadTooLarge,
-                PublicError::SkillUploadTooLarge(ora_contracts::SkillUploadTooLargeParams {
-                    max_bytes: 1,
-                }),
+                PublicError::ArchiveExpansionRatioExceeded(ora_contracts::EmptyErrorParams {}),
             ),
             (
                 ErrorClassification::Unprocessable,

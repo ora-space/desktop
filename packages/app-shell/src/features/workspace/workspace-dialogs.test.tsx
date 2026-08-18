@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@ora/ui";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import { describe, expect, it, beforeEach } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {
@@ -302,7 +302,6 @@ describe("WorkspaceDialogs task creation", () => {
               params: {},
               requestId: "550e8400-e29b-41d4-a716-446655440000",
             },
-            400,
             null,
           );
         },
@@ -536,7 +535,6 @@ describe("WorkspaceDialogs task deletion", () => {
                 params: {},
                 requestId: "550e8400-e29b-41d4-a716-446655440000",
               },
-              409,
               null,
             );
           },

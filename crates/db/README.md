@@ -18,4 +18,4 @@ Repository adapters preserve those concrete failures as the source of `ora-appli
 `RepositoryError`; they do not stringify or log failures that an outer request seam will complete.
 Repositories hide SQL rows and soft-delete columns from callers.
 
-See [Database Migrations](../../docs/database-migrations.md) and [Application and Contracts Boundary](../../docs/application-contracts.md).
+See [Database Migrations](../../docs/database-migrations.md) and [Application and Contracts Boundary](../../docs/application-contracts-boundary.md).

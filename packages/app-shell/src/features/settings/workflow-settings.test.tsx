@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { createChatStore } from "@ora/chat";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import {
   createMockWorkflowVersions,
   createMockWorkflows,

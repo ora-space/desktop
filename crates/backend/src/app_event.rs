@@ -89,12 +89,11 @@ async fn forward_events(
             }
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 ora_debug!(skipped, "application event subscriber lagged");
-                let _ = sender.try_send(Err(stream_interrupted("application event stream lagged")));
+                let _ = sender.try_send(Err(stream_failure("application event stream lagged")));
                 return;
             }
             Err(broadcast::error::RecvError::Closed) => {
-                let _ =
-                    sender.try_send(Err(stream_interrupted("application event hub was closed")));
+                let _ = sender.try_send(Err(stream_failure("application event hub was closed")));
                 return;
             }
         }
@@ -102,7 +101,7 @@ async fn forward_events(
 }
 
 /// Creates the local terminal failure used when an app-event stream loses its event window.
-fn stream_interrupted(context: &'static str) -> BackendError {
+fn stream_failure(context: &'static str) -> BackendError {
     BackendError::new(
         ErrorClassification::Internal,
         PublicError::InternalError(EmptyErrorParams {}),

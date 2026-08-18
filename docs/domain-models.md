@@ -6,21 +6,21 @@
 
 The application-facing tables owned by the migration catalog have first-class domain models:
 
-| Domain type | Backing table |
-| --- | --- |
-| `Project` | `projects` |
-| `Task` | `tasks` |
-| `Worktree` | `worktrees` |
-| `Session` | `sessions` |
-| `Skill` | `skills` |
-| `AgentDefinition` | `agents` |
-| `TaskDiffComment` | `task_diff_comments` |
-| `Workflow` | `workflows` |
-| `WorkflowSnapshot` | `workflow_snapshots` |
-| `WorkflowRun` | `workflow_runs` |
-| `WorkflowNodeRun` | `workflow_node_runs` |
-| `TaskType` | `tasks.type` |
-| `GitCleanupJob` | `git_cleanup_jobs` |
+| Domain type                 | Backing table                  |
+| --------------------------- | ------------------------------ |
+| `Project`                   | `projects`                     |
+| `Task`                      | `tasks`                        |
+| `Worktree`                  | `worktrees`                    |
+| `Session`                   | `sessions`                     |
+| `Skill`                     | `skills`                       |
+| `AgentDefinition`           | `agents`                       |
+| `TaskDiffComment`           | `task_diff_comments`           |
+| `Workflow`                  | `workflows`                    |
+| `WorkflowSnapshot`          | `workflow_snapshots`           |
+| `WorkflowRun`               | `workflow_runs`                |
+| `WorkflowNodeRun`           | `workflow_node_runs`           |
+| `TaskType`                  | `tasks.type`                   |
+| `GitCleanupJob`             | `git_cleanup_jobs`             |
 | `WorktreeProvisioningLease` | `worktree_provisioning_leases` |
 
 `Workflow` and `WorkflowSnapshot` implement draft-as-workspace semantics with immutable published snapshots. `WorkflowRun` and `WorkflowNodeRun` extend the workflow model with executed runs that freeze a published snapshot, and `TaskType` distinguishes run-tasks (`Workflow`) from ordinary tasks (`Default`). See [Workflow](workflow.md).
@@ -60,7 +60,7 @@ Most models are plain snapshots whose constructors cannot fail. Two normalize an
 - `AgentDefinition::new` trims the name and rejects a blank one with `DomainModelError::EmptyAgentDefinitionName`.
 - `SessionTitle::parse` trims agent-provided text, rejects blank values, and rejects more than 255 Unicode scalar values without truncating. `Session.title` is an `Option<SessionTitle>`, so an invalid or absent title cannot be represented as a persisted non-empty string.
 
-`Session` models one conversation and the provider session it currently runs on. `task_id` is fixed at construction because it decides the working directory the conversation lives in, but `agent_cli` and `agent_session_id` are the *current binding* rather than the session's identity: `with_binding` replaces both when a conversation moves to another CLI, while its identifier and its recorded history continue unchanged. `with_status` still changes only `status` and `updated_at`. A `Session` cannot be constructed before the provider returns its session identifier, because `agent_session_id` is required rather than optional.
+`Session` models one conversation and the provider session it currently runs on. `task_id` is fixed at construction because it decides the working directory the conversation lives in, but `agent_cli` and `agent_session_id` are the _current binding_ rather than the session's identity: `with_binding` replaces both when a conversation moves to another CLI, while its identifier and its recorded history continue unchanged. `with_status` still changes only `status` and `updated_at`. A `Session` cannot be constructed before the provider returns its session identifier, because `agent_session_id` is required rather than optional.
 
 `HistoryState` sits beside `SessionStatus` as an independent axis. `SessionStatus` says whether the conversation is registered on a CLI connection; `HistoryState` says whether Ora can still extend the durable record of it, which a full disk can break while the session stays perfectly registered. It persists as one nullable reason column — absent means `Writable`, present means `Degraded` with the explanation the user has to act on — so "degraded for no stated reason" cannot be stored at all.
 
@@ -70,4 +70,4 @@ Most models are plain snapshots whose constructors cannot fail. Two normalize an
 
 `ora-domain` does not choose SQL, map contract DTOs, decide transport status codes, or emit logs. Contract shapes belong to `ora-contracts`, use-case rules to `ora-application`, and column mapping to `ora-db`.
 
-See [Application and Contracts Boundary](application-contracts.md) and [Database Migrations](database-migrations.md).
+See [Application and Contracts Boundary](application-contracts-boundary.md) and [Database Migrations](database-migrations.md).

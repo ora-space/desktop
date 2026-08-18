@@ -11,12 +11,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import type { ContractsClient } from "@ora/contracts";
 import type { ChatStore } from "@ora/chat";
 import type { WorkflowRuntime } from "@ora/workflow-runtime";
-import {
-  PlatformHost,
-  PlatformProvider,
-  type PlatformAdapter,
-  type PlatformLocale,
-} from "@ora/platform";
+import { PlatformProvider, type PlatformAdapter } from "./platform";
 import { ContractsClientContext } from "./contracts-client-context";
 import { ChatStoreContext } from "./chat-store-context";
 import { WorkspaceSidebar } from "./features/workspace/workspace-sidebar";
@@ -75,7 +70,7 @@ export function AppShell({
   return (
     <QueryClientProvider client={queryClient}>
       <AppI18nProvider>
-        <AppEventGate client={client} ownership={platform.appWindowOwnership}>
+        <AppEventGate client={client}>
           <WorkflowRuntimeProvider runtime={workflowRuntime}>
             <AppShellContent
               client={client}
@@ -117,11 +112,8 @@ function AppShellContent({
   const user = injectedUser ?? gitIdentityUser;
 
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
-  const { i18n, t } = useTranslation();
+  const { t } = useTranslation();
   const sidebarPanelRef = useRef<ResizablePanelHandle | null>(null);
-  const locale: PlatformLocale =
-    i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN";
-
   const handleSignOut = () => {
     chatStore.getState().clearAll();
     window.location.reload();
@@ -180,7 +172,6 @@ function AppShellContent({
                   not take the workspace dialogs down with it. */}
               <WorkspaceDialogs />
             </div>
-            <PlatformHost locale={locale} />
             <Toaster position="bottom-right" closeButton />
           </TooltipProvider>
         </PlatformProvider>

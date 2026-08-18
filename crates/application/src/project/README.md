@@ -15,4 +15,4 @@ The module does not execute Git commands, create Git repositories, manage worktr
 
 `ProjectRepository`, `BranchLister`, `ProjectIdGenerator`, and `Clock` keep persistence, Git inspection, identity, and time injectable. Implementations must preserve the visible-record, local-ref, and soft-delete semantics expected by the handlers.
 
-See the [ora-application overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts.md).
+See the [ora-application overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts-boundary.md).

@@ -44,7 +44,7 @@ Git and database state must not drift apart, and a partially created workspace i
 - The commit itself is a single-transaction unit of work (`SqliteTaskWorkspaceRepository`) that re-validates the owning project is still visible. Losing the race against a project deletion returns `project_not_found` and hands the lease to durable cleanup.
 - If anything fails after the Git worktree was created — persistence errors, the project disappearing, or a process crash — the provisioned worktree and branch are reclaimed through the durable Git cleanup path: either the handler releases the lease into a cleanup job immediately, or the lease expires without renewal and the cleanup worker converts it.
 
-The Web runtime maps these into typed `ContractError` values that identify task creation as failed without exposing raw Git command output or filesystem formatting.
+The Desktop runtime maps these into typed `ContractError` values that identify task creation as failed without exposing raw Git command output or filesystem formatting.
 
 ## Path resolution after creation
 
@@ -60,4 +60,4 @@ Inside that same transaction the cascade reads each worktree-backed task's persi
 
 The worker force-removes the linked worktree (resolved by branch first, then by the recorded checkout path for detached worktrees) and force-deletes the local `ora/<prefix>` branch. Both stages are idempotent — an already-absent resource is a positively confirmed success, never an error. Removal is only confirmed on disk: when Git deregisters a worktree but leaves the directory behind (a common Windows half-failure), an empty leftover shell is finished with a plain filesystem removal, while a leftover that still has content stays a retryable failure. A **non-empty** checkout that exists on disk but can no longer be proven Ora-owned is left untouched and the job parks as `manual_attention`; empty directories at a recorded checkout path hold no user data and are reclaimed as Ora residue. Bounded retries with backoff handle transient Git failures. Project-root tasks own no Git resources and produce no job, remote branches are never touched, and provider-owned ACP history is never deleted.
 
-See [Application and Contracts Boundary](application-contracts.md), [Gitlancer Architecture](gitlancer-architecture.md), and [ACP Agent Runtime](agent-runtime.md).
+See [Application and Contracts Boundary](application-contracts-boundary.md), [Gitlancer Architecture](gitlancer-architecture.md), and [ACP Agent Runtime](agent-runtime.md).

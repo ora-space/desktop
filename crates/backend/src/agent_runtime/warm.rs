@@ -74,7 +74,7 @@ pub(super) struct WarmAttachment {
 ///
 /// The reservation lives in a value rather than in a pair of calls because the
 /// caller cannot be relied upon to make the second one. Attaching waits on the
-/// runtime's lifecycle lock while holding a reservation, and the HTTP surface
+/// runtime's lifecycle lock while holding a reservation, and the Desktop command surface
 /// drops the whole request future when its client disconnects; unwinding from a
 /// panic loses the call the same way. Both paths run `Drop`, which is the only
 /// reason a lost caller cannot strand an entry — eviction deliberately skips
@@ -667,6 +667,7 @@ pub(super) async fn request_config_option(
 #[cfg(test)]
 mod tests {
     use super::{WarmAttachment, WarmPool, WarmReservation, lock_pool};
+    use crate::agent_runtime::WarmOwner;
     use crate::agent_runtime::warm_pool::{AttachedWarm, CreatedProvider, Reservation, WarmKey};
     use ora_contracts::WarmSessionTarget;
     use ora_domain::{AgentCli, SessionId};
@@ -684,7 +685,7 @@ mod tests {
                 task_id: "task-1".to_string(),
             },
             agent_cli: AgentCli::OpenCode,
-            client_id: "client-1".to_string(),
+            owner: WarmOwner::Interactive,
         };
         let session_id = SessionId::new("session-1");
         let _ = pool.lookup(&key, Path::new("/repo"), GENERATION, 0, || {

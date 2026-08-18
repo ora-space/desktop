@@ -26,7 +26,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Owns the in-memory import session lifecycle shared by Web and Desktop adapters.
+/// Owns the in-memory import session lifecycle used by the Desktop adapter.
 pub struct SkillImportService<Repository, Storage, IdGenerator, ClockSource, Progress> {
     repository: Repository,
     storage: Storage,

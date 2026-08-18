@@ -11,7 +11,7 @@ import {
   usePlatform,
   type SkillMarketplaceProvider,
   type SkillMarketplaceStatus,
-} from "@ora/platform";
+} from "../../platform";
 
 /** Opens provider-specific marketplaces and keeps their latest download status visible. */
 export function SkillMarketplacePanel() {
@@ -24,8 +24,6 @@ export function SkillMarketplacePanel() {
     useState<SkillMarketplaceProvider | null>(null);
 
   useEffect(() => {
-    if (skillMarketplace.kind !== "supported") return undefined;
-
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
     void skillMarketplace
@@ -50,7 +48,6 @@ export function SkillMarketplacePanel() {
 
   /** Opens one native marketplace WebView while preventing duplicate actions per surface. */
   const openMarketplace = async (provider: SkillMarketplaceProvider) => {
-    if (skillMarketplace.kind !== "supported") return;
     setOpeningProvider(provider);
     setFailedProvider(null);
     try {
@@ -64,7 +61,6 @@ export function SkillMarketplacePanel() {
 
   /** Opens the directory containing a completed archive without launching the ZIP itself. */
   const openDownloadDirectory = async (archivePath: string) => {
-    if (locationActions.kind !== "supported") return;
     const lastSeparator = Math.max(
       archivePath.lastIndexOf("/"),
       archivePath.lastIndexOf("\\"),
@@ -77,8 +73,6 @@ export function SkillMarketplacePanel() {
       toast.error(t("settings.skills.marketplaceOpenFolderFailed"));
     }
   };
-
-  const unsupported = skillMarketplace.kind === "unsupported";
 
   return (
     <section
@@ -110,7 +104,7 @@ export function SkillMarketplacePanel() {
               type="button"
               variant="secondary"
               size="sm"
-              disabled={unsupported || openingProvider !== null}
+              disabled={openingProvider !== null}
               onClick={() => void openMarketplace("skillHub")}
             >
               <IconExternalLink aria-hidden="true" />
@@ -122,9 +116,7 @@ export function SkillMarketplacePanel() {
         >
           <MarketplaceStatus
             status={status?.provider === "skillHub" ? status : null}
-            unsupported={unsupported}
             connectionFailed={failedProvider === "skillHub"}
-            canOpenDownloadDirectory={locationActions.kind === "supported"}
             onOpenDownloadDirectory={openDownloadDirectory}
           />
         </MarketplaceCard>
@@ -139,7 +131,7 @@ export function SkillMarketplacePanel() {
               type="button"
               variant="secondary"
               size="sm"
-              disabled={unsupported || openingProvider !== null}
+              disabled={openingProvider !== null}
               onClick={() => void openMarketplace("huaweiAgentCenter")}
             >
               <IconExternalLink aria-hidden="true" />
@@ -151,9 +143,7 @@ export function SkillMarketplacePanel() {
         >
           <MarketplaceStatus
             status={status?.provider === "huaweiAgentCenter" ? status : null}
-            unsupported={unsupported}
             connectionFailed={failedProvider === "huaweiAgentCenter"}
-            canOpenDownloadDirectory={locationActions.kind === "supported"}
             onOpenDownloadDirectory={openDownloadDirectory}
           />
         </MarketplaceCard>
@@ -202,29 +192,18 @@ function MarketplaceCard({
   );
 }
 
-/** Renders one accessible status region without confusing unsupported hosts with failures. */
+/** Renders one accessible marketplace status region. */
 function MarketplaceStatus({
   status,
-  unsupported,
   connectionFailed,
-  canOpenDownloadDirectory,
   onOpenDownloadDirectory,
 }: {
   status: SkillMarketplaceStatus | null;
-  unsupported: boolean;
   connectionFailed: boolean;
-  canOpenDownloadDirectory: boolean;
   onOpenDownloadDirectory: (archivePath: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
 
-  if (unsupported) {
-    return (
-      <p className="mt-3 text-xs text-muted-foreground" role="status">
-        {t("settings.skills.marketplaceUnsupported")}
-      </p>
-    );
-  }
   if (connectionFailed) {
     return (
       <p className="mt-3 text-xs text-destructive" role="alert">
@@ -258,7 +237,6 @@ function MarketplaceStatus({
         variant="link"
         size="sm"
         className="h-auto gap-1 p-0 text-xs"
-        disabled={!canOpenDownloadDirectory}
         title={status.archivePath}
         onClick={() => void onOpenDownloadDirectory(status.archivePath)}
       >

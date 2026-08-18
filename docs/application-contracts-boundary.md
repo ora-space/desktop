@@ -1,20 +1,20 @@
 # Application and Contracts Boundary
 
-The public application surface is split across `ora-domain`, `ora-contracts`, `ora-application`, `ora-db`, `ora-backend`, and transport adapters so use-case orchestration and ACP streams are shared without coupling them to HTTP or Tauri.
+The public application surface is split across `ora-domain`, `ora-contracts`, `ora-application`, `ora-db`, `ora-backend`, and the Desktop Tauri adapter so use-case orchestration and ACP streams remain independent of the UI shell.
 
 ## Ownership
 
 - `ora-domain` owns schema-backed entities, identifier newtypes, and categorical enums. See [Domain Models](domain-models.md).
-- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Spec management, Session, Skill, Skill Import, Agent, Workflow, and Git identity operations, plus the Web-only filesystem operations.
+- `ora-contracts` owns serialization-friendly request, response, stream-event, and public-error DTOs for Project, Task, Task Diff review, Spec management, Session, Skill, Skill Import, Agent, Workflow, Git identity, and workspace-file operations.
 - `ora-contracts` keeps Rust field names idiomatic while serializing JSON payloads in `camelCase` for adapter and frontend consumption.
 - ACP v1 wire types are owned by the official `agent-client-protocol-schema` crate in Rust and `@agentclientprotocol/sdk` package in TypeScript. `ora-contracts` may embed those types in Ora application DTOs, but does not duplicate the ACP schema.
-- The `xtask` exporter owns the generation-only frontend endpoint catalog for the exported HTTP surface, including operation names, client namespaces, methods, path templates, path and query parameters, request and response types, JSON body behavior, and unary-versus-stream response mode. `ora-contracts` keeps the shared HTTP path constants used by server adapters.
-- `ora-contracts` exports TypeScript DTOs into `packages/contracts/src` so frontend packages consume the contract surface from `@ora/contracts` and the browser transport from `@ora/contracts/fetch`. See [Frontend Contract SDK](frontend-contract-sdk.md).
+- The `xtask` exporter owns the generation-only frontend endpoint catalog: operation names, client namespaces, request and response types, and unary-versus-stream response mode.
+- `ora-contracts` exports TypeScript DTOs into `packages/contracts/src` so frontend packages consume the contract surface from `@ora/contracts`. See [Frontend Contract SDK](frontend-contract-sdk.md).
 - `ora-application` owns use-case handlers, `ApplicationError`, the repository/clock/identity/provisioning ports those handlers depend on, and domain-to-contract mapping.
 - `ora-db` implements those ports on SQLite and owns schema reconciliation. See [Database Repositories](database-repositories.md).
 - `ora-backend` owns SQLite bootstrap, the system clock, concrete repository and handler composition, task-diff workspace/baseline resolution, specification target/configuration/filesystem composition, transactional aggregate deletion, dynamic project selection for task Git operations, one application-scoped supervisor per supported agent CLI, grouped model discovery, per-session ACP routing, transport-neutral public error projection, and the shared request lifecycle used by runtime adapters.
-- Transport adapters stay thin: Web handlers and Tauri commands accept contract requests, delegate to the same `Backend`, then map its stable public errors into HTTP or IPC semantics.
-- Filesystem browsing is deliberately outside `ora-backend`. The Web server keeps that service composed directly from the repository pool; Desktop's transport reports `unsupported_operation` for that contract operation.
+- The Tauri adapter stays thin: commands accept contract requests, delegate to the same `Backend` or Desktop filesystem service, then serialize stable public errors over IPC.
+- General filesystem browsing is deliberately outside `ora-backend`; Desktop composes the bounded workspace-file service in its command layer, while specification access remains part of backend composition because it combines persisted targets with discovery.
 
 ## Contract shapes
 
@@ -52,24 +52,24 @@ The backend maps the highest semantic application error exhaustively to both a p
 
 ## Handlers
 
-`ora-application` handlers are transport-agnostic entry points. Each accepts exactly one request contract type and returns exactly one response contract type or an `ApplicationError`, referencing no HTTP, Tauri, or database type. An HTTP route or Tauri command can therefore deserialize transport input into one contract value, call the handler, and serialize the result with no extra use-case orchestration in the adapter.
+`ora-application` handlers are adapter-agnostic entry points. Each accepts exactly one request contract type and returns exactly one response contract type or an `ApplicationError`, referencing no UI, Tauri, or database type. A Tauri command can therefore deserialize transport input into one contract value, call the handler, and serialize the result with no extra use-case orchestration in the adapter.
 
-Handlers own their ports, so a unit test can construct any handler with in-memory fakes and execute the full use case with no database, HTTP server, Git process, or Tauri runtime. Dependencies are statically dispatched through generics rather than trait objects.
+Handlers own their ports, so a unit test can construct any handler with in-memory fakes and execute the full use case with no database, Git process, or Tauri runtime. Dependencies are statically dispatched through generics rather than trait objects.
 
 The handler set is intentionally narrower than full CRUD per entity, because some lifecycles are owned elsewhere:
 
-| Module | Handlers |
-| --- | --- |
-| `project` | create, get, list, list branches, update |
-| `task` | create, get, list, update |
-| `session` | get, list, delete |
-| `skill` | create, get, list, update, delete, startup reconciliation |
-| `skill_import` | prepare, get, commit, cancel batch sessions |
-| `agent_definition` | create, get, list, update, delete |
-| `task_diff` | read diff, create/list/reply/update comments, commit, push |
-| `workflow` | create, get, list, update, delete, getDraft, updateDraft, publish, rollback, activate, listVersions, getVersion, deleteSnapshot |
-| `workflow_run` | create, get, list, listNodeRuns, delete |
-| `worktree` | none — ports only |
+| Module             | Handlers                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `project`          | create, get, list, list branches, update                                                                                        |
+| `task`             | create, get, list, update                                                                                                       |
+| `session`          | get, list, delete                                                                                                               |
+| `skill`            | create, get, list, update, delete, startup reconciliation                                                                       |
+| `skill_import`     | prepare, get, commit, cancel batch sessions                                                                                     |
+| `agent_definition` | create, get, list, update, delete                                                                                               |
+| `task_diff`        | read diff, create/list/reply/update comments, commit, push                                                                      |
+| `workflow`         | create, get, list, update, delete, getDraft, updateDraft, publish, rollback, activate, listVersions, getVersion, deleteSnapshot |
+| `workflow_run`     | create, get, list, listNodeRuns, delete                                                                                         |
+| `worktree`         | none — ports only                                                                                                               |
 
 Notable consequences:
 
@@ -87,7 +87,7 @@ Deletion stays a normal delete use case at the boundary even though the reposito
 
 ## Error propagation and completion logging
 
-Application handlers preserve semantic errors and infrastructure source chains without emitting generic success or propagation-only failure events. Repository adapters likewise do not add another event merely to report the same failure. Web, Tauri, and stream entry seams own the single correlated request-completion event and derive its level from the public classification. The task workspace watcher is a Web stream seam: watcher failures are converted to the same `{ code, params, requestId }` contract frame and complete the request lifecycle exactly once.
+Application handlers preserve semantic errors and infrastructure source chains without emitting generic success or propagation-only failure events. Repository adapters likewise do not add another event merely to report the same failure. Tauri command and channel entry seams own the single correlated request-completion event and derive its level from the public classification. Workspace watcher failures are converted to the same `{ code, params, requestId }` contract frame and complete the request lifecycle exactly once.
 
 Bootstrap, migration, state-transition, and secondary-cleanup events remain independent lifecycle facts. Logging initialization, sink selection, and writer lifetimes stay with runtime composition roots. See [Runtime Logging](runtime-logging.md).
 

@@ -2,19 +2,11 @@
 #
 # Triggers:
 # - pull_request (any base branch): runs the test blocks affected by the change set.
-# - push to main: runs all three blocks unconditionally. This doubles as the
+# - push to main: runs both blocks unconditionally. This doubles as the
 #   post-merge verification and as the only cache producer — PR runs can read
 #   caches created on main, but caches written inside a PR are scoped to that
 #   PR and invisible to other PRs, so PR runs are restore-only (save-if below).
-#
-# Change detection maps paths onto the three existing Taskfile test blocks.
-# The mapping is deliberately conservative (better to over-run than to skip):
-# - test:frontend starts with `cargo xtask export-contracts`, so contracts and
-#   xtask changes affect the frontend block and the frontend job needs Rust.
-# - apps/desktop/src-tauri path-depends on crates/ (ora-backend, ora-contracts,
-#   ora-fs, ora-logging, ora-plugin-manager), so crates/ changes affect desktop.
-# - @ora/desktop TS tests build on packages/ (app-shell, chat, contracts,
-#   platform, ui), so packages/ changes affect desktop.
+
 name: pr-tests
 
 on:
@@ -36,8 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
-      backend: ${{ steps.filter.outputs.backend }}
-      desktop: ${{ steps.filter.outputs.desktop }}
+      crates: ${{ steps.filter.outputs.crates }}
     steps:
       # On push to main every block runs regardless, so the filter only needs
       # to execute for pull_request events (where it diffs via the API and
@@ -62,19 +53,17 @@ jobs:
             frontend:
               - *shared
               - 'packages/**'
-              - 'apps/web/client/**'
               - 'crates/contracts/**'
               - 'xtask/**'
-            backend:
+              - 'apps/desktop/web/**'
+              - 'apps/desktop/index.html'
+              - 'apps/desktop/*.json'
+              - 'apps/desktop/*.ts'
+              - 'apps/desktop/tsconfig*.json'
+            crates:
               - *shared
+              - 'apps/desktop/src-tauri/**'
               - 'crates/**'
-              - 'apps/web/server/**'
-              - 'xtask/**'
-            desktop:
-              - *shared
-              - 'apps/desktop/**'
-              - 'crates/**'
-              - 'packages/**'
 
   frontend:
     needs: changes
@@ -90,8 +79,11 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      # test:frontend regenerates TS contracts via `cargo xtask export-contracts`,
-      # which compiles xtask and ora-contracts from the root cargo workspace.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.5
+      # test:frontend regenerates TS contracts via `cargo xtask export-contracts`
+      # and also runs the Desktop frontend tests.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -99,9 +91,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: task test:frontend
 
-  backend:
+  crates:
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.backend == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.crates == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -109,37 +101,15 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
+      # The root workspace now contains both shared crates and Tauri packages.
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # ora-fs spec tests spawn the ripgrep binary, which GitHub-hosted
       # runners do not preinstall.
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
-      - run: task test:backend
-
-  desktop:
-    needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.desktop == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: arduino/setup-task@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      # The desktop block builds only the standalone src-tauri cargo workspace
-      # (its path-dependencies on crates/ compile into src-tauri/target), so
-      # the root workspace target is not cached here.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       # System libraries required to compile Tauri 2 on ubuntu-latest (24.04).
       - name: Install Tauri system dependencies
         run: |
@@ -152,18 +122,16 @@ jobs:
             libxdo-dev \
             libssl-dev \
             build-essential
-      - run: pnpm install --frozen-lockfile
-        env:
-          DENO_VERSION: v2.9.5
-          RG_VERSION: 15.2.0
-      - run: task test:desktop
+      - name: Set up sidecar binaries
+        run: node scripts/setup-binary.mjs
+      - run: task test:crates
 
   # Aggregate gate: the single check to mark as "required" in branch
   # protection. Skipped blocks count as success; failures and cancellations
   # propagate. Without this, a required-but-path-skipped job would leave the
   # PR pending forever.
   ci-ok:
-    needs: [changes, frontend, backend, desktop]
+    needs: [changes, frontend, crates]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -172,8 +140,7 @@ jobs:
           RESULTS: >-
             changes=${{ needs.changes.result }}
             frontend=${{ needs.frontend.result }}
-            backend=${{ needs.backend.result }}
-            desktop=${{ needs.desktop.result }}
+            crates=${{ needs.crates.result }}
         run: |
           echo "$RESULTS"
           for entry in $RESULTS; do

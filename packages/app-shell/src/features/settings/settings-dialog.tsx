@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { localizeContractError } from "../../i18n/contract-error";
-import { usePlatform } from "@ora/platform";
+import { usePlatform } from "../../platform";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -496,10 +496,6 @@ function PrivacySettings({
   const worktreeStorage = platform.worktreeStorage;
 
   useEffect(() => {
-    if (worktreeStorage.kind !== "configurable") {
-      return;
-    }
-
     let active = true;
     worktreeStorage.getRoot().then(
       (root) => {
@@ -520,10 +516,6 @@ function PrivacySettings({
   }, [t, worktreeStorage]);
 
   async function changeWorktreeRoot(): Promise<void> {
-    if (worktreeStorage.kind !== "configurable") {
-      return;
-    }
-
     setWorktreeError(null);
     try {
       const selected = await platform.selectPath({
@@ -550,40 +542,35 @@ function PrivacySettings({
         title={t("settings.privacy.title")}
         description={t("settings.privacy.description")}
       />
-      {worktreeStorage.kind === "configurable" && (
-        <SettingsRow
-          icon={IconFolder}
-          title={t("settings.privacy.worktreeRoot")}
-          description={t("settings.privacy.worktreeRootDescription")}
-        >
-          <div className="flex max-w-sm flex-col items-end gap-2">
-            <code
-              data-selectable
-              className="max-w-full break-all text-right text-xs text-muted-foreground"
-            >
-              {worktreeRoot ?? t("settings.privacy.worktreeRootLoading")}
-            </code>
-            <Button
-              variant="outline"
-              disabled={worktreeRoot === null || worktreeSaving}
-              onClick={changeWorktreeRoot}
-            >
-              <IconFolder />
-              {worktreeSaving
-                ? t("common.saving")
-                : t("settings.privacy.changeWorktreeRoot")}
-            </Button>
-            {worktreeError !== null && (
-              <p
-                data-selectable
-                className="text-right text-xs text-destructive"
-              >
-                {worktreeError}
-              </p>
-            )}
-          </div>
-        </SettingsRow>
-      )}
+      <SettingsRow
+        icon={IconFolder}
+        title={t("settings.privacy.worktreeRoot")}
+        description={t("settings.privacy.worktreeRootDescription")}
+      >
+        <div className="flex max-w-sm flex-col items-end gap-2">
+          <code
+            data-selectable
+            className="max-w-full break-all text-right text-xs text-muted-foreground"
+          >
+            {worktreeRoot ?? t("settings.privacy.worktreeRootLoading")}
+          </code>
+          <Button
+            variant="outline"
+            disabled={worktreeRoot === null || worktreeSaving}
+            onClick={changeWorktreeRoot}
+          >
+            <IconFolder />
+            {worktreeSaving
+              ? t("common.saving")
+              : t("settings.privacy.changeWorktreeRoot")}
+          </Button>
+          {worktreeError !== null && (
+            <p data-selectable className="text-right text-xs text-destructive">
+              {worktreeError}
+            </p>
+          )}
+        </div>
+      </SettingsRow>
       <SettingsRow
         icon={IconDatabase}
         title={t("settings.privacy.retention")}

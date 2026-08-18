@@ -21,8 +21,8 @@ import {
   IconTerminal2,
 } from "@tabler/icons-react";
 import type { ComponentType } from "react";
-import { usePlatform } from "@ora/platform";
-import type { LocationTarget } from "@ora/platform";
+import { usePlatform } from "../../platform";
+import type { LocationTarget } from "../../platform";
 import {
   useLocationActionsStore,
   type DefaultLocationTarget,
@@ -68,7 +68,6 @@ interface LocationActionsButtonProps {
  * the chevron half opens a menu to switch it. Choosing an opener both runs it and makes
  * it the new default. "Copy Path" is a menu-only action that never becomes the default.
  *
- * Desktop-only: on the Web host `locationActions` is unsupported and this renders nothing.
  */
 export function LocationActionsButton({
   taskId,
@@ -80,9 +79,6 @@ export function LocationActionsButton({
   const setDefaultTarget = useLocationActionsStore(
     (state) => state.setDefaultTarget,
   );
-
-  // The browser cannot launch native apps, so the whole entry point stays hidden there.
-  if (locationActions.kind !== "supported") return null;
 
   const hasTarget = Boolean(taskId) || Boolean(projectPath);
   const DefaultIcon = OPENER_ICONS[defaultTarget];

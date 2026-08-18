@@ -18,7 +18,6 @@
     "ts-to-zod": "^5.1.0"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./fetch": "./src/fetch.ts"
+    ".": "./src/index.ts"
   }
 }

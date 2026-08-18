@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { IconFolderOpen } from "@tabler/icons-react";
-import { usePlatform, type PathSelectionKind } from "@ora/platform";
+import { usePlatform, type PathSelectionKind } from "../../platform";
 import {
   Button,
   Dialog,

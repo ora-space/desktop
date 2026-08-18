@@ -3,26 +3,25 @@
   "version": "0.1.3",
   "description": "Ora plugin development SDK",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "files": [
     "src",
-    "tsconfig.json"
+    "deno.json"
   ],
   "exports": {
-    "./host": {
-      "types": "./src/host/index.ts",
-      "default": "./src/host/index.ts"
+    ".": {
+      "types": "./src/mod.ts",
+      "default": "./src/mod.ts"
     },
     "./package.json": "./package.json"
   },
+  "scripts": {
+    "format": "deno fmt src tests deno.json package.json README.md",
+    "format:check": "deno fmt --check src tests deno.json package.json README.md",
+    "lint": "deno lint src tests && deno check src/mod.ts tests/plugin.test.ts",
+    "test": "deno test tests"
+  },
   "publishConfig": {
     "access": "public"
-  },
-  "devDependencies": {
-    "bun-types": "^1.3.14"
-  },
-  "dependencies": {
-    "@agentclientprotocol/sdk": "1.3.0",
-    "zod": "^4.4.3"
   }
 }

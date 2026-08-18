@@ -1,18 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  decodeRemoteError,
   type Agent,
   type AgentImportCandidate,
   type AgentImportDecision,
-  type PrepareSkillImportResponse,
   type Skill,
   type SkillImportConflictDecision,
   type SkillImportDecision,
   type SkillImportSession,
 } from "@ora/contracts";
 import { useQueryClient } from "@tanstack/react-query";
-import { usePlatform } from "@ora/platform";
+import { usePlatform } from "../../platform";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -963,9 +961,6 @@ export function SkillImportDialog({
   >({});
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
-  const archiveInput = useRef<HTMLInputElement>(null);
-  const usesBrowserUploads = platform.worktreeStorage.kind === "unsupported";
 
   const conflictCandidates =
     session?.candidates.filter(
@@ -1067,36 +1062,6 @@ export function SkillImportDialog({
     }
   };
 
-  const prepareBrowserUpload = async (
-    kind: "folder" | "archive",
-    files: FileList | null,
-  ) => {
-    if (files === null || files.length === 0) return;
-    setPreparing(true);
-    setError(null);
-    try {
-      const form = new FormData();
-      for (const file of Array.from(files)) {
-        const sourcePath =
-          kind === "folder" && file.webkitRelativePath
-            ? file.webkitRelativePath
-            : file.name;
-        form.append("source", file, sourcePath);
-      }
-      const response = await fetch(`/api/skill-imports?mode=${kind}`, {
-        method: "POST",
-        body: form,
-      });
-      const body: unknown = await response.json();
-      if (!response.ok) throw decodeRemoteError(body, response.status);
-      setSession((body as PrepareSkillImportResponse).session);
-    } catch (cause) {
-      setError(localizeContractError(cause, t));
-    } finally {
-      setPreparing(false);
-    }
-  };
-
   const commit = async () => {
     if (session === null || needsDecisions || restoreBlocked) return;
     const frozenDecisions: Array<SkillImportConflictDecision> =
@@ -1137,35 +1102,10 @@ export function SkillImportDialog({
         </DialogHeader>
         {session === null && (
           <div className="grid gap-3 sm:grid-cols-2">
-            <input
-              {...{ webkitdirectory: "" }}
-              ref={folderInput}
-              className="hidden"
-              type="file"
-              multiple
-              onChange={(event) => {
-                void prepareBrowserUpload("folder", event.currentTarget.files);
-                event.currentTarget.value = "";
-              }}
-            />
-            <input
-              ref={archiveInput}
-              className="hidden"
-              type="file"
-              accept=".zip,.skill,.tar.gz,.tgz"
-              onChange={(event) => {
-                void prepareBrowserUpload("archive", event.currentTarget.files);
-                event.currentTarget.value = "";
-              }}
-            />
             <Button
               variant="secondary"
               disabled={preparing}
-              onClick={() =>
-                usesBrowserUploads
-                  ? folderInput.current?.click()
-                  : void chooseSource("folder")
-              }
+              onClick={() => void chooseSource("folder")}
             >
               {preparing
                 ? t("settings.skills.importing")
@@ -1174,11 +1114,7 @@ export function SkillImportDialog({
             <Button
               variant="secondary"
               disabled={preparing}
-              onClick={() =>
-                usesBrowserUploads
-                  ? archiveInput.current?.click()
-                  : void chooseSource("archive")
-              }
+              onClick={() => void chooseSource("archive")}
             >
               {preparing
                 ? t("settings.skills.importing")

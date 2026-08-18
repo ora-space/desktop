@@ -27,10 +27,9 @@ deepest detected source.
 ## API and security
 
 The generated `spec` client namespace exposes catalog, read, and watch operations. Catalog and read
-responses never expose absolute roots. On the Web server, spec watch uses the shared NDJSON framing
-path. The stream completes when process shutdown begins so a mounted Specs view cannot block
-`Ctrl+C` exit; a terminal error already queued at shutdown is emitted as `error` rather than a
-successful `end`.
+responses never expose absolute roots. On Desktop, spec watch uses a Tauri channel. The stream
+completes when process shutdown begins so a mounted Specs view cannot block application exit; a
+terminal error already queued at shutdown is emitted as `error` rather than a successful `end`.
 
 All filesystem operations canonicalize the target root. Reads accept only `.md`/`.mdx` files that
 still belong to the current automatically detected catalog, preventing traversal, symlink escape,

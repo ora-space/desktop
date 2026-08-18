@@ -245,6 +245,54 @@ fn rejects_non_slug_names_and_case_insensitive_conflicts() {
 }
 
 #[test]
+fn reports_folder_conflict_when_rename_target_directory_exists() {
+    let repository = Rc::new(FakeSkillRepository::with_skills(vec![skill(
+        "skill-1", "review", "Reviews", 10, 20, false,
+    )]));
+    let storage = Rc::new(FakeSkillStorage::with_manifest("review", "Reviews"));
+    storage
+        .formal
+        .borrow_mut()
+        .insert("grilling".to_string(), Vec::new());
+
+    let error = UpdateSkillHandler::new(repository, storage, FixedClock(30))
+        .handle(UpdateSkillRequest {
+            skill_id: "skill-1".to_string(),
+            name: "grilling".to_string(),
+            description: "Reviews".to_string(),
+            content: None,
+        })
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        ApplicationError::SkillFolderConflict {
+            name: "grilling".to_string()
+        }
+    );
+}
+
+#[test]
+fn maps_existing_formal_directory_to_folder_conflict() {
+    assert_eq!(
+        ApplicationError::from_skill_storage_error(SkillStorageError::FormalDirectoryExists {
+            name: "grilling".to_string(),
+        }),
+        ApplicationError::SkillFolderConflict {
+            name: "grilling".to_string(),
+        }
+    );
+    assert_eq!(
+        ApplicationError::from_skill_storage_error(SkillStorageError::FormalDirectoryMissing {
+            name: "grilling".to_string(),
+        }),
+        ApplicationError::SkillStorageInconsistent {
+            name: "grilling".to_string(),
+        }
+    );
+}
+
+#[test]
 fn rejects_blank_and_oversized_descriptions() {
     let handler = CreateSkillHandler::new(
         Rc::new(FakeSkillRepository::default()),

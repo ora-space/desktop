@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@ora/ui";
 import { RemoteContractError, type SkillImportSession } from "@ora/contracts";
-import { PlatformProvider } from "@ora/platform";
+import { PlatformProvider } from "../../platform";
 import { createChatStore } from "@ora/chat";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { appI18n } from "../../i18n/i18n-instance";
@@ -236,7 +236,6 @@ describe("atom settings content", () => {
             params: {},
             requestId: "550e8400-e29b-41d4-a716-446655440000",
           },
-          409,
           null,
         );
       };

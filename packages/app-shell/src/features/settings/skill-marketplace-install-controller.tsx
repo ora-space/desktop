@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type SkillImportSession } from "@ora/contracts";
-import { usePlatform, type SkillMarketplaceStatus } from "@ora/platform";
+import { usePlatform, type SkillMarketplaceStatus } from "../../platform";
 import { toast } from "@ora/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -147,8 +147,6 @@ export function SkillMarketplaceInstallController() {
   );
 
   useEffect(() => {
-    if (skillMarketplace.kind !== "supported") return undefined;
-
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
     void skillMarketplace

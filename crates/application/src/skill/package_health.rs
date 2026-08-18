@@ -1,4 +1,4 @@
-use super::storage::{CreateHandle, SkillStorage, SwapHandle};
+use super::storage::{CreateHandle, JournalOp, SkillStorage, SwapHandle};
 use crate::ApplicationError;
 use ora_contracts::SkillAvailability;
 use ora_domain::Namespace;
@@ -93,6 +93,20 @@ pub(crate) fn commit_unclaimed_package<Storage: SkillStorage>(
     name: &str,
     staging: &Path,
 ) -> Result<PromotedPackage, ApplicationError> {
+    if storage.formal_exists(name)
+        && storage
+            .list_journals()
+            .map_err(ApplicationError::from_skill_storage_error)?
+            .iter()
+            .any(|journal| {
+                matches!(journal.op, JournalOp::Create | JournalOp::Swap)
+                    && (journal.name == name || journal.from_name == name)
+            })
+    {
+        return Err(ApplicationError::SkillFolderConflict {
+            name: name.to_string(),
+        });
+    }
     promote_staging(storage, name, staging)
 }
 

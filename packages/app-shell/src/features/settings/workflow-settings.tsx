@@ -48,7 +48,7 @@ import {
   serializeWorkflowGraph,
   workflowTimestampToIso,
 } from "@ora/workflow-runtime";
-import { usePlatform } from "@ora/platform";
+import { usePlatform } from "../../platform";
 import { useContractsClient } from "../../contracts-client-context";
 import { useAgents } from "../../state/hooks/use-agents";
 import { availableSkills, useSkills } from "../../state/hooks/use-skills";

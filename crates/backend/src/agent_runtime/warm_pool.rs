@@ -8,6 +8,7 @@
 //! asynchronous caller carries out, which keeps the reuse, invalidation and
 //! replay rules testable without a running agent.
 
+use super::WarmOwner;
 use agent_client_protocol_schema::v1::AvailableCommand;
 use agent_client_protocol_schema::v1::{
     SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
@@ -34,17 +35,12 @@ const MAX_LIVE_ENTRIES: usize = 16;
 /// bound exists to cap unbounded growth rather than to reclaim meaningful memory.
 const MAX_ENTRIES: usize = 64;
 
-/// Identifies the chat surface a warm session belongs to.
-///
-/// `client_id` is part of the identity because one backend can serve several
-/// clients. Two browser tabs showing the same selection must not receive the
-/// same provider session, or the first tab to attach would take the other's
-/// conversation.
+/// Identifies the Desktop or workflow surface a warm session belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct WarmKey {
     pub target: WarmSessionTarget,
     pub agent_cli: AgentCli,
-    pub client_id: String,
+    pub owner: WarmOwner,
 }
 
 /// A provider session that is currently registered on a live connection.
@@ -647,6 +643,7 @@ mod tests {
         MAX_ENTRIES, MAX_LIVE_ENTRIES, RebuildPlan, ReleasedSession, Reservation, WarmDecision,
         WarmKey, WarmPool,
     };
+    use crate::agent_runtime::WarmOwner;
     use agent_client_protocol_schema::v1::{
         SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOption,
     };
@@ -657,14 +654,22 @@ mod tests {
 
     const GENERATION: u64 = 1;
 
-    /// Builds a key for one task-scoped chat surface.
-    fn key(task_id: &str, client_id: &str) -> WarmKey {
+    /// Builds a key for one task-scoped warm-session owner.
+    fn key(task_id: &str, owner_name: &str) -> WarmKey {
+        let owner = match owner_name {
+            "interactive" | "client-1" => WarmOwner::Interactive,
+            "workflow-node" | "client-2" => WarmOwner::WorkflowNode {
+                run_id: "run-1".to_string(),
+                node_id: "node-1".to_string(),
+            },
+            other => panic!("unknown warm owner {other}"),
+        };
         WarmKey {
             target: WarmSessionTarget::Task {
                 task_id: task_id.to_string(),
             },
             agent_cli: AgentCli::OpenCode,
-            client_id: client_id.to_string(),
+            owner,
         }
     }
 
@@ -723,9 +728,9 @@ mod tests {
         );
     }
 
-    /// Verifies two clients on the same selection never share one provider session.
+    /// Verifies interactive and workflow owners on one selection never share a provider session.
     #[test]
-    fn isolates_warm_sessions_per_client() {
+    fn isolates_warm_sessions_per_owner() {
         let mut pool = WarmPool::default();
         let first = warm(
             &mut pool,
@@ -1009,7 +1014,7 @@ mod tests {
     }
 
     /// Verifies a deleted target takes its warm sessions with it, across every
-    /// client that had one open, while leaving other surfaces untouched.
+    /// owner that had one open, while leaving other surfaces untouched.
     #[test]
     fn discards_every_warm_session_for_a_deleted_target() {
         let mut pool = WarmPool::default();

@@ -426,12 +426,6 @@ export function createMockClient(state: MockClientState): ContractsClient {
       }),
     },
     fileSystem: {
-      listDirectory: async (request) => ({
-        currentPath: request.path ?? "/home/test",
-        parentPath: null,
-        breadcrumbs: [],
-        entries: [],
-      }),
       listWorkspaceDirectory: async () => ({ path: "", entries: [] }),
       readWorkspaceFile: async (request) => ({
         path: request.path,

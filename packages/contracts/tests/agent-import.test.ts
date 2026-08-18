@@ -7,7 +7,7 @@ import type {
   ContractTransportRequest,
 } from "../src/transport.js";
 
-test("sends Agent Markdown and conflict metadata in JSON bodies", async () => {
+test("forwards Agent Markdown and conflict metadata as one IPC request", async () => {
   const requests: ContractTransportRequest[] = [];
   const transport: ContractTransport = {
     async send<TResponse>(
@@ -36,10 +36,6 @@ test("sends Agent Markdown and conflict metadata in JSON bodies", async () => {
     {
       operationName: "prepareAgentImport",
       request: { content },
-      method: "POST",
-      path: "/api/agent-imports/prepare",
-      body: { content },
-      headers: { "content-type": "application/json" },
     },
     {
       operationName: "commitAgentImport",
@@ -49,15 +45,6 @@ test("sends Agent Markdown and conflict metadata in JSON bodies", async () => {
         expectedAgentId: "agent-1",
         expectedUpdatedAt: 42,
       },
-      method: "POST",
-      path: "/api/agent-imports/commit",
-      body: {
-        content,
-        decision: "overwrite",
-        expectedAgentId: "agent-1",
-        expectedUpdatedAt: 42,
-      },
-      headers: { "content-type": "application/json" },
     },
   ]);
 });

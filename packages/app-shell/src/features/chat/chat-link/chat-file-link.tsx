@@ -7,7 +7,7 @@ import {
   ContextMenuTrigger,
   toast,
 } from "@ora/ui";
-import { usePlatform } from "@ora/platform";
+import { usePlatform } from "../../../platform";
 import { useTranslation } from "react-i18next";
 import { joinOsAbsolutePath } from "../../../lib/workspace-path";
 import { useTaskChangesNavigation } from "../../diff/task-changes-navigation-context";
