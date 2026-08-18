@@ -1,7 +1,6 @@
 use crate::config::DesktopConfigStore;
 use crate::workspace_files::WorkspaceFileApi;
 use ora_backend::Backend;
-use ora_plugin_manager::PluginManager;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -81,7 +80,6 @@ fn platform_binary_name(name: &str) -> String {
 #[derive(Clone)]
 pub struct DesktopState {
     pub backend: Backend,
-    pub plugin_manager: Arc<PluginManager>,
     pub config: DesktopConfigStore,
     pub workspace_files: Arc<WorkspaceFileApi>,
     pub binary_paths: BundledBinaryPaths,

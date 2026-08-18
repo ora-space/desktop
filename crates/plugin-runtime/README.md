@@ -4,6 +4,8 @@
 processes. It launches a configured JavaScript entrypoint with Deno, waits for the
 plugin's immutable method registration, correlates concurrent JSON-RPC calls, drains
 plugin logs from stderr, and shuts down the complete child process tree.
+Explicit shutdown resolves only after the supervised process exits. Exit observation distinguishes
+intentional shutdown from startup, protocol, and unexpected process failures.
 
 The crate does not discover, install, select, or configure plugins. Callers supply a
 plugin identifier, an entrypoint, a Deno executable, and the exact method to invoke.

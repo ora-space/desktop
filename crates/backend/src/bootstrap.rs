@@ -15,9 +15,12 @@ use crate::workflow_run_engine::{ConcreteWorkflowRunControl, build_workflow_run_
 use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_db::SqliteWorkflowRunEngineRepository;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
+use ora_db::{SqlitePluginStateRepository, SqliteWorkflowRunEngineRepository};
 use ora_logging::{ora_error, ora_warn};
+use ora_plugin_lifecycle::{
+    DenoPluginRuntimeLauncher, PluginLifecycle, PluginLifecycleConfig, PluginRuntimeTimeouts,
+};
 use ora_scheduler::Scheduler;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,6 +31,10 @@ use thiserror::Error;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackendPaths {
     pub database_path: PathBuf,
+    /// Root containing the installed `plugins` directory.
+    pub data_directory: PathBuf,
+    /// Bundled Deno executable used for plugin activation.
+    pub deno_path: PathBuf,
     pub worktree_root: PathBuf,
     pub home_directory: PathBuf,
     /// Directory against which persisted relative project roots are resolved.
@@ -56,6 +63,8 @@ pub enum BackendBootstrapError {
     },
     #[error("failed to bootstrap backend database")]
     Database(#[source] ora_db::DatabaseError),
+    #[error("failed to initialize plugin lifecycle")]
+    PluginLifecycle(#[source] ora_plugin_lifecycle::PluginLifecycleError),
     #[error("failed to reconcile skill storage")]
     SkillStorage(#[source] ApplicationError),
     #[error("failed to initialize agent runtime")]
@@ -76,6 +85,12 @@ pub struct Backend {
     task_diff: Arc<TaskDiffApi>,
     session: Arc<SessionApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
+    plugin_lifecycle: PluginLifecycle<
+        SqlitePluginStateRepository,
+        SystemClock,
+        DenoPluginRuntimeLauncher,
+        crate::app_event::AppEventPublisher,
+    >,
     skill: Arc<SkillApi>,
     agent: Arc<AgentApi>,
     spec: Arc<SpecApi>,
@@ -107,6 +122,17 @@ impl Backend {
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let app_events = Arc::new(AppEventHub::new());
+        let plugin_lifecycle = PluginLifecycle::open(
+            PluginLifecycleConfig {
+                data_directory: paths.data_directory,
+                deno_path: paths.deno_path,
+            },
+            SqlitePluginStateRepository::new(pool.clone()),
+            clock,
+            DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
+            app_events.publisher(),
+        )
+        .map_err(BackendBootstrapError::PluginLifecycle)?;
         let scheduler = Scheduler::new(paths.timezone);
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let sessions_root = paths.sessions_root;
@@ -158,6 +184,7 @@ impl Backend {
             )),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime,
+            plugin_lifecycle,
             skill: Arc::new(SkillApi::new(
                 pool.clone(),
                 paths.skills_root.clone(),
@@ -185,6 +212,80 @@ impl Backend {
             worktree_root,
             relative_path_base,
         })
+    }
+
+    /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
+    pub fn list_installed_plugins(
+        &self,
+        _request: ListInstalledPluginsRequest,
+    ) -> Result<ListInstalledPluginsResponse, BackendError> {
+        Ok(self.plugin_lifecycle.list_installed_plugins())
+    }
+
+    /// Explicitly rescans packages and reconciles durable and runtime state.
+    pub async fn scan_plugins(
+        &self,
+        request: ScanPluginsRequest,
+    ) -> Result<ScanPluginsResponse, BackendError> {
+        self.plugin_lifecycle
+            .scan_plugins(request)
+            .await
+            .map_err(BackendError::from)
+    }
+
+    /// Persists plugin eligibility without starting its process.
+    pub async fn enable_plugin(
+        &self,
+        request: EnablePluginRequest,
+    ) -> Result<EnablePluginResponse, BackendError> {
+        self.plugin_lifecycle
+            .enable_plugin(request)
+            .await
+            .map_err(BackendError::from)
+    }
+
+    /// Stops a plugin when necessary before persisting ineligibility.
+    pub async fn disable_plugin(
+        &self,
+        request: DisablePluginRequest,
+    ) -> Result<DisablePluginResponse, BackendError> {
+        self.plugin_lifecycle
+            .disable_plugin(request)
+            .await
+            .map_err(BackendError::from)
+    }
+
+    /// Starts one enabled plugin and returns its immediate starting state.
+    pub async fn activate_plugin(
+        &self,
+        request: ActivatePluginRequest,
+    ) -> Result<ActivatePluginResponse, BackendError> {
+        self.plugin_lifecycle
+            .activate_plugin(request)
+            .await
+            .map_err(BackendError::from)
+    }
+
+    /// Stops one plugin process without changing durable eligibility.
+    pub async fn stop_plugin(
+        &self,
+        request: StopPluginRequest,
+    ) -> Result<StopPluginResponse, BackendError> {
+        self.plugin_lifecycle
+            .stop_plugin(request)
+            .await
+            .map_err(BackendError::from)
+    }
+
+    /// Stops and removes one plugin package plus its durable state.
+    pub async fn uninstall_plugin(
+        &self,
+        request: UninstallPluginRequest,
+    ) -> Result<UninstallPluginResponse, BackendError> {
+        self.plugin_lifecycle
+            .uninstall_plugin(request)
+            .await
+            .map_err(BackendError::from)
     }
 
     /// Starts a workflow run against its frozen snapshot graph.
@@ -1056,6 +1157,8 @@ mod tests {
         let worktree_root = temporary.path().join("worktrees");
         let backend = Backend::open(BackendPaths {
             database_path: database_path.clone(),
+            data_directory: temporary.path().to_path_buf(),
+            deno_path: std::path::PathBuf::from("deno"),
             worktree_root: worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
             relative_path_base: temporary.path().to_path_buf(),
@@ -1175,6 +1278,8 @@ mod tests {
         let skills_root = temporary.path().join("atoms").join("skills");
         let backend = Backend::open(BackendPaths {
             database_path: temporary.path().join("ora.sqlite3"),
+            data_directory: temporary.path().to_path_buf(),
+            deno_path: std::path::PathBuf::from("deno"),
             worktree_root: temporary.path().join("worktrees"),
             home_directory: temporary.path().to_path_buf(),
             relative_path_base: temporary.path().to_path_buf(),
@@ -1223,6 +1328,8 @@ mod tests {
         let original_worktree_root = temporary.path().join("original-worktrees");
         let backend = Backend::open(BackendPaths {
             database_path: temporary.path().join("ora.sqlite3"),
+            data_directory: temporary.path().to_path_buf(),
+            deno_path: std::path::PathBuf::from("deno"),
             worktree_root: original_worktree_root.clone(),
             home_directory: temporary.path().to_path_buf(),
             relative_path_base: temporary.path().to_path_buf(),

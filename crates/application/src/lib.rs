@@ -1,5 +1,6 @@
 mod agent_definition;
 mod error;
+mod plugin;
 mod project;
 mod repository_error;
 mod session;
@@ -17,6 +18,7 @@ pub use agent_definition::{
     ListAgentDefinitionsHandler, UpdateAgentDefinitionHandler, UuidAgentDefinitionIdGenerator,
 };
 pub use error::ApplicationError;
+pub use plugin::PluginStateRepository;
 pub use project::{
     BranchLister, BranchListingError, BranchReference, Clock, CreateProjectHandler,
     GetProjectHandler, ListProjectBranchesHandler, ListProjectsHandler, ProjectIdGenerator,

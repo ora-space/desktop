@@ -10,6 +10,8 @@ pub enum AppEvent {
     Ready,
     /// Tells clients that the persisted session row should be queried again.
     SessionTitleUpdated { session_id: String },
+    /// Tells clients that the cached plugin lifecycle snapshot should be queried again.
+    PluginStatusChanged { plugin_id: String },
 }
 
 /// Opens the application event stream without filtering or ownership metadata.
@@ -36,6 +38,16 @@ mod tests {
         assert_eq!(
             serde_json::to_value(AppEvent::Ready).expect("ready serializes"),
             serde_json::json!({ "type": "ready" }),
+        );
+        assert_eq!(
+            serde_json::to_value(AppEvent::PluginStatusChanged {
+                plugin_id: "ora.example".to_string(),
+            })
+            .expect("plugin invalidation serializes"),
+            serde_json::json!({
+                "type": "plugin_status_changed",
+                "plugin_id": "ora.example",
+            }),
         );
         assert_eq!(
             serde_json::to_value(AppEvent::SessionTitleUpdated {

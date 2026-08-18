@@ -13,6 +13,8 @@ const plugins: InstalledPlugin[] = [
     agents: [
       { id: "reviewer", displayName: "Review Agent", contractVersion: 1 },
     ],
+    enabled: false,
+    runtime: "stopped",
   },
   {
     id: "ora.planner",
@@ -22,6 +24,8 @@ const plugins: InstalledPlugin[] = [
     kind: "agent",
     main: "dist/index.js",
     agents: [{ id: "planner", displayName: "Plan Agent", contractVersion: 1 }],
+    enabled: false,
+    runtime: "stopped",
   },
 ];
 

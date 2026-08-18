@@ -90,6 +90,8 @@ pub enum PublicError {
     AgentNameBlank(EmptyErrorParams),
     AgentNameConflict(EmptyErrorParams),
     AgentNotFound(EmptyErrorParams),
+    PluginNotFound(EmptyErrorParams),
+    PluginDisabled(EmptyErrorParams),
     ProjectNotFound(EmptyErrorParams),
     TaskNotFound(EmptyErrorParams),
     ResourceInUse(EmptyErrorParams),
@@ -191,6 +193,8 @@ impl PublicError {
             Self::AgentNameBlank(_) => "agent_name_blank",
             Self::AgentNameConflict(_) => "agent_name_conflict",
             Self::AgentNotFound(_) => "agent_not_found",
+            Self::PluginNotFound(_) => "plugin_not_found",
+            Self::PluginDisabled(_) => "plugin_disabled",
             Self::ProjectNotFound(_) => "project_not_found",
             Self::TaskNotFound(_) => "task_not_found",
             Self::ResourceInUse(_) => "resource_in_use",
@@ -348,6 +352,8 @@ mod tests {
             PublicError::AgentNameBlank(empty),
             PublicError::AgentNameConflict(empty),
             PublicError::AgentNotFound(empty),
+            PublicError::PluginNotFound(empty),
+            PublicError::PluginDisabled(empty),
             PublicError::ProjectNotFound(empty),
             PublicError::TaskNotFound(empty),
             PublicError::ResourceInUse(empty),
@@ -446,6 +452,8 @@ mod tests {
                 | PublicError::AgentNameBlank(_)
                 | PublicError::AgentNameConflict(_)
                 | PublicError::AgentNotFound(_)
+                | PublicError::PluginNotFound(_)
+                | PublicError::PluginDisabled(_)
                 | PublicError::ProjectNotFound(_)
                 | PublicError::TaskNotFound(_)
                 | PublicError::ResourceInUse(_)
@@ -539,7 +547,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 88);
+        assert_eq!(samples.len(), 90);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

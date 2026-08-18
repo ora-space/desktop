@@ -5,6 +5,7 @@
 ## Module map
 
 - [agent_definition](src/agent_definition/README.md) manages configurable agent definitions.
+- [plugin](src/plugin/README.md) defines persistence for durable plugin eligibility.
 - [project](src/project/README.md) manages project creation, reads, and rename operations.
 - [session](src/session/README.md) provides persisted session reads and soft deletion.
 - [skill](src/skill/README.md) manages reusable skill records, their atomic on-disk packages, and journaled filesystem transactions.

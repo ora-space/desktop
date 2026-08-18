@@ -1,0 +1,30 @@
+[package]
+name = "ora-plugin-lifecycle"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_plugin_lifecycle"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ora-application = { workspace = true }
+ora-contracts = { workspace = true }
+ora-domain = { workspace = true }
+ora-plugin-manager = { workspace = true }
+ora-plugin-runtime = { workspace = true }
+ora-process = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+
+[dev-dependencies]
+ora-db = { workspace = true }
+ora-logging = { workspace = true }
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -21,6 +21,7 @@ ora-domain = { workspace = true }
 ora-fs = { workspace = true }
 ora-history = { workspace = true }
 ora-logging = { workspace = true }
+ora-plugin-lifecycle = { workspace = true }
 ora-process = { workspace = true }
 ora-scheduler = { workspace = true }
 ora-skill-package = { workspace = true }

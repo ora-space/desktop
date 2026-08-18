@@ -388,6 +388,8 @@ mod tests {
     fn open_backend(temporary: &TempDir) -> Backend {
         Backend::open(BackendPaths {
             database_path: temporary.path().join("ora.sqlite3"),
+            data_directory: temporary.path().to_path_buf(),
+            deno_path: std::path::PathBuf::from("deno"),
             worktree_root: temporary.path().join("worktrees"),
             home_directory: temporary.path().to_path_buf(),
             relative_path_base: temporary.path().to_path_buf(),

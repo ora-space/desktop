@@ -2,6 +2,7 @@ use ora_application::{ApplicationError, SkillImportError};
 use ora_contracts::{
     ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
 };
+use ora_plugin_lifecycle::PluginLifecycleError;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -110,6 +111,32 @@ impl fmt::Display for BackendError {
 impl Error for BackendError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.source.as_deref().map(|source| source as &dyn Error)
+    }
+}
+
+impl From<PluginLifecycleError> for BackendError {
+    /// Maps lifecycle semantics to stable adapter classifications while retaining diagnostics.
+    fn from(error: PluginLifecycleError) -> Self {
+        let (classification, public_error, context) = match &error {
+            PluginLifecycleError::PluginNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "installed plugin was not found",
+            ),
+            PluginLifecycleError::PluginDisabled { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::PluginDisabled(EmptyErrorParams {}),
+                "plugin must be enabled before activation",
+            ),
+            PluginLifecycleError::Repository(_)
+            | PluginLifecycleError::RuntimeStop { .. }
+            | PluginLifecycleError::PackageRemoval { .. } => (
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "plugin lifecycle operation failed",
+            ),
+        };
+        Self::with_source(classification, public_error, context, error)
     }
 }
 

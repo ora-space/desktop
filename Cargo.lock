@@ -2908,6 +2908,7 @@ dependencies = [
  "ora-fs",
  "ora-history",
  "ora-logging",
+ "ora-plugin-lifecycle",
  "ora-process",
  "ora-scheduler",
  "ora-skill-package",
@@ -2968,7 +2969,6 @@ dependencies = [
  "ora-contracts",
  "ora-fs",
  "ora-logging",
- "ora-plugin-manager",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -3038,6 +3038,27 @@ dependencies = [
  "time",
  "tracing",
  "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ora-plugin-lifecycle"
+version = "0.0.0"
+dependencies = [
+ "ora-application",
+ "ora-contracts",
+ "ora-db",
+ "ora-domain",
+ "ora-logging",
+ "ora-plugin-manager",
+ "ora-plugin-runtime",
+ "ora-process",
+ "pretty_assertions",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 

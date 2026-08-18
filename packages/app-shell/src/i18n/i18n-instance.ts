@@ -19,6 +19,8 @@ export const translationResources = {
     "errors.agent_name_blank": "Agent 名称不能为空。",
     "errors.agent_name_conflict": "已存在同名 Role。",
     "errors.agent_not_found": "未找到该 Agent。",
+    "errors.plugin_not_found": "未找到该插件。",
+    "errors.plugin_disabled": "请先启用该插件，再进行激活。",
     "errors.workflow_name_conflict": "已存在同名工作流。",
     "errors.project_not_found": "未找到该项目。",
     "errors.task_not_found": "未找到该任务。",
@@ -1382,6 +1384,8 @@ export const translationResources = {
     "errors.agent_name_blank": "Agent name cannot be blank.",
     "errors.agent_name_conflict": "A role with this name already exists.",
     "errors.agent_not_found": "The agent was not found.",
+    "errors.plugin_not_found": "The plugin was not found.",
+    "errors.plugin_disabled": "Enable the plugin before activating it.",
     "errors.workflow_name_conflict":
       "A workflow with this name already exists.",
     "errors.project_not_found": "The project was not found.",

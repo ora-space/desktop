@@ -57,7 +57,7 @@ pub struct InstalledPlugin {
     pub id: String,
     pub display_name: String,
     pub kind: PluginKind,
-    pub main: PathBuf,
+    pub main: PortableRelativePath,
     pub engines: PluginEngines,
     pub agents: Vec<InstalledPluginAgent>,
 }
@@ -150,7 +150,7 @@ pub(crate) fn validate(
 fn validate_main_path(
     package_root: &Path,
     value: &str,
-) -> Result<PathBuf, ManifestValidationError> {
+) -> Result<PortableRelativePath, ManifestValidationError> {
     require_non_empty("ora.main", value)?;
     let relative = PortableRelativePath::parse(value).map_err(|error| {
         invalid(
@@ -191,7 +191,7 @@ fn validate_main_path(
         )
     })?;
 
-    Ok(main.to_path_buf())
+    Ok(main)
 }
 
 /// Validates agent contract versions and uniqueness inside one package.

@@ -54,6 +54,13 @@ pub enum PluginRuntimeError {
     Remote { code: i64, message: String },
 }
 
+/// Reports whether the supervised plugin exited intentionally or failed unexpectedly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginProcessExit {
+    Stopped,
+    Failed(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RuntimeStatus {
     Starting,
@@ -68,6 +75,7 @@ struct RuntimeInner {
     plugin_id: String,
     methods: RwLock<HashSet<String>>,
     status_tx: watch::Sender<RuntimeStatus>,
+    exited_tx: watch::Sender<bool>,
     writer_tx: mpsc::Sender<Value>,
     supervisor_tx: mpsc::UnboundedSender<SupervisorCommand>,
     pending: Mutex<HashMap<u64, oneshot::Sender<PendingResult>>>,
@@ -132,10 +140,12 @@ impl PluginRuntime {
         let (writer_close_tx, writer_close_rx) = oneshot::channel();
         let (supervisor_tx, supervisor_rx) = mpsc::unbounded_channel();
         let (status_tx, mut status_rx) = watch::channel(RuntimeStatus::Starting);
+        let (exited_tx, _) = watch::channel(false);
         let inner = Arc::new(RuntimeInner {
             plugin_id: config.plugin_id.clone(),
             methods: RwLock::new(HashSet::new()),
             status_tx,
+            exited_tx,
             writer_tx: writer_tx.clone(),
             supervisor_tx: supervisor_tx.clone(),
             pending: Mutex::new(HashMap::new()),
@@ -250,6 +260,25 @@ impl PluginRuntime {
             Err(_) => {
                 self.inner.pending.lock().await.remove(&request_id);
                 Err(PluginRuntimeError::CallTimeout)
+            }
+        }
+    }
+
+    /// Requests graceful shutdown and resolves only after the supervised process has exited.
+    pub async fn shutdown(&self) {
+        self.request_shutdown();
+        let mut exited = self.inner.exited_tx.subscribe();
+        while !*exited.borrow() && exited.changed().await.is_ok() {}
+    }
+
+    /// Waits for process exit and classifies intentional shutdown separately from failure.
+    pub async fn wait_for_exit(&self) -> PluginProcessExit {
+        let mut exited = self.inner.exited_tx.subscribe();
+        while !*exited.borrow() && exited.changed().await.is_ok() {}
+        match self.inner.status_tx.borrow().clone() {
+            RuntimeStatus::Failed(reason) => PluginProcessExit::Failed(reason),
+            RuntimeStatus::Starting | RuntimeStatus::Ready | RuntimeStatus::ShuttingDown => {
+                PluginProcessExit::Stopped
             }
         }
     }
@@ -454,24 +483,27 @@ async fn run_supervisor<P>(
             }
         }
         command = commands.recv() => {
-            inner.status_tx.send_replace(RuntimeStatus::ShuttingDown);
-            if matches!(command, Some(SupervisorCommand::Shutdown))
-                && timeout(shutdown_timeout, process.wait()).await.is_ok()
-            {
-                let _ = writer_close.send(());
-                return;
+            // Protocol failures already carry the actionable reason; overwriting them with
+            // ShuttingDown would make lifecycle observers misclassify a crash as an explicit stop.
+            if matches!(command, Some(SupervisorCommand::Shutdown)) {
+                inner.status_tx.send_replace(RuntimeStatus::ShuttingDown);
             }
-            if let Err(error) = process.kill().await {
-                ora_error!(
-                    message = "failed to terminate plugin process tree",
-                    plugin_id = %inner.plugin_id,
-                    error = %error,
-                );
+            let stopped_gracefully = matches!(command, Some(SupervisorCommand::Shutdown))
+                && timeout(shutdown_timeout, process.wait()).await.is_ok();
+            if !stopped_gracefully {
+                if let Err(error) = process.kill().await {
+                    ora_error!(
+                        message = "failed to terminate plugin process tree",
+                        plugin_id = %inner.plugin_id,
+                        error = %error,
+                    );
+                }
+                let _ = process.wait().await;
             }
-            let _ = process.wait().await;
         }
     }
     let _ = writer_close.send(());
+    inner.exited_tx.send_replace(true);
 }
 
 /// Marks a protocol connection unusable and wakes every waiting caller.
@@ -505,12 +537,14 @@ mod tests {
 
     fn test_inner() -> RuntimeInner {
         let (status_tx, _) = watch::channel(RuntimeStatus::Starting);
+        let (exited_tx, _) = watch::channel(false);
         let (writer_tx, _) = mpsc::channel(1);
         let (supervisor_tx, _) = mpsc::unbounded_channel();
         RuntimeInner {
             plugin_id: "example".to_string(),
             methods: RwLock::new(HashSet::new()),
             status_tx,
+            exited_tx,
             writer_tx,
             supervisor_tx,
             pending: Mutex::new(HashMap::new()),
