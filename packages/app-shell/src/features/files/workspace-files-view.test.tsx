@@ -21,7 +21,6 @@ function renderMissingFile() {
         params: {},
         requestId: "eb093a72-6961-4e9f-966a-3d5187958476",
       },
-      404,
       null,
     );
   };

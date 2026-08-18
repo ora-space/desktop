@@ -35,7 +35,7 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 
 - `MessageList` provides a per-turn `ChatLinkContext` around each `ResponseTurn`
 - `TaskChangesNavigation.openDiff` / `openWorkspaceFile` in the review layout
-- Desktop `locationActions` for Explorer, VS Code, and copying an OS-absolute path
+- Desktop `locationActions` for Explorer, VS Code, and copying an OS-absolute path. The capability is always the cwd + OS-open pair (no `unsupported` variant); Terminal stays hidden because it is a directory opener.
 - Shared slash matching in `packages/app-shell/src/lib/workspace-path.ts`
 
 ## Appearance

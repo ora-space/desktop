@@ -136,7 +136,8 @@ function LinkedChatFile({
   const [desktopCwd, setDesktopCwd] = useState<string | null>(null);
 
   useEffect(() => {
-    if (locationActions.kind !== "supported") return;
+    // Desktop is the only host: locationActions is always the cwd + OS-open
+    // pair, not a supported/unsupported discriminant.
     let cancelled = false;
     void locationActions
       .resolveTaskCwd(chatLink.taskId)
@@ -164,7 +165,6 @@ function LinkedChatFile({
       ? refreshed
       : initial;
 
-  const desktop = locationActions.kind === "supported";
   const editedHit = matchIndexPath(classified.path, chatLink.index.edited);
   const osPath =
     cwd === null
@@ -179,7 +179,6 @@ function LinkedChatFile({
     (classified.kind === "files" && editedHit !== null);
 
   const openOs = async (target: "explorer" | "vscode") => {
-    if (locationActions.kind !== "supported") return;
     try {
       await locationActions.open(target, osPath);
     } catch {
@@ -224,20 +223,16 @@ function LinkedChatFile({
         )}
       </ContextMenuTrigger>
       <ContextMenuContent>
-        {desktop && (
-          <>
-            <ContextMenuItem onClick={() => void openOs("explorer")}>
-              {t("locationActions.explorer")}
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => void openOs("vscode")}>
-              {t("locationActions.vscode")}
-            </ContextMenuItem>
-          </>
-        )}
+        <ContextMenuItem onClick={() => void openOs("explorer")}>
+          {t("locationActions.explorer")}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => void openOs("vscode")}>
+          {t("locationActions.vscode")}
+        </ContextMenuItem>
         <ContextMenuItem onClick={() => void copyPath()}>
           {t("locationActions.copyPath")}
         </ContextMenuItem>
-        {desktop && showInAppAlternate && <ContextMenuSeparator />}
+        {showInAppAlternate && <ContextMenuSeparator />}
         {classified.kind === "diff" && (
           <ContextMenuItem
             onClick={() =>

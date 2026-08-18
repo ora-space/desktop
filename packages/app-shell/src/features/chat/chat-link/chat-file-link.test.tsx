@@ -18,7 +18,6 @@ function desktopPlatform(open = vi.fn()): PlatformAdapter {
   return {
     ...createStubPlatform(),
     locationActions: {
-      kind: "supported",
       resolveTaskCwd: async () => "C:/repo",
       open,
     },
@@ -119,15 +118,17 @@ describe("ChatFileLink", () => {
     expect(button.className).toContain("hover:underline");
   });
 
-  it("hides Explorer, VS Code, and Terminal on the web stub", async () => {
+  it("offers Explorer and VS Code without Terminal on the desktop host", async () => {
     renderFileLink("src/main.rs");
     fireEvent.contextMenu(
       screen.getByRole("button", { name: /src\/main\.rs/ }),
     );
     expect(
-      screen.queryByRole("menuitem", { name: /文件管理器|Explorer/ }),
-    ).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: /VS Code/ })).toBeNull();
+      screen.getByRole("menuitem", { name: /文件管理器|Explorer/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /VS Code/ }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("menuitem", { name: /终端|Terminal/ }),
     ).toBeNull();
@@ -136,7 +137,7 @@ describe("ChatFileLink", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers Explorer and VS Code on desktop without Terminal", async () => {
+  it("opens Explorer with the OS-absolute path from resolveTaskCwd", async () => {
     const user = userEvent.setup();
     const open = vi.fn();
     const platform = desktopPlatform(open);
