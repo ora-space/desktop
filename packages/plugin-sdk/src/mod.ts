@@ -1,6 +1,6 @@
 export {
-  AGENT_NOT_INSTALLED,
   type AcpSender,
+  AGENT_NOT_INSTALLED,
   type AgentDefinition,
   type AgentModel,
   type AgentStartContext,

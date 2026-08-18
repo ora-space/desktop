@@ -36,9 +36,9 @@ settle before returning.
 Registration declares both directions. `registerMethod` lists what Ora may call;
 `declareEmit` lists what the plugin may send unprompted. Ora rejects any
 plugin-sent method outside that whitelist and terminates the process, so an
-undeclared `notify()` is a defect rather than a dropped message. `onNotification`
-handles host-sent notifications, which never produce a response; an unhandled one
-is logged rather than treated as fatal.
+undeclared `notify()` is a defect rather than a dropped message.
+`onNotification` handles host-sent notifications, which never produce a
+response; an unhandled one is logged rather than treated as fatal.
 
 Throw `PluginMethodError` from a handler to control the JSON-RPC error code Ora
 sees; a plain `Error` becomes `-32603`.
@@ -52,7 +52,11 @@ refuses a plugin whose declaration is incomplete, so the helper registers all of
 it up front.
 
 ```ts
-import { AGENT_NOT_INSTALLED, defineAgent, PluginMethodError } from "@ora-space/plugin-sdk";
+import {
+  AGENT_NOT_INSTALLED,
+  defineAgent,
+  PluginMethodError,
+} from "@ora-space/plugin-sdk";
 
 let send;
 const plugin = defineAgent({

@@ -102,7 +102,12 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     params: { jsonrpc: "2.0", id: 7, result: { protocolVersion: 1 } },
   });
 
-  await harness.send({ jsonrpc: "2.0", id: 3, method: "agent/stop", params: {} });
+  await harness.send({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "agent/stop",
+    params: {},
+  });
   assertEquals((await harness.responses.next()).value, {
     jsonrpc: "2.0",
     id: 3,
@@ -115,7 +120,10 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
 Deno.test("reports a missing agent with the code Ora retries quietly", async () => {
   const plugin = defineAgent({
     start: () => {
-      throw new PluginMethodError(AGENT_NOT_INSTALLED, "claude-agent-acp is not installed");
+      throw new PluginMethodError(
+        AGENT_NOT_INSTALLED,
+        "claude-agent-acp is not installed",
+      );
     },
     stop: () => {},
     listModels: () => [],
