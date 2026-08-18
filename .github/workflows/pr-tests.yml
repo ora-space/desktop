@@ -79,6 +79,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.5
       # test:frontend regenerates TS contracts via `cargo xtask export-contracts`
       # and also runs the Desktop frontend tests.
       - uses: dtolnay/rust-toolchain@stable
@@ -92,11 +95,17 @@ jobs:
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.crates == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: arduino/setup-task@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
       # The root workspace now contains both shared crates and Tauri packages.
       - uses: Swatinem/rust-cache@v2
@@ -105,12 +114,16 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # ora-fs spec tests spawn the ripgrep binary, which GitHub-hosted
       # runners do not preinstall.
+      - name: Update apt package indexes
+        timeout-minutes: 5
+        run: sudo apt-get update
       - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+        timeout-minutes: 5
+        run: sudo apt-get install -y --no-install-recommends ripgrep
       # System libraries required to compile Tauri 2 on ubuntu-latest (24.04).
       - name: Install Tauri system dependencies
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -119,6 +132,10 @@ jobs:
             libxdo-dev \
             libssl-dev \
             build-essential
+      - run: pnpm install --frozen-lockfile
+        env:
+          DENO_VERSION: v2.9.5
+          RG_VERSION: 15.2.0
       - run: task test:crates
 
   # Aggregate gate: the single check to mark as "required" in branch
