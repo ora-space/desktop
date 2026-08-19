@@ -35,6 +35,8 @@ pub(crate) struct RuntimeInner {
     pub plugin_id: String,
     pub registration: RwLock<PluginRegistration>,
     pub status_tx: watch::Sender<RuntimeStatus>,
+    /// Flips to `true` once the supervisor confirms the child process tree has fully exited.
+    pub exited_tx: watch::Sender<bool>,
     pub writer_tx: mpsc::Sender<Value>,
     pub supervisor_tx: mpsc::UnboundedSender<SupervisorCommand>,
     pub inbound: mpsc::UnboundedSender<PluginNotification>,

@@ -16,6 +16,7 @@ use crate::tasks::run_writer;
 /// Builds one isolated protocol state whose inbound notifications the caller can observe.
 fn test_inner() -> (RuntimeInner, mpsc::UnboundedReceiver<PluginNotification>) {
     let (status_tx, _) = watch::channel(RuntimeStatus::Starting);
+    let (exited_tx, _) = watch::channel(false);
     let (writer_tx, _) = mpsc::channel(1);
     let (supervisor_tx, _) = mpsc::unbounded_channel();
     let (inbound, inbound_rx) = mpsc::unbounded_channel();
@@ -23,6 +24,7 @@ fn test_inner() -> (RuntimeInner, mpsc::UnboundedReceiver<PluginNotification>) {
         plugin_id: "example".to_string(),
         registration: RwLock::new(PluginRegistration::default()),
         status_tx,
+        exited_tx,
         writer_tx,
         supervisor_tx,
         inbound,

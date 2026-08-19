@@ -1095,11 +1095,10 @@ fn expected_plugin_with_runtime(
         version: "1.0.0".to_string(),
         kind: "agent".to_string(),
         main: "dist/index.js".to_string(),
-        agents: vec![InstalledPluginAgent {
-            id: "example-agent".to_string(),
+        agent: InstalledPluginAgent {
             display_name: "Example Agent".to_string(),
             contract_version: 1,
-        }],
+        },
         enabled: enabled.is_enabled(),
         runtime,
     }
@@ -1389,11 +1388,10 @@ fn write_plugin_package(data_dir: &std::path::Path, directory: &str, id: &str, n
                     "bun": ">=1.0.0 <2.0.0"
                 },
                 "contributes": {
-                    "agents": [{
-                        "id": "example-agent",
+                    "agent": {
                         "displayName": "Example Agent",
                         "contractVersion": 1
-                    }]
+                    }
                 }
             }
         }))

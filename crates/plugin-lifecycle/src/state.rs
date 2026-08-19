@@ -92,22 +92,19 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         ),
     };
 
+    let ora_plugin_manager::PluginContribution::Agent(agent) = &plugin.contributes;
+
     InstalledPlugin {
         id: plugin.id.clone(),
         package_name: plugin.package_name.clone(),
         display_name: plugin.display_name.clone(),
         version: plugin.version.to_string(),
-        kind: plugin.kind.as_str().to_string(),
+        kind: plugin.contributes.kind().to_string(),
         main: plugin.main.as_str().to_string(),
-        agents: plugin
-            .agents
-            .iter()
-            .map(|agent| InstalledPluginAgent {
-                id: agent.id.clone(),
-                display_name: agent.display_name.clone(),
-                contract_version: agent.contract_version,
-            })
-            .collect(),
+        agent: InstalledPluginAgent {
+            display_name: agent.display_name.clone(),
+            contract_version: agent.contract_version,
+        },
         enabled,
         runtime,
     }

@@ -27,7 +27,14 @@ function createTransportHarness(): {
   responses: AsyncGenerator<unknown>;
 } {
   const hostInput = new TransformStream<Uint8Array>();
-  const pluginOutput = new TransformStream<Uint8Array>();
+  // A default TransformStream has a zero readable high-water mark, so a write's promise only
+  // resolves once a reader pulls it. Unbounded queuing here decouples writes from reads the way a
+  // real stdio pipe does, so a plugin can await `notify` before the harness reads the response.
+  const pluginOutput = new TransformStream<Uint8Array>(
+    undefined,
+    undefined,
+    new CountQueuingStrategy({ highWaterMark: Infinity }),
+  );
   const inputWriter = hostInput.writable.getWriter();
   return {
     transport: {

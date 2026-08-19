@@ -144,4 +144,5 @@ pub(crate) async fn run_supervisor<P>(
         }
     }
     let _ = writer_close.send(());
+    inner.exited_tx.send_replace(true);
 }

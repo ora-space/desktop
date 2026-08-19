@@ -62,6 +62,13 @@ pub enum PluginRuntimeError {
     Remote { code: i64, message: String },
 }
 
+/// Reports whether the supervised plugin exited intentionally or failed unexpectedly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginProcessExit {
+    Stopped,
+    Failed(String),
+}
+
 /// Ends the plugin process once the last clone of its public handle is dropped.
 struct RuntimeLease {
     writer_tx: mpsc::Sender<Value>,
@@ -126,10 +133,12 @@ impl PluginRuntime {
         let (supervisor_tx, supervisor_rx) = mpsc::unbounded_channel();
         let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
         let (status_tx, mut status_rx) = watch::channel(RuntimeStatus::Starting);
+        let (exited_tx, _) = watch::channel(false);
         let inner = Arc::new(RuntimeInner {
             plugin_id: config.plugin_id.clone(),
             registration: RwLock::new(PluginRegistration::default()),
             status_tx,
+            exited_tx,
             writer_tx: writer_tx.clone(),
             supervisor_tx: supervisor_tx.clone(),
             inbound: inbound_tx,
@@ -287,6 +296,18 @@ impl PluginRuntime {
     /// does not exit within its shutdown timeout.
     pub fn shutdown(&self) {
         self.request_shutdown();
+    }
+
+    /// Waits for process exit and classifies intentional shutdown separately from failure.
+    pub async fn wait_for_exit(&self) -> PluginProcessExit {
+        let mut exited = self.inner.exited_tx.subscribe();
+        while !*exited.borrow() && exited.changed().await.is_ok() {}
+        match self.inner.status_tx.borrow().clone() {
+            RuntimeStatus::Failed(reason) => PluginProcessExit::Failed(reason),
+            RuntimeStatus::Starting | RuntimeStatus::Ready | RuntimeStatus::ShuttingDown => {
+                PluginProcessExit::Stopped
+            }
+        }
     }
 
     fn request_shutdown(&self) {

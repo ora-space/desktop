@@ -286,7 +286,7 @@ fn agent_plugin_packages(
             AgentPluginPackage {
                 id: plugin.id.clone(),
                 deno_path: deno_path.to_path_buf(),
-                entrypoint: plugin.package_root.join(&plugin.main),
+                entrypoint: plugin.package_root.join(plugin.main.as_str()),
             }
         })
         .collect()

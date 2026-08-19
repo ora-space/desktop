@@ -2971,6 +2971,7 @@ dependencies = [
  "ora-contracts",
  "ora-fs",
  "ora-logging",
+ "ora-plugin-manager",
  "pretty_assertions",
  "serde",
  "serde_json",
