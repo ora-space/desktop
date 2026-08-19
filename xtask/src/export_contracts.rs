@@ -355,7 +355,25 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "CommitAgentImportRequest"
         | "CommitAgentImportResponse" => "agent-import",
         // plugin
-        "ListInstalledPluginsRequest" | "ListInstalledPluginsResponse" => "plugin",
+        "ActivatePluginRequest"
+        | "ActivatePluginResponse"
+        | "AvailablePlugin"
+        | "DisablePluginRequest"
+        | "DisablePluginResponse"
+        | "EnablePluginRequest"
+        | "EnablePluginResponse"
+        | "ListAvailablePluginsRequest"
+        | "ListAvailablePluginsResponse"
+        | "ListInstalledPluginsRequest"
+        | "ListInstalledPluginsResponse"
+        | "ScanPluginsRequest"
+        | "ScanPluginsResponse"
+        | "StopPluginRequest"
+        | "StopPluginResponse"
+        | "SyncAvailablePluginsRequest"
+        | "SyncAvailablePluginsResponse"
+        | "UninstallPluginRequest"
+        | "UninstallPluginResponse" => "plugin",
         // workflow
         "CreateWorkflowRequest"
         | "CreateWorkflowResponse"

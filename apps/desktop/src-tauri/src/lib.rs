@@ -126,6 +126,8 @@ pub fn run() {
             // plugin
             // =============================================================================
             commands::list_installed_plugins,
+            commands::list_available_plugins,
+            commands::sync_available_plugins,
             commands::scan_plugins,
             commands::enable_plugin,
             commands::disable_plugin,

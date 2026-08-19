@@ -14,6 +14,7 @@ export const queryKeys = {
   sessions: ["sessions"] as const,
   agents: ["agents"] as const,
   skills: ["skills"] as const,
+  availablePlugins: ["available-plugins"] as const,
   installedPlugins: ["installed-plugins"] as const,
   developerMode: ["developer-mode"] as const,
   runtimeLogLevel: ["runtime-log-level"] as const,

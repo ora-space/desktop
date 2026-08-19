@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { IconX } from "@tabler/icons-react";
+import { IconPlug, IconX } from "@tabler/icons-react";
 import {
   Button,
   DropdownMenu,
@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@ora/ui";
-import type { PluginEntry } from "../settings/plugin-catalog";
+import type { InstalledPlugin } from "@ora/contracts";
 
 /** Icons beyond this count collapse into a "+N" badge so the stack stays compact. */
 const STACK_ICON_LIMIT = 3;
@@ -22,8 +22,8 @@ export function SelectedPluginsButton({
   onRemove,
   disabled = false,
 }: {
-  selected: PluginEntry[];
-  onRemove: (plugin: PluginEntry) => void;
+  selected: InstalledPlugin[];
+  onRemove: (plugin: InstalledPlugin) => void;
   disabled?: boolean;
 }) {
   const { t } = useTranslation();
@@ -45,40 +45,34 @@ export function SelectedPluginsButton({
         }
       >
         <span className="flex items-center -space-x-2.5">
-          {stacked.map((plugin) => {
-            const Mark = plugin.mark;
-            return (
-              <span
-                key={plugin.id}
-                className={`flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-background ${plugin.tone}`}
-              >
-                <Mark className="size-3" />
-              </span>
-            );
-          })}
+          {stacked.map((plugin) => (
+            <span
+              key={plugin.id}
+              className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground"
+            >
+              <IconPlug className="size-3" />
+            </span>
+          ))}
         </span>
         {overflow > 0 && (
           <span className="whitespace-nowrap text-xs">+{overflow}</span>
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-56">
-        {selected.map((plugin) => {
-          const Mark = plugin.mark;
-          return (
-            <DropdownMenuItem
-              key={plugin.id}
-              onClick={() => onRemove(plugin)}
-              className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
-            >
-              <Mark className={`size-3.5 shrink-0 ${plugin.tone}`} />
-              <span className="min-w-0 flex-1 truncate">{plugin.name}</span>
-              <IconX
-                className="size-3.5 shrink-0 text-muted-foreground"
-                aria-hidden="true"
-              />
-            </DropdownMenuItem>
-          );
-        })}
+        {selected.map((plugin) => (
+          <DropdownMenuItem
+            key={plugin.id}
+            onClick={() => onRemove(plugin)}
+            className="gap-1.5 rounded-sm px-2 py-1.5 text-xs"
+          >
+            <IconPlug className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">{plugin.name}</span>
+            <IconX
+              className="size-3.5 shrink-0 text-muted-foreground"
+              aria-hidden="true"
+            />
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

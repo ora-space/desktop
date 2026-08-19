@@ -1,6 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk";
-import type { Skill } from "@ora/contracts";
-import type { PluginEntry } from "../settings/plugin-catalog";
+import type { InstalledPlugin, Skill } from "@ora/contracts";
 import { availableSkills } from "../../state/hooks/use-skills";
 
 export type ComposerActionGroup =
@@ -36,7 +35,7 @@ export type ComposerAction =
       group: "plugins";
       label: string;
       description: string;
-      plugin: PluginEntry;
+      plugin: InstalledPlugin;
     }
   | {
       id: "action:add-images";
@@ -61,15 +60,13 @@ export function buildComposerActions({
   skills,
   commands,
   plugins,
-  translatePluginSummary,
   includeAttachments,
   attachmentLabel,
   attachmentDescription,
 }: {
   skills: Skill[];
   commands: acp.AvailableCommand[];
-  plugins: PluginEntry[];
-  translatePluginSummary: (summaryKey: string) => string;
+  plugins: InstalledPlugin[];
   includeAttachments: boolean;
   attachmentLabel: string;
   attachmentDescription: string;
@@ -94,7 +91,7 @@ export function buildComposerActions({
       id: `plugin:${plugin.id}`,
       group: "plugins",
       label: plugin.name,
-      description: translatePluginSummary(plugin.summaryKey),
+      description: plugin.description,
       plugin,
     })),
     ...(includeAttachments

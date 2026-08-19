@@ -217,6 +217,19 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies a missing or empty marketplace registry directory builds a valid empty index.
+    #[test]
+    fn builds_an_empty_index_for_a_missing_registry_directory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+
+        let build = RegistryIndex::build(&root.path().join("registry"), UPDATED_AT);
+
+        assert_eq!(build.index().plugins().len(), 0);
+        assert_eq!(build.skipped().len(), 0);
+        Ok(())
+    }
+
     /// Verifies a malformed manifest is skipped, logged, and reported without blocking the build.
     #[test]
     fn skips_invalid_manifest_and_reports_it() -> Result<(), Box<dyn std::error::Error>> {

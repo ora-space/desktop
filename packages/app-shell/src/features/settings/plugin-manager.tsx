@@ -13,66 +13,38 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
   Input,
   Switch,
 } from "@ora/ui";
 import {
   IconDots,
-  IconInfoCircle,
   IconLoader2,
   IconPlug,
+  IconRefresh,
   IconSearch,
   IconTrash,
 } from "@tabler/icons-react";
-import type { PluginEntry } from "./plugin-catalog";
-import { PluginTile } from "./plugin-tile";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
+import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
+import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 
-/**
- * The installed-plugin manager keeps catalog interactions unchanged and appends
- * discovered packages as read-only rows without detail, uninstall, or enable controls.
- */
+/** The installed-plugin manager drives durable state through the backend lifecycle commands. */
 export function PluginManager({
   plugins,
-  discoveredPlugins,
-  disabledIds,
-  pendingInstallIds,
-  pendingEnableIds,
   onBack,
-  onOpen,
-  onToggleEnabled,
-  onUninstall,
 }: {
-  plugins: PluginEntry[];
-  discoveredPlugins: InstalledPlugin[];
-  disabledIds: string[];
-  pendingInstallIds: string[];
-  pendingEnableIds: string[];
+  plugins: InstalledPlugin[];
   onBack: () => void;
-  onOpen: (id: string) => void;
-  onToggleEnabled: (id: string) => void;
-  onUninstall: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const scan = usePluginScan();
 
   const needle = query.trim().toLowerCase();
   const visible = useMemo(
-    () =>
-      plugins.filter(
-        (plugin) =>
-          !needle ||
-          plugin.name.toLowerCase().includes(needle) ||
-          plugin.publisher.toLowerCase().includes(needle) ||
-          t(plugin.summaryKey).toLowerCase().includes(needle),
-      ),
-    [needle, plugins, t],
-  );
-  const visibleDiscovered = useMemo(
-    () => filterDiscoveredPlugins(discoveredPlugins, needle),
-    [discoveredPlugins, needle],
+    () => filterDiscoveredPlugins(plugins, needle),
+    [needle, plugins],
   );
 
   return (
@@ -105,9 +77,9 @@ export function PluginManager({
           variant="secondary"
           className="h-7 shrink-0 gap-1.5 rounded-lg px-2.5 text-sm font-medium"
         >
-          {t("settings.plugins.title")}
+          {t("settings.plugins.installed")}
           <span className="font-normal text-muted-foreground">
-            {plugins.length + discoveredPlugins.length}
+            {plugins.length}
           </span>
         </Badge>
         <div className="relative min-w-0 flex-1 sm:max-w-xs sm:ml-auto">
@@ -120,117 +92,109 @@ export function PluginManager({
             className="pl-8"
           />
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={scan.isPending}
+          onClick={() => scan.mutate()}
+          aria-label={t("settings.plugins.scanInstalled")}
+        >
+          {scan.isPending ? (
+            <IconLoader2 className="animate-spin" />
+          ) : (
+            <IconRefresh />
+          )}
+        </Button>
       </div>
 
-      {visible.length === 0 && visibleDiscovered.length === 0 ? (
+      {visible.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
-          {plugins.length + discoveredPlugins.length === 0
+          {plugins.length === 0
             ? t("settings.plugins.noneInstalled")
             : t("settings.plugins.empty")}
         </p>
       ) : (
         <div className="divide-y divide-border border-y border-border">
-          {visible.map((plugin) => {
-            const uninstalling = pendingInstallIds.includes(plugin.id);
-            const togglingEnabled = pendingEnableIds.includes(plugin.id);
-            return (
-              <div key={plugin.id} className="flex items-center gap-3 py-3">
-                <button
-                  type="button"
-                  onClick={() => onOpen(plugin.id)}
-                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <PluginTile plugin={plugin} />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">
-                      {plugin.name}
-                    </span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {t(plugin.summaryKey)}
-                    </span>
-                    <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
-                      {plugin.publisher}
-                    </span>
-                  </span>
-                </button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={t("settings.plugins.openMenu", {
-                          name: plugin.name,
-                        })}
-                        className="shrink-0 text-muted-foreground"
-                      />
-                    }
-                  >
-                    <IconDots />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-44">
-                    <DropdownMenuItem onClick={() => onOpen(plugin.id)}>
-                      <IconInfoCircle />
-                      {t("settings.plugins.viewDetails")}
-                    </DropdownMenuItem>
-                    {/* The CLI runtimes' install state is detected, not managed here, so they never offer uninstall. */}
-                    {!plugin.detectionAgentCli && (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          variant="destructive"
-                          disabled={uninstalling}
-                          onClick={() => onUninstall(plugin.id)}
-                        >
-                          {uninstalling ? (
-                            <IconLoader2 className="animate-spin" />
-                          ) : (
-                            <IconTrash />
-                          )}
-                          {t(
-                            uninstalling
-                              ? "settings.plugins.uninstalling"
-                              : "settings.plugins.uninstall",
-                          )}
-                        </DropdownMenuItem>
-                      </>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                {/* An uninstall in flight also freezes the toggle: this row is on its way out. */}
-                <Switch
-                  checked={!disabledIds.includes(plugin.id)}
-                  disabled={togglingEnabled || uninstalling}
-                  onCheckedChange={() => onToggleEnabled(plugin.id)}
-                  aria-label={t("settings.plugins.toggleSkill", {
-                    name: plugin.name,
-                  })}
-                />
-              </div>
-            );
-          })}
-          {visibleDiscovered.map((plugin) => (
-            <div
-              key={`discovered:${plugin.id}`}
-              className="flex items-center gap-3 py-3"
-            >
-              <span className="flex size-10 shrink-0 items-center justify-center text-muted-foreground">
-                <IconPlug className="size-6" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">
-                  {plugin.displayName}
-                </span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {plugin.packageName}
-                </span>
-                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
-                  {plugin.version} · {plugin.kind}
-                </span>
-              </span>
-            </div>
+          {visible.map((plugin) => (
+            <InstalledPluginRow key={plugin.id} plugin={plugin} />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function InstalledPluginRow({ plugin }: { plugin: InstalledPlugin }) {
+  const { t } = useTranslation();
+  const mutations = usePluginMutations(plugin.id);
+  const enabling = mutations.enable.isPending;
+  const disabling = mutations.disable.isPending;
+  const uninstalling = mutations.uninstall.isPending;
+  const busy = enabling || disabling || uninstalling;
+
+  return (
+    <div className="flex items-center gap-3 py-3">
+      <span className="flex size-10 shrink-0 items-center justify-center text-muted-foreground">
+        <IconPlug className="size-6" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">
+          {plugin.name}
+        </span>
+        <span className="block truncate text-xs text-muted-foreground">
+          {plugin.description}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
+          {plugin.version} · {plugin.kind} ·{" "}
+          {plugin.runtime === "failed" ? plugin.failureReason : plugin.runtime}
+        </span>
+      </span>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t("settings.plugins.openMenu", { name: plugin.name })}
+              className="shrink-0 text-muted-foreground"
+              disabled={busy}
+            />
+          }
+        >
+          <IconDots />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={uninstalling}
+            onClick={() => mutations.uninstall.mutate()}
+          >
+            {uninstalling ? (
+              <IconLoader2 className="animate-spin" />
+            ) : (
+              <IconTrash />
+            )}
+            {t(
+              uninstalling
+                ? "settings.plugins.uninstalling"
+                : "settings.plugins.uninstall",
+            )}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Switch
+        checked={plugin.enabled}
+        disabled={busy}
+        onCheckedChange={(next) => {
+          if (next) void mutations.enable.mutate();
+          else void mutations.disable.mutate();
+        }}
+        aria-label={t("settings.plugins.toggleSkill", { name: plugin.name })}
+      />
+      {(enabling || disabling) && (
+        <IconLoader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
       )}
     </div>
   );

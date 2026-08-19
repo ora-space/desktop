@@ -265,6 +265,26 @@ impl Backend {
         Ok(self.plugin.list(request))
     }
 
+    /// Returns the cached marketplace registry index used to populate plugin discovery.
+    pub fn list_available_plugins(
+        &self,
+        request: ListAvailablePluginsRequest,
+    ) -> Result<ListAvailablePluginsResponse, BackendError> {
+        self.plugin
+            .list_available_plugins(request)
+            .map_err(|error| BackendError::internal("failed to load plugin registry index", error))
+    }
+
+    /// Pulls the marketplace source and rebuilds the cache used by plugin discovery.
+    pub fn sync_available_plugins(
+        &self,
+        request: SyncAvailablePluginsRequest,
+    ) -> Result<SyncAvailablePluginsResponse, BackendError> {
+        self.plugin
+            .sync_available_plugins(request)
+            .map_err(|error| BackendError::internal("failed to sync plugin registry index", error))
+    }
+
     /// Explicitly rescans packages and reconciles durable and runtime state.
     pub async fn scan_plugins(
         &self,

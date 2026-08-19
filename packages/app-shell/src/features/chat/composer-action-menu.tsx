@@ -9,6 +9,7 @@ import {
   IconBolt,
   IconLoader2,
   IconPhoto,
+  IconPlug,
   IconSparkles,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
@@ -335,15 +336,8 @@ function actionIcon(
       return <IconSparkles className={commonClassName} aria-hidden="true" />;
     case "commands":
       return <IconBolt className={commonClassName} aria-hidden="true" />;
-    case "plugins": {
-      const Mark = action.plugin.mark;
-      return (
-        <Mark
-          className={`size-4 shrink-0 ${action.plugin.tone}`}
-          aria-hidden="true"
-        />
-      );
-    }
+    case "plugins":
+      return <IconPlug className={commonClassName} aria-hidden="true" />;
     case "actions":
       return <IconPhoto className={commonClassName} aria-hidden="true" />;
   }
