@@ -24,4 +24,6 @@ open of an absolute tool path does not hit the backend’s rooted-path
 rejection. A path that remains outside the task cwd is not a link: suffix
 matching it must not open a different relative file inside the worktree.
 OS handoff uses `joinOsAbsolutePath` so Explorer, VS Code, and Copy path
-receive a host path rather than an internal URI.
+receive a host path rather than an internal URI. Chat file links hide those
+actions until a task cwd is known, so a relative workspace path is never
+copied or opened as if it were absolute.

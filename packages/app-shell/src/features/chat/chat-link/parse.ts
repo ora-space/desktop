@@ -15,7 +15,9 @@ export type ParsedChatHref =
   | { kind: "inert" };
 
 const DANGEROUS_HREF_SCHEME = /^(javascript|data|vbscript|mailto):/i;
-const HTTP_HREF_SCHEME = /^https?:\/\//i;
+const HTTP_HREF_SCHEME = /^https?:/i;
+const FILE_HREF_SCHEME = /^file:/i;
+const HREF_SCHEME = /^([a-z][a-z0-9+.-]*):/i;
 
 /** Decodes percent-escapes without throwing on malformed sequences. */
 function decodeHref(value: string): string {
@@ -115,17 +117,29 @@ export function isPathLikeToken(raw: string): boolean {
   return isNamedWorkspaceFile(path);
 }
 
-/** Classifies a Markdown href without probing the workspace. */
+/**
+ * Classifies a Markdown href without probing the workspace.
+ * Web hrefs keep their original encoding; file paths decode percent-escapes once.
+ */
 export function parseChatHref(href: string): ParsedChatHref {
-  const trimmed = decodeHref(href.trim());
+  const trimmed = href.trim();
   if (HTTP_HREF_SCHEME.test(trimmed)) {
     return { kind: "web", href: trimmed };
   }
   if (DANGEROUS_HREF_SCHEME.test(trimmed)) {
     return { kind: "inert" };
   }
-  if (/^file:/i.test(trimmed)) {
-    let rest = trimmed.replace(/^file:/i, "").replace(/^\/\//, "");
+  const scheme = trimmed.match(HREF_SCHEME)?.[1];
+  // Single-letter schemes are Windows drives (`C:`), not URL protocols.
+  if (
+    scheme !== undefined &&
+    !FILE_HREF_SCHEME.test(trimmed) &&
+    !/^[A-Za-z]$/.test(scheme)
+  ) {
+    return { kind: "inert" };
+  }
+  if (FILE_HREF_SCHEME.test(trimmed)) {
+    let rest = trimmed.replace(FILE_HREF_SCHEME, "").replace(/^\/\//, "");
     if (/^\/[A-Za-z]:/.test(rest)) rest = rest.slice(1);
     const parsed = parsePathCandidate(rest);
     return { kind: "file", ...parsed };

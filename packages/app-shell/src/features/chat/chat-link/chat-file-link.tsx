@@ -172,10 +172,10 @@ function LinkedChatFile({
       : initial;
 
   const editedHit = matchIndexPath(classified.path, chatLink.index.edited);
+  // Explorer / VS Code / copy need a host path. Hide them until cwd is known
+  // rather than handing a worktree-relative path to the OS.
   const osPath =
-    cwd === null
-      ? classified.path
-      : joinOsAbsolutePath(classified.displayPath, cwd);
+    cwd === null ? null : joinOsAbsolutePath(classified.displayPath, cwd);
   const ariaLabel = t("chat.fileLink.aria", { path: classified.path });
   const linkClassName = [CHAT_FILE_LINK_CLASS, className]
     .filter((part) => part !== undefined && part !== "")
@@ -185,6 +185,7 @@ function LinkedChatFile({
     (classified.kind === "files" && editedHit !== null);
 
   const openOs = async (target: "explorer" | "vscode") => {
+    if (osPath === null) return;
     try {
       await locationActions.open(target, osPath);
     } catch {
@@ -201,6 +202,7 @@ function LinkedChatFile({
   };
 
   const copyPath = async () => {
+    if (osPath === null) return;
     try {
       await navigator.clipboard.writeText(osPath);
       toast.success(t("locationActions.copied"));
@@ -229,16 +231,20 @@ function LinkedChatFile({
         )}
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onClick={() => void openOs("explorer")}>
-          {t("locationActions.explorer")}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => void openOs("vscode")}>
-          {t("locationActions.vscode")}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => void copyPath()}>
-          {t("locationActions.copyPath")}
-        </ContextMenuItem>
-        {showInAppAlternate && <ContextMenuSeparator />}
+        {osPath !== null && (
+          <>
+            <ContextMenuItem onClick={() => void openOs("explorer")}>
+              {t("locationActions.explorer")}
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => void openOs("vscode")}>
+              {t("locationActions.vscode")}
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => void copyPath()}>
+              {t("locationActions.copyPath")}
+            </ContextMenuItem>
+          </>
+        )}
+        {osPath !== null && showInAppAlternate && <ContextMenuSeparator />}
         {classified.kind === "diff" && (
           <ContextMenuItem
             onClick={() =>

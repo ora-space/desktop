@@ -33,19 +33,14 @@ function basename(path: string): string {
 }
 
 /**
- * Resolves a typed path against the session index. Bare filenames link only when
- * exactly one index entry shares that last segment; the hit's stored path is returned.
+ * Resolves a typed path against one index collection. Bare filenames skip exact
+ * equality so a root `README.md` cannot hide another `…/README.md`.
  */
 export function matchIndexPath(
   candidate: string,
   entries: string[],
 ): string | null {
   const normalized = normalizeDiffPath(displayPath(candidate));
-  const exact = entries.find(
-    (entry) => entry.toLowerCase() === normalized.toLowerCase(),
-  );
-  if (exact !== undefined) return exact;
-
   if (!normalized.includes("/")) {
     const target = normalized.toLowerCase();
     const hits = entries.filter(
@@ -54,10 +49,31 @@ export function matchIndexPath(
     return hits.length === 1 ? hits[0]! : null;
   }
 
+  const exact = entries.find(
+    (entry) => entry.toLowerCase() === normalized.toLowerCase(),
+  );
+  if (exact !== undefined) return exact;
+
   const suffixHits = entries.filter((entry) =>
     pathsMatchForWorkspace(entry, normalized),
   );
   return suffixHits.length === 1 ? suffixHits[0]! : null;
+}
+
+/**
+ * Bare filenames must be unique across edited and referenced together.
+ * Matching one collection at a time would still link `src/main.rs` vs `tests/main.rs`.
+ */
+function uniqueBasenameHit(
+  candidate: string,
+  index: SessionArtifactIndex,
+): string | null {
+  const target = normalizeDiffPath(displayPath(candidate)).toLowerCase();
+  if (target.includes("/") || target === "") return null;
+  const hits = [...index.edited, ...index.referenced].filter(
+    (entry) => basename(entry).toLowerCase() === target,
+  );
+  return hits.length === 1 ? hits[0]! : null;
 }
 
 /**
@@ -137,20 +153,46 @@ function classifyFileCandidate(
   input: ClassifyChatCandidateInput,
   hrefMissOpensFiles: boolean,
 ): ChatLinkClassification {
+  const normalized = normalizeDiffPath(displayPath(path));
+  if (!normalized.includes("/")) {
+    const unique = uniqueBasenameHit(path, input.index);
+    if (unique === null) {
+      if (!hrefMissOpensFiles) return { kind: "none" };
+      return navigationClassification("files", path, line, column, input);
+    }
+    const kind = input.index.edited.some(
+      (entry) => entry.toLowerCase() === unique.toLowerCase(),
+    )
+      ? "diff"
+      : "files";
+    return navigationClassification(kind, unique, line, column, input);
+  }
+
   const editedHit = matchIndexPath(path, input.index.edited);
   const referencedHit =
     editedHit === null ? matchIndexPath(path, input.index.referenced) : null;
   const hit = editedHit ?? referencedHit;
   if (hit === null && !hrefMissOpensFiles) return { kind: "none" };
 
-  const navigationPath = toNavigationPath(hit ?? path, input.cwd);
-  if (navigationPath === null) return { kind: "none" };
   const kind = editedHit !== null ? "diff" : "files";
+  return navigationClassification(kind, hit ?? path, line, column, input);
+}
+
+/** Drops candidates whose stored path cannot be opened as a worktree-relative file. */
+function navigationClassification(
+  kind: "diff" | "files",
+  storedPath: string,
+  line: number | undefined,
+  column: number | undefined,
+  input: ClassifyChatCandidateInput,
+): ChatLinkClassification {
+  const navigationPath = toNavigationPath(storedPath, input.cwd);
+  if (navigationPath === null) return { kind: "none" };
   return {
     kind,
     path: navigationPath,
     line,
     column,
-    displayPath: hit ?? path,
+    displayPath: storedPath,
   };
 }

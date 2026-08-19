@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ChatToolCall, ChatTurn } from "@ora/chat";
 import {
   collectCumulativeArtifactIndices,
   collectSessionArtifactIndex,
 } from "./artifact-index";
+import * as turnDiffFiles from "../turn-diff-files";
 
 /** Builds a tool call without involving the ACP transport. */
 function tool(
@@ -277,5 +278,34 @@ describe("collectSessionArtifactIndex", () => {
     expect(index.referenced).toEqual([
       "packages/app-shell/src/features/chat/chat-link/chat-file-link.test.tsx",
     ]);
+  });
+
+  it("never reads diff text or calls collectTurnDiffFiles while indexing", () => {
+    const collect = vi.spyOn(turnDiffFiles, "collectTurnDiffFiles");
+    const throwingDiff = {
+      type: "diff" as const,
+      path: "src/main.rs",
+      get oldText(): string {
+        throw new Error("must not read oldText");
+      },
+      get newText(): string {
+        throw new Error("must not read newText");
+      },
+    };
+
+    expect(() =>
+      collectSessionArtifactIndex([
+        turn("t1", [
+          tool({
+            id: "edit-1",
+            toolKind: "edit",
+            content: [throwingDiff],
+            locations: [{ path: "src/main.rs" }],
+          }),
+        ]),
+      ]),
+    ).not.toThrow();
+    expect(collect).not.toHaveBeenCalled();
+    collect.mockRestore();
   });
 });

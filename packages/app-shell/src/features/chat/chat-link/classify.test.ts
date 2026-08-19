@@ -71,6 +71,48 @@ describe("classifyChatCandidate", () => {
     ).toEqual({ kind: "none" });
   });
 
+  it("does not link a bare filename that appears once in edited and once in referenced", () => {
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "main.rs",
+        index: {
+          edited: ["src/main.rs"],
+          referenced: ["tests/main.rs"],
+        },
+        hasNavigation: true,
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("does not link a bare filename that exact-matches one entry when another shares the basename", () => {
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "README.md",
+        index: {
+          edited: [],
+          referenced: ["README.md", "packages/app-shell/README.md"],
+        },
+        hasNavigation: true,
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("still opens Files for an explicit href when the bare filename is ambiguous", () => {
+    expect(
+      classifyChatCandidate({
+        source: "href",
+        raw: "README.md",
+        index: {
+          edited: [],
+          referenced: ["README.md", "packages/app-shell/README.md"],
+        },
+        hasNavigation: true,
+      }),
+    ).toMatchObject({ kind: "files", path: "README.md" });
+  });
+
   it("sends explicit file hrefs that miss the index to Files", () => {
     expect(
       classifyChatCandidate({
@@ -208,6 +250,18 @@ describe("classifyChatCandidate", () => {
         },
         hasNavigation: true,
         cwd: "D:/project/desktop/.data/worktrees/f06fdb43-1297-4ba3-9143-a7a95ee85b0b",
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("does not link an absolute Markdown href outside the task cwd", () => {
+    expect(
+      classifyChatCandidate({
+        source: "href",
+        raw: "C:/other/config.toml",
+        index,
+        hasNavigation: true,
+        cwd: "C:/repo",
       }),
     ).toEqual({ kind: "none" });
   });

@@ -134,7 +134,7 @@ describe("ChatFileLink", () => {
   });
 
   it("offers Explorer and VS Code without Terminal on the desktop host", async () => {
-    await renderFileLink("src/main.rs");
+    await renderFileLink("src/main.rs", { platform: desktopPlatform() });
     fireEvent.contextMenu(
       screen.getByRole("button", { name: /src\/main\.rs/ }),
     );
@@ -149,6 +149,30 @@ describe("ChatFileLink", () => {
     ).toBeNull();
     expect(
       screen.getByRole("menuitem", { name: /复制路径|Copy path/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides OS path actions until an absolute cwd is known", async () => {
+    const platform: PlatformAdapter = {
+      ...createStubPlatform(),
+      locationActions: {
+        resolveTaskCwd: () => new Promise(() => undefined),
+        open: vi.fn(),
+      },
+    };
+    await renderFileLink("src/main.rs", { platform });
+    fireEvent.contextMenu(
+      screen.getByRole("button", { name: /src\/main\.rs/ }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: /文件管理器|Explorer/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /VS Code/ })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: /复制路径|Copy path/ }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: /在文件中预览|Preview in Files/ }),
     ).toBeInTheDocument();
   });
 

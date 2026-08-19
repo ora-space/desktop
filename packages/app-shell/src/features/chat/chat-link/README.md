@@ -23,8 +23,9 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 - Each assistant turn receives a **cumulative** index of tools up to that turn (`collectCumulativeArtifactIndices`). A path that was only read still opens Files on that turn, even if a later turn edits it. Mentions from the edit turn onward open Changes.
 - Failed and cancelled tool calls are not indexed.
 - When ACP omits `locations`, read tools may still contribute referenced paths from `rawInput` (`filePath`, `path`, `AbsolutePath`, …).
-- Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists. A bare filename must not replace a nested index path.
-- Absolute ACP paths are stripped with the task cwd (`getWorkspace`, plus desktop `resolveTaskCwd`) before Diff/Files requests. A hit outside that cwd is not a link: suffix-matching it must not open a different relative path inside the worktree.
+- Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists. A bare filename links only when that last segment is unique across **edited and referenced together**; several hits stay plain text. An explicit Markdown file href still attempts Files with the typed string.
+- Web `http(s)` hrefs keep their original percent-encoding. `javascript:` / `data:` / `vbscript:` / `mailto:` and other non-file schemes (`ssh:`, `ftp:`, …) are inert. File paths decode `%20` once.
+- Absolute ACP paths are stripped with the task cwd (`getWorkspace`, plus desktop `resolveTaskCwd`) before Diff/Files requests. A hit outside that cwd is not a link: suffix-matching it must not open a different relative path inside the worktree. An absolute Markdown href outside the cwd stays unlinked for the same reason (Files rejects rooted paths).
 - If a requested diff file is not in the active task patch, navigation falls back to Files. A line missing from a file that **is** in the patch still opens that file in Changes, with no toast.
 - If Files cannot read a requested path, the viewer shows the localized missing-path copy, not the raw `Remote Ora request failed` transport message.
 - Changes must keep the requested file selected **and scroll that file's diff section to the top of the viewport**. The first layout after remounting Changes is often 0-height, and virtualized placeholders above the file can shrink after the first jump; do not treat `scrollTo(0)` or a one-shot jump as success. Scroll-position highlighting must not replace a chat-driven `fileRequest` with the first or last file in the patch.
@@ -33,9 +34,9 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 
 ## Interactions
 
-- `MessageList` provides a per-turn `ChatLinkContext` around each `ResponseTurn`
+- `MessageList` provides a per-turn `ChatLinkContext` around each `ResponseTurn`. `ChatView` remounts the list when `taskId` changes so the per-turn artifact cache cannot leak across tasks.
 - `TaskChangesNavigation.openDiff` / `openWorkspaceFile` in the review layout
-- Desktop `locationActions` for Explorer, VS Code, and copying an OS-absolute path. The capability is always the cwd + OS-open pair (no `unsupported` variant); Terminal stays hidden because it is a directory opener. An empty `resolveTaskCwd` result keeps the session cwd instead of forcing a blank host path.
+- Desktop `locationActions` for Explorer, VS Code, and copying an OS-absolute path. The capability is always the cwd + OS-open pair (no `unsupported` variant); Terminal stays hidden because it is a directory opener. An empty `resolveTaskCwd` result keeps the session cwd instead of forcing a blank host path. Explorer / VS Code / Copy path are omitted until an OS-absolute cwd is known so the menu never copies a worktree-relative path.
 - Shared slash matching in `packages/app-shell/src/lib/workspace-path.ts`
 
 ## Appearance

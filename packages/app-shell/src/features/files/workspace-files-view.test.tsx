@@ -1,8 +1,8 @@
 import { createElement, type ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { RemoteContractError } from "@ora/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { ContractsClientContext } from "../../contracts-client-context";
 import {
@@ -55,5 +55,68 @@ describe("WorkspaceFilesView missing files", () => {
       await screen.findByText(/所选路径不存在|The selected path was not found/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Remote Ora request failed/)).toBeNull();
+  });
+});
+
+/** Renders Files with a readable chat-driven path and an optional line target. */
+function renderRequestedFile(path: string, line?: number) {
+  const client = createMockClient(createMockClientState());
+  const readWorkspaceFile = vi.fn(async (request: { path: string }) => ({
+    path: request.path,
+    content: 'fn main() {\n    println!("hi");\n}\n',
+    version: "test",
+    sizeBytes: 32,
+  }));
+  client.fileSystem.readWorkspaceFile = readWorkspaceFile;
+  client.task.getWorkspace = async () => ({
+    workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+  });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 0 } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(
+        ContractsClientContext.Provider,
+        { value: client },
+        createElement(AppI18nProvider, null, children),
+      ),
+    );
+  const view = render(
+    <WorkspaceFilesView
+      taskId="task-1"
+      hideHeader
+      fileRequest={{
+        path,
+        requestId: 1,
+        line,
+        column: line === undefined ? undefined : 1,
+      }}
+    />,
+    { wrapper },
+  );
+  return { ...view, readWorkspaceFile };
+}
+
+describe("WorkspaceFilesView file requests", () => {
+  it("reads the requested path and passes the line to the viewer", async () => {
+    const { container, readWorkspaceFile } = renderRequestedFile(
+      "src/main.rs",
+      2,
+    );
+
+    expect(await screen.findByText("src/main.rs:2:1")).toBeInTheDocument();
+    expect(readWorkspaceFile).toHaveBeenCalledWith({
+      taskId: "task-1",
+      path: "src/main.rs",
+    });
+    await waitFor(() => {
+      expect(container.querySelector('[data-line-number="2"]')).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+    });
   });
 });

@@ -66,6 +66,8 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * The right pane. The composer keeps a single DOM node across the empty and
  * thread layouts so sending the first message slides it down to the bottom
  * instead of tearing it down and rebuilding it in the new position.
+ * MessageList is keyed by `taskId` so the per-turn artifact cache cannot leak
+ * when the list would otherwise stay mounted across task switches.
  */
 export function ChatView({
   taskId,
@@ -154,6 +156,7 @@ export function ChatView({
         <HistoryLoading />
       ) : (
         <MessageList
+          key={taskId}
           turns={turns}
           modelChanges={modelChanges}
           userName={userName}

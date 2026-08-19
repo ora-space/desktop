@@ -82,9 +82,36 @@ describe("parseChatHref", () => {
     });
   });
 
-  it("treats dangerous schemes as inert", () => {
+  it("does not decode percent-escapes in http(s) hrefs", () => {
+    expect(
+      parseChatHref("https://example.com/v2/search?q=a%26b#frag%2Fment"),
+    ).toEqual({
+      kind: "web",
+      href: "https://example.com/v2/search?q=a%26b#frag%2Fment",
+    });
+  });
+
+  it("treats dangerous and other non-file schemes as inert", () => {
     expect(parseChatHref("javascript:alert(1)")).toEqual({ kind: "inert" });
     expect(parseChatHref("data:text/html,hi")).toEqual({ kind: "inert" });
     expect(parseChatHref("mailto:a@b.com")).toEqual({ kind: "inert" });
+    expect(parseChatHref("ssh://git@github.com/user/repo.git")).toEqual({
+      kind: "inert",
+    });
+    expect(parseChatHref("ftp://example.com/a.rs")).toEqual({ kind: "inert" });
+  });
+
+  it("decodes percent-escapes in file paths only once", () => {
+    expect(parsePathCandidate("dir/file%2520name.rs")).toEqual({
+      path: "dir/file%20name.rs",
+      line: undefined,
+      column: undefined,
+    });
+    expect(parseChatHref("dir/file%2520name.rs")).toEqual({
+      kind: "file",
+      path: "dir/file%20name.rs",
+      line: undefined,
+      column: undefined,
+    });
   });
 });

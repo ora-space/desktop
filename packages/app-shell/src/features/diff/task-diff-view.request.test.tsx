@@ -36,7 +36,11 @@ const MULTI_FILE_PATCH = [
 ].join("");
 
 /** Renders Changes with a mocked multi-file patch and an explicit file request. */
-function renderRequestedDiff() {
+function renderRequestedDiff(fileRequest?: {
+  path?: string;
+  requestId?: number;
+  line?: number;
+}) {
   const client = createMockClient(createMockClientState());
   client.task.getDiff = async () => ({
     baseCommitId: "base",
@@ -62,7 +66,11 @@ function renderRequestedDiff() {
       taskId="task-1"
       viewType="unified"
       fileTreeOpen
-      fileRequest={{ path: REQUESTED_FILE, requestId: 1 }}
+      fileRequest={{
+        path: fileRequest?.path ?? REQUESTED_FILE,
+        requestId: fileRequest?.requestId ?? 1,
+        line: fileRequest?.line,
+      }}
       onFileTreeOpenChange={() => undefined}
     />,
     { wrapper },
@@ -225,5 +233,79 @@ describe("TaskDiffView file requests", () => {
         behavior: "auto",
       });
     });
+  });
+
+  it("highlights and scrolls the requested new-side line", async () => {
+    const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
+    const patch = [
+      "diff --git a/src/main.rs b/src/main.rs",
+      "new file mode 100644",
+      "index 0000000..1111111",
+      "--- /dev/null",
+      "+++ b/src/main.rs",
+      "@@ -0,0 +1,3 @@",
+      "+fn main() {",
+      '+    println!("hi");',
+      "+}",
+      "",
+    ].join("\n");
+    const client = createMockClient(createMockClientState());
+    client.task.getDiff = async () => ({
+      baseCommitId: "base",
+      headCommitId: "head",
+      diffId: "diff-1",
+      patch,
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0 } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(
+          ContractsClientContext.Provider,
+          { value: client },
+          createElement(AppI18nProvider, null, children),
+        ),
+      );
+    const { container } = render(
+      <TaskDiffView
+        taskId="task-1"
+        viewType="unified"
+        fileTreeOpen
+        fileRequest={{ path: "src/main.rs", requestId: 1, line: 2 }}
+        onFileTreeOpenChange={() => undefined}
+      />,
+      { wrapper },
+    );
+
+    const requested = await screen.findByRole("button", { name: "main.rs" });
+    await waitFor(() => {
+      expect(requested).toHaveAttribute("aria-current", "page");
+    });
+    await waitFor(() => {
+      expect(
+        container.querySelector(".diff-code-selected, .diff-selected"),
+      ).not.toBeNull();
+    });
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: "center",
+      inline: "nearest",
+    });
+  });
+
+  it("still selects the file when the requested line is absent from the patch", async () => {
+    renderRequestedDiff({ line: 99 });
+
+    const requested = await screen.findByRole("button", {
+      name: "demo-spec.md",
+    });
+    await waitFor(() => {
+      expect(requested).toHaveAttribute("aria-current", "page");
+    });
+    expect(
+      document.querySelector(".diff-code-selected, .diff-selected"),
+    ).toBeNull();
   });
 });
