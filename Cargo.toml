@@ -15,6 +15,7 @@ members = [
     "crates/plugin-lifecycle",
     "crates/plugin-manager",
     "crates/plugin-runtime",
+    "crates/plugin-registry",
     "crates/process",
     "crates/pty",
     "crates/scheduler",
@@ -38,6 +39,7 @@ default-members = [
     "crates/plugin-lifecycle",
     "crates/plugin-manager",
     "crates/plugin-runtime",
+    "crates/plugin-registry",
     "crates/process",
     "crates/pty",
     "crates/scheduler",
@@ -71,6 +73,7 @@ ora-logging = { path = "crates/logging" }
 ora-plugin-manifest = { path = "crates/plugin-manifest" }
 ora-plugin-lifecycle = { path = "crates/plugin-lifecycle" }
 ora-plugin-manager = { path = "crates/plugin-manager" }
+ora-plugin-registry = { path = "crates/plugin-registry" }
 ora-plugin-runtime = { path = "crates/plugin-runtime" }
 ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
@@ -98,6 +101,8 @@ pretty_assertions = "1"
 r2d2 = "0.8"
 regex = "1"
 semver = "1"
+quick-xml = "0.41"
+sha2 = "0.10"
 rusqlite = "0.37"
 serde = "1.0"
 similar = "2"

@@ -1,0 +1,26 @@
+[package]
+name = "ora-plugin-registry"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_plugin_registry"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+gitlancer = { workspace = true }
+ora-logging = { workspace = true }
+ora-plugin-manifest = { workspace = true }
+ora-utils = { workspace = true }
+semver = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

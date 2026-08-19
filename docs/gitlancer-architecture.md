@@ -26,7 +26,7 @@ Owns repository facts and invariants: `RepoRoot`, `WorktreeRoot`, `GitDir`, `Rep
 
 It answers questions such as which repo a worktree belongs to, and whether a path is safe to pass to `git add` from this worktree. `WorktreeHandle::resolve_repo_relative_path` lexically normalizes a caller path and rejects absolute paths and traversal outside the worktree; it does not require the target to exist and does not canonicalize through the filesystem. `RepoRelativePath` is obtainable only through that worktree-aware boundary.
 
-Constructors for repository and worktree roots assume their callers already validated Git identity — discovery and validation belong to `git`. This layer spawns no processes and parses no output.
+Constructors for repository and worktree roots assume their callers already validated Git identity —discovery and validation belong to `git`. This layer spawns no processes and parses no output.
 
 ### `exec`
 
@@ -36,7 +36,7 @@ It exists so upper layers can inject a fake runner in tests, record commands for
 
 ### `git`
 
-Exposes the typed use cases Ora calls directly — repository discovery, worktree discovery and lifecycle, branch read and lifecycle, add/commit, diff, push, status, and global identity. Each takes a typed request and returns a typed response, which keeps option growth manageable and produces better call boundaries for agent orchestration.
+Exposes the typed use cases Ora calls directly -repository discovery, worktree discovery and lifecycle, branch read and lifecycle, add/commit, diff, push, status, global identity, and repository sync (clone/fetch/checkout/fast-forward pull). Each takes a typed request and returns a typed response, which keeps option growth manageable and produces better call boundaries for agent orchestration.
 
 Worktree-base discovery is a separate local branch read path because worktree selection must not have network or repository-state side effects.
 
@@ -110,7 +110,7 @@ Branch and worktree lifecycle commands are typed APIs, so callers never assemble
 - `add` stages `RepoRelativePath` values; `commit` creates commits without GPG signing.
 - `push_branch` is the only networked use case in this module. It derives the branch from `WorktreeHandle` rather than accepting a free-form ref from an upper layer.
 
-Mutating operations perform domain validation *before* invoking Git whenever the invalid state is determinable from repository and worktree metadata, and no Git command is issued when validation fails:
+Mutating operations perform domain validation _before_ invoking Git whenever the invalid state is determinable from repository and worktree metadata, and no Git command is issued when validation fails:
 
 - Deleting the repository's main worktree returns `DomainError::CannotDeleteMainWorktree`.
 - Deleting a linked worktree that belongs to a different repository returns `DomainError::WorktreeMismatch`.
@@ -177,11 +177,11 @@ Command telemetry is opt-in through `gitlancer::logging::register`; `ora-logging
 
 gitlancer relies on stable machine-readable outputs:
 
-- `git worktree list --porcelain` — repository discovery, worktree listing, and worktree resolution
-- `git for-each-ref refs/heads` — local worktree-base discovery without remote or repository-state side effects
-- `git rev-parse <ref>^{commit}` — immutable worktree-base resolution
-- `git status --porcelain=v2 -z` — status entries
-- `git rev-parse HEAD` and `git log -1 --pretty=%s` — commit id and summary after a commit
+- `git worktree list --porcelain` -repository discovery, worktree listing, and worktree resolution
+- `git for-each-ref refs/heads` -local worktree-base discovery without remote or repository-state side effects
+- `git rev-parse <ref>^{commit}` -immutable worktree-base resolution
+- `git status --porcelain=v2 -z` -status entries
+- `git rev-parse HEAD` and `git log -1 --pretty=%s` -commit id and summary after a commit
 
 `discover_repository` reads the main checkout out of the porcelain worktree list rather than calling `git rev-parse --show-toplevel`, so discovery from a nested directory and from inside a linked worktree both resolve to the owning repository root. A non-zero exit there is reported as `DomainError::NotARepository` rather than a raw execution error.
 

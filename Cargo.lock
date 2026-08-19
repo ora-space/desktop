@@ -3093,6 +3093,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-plugin-registry"
+version = "0.0.0"
+dependencies = [
+ "gitlancer",
+ "ora-logging",
+ "ora-plugin-manifest",
+ "ora-utils",
+ "pretty_assertions",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+]
+
+[[package]]
 name = "ora-plugin-runtime"
 version = "0.0.0"
 dependencies = [
@@ -3168,6 +3185,8 @@ version = "0.0.0"
 dependencies = [
  "flate2",
  "pretty_assertions",
+ "quick-xml",
+ "sha2",
  "tar",
  "tempfile",
  "thiserror 2.0.20",
