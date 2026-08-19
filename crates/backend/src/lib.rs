@@ -6,6 +6,7 @@ mod clock;
 mod error;
 mod git_cleanup;
 mod identity;
+mod plugin;
 mod project;
 mod request_lifecycle;
 mod session;

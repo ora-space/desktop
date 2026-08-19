@@ -3,6 +3,7 @@ use crate::agent_runtime::{AgentRuntimeManager, SessionEventStream, SessionLocat
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
+use crate::plugin::PluginApi;
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
@@ -15,12 +16,9 @@ use crate::workflow_run_engine::{ConcreteWorkflowRunControl, build_workflow_run_
 use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
 use ora_contracts::*;
 use ora_contracts::{EmptyErrorParams, PublicError};
+use ora_db::SqliteWorkflowRunEngineRepository;
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
-use ora_db::{SqlitePluginStateRepository, SqliteWorkflowRunEngineRepository};
 use ora_logging::{ora_error, ora_warn};
-use ora_plugin_lifecycle::{
-    DenoPluginRuntimeLauncher, PluginLifecycle, PluginLifecycleConfig, PluginRuntimeTimeouts,
-};
 use ora_scheduler::Scheduler;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -85,12 +83,7 @@ pub struct Backend {
     task_diff: Arc<TaskDiffApi>,
     session: Arc<SessionApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
-    plugin_lifecycle: PluginLifecycle<
-        SqlitePluginStateRepository,
-        SystemClock,
-        DenoPluginRuntimeLauncher,
-        crate::app_event::AppEventPublisher,
-    >,
+    plugin: Arc<PluginApi>,
     skill: Arc<SkillApi>,
     agent: Arc<AgentApi>,
     spec: Arc<SpecApi>,
@@ -122,17 +115,16 @@ impl Backend {
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let app_events = Arc::new(AppEventHub::new());
-        let plugin_lifecycle = PluginLifecycle::open(
-            PluginLifecycleConfig {
-                data_directory: paths.data_directory,
-                deno_path: paths.deno_path,
-            },
-            SqlitePluginStateRepository::new(pool.clone()),
-            clock,
-            DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
-            app_events.publisher(),
-        )
-        .map_err(BackendBootstrapError::PluginLifecycle)?;
+        let plugin = Arc::new(
+            PluginApi::open(
+                pool.clone(),
+                paths.data_directory,
+                paths.deno_path,
+                clock,
+                app_events.publisher(),
+            )
+            .map_err(BackendBootstrapError::PluginLifecycle)?,
+        );
         let scheduler = Scheduler::new(paths.timezone);
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let sessions_root = paths.sessions_root;
@@ -184,7 +176,7 @@ impl Backend {
             )),
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime,
-            plugin_lifecycle,
+            plugin,
             skill: Arc::new(SkillApi::new(
                 pool.clone(),
                 paths.skills_root.clone(),
@@ -217,9 +209,9 @@ impl Backend {
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
     pub fn list_installed_plugins(
         &self,
-        _request: ListInstalledPluginsRequest,
+        request: ListInstalledPluginsRequest,
     ) -> Result<ListInstalledPluginsResponse, BackendError> {
-        Ok(self.plugin_lifecycle.list_installed_plugins())
+        Ok(self.plugin.list(request))
     }
 
     /// Explicitly rescans packages and reconciles durable and runtime state.
@@ -227,10 +219,7 @@ impl Backend {
         &self,
         request: ScanPluginsRequest,
     ) -> Result<ScanPluginsResponse, BackendError> {
-        self.plugin_lifecycle
-            .scan_plugins(request)
-            .await
-            .map_err(BackendError::from)
+        self.plugin.scan(request).await.map_err(BackendError::from)
     }
 
     /// Persists plugin eligibility without starting its process.
@@ -238,8 +227,8 @@ impl Backend {
         &self,
         request: EnablePluginRequest,
     ) -> Result<EnablePluginResponse, BackendError> {
-        self.plugin_lifecycle
-            .enable_plugin(request)
+        self.plugin
+            .enable(request)
             .await
             .map_err(BackendError::from)
     }
@@ -249,8 +238,8 @@ impl Backend {
         &self,
         request: DisablePluginRequest,
     ) -> Result<DisablePluginResponse, BackendError> {
-        self.plugin_lifecycle
-            .disable_plugin(request)
+        self.plugin
+            .disable(request)
             .await
             .map_err(BackendError::from)
     }
@@ -260,8 +249,8 @@ impl Backend {
         &self,
         request: ActivatePluginRequest,
     ) -> Result<ActivatePluginResponse, BackendError> {
-        self.plugin_lifecycle
-            .activate_plugin(request)
+        self.plugin
+            .activate(request)
             .await
             .map_err(BackendError::from)
     }
@@ -271,10 +260,7 @@ impl Backend {
         &self,
         request: StopPluginRequest,
     ) -> Result<StopPluginResponse, BackendError> {
-        self.plugin_lifecycle
-            .stop_plugin(request)
-            .await
-            .map_err(BackendError::from)
+        self.plugin.stop(request).await.map_err(BackendError::from)
     }
 
     /// Stops and removes one plugin package plus its durable state.
@@ -282,8 +268,8 @@ impl Backend {
         &self,
         request: UninstallPluginRequest,
     ) -> Result<UninstallPluginResponse, BackendError> {
-        self.plugin_lifecycle
-            .uninstall_plugin(request)
+        self.plugin
+            .uninstall(request)
             .await
             .map_err(BackendError::from)
     }
