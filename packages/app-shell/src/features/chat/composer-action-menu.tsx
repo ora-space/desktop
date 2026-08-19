@@ -1,5 +1,10 @@
 import type { MutableRefObject, ReactNode } from "react";
-import { IconBolt, IconPhoto, IconSparkles } from "@tabler/icons-react";
+import {
+  IconBolt,
+  IconPhoto,
+  IconPlug,
+  IconSparkles,
+} from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   COLLAPSED_ACTION_GROUP_SIZE,
@@ -153,15 +158,8 @@ function actionIcon(action: ComposerAction): ReactNode {
       return <IconSparkles className={commonClassName} aria-hidden="true" />;
     case "commands":
       return <IconBolt className={commonClassName} aria-hidden="true" />;
-    case "plugins": {
-      const Mark = action.plugin.mark;
-      return (
-        <Mark
-          className={`size-4 shrink-0 ${action.plugin.tone}`}
-          aria-hidden="true"
-        />
-      );
-    }
+    case "plugins":
+      return <IconPlug className={commonClassName} aria-hidden="true" />;
     case "actions":
       return <IconPhoto className={commonClassName} aria-hidden="true" />;
   }

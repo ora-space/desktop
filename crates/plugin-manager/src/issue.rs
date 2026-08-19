@@ -10,7 +10,7 @@ pub enum PluginDiscoveryIssueKind {
     ManifestNotFile,
     ManifestTooLarge,
     ManifestUnreadable,
-    InvalidJson,
+    InvalidToml,
     InvalidManifest,
     DuplicatePluginId,
 }
@@ -25,7 +25,7 @@ impl PluginDiscoveryIssueKind {
             Self::ManifestNotFile => "manifest_not_file",
             Self::ManifestTooLarge => "manifest_too_large",
             Self::ManifestUnreadable => "manifest_unreadable",
-            Self::InvalidJson => "invalid_json",
+            Self::InvalidToml => "invalid_toml",
             Self::InvalidManifest => "invalid_manifest",
             Self::DuplicatePluginId => "duplicate_plugin_id",
         }

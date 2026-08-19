@@ -5,7 +5,7 @@ import type { AppEvent, WatchAppEventsRequest } from "./app_event.js";
 import type { DeveloperModeResponse, GetDeveloperModeRequest, SetDeveloperModeRequest } from "./developerMode.js";
 import type { ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse, ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchWorkspaceRequest, SearchWorkspaceResponse, WatchWorkspaceRequest, WorkspaceFileEventBatch } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
-import type { ListInstalledPluginsRequest, ListInstalledPluginsResponse } from "./plugin.js";
+import type { ActivatePluginRequest, ActivatePluginResponse, DisablePluginRequest, DisablePluginResponse, EnablePluginRequest, EnablePluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse } from "./plugin.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { GetRuntimeLogLevelRequest, RuntimeLogLevelStateResponse, SetRuntimeLogLevelRequest } from "./runtimeLogLevel.js";
 import type { AttachSessionRequest, AttachSessionResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RenameSessionRequest, RenameSessionResponse, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
@@ -80,7 +80,15 @@ export type RequestByOperation = {
   deleteAgent: DeleteAgentRequest;
   prepareAgentImport: PrepareAgentImportRequest;
   commitAgentImport: CommitAgentImportRequest;
+  listAvailablePlugins: ListAvailablePluginsRequest;
+  syncAvailablePlugins: SyncAvailablePluginsRequest;
   listInstalledPlugins: ListInstalledPluginsRequest;
+  scanPlugins: ScanPluginsRequest;
+  enablePlugin: EnablePluginRequest;
+  disablePlugin: DisablePluginRequest;
+  activatePlugin: ActivatePluginRequest;
+  stopPlugin: StopPluginRequest;
+  uninstallPlugin: UninstallPluginRequest;
   listWorkspaceDirectory: ListWorkspaceDirectoryRequest;
   readWorkspaceFile: ReadWorkspaceFileRequest;
   searchWorkspace: SearchWorkspaceRequest;
@@ -170,7 +178,15 @@ export type ResponseByOperation = {
   deleteAgent: DeleteAgentResponse;
   prepareAgentImport: PrepareAgentImportResponse;
   commitAgentImport: CommitAgentImportResponse;
+  listAvailablePlugins: ListAvailablePluginsResponse;
+  syncAvailablePlugins: SyncAvailablePluginsResponse;
   listInstalledPlugins: ListInstalledPluginsResponse;
+  scanPlugins: ScanPluginsResponse;
+  enablePlugin: EnablePluginResponse;
+  disablePlugin: DisablePluginResponse;
+  activatePlugin: ActivatePluginResponse;
+  stopPlugin: StopPluginResponse;
+  uninstallPlugin: UninstallPluginResponse;
   listWorkspaceDirectory: ListWorkspaceDirectoryResponse;
   readWorkspaceFile: ReadWorkspaceFileResponse;
   searchWorkspace: SearchWorkspaceResponse;
@@ -640,12 +656,76 @@ export const endpoints = {
     responseType: "CommitAgentImportResponse",
     responseMode: "unary",
   },
+  listAvailablePlugins: {
+    operationName: "listAvailablePlugins",
+    namespace: "plugin",
+    memberName: "listAvailable",
+    requestType: "ListAvailablePluginsRequest",
+    responseType: "ListAvailablePluginsResponse",
+    responseMode: "unary",
+  },
+  syncAvailablePlugins: {
+    operationName: "syncAvailablePlugins",
+    namespace: "plugin",
+    memberName: "syncAvailable",
+    requestType: "SyncAvailablePluginsRequest",
+    responseType: "SyncAvailablePluginsResponse",
+    responseMode: "unary",
+  },
   listInstalledPlugins: {
     operationName: "listInstalledPlugins",
     namespace: "plugin",
     memberName: "listInstalled",
     requestType: "ListInstalledPluginsRequest",
     responseType: "ListInstalledPluginsResponse",
+    responseMode: "unary",
+  },
+  scanPlugins: {
+    operationName: "scanPlugins",
+    namespace: "plugin",
+    memberName: "scan",
+    requestType: "ScanPluginsRequest",
+    responseType: "ScanPluginsResponse",
+    responseMode: "unary",
+  },
+  enablePlugin: {
+    operationName: "enablePlugin",
+    namespace: "plugin",
+    memberName: "enable",
+    requestType: "EnablePluginRequest",
+    responseType: "EnablePluginResponse",
+    responseMode: "unary",
+  },
+  disablePlugin: {
+    operationName: "disablePlugin",
+    namespace: "plugin",
+    memberName: "disable",
+    requestType: "DisablePluginRequest",
+    responseType: "DisablePluginResponse",
+    responseMode: "unary",
+  },
+  activatePlugin: {
+    operationName: "activatePlugin",
+    namespace: "plugin",
+    memberName: "activate",
+    requestType: "ActivatePluginRequest",
+    responseType: "ActivatePluginResponse",
+    responseMode: "unary",
+  },
+  stopPlugin: {
+    operationName: "stopPlugin",
+    namespace: "plugin",
+    memberName: "stop",
+    requestType: "StopPluginRequest",
+    responseType: "StopPluginResponse",
+    responseMode: "unary",
+  },
+  uninstallPlugin: {
+    operationName: "uninstallPlugin",
+    namespace: "plugin",
+    memberName: "uninstall",
+    requestType: "UninstallPluginRequest",
+    responseType: "UninstallPluginResponse",
     responseMode: "unary",
   },
   listWorkspaceDirectory: {

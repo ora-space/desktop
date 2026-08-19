@@ -32,6 +32,36 @@ describe("createTauriTransport", () => {
       request: {},
     });
   });
+  it("maps available plugin discovery to the Desktop registry command", async () => {
+    const response = { updatedAt: 0n, plugins: [] };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+
+    await expect(
+      transport.send({
+        operationName: "listAvailablePlugins",
+        request: {},
+      }),
+    ).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("list_available_plugins", {
+      request: {},
+    });
+  });
+  it("maps marketplace sync to the Desktop registry command", async () => {
+    const response = { updatedAt: 0n, plugins: [] };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+
+    await expect(
+      transport.send({
+        operationName: "syncAvailablePlugins",
+        request: {},
+      }),
+    ).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("sync_available_plugins", {
+      request: {},
+    });
+  });
   it("maps workspace directory reads to the dedicated desktop command", async () => {
     const response = { path: "src", entries: [] };
     const invoke = vi.fn().mockResolvedValue(response);

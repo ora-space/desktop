@@ -1,22 +1,23 @@
 use crate::MAX_MANIFEST_BYTES;
 use crate::issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
-use crate::manifest::PackageManifest;
 use crate::validation::{InstalledPlugin, validate};
+use ora_plugin_manifest::{ManifestError, PluginManifest};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::str;
 
 pub(crate) struct PluginDiscovery {
     pub installed_plugins: Vec<InstalledPlugin>,
     pub discovery_issues: Vec<PluginDiscoveryIssue>,
 }
 
-/// Discovers valid direct child packages and isolates every recoverable failure.
+/// Discovers valid direct child plugin packages below `<data>/plugins/installed`.
 pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
-    let plugins_root = data_dir.join("plugins");
+    let installed_root = data_dir.join("plugins").join("installed");
     let mut issues = Vec::new();
-    let entries = match sorted_package_directories(&plugins_root, &mut issues) {
+    let entries = match sorted_package_directories(&installed_root, &mut issues) {
         Some(entries) => entries,
         None => {
             return PluginDiscovery {
@@ -29,14 +30,14 @@ pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
     let mut installed_plugins = Vec::new();
     let mut first_path_by_id = HashMap::<String, PathBuf>::new();
     for package_root in entries {
-        let manifest_path = package_root.join("package.json");
+        let manifest_path = package_root.join("orax.toml");
         match read_and_validate_manifest(&package_root, &manifest_path) {
             Ok(plugin) => {
                 if let Some(first_path) = first_path_by_id.get(&plugin.id) {
                     issues.push(PluginDiscoveryIssue::new(
                         manifest_path,
                         PluginDiscoveryIssueKind::DuplicatePluginId,
-                        Some("ora.id".to_string()),
+                        Some("id".to_string()),
                         format!(
                             "plugin id `{}` was already discovered at {}",
                             plugin.id,
@@ -61,15 +62,15 @@ pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
 
 /// Returns real direct child directories in reproducible path order.
 fn sorted_package_directories(
-    plugins_root: &Path,
+    installed_root: &Path,
     issues: &mut Vec<PluginDiscoveryIssue>,
 ) -> Option<Vec<PathBuf>> {
-    let read_dir = match fs::read_dir(plugins_root) {
+    let read_dir = match fs::read_dir(installed_root) {
         Ok(read_dir) => read_dir,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
         Err(error) => {
             issues.push(PluginDiscoveryIssue::new(
-                plugins_root.to_path_buf(),
+                installed_root.to_path_buf(),
                 PluginDiscoveryIssueKind::RootUnreadable,
                 None,
                 error.to_string(),
@@ -92,7 +93,7 @@ fn sorted_package_directories(
                 )),
             },
             Err(error) => issues.push(PluginDiscoveryIssue::new(
-                plugins_root.to_path_buf(),
+                installed_root.to_path_buf(),
                 PluginDiscoveryIssueKind::EntryUnreadable,
                 None,
                 error.to_string(),
@@ -104,7 +105,7 @@ fn sorted_package_directories(
     Some(directories)
 }
 
-/// Reads one bounded manifest, deserializes it with field paths, and applies semantic checks.
+/// Reads one bounded TOML manifest, parses it with the shared manifest crate, and validates the fixed entrypoint.
 fn read_and_validate_manifest(
     package_root: &Path,
     manifest_path: &Path,
@@ -116,7 +117,7 @@ fn read_and_validate_manifest(
                 manifest_path.to_path_buf(),
                 PluginDiscoveryIssueKind::MissingManifest,
                 None,
-                "plugin directory does not contain package.json",
+                "plugin directory does not contain orax.toml",
             ));
         }
         Err(error) => {
@@ -133,32 +134,41 @@ fn read_and_validate_manifest(
             manifest_path.to_path_buf(),
             PluginDiscoveryIssueKind::ManifestNotFile,
             None,
-            "package.json must be a regular file",
+            "orax.toml must be a regular file",
         ));
     }
 
     let bytes = read_bounded(manifest_path)?;
-    let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
-    let manifest: PackageManifest =
-        serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
-            let field_path = error.path().to_string();
-            PluginDiscoveryIssue::new(
-                manifest_path.to_path_buf(),
-                PluginDiscoveryIssueKind::InvalidJson,
-                (!field_path.is_empty() && field_path != ".").then_some(field_path),
-                error.into_inner().to_string(),
-            )
-        })?;
-    deserializer.end().map_err(|error| {
+    let source = str::from_utf8(&bytes).map_err(|error| {
         PluginDiscoveryIssue::new(
             manifest_path.to_path_buf(),
-            PluginDiscoveryIssueKind::InvalidJson,
+            PluginDiscoveryIssueKind::InvalidToml,
             None,
-            error.to_string(),
+            format!("orax.toml is not valid UTF-8: {error}"),
         )
     })?;
+    let manifest = PluginManifest::parse(source).map_err(|error| match error {
+        ManifestError::InvalidToml { source, .. } => PluginDiscoveryIssue::new(
+            manifest_path.to_path_buf(),
+            PluginDiscoveryIssueKind::InvalidToml,
+            None,
+            source.to_string(),
+        ),
+        ManifestError::UnsupportedResolver { found } => PluginDiscoveryIssue::new(
+            manifest_path.to_path_buf(),
+            PluginDiscoveryIssueKind::InvalidManifest,
+            Some("resolver".to_string()),
+            format!("unsupported plugin manifest resolver {found}"),
+        ),
+        ManifestError::InvalidField { field, reason } => PluginDiscoveryIssue::new(
+            manifest_path.to_path_buf(),
+            PluginDiscoveryIssueKind::InvalidManifest,
+            Some(field.to_string()),
+            reason.to_string(),
+        ),
+    })?;
 
-    validate(package_root, manifest).map_err(|error| {
+    validate(package_root, &manifest).map_err(|error| {
         PluginDiscoveryIssue::new(
             manifest_path.to_path_buf(),
             PluginDiscoveryIssueKind::InvalidManifest,

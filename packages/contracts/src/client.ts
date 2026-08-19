@@ -178,8 +178,24 @@ export function createContractsClient(
         executeOperation("commitAgentImport", request, transport, options),
     },
     plugin: {
+      listAvailable: (request, options) =>
+        executeOperation("listAvailablePlugins", request, transport, options),
+      syncAvailable: (request, options) =>
+        executeOperation("syncAvailablePlugins", request, transport, options),
       listInstalled: (request, options) =>
         executeOperation("listInstalledPlugins", request, transport, options),
+      scan: (request, options) =>
+        executeOperation("scanPlugins", request, transport, options),
+      enable: (request, options) =>
+        executeOperation("enablePlugin", request, transport, options),
+      disable: (request, options) =>
+        executeOperation("disablePlugin", request, transport, options),
+      activate: (request, options) =>
+        executeOperation("activatePlugin", request, transport, options),
+      stop: (request, options) =>
+        executeOperation("stopPlugin", request, transport, options),
+      uninstall: (request, options) =>
+        executeOperation("uninstallPlugin", request, transport, options),
     },
     fileSystem: {
       listWorkspaceDirectory: (request, options) =>
