@@ -6,6 +6,7 @@ pub mod diff;
 pub mod push;
 pub mod repository;
 pub mod status;
+pub mod sync;
 pub mod worktree;
 
 use crate::exec::runner::GitRunner;

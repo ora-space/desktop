@@ -7,12 +7,16 @@ edition.workspace = true
 workspace = true
 
 [features]
-default = []
+default = ["validation"]
 archive = ["dep:zip", "dep:tar", "dep:flate2"]
+validation = ["dep:sha2", "dep:quick-xml"]
 
 [dependencies]
 flate2 = { workspace = true, optional = true }
+quick-xml = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 unicode-normalization = { workspace = true }
 zip = { workspace = true, optional = true }
@@ -21,5 +25,4 @@ zip = { workspace = true, optional = true }
 flate2 = { workspace = true }
 pretty_assertions = { workspace = true }
 tar = { workspace = true }
-tempfile = { workspace = true }
 zip = { workspace = true }
