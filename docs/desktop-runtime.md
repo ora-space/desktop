@@ -18,7 +18,7 @@ Backend construction immediately attempts supervised `opencode acp`, `nga acp`, 
 
 The Desktop App Shell waits for the `Ready` frame before mounting normal queries and watchers. The application stream is a multi-subscriber, best-effort session-title invalidation broadcast rather than a persisted event log.
 
-Beyond the shared contract surface, Desktop registers four platform-only commands: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`.
+Beyond the shared contract surface, Desktop registers four platform-only commands: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`. `open_location` with target `explorer` reveals a file in the system file manager (`explorer.exe /select,` on Windows, `open -R` on macOS) so the default file association — often Cursor — is not launched. Existing directories still open as folder windows.
 
 ## Skill imports
 

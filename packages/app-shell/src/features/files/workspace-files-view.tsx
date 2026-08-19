@@ -159,6 +159,16 @@ export function WorkspaceFilesView({
     return () => clearTimeout(timer);
   }, [fileFilterText]);
 
+  // A new chat requestId must re-read even when the path is unchanged. Otherwise
+  // a file the user deleted after an earlier preview stays on screen from cache.
+  const fileRequestId = fileRequest?.requestId;
+  useEffect(() => {
+    if (fileRequestId === undefined || selectedPath === null) return;
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.workspaceFile(taskId, selectedPath),
+    });
+  }, [fileRequestId, queryClient, selectedPath, taskId]);
+
   useEffect(() => {
     const controller = new AbortController();
     void watchWorkspaceContinuously({

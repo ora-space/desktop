@@ -119,4 +119,66 @@ describe("WorkspaceFilesView file requests", () => {
       );
     });
   });
+
+  it("refetches on a new chat request so a deleted file is not shown from cache", async () => {
+    const client = createMockClient(createMockClientState());
+    let missing = false;
+    client.fileSystem.readWorkspaceFile = async (request: { path: string }) => {
+      if (missing) {
+        throw new RemoteContractError(
+          {
+            code: "file_system_path_not_found",
+            params: {},
+            requestId: "eb093a72-6961-4e9f-966a-3d5187958476",
+          },
+          null,
+        );
+      }
+      return {
+        path: request.path,
+        content: "fn main() {}\n",
+        version: "test",
+        sizeBytes: 12,
+      };
+    };
+    client.task.getWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0 } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(
+          ContractsClientContext.Provider,
+          { value: client },
+          createElement(AppI18nProvider, null, children),
+        ),
+      );
+    const { rerender } = render(
+      <WorkspaceFilesView
+        taskId="task-1"
+        hideHeader
+        fileRequest={{ path: "src/main.rs", requestId: 1 }}
+      />,
+      { wrapper },
+    );
+    expect(await screen.findByText("src/main.rs")).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(/fn\s*main/);
+
+    missing = true;
+    rerender(
+      <WorkspaceFilesView
+        taskId="task-1"
+        hideHeader
+        fileRequest={{ path: "src/main.rs", requestId: 2 }}
+      />,
+    );
+    expect(
+      await screen.findByText(/所选路径不存在|The selected path was not found/),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/fn\s*main/);
+  });
 });

@@ -26,4 +26,6 @@ matching it must not open a different relative file inside the worktree.
 OS handoff uses `joinOsAbsolutePath` so Explorer, VS Code, and Copy path
 receive a host path rather than an internal URI. Chat file links hide those
 actions until a task cwd is known, so a relative workspace path is never
-copied or opened as if it were absolute.
+copied or opened as if it were absolute. Desktop Explorer then _reveals_
+a file in the system file manager; it does not open the file with Cursor
+or another default editor.
