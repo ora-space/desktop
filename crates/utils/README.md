@@ -11,8 +11,21 @@ that any other crate can consume without introducing dependency cycles.
 - `archive` (Cargo feature `archive`): safe materialization of untrusted `.zip` / `.tar.gz`
   archives and folder trees into a destination directory with zip-slip defenses, encrypted and
   special-entry rejection, portable case-conflict detection, and cumulative entry/byte budgets.
+- `atomic`: atomically replacing a file by writing a same-directory temporary file and renaming
+  it over the destination, so readers never observe partial content.
+- `hash` (Cargo feature `validation`): streaming SHA-256 digests over a reader or file without
+  buffering the whole input.
+- `html` (Cargo feature `validation`): conservative validation rejecting README text that embeds
+  scriptable HTML (forbidden tags, `on*` event handlers, `javascript:`/`data:` URIs).
+- `svg` (Cargo feature `validation`): security validation for SVG icons — accepts well-formed
+  XML only, forbidding `<script>`/`<foreignObject>`, event-handler attributes, external `href`
+  references, and files over the 50 KiB cap.
 - `Slug`: an owned lowercase ASCII slug segment with stable syntax and byte-length guarantees.
 - `GitBranchName`: an owned short Git branch name validated without starting a Git process.
+
+The `validation` feature is enabled by default because its dependencies are small and already in
+the workspace dependency graph; path-only consumers can opt out with `default-features = false`.
+Heavier capabilities such as `archive` stay opt-in.
 
 ## Non-responsibilities
 
