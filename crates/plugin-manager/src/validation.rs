@@ -1,4 +1,5 @@
-use crate::manifest::{AgentManifest, PackageManifest};
+use crate::manifest::{AgentManifest, EnvPermissionManifest, PackageManifest, PermissionsManifest};
+use ora_domain::{EnvPermission, PluginPermissions};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
 use std::collections::HashSet;
@@ -35,7 +36,6 @@ impl PluginKind {
 pub struct PluginEngines {
     pub ora: String,
     pub plugin_api: u32,
-    pub bun: String,
 }
 
 /// Holds one validated agent contribution.
@@ -60,6 +60,8 @@ pub struct InstalledPlugin {
     pub main: PortableRelativePath,
     pub engines: PluginEngines,
     pub agents: Vec<InstalledPluginAgent>,
+    /// Permissions the host grants this plugin process; defaults to none when undeclared.
+    pub permissions: PluginPermissions,
 }
 
 /// Reports a semantic manifest constraint after structural deserialization succeeds.
@@ -123,9 +125,9 @@ pub(crate) fn validate(
             ),
         ));
     }
-    require_non_empty("ora.engines.bun", &manifest.ora.engines.bun)?;
 
     let agents = validate_agents(manifest.ora.contributes.agents)?;
+    let permissions = validate_permissions(manifest.ora.permissions.unwrap_or_default())?;
 
     Ok(InstalledPlugin {
         package_root: package_root.to_path_buf(),
@@ -140,9 +142,43 @@ pub(crate) fn validate(
         engines: PluginEngines {
             ora: manifest.ora.engines.ora,
             plugin_api: manifest.ora.engines.plugin_api,
-            bun: manifest.ora.engines.bun,
         },
         agents,
+        permissions,
+    })
+}
+
+/// Converts declared permissions into the domain shape, rejecting unusable env variable names.
+fn validate_permissions(
+    permissions: PermissionsManifest,
+) -> Result<PluginPermissions, ManifestValidationError> {
+    let env = match permissions.env {
+        EnvPermissionManifest::All(true) => EnvPermission::All,
+        EnvPermissionManifest::All(false) => EnvPermission::Denied,
+        EnvPermissionManifest::Variables(names) => {
+            // A comma would split the `--allow-env=A,B` flag into unintended grants, and an empty
+            // name can only be a mistake, so both are rejected rather than passed to Deno.
+            if let Some(name) = names
+                .iter()
+                .find(|name| name.trim().is_empty() || name.contains(','))
+            {
+                return Err(invalid(
+                    "ora.permissions.env",
+                    format!("environment variable name `{name}` is not valid"),
+                ));
+            }
+            if names.is_empty() {
+                EnvPermission::Denied
+            } else {
+                EnvPermission::Variables(names)
+            }
+        }
+    };
+    Ok(PluginPermissions {
+        run: permissions.run,
+        read: permissions.read,
+        env,
+        net: permissions.net,
     })
 }
 

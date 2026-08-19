@@ -1,6 +1,7 @@
 use super::{
     MAX_MANIFEST_BYTES, PluginDiscoveryIssueKind, PluginKind, PluginManager, PluginPackageType,
 };
+use ora_domain::{EnvPermission, PluginPermissions};
 use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -38,11 +39,79 @@ fn discovers_complete_manifest() {
     );
     assert_eq!(plugin.engines.ora, ">=0.1.0 <0.2.0");
     assert_eq!(plugin.engines.plugin_api, 1);
-    assert_eq!(plugin.engines.bun, ">=1.0.0 <2.0.0");
     assert_eq!(plugin.agents.len(), 1);
     assert_eq!(plugin.agents[0].id, "claude-code");
     assert_eq!(plugin.agents[0].display_name, "Claude Code");
     assert_eq!(plugin.agents[0].contract_version, 1);
+    assert_eq!(plugin.permissions, PluginPermissions::default());
+}
+
+/// Declared permissions are carried through verbatim, with `env` accepting both spellings.
+#[test]
+fn discovers_declared_permissions() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut manifest = valid_manifest("ora.claude-code", "Claude Code", "0.1.0");
+    manifest["ora"]["permissions"] = json!({
+        "run": true,
+        "env": ["ORA_CLAUDE_ACP_BIN", "PATH"],
+        "net": true
+    });
+    write_manifest(temp_dir.path(), "claude", manifest);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    assert_eq!(
+        manager.installed_plugins()[0].permissions,
+        PluginPermissions {
+            run: true,
+            read: false,
+            env: EnvPermission::Variables(vec![
+                "ORA_CLAUDE_ACP_BIN".to_string(),
+                "PATH".to_string()
+            ]),
+            net: true,
+        }
+    );
+
+    let mut all_env = valid_manifest("ora.other", "Other", "0.1.0");
+    all_env["ora"]["permissions"] = json!({ "env": true });
+    write_manifest(temp_dir.path(), "other", all_env);
+    let manager = PluginManager::discover(temp_dir.path());
+    let other = manager
+        .installed_plugins()
+        .iter()
+        .find(|plugin| plugin.id == "ora.other")
+        .unwrap();
+    assert_eq!(
+        other.permissions,
+        PluginPermissions {
+            env: EnvPermission::All,
+            ..PluginPermissions::default()
+        }
+    );
+}
+
+/// An env variable name that would split the Deno flag is a manifest error, not a silent grant.
+#[test]
+fn rejects_invalid_env_permission_names() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut manifest = valid_manifest("ora.claude-code", "Claude Code", "0.1.0");
+    manifest["ora"]["permissions"] = json!({ "env": ["A,B"] });
+    write_manifest(temp_dir.path(), "claude", manifest);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.installed_plugins(), &[]);
+    assert_eq!(manager.discovery_issues().len(), 1);
+    assert_eq!(
+        manager.discovery_issues()[0].kind(),
+        PluginDiscoveryIssueKind::InvalidManifest
+    );
+    assert_eq!(
+        manager.discovery_issues()[0].field_path(),
+        Some("ora.permissions.env")
+    );
 }
 
 /// Verifies a missing plugin root represents an empty installation.
@@ -262,7 +331,6 @@ fn rejects_empty_required_strings() {
         (vec!["ora", "displayName"], "ora.displayName"),
         (vec!["ora", "main"], "ora.main"),
         (vec!["ora", "engines", "ora"], "ora.engines.ora"),
-        (vec!["ora", "engines", "bun"], "ora.engines.bun"),
         (
             vec!["ora", "contributes", "agents", "0", "id"],
             "ora.contributes.agents[].id",
@@ -495,8 +563,7 @@ fn valid_manifest(id: &str, display_name: &str, version: &str) -> Value {
             "main": "dist/index.js",
             "engines": {
                 "ora": ">=0.1.0 <0.2.0",
-                "pluginApi": 1,
-                "bun": ">=1.0.0 <2.0.0"
+                "pluginApi": 1
             },
             "contributes": {
                 "agents": [{

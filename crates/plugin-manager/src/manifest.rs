@@ -22,6 +22,37 @@ pub(crate) struct OraManifest {
     pub main: String,
     pub engines: EngineManifest,
     pub contributes: ContributionManifest,
+    /// Deno permissions the plugin asks for; absent means fully sandboxed.
+    #[serde(default)]
+    pub permissions: Option<PermissionsManifest>,
+}
+
+/// Mirrors the Deno permissions a plugin declares; every field is optional and defaults to denied.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PermissionsManifest {
+    #[serde(default)]
+    pub run: bool,
+    #[serde(default)]
+    pub read: bool,
+    #[serde(default)]
+    pub env: EnvPermissionManifest,
+    #[serde(default)]
+    pub net: bool,
+}
+
+/// Mirrors `env: true | false | ["NAME", …]` without forcing plugin authors into one spelling.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum EnvPermissionManifest {
+    All(bool),
+    Variables(Vec<String>),
+}
+
+impl Default for EnvPermissionManifest {
+    fn default() -> Self {
+        Self::All(false)
+    }
 }
 
 /// Mirrors engine declarations while leaving npm-style ranges uninterpreted.
@@ -30,7 +61,6 @@ pub(crate) struct OraManifest {
 pub(crate) struct EngineManifest {
     pub ora: String,
     pub plugin_api: u32,
-    pub bun: String,
 }
 
 /// Mirrors contributions declared by one plugin package.

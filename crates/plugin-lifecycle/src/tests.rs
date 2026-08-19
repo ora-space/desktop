@@ -13,7 +13,7 @@ use ora_contracts::{
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, SqlitePluginStateRepository, default_migration_catalog,
 };
-use ora_domain::{PluginEnabledState, PluginId};
+use ora_domain::{EnvPermission, PluginEnabledState, PluginId, PluginPermissions};
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -617,12 +617,20 @@ async fn activates_enabled_plugin_and_publishes_each_transition() {
         Some(PluginLaunchRequest {
             plugin_id: PluginId::new("ora.example"),
             deno_path: PathBuf::from("deno"),
+            package_root: temp_dir.path().join("plugins").join("example"),
             entrypoint: temp_dir
                 .path()
                 .join("plugins")
                 .join("example")
                 .join("dist")
                 .join("index.js"),
+            deno_dir: temp_dir.path().join("deno"),
+            permissions: PluginPermissions {
+                run: true,
+                read: false,
+                env: EnvPermission::Variables(vec!["ORA_EXAMPLE_BIN".to_string()]),
+                net: true,
+            },
         }),
     );
 
@@ -1385,8 +1393,7 @@ fn write_plugin_package(data_dir: &std::path::Path, directory: &str, id: &str, n
                 "main": "dist/index.js",
                 "engines": {
                     "ora": ">=0.1.0 <0.2.0",
-                    "pluginApi": 1,
-                    "bun": ">=1.0.0 <2.0.0"
+                    "pluginApi": 1
                 },
                 "contributes": {
                     "agents": [{
@@ -1394,6 +1401,11 @@ fn write_plugin_package(data_dir: &std::path::Path, directory: &str, id: &str, n
                         "displayName": "Example Agent",
                         "contractVersion": 1
                     }]
+                },
+                "permissions": {
+                    "run": true,
+                    "env": ["ORA_EXAMPLE_BIN"],
+                    "net": true
                 }
             }
         }))

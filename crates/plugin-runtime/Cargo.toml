@@ -11,6 +11,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+ora-domain = { workspace = true }
 ora-logging = { workspace = true }
 ora-process = { workspace = true }
 serde_json = { workspace = true }
@@ -20,3 +21,4 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

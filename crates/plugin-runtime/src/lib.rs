@@ -6,12 +6,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use ora_domain::PluginPermissions;
 use ora_logging::{ora_error, ora_info, ora_warn};
 use ora_process::{ManagedProcess, ProcessSpawner, ProcessSpec};
 use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
 use crate::codec::{read_frame, write_frame};
@@ -19,16 +20,47 @@ use crate::codec::{read_frame, write_frame};
 const JSON_RPC_VERSION: &str = "2.0";
 const REGISTER_METHOD: &str = "ora/register";
 const SHUTDOWN_METHOD: &str = "ora/shutdown";
+/// The plugin protocol version this host speaks; a plugin reporting another one is refused.
+const SUPPORTED_PLUGIN_API_VERSION: u64 = 1;
+/// Notifications a plugin emits faster than subscribers drain are dropped, never buffered forever.
+const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
+/// The Deno lockfile name a plugin package pins its dependency graph with.
+const DENO_LOCKFILE: &str = "deno.lock";
 
 /// Describes one eagerly started Deno plugin process and its lifecycle timeouts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginRuntimeConfig {
     pub plugin_id: String,
     pub deno_path: PathBuf,
+    /// Root of the installed package; Deno discovers `deno.json` and `deno.lock` from here.
+    pub package_root: PathBuf,
     pub entrypoint: PathBuf,
+    /// Host-owned `DENO_DIR` holding every plugin's pre-warmed dependency cache.
+    pub deno_dir: PathBuf,
+    /// Permissions the plugin declared; translated one-to-one into `--allow-*` flags.
+    pub permissions: PluginPermissions,
     pub ready_timeout: Duration,
     pub call_timeout: Duration,
     pub shutdown_timeout: Duration,
+}
+
+/// Records what one plugin announced in `ora/register`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PluginRegistration {
+    pub methods: HashSet<String>,
+    /// Notification methods the plugin may send to the host unprompted.
+    pub emits: HashSet<String>,
+    /// SDK release the plugin was built with; diagnostic only, the host checks contracts instead.
+    pub sdk_version: Option<String>,
+    /// Contract name to version, always including `pluginApi` for SDKs that report it.
+    pub contracts: HashMap<String, u64>,
+}
+
+/// One notification a plugin emitted; only methods declared in `emits` reach subscribers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginNotification {
+    pub method: String,
+    pub params: Value,
 }
 
 /// Reports why a plugin cannot start or serve a method invocation.
@@ -44,6 +76,8 @@ pub enum PluginRuntimeError {
     ReadyTimeout,
     #[error("plugin is unavailable: {0}")]
     Unavailable(String),
+    #[error("plugin reports plugin API version {0}, host supports {SUPPORTED_PLUGIN_API_VERSION}")]
+    UnsupportedPluginApi(u64),
     #[error("plugin did not register method {0}")]
     MethodNotRegistered(String),
     #[error("plugin request channel is closed")]
@@ -73,7 +107,8 @@ type PendingResult = Result<Value, PluginRuntimeError>;
 
 struct RuntimeInner {
     plugin_id: String,
-    methods: RwLock<HashSet<String>>,
+    registration: RwLock<PluginRegistration>,
+    notification_tx: broadcast::Sender<PluginNotification>,
     status_tx: watch::Sender<RuntimeStatus>,
     exited_tx: watch::Sender<bool>,
     writer_tx: mpsc::Sender<Value>,
@@ -119,10 +154,7 @@ impl PluginRuntime {
             return Err(PluginRuntimeError::MissingEntrypoint(config.entrypoint));
         }
 
-        let spec = ProcessSpec::new(config.deno_path.as_os_str())
-            .arg("run")
-            .arg("--no-prompt")
-            .arg(config.entrypoint.as_os_str());
+        let spec = build_launch_spec(&config);
         let mut process = spawner
             .spawn(spec)
             .map_err(|error| PluginRuntimeError::Spawn(error.to_string()))?;
@@ -141,9 +173,11 @@ impl PluginRuntime {
         let (supervisor_tx, supervisor_rx) = mpsc::unbounded_channel();
         let (status_tx, mut status_rx) = watch::channel(RuntimeStatus::Starting);
         let (exited_tx, _) = watch::channel(false);
+        let (notification_tx, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
         let inner = Arc::new(RuntimeInner {
             plugin_id: config.plugin_id.clone(),
-            methods: RwLock::new(HashSet::new()),
+            registration: RwLock::new(PluginRegistration::default()),
+            notification_tx,
             status_tx,
             exited_tx,
             writer_tx: writer_tx.clone(),
@@ -212,6 +246,19 @@ impl PluginRuntime {
         Ok(runtime)
     }
 
+    /// Returns what the plugin announced in `ora/register`.
+    pub async fn registration(&self) -> PluginRegistration {
+        self.inner.registration.read().await.clone()
+    }
+
+    /// Subscribes to notifications the plugin emits; methods must have been declared in `emits`.
+    ///
+    /// A lagging subscriber loses the oldest notifications rather than stalling the protocol
+    /// reader, which is why the channel is bounded and broadcast.
+    pub fn subscribe_notifications(&self) -> broadcast::Receiver<PluginNotification> {
+        self.inner.notification_tx.subscribe()
+    }
+
     /// Invokes one registered method and returns its JSON result.
     pub async fn invoke(&self, method: &str, params: Value) -> Result<Value, PluginRuntimeError> {
         match self.inner.status_tx.borrow().clone() {
@@ -230,7 +277,14 @@ impl PluginRuntime {
                 ));
             }
         }
-        if !self.inner.methods.read().await.contains(method) {
+        if !self
+            .inner
+            .registration
+            .read()
+            .await
+            .methods
+            .contains(method)
+        {
             return Err(PluginRuntimeError::MethodNotRegistered(method.to_string()));
         }
 
@@ -376,28 +430,30 @@ async fn handle_message(inner: &RuntimeInner, message: Value) -> Result<(), Stri
         if !matches!(*inner.status_tx.borrow(), RuntimeStatus::Starting) {
             return Err("plugin registered methods more than once".to_string());
         }
-        let methods = object
+        let params = object
             .get("params")
-            .and_then(|params| params.get("methods"))
-            .and_then(Value::as_array)
-            .ok_or_else(|| "plugin registration is missing a methods array".to_string())?;
-        let mut registered = HashSet::with_capacity(methods.len());
-        for method in methods {
-            let method = method
-                .as_str()
-                .filter(|method| !method.is_empty())
-                .ok_or_else(|| "plugin registration contains an invalid method".to_string())?;
-            if !registered.insert(method.to_string()) {
-                return Err(format!("plugin registered duplicate method {method}"));
-            }
-        }
-        *inner.methods.write().await = registered;
+            .ok_or_else(|| "plugin registration is missing params".to_string())?;
+        let registration = parse_registration(params)?;
+        *inner.registration.write().await = registration;
         inner.status_tx.send_replace(RuntimeStatus::Ready);
         return Ok(());
     }
 
-    if object.contains_key("method") {
-        return Err("plugin sent an unsupported notification or request".to_string());
+    if let Some(method) = object.get("method").and_then(Value::as_str) {
+        if object.contains_key("id") {
+            return Err(format!("plugin sent an unsupported request {method}"));
+        }
+        // Only declared emits are delivered; an undeclared method is a protocol violation because
+        // the host validated the plugin's whole behaviour from its registration.
+        if !inner.registration.read().await.emits.contains(method) {
+            return Err(format!("plugin sent an undeclared notification {method}"));
+        }
+        // A send error only means nobody is subscribed right now, which is not a plugin fault.
+        let _ = inner.notification_tx.send(PluginNotification {
+            method: method.to_string(),
+            params: object.get("params").cloned().unwrap_or(Value::Null),
+        });
+        return Ok(());
     }
 
     let request_id = object
@@ -430,6 +486,92 @@ async fn handle_message(inner: &RuntimeInner, message: Value) -> Result<(), Stri
         .ok_or_else(|| format!("plugin responded with unknown request ID {request_id}"))?;
     let _ = sender.send(result);
     Ok(())
+}
+
+/// Builds the Deno command line for one plugin package.
+///
+/// The launch is deterministic by construction: modules come only from the host-owned
+/// `DENO_DIR` (`--cached-only`), a package lockfile is enforced when present (`--frozen`), and
+/// permissions are exactly the ones the manifest declared. The package root is the working
+/// directory so Deno discovers the package's own `deno.json` import map.
+fn build_launch_spec(config: &PluginRuntimeConfig) -> ProcessSpec {
+    let mut spec = ProcessSpec::new(config.deno_path.as_os_str())
+        .arg("run")
+        .arg("--no-prompt")
+        .arg("--cached-only");
+    let lockfile = config.package_root.join(DENO_LOCKFILE);
+    if lockfile.is_file() {
+        spec = spec.arg("--frozen").arg("--lock").arg(lockfile.as_os_str());
+    }
+    spec.args(config.permissions.deno_flags())
+        .arg(config.entrypoint.as_os_str())
+        .cwd(config.package_root.clone())
+        .env("DENO_DIR", config.deno_dir.as_os_str())
+}
+
+/// Validates `ora/register` params into the immutable registration record.
+fn parse_registration(params: &Value) -> Result<PluginRegistration, String> {
+    let methods = params
+        .get("methods")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "plugin registration is missing a methods array".to_string())?;
+    let mut registered = HashSet::with_capacity(methods.len());
+    for method in methods {
+        let method = method
+            .as_str()
+            .filter(|method| !method.is_empty())
+            .ok_or_else(|| "plugin registration contains an invalid method".to_string())?;
+        if !registered.insert(method.to_string()) {
+            return Err(format!("plugin registered duplicate method {method}"));
+        }
+    }
+
+    // `emits` is optional so SDKs without notification support still register.
+    let mut emits = HashSet::new();
+    if let Some(declared) = params.get("emits") {
+        let declared = declared
+            .as_array()
+            .ok_or_else(|| "plugin registration emits must be an array".to_string())?;
+        for method in declared {
+            let method = method
+                .as_str()
+                .filter(|method| !method.is_empty())
+                .ok_or_else(|| "plugin registration contains an invalid emit".to_string())?;
+            emits.insert(method.to_string());
+        }
+    }
+
+    let sdk_version = params
+        .get("sdkVersion")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    let mut contracts = HashMap::new();
+    if let Some(declared) = params.get("contracts") {
+        let declared = declared
+            .as_object()
+            .ok_or_else(|| "plugin registration contracts must be an object".to_string())?;
+        for (name, version) in declared {
+            let version = version
+                .as_u64()
+                .ok_or_else(|| format!("plugin contract {name} has an invalid version"))?;
+            contracts.insert(name.clone(), version);
+        }
+    }
+    // Refusing here turns a future protocol break into a precise handshake error instead of a
+    // confusing failure on the first call.
+    if let Some(&plugin_api) = contracts.get("pluginApi")
+        && plugin_api != SUPPORTED_PLUGIN_API_VERSION
+    {
+        return Err(PluginRuntimeError::UnsupportedPluginApi(plugin_api).to_string());
+    }
+
+    Ok(PluginRegistration {
+        methods: registered,
+        emits,
+        sdk_version,
+        contracts,
+    })
 }
 
 /// Drains plugin stderr continuously so logging cannot block the child process.
@@ -525,14 +667,20 @@ async fn fail_pending(inner: &RuntimeInner, error: PluginRuntimeError) {
 
 #[cfg(test)]
 mod tests {
-    use super::{RuntimeInner, RuntimeStatus, handle_message, run_writer};
+    use super::{
+        NOTIFICATION_CHANNEL_CAPACITY, PluginNotification, PluginRegistration, PluginRuntimeConfig,
+        RuntimeInner, RuntimeStatus, build_launch_spec, handle_message, run_writer,
+    };
+    use ora_domain::{EnvPermission, PluginPermissions};
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
     use std::sync::atomic::AtomicU64;
     use std::time::Duration;
     use tokio::io::duplex;
-    use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
+    use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot, watch};
     use tokio::time::timeout;
 
     fn test_inner() -> RuntimeInner {
@@ -540,9 +688,11 @@ mod tests {
         let (exited_tx, _) = watch::channel(false);
         let (writer_tx, _) = mpsc::channel(1);
         let (supervisor_tx, _) = mpsc::unbounded_channel();
+        let (notification_tx, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
         RuntimeInner {
             plugin_id: "example".to_string(),
-            methods: RwLock::new(HashSet::new()),
+            registration: RwLock::new(PluginRegistration::default()),
+            notification_tx,
             status_tx,
             exited_tx,
             writer_tx,
@@ -570,10 +720,171 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            inner.methods.read().await.clone(),
-            HashSet::from(["example.echo".to_string()])
+            inner.registration.read().await.clone(),
+            PluginRegistration {
+                methods: HashSet::from(["example.echo".to_string()]),
+                emits: HashSet::new(),
+                sdk_version: None,
+                contracts: HashMap::new(),
+            }
         );
         assert_eq!(*inner.status_tx.borrow(), RuntimeStatus::Ready);
+    }
+
+    /// Registration keeps emits, SDK version, and contracts, and refuses a foreign plugin API.
+    #[tokio::test]
+    async fn records_extended_registration_and_checks_plugin_api() {
+        let inner = test_inner();
+        handle_message(
+            &inner,
+            json!({
+                "jsonrpc": "2.0",
+                "method": "ora/register",
+                "params": {
+                    "methods": ["agent/start"],
+                    "emits": ["agent/acp"],
+                    "sdkVersion": "1.0.0",
+                    "contracts": { "pluginApi": 1, "agent": 1 },
+                },
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            inner.registration.read().await.clone(),
+            PluginRegistration {
+                methods: HashSet::from(["agent/start".to_string()]),
+                emits: HashSet::from(["agent/acp".to_string()]),
+                sdk_version: Some("1.0.0".to_string()),
+                contracts: HashMap::from([("pluginApi".to_string(), 1), ("agent".to_string(), 1)]),
+            }
+        );
+
+        let error = handle_message(
+            &test_inner(),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "ora/register",
+                "params": { "methods": [], "contracts": { "pluginApi": 2 } },
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "plugin reports plugin API version 2, host supports 1"
+        );
+    }
+
+    /// Declared notifications reach subscribers; undeclared ones invalidate the protocol.
+    #[tokio::test]
+    async fn delivers_declared_notifications_only() {
+        let inner = test_inner();
+        handle_message(
+            &inner,
+            json!({
+                "jsonrpc": "2.0",
+                "method": "ora/register",
+                "params": { "methods": [], "emits": ["agent/acp"] },
+            }),
+        )
+        .await
+        .unwrap();
+        let mut notifications = inner.notification_tx.subscribe();
+
+        handle_message(
+            &inner,
+            json!({
+                "jsonrpc": "2.0",
+                "method": "agent/acp",
+                "params": { "jsonrpc": "2.0", "id": 1, "result": {} },
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            notifications.recv().await.unwrap(),
+            PluginNotification {
+                method: "agent/acp".to_string(),
+                params: json!({ "jsonrpc": "2.0", "id": 1, "result": {} }),
+            }
+        );
+
+        let error = handle_message(
+            &inner,
+            json!({ "jsonrpc": "2.0", "method": "agent/other", "params": {} }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "plugin sent an undeclared notification agent/other");
+        let error = handle_message(
+            &inner,
+            json!({ "jsonrpc": "2.0", "id": 3, "method": "agent/acp", "params": {} }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "plugin sent an unsupported request agent/acp");
+    }
+
+    /// The launch command is deterministic: cached-only modules, frozen lockfile when present,
+    /// declared permissions only, and the host-owned DENO_DIR.
+    #[test]
+    fn builds_deterministic_launch_spec() {
+        let package_root = tempfile::tempdir().unwrap();
+        let config = PluginRuntimeConfig {
+            plugin_id: "example".to_string(),
+            deno_path: PathBuf::from("deno"),
+            package_root: package_root.path().to_path_buf(),
+            entrypoint: package_root.path().join("src").join("main.ts"),
+            deno_dir: PathBuf::from("/data/deno"),
+            permissions: PluginPermissions {
+                run: true,
+                read: false,
+                env: EnvPermission::Variables(vec!["ORA_BIN".to_string()]),
+                net: true,
+            },
+            ready_timeout: Duration::from_secs(1),
+            call_timeout: Duration::from_secs(1),
+            shutdown_timeout: Duration::from_secs(1),
+        };
+
+        let spec = build_launch_spec(&config);
+        assert_eq!(
+            spec.args_iter().collect::<Vec<&OsStr>>(),
+            vec![
+                OsStr::new("run"),
+                OsStr::new("--no-prompt"),
+                OsStr::new("--cached-only"),
+                OsStr::new("--allow-run"),
+                OsStr::new("--allow-env=ORA_BIN"),
+                OsStr::new("--allow-net"),
+                config.entrypoint.as_os_str(),
+            ]
+        );
+        assert_eq!(spec.cwd_path(), Some(package_root.path()));
+        assert_eq!(
+            spec.envs().collect::<Vec<_>>(),
+            vec![(OsStr::new("DENO_DIR"), OsStr::new("/data/deno"))]
+        );
+
+        std::fs::write(package_root.path().join("deno.lock"), "{}").unwrap();
+        let spec = build_launch_spec(&config);
+        let lockfile = package_root.path().join("deno.lock");
+        assert_eq!(
+            spec.args_iter().collect::<Vec<&OsStr>>(),
+            vec![
+                OsStr::new("run"),
+                OsStr::new("--no-prompt"),
+                OsStr::new("--cached-only"),
+                OsStr::new("--frozen"),
+                OsStr::new("--lock"),
+                lockfile.as_os_str(),
+                OsStr::new("--allow-run"),
+                OsStr::new("--allow-env=ORA_BIN"),
+                OsStr::new("--allow-net"),
+                config.entrypoint.as_os_str(),
+            ]
+        );
     }
 
     /// Duplicate method names invalidate registration rather than selecting one handler.

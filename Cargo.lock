@@ -3069,6 +3069,7 @@ dependencies = [
 name = "ora-plugin-manager"
 version = "0.0.0"
 dependencies = [
+ "ora-domain",
  "ora-utils",
  "pretty_assertions",
  "semver",
@@ -3096,10 +3097,12 @@ dependencies = [
 name = "ora-plugin-runtime"
 version = "0.0.0"
 dependencies = [
+ "ora-domain",
  "ora-logging",
  "ora-process",
  "pretty_assertions",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tracing",

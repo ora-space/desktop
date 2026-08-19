@@ -61,7 +61,10 @@ impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
                 PluginRuntimeConfig {
                     plugin_id: request.plugin_id.to_string(),
                     deno_path: request.deno_path,
+                    package_root: request.package_root,
                     entrypoint: request.entrypoint,
+                    deno_dir: request.deno_dir,
+                    permissions: request.permissions,
                     ready_timeout: timeouts.ready,
                     call_timeout: timeouts.call,
                     shutdown_timeout: timeouts.shutdown,

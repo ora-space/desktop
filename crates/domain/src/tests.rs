@@ -1,8 +1,8 @@
 use crate::{
     AgentCli, AgentDefinition, AgentDefinitionId, AuditFields, BACKUP_DIR_NAME, DomainModelError,
-    HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, Session,
-    SessionId, SessionStatus, Skill, SkillId, Task, TaskId, TaskType, Worktree, WorktreeActivity,
-    WorktreeBaseline, WorktreeId,
+    EnvPermission, HistoryState, JOURNAL_DIR_NAME, Namespace, PluginPermissions, Project,
+    ProjectId, STAGING_DIR_NAME, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId,
+    TaskType, Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
 };
 use pretty_assertions::assert_eq;
 
@@ -298,5 +298,47 @@ fn rejects_invalid_database_values() {
     assert_eq!(
         SessionStatus::from_database_value(5),
         Err(DomainModelError::InvalidSessionStatus(5))
+    );
+}
+
+/// Declared permissions translate into the exact Deno flags the host passes, and nothing more.
+#[test]
+fn renders_plugin_permissions_as_deno_flags() {
+    assert_eq!(
+        PluginPermissions::default().deno_flags(),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        PluginPermissions {
+            run: true,
+            read: true,
+            env: EnvPermission::Variables(vec!["ORA_BIN".to_string(), "PATH".to_string()]),
+            net: true,
+        }
+        .deno_flags(),
+        vec![
+            "--allow-run".to_string(),
+            "--allow-read".to_string(),
+            "--allow-env=ORA_BIN,PATH".to_string(),
+            "--allow-net".to_string(),
+        ]
+    );
+    assert_eq!(
+        PluginPermissions {
+            run: false,
+            read: false,
+            env: EnvPermission::All,
+            net: false,
+        }
+        .deno_flags(),
+        vec!["--allow-env".to_string()]
+    );
+    assert_eq!(
+        PluginPermissions {
+            env: EnvPermission::Variables(Vec::new()),
+            ..PluginPermissions::default()
+        }
+        .deno_flags(),
+        Vec::<String>::new()
     );
 }

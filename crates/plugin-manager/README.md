@@ -8,6 +8,8 @@
 - Read and validate each child package's `package.json`.
 - Resolve `ora.main` as an existing regular file whose canonical target remains inside its package,
   then retain its normalized portable relative path.
+- Convert the optional `ora.permissions` declaration (`run`, `read`, `env` as a boolean or a list
+  of variable names, `net`) into `PluginPermissions`; an absent declaration means no permissions.
 - Return a deterministic, immutable snapshot of valid installed plugins.
 - Isolate malformed or unsupported packages as structured discovery issues.
 

@@ -17,7 +17,9 @@ over a partially refreshed result.
 Filesystem package parsing remains in `ora-plugin-manager`, process protocol ownership remains in
 `ora-plugin-runtime`, and durable eligibility remains behind the `ora-application` repository port.
 The production adapter launches Deno through the shared process-tree supervisor and waits for
-confirmed process exit before filesystem cleanup.
+confirmed process exit before filesystem cleanup. Every launch request carries the package root,
+the manifest-declared permissions, and the shared dependency cache at `<data-dir>/deno`
+(`DENO_CACHE_DIR_NAME`), so runtime behaviour depends only on what is installed on disk.
 
 Transport adapters and concrete dependency composition belong to `ora-backend` and Desktop. This
 crate does not depend on Tauri, SQLite, or backend-private state.

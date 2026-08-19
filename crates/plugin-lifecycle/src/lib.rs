@@ -14,7 +14,7 @@ use ora_contracts::{
     EnablePluginRequest, EnablePluginResponse, ListInstalledPluginsResponse, StopPluginRequest,
     StopPluginResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
-use ora_domain::{PluginEnabledState, PluginId};
+use ora_domain::{PluginEnabledState, PluginId, PluginPermissions};
 use ora_plugin_manager::{InstalledPlugin as DiscoveredPlugin, PluginManager};
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -30,12 +30,24 @@ pub struct PluginLifecycleConfig {
     pub deno_path: PathBuf,
 }
 
+/// Directory under the Ora data directory that holds the shared Deno dependency cache.
+///
+/// Keeping `DENO_DIR` inside the data directory means the host owns every cached module, can
+/// clear it wholesale, and never depends on the user's global Deno cache.
+pub const DENO_CACHE_DIR_NAME: &str = "deno";
+
 /// Describes one concrete process launch after package discovery has resolved its entrypoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginLaunchRequest {
     pub plugin_id: PluginId,
     pub deno_path: PathBuf,
+    /// Installed package root; the process working directory and `deno.json` discovery root.
+    pub package_root: PathBuf,
     pub entrypoint: PathBuf,
+    /// Host-owned Deno dependency cache shared by every plugin.
+    pub deno_dir: PathBuf,
+    /// Permissions the package manifest declared; the process receives exactly these.
+    pub permissions: PluginPermissions,
 }
 
 /// Preserves the reason a plugin process could not start or stopped unexpectedly.
@@ -572,7 +584,10 @@ async fn complete_launch<Repository, LifecycleClock, RuntimeLauncher, StatusPubl
         .launch(PluginLaunchRequest {
             plugin_id: plugin_id.clone(),
             deno_path: inner.config.deno_path.clone(),
+            package_root: plugin.package_root.clone(),
             entrypoint: plugin.package_root.join(plugin.main.to_path_buf()),
+            deno_dir: inner.config.data_directory.join(DENO_CACHE_DIR_NAME),
+            permissions: plugin.permissions.clone(),
         })
         .await;
 

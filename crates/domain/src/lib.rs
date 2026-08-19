@@ -31,7 +31,7 @@ pub use ids::{
     WorktreeProvisioningLeaseId,
 };
 pub use namespace::Namespace;
-pub use plugin::{PluginEnabledState, PluginState};
+pub use plugin::{EnvPermission, PluginEnabledState, PluginPermissions, PluginState};
 pub use project::Project;
 pub use session::{AgentCli, HistoryState, Session, SessionStatus};
 pub use session_title::{MAX_SESSION_TITLE_CHARS, SessionTitle, SessionTitleError};
