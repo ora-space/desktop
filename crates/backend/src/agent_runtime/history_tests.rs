@@ -53,7 +53,7 @@ fn switch_then_prompt(root: &Path, deliver: Delivery) {
     let mut recorder = recorder(root, 0, &HistoryState::Writable);
     assert_eq!(
         recorder.record_agent_switch(
-            AgentCli::OpenCode.agent_ref(),
+            AgentCli::Claude.agent_ref(),
             AgentCli::Nga.agent_ref(),
             NEW_PROVIDER_SESSION_ID.to_string(),
         ),
@@ -113,7 +113,7 @@ fn a_settled_handoff_records_the_delivery_after_the_prompt_that_carried_it() {
                 RECORDED_AT,
                 0,
                 HistoryRecord::AgentSwitched(AgentSwitch {
-                    from: AgentCli::OpenCode.agent_ref(),
+                    from: AgentCli::Claude.agent_ref(),
                     to: AgentCli::Nga.agent_ref(),
                     agent_session_id: NEW_PROVIDER_SESSION_ID.to_string(),
                 }),
@@ -146,7 +146,7 @@ fn a_recorder_that_stopped_writing_records_no_delivery_it_cannot_prove() {
     let root = TempDir::new().expect("create history root");
     let mut writable = recorder(root.path(), 0, &HistoryState::Writable);
     writable.record_agent_switch(
-        AgentCli::OpenCode.agent_ref(),
+        AgentCli::Claude.agent_ref(),
         AgentCli::Nga.agent_ref(),
         NEW_PROVIDER_SESSION_ID.to_string(),
     );

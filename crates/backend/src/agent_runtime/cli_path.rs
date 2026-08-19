@@ -32,7 +32,6 @@ pub(super) fn resolve_agent_cli_path(
     // Each CLI's official install script places the binary under this fixed
     // per-user directory, which is often absent from a GUI process PATH.
     let install_directory = match agent_cli {
-        AgentCli::OpenCode => ".opencode",
         AgentCli::Nga => ".nga",
         AgentCli::CodeAgentCli => ".codeagentcli",
         AgentCli::Claude => ".claude",
@@ -112,11 +111,11 @@ mod tests {
     fn prefers_path_over_fixed_install_directory() {
         let home = tempfile::tempdir().unwrap();
         let path_dir = tempfile::tempdir().unwrap();
-        let on_path = write_executable(path_dir.path(), "opencode");
-        write_executable(&home.path().join(".opencode").join("bin"), "opencode");
+        let on_path = write_executable(path_dir.path(), "nga");
+        write_executable(&home.path().join(".nga").join("bin"), "nga");
 
         let resolved = resolve_agent_cli_path(
-            AgentCli::OpenCode,
+            AgentCli::Nga,
             Some(&path_value(&[path_dir.path()])),
             home.path(),
         )
@@ -130,10 +129,10 @@ mod tests {
     fn falls_back_to_fixed_install_directory() {
         let home = tempfile::tempdir().unwrap();
         let empty_path_dir = tempfile::tempdir().unwrap();
-        let installed = write_executable(&home.path().join(".opencode").join("bin"), "opencode");
+        let installed = write_executable(&home.path().join(".nga").join("bin"), "nga");
 
         let resolved = resolve_agent_cli_path(
-            AgentCli::OpenCode,
+            AgentCli::Nga,
             Some(&path_value(&[empty_path_dir.path()])),
             home.path(),
         )
@@ -148,11 +147,11 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
-        let expected = write_executable(first.path(), "opencode");
-        write_executable(second.path(), "opencode");
+        let expected = write_executable(first.path(), "nga");
+        write_executable(second.path(), "nga");
 
         let resolved = resolve_agent_cli_path(
-            AgentCli::OpenCode,
+            AgentCli::Nga,
             Some(&path_value(&[first.path(), second.path()])),
             home.path(),
         )
@@ -166,13 +165,13 @@ mod tests {
     fn skips_non_executable_files() {
         let home = tempfile::tempdir().unwrap();
         let path_dir = tempfile::tempdir().unwrap();
-        let plain = path_dir.path().join("opencode");
+        let plain = path_dir.path().join("nga");
         std::fs::write(&plain, "not a binary").unwrap();
         std::fs::set_permissions(&plain, Permissions::from_mode(0o644)).unwrap();
-        let installed = write_executable(&home.path().join(".opencode").join("bin"), "opencode");
+        let installed = write_executable(&home.path().join(".nga").join("bin"), "nga");
 
         let resolved = resolve_agent_cli_path(
-            AgentCli::OpenCode,
+            AgentCli::Nga,
             Some(&path_value(&[path_dir.path()])),
             home.path(),
         )
@@ -188,7 +187,7 @@ mod tests {
         let empty_path_dir = tempfile::tempdir().unwrap();
 
         let error = resolve_agent_cli_path(
-            AgentCli::OpenCode,
+            AgentCli::Nga,
             Some(&path_value(&[empty_path_dir.path()])),
             home.path(),
         )
@@ -199,11 +198,11 @@ mod tests {
             error.public_error(),
             &PublicError::AgentCliNotFound(EmptyErrorParams {})
         );
-        let fallback = home.path().join(".opencode").join("bin");
+        let fallback = home.path().join(".nga").join("bin");
         assert_eq!(
             error.to_string(),
             format!(
-                "opencode executable not found; searched PATH (1 directories) and {fallback}",
+                "nga executable not found; searched PATH (1 directories) and {fallback}",
                 fallback = fallback.display()
             )
         );
@@ -213,11 +212,10 @@ mod tests {
     #[test]
     fn resolves_without_path_variable() {
         let home = tempfile::tempdir().unwrap();
-        let installed = write_executable(&home.path().join(".opencode").join("bin"), "opencode");
+        let installed = write_executable(&home.path().join(".nga").join("bin"), "nga");
 
         let resolved =
-            resolve_agent_cli_path(AgentCli::OpenCode, /*path_variable*/ None, home.path())
-                .unwrap();
+            resolve_agent_cli_path(AgentCli::Nga, /*path_variable*/ None, home.path()).unwrap();
 
         assert_eq!(resolved, installed);
     }

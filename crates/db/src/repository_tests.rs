@@ -2422,7 +2422,7 @@ fn session_repository_supports_crud_and_soft_delete() {
     let created_session = Session::new(
         SessionId::new("session-1"),
         TaskId::new("task-1"),
-        AgentCli::OpenCode.agent_ref(),
+        AgentCli::Claude.agent_ref(),
         "provider-1",
         SessionStatus::Running,
         AuditFields::new(12, 12, false),
@@ -2443,7 +2443,7 @@ fn session_repository_supports_crud_and_soft_delete() {
                 .map_err(crate::DatabaseError::from)
         })
         .unwrap(),
-        "ora-space.opencode"
+        "ora-space.claude"
     );
     assert_eq!(
         repository.find_session(&created_session.id).unwrap(),
@@ -2619,7 +2619,7 @@ fn session_repository_rejects_soft_deleted_task() {
     let session = Session::new(
         SessionId::new("session-after-delete"),
         TaskId::new("task-1"),
-        AgentCli::OpenCode.agent_ref(),
+        AgentCli::Claude.agent_ref(),
         "provider-after-delete",
         SessionStatus::Running,
         AuditFields::new(21, 21, false),
@@ -2719,7 +2719,7 @@ fn repository_pool_composes_all_repository_adapters() {
     let session = Session::new(
         SessionId::new("session-1"),
         task.id.clone(),
-        AgentCli::OpenCode.agent_ref(),
+        AgentCli::Claude.agent_ref(),
         "provider-1",
         SessionStatus::Running,
         AuditFields::new(42, 42, false),
@@ -2994,7 +2994,7 @@ fn insert_invalid_session_row(pool: &RepositoryPool) {
             rusqlite::params![
                 "session-invalid",
                 "task-1",
-                AgentCli::OpenCode.agent_ref().as_str(),
+                AgentCli::Claude.agent_ref().as_str(),
                 "provider-invalid",
                 99,
                 61,

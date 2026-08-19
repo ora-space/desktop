@@ -692,7 +692,7 @@ mod tests {
             target: WarmSessionTarget::Task {
                 task_id: "task-1".to_string(),
             },
-            agent_ref: AgentCli::OpenCode.agent_ref(),
+            agent_ref: AgentCli::Nga.agent_ref(),
             owner: WarmOwner::Interactive,
         };
         let session_id = SessionId::new("session-1");
@@ -715,7 +715,7 @@ mod tests {
 
     fn attachment() -> WarmAttachment {
         WarmAttachment {
-            agent_ref: AgentCli::OpenCode.agent_ref(),
+            agent_ref: AgentCli::Nga.agent_ref(),
             agent_session_id: "agent-session-1".to_string(),
             cwd: PathBuf::from("/repo"),
             available_commands: Vec::new(),
@@ -740,7 +740,7 @@ mod tests {
             lock_pool(&pool).reserve_for_attach(&session_id, Path::new("/repo")),
             Reservation::Held(AttachedWarm {
                 session_id,
-                agent_ref: AgentCli::OpenCode.agent_ref(),
+                agent_ref: AgentCli::Nga.agent_ref(),
                 agent_session_id: "agent-session-1".to_string(),
                 cwd: PathBuf::from("/repo"),
                 available_commands: vec![],

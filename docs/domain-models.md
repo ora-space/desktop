@@ -37,11 +37,11 @@ Numeric and text category columns are modeled as enums rather than raw codes, so
 
 - `SessionStatus`: `Running` (0), `Stopped` (1)
 - `WorktreeActivity`: `Inactive` (0), `Active` (1)
-- `AgentCli`: `OpenCode`, `Nga`, `CodeAgentCli`, `Claude`, `Codex`
+- `AgentCli`: `Nga`, `CodeAgentCli`, `Claude`, `Codex`
 
 Encoding and decoding live at the boundary, not inside the models. Each enum exposes `database_value()` plus a `from_database_value()` that rejects unknown persisted values with a `DomainModelError` instead of constructing an invalid state. Domain enums are never derived from raw integers implicitly.
 
-`AgentCli` is persisted as namespaced text (`ora-space.opencode`, `ora-space.nga`, `ora-space.codeagentcli`, `ora-space.claude`, `ora-space.codex`) so the stored value does not depend on enum declaration order. It also exposes `executable_name()` for the process lookup performed by the backend agent runtime. `AgentCli::ALL` gives the runtime a stable iteration order over supported CLIs.
+`AgentCli` is persisted as namespaced text (`ora-space.nga`, `ora-space.codeagentcli`, `ora-space.claude`, `ora-space.codex`) so the stored value does not depend on enum declaration order. It covers built-in CLIs only: an agent supplied by a plugin, such as `ora-space.opencode`, is persisted the same way but never appears in this enum. It also exposes `executable_name()` for the process lookup performed by the backend agent runtime. `AgentCli::ALL` gives the runtime a stable iteration order over supported CLIs.
 
 `TaskDiffCommentKind` is an enum with associated data: `Thread` owns a `TaskDiffAnchor` and `TaskDiffThreadStatus`, while `Reply` owns a `parent_comment_id`. This keeps reply rows from carrying partial or misleading anchor fields. `TaskDiffSide` and `TaskDiffThreadStatus` use explicit database codes and reject unknown values at the SQLite boundary.
 

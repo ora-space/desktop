@@ -35,7 +35,7 @@ fn constructs_schema_backed_entities() {
     let session = Session::new(
         SessionId::new("session-1"),
         task.id.clone(),
-        AgentCli::OpenCode.agent_ref(),
+        AgentCli::Nga.agent_ref(),
         "agent-session-1",
         SessionStatus::Running,
         audit_fields.clone(),
@@ -96,7 +96,7 @@ fn constructs_schema_backed_entities() {
         Session {
             id: SessionId::new("session-1"),
             task_id: TaskId::new("task-1"),
-            agent_ref: AgentCli::OpenCode.agent_ref(),
+            agent_ref: AgentCli::Nga.agent_ref(),
             agent_session_id: "agent-session-1".to_string(),
             title: None,
             status: SessionStatus::Running,
@@ -222,7 +222,6 @@ fn maps_agent_cli_identities() {
     assert_eq!(
         AgentCli::ALL.map(|agent_cli| agent_cli.agent_ref().to_string()),
         [
-            "ora-space.opencode",
             "ora-space.nga",
             "ora-space.codeagentcli",
             "ora-space.claude",
@@ -259,7 +258,6 @@ fn maps_agent_cli_launch_arguments() {
     assert_eq!(
         AgentCli::ALL.map(AgentCli::launch_arguments),
         [
-            ["acp"].as_slice(),
             ["acp"].as_slice(),
             ["acp"].as_slice(),
             [].as_slice(),

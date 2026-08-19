@@ -75,7 +75,7 @@ fn round_trips_appended_records_in_conversation_order() {
         schema_version: SCHEMA_VERSION,
         session_id: SESSION_ID.to_string(),
         task_id: "task-1".to_string(),
-        agent_ref: AgentCli::OpenCode.agent_ref(),
+        agent_ref: AgentCli::Nga.agent_ref(),
         agent_session_id: "provider-1".to_string(),
         cwd: PathBuf::from("/repo"),
     });

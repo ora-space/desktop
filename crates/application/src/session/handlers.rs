@@ -307,7 +307,7 @@ mod tests {
                     id: "s1".to_owned(),
                     task_id: "t1".to_owned(),
                     title: Some("Review auth".to_owned()),
-                    agent_ref: "ora-space.opencode".to_string(),
+                    agent_ref: "ora-space.nga".to_string(),
                     status: ContractSessionStatus::Running,
                     history_state: ContractHistoryState::Writable,
                 },
@@ -341,7 +341,7 @@ mod tests {
         Session::new(
             SessionId::new("s1"),
             ora_domain::TaskId::new("t1"),
-            AgentCli::OpenCode.agent_ref(),
+            AgentCli::Nga.agent_ref(),
             "provider-1",
             SessionStatus::Running,
             AuditFields::new(1, 1, false),
