@@ -11,11 +11,7 @@ import { usePlatform } from "../../../platform";
 import { useTranslation } from "react-i18next";
 import { joinOsAbsolutePath } from "../../../lib/workspace-path";
 import { useTaskChangesNavigation } from "../../diff/task-changes-navigation-context";
-import {
-  classifyChatCandidate,
-  matchIndexPath,
-  type ChatLinkClassification,
-} from "./classify";
+import { classifyChatCandidate, type ChatLinkClassification } from "./classify";
 import { useChatLinkContext } from "./context";
 
 const INLINE_CODE_CLASS =
@@ -58,7 +54,8 @@ function openClassified(
 
 /**
  * Focusable chat artifact control: left click routes by role, right click offers
- * OS handoff and the in-app surface the left click did not use.
+ * OS handoff. Diff links also offer Preview in Files; Files links have no extra
+ * in-app item because left click already opens Files.
  *
  * Platform is read only after a candidate classifies as a file link so tests
  * that render tool locations without a PlatformProvider keep working.
@@ -171,7 +168,6 @@ function LinkedChatFile({
       ? refreshed
       : initial;
 
-  const editedHit = matchIndexPath(classified.path, chatLink.index.edited);
   // Explorer / VS Code / copy need a host path. Hide them until cwd is known
   // rather than handing a worktree-relative path to the OS.
   const osPath =
@@ -180,9 +176,7 @@ function LinkedChatFile({
   const linkClassName = [CHAT_FILE_LINK_CLASS, className]
     .filter((part) => part !== undefined && part !== "")
     .join(" ");
-  const showInAppAlternate =
-    classified.kind === "diff" ||
-    (classified.kind === "files" && editedHit !== null);
+  const showPreviewInFiles = classified.kind === "diff";
 
   const openOs = async (target: "explorer" | "vscode") => {
     if (osPath === null) return;
@@ -244,8 +238,8 @@ function LinkedChatFile({
             </ContextMenuItem>
           </>
         )}
-        {osPath !== null && showInAppAlternate && <ContextMenuSeparator />}
-        {classified.kind === "diff" && (
+        {osPath !== null && showPreviewInFiles && <ContextMenuSeparator />}
+        {showPreviewInFiles && (
           <ContextMenuItem
             onClick={() =>
               navigation.openWorkspaceFile(
@@ -256,15 +250,6 @@ function LinkedChatFile({
             }
           >
             {t("chat.fileLink.previewInFiles")}
-          </ContextMenuItem>
-        )}
-        {classified.kind === "files" && editedHit !== null && (
-          <ContextMenuItem
-            onClick={() =>
-              navigation.openDiff(classified.path, classified.line)
-            }
-          >
-            {t("chat.fileLink.viewInChanges")}
           </ContextMenuItem>
         )}
       </ContextMenuContent>

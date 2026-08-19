@@ -318,6 +318,11 @@ describe("chat link usage scenarios", () => {
       fireEvent.contextMenu(
         screen.getByRole("button", { name: /src\/lib\.rs/ }),
       );
+      expect(
+        screen.queryByRole("menuitem", {
+          name: /在变更中查看|View in Changes/,
+        }),
+      ).toBeNull();
       await user.click(
         screen.getByRole("menuitem", { name: /文件管理器|Explorer/ }),
       );

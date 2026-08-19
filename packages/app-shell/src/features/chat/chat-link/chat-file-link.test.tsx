@@ -174,6 +174,9 @@ describe("ChatFileLink", () => {
     expect(
       screen.getByRole("menuitem", { name: /在文件中预览|Preview in Files/ }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /在变更中查看|View in Changes/ }),
+    ).toBeNull();
   });
 
   it("opens Explorer with the OS-absolute path from resolveTaskCwd", async () => {
@@ -196,6 +199,9 @@ describe("ChatFileLink", () => {
     expect(
       screen.getByRole("menuitem", { name: /在文件中预览|Preview in Files/ }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /在变更中查看|View in Changes/ }),
+    ).toBeNull();
 
     await user.click(
       screen.getByRole("menuitem", { name: /文件管理器|Explorer/ }),
@@ -203,5 +209,19 @@ describe("ChatFileLink", () => {
     await waitFor(() => {
       expect(open).toHaveBeenCalledWith("explorer", "C:/repo/src/main.rs");
     });
+  });
+
+  it("does not offer an in-app alternate on a read-only Files link", async () => {
+    await renderFileLink("src/lib.rs", { platform: desktopPlatform() });
+    fireEvent.contextMenu(screen.getByRole("button", { name: /src\/lib\.rs/ }));
+    expect(
+      screen.getByRole("menuitem", { name: /文件管理器|Explorer/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /在文件中预览|Preview in Files/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: /在变更中查看|View in Changes/ }),
+    ).toBeNull();
   });
 });
