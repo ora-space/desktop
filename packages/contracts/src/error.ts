@@ -18,6 +18,8 @@ export type ContractError =
     | { "code": "agent_name_blank"; "params": EmptyErrorParams }
     | { "code": "agent_name_conflict"; "params": EmptyErrorParams }
     | { "code": "agent_not_found"; "params": EmptyErrorParams }
+    | { "code": "plugin_not_found"; "params": EmptyErrorParams }
+    | { "code": "plugin_disabled"; "params": EmptyErrorParams }
     | { "code": "project_not_found"; "params": EmptyErrorParams }
     | { "code": "task_not_found"; "params": EmptyErrorParams }
     | { "code": "resource_in_use"; "params": EmptyErrorParams }
@@ -152,6 +154,8 @@ export type PublicError =
   | { "code": "agent_name_blank"; "params": EmptyErrorParams }
   | { "code": "agent_name_conflict"; "params": EmptyErrorParams }
   | { "code": "agent_not_found"; "params": EmptyErrorParams }
+  | { "code": "plugin_not_found"; "params": EmptyErrorParams }
+  | { "code": "plugin_disabled"; "params": EmptyErrorParams }
   | { "code": "project_not_found"; "params": EmptyErrorParams }
   | { "code": "task_not_found"; "params": EmptyErrorParams }
   | { "code": "resource_in_use"; "params": EmptyErrorParams }

@@ -1,6 +1,7 @@
 use super::{
     MAX_MANIFEST_BYTES, PluginDiscoveryIssueKind, PluginKind, PluginManager, PluginPackageType,
 };
+use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::fs;
@@ -31,7 +32,10 @@ fn discovers_complete_manifest() {
     assert_eq!(plugin.display_name, "Claude Code");
     assert_eq!(plugin.kind, PluginKind::Agent);
     assert_eq!(plugin.kind.as_str(), "agent");
-    assert_eq!(plugin.main, Path::new("dist/index.js"));
+    assert_eq!(
+        plugin.main,
+        PortableRelativePath::parse("dist/index.js").expect("parse expected entrypoint")
+    );
     assert_eq!(plugin.engines.ora, ">=0.1.0 <0.2.0");
     assert_eq!(plugin.engines.plugin_api, 1);
     assert_eq!(plugin.engines.bun, ">=1.0.0 <2.0.0");
@@ -326,7 +330,7 @@ fn normalizes_plugin_entrypoints() {
     assert_eq!(manager.discovery_issues(), &[]);
     assert_eq!(
         manager.installed_plugins()[0].main,
-        Path::new("dist/index.js")
+        PortableRelativePath::parse("dist/index.js").expect("parse expected entrypoint")
     );
 }
 

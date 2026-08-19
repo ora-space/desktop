@@ -7,7 +7,7 @@
     "format": "prettier --write \"web/**/*.{ts,tsx,css}\" \"*.{html,json,ts}\" --ignore-path ../../.prettierignore",
     "format:check": "prettier --check \"web/**/*.{ts,tsx,css}\" \"*.{html,json,ts}\" --ignore-path ../../.prettierignore",
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node ../../scripts/setup-binary.mjs && tsc -b && vite build",
     "lint": "eslint . --max-warnings 0",
     "test": "node ../../scripts/run-with-clean-stderr.mjs \"vitest run web/tauri-transport.test.ts web/tauri-platform-adapter.test.ts\"",
     "preview": "vite preview",

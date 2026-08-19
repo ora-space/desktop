@@ -1,0 +1,17 @@
+[package]
+name = "ora-test-support"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_test_support"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tempfile = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

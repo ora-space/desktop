@@ -102,15 +102,26 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.5
       # The root workspace now contains both shared crates and Tauri packages.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # ora-fs spec tests spawn the ripgrep binary, which GitHub-hosted
-      # runners do not preinstall.
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+      # ora-fs spec tests spawn ripgrep by command name. Keep the downloaded
+      # sidecar outside the repository and expose it through the job PATH.
+      - name: Setup ripgrep
+        run: |
+          node scripts/setup-binary.mjs rg
+          mkdir -p "$RUNNER_TEMP/bin"
+          mv apps/desktop/src-tauri/binaries/rg-x86_64-unknown-linux-gnu "$RUNNER_TEMP/bin/rg"
+          chmod +x "$RUNNER_TEMP/bin/rg"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/rg" --version
+        env:
+          RG_VERSION: 15.2.0
       # System libraries required to compile Tauri 2 on ubuntu-latest (24.04).
       - name: Install Tauri system dependencies
         run: |
@@ -123,8 +134,6 @@ jobs:
             libxdo-dev \
             libssl-dev \
             build-essential
-      - name: Set up sidecar binaries
-        run: node scripts/setup-binary.mjs
       - run: task test:crates
 
   # Aggregate gate: the single check to mark as "required" in branch

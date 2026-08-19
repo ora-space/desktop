@@ -1554,6 +1554,7 @@ dependencies = [
 name = "gitlancer"
 version = "0.0.0"
 dependencies = [
+ "ora-test-support",
  "ora-utils",
  "pretty_assertions",
  "thiserror 2.0.20",
@@ -2877,6 +2878,7 @@ dependencies = [
  "ora-domain",
  "ora-logging",
  "ora-skill-package",
+ "ora-test-support",
  "ora-utils",
  "petgraph",
  "pretty_assertions",
@@ -2908,9 +2910,11 @@ dependencies = [
  "ora-fs",
  "ora-history",
  "ora-logging",
+ "ora-plugin-lifecycle",
  "ora-process",
  "ora-scheduler",
  "ora-skill-package",
+ "ora-test-support",
  "ora-utils",
  "pretty_assertions",
  "serde",
@@ -2968,7 +2972,6 @@ dependencies = [
  "ora-contracts",
  "ora-fs",
  "ora-logging",
- "ora-plugin-manager",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -3038,6 +3041,27 @@ dependencies = [
  "time",
  "tracing",
  "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ora-plugin-lifecycle"
+version = "0.0.0"
+dependencies = [
+ "ora-application",
+ "ora-contracts",
+ "ora-db",
+ "ora-domain",
+ "ora-logging",
+ "ora-plugin-manager",
+ "ora-plugin-runtime",
+ "ora-process",
+ "pretty_assertions",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -3127,6 +3151,14 @@ dependencies = [
  "ora-utils",
  "pretty_assertions",
  "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "ora-test-support"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
  "tempfile",
 ]
 

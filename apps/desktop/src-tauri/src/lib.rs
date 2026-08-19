@@ -16,7 +16,6 @@ use ora_logging::{
     FileLoggingConfig, LogLevel, LogOutput, LoggingConfig, RotationPolicy, init_logging, ora_error,
     ora_info, ora_warn, register_gitlancer_logger,
 };
-use ora_plugin_manager::PluginManager;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
@@ -116,6 +115,12 @@ pub fn run() {
             // plugin
             // =============================================================================
             commands::list_installed_plugins,
+            commands::scan_plugins,
+            commands::enable_plugin,
+            commands::disable_plugin,
+            commands::activate_plugin,
+            commands::stop_plugin,
+            commands::uninstall_plugin,
             commands::update_agent,
             commands::delete_agent,
             commands::prepare_agent_import,
@@ -223,6 +228,8 @@ fn bootstrap_desktop(
     let ripgrep_path = binary_paths.ripgrep_path().to_path_buf();
     let backend = Backend::open(BackendPaths {
         database_path: app_data_directory.join("ora.sqlite3"),
+        data_directory: app_data_directory.clone(),
+        deno_path: binary_paths.deno_path().to_path_buf(),
         worktree_root: config_snapshot.worktree_root().to_path_buf(),
         home_directory,
         relative_path_base: desktop_relative_path_base(&app_data_directory),
@@ -232,21 +239,9 @@ fn bootstrap_desktop(
         timezone: resolved_timezone.timezone,
     })?;
     let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
-    let plugin_manager = PluginManager::discover(&app_data_directory);
-    for issue in plugin_manager.discovery_issues() {
-        ora_warn!(
-            message = "installed plugin manifest skipped during discovery",
-            path = %issue.path().display(),
-            issue_kind = issue.kind().as_str(),
-            field_path = issue.field_path().unwrap_or(""),
-            reason = issue.message(),
-        );
-    }
-
     Ok((
         DesktopState {
             backend,
-            plugin_manager: Arc::new(plugin_manager),
             config,
             workspace_files,
             binary_paths,

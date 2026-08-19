@@ -8,6 +8,6 @@ ora-utils = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+ora-test-support = { workspace = true }
 pretty_assertions = { workspace = true }
-
 

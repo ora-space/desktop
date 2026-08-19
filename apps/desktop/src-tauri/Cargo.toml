@@ -28,7 +28,6 @@ ora-backend = { path = "../../../crates/backend" }
 ora-contracts = { path = "../../../crates/contracts" }
 ora-fs = { path = "../../../crates/fs" }
 ora-logging = { path = "../../../crates/logging" }
-ora-plugin-manager = { path = "../../../crates/plugin-manager" }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "sync", "net"] }

@@ -9,7 +9,7 @@ import { queryKeys } from "./query-keys";
 import { useInstalledPlugins } from "./use-installed-plugins";
 
 describe("useInstalledPlugins", () => {
-  it("loads the immutable installed plugin list through the contracts client", async () => {
+  it("loads the cached installed plugin list through the contracts client", async () => {
     const state = createMockClientState();
     state.installedPlugins.push({
       id: "ora.reviewer",
@@ -19,6 +19,8 @@ describe("useInstalledPlugins", () => {
       kind: "agent",
       main: "dist/index.js",
       agents: [],
+      enabled: false,
+      runtime: "stopped",
     });
     const { result, queryClient } = renderHookWithClient(
       () => useInstalledPlugins(),

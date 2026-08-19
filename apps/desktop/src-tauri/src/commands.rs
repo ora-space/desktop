@@ -137,6 +137,19 @@ macro_rules! backend_command {
     };
 }
 
+macro_rules! async_backend_command {
+    ($name:ident, $request:ty, $response:ty, $operation:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[tauri::command]
+        pub async fn $name(
+            state: State<'_, DesktopState>,
+            request: $request,
+        ) -> Result<$response, CommandError> {
+            run_async_backend(stringify!($name), state.backend.$operation(request)).await
+        }
+    };
+}
+
 /// Carries a user-selected destination and serialized workflow definition for export.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -869,37 +882,55 @@ backend_command!(
 // plugin
 // =============================================================================
 
-/// Lists the immutable installed-plugin snapshot captured during Desktop bootstrap.
-#[tauri::command]
-pub async fn list_installed_plugins(
-    state: State<'_, DesktopState>,
-    _request: ListInstalledPluginsRequest,
-) -> Result<ListInstalledPluginsResponse, CommandError> {
-    let plugins = state
-        .plugin_manager
-        .installed_plugins()
-        .iter()
-        .map(|plugin| InstalledPlugin {
-            id: plugin.id.clone(),
-            package_name: plugin.package_name.clone(),
-            display_name: plugin.display_name.clone(),
-            version: plugin.version.to_string(),
-            kind: plugin.kind.as_str().to_string(),
-            main: plugin.main.to_string_lossy().to_string(),
-            agents: plugin
-                .agents
-                .iter()
-                .map(|agent| InstalledPluginAgent {
-                    id: agent.id.clone(),
-                    display_name: agent.display_name.clone(),
-                    contract_version: agent.contract_version,
-                })
-                .collect(),
-        })
-        .collect();
-
-    Ok(ListInstalledPluginsResponse { plugins })
-}
+backend_command!(
+    list_installed_plugins,
+    ListInstalledPluginsRequest,
+    ListInstalledPluginsResponse,
+    list_installed_plugins,
+    "Lists the cached installed-plugin lifecycle snapshot."
+);
+async_backend_command!(
+    scan_plugins,
+    ScanPluginsRequest,
+    ScanPluginsResponse,
+    scan_plugins,
+    "Explicitly scans and reconciles installed plugins."
+);
+async_backend_command!(
+    enable_plugin,
+    EnablePluginRequest,
+    EnablePluginResponse,
+    enable_plugin,
+    "Persists plugin eligibility without activating it."
+);
+async_backend_command!(
+    disable_plugin,
+    DisablePluginRequest,
+    DisablePluginResponse,
+    disable_plugin,
+    "Stops and disables one installed plugin."
+);
+async_backend_command!(
+    activate_plugin,
+    ActivatePluginRequest,
+    ActivatePluginResponse,
+    activate_plugin,
+    "Activates one enabled plugin."
+);
+async_backend_command!(
+    stop_plugin,
+    StopPluginRequest,
+    StopPluginResponse,
+    stop_plugin,
+    "Stops one plugin without changing eligibility."
+);
+async_backend_command!(
+    uninstall_plugin,
+    UninstallPluginRequest,
+    UninstallPluginResponse,
+    uninstall_plugin,
+    "Stops and removes one installed plugin."
+);
 
 // =============================================================================
 // gitIdentity

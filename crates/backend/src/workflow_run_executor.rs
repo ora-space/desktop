@@ -740,16 +740,15 @@ mod tests {
     /// so the before/after delta reports the node's own edits rather than whole-file additions.
     #[test]
     fn capture_worktree_snapshot_diffs_clean_tracked_and_untracked_dir_files() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-        run_git(root, &["init"]);
-        run_git(root, &["config", "user.email", "test@example.com"]);
-        run_git(root, &["config", "user.name", "Test"]);
+        let scaffold = ora_test_support::GitTestScaffold::new("backend-workflow-snapshot")
+            .expect("create Git test scaffold");
+        let root = scaffold.repo_path();
         std::fs::create_dir_all(root.join("src")).unwrap();
         // A tracked file that is clean at the baseline and modified by the node.
         std::fs::write(root.join("src/a.ts"), "one\ntwo\n").unwrap();
-        run_git(root, &["add", "."]);
-        run_git(root, &["commit", "-m", "init"]);
+        scaffold
+            .stage_all_and_commit("init")
+            .expect("create snapshot baseline commit");
 
         let baseline = capture_worktree_snapshot(root);
         // The clean tracked file is part of the baseline.
@@ -778,16 +777,6 @@ mod tests {
                 },
             ]
         );
-    }
-
-    /// Runs one git command in the worktree, panicking on failure.
-    fn run_git(cwd: &Path, args: &[&str]) {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .status()
-            .unwrap_or_else(|error| panic!("git {args:?} failed: {error}"));
-        assert!(status.success(), "git {args:?} exited with {status}");
     }
 
     fn model_option(options: Vec<SessionConfigSelectOption>) -> SessionConfigOption {

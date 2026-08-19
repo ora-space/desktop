@@ -1,7 +1,9 @@
 use crate::agent_runtime::SessionEventStream;
 use crate::{BackendError, ErrorClassification};
 use ora_contracts::{AppEvent, EmptyErrorParams, PublicError};
+use ora_domain::PluginId;
 use ora_logging::ora_debug;
+use ora_plugin_lifecycle::PluginStatusPublisher;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
@@ -66,6 +68,15 @@ impl AppEventPublisher {
         if self.events.send(event).is_err() {
             ora_debug!("application event dropped because no client is subscribed");
         }
+    }
+}
+
+impl PluginStatusPublisher for AppEventPublisher {
+    /// Projects lifecycle invalidations onto the existing application event stream.
+    fn publish_status_changed(&self, plugin_id: &PluginId) {
+        self.try_publish(AppEvent::PluginStatusChanged {
+            plugin_id: plugin_id.to_string(),
+        });
     }
 }
 
@@ -160,6 +171,24 @@ mod tests {
 
         assert_eq!(first.recv().await.unwrap().unwrap(), event);
         assert_eq!(second.recv().await.unwrap().unwrap(), event);
+    }
+
+    /// Verifies lifecycle publishers project plugin identifiers onto the shared event stream.
+    #[tokio::test]
+    async fn publishes_plugin_status_invalidations() {
+        let hub = AppEventHub::new();
+        let mut stream = hub.subscribe();
+        assert_eq!(stream.recv().await.unwrap().unwrap(), AppEvent::Ready);
+
+        hub.publisher()
+            .publish_status_changed(&PluginId::new("ora.example"));
+
+        assert_eq!(
+            stream.recv().await.unwrap().unwrap(),
+            AppEvent::PluginStatusChanged {
+                plugin_id: "ora.example".to_string(),
+            },
+        );
     }
 
     /// Verifies best-effort events published without a subscriber are not replayed later.

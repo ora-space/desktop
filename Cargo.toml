@@ -12,12 +12,14 @@ members = [
     "crates/history",
     "crates/logging",
     "crates/plugin-manifest",
+    "crates/plugin-lifecycle",
     "crates/plugin-manager",
     "crates/plugin-runtime",
     "crates/process",
     "crates/pty",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/test-support",
     "crates/utils",
     "xtask",
 ]
@@ -33,12 +35,14 @@ default-members = [
     "crates/history",
     "crates/logging",
     "crates/plugin-manifest",
+    "crates/plugin-lifecycle",
     "crates/plugin-manager",
     "crates/plugin-runtime",
     "crates/process",
     "crates/pty",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/test-support",
     "crates/utils",
     "xtask",
 ]
@@ -65,12 +69,14 @@ gitlancer = { path = "crates/gitlancer" }
 ora-history = { path = "crates/history" }
 ora-logging = { path = "crates/logging" }
 ora-plugin-manifest = { path = "crates/plugin-manifest" }
+ora-plugin-lifecycle = { path = "crates/plugin-lifecycle" }
 ora-plugin-manager = { path = "crates/plugin-manager" }
 ora-plugin-runtime = { path = "crates/plugin-runtime" }
 ora-process = { path = "crates/process" }
 ora-pty = { path = "crates/pty" }
 ora-scheduler = { path = "crates/scheduler" }
 ora-skill-package = { path = "crates/skill-package" }
+ora-test-support = { path = "crates/test-support" }
 ora-utils = { path = "crates/utils" }
 
 # External

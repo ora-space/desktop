@@ -16,6 +16,20 @@ const binaryDirectory = path.join(
   "src-tauri",
   "binaries",
 );
+const requestedBinaries = process.argv
+  .slice(2)
+  .filter((argument) => argument !== "--force");
+const supportedBinaries = new Set(["deno", "rg"]);
+for (const binary of requestedBinaries) {
+  if (!supportedBinaries.has(binary)) {
+    throw new Error(
+      `Unsupported binary '${binary}'. Expected one of: deno, rg.`,
+    );
+  }
+}
+const binariesToInstall = new Set(
+  requestedBinaries.length > 0 ? requestedBinaries : supportedBinaries,
+);
 
 /** Resolves the configured build target or the current development machine target. */
 function targetTriple() {
@@ -120,6 +134,8 @@ async function installBinary({
     if (process.platform === "win32" && archiveExtension === "zip") {
       await execFileAsync("powershell", [
         "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
         "-Command",
         `Expand-Archive -LiteralPath '${archivePath}' -DestinationPath '${extractDirectory}' -Force`,
       ]);
@@ -166,19 +182,23 @@ const ripgrepAssetTriple =
 const ripgrepAsset = `ripgrep-${ripgrepVersion}-${ripgrepAssetTriple}.${isWindows ? "zip" : "tar.gz"}`;
 
 await mkdir(binaryDirectory, { recursive: true });
-await installBinary({
-  name: "deno",
-  version: denoVersion,
-  asset: denoAsset,
-  archiveExtension: "zip",
-  archiveExecutableName: "deno",
-  executableName: `deno-${triple}${isWindows ? ".exe" : ""}`,
-});
-await installBinary({
-  name: "ripgrep",
-  version: ripgrepVersion,
-  asset: ripgrepAsset,
-  archiveExtension: isWindows ? "zip" : "tar.gz",
-  archiveExecutableName: "rg",
-  executableName: `rg-${triple}${isWindows ? ".exe" : ""}`,
-});
+if (binariesToInstall.has("deno")) {
+  await installBinary({
+    name: "deno",
+    version: denoVersion,
+    asset: denoAsset,
+    archiveExtension: "zip",
+    archiveExecutableName: "deno",
+    executableName: `deno-${triple}${isWindows ? ".exe" : ""}`,
+  });
+}
+if (binariesToInstall.has("rg")) {
+  await installBinary({
+    name: "ripgrep",
+    version: ripgrepVersion,
+    asset: ripgrepAsset,
+    archiveExtension: isWindows ? "zip" : "tar.gz",
+    archiveExecutableName: "rg",
+    executableName: `rg-${triple}${isWindows ? ".exe" : ""}`,
+  });
+}

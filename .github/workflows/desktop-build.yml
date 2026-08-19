@@ -89,10 +89,21 @@ jobs:
             patchelf \
             build-essential
       - run: pnpm install --frozen-lockfile
+      # Keep the checked-in config free of local sidecar requirements so
+      # `tauri dev` resolves rg and deno from PATH. Packaging enables the
+      # downloaded sidecars by editing this working copy in place.
+      - name: Configure Tauri sidecars
+        shell: node {0}
+        run: |
+          const fs = require("node:fs");
+          const configPath = "apps/desktop/src-tauri/tauri.conf.json";
+          const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+          config.bundle.externalBin = ["binaries/rg", "binaries/deno"];
+          fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+      - run: task build:desktop
         env:
           DENO_VERSION: v2.9.5
           RG_VERSION: 15.2.0
-      - run: task build:desktop
       - uses: actions/upload-artifact@v6
         with:
           name: ora-desktop-${{ matrix.os }}

@@ -206,53 +206,34 @@ mod tests {
         RemoveTaskBranchRequest, RemoveTaskWorktreeRequest, ResourceRemoval,
         TaskGitResourceCleaner, WorktreeRemoval,
     };
+    use ora_test_support::GitTestScaffold;
     use pretty_assertions::assert_eq;
+    use std::ffi::OsStr;
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::process::Command;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// Runs one required Git setup command for the repository fixture.
-    fn run_git(repository_root: &Path, arguments: &[&str]) {
-        let status = Command::new("git")
-            .current_dir(repository_root)
-            .args(arguments)
-            .status()
-            .unwrap_or_else(|error| panic!("failed to start git {arguments:?}: {error}"));
-        assert!(status.success(), "git {arguments:?} failed with {status}");
-    }
-
     /// Builds a real repository with one committed file and one linked task worktree.
-    fn repository_with_task_worktree() -> (TempDir, PathBuf, PathBuf) {
-        let temp = TempDir::new().expect("create temp dir");
-        let repo = temp.path().join("repo");
-        fs::create_dir_all(&repo).expect("create repo dir");
-        run_git(&repo, &["init", "--initial-branch=main", "."]);
-        run_git(&repo, &["config", "user.name", "ora-test"]);
-        run_git(&repo, &["config", "user.email", "ora-test@example.com"]);
-        fs::write(repo.join("README.md"), "fixture").expect("write file");
-        run_git(&repo, &["add", "."]);
-        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "init"]);
-        let checkout = temp.path().join("worktrees").join("task-1");
-        fs::create_dir_all(checkout.parent().unwrap()).expect("create worktrees dir");
-        run_git(
-            &repo,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "ora/12345678",
-                checkout.to_str().unwrap(),
-                "main",
-            ],
-        );
-        (temp, repo, checkout)
+    fn repository_with_task_worktree() -> (GitTestScaffold, PathBuf, PathBuf) {
+        let scaffold =
+            GitTestScaffold::new("git-resource-cleaner").expect("create Git test scaffold");
+        scaffold
+            .write_file(scaffold.repo_path(), "README.md", "fixture")
+            .expect("write file");
+        scaffold
+            .stage_all_and_commit("init")
+            .expect("create initial commit");
+        let checkout = scaffold
+            .create_linked_worktree("task-1", "ora/12345678")
+            .expect("create linked worktree");
+        let repo = scaffold.repo_path().to_path_buf();
+        (scaffold, repo, checkout)
     }
 
     /// Verifies the branch-resolved removal path and its idempotent replay.
     #[test]
     fn removes_worktree_and_branch_then_confirms_absence_on_replay() {
-        let (_temp, repo, checkout) = repository_with_task_worktree();
+        let (_scaffold, repo, checkout) = repository_with_task_worktree();
         let cleaner = GitTaskResourceCleaner::new();
         let worktree_request = RemoveTaskWorktreeRequest {
             repository_root: repo.clone(),
@@ -289,9 +270,11 @@ mod tests {
     /// Verifies a detached checkout is still resolved through its recorded root.
     #[test]
     fn removes_detached_worktree_through_recorded_checkout_root() {
-        let (_temp, repo, checkout) = repository_with_task_worktree();
+        let (scaffold, repo, checkout) = repository_with_task_worktree();
         // Detach the worktree so branch-based resolution can no longer find it.
-        run_git(&checkout, &["checkout", "--detach"]);
+        scaffold
+            .run_git_in(&checkout, ["checkout", "--detach"])
+            .expect("detach worktree");
         let cleaner = GitTaskResourceCleaner::new();
 
         assert_eq!(
@@ -320,8 +303,10 @@ mod tests {
     /// Verifies dirty worktrees are still force-removed as the product decided.
     #[test]
     fn force_removes_dirty_worktrees() {
-        let (_temp, repo, checkout) = repository_with_task_worktree();
-        fs::write(checkout.join("dirty.txt"), "uncommitted").expect("write dirty file");
+        let (scaffold, repo, checkout) = repository_with_task_worktree();
+        scaffold
+            .write_file(&checkout, "dirty.txt", "uncommitted")
+            .expect("write dirty file");
         let cleaner = GitTaskResourceCleaner::new();
 
         assert_eq!(
@@ -341,13 +326,19 @@ mod tests {
     /// Verifies a directory that is not a linked worktree is never removed.
     #[test]
     fn reports_ownership_lost_for_a_non_worktree_directory() {
-        let (temp, repo, checkout) = repository_with_task_worktree();
+        let (scaffold, repo, checkout) = repository_with_task_worktree();
         // Replace the checkout with a plain directory Git no longer tracks.
-        run_git(
-            &repo,
-            &["worktree", "remove", checkout.to_str().unwrap(), "--force"],
-        );
-        run_git(&repo, &["branch", "-D", "ora/12345678"]);
+        scaffold
+            .run_git([
+                OsStr::new("worktree"),
+                OsStr::new("remove"),
+                checkout.as_os_str(),
+                OsStr::new("--force"),
+            ])
+            .expect("remove linked worktree");
+        scaffold
+            .run_git(["branch", "-D", "ora/12345678"])
+            .expect("remove linked branch");
         fs::create_dir_all(&checkout).expect("recreate plain directory");
         fs::write(checkout.join("user-data.txt"), "keep me").expect("write user data");
         let cleaner = GitTaskResourceCleaner::new();
@@ -378,7 +369,6 @@ mod tests {
             WorktreeRemoval::OwnershipLost
         );
         assert!(repo.join("README.md").exists());
-        drop(temp);
     }
 
     /// Verifies a half-failed removal's empty shell is reclaimed, not parked.
@@ -388,11 +378,15 @@ mod tests {
     /// instead of misreading the empty shell as a user-owned checkout.
     #[test]
     fn reclaims_a_leftover_empty_shell_after_a_half_failed_removal() {
-        let (_temp, repo, checkout) = repository_with_task_worktree();
-        run_git(
-            &repo,
-            &["worktree", "remove", checkout.to_str().unwrap(), "--force"],
-        );
+        let (scaffold, repo, checkout) = repository_with_task_worktree();
+        scaffold
+            .run_git([
+                OsStr::new("worktree"),
+                OsStr::new("remove"),
+                checkout.as_os_str(),
+                OsStr::new("--force"),
+            ])
+            .expect("remove linked worktree");
         // Recreate the shell a half-failed platform removal would leave behind.
         fs::create_dir_all(&checkout).expect("recreate empty shell");
         let cleaner = GitTaskResourceCleaner::new();

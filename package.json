@@ -9,7 +9,6 @@
   },
   "scripts": {
     "prepare": "husky",
-    "postinstall": "node scripts/setup-binary.mjs",
     "setup:binary": "node scripts/setup-binary.mjs"
   },
   "devDependencies": {
