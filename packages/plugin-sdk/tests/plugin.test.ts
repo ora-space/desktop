@@ -1,4 +1,9 @@
-import { createPlugin } from "../src/mod.ts";
+import {
+  createPlugin,
+  PLUGIN_API_VERSION,
+  PluginMethodError,
+  SDK_VERSION,
+} from "../src/mod.ts";
 import {
   decodeFrames,
   encodeFrame,
@@ -59,7 +64,12 @@ Deno.test(
     assertEquals((await harness.responses.next()).value, {
       jsonrpc: "2.0",
       method: "ora/register",
-      params: { methods: ["example.echo"] },
+      params: {
+        methods: ["example.echo"],
+        emits: [],
+        sdkVersion: SDK_VERSION,
+        contracts: { pluginApi: PLUGIN_API_VERSION },
+      },
     });
     await harness.send({
       jsonrpc: "2.0",
@@ -101,7 +111,7 @@ Deno.test("rejects duplicate and late method registration", async () => {
   await harness.responses.next();
   assertThrows(
     () => plugin.registerMethod("example.other", (input) => input),
-    /cannot be registered/,
+    /cannot change after run/,
   );
   await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
   await run;
@@ -127,6 +137,88 @@ Deno.test("maps handler failures to JSON-RPC errors", async () => {
     id: 3,
     error: { code: -32603, message: "expected failure" },
   });
+  await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
+  await run;
+});
+
+Deno.test("carries PluginMethodError codes and declared contracts", async () => {
+  const plugin = createPlugin();
+  plugin.declareContract("agent", 1);
+  plugin.registerMethod("example.missing", () => {
+    throw new PluginMethodError(-32001, "not installed");
+  });
+  const harness = createTransportHarness();
+  const run = plugin.run(harness.transport);
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    method: "ora/register",
+    params: {
+      methods: ["example.missing"],
+      emits: [],
+      sdkVersion: SDK_VERSION,
+      contracts: { pluginApi: PLUGIN_API_VERSION, agent: 1 },
+    },
+  });
+  await harness.send({
+    jsonrpc: "2.0",
+    id: 4,
+    method: "example.missing",
+    params: null,
+  });
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 4,
+    error: { code: -32001, message: "not installed" },
+  });
+  await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
+  await run;
+});
+
+Deno.test("routes host notifications and emits declared notifications", async () => {
+  const plugin = createPlugin();
+  const received: unknown[] = [];
+  plugin.declareEmit("example.event");
+  plugin.onNotification("example.ping", (params) => {
+    received.push(params);
+    return plugin.notify("example.event", { echo: params });
+  });
+  assertThrows(
+    () => plugin.onNotification("example.ping", () => {}),
+    /already has a handler/,
+  );
+  const harness = createTransportHarness();
+  const run = plugin.run(harness.transport);
+  await harness.responses.next();
+
+  await harness.send({
+    jsonrpc: "2.0",
+    method: "example.ping",
+    params: { n: 1 },
+  });
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    method: "example.event",
+    params: { echo: { n: 1 } },
+  });
+  assertEquals(received, [{ n: 1 }]);
+  // An unhandled notification is ignored rather than failing the process.
+  await harness.send({ jsonrpc: "2.0", method: "example.unknown" });
+  await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
+  await run;
+});
+
+Deno.test("refuses to emit a notification that was not declared", async () => {
+  const plugin = createPlugin();
+  const harness = createTransportHarness();
+  const run = plugin.run(harness.transport);
+  await harness.responses.next();
+  let message = "";
+  try {
+    await plugin.notify("example.undeclared", null);
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+  assertEquals(/not declared in emits/.test(message), true);
   await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
   await run;
 });

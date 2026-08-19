@@ -1,0 +1,48 @@
+name: plugin-sdk-publish
+
+on:
+  push:
+    tags:
+      - "plugin-sdk/v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/plugin-sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Verify tag matches package versions
+        run: |
+          tag_version="${GITHUB_REF_NAME#plugin-sdk/v}"
+          deno_version="$(deno eval 'console.log(JSON.parse(Deno.readTextFileSync("deno.json")).version)')"
+          npm_version="$(deno eval 'console.log(JSON.parse(Deno.readTextFileSync("package.json")).version)')"
+          sdk_version="$(deno eval 'import { SDK_VERSION } from "./src/version.ts"; console.log(SDK_VERSION)')"
+          for candidate in "$deno_version" "$npm_version" "$sdk_version"; do
+            if [ "$candidate" != "$tag_version" ]; then
+              echo "tag $tag_version does not match $candidate" >&2
+              exit 1
+            fi
+          done
+      - run: deno task format:check
+      - run: deno task lint
+      - run: deno task check
+      - run: deno task test
+      - name: Publish to JSR
+        run: deno publish
+      - name: Publish npm mirror
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

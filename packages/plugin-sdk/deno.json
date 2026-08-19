@@ -1,4 +1,25 @@
 {
+  "name": "@ora-space/plugin-sdk",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./agent": "./src/agent/mod.ts",
+    "./acp": "./src/acp/mod.ts",
+    "./testing": "./src/testing/mod.ts"
+  },
+  "publish": {
+    "include": ["src", "README.md", "deno.json"],
+    "exclude": ["tests"]
+  },
+  "tasks": {
+    "check": "deno check src/mod.ts src/agent/mod.ts src/acp/mod.ts src/testing/mod.ts tests/*.ts tests/fixtures/*.ts",
+    "lint": "deno lint src tests",
+    "format": "deno fmt src tests deno.json package.json README.md",
+    "format:check": "deno fmt --check src tests deno.json package.json README.md",
+    "test": "deno test --allow-run --allow-read --allow-env tests",
+    "publish:dry-run": "deno publish --dry-run"
+  },
   "compilerOptions": {
     "lib": ["deno.ns", "dom", "esnext"],
     "strict": true
@@ -7,5 +28,10 @@
     "lineWidth": 80,
     "semiColons": true,
     "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@ora-space/plugin-sdk",
-  "version": "0.1.3",
+  "version": "1.0.0",
   "description": "Ora plugin development SDK",
   "type": "module",
   "license": "Apache-2.0",
@@ -13,13 +13,26 @@
       "types": "./src/mod.ts",
       "default": "./src/mod.ts"
     },
+    "./agent": {
+      "types": "./src/agent/mod.ts",
+      "default": "./src/agent/mod.ts"
+    },
+    "./acp": {
+      "types": "./src/acp/mod.ts",
+      "default": "./src/acp/mod.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/mod.ts",
+      "default": "./src/testing/mod.ts"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
-    "format": "deno fmt src tests deno.json package.json README.md",
-    "format:check": "deno fmt --check src tests deno.json package.json README.md",
-    "lint": "deno lint src tests && deno check src/mod.ts tests/plugin.test.ts",
-    "test": "deno test tests"
+    "check": "deno task check",
+    "format": "deno task format",
+    "format:check": "deno task format:check",
+    "lint": "deno task lint && deno task check",
+    "test": "deno task test"
   },
   "publishConfig": {
     "access": "public"
