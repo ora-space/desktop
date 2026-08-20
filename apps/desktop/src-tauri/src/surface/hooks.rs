@@ -5,6 +5,7 @@
 //! serve both paths and guarantees the two mount targets enforce the same policy.
 
 use crate::surface::web_data::ResolvedWebData;
+use ora_logging::ora_info;
 use ora_surface::{NavigationPolicy, WebviewLabel};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -131,12 +132,23 @@ impl<D> SurfaceHooks<D> {
         let popups = self.navigation;
         let downloads = self.downloads;
         let label = self.label;
+        let navigation_label = label.clone();
+        let popup_label = label.clone();
         builder
-            .on_navigation(move |url| navigation.allows(url))
+            .on_navigation(move |url| {
+                let allowed = navigation.allows(url);
+                // Denials are the only navigation outcome worth recording: a remote site that
+                // silently stops working is otherwise impossible to diagnose from the logs.
+                if !allowed {
+                    ora_info!(message = "surface navigation denied", label = %navigation_label, url = %url);
+                }
+                allowed
+            })
             .on_new_window(move |url, _features| {
                 if popups.allows(&url) {
                     NewWindowResponse::Allow
                 } else {
+                    ora_info!(message = "surface popup denied", label = %popup_label, url = %url);
                     NewWindowResponse::Deny
                 }
             })

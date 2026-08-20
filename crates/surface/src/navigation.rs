@@ -27,6 +27,12 @@ impl NavigationPolicy {
     /// a public site boundary, and a lookalike such as `allowed.com.evil.example` fails because
     /// suffix matching respects label boundaries.
     pub fn allows(&self, url: &Url) -> bool {
+        // Sites start in-page downloads by navigating to `blob:<origin>/<id>` URLs created from
+        // a fetched response. The blob's origin is the page that minted it, so the same host
+        // rules apply to the inner URL; `blob:` alone never grants anything.
+        if url.scheme() == "blob" {
+            return Url::parse(url.path()).is_ok_and(|origin| self.allows(&origin));
+        }
         if url.scheme() != "https"
             || url.port().is_some()
             || !url.username().is_empty()
@@ -83,10 +89,11 @@ mod tests {
             [
                 "https://skillhub.cn",
                 "https://www.skillhub.cn/skills/example?tab=install",
+                "blob:https://www.skillhub.cn/ea83c2ef-e61d-47fe-b0b5-10b5ccb2246d",
             ]
             .map(parse_url)
             .map(|url| policy.allows(&url)),
-            [true, true],
+            [true, true, true],
         );
     }
 
@@ -123,10 +130,13 @@ mod tests {
                 "javascript:alert(1)",
                 "data:text/html,hi",
                 "https://www.skillhüb.cn",
+                "blob:https://evil.example/ea83c2ef",
+                "blob:http://www.skillhub.cn/ea83c2ef",
+                "blob:null/ea83c2ef",
             ]
             .map(parse_url)
             .map(|url| skillhub.allows(&url)),
-            [false; 10],
+            [false; 13],
         );
         assert_eq!(
             [

@@ -14,7 +14,9 @@ executes the effects this crate decides on.
 - `definition`: `SurfaceDefinition` built from `ora-plugin-manager`'s already validated
   `InstalledSurface`; `MountTarget` (`embedded` / `windowed` on the wire, both directions).
 - `navigation`: `NavigationPolicy::allows` accepts only credential-free, port-free `https` URLs
-  whose host is an exact allow-list entry or a subdomain of a suffix entry.
+  whose host is an exact allow-list entry or a subdomain of a suffix entry. `blob:` URLs are
+  judged by their inner origin under the same rules, because sites start in-page downloads by
+  navigating to a blob minted from a fetched response.
 - `state`: pure transition functions returning `SurfaceEffect`s (see `src/state/README.md` for
   the full transition table).
 - `registry`: `SurfaceRegistry` keeps live instances behind one mutex, enforces the singleton
