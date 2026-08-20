@@ -1,6 +1,8 @@
 import type { ChatToolCall, ChatTurn } from "@ora/chat";
 import { displayPath } from "../turn-diff-files";
 import { normalizeDiffPath } from "../../../lib/workspace-path";
+import { isLikelyFileArtifactPath } from "./parse";
+import { collectToolOutputPaths } from "./tool-output-paths";
 
 export interface SessionArtifactIndex {
   edited: string[];
@@ -18,9 +20,9 @@ function storedArtifactPath(path: string): string {
   return normalizeDiffPath(displayPath(path));
 }
 
-/** Directory locations are not Files-preview targets in v1. */
-function isDirectoryPath(path: string): boolean {
-  return /[\\/]$/.test(path.trim());
+/** True when a tool path should enter the referenced set (files, not search roots). */
+function isIndexableReferencedPath(path: string | null): path is string {
+  return path !== null && isLikelyFileArtifactPath(path);
 }
 
 /** Narrows unknown provider payloads before reading their fields. */
@@ -76,6 +78,19 @@ function fallbackReadPath(tool: ChatToolCall): string | null {
   );
 }
 
+/** Adds a referenced file unless it is a directory, glob, or already edited. */
+function addReferencedPath(
+  rawPath: string | null,
+  edited: Map<string, string>,
+  referenced: Map<string, string>,
+): void {
+  if (!isIndexableReferencedPath(rawPath)) return;
+  const path = storedArtifactPath(rawPath);
+  const key = path.toLowerCase();
+  if (edited.has(key)) return;
+  referenced.set(key, path);
+}
+
 /** Collects edited and referenced paths for one turn without reading diff text. */
 export function collectTurnArtifactPaths(turn: ChatTurn): {
   edited: string[];
@@ -115,21 +130,13 @@ export function collectTurnArtifactPaths(turn: ChatTurn): {
     )
       continue;
     for (const location of item.locations) {
-      if (isDirectoryPath(location.path)) continue;
-      const path = storedArtifactPath(location.path);
-      const key = path.toLowerCase();
-      if (edited.has(key)) continue;
-      referenced.set(key, path);
+      addReferencedPath(location.path, edited, referenced);
     }
     if (item.locations.length === 0) {
-      const fallback = fallbackReadPath(item);
-      if (fallback !== null && !isDirectoryPath(fallback)) {
-        const path = storedArtifactPath(fallback);
-        const key = path.toLowerCase();
-        if (!edited.has(key)) {
-          referenced.set(key, path);
-        }
-      }
+      addReferencedPath(fallbackReadPath(item), edited, referenced);
+    }
+    for (const outputPath of collectToolOutputPaths(item)) {
+      addReferencedPath(outputPath, edited, referenced);
     }
   }
 
@@ -151,7 +158,8 @@ function turnArtifactFingerprint(turn: ChatTurn): string {
       const locations = item.locations.map((loc) => loc.path).join(",");
       const editFallback = fallbackEditPath(item) ?? "";
       const readFallback = fallbackReadPath(item) ?? "";
-      return `${item.id}:${item.status ?? ""}:${diffs}:${locations}:${editFallback}:${readFallback}`;
+      const outputPaths = collectToolOutputPaths(item).join(",");
+      return `${item.id}:${item.status ?? ""}:${diffs}:${locations}:${editFallback}:${readFallback}:${outputPaths}`;
     })
     .join(";");
 }

@@ -7,7 +7,7 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 ## Responsibilities
 
 - Parse path-like inline code and Markdown hrefs (`parse.ts`)
-- Build a **path-only** session artifact index from tool diffs and locations (`artifact-index.ts`)
+- Build a **path-only** session artifact index from tool diffs, locations, and glob/search dumps (`artifact-index.ts`)
 - Classify a candidate as Diff, Files, Web, or none (`classify.ts`)
 - Provide `ChatLinkContext` from the message list and render `ChatFileLink`
 
@@ -23,7 +23,8 @@ Files viewer, the Diff viewer, or ACP tool collection with line-diff counts.
 - Each assistant turn receives a **cumulative** index of tools up to that turn (`collectCumulativeArtifactIndices`). A path that was only read still opens Files on that turn, even if a later turn edits it. Mentions from the edit turn onward open Changes.
 - Failed and cancelled tool calls are not indexed.
 - When ACP omits `locations`, read tools may still contribute referenced paths from `rawInput` (`filePath`, `path`, `AbsolutePath`, …).
-- Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists. A bare filename links only when that last segment is unique across **edited and referenced together**; several hits stay plain text. An explicit Markdown file href still attempts Files with the typed string.
+- Navigation uses the index hit’s workspace-relative path, never the raw clicked token when a unique hit exists. A bare filename links when that last segment is unique across **edited and referenced together**. If several hits share the basename, the workspace-root file (`README.md`) still links; same-level nested copies stay plain text. An explicit Markdown file href still attempts Files with the typed string.
+- Search/glob/execute dumps that list one file per line (or a `filenames` array) are referenced artifacts even when ACP omitted per-file `locations`. `file:` URIs are stripped to filesystem paths. Glob patterns (`**/*.md`) and search-root directories are not indexed. Path-only plaintext fences, markdown list items, and expanded tool dumps use the same classifier.
 - Web `http(s)` hrefs keep their original percent-encoding. `javascript:` / `data:` / `vbscript:` / `mailto:` and other non-file schemes (`ssh:`, `ftp:`, …) are inert. File paths decode `%20` once.
 - Absolute ACP paths are stripped with the task cwd (`getWorkspace`, plus desktop `resolveTaskCwd`) before Diff/Files requests. A hit outside that cwd is not a link: suffix-matching it must not open a different relative path inside the worktree. An absolute Markdown href outside the cwd stays unlinked for the same reason (Files rejects rooted paths). Codex may still open absolute paths in View Code; Ora does not, because `readWorkspaceFile` rejects rooted paths.
 - If a requested diff file is not in the active task patch, navigation falls back to Files. A line missing from a file that **is** in the patch still opens that file in Changes, with no toast.

@@ -89,6 +89,11 @@ export function parsePathCandidate(raw: string): ParsedPathCandidate {
   };
 }
 
+/** True when a token is a glob/search pattern rather than a concrete file. */
+export function looksLikeGlobPattern(path: string): boolean {
+  return /[*?]/.test(path);
+}
+
 /**
  * True when the last path segment is a well-known filename or has an extension.
  * Used as the admission ticket for path-like inline code, not as proof the file exists.
@@ -112,9 +117,27 @@ function isNamedWorkspaceFile(path: string): boolean {
  */
 export function isPathLikeToken(raw: string): boolean {
   const { path } = parsePathCandidate(raw);
+  if (looksLikeGlobPattern(path)) return false;
   if (path.includes("/") || path.includes("\\")) return true;
   if (isAbsoluteWorkspacePath(path)) return true;
   return isNamedWorkspaceFile(path);
+}
+
+/**
+ * True when a tool location or dump line looks like a file, not a search root
+ * or glob pattern. Directories without a trailing slash still fail this check
+ * because they have no extension.
+ */
+export function isLikelyFileArtifactPath(path: string): boolean {
+  const trimmed = path.trim();
+  if (
+    trimmed === "" ||
+    looksLikeGlobPattern(trimmed) ||
+    /[\\/]$/.test(trimmed)
+  ) {
+    return false;
+  }
+  return isNamedWorkspaceFile(trimmed);
 }
 
 /**

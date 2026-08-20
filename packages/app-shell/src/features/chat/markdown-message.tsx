@@ -27,6 +27,10 @@ import { prepareStreamingMarkdown } from "./streaming-markdown";
 import {
   ChatMarkdownAnchor,
   ChatMarkdownCode,
+  ChatMarkdownListItem,
+  ChatMarkdownParagraph,
+  ChatMarkdownPre,
+  ChatMarkdownTableCell,
 } from "./chat-link/markdown-overrides";
 import { useChatLinkContext } from "./chat-link/context";
 
@@ -230,13 +234,25 @@ export function MarkdownMessage({
   const markdown = unwrapMarkdownDocument(content);
   const chatLink = useChatLinkContext();
   const markdownWithLinks = useMemo(
-    () =>
+    (): Components =>
       chatLink === null
         ? markdownComponents
         : {
             ...markdownComponents,
             a: ChatMarkdownAnchor,
             code: ChatMarkdownCode,
+            p: ChatMarkdownParagraph,
+            li: ChatMarkdownListItem,
+            td: ChatMarkdownTableCell,
+            pre: ({ children }) => (
+              <ChatMarkdownPre
+                renderCodeBlock={(code, language) => (
+                  <CodeBlock code={code} language={language} />
+                )}
+              >
+                {children}
+              </ChatMarkdownPre>
+            ),
           },
     [chatLink],
   );

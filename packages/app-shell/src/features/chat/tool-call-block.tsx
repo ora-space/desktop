@@ -23,6 +23,7 @@ import type { ChatToolCall, ChatToolCallStatus } from "@ora/chat";
 import { DiffView } from "./diff-view";
 import { ContentBlock } from "./content-block";
 import { ChatFileLink } from "./chat-link/chat-file-link";
+import { ChatToolOutputText } from "./chat-link/markdown-overrides";
 
 interface ToolCallBlockProps {
   tool: ChatToolCall;
@@ -263,14 +264,7 @@ function ToolContent({ content }: { content: acp.ToolCallContent }) {
       );
     case "content":
       if (content.content.type === "text") {
-        return (
-          <pre
-            data-selectable
-            className="max-h-72 overflow-auto rounded-r-sm border-l-2 border-border bg-[var(--code-background)] px-3 py-2.5 text-[11px] leading-5 whitespace-pre-wrap"
-          >
-            {content.content.text}
-          </pre>
-        );
+        return <ChatToolOutputText text={content.content.text} />;
       }
       return <ContentBlock content={content.content} appearance="tool" />;
   }

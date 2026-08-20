@@ -13,9 +13,13 @@ import {
 import { createStubPlatform } from "../../../test/stub-platform";
 import { TaskChangesNavigationProvider } from "../../diff/task-changes-navigation";
 import { MessageList } from "../message-list";
+import { ToolCallBlock } from "../tool-call-block";
 import { MarkdownDocument, MarkdownMessage } from "../markdown-message";
 import { ChatLinkContext } from "./context";
-import type { SessionArtifactIndex } from "./artifact-index";
+import {
+  collectSessionArtifactIndex,
+  type SessionArtifactIndex,
+} from "./artifact-index";
 
 const index: SessionArtifactIndex = {
   edited: ["src/main.rs"],
@@ -73,6 +77,28 @@ function readTool(path: string): ChatToolCall {
     status: "completed",
     content: [],
     locations: [{ path }],
+    createdAt: 10,
+    updatedAt: 20,
+  };
+}
+
+function searchTool(
+  text: string,
+  locations: { path: string }[] = [],
+): ChatToolCall {
+  return {
+    kind: "toolCall",
+    id: "glob-md",
+    title: "**/*.md",
+    toolKind: "search",
+    status: "completed",
+    content: [
+      {
+        type: "content",
+        content: { type: "text", text },
+      },
+    ],
+    locations,
     createdAt: 10,
     updatedAt: 20,
   };
@@ -392,6 +418,237 @@ describe("session-wide chat links", () => {
     await user.click(button);
     expect(openWorkspaceFile).toHaveBeenCalledWith(
       relativePath,
+      undefined,
+      undefined,
+    );
+  });
+
+  it("links markdown files listed after a project-root glob with no per-file locations", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    const workspaceRoot = "D:/project/desktop";
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [
+            searchTool(
+              "D:\\project\\desktop\\README.md\nD:\\project\\desktop\\docs\\guide.md",
+              [{ path: "D:\\project\\desktop" }],
+            ),
+          ],
+          "Markdown files:\n- `README.md`\n- `docs/guide.md`",
+        ),
+      ],
+      { openWorkspaceFile, workspaceRoot },
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /打开文件 README\.md|Open file README\.md/,
+      }),
+    );
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "README.md",
+      undefined,
+      undefined,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开文件 docs\/guide\.md|Open file docs\/guide\.md/,
+      }),
+    );
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "docs/guide.md",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("links a bare README.md to the workspace root when nested README.md files were also listed", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [
+            readTool("README.md"),
+            readTool("crates/engine/README.md"),
+            readTool("docs/trading.md"),
+          ],
+          "Docs:\n- `README.md`\n- `docs/trading.md`\n- `crates/engine/README.md`",
+        ),
+      ],
+      { openWorkspaceFile },
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开文件 README\.md|Open file README\.md/,
+      }),
+    );
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "README.md",
+      undefined,
+      undefined,
+    );
+    expect(openWorkspaceFile).not.toHaveBeenCalledWith(
+      "crates/engine/README.md",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("links path-only markdown list items that the glob already touched", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [searchTool("README.md\ndocs/guide.md")],
+          "Markdown files:\n- README.md\n- docs/guide.md",
+        ),
+      ],
+      { openWorkspaceFile },
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /打开文件 docs\/guide\.md|Open file docs\/guide\.md/,
+      }),
+    );
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "docs/guide.md",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("links path lines inside a plaintext fenced file list", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <TaskChangesNavigationProvider
+            onOpenDiff={vi.fn()}
+            onOpenWorkspaceFile={openWorkspaceFile}
+          >
+            <ChatLinkContext.Provider
+              value={{
+                index: {
+                  edited: [],
+                  referenced: ["README.md", "docs/guide.md"],
+                },
+                taskId: "task-1",
+              }}
+            >
+              <MarkdownMessage content={"```\nREADME.md\ndocs/guide.md\n```"} />
+            </ChatLinkContext.Provider>
+          </TaskChangesNavigationProvider>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+    await flushDesktopCwd();
+
+    expect(screen.getByTestId("chat-path-list")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开文件 docs\/guide\.md|Open file docs\/guide\.md/,
+      }),
+    );
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "docs/guide.md",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("turns glob tool dump lines into Files links after expanding the tool", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    const tool = searchTool("README.md\ndocs/guide.md", [
+      { path: "D:/project/desktop" },
+    ]);
+    const artifactIndex = collectSessionArtifactIndex([turn("turn-1", [tool])]);
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <TaskChangesNavigationProvider
+            onOpenDiff={vi.fn()}
+            onOpenWorkspaceFile={openWorkspaceFile}
+          >
+            <ChatLinkContext.Provider
+              value={{
+                index: artifactIndex,
+                taskId: "task-1",
+                cwd: "D:/project/desktop",
+              }}
+            >
+              <ToolCallBlock tool={tool} expanded />
+            </ChatLinkContext.Provider>
+          </TaskChangesNavigationProvider>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+    await flushDesktopCwd();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /打开文件 docs\/guide\.md|Open file docs\/guide\.md/,
+      }),
+    );
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "docs/guide.md",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("does not turn shell commands in prose into file links", async () => {
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [searchTool("README.md")],
+          "Run cargo test then open README.md",
+        ),
+      ],
+      { workspaceRoot: "D:/project/desktop" },
+    );
+
+    expect(screen.queryByRole("button", { name: /cargo test/ })).toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: /打开文件 README\.md|Open file README\.md/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("links markdown table cells that name globbed files", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [searchTool("README.md\ndocs/guide.md")],
+          "| File | Role |\n| --- | --- |\n| docs/guide.md | guide |",
+        ),
+      ],
+      { openWorkspaceFile },
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /打开文件 docs\/guide\.md|Open file docs\/guide\.md/,
+      }),
+    );
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "docs/guide.md",
       undefined,
       undefined,
     );

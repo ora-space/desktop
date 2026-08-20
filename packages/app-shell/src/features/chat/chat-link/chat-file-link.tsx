@@ -29,6 +29,8 @@ export interface ChatFileLinkProps {
   raw: string;
   children: ReactNode;
   className?: string;
+  /** When classification misses, inline code stays a chip unless this is `text`. */
+  unmatched?: "code" | "text";
 }
 
 type FileLinkClassification = Extract<
@@ -65,6 +67,7 @@ export function ChatFileLink({
   raw,
   children,
   className,
+  unmatched = "code",
 }: ChatFileLinkProps) {
   const chatLink = useChatLinkContext();
   const navigation = useTaskChangesNavigation();
@@ -77,11 +80,10 @@ export function ChatFileLink({
   });
 
   if (classified.kind === "none" || chatLink === null || navigation === null) {
-    return source === "inline-code" ? (
-      <code className={className ?? INLINE_CODE_CLASS}>{children}</code>
-    ) : (
-      <>{children}</>
-    );
+    if (source === "inline-code" && unmatched === "code") {
+      return <code className={className ?? INLINE_CODE_CLASS}>{children}</code>;
+    }
+    return <>{children}</>;
   }
 
   if (classified.kind === "web") {

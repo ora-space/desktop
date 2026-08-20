@@ -85,7 +85,7 @@ describe("classifyChatCandidate", () => {
     ).toEqual({ kind: "none" });
   });
 
-  it("does not link a bare filename that exact-matches one entry when another shares the basename", () => {
+  it("links a bare README.md to the workspace-root file when nested copies also exist", () => {
     expect(
       classifyChatCandidate({
         source: "inline-code",
@@ -93,6 +93,38 @@ describe("classifyChatCandidate", () => {
         index: {
           edited: [],
           referenced: ["README.md", "packages/app-shell/README.md"],
+        },
+        hasNavigation: true,
+      }),
+    ).toMatchObject({ kind: "files", path: "README.md" });
+  });
+
+  it("links a bare README.md to the shortest absolute root file without a cwd", () => {
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "README.md",
+        index: {
+          edited: [],
+          referenced: [
+            "D:/project/desktop/README.md",
+            "D:/project/desktop/crates/engine/README.md",
+          ],
+        },
+        hasNavigation: true,
+        cwd: "D:/project/desktop",
+      }),
+    ).toMatchObject({ kind: "files", path: "README.md" });
+  });
+
+  it("does not guess among nested README.md files when no workspace-root copy exists", () => {
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "README.md",
+        index: {
+          edited: [],
+          referenced: ["crates/a/README.md", "crates/b/README.md"],
         },
         hasNavigation: true,
       }),

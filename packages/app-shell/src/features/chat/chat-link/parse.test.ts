@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isPathLikeToken, parseChatHref, parsePathCandidate } from "./parse";
+import {
+  isLikelyFileArtifactPath,
+  isPathLikeToken,
+  parseChatHref,
+  parsePathCandidate,
+} from "./parse";
 
 describe("isPathLikeToken", () => {
   it("rejects shell commands and type syntax", () => {
@@ -18,6 +23,7 @@ describe("isPathLikeToken", () => {
     expect(isPathLikeToken("src/main.rs:12")).toBe(true);
     expect(isPathLikeToken("C:\\repo\\src\\main.rs")).toBe(true);
     expect(isPathLikeToken("/repo/src/main.rs")).toBe(true);
+    expect(isPathLikeToken("**/*.md")).toBe(false);
   });
 });
 
@@ -113,5 +119,16 @@ describe("parseChatHref", () => {
       line: undefined,
       column: undefined,
     });
+  });
+});
+
+describe("isLikelyFileArtifactPath", () => {
+  it("accepts files and rejects search roots and glob patterns", () => {
+    expect(isLikelyFileArtifactPath("README.md")).toBe(true);
+    expect(isLikelyFileArtifactPath("docs/guide.md")).toBe(true);
+    expect(isLikelyFileArtifactPath("D:/project/desktop/README.md")).toBe(true);
+    expect(isLikelyFileArtifactPath("D:/project/desktop")).toBe(false);
+    expect(isLikelyFileArtifactPath("src/")).toBe(false);
+    expect(isLikelyFileArtifactPath("**/*.md")).toBe(false);
   });
 });

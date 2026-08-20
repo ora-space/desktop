@@ -260,6 +260,122 @@ describe("collectSessionArtifactIndex", () => {
     expect(index).toEqual({ edited: [], referenced: [] });
   });
 
+  it("indexes markdown paths listed in a glob/search tool text dump", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "glob-md",
+          toolKind: "search",
+          locations: [],
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "D:\\project\\desktop\\README.md\nD:\\project\\desktop\\docs\\guide.md\nD:\\project\\desktop\\crates\\engine\\README.md",
+              },
+            },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(index.referenced).toEqual([
+      "D:/project/desktop/README.md",
+      "D:/project/desktop/docs/guide.md",
+      "D:/project/desktop/crates/engine/README.md",
+    ]);
+  });
+
+  it("indexes glob text paths even when locations only record the search directory", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "glob-md",
+          toolKind: "search",
+          locations: [{ path: "D:\\project\\desktop" }],
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "README.md\ndocs/guide.md\ncrates/engine/README.md",
+              },
+            },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(index.referenced).toEqual([
+      "README.md",
+      "docs/guide.md",
+      "crates/engine/README.md",
+    ]);
+  });
+
+  it("does not index glob patterns or shell commands from tool text", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "glob-md",
+          toolKind: "search",
+          locations: [],
+          rawInput: { path: "**/*.md", glob: "**/*.md" },
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "**/*.md\ncargo test\nOption<T>\nREADME.md",
+              },
+            },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(index.referenced).toEqual(["README.md"]);
+  });
+
+  it("indexes filename arrays in search rawOutput", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "glob-md",
+          toolKind: "search",
+          locations: [],
+          rawOutput: { filenames: ["README.md", "docs/guide.md"] },
+        }),
+      ]),
+    ]);
+
+    expect(index.referenced).toEqual(["README.md", "docs/guide.md"]);
+  });
+
+  it("strips file: URIs from glob dumps before indexing", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "glob-md",
+          toolKind: "search",
+          locations: [],
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "file:///D:/project/desktop/docs/guide.md",
+              },
+            },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(index.referenced).toEqual(["D:/project/desktop/docs/guide.md"]);
+  });
+
   it("extracts referenced paths from read tool rawInput when locations are empty", () => {
     const index = collectSessionArtifactIndex([
       turn("t1", [
@@ -307,5 +423,28 @@ describe("collectSessionArtifactIndex", () => {
     ).not.toThrow();
     expect(collect).not.toHaveBeenCalled();
     collect.mockRestore();
+  });
+
+  it("indexes one-path-per-line dumps from execute tools", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "ls-md",
+          toolKind: "execute",
+          locations: [],
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "README.md\ndocs/guide.md",
+              },
+            },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(index.referenced).toEqual(["README.md", "docs/guide.md"]);
   });
 });

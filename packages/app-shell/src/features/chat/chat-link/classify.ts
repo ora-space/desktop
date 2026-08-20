@@ -61,19 +61,58 @@ export function matchIndexPath(
 }
 
 /**
- * Bare filenames must be unique across edited and referenced together.
- * Matching one collection at a time would still link `src/main.rs` vs `tests/main.rs`.
+ * Bare filenames must be unique across edited and referenced together, except a
+ * workspace-root file (README.md) may win over nested copies of the same name.
  */
 function uniqueBasenameHit(
   candidate: string,
   index: SessionArtifactIndex,
+  cwd?: string | null,
 ): string | null {
   const target = normalizeDiffPath(displayPath(candidate)).toLowerCase();
   if (target.includes("/") || target === "") return null;
   const hits = [...index.edited, ...index.referenced].filter(
     (entry) => basename(entry).toLowerCase() === target,
   );
-  return hits.length === 1 ? hits[0]! : null;
+  if (hits.length <= 1) return hits[0] ?? null;
+
+  const relativeRoots = hits.filter((hit) => {
+    const relative =
+      toNavigationPath(hit, cwd) ??
+      (isAbsoluteWorkspacePath(hit) ||
+      isAbsoluteWorkspacePath(normalizeDiffPath(displayPath(hit)))
+        ? null
+        : normalizeDiffPath(displayPath(hit)));
+    return relative !== null && relative.toLowerCase() === target;
+  });
+  if (relativeRoots.length === 1) return relativeRoots[0]!;
+  return uniqueShallowestHit(hits);
+}
+
+/**
+ * When several files share a basename, prefer the unique ancestor whose parent
+ * directory prefixes every other hit (workspace-root README.md over nested copies).
+ */
+function uniqueShallowestHit(hits: string[]): string | null {
+  const roots = hits.filter((hit) => {
+    const normalizedHit = normalizeDiffPath(displayPath(hit)).toLowerCase();
+    const dir = parentDir(normalizedHit);
+    return hits.every((other) => {
+      const normalizedOther = normalizeDiffPath(
+        displayPath(other),
+      ).toLowerCase();
+      if (normalizedOther === normalizedHit) return true;
+      if (dir === "") return true;
+      return normalizedOther.startsWith(`${dir}/`);
+    });
+  });
+  return roots.length === 1 ? roots[0]! : null;
+}
+
+/** Parent directory after slash normalization, or empty for a bare filename. */
+function parentDir(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash === -1 ? "" : path.slice(0, slash);
 }
 
 /**
@@ -155,7 +194,7 @@ function classifyFileCandidate(
 ): ChatLinkClassification {
   const normalized = normalizeDiffPath(displayPath(path));
   if (!normalized.includes("/")) {
-    const unique = uniqueBasenameHit(path, input.index);
+    const unique = uniqueBasenameHit(path, input.index, input.cwd);
     if (unique === null) {
       if (!hrefMissOpensFiles) return { kind: "none" };
       return navigationClassification("files", path, line, column, input);
