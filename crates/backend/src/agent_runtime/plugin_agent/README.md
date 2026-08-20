@@ -69,7 +69,8 @@ partially started plugin before the connection supervisor schedules another atte
 ## Sandboxing
 
 Agent plugins currently receive `--allow-run` plus read, env, and network access, because they spawn
-and own the agent CLI. An agent plugin is therefore roughly as privileged as the host itself. This
+and own the agent CLI. The set itself is `ora_plugin_lifecycle::agent_permissions`, shared with the
+lifecycle's own launcher so both launch paths grant exactly the same flags. An agent plugin is therefore roughly as privileged as the host itself. This
 is a deliberate, documented gap rather than an oversight: capability narrowing is deferred until the
 agent contract is proven, and closing it later changes only how the agent is started, never the
 `agent/acp` pipe.

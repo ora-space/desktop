@@ -60,36 +60,88 @@ export interface LocationActionsCapability {
   open(target: LocationTarget, path: string): Promise<void>;
 }
 
-/** A native marketplace integration exposed by Ora Desktop. */
-export type SkillMarketplaceProvider = "skillHub" | "huaweiAgentCenter";
+/** Where a plugin surface renders: docked into the right panel or in its own native window. */
+export type SurfaceTarget = "embedded" | "windowed";
 
-/** Reports the download lifecycle controlled by a provider-specific native marketplace window. */
-export type SkillMarketplaceStatus =
+/** Lifecycle of one native surface instance, mirrored from the backend registry. */
+export type SurfaceState =
+  "opening" | "open" | "migrating" | "closing" | "failed";
+
+/** One live plugin surface owned by the host runtime. */
+export interface SurfaceRecord {
+  instance: number;
+  pluginId: string;
+  surfaceId: string;
+  title: string;
+  target: SurfaceTarget;
+  state: SurfaceState;
+}
+
+/** Lifecycle and download notifications emitted by the host for every surface instance. */
+export type SurfaceEvent =
   | {
-      status: "downloading";
-      provider: SkillMarketplaceProvider;
+      type: "opened";
+      instance: number;
+      pluginId: string;
+      surfaceId: string;
+      target: SurfaceTarget;
+      title: string;
+    }
+  | { type: "migrated"; instance: number; target: SurfaceTarget }
+  | { type: "migrateFailed"; instance: number; reason: string }
+  | { type: "failed"; instance: number; reason: string }
+  | { type: "closed"; instance: number }
+  | {
+      type: "downloadStarted";
+      instance: number;
+      pluginId: string;
       fileName: string;
     }
   | {
-      status: "downloaded";
-      provider: SkillMarketplaceProvider;
+      type: "downloadCompleted";
+      instance: number;
+      pluginId: string;
       fileName: string;
-      archivePath: string;
+      path: string;
     }
   | {
-      status: "failed";
-      provider: SkillMarketplaceProvider;
-      stage: "download";
-      code: string;
-      message: string;
+      type: "downloadFailed";
+      instance: number;
+      pluginId: string;
+      fileName: string;
+      reason: string;
     };
 
-/** Opens a provider-specific native WebView and observes its Ora-owned download lifecycle. */
-export interface SkillMarketplaceCapability {
-  open(provider: SkillMarketplaceProvider): Promise<void>;
-  onStatus(
-    listener: (status: SkillMarketplaceStatus) => void,
-  ): Promise<() => void>;
+/** The placeholder rectangle in CSS pixels plus the device scale the native layer needs. */
+export interface SurfaceBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale: number;
+}
+
+/** Identifies one surface declared by an installed ui plugin. */
+export interface SurfaceDefinitionId {
+  pluginId: string;
+  surfaceId: string;
+}
+
+/** Drives native plugin surfaces (embedded child webviews or standalone windows). */
+export interface SurfaceCapability {
+  capabilities(): Promise<{ embedded: boolean }>;
+  list(): Promise<SurfaceRecord[]>;
+  open(
+    definition: SurfaceDefinitionId,
+    target: SurfaceTarget,
+  ): Promise<SurfaceRecord>;
+  close(instance: number): Promise<void>;
+  setBounds(instance: number, bounds: SurfaceBounds): Promise<void>;
+  setVisible(instance: number, visible: boolean): Promise<void>;
+  popout(instance: number): Promise<void>;
+  dock(instance: number): Promise<void>;
+  reload(instance: number): Promise<void>;
+  onEvent(listener: (event: SurfaceEvent) => void): Promise<() => void>;
 }
 
 /** Collects the host capabilities consumed by the shared application shell. */
@@ -97,7 +149,7 @@ export interface PlatformAdapter {
   readonly worktreeStorage: WorktreeStorageCapability;
   readonly windowControls: WindowControlsCapability;
   readonly locationActions: LocationActionsCapability;
-  readonly skillMarketplace: SkillMarketplaceCapability;
+  readonly surfaces: SurfaceCapability;
   selectPath(options: SelectPathOptions): Promise<string | null>;
   saveTextFile(options: SaveTextFileOptions): Promise<boolean>;
 }

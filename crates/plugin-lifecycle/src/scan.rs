@@ -1,6 +1,6 @@
 use super::{
-    EnabledRuntime, ManagedPluginState, PluginLifecycle, PluginLifecycleError, PluginRuntime,
-    PluginRuntimeLauncher, PluginStatusPublisher,
+    EnabledRuntime, ManagedPluginState, PluginLifecycle, PluginLifecycleError,
+    PluginNotificationSink, PluginRuntime, PluginRuntimeLauncher, PluginStatusPublisher,
 };
 use ora_application::{Clock, PluginStateRepository};
 use ora_contracts::{ScanPluginsRequest, ScanPluginsResponse};
@@ -8,13 +8,14 @@ use ora_domain::{PluginEnabledState, PluginId};
 use ora_plugin_manager::PluginManager;
 use std::collections::{BTreeMap, BTreeSet};
 
-impl<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>
-    PluginLifecycle<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>
+impl<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher, NotificationSink>
+    PluginLifecycle<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher, NotificationSink>
 where
     Repository: PluginStateRepository + Send + Sync + 'static,
     LifecycleClock: Clock + Send + Sync + 'static,
     RuntimeLauncher: PluginRuntimeLauncher,
     StatusPublisher: PluginStatusPublisher,
+    NotificationSink: PluginNotificationSink,
 {
     /// Rebuilds the installed snapshot and rejoins durable eligibility on explicit request.
     pub async fn scan_plugins(
@@ -50,7 +51,7 @@ where
             let state = self.read_state();
             removed_ids
                 .iter()
-                .filter_map(|plugin_id| match state.managed_by_id.get(plugin_id) {
+                .filter_map(|plugin_id| match state.managed(plugin_id) {
                     Some(ManagedPluginState::Enabled(EnabledRuntime::Running {
                         runtime, ..
                     })) => Some((plugin_id.clone(), runtime.clone())),
@@ -100,7 +101,7 @@ where
                         return None;
                     }
 
-                    match state.managed_by_id.get(plugin_id) {
+                    match state.managed(plugin_id) {
                         Some(ManagedPluginState::Enabled(EnabledRuntime::Running {
                             runtime,
                             ..
@@ -137,14 +138,13 @@ where
                 .iter()
                 .map(|plugin| PluginId::new(&plugin.id))
                 .collect::<BTreeSet<_>>();
-            let mut previous_managed = std::mem::take(&mut state.managed_by_id);
             let mut managed_by_id = BTreeMap::new();
             let mut changed_ids = previous_ids
                 .symmetric_difference(&installed_ids)
                 .cloned()
                 .collect::<BTreeSet<_>>();
             for plugin_id in &installed_ids {
-                let previous = previous_managed.remove(plugin_id);
+                let previous = state.managed(plugin_id).cloned();
                 let persisted = persisted_by_id
                     .get(plugin_id)
                     .copied()
@@ -167,7 +167,7 @@ where
                 managed_by_id.insert(plugin_id.clone(), managed);
             }
             state.installed = installed;
-            state.managed_by_id = managed_by_id;
+            state.replace_managed(managed_by_id);
             changed_ids
         };
         for plugin_id in changed_ids {

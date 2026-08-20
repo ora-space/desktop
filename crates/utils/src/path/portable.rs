@@ -128,7 +128,7 @@ fn has_windows_prefix(value: &str) -> bool {
 }
 
 /// Detects device names that Win32 resolves as devices even when they have an extension.
-fn is_windows_reserved_device_name(segment: &str) -> bool {
+pub(crate) fn is_windows_reserved_device_name(segment: &str) -> bool {
     let stem = segment
         .split_once('.')
         .map_or(segment, |(stem, _)| stem)

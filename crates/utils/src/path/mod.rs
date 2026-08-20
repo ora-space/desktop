@@ -14,3 +14,5 @@ pub use containment::{CanonicalPathRoot, PathContainmentError};
 pub use lexical::{canonicalize_longest_existing_prefix, normalize_absolute, normalize_relative};
 pub use portable::{PortableRelativePath, PortableRelativePathError};
 pub use strict::{RelativePathLimits, StrictRelativePath, StrictRelativePathError};
+
+pub(crate) use portable::is_windows_reserved_device_name;

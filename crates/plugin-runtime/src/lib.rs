@@ -10,6 +10,7 @@ mod tests;
 
 pub use protocol::{PluginNotification, PluginRegistration};
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -33,6 +34,11 @@ pub struct PluginRuntimeConfig {
     pub entrypoint: PathBuf,
     /// Extra Deno permission flags placed before the entrypoint, such as `--allow-run`.
     pub permissions: Vec<String>,
+    /// Working directory of the plugin process, normally its package root so that relative
+    /// imports and configuration discovery resolve against the package instead of the host.
+    pub cwd: Option<PathBuf>,
+    /// Extra environment variables visible to the plugin, such as `ORA_PLUGIN_DATA_DIR`.
+    pub env: Vec<(OsString, OsString)>,
     pub ready_timeout: Duration,
     pub call_timeout: Duration,
     pub shutdown_timeout: Duration,
@@ -109,11 +115,17 @@ impl PluginRuntime {
             return Err(PluginRuntimeError::MissingEntrypoint(config.entrypoint));
         }
 
-        let spec = ProcessSpec::new(config.deno_path.as_os_str())
+        let mut spec = ProcessSpec::new(config.deno_path.as_os_str())
             .arg("run")
             .arg("--no-prompt")
             .args(config.permissions.iter().map(String::as_str))
             .arg(config.entrypoint.as_os_str());
+        if let Some(cwd) = &config.cwd {
+            spec = spec.cwd(cwd);
+        }
+        for (key, value) in &config.env {
+            spec = spec.env(key, value);
+        }
         let mut process = spawner
             .spawn(spec)
             .map_err(|error| PluginRuntimeError::Spawn(error.to_string()))?;

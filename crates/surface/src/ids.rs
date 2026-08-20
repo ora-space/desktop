@@ -1,0 +1,140 @@
+use ora_domain::PluginId;
+use ora_plugin_manager::SurfaceId;
+use std::fmt;
+
+/// Identifies one manifest-contributed surface; stable across processes and restarts.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SurfaceDefinitionId {
+    pub plugin_id: PluginId,
+    pub surface_id: SurfaceId,
+}
+
+/// Identifies one live instance produced by an `open`; monotonic within a process, never persisted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SurfaceInstanceId(u64);
+
+impl SurfaceInstanceId {
+    /// Wraps a registry-allocated counter value; exposed so hosts can round-trip ids from events.
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw counter value used in events and labels.
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+/// Host-generated webview label.
+///
+/// Tauri labels only accept `[A-Za-z0-9-/:_]`, so the `.` of a two-segment plugin id maps to `_`.
+/// The mapping is unambiguous because slugs never contain `_`. Labels are never used for
+/// authorization decisions; callers resolve them through the registry instead.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WebviewLabel(String);
+
+impl WebviewLabel {
+    pub const REMOTE_PREFIX: &'static str = "remote-surface:";
+    pub const PANEL_PREFIX: &'static str = "panel-surface:";
+
+    /// Builds the label of one remote site surface instance, e.g.
+    /// `remote-surface:ora-space_skillhub:market:7`.
+    pub fn remote(definition: &SurfaceDefinitionId, instance: SurfaceInstanceId) -> Self {
+        let plugin = definition.plugin_id.as_ref().replace('.', "_");
+        let surface = definition.surface_id.as_str();
+        let instance = instance.value();
+        Self(format!(
+            "{}{plugin}:{surface}:{instance}",
+            Self::REMOTE_PREFIX
+        ))
+    }
+
+    /// Returns the label text handed to the webview runtime.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for WebviewLabel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// Ticket of one asynchronous operation (open/close/migrate); completions must carry it back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OperationId(u64);
+
+impl OperationId {
+    /// Wraps a registry-allocated counter value; exposed so hosts can thread tickets through
+    /// their own async callbacks.
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw ticket value for logging.
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+/// Generation of the page inside one instance; bumped each time the webview is rebuilt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ViewGeneration(u32);
+
+impl ViewGeneration {
+    /// Generation of a freshly opened instance.
+    pub const INITIAL: Self = Self(0);
+
+    /// Returns the generation that follows a rebuild.
+    pub const fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+
+    /// Returns the raw generation counter for logging.
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SurfaceDefinitionId, SurfaceInstanceId, WebviewLabel};
+    use ora_domain::PluginId;
+    use ora_plugin_manager::SurfaceId;
+    use pretty_assertions::assert_eq;
+
+    /// Verifies the documented label shape for a two-segment plugin id.
+    #[test]
+    fn remote_label_maps_plugin_dot_to_underscore() {
+        let definition = SurfaceDefinitionId {
+            plugin_id: PluginId::new("ora-space.skillhub"),
+            surface_id: SurfaceId::parse("market").expect("valid surface id"),
+        };
+        assert_eq!(
+            WebviewLabel::remote(&definition, SurfaceInstanceId::new(7)).as_str(),
+            "remote-surface:ora-space_skillhub:market:7"
+        );
+    }
+
+    /// Enumerates every character a slug-based plugin id and surface id can contain and checks
+    /// the resulting label stays inside the Tauri label alphabet `[A-Za-z0-9-/:_]`.
+    #[test]
+    fn remote_label_only_contains_tauri_label_characters() {
+        let slug_alphabet: String = ('a'..='z').chain('0'..='9').collect();
+        let plugin_id = PluginId::new(format!("{slug_alphabet}-x.{slug_alphabet}-y"));
+        let surface_id = SurfaceId::parse(&format!("{}-{}", &slug_alphabet[..20], "9"))
+            .expect("valid surface id");
+        let definition = SurfaceDefinitionId {
+            plugin_id,
+            surface_id,
+        };
+        let label = WebviewLabel::remote(&definition, SurfaceInstanceId::new(u64::MAX));
+        let offending: Vec<char> = label
+            .as_str()
+            .chars()
+            .filter(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '/' | ':' | '_')))
+            .collect();
+        assert_eq!((offending, label.as_str().contains('.')), (vec![], false));
+    }
+}

@@ -7,6 +7,7 @@
 
 #[cfg(feature = "archive")]
 pub mod archive;
+pub mod fs;
 mod git_branch;
 pub mod path;
 mod slug;

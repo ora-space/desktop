@@ -484,3 +484,70 @@ async fn closes_idle_writer_on_supervisor_signal() {
         .unwrap()
         .unwrap();
 }
+
+/// Captures the spec of every spawn while handing out a process without stdio pipes.
+///
+/// Missing pipes make `launch` fail right after spawning, which is exactly enough to audit the
+/// argv, working directory, and environment the runtime derives from its configuration.
+struct CapturingSpawner {
+    specs: std::sync::Mutex<Vec<ora_process::ProcessSpec>>,
+}
+
+impl ora_process::ProcessSpawner for CapturingSpawner {
+    type Process = ControllableProcess;
+
+    fn spawn(&self, spec: ora_process::ProcessSpec) -> io::Result<Self::Process> {
+        self.specs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(spec);
+        let (exited, _) = watch::channel(false);
+        Ok(ControllableProcess {
+            exited,
+            killed: Arc::new(AtomicBool::new(false)),
+        })
+    }
+}
+
+/// Permissions, working directory, and environment all reach the spawned process spec.
+#[tokio::test]
+async fn launch_applies_permissions_cwd_and_env_to_the_process_spec() {
+    let package_root = tempfile::tempdir().expect("create package root");
+    let entrypoint = package_root.path().join("index.js");
+    std::fs::write(&entrypoint, "export {};\n").expect("write entrypoint");
+    let spawner = CapturingSpawner {
+        specs: std::sync::Mutex::new(Vec::new()),
+    };
+
+    let error = PluginRuntime::launch(
+        &spawner,
+        crate::PluginRuntimeConfig {
+            plugin_id: "example".to_string(),
+            deno_path: "deno".into(),
+            entrypoint: entrypoint.clone(),
+            permissions: vec!["--allow-read=/tmp/data".to_string()],
+            cwd: Some(package_root.path().to_path_buf()),
+            env: vec![("ORA_PLUGIN_DATA_DIR".into(), "/tmp/data".into())],
+            ready_timeout: Duration::from_secs(1),
+            call_timeout: Duration::from_secs(1),
+            shutdown_timeout: Duration::from_secs(1),
+        },
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert_eq!(error, PluginRuntimeError::MissingStdio);
+
+    let specs = spawner
+        .specs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let expected = ora_process::ProcessSpec::new("deno")
+        .arg("run")
+        .arg("--no-prompt")
+        .arg("--allow-read=/tmp/data")
+        .arg(entrypoint.as_os_str())
+        .cwd(package_root.path())
+        .env("ORA_PLUGIN_DATA_DIR", "/tmp/data");
+    assert_eq!(*specs, vec![expected]);
+}

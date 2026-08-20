@@ -8,7 +8,8 @@ down the complete child process tree.
 
 The crate does not discover, install, select, or configure plugins. Callers supply a
 plugin identifier, an entrypoint, a Deno executable, the permission flags the plugin
-was granted, and the exact method to invoke. Application-level code remains
+was granted, an optional working directory plus extra environment variables for the
+process, and the exact method to invoke. Application-level code remains
 responsible for mapping Ora capabilities to those plugin methods.
 
 ## Protocol
