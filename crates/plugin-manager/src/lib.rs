@@ -4,13 +4,22 @@ mod discovery;
 mod install;
 mod issue;
 mod logo;
+mod manifest;
+pub mod surface;
+mod ui_validation;
 mod validation;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ui_tests;
 
 pub use install::{InstallError, Installer};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
+pub use surface::{HostName, InstancePolicy, SurfaceId, WebDataPolicy};
+pub use ui_validation::{
+    InstalledPluginUi, InstalledSurface, InstalledSurfaceSource, RemoteSiteSource,
+};
 pub use validation::{
     InstalledPlugin, InstalledPluginAgent, PluginContribution, PluginEngines, PluginPackageType,
 };

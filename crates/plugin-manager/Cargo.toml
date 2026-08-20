@@ -15,6 +15,7 @@ ora-plugin-manifest = { workspace = true }
 ora-utils = { workspace = true, features = ["archive", "http"] }
 semver = { workspace = true }
 thiserror = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 futures = { workspace = true }

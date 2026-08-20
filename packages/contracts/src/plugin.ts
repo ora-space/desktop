@@ -64,9 +64,7 @@ export type InstalledPlugin =
     packageName: string;
     displayName: string;
     version: string;
-    kind: string;
     main: string;
-    agent: InstalledPluginAgent;
     enabled: boolean;
     /**
      * Security-validated SVG source for the package icon, absent when the package ships none.
@@ -77,18 +75,44 @@ export type InstalledPlugin =
      */
     logo: string | null;
   }
+  & ({ "kind": "agent"; agentDisplayName: string; contractVersion: number } | {
+    "kind": "ui";
+    contractVersion: number;
+    surfaces: Array<InstalledPluginSurface>;
+  })
   & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
     "runtime": "running";
   } | { "runtime": "failed"; failureReason: string });
 
 /**
- * Describes the single agent contributed by an installed agent plugin package.
+ * Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
  *
- * The agent carries no id: one package provides exactly one agent, identified by the package.
+ * The agent variant names its display name `agentDisplayName` because the contribution is
+ * flattened into [`InstalledPlugin`], which already owns the top-level `displayName`.
  */
-export type InstalledPluginAgent = {
-  displayName: string;
+export type InstalledPluginContribution = {
+  "kind": "agent";
+  agentDisplayName: string;
   contractVersion: number;
+} | {
+  "kind": "ui";
+  contractVersion: number;
+  surfaces: Array<InstalledPluginSurface>;
+};
+
+/**
+ * Describes one surface a ui plugin contributes, with its source flattened beside the identity.
+ */
+export type InstalledPluginSurface =
+  & { id: string; title: string }
+  & ({ "source": "remote_site"; entryUrl: string });
+
+/**
+ * Describes where a surface loads its content from, discriminated by `source`.
+ */
+export type InstalledPluginSurfaceSource = {
+  "source": "remote_site";
+  entryUrl: string;
 };
 
 /**

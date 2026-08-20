@@ -6,7 +6,7 @@ use super::{
 use ora_application::{Clock, PluginStateRepository};
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, DisablePluginRequest, DisablePluginResponse,
-    EnablePluginRequest, EnablePluginResponse, InstalledPlugin, InstalledPluginAgent,
+    EnablePluginRequest, EnablePluginResponse, InstalledPlugin, InstalledPluginContribution,
     ListInstalledPluginsResponse, PluginRuntimeStatus, ScanPluginsRequest, ScanPluginsResponse,
     StopPluginRequest, StopPluginResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
@@ -1112,10 +1112,9 @@ fn expected_plugin_with_runtime(
         package_name: "example".to_string(),
         display_name: "example".to_string(),
         version: "1.0.0".to_string(),
-        kind: "agent".to_string(),
         main: "main.js".to_string(),
-        agent: InstalledPluginAgent {
-            display_name: "example".to_string(),
+        contribution: InstalledPluginContribution::Agent {
+            agent_display_name: "example".to_string(),
             contract_version: 1,
         },
         enabled: enabled.is_enabled(),

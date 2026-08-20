@@ -320,13 +320,14 @@ fn agent_plugin_packages(
     plugin_manager
         .installed_plugins()
         .iter()
-        .map(|plugin| {
-            let PluginContribution::Agent(_) = &plugin.contributes;
-            AgentPluginPackage {
+        .filter_map(|plugin| match &plugin.contributes {
+            PluginContribution::Agent(_) => Some(AgentPluginPackage {
                 id: plugin.id.clone(),
                 deno_path: deno_path.to_path_buf(),
                 entrypoint: plugin.package_root.join(plugin.main.as_str()),
-            }
+            }),
+            // UI plugins own no agent process; the surface host opens them on demand instead.
+            PluginContribution::Ui(_) => None,
         })
         .collect()
 }
