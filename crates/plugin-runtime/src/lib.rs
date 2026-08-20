@@ -10,7 +10,6 @@ mod tests;
 
 pub use protocol::{PluginNotification, PluginRegistration};
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,7 +23,7 @@ use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
 use crate::protocol::{JSON_RPC_VERSION, SHUTDOWN_METHOD};
-use crate::state::{RuntimeInner, RuntimeStatus, SupervisorCommand};
+use crate::state::{PendingRequests, RuntimeInner, RuntimeStatus, SupervisorCommand};
 
 /// Describes one eagerly started Deno plugin process and its lifecycle timeouts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,13 +117,14 @@ impl PluginRuntime {
         let mut process = spawner
             .spawn(spec)
             .map_err(|error| PluginRuntimeError::Spawn(error.to_string()))?;
-        let Some(stdin) = process.take_stdin() else {
-            return Err(PluginRuntimeError::MissingStdio);
-        };
-        let Some(stdout) = process.take_stdout() else {
-            return Err(PluginRuntimeError::MissingStdio);
-        };
-        let Some(stderr) = process.take_stderr() else {
+        let stdio = (
+            process.take_stdin(),
+            process.take_stdout(),
+            process.take_stderr(),
+        );
+        let (Some(stdin), Some(stdout), Some(stderr)) = stdio else {
+            let _ = process.kill().await;
+            let _ = process.wait().await;
             return Err(PluginRuntimeError::MissingStdio);
         };
 
@@ -141,8 +141,8 @@ impl PluginRuntime {
             exited_tx,
             writer_tx: writer_tx.clone(),
             supervisor_tx: supervisor_tx.clone(),
-            inbound: inbound_tx,
-            pending: Mutex::new(HashMap::new()),
+            inbound: Mutex::new(Some(inbound_tx)),
+            pending: Mutex::new(PendingRequests::default()),
             next_request_id: AtomicU64::new(1),
             call_timeout: config.call_timeout,
         });
@@ -192,9 +192,13 @@ impl PluginRuntime {
         .await;
 
         match ready_result {
-            Ok(result) => result?,
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                runtime.shutdown_and_wait().await;
+                return Err(error);
+            }
             Err(_) => {
-                runtime.request_shutdown();
+                runtime.shutdown_and_wait().await;
                 return Err(PluginRuntimeError::ReadyTimeout);
             }
         }
@@ -239,7 +243,7 @@ impl PluginRuntime {
             "params": params,
         });
         if self.inner.writer_tx.send(request).await.is_err() {
-            self.inner.pending.lock().await.remove(&request_id);
+            self.inner.pending.lock().await.remove_active(request_id);
             return Err(PluginRuntimeError::RequestChannelClosed);
         }
 
@@ -249,7 +253,7 @@ impl PluginRuntime {
                 "plugin stopped before responding".to_string(),
             )),
             Err(_) => {
-                self.inner.pending.lock().await.remove(&request_id);
+                self.inner.pending.lock().await.abandon(request_id);
                 Err(PluginRuntimeError::CallTimeout)
             }
         }
@@ -296,6 +300,15 @@ impl PluginRuntime {
     /// does not exit within its shutdown timeout.
     pub fn shutdown(&self) {
         self.request_shutdown();
+    }
+
+    /// Requests bounded process-tree shutdown and returns only after the child has been reaped.
+    ///
+    /// Lifecycle owners use this instead of `shutdown` when starting a replacement generation:
+    /// the blocking boundary prevents old and new plugin generations from overlapping.
+    pub async fn shutdown_and_wait(&self) -> PluginProcessExit {
+        self.request_shutdown();
+        self.wait_for_exit().await
     }
 
     /// Waits for process exit and classifies intentional shutdown separately from failure.

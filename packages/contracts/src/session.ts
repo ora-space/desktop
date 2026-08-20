@@ -24,7 +24,7 @@ export type AgentRuntimeStatus = { agentRef: string; status: AgentStatus };
 /**
  * Describes the live ACP handshake state of one application-scoped agent runtime.
  */
-export type AgentStatus = "ready" | "starting" | "unavailable";
+export type AgentStatus = "ready" | "starting" | "unavailable" | "failing";
 
 /**
  * Binds one warm session to its owning Task and persists the Ora record.

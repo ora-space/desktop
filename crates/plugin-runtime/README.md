@@ -51,6 +51,20 @@ a control-call timeout would sever. Plugin-originated notifications arrive on th
 unbounded receiver returned by `launch`; connection-wide backpressure would let one
 noisy stream stall unrelated traffic, so bounded queues belong to each consumer.
 
+When an `invoke` times out, its request id moves from the active correlation table into a
+bounded 256-entry tombstone queue. A late, otherwise valid response to that known request is
+discarded; a genuinely unknown id remains a protocol failure. This keeps local cancellation from
+invalidating a healthy plugin without allowing stale-id memory to grow without bound.
+
+`shutdown` only requests termination. A lifecycle owner that must prevent generation overlap uses
+`shutdown_and_wait`, which returns after the supervisor has observed graceful exit or killed and
+reaped the complete process tree after the configured timeout.
+
+Every launch failure after process creation follows the same reaping boundary, including missing
+stdio, registration timeout, contract rejection, and agent control-call failure. Unexpected process
+exit also closes the plugin-originated notification receiver even while public runtime handles still
+exist, so the connection owner can fail the generation and apply its restart policy immediately.
+
 Reverse request/response — a plugin calling into the host — is intentionally absent.
 No current plugin contract needs it, and the pending-request table stays single-purpose
 until one does.

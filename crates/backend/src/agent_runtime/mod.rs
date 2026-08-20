@@ -6,6 +6,7 @@ mod handoff;
 mod history;
 mod plugin_agent;
 mod replay;
+mod restart_circuit;
 mod routing;
 mod scheduling;
 mod stream;
@@ -331,6 +332,7 @@ impl AgentRuntimeManager {
                         ConnectionStatus::Ready => ora_contracts::AgentStatus::Ready,
                         ConnectionStatus::Starting => ora_contracts::AgentStatus::Starting,
                         ConnectionStatus::Unavailable => ora_contracts::AgentStatus::Unavailable,
+                        ConnectionStatus::Failing => ora_contracts::AgentStatus::Failing,
                     },
                 })
                 .collect(),

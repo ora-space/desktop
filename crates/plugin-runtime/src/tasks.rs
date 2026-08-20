@@ -11,7 +11,9 @@ use tokio::time::timeout;
 use crate::PluginRuntimeError;
 use crate::codec::{read_frame, write_frame};
 use crate::protocol::handle_message;
-use crate::state::{RuntimeInner, RuntimeStatus, SupervisorCommand, fail_pending, fail_runtime};
+use crate::state::{
+    RuntimeInner, RuntimeStatus, SupervisorCommand, close_inbound, fail_pending, fail_runtime,
+};
 
 /// Serializes all outbound frames through one task so concurrent callers cannot interleave bytes.
 pub(crate) async fn run_writer<W>(
@@ -126,23 +128,34 @@ pub(crate) async fn run_supervisor<P>(
             }
         }
         command = commands.recv() => {
-            inner.status_tx.send_replace(RuntimeStatus::ShuttingDown);
-            if matches!(command, Some(SupervisorCommand::Shutdown))
-                && timeout(shutdown_timeout, process.wait()).await.is_ok()
-            {
-                let _ = writer_close.send(());
-                return;
+            let graceful_exit = match command {
+                Some(SupervisorCommand::Shutdown) => {
+                    inner.status_tx.send_replace(RuntimeStatus::ShuttingDown);
+                    timeout(shutdown_timeout, process.wait()).await.is_ok()
+                }
+                Some(SupervisorCommand::ProtocolFailure) => false,
+                None => {
+                    inner.status_tx.send_replace(RuntimeStatus::ShuttingDown);
+                    false
+                }
+            };
+            if !graceful_exit {
+                if let Err(error) = process.kill().await {
+                    ora_error!(
+                        message = "failed to terminate plugin process tree",
+                        plugin_id = %inner.plugin_id,
+                        error = %error,
+                    );
+                }
+                let _ = process.wait().await;
             }
-            if let Err(error) = process.kill().await {
-                ora_error!(
-                    message = "failed to terminate plugin process tree",
-                    plugin_id = %inner.plugin_id,
-                    error = %error,
-                );
-            }
-            let _ = process.wait().await;
+            fail_pending(
+                &inner,
+                PluginRuntimeError::Unavailable("plugin stopped".to_string()),
+            ).await;
         }
     }
+    close_inbound(&inner).await;
     let _ = writer_close.send(());
     inner.exited_tx.send_replace(true);
 }

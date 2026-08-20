@@ -79,8 +79,14 @@ pub(crate) async fn launch(
     };
     let (runtime, mut notifications) =
         PluginRuntime::launch(&TokioProcessSpawner::new(), config).await?;
-    control::verify_agent_contract(&runtime.registration().await)?;
-    control::start_agent(&runtime, home_directory, host_version).await?;
+    if let Err(error) = control::verify_agent_contract(&runtime.registration().await) {
+        runtime.shutdown_and_wait().await;
+        return Err(error);
+    }
+    if let Err(error) = control::start_agent(&runtime, home_directory, host_version).await {
+        runtime.shutdown_and_wait().await;
+        return Err(error);
+    }
     inbound::discard_frames_before_start(&mut notifications, &spec.plugin_id);
 
     Ok(LaunchedPluginAgent {

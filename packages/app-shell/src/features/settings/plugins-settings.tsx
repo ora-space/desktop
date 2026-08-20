@@ -16,6 +16,7 @@ import {
 import {
   IconChevronDown,
   IconChevronUp,
+  IconAlertTriangle,
   IconDots,
   IconFilter,
   IconInfoCircle,
@@ -459,6 +460,7 @@ function PluginGrid({
                 : installedIds.includes(plugin.id)
             }
             pending={pendingInstallIds.includes(plugin.id)}
+            runtimeStatus={detectionStatus}
             onOpen={() => onOpen(plugin.id)}
             onToggleInstall={() => onToggleInstall(plugin.id)}
           />
@@ -473,12 +475,14 @@ function PluginCard({
   plugin,
   installed,
   pending,
+  runtimeStatus,
   onOpen,
   onToggleInstall,
 }: {
   plugin: PluginEntry;
   installed: boolean;
   pending: boolean;
+  runtimeStatus: AgentStatus | undefined;
   onOpen: () => void;
   onToggleInstall: () => void;
 }) {
@@ -505,7 +509,12 @@ function PluginCard({
       </button>
       {/* In flight, the menu and the install button both give way to one inert progress
           button, so the row cannot start a second mutation or be uninstalled mid-install. */}
-      {pending ? (
+      {runtimeStatus === "failing" ? (
+        <Button variant="outline" size="sm" disabled className="shrink-0">
+          <IconAlertTriangle />
+          {t("settings.plugins.runtimeFailing")}
+        </Button>
+      ) : pending ? (
         <Button variant="outline" size="sm" disabled className="shrink-0">
           <IconLoader2 className="animate-spin" />
           {t(

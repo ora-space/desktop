@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use crate::PluginRuntimeError;
-use crate::state::{RuntimeInner, RuntimeStatus};
+use crate::state::{ResponseRequest, RuntimeInner, RuntimeStatus};
 
 pub(crate) const JSON_RPC_VERSION: &str = "2.0";
 pub(crate) const REGISTER_METHOD: &str = "ora/register";
@@ -70,14 +70,19 @@ pub(crate) async fn handle_message(inner: &RuntimeInner, message: Value) -> Resu
         }
         _ => return Err("plugin response must contain exactly one result or error".to_string()),
     };
-    let sender = inner
-        .pending
-        .lock()
-        .await
-        .remove(&request_id)
-        .ok_or_else(|| format!("plugin responded with unknown request ID {request_id}"))?;
-    let _ = sender.send(result);
-    Ok(())
+    let response = inner.pending.lock().await.take_response(request_id);
+    match response {
+        ResponseRequest::Pending(sender) => {
+            let _ = sender.send(result);
+            Ok(())
+        }
+        // A timeout is local cancellation, not proof of a broken plugin. Its response remains a
+        // well-formed answer to a request this generation sent, so it is safe to discard.
+        ResponseRequest::Abandoned => Ok(()),
+        ResponseRequest::Unmatched => Err(format!(
+            "plugin responded with unknown request ID {request_id}"
+        )),
+    }
 }
 
 /// Splits registration from whitelisted notifications and rejects everything else.
@@ -114,10 +119,12 @@ async fn handle_plugin_originated(
     }
     // A closed inbound receiver means the host stopped consuming this plugin's stream; that is a
     // host-side lifecycle decision, so dropping the notification must not fail the connection.
-    let _ = inner.inbound.send(PluginNotification {
-        method: method.to_string(),
-        params: object.get("params").cloned().unwrap_or(Value::Null),
-    });
+    if let Some(inbound) = inner.inbound.lock().await.as_ref() {
+        let _ = inbound.send(PluginNotification {
+            method: method.to_string(),
+            params: object.get("params").cloned().unwrap_or(Value::Null),
+        });
+    }
     Ok(())
 }
 

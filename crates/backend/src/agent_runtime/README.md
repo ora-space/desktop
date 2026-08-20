@@ -49,6 +49,6 @@ Cancellation sends `session/cancel` and waits for bounded settlement. Explicit s
 
 Session titles are validated as the domain `SessionTitle` value object, persisted through a title-only repository operation taking `&SessionTitle`, and published through `AppEventHub` only after a successful database commit. The event contains only the Ora session id; clients refetch the authoritative `Session.title`. Title acquisition is never restored after process restart, agent switch, explicit stop, connection loss, actor termination, or a user-driven rename, and a late provider update cannot change a locked title.
 
-Supervisors retry failed providers independently with capped backoff and reap the old process tree before replacement. Ora remains available when one or all providers are unavailable.
+Supervisors retry failed providers independently with capped backoff and reap the old process tree before replacement. More than three unexpected failures inside one minute opens that agent's restart circuit: the supervisor publishes `Failing`, stops automatic retries for the rest of the process, and leaves every other agent available. Missing local CLI installations remain `Unavailable` and keep retrying because they are expected configuration rather than crashes.
 
 See the [ora-backend overview](../../README.md) and [ACP Agent Runtime design](../../../../docs/agent-runtime.md).

@@ -2,6 +2,7 @@ use super::plugin_agent::{
     self, AgentTransport, LaunchedPluginAgent, PluginAcpTransport, PluginAgentError,
     PluginAgentModel, PluginAgentSpec,
 };
+use super::restart_circuit::{RestartCircuit, RestartDecision};
 use super::routing::{RouteRegistry, SessionChannel, SessionEvent};
 use super::{
     CANCELLATION_GRACE, CONTRACT_QUEUE_CAPACITY, INITIALIZE_TIMEOUT, map_acp_error,
@@ -31,7 +32,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
@@ -105,6 +106,7 @@ enum ConnectionState {
     Starting,
     Ready(RuntimeConnection),
     Unavailable,
+    Failing,
 }
 
 /// Reports one CLI's live detection state without exposing its private connection handle.
@@ -113,6 +115,7 @@ pub(super) enum ConnectionStatus {
     Ready,
     Starting,
     Unavailable,
+    Failing,
 }
 
 /// Keeps one supervisor generation's fixed dependencies together as the retry loop evolves.
@@ -260,6 +263,7 @@ impl ConnectionSupervisor {
             ConnectionState::Ready(_) => ConnectionStatus::Ready,
             ConnectionState::Starting => ConnectionStatus::Starting,
             ConnectionState::Unavailable => ConnectionStatus::Unavailable,
+            ConnectionState::Failing => ConnectionStatus::Failing,
         }
     }
 
@@ -267,10 +271,12 @@ impl ConnectionSupervisor {
     pub fn current(&self) -> Result<RuntimeConnection, BackendError> {
         match self.state.borrow().clone() {
             ConnectionState::Ready(connection) => Ok(connection),
-            ConnectionState::Starting | ConnectionState::Unavailable => Err(runtime_internal(
-                "agent_runtime_unavailable",
-                format!("{label} runtime is unavailable", label = self.label),
-            )),
+            ConnectionState::Starting | ConnectionState::Unavailable | ConnectionState::Failing => {
+                Err(runtime_internal(
+                    "agent_runtime_unavailable",
+                    format!("{label} runtime is unavailable", label = self.label),
+                ))
+            }
         }
     }
 
@@ -408,7 +414,7 @@ impl AgentProcess {
                 // plugin itself cannot wait for the last transport clone to be dropped, or a
                 // surviving session actor would keep a failed plugin running.
                 plugin_agent::stop_agent(runtime, plugin_id).await;
-                runtime.shutdown();
+                runtime.shutdown_and_wait().await;
             }
         }
     }
@@ -471,6 +477,7 @@ async fn run_supervisor(context: SupervisorContext) {
     let identifier = agent_ref.as_str();
     let mut retry_delay = INITIAL_RETRY_DELAY;
     let mut generation = 0_u64;
+    let mut restart_circuit = RestartCircuit::default();
     loop {
         let _ = state.send(ConnectionState::Starting);
         match spawn_initialized_process(&source, &home_directory).await {
@@ -502,6 +509,15 @@ async fn run_supervisor(context: SupervisorContext) {
                     return;
                 }
                 process.process.terminate_and_reap(identifier).await;
+                if restart_circuit.record_failure(Instant::now()) == RestartDecision::Stop {
+                    let _ = state.send(ConnectionState::Failing);
+                    ora_warn!(
+                        agent = identifier,
+                        generation,
+                        "agent entered a crash loop; automatic restarts are disabled"
+                    );
+                    return;
+                }
                 ora_warn!(
                     agent = identifier,
                     generation,
@@ -509,7 +525,7 @@ async fn run_supervisor(context: SupervisorContext) {
                 );
             }
             Err(StartFailure::Terminal(error)) => {
-                let _ = state.send(ConnectionState::Unavailable);
+                let _ = state.send(ConnectionState::Failing);
                 ora_warn!(
                     agent = identifier,
                     error = %error,
@@ -530,6 +546,14 @@ async fn run_supervisor(context: SupervisorContext) {
                         error = %error,
                         "agent startup failed; scheduling retry"
                     );
+                    if restart_circuit.record_failure(Instant::now()) == RestartDecision::Stop {
+                        let _ = state.send(ConnectionState::Failing);
+                        ora_warn!(
+                            agent = identifier,
+                            "agent entered a startup failure loop; automatic retries are disabled"
+                        );
+                        return;
+                    }
                 }
             }
         }
@@ -712,9 +736,13 @@ async fn spawn_plugin_connection(
         plugin_agent::launch(spec, home_directory, env!("CARGO_PKG_VERSION"))
             .await
             .map_err(plugin_start_error)?;
-    let models = plugin_agent::list_models(&runtime)
-        .await
-        .map_err(plugin_start_error)?;
+    let models = match plugin_agent::list_models(&runtime).await {
+        Ok(models) => models,
+        Err(error) => {
+            runtime.shutdown_and_wait().await;
+            return Err(plugin_start_error(error));
+        }
+    };
     let transport = AgentTransport::Plugin(PluginAcpTransport::new(runtime.clone()));
     Ok(StartedAgent {
         process: AgentProcess::Plugin(runtime),

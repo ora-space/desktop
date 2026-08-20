@@ -21,6 +21,8 @@ pub enum AgentStatus {
     Ready,
     Starting,
     Unavailable,
+    /// Automatic restart stopped after the provider repeatedly failed in a short period.
+    Failing,
 }
 
 /// Pairs one agent identity with its current runtime detection status.
@@ -480,10 +482,23 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 
 #[cfg(test)]
 mod tests {
-    use super::PromptSessionRequest;
+    use super::{AgentRuntimeStatus, AgentStatus, PromptSessionRequest};
     use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
     use pretty_assertions::assert_eq;
     use serde_json::{Map, json};
+
+    /// Verifies the public status contract distinguishes a stopped crash loop from retrying.
+    #[test]
+    fn serializes_a_failing_agent_runtime_status() {
+        assert_eq!(
+            serde_json::to_value(AgentRuntimeStatus {
+                agent_ref: "acme.agent".to_string(),
+                status: AgentStatus::Failing,
+            })
+            .expect("serialize failing agent status"),
+            json!({ "agentRef": "acme.agent", "status": "failing" })
+        );
+    }
 
     /// Verifies Ora route DTOs preserve official ACP extension metadata without translation.
     #[test]

@@ -80,8 +80,7 @@ impl PluginRuntime for DenoPluginRuntime {
     fn stop(&self) -> impl Future<Output = Result<(), PluginRuntimeFailure>> + Send {
         let runtime = self.runtime.clone();
         async move {
-            runtime.shutdown();
-            runtime.wait_for_exit().await;
+            runtime.shutdown_and_wait().await;
             Ok(())
         }
     }

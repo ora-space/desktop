@@ -25,21 +25,23 @@ sees a `RuntimeConnection` and cannot tell which kind of provider produced it.
 - Interpreting ACP. The host is a pipe for `agent/acp` payloads and never parses, validates, or
   rewrites them, which is what lets a plugin support ACP methods this host has never heard of.
 - Supervising the agent's process. A plugin spawns and owns its agent CLI itself.
-- Retry, backoff, and connection state. Those belong to the connection supervisor, which treats a
-  dead plugin exactly as it treats a dead CLI.
+- Retry, backoff, crash-loop detection, and connection state. Those belong to the connection
+  supervisor, which treats a dead plugin exactly as it treats a dead CLI.
 
 ## Boundaries and failure semantics
 
 The contract check runs the moment the handshake completes — before any session exists and before a
 user is waiting on a prompt — so a plugin that does not implement the contract surfaces as an
-unavailable agent rather than as a failure in the middle of someone's turn. That failure is
-terminal: the supervisor abandons the agent for the rest of the process instead of retrying, because
+failing agent rather than as a failure in the middle of someone's turn. That failure is terminal:
+the supervisor publishes `Failing` and abandons the agent for the rest of the process instead of retrying, because
 the same plugin will fail identically every time and retrying only produces a warning per backoff
 interval.
 
 `agent/start` failures split in two. `-32001` means the agent CLI is absent from this machine; that
 is an expected local configuration, so it maps onto the same public error a missing built-in CLI
-produces and is retried without logging. Every other code is a genuine startup failure.
+produces and is retried without logging or contributing to the crash counter. Every other code is a
+genuine startup failure. More than three genuine failures in one minute opens the connection
+supervisor's restart circuit, publishes `Failing` to the UI, and stops automatic retries.
 
 ACP travels as notifications rather than plugin method calls. ACP frames already carry their own
 ids, cancellation, and ordering, so a second correlation layer would mean two timeouts and two
@@ -52,12 +54,17 @@ must not end every live session on that agent. Frames that arrive before `agent/
 discarded, because they belong to no connection.
 
 Teardown is `agent/stop`, then an explicit plugin shutdown that sends `ora/shutdown` and kills the
-process tree once the shutdown timeout expires. `agent/stop` has its own short deadline, well inside
+process tree once the shutdown timeout expires, then waits until that tree has actually exited
+before a replacement generation may start. `agent/stop` has its own short deadline, well inside
 the host's cancellation grace, and the plugin is ended whether or not it answered — teardown must
 never be the reason shutdown stalls. Ending the plugin explicitly also matters because plugin
 handles are cloned into the ACP transport that live sessions hold: waiting for the last clone to
 drop would let one surviving session actor keep a failed plugin running. Plugin cleanup is best
 effort; final reclamation of the process tree is always the host's.
+
+The same explicit shutdown-and-wait boundary applies before a connection generation is published:
+contract verification, `agent/start`, model discovery, or ACP initialization failure reaps the
+partially started plugin before the connection supervisor schedules another attempt.
 
 ## Sandboxing
 

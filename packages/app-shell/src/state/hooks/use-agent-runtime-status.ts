@@ -6,9 +6,9 @@ import { queryKeys } from "./query-keys";
 const STARTING_POLL_INTERVAL_MS = 1500;
 
 /**
- * Loads the live per-CLI detection status (ready/starting/unavailable) used to drive the
+ * Loads the live per-CLI detection status (ready/starting/unavailable/failing) used to drive the
  * plugin settings pane's installed indicator. Polls at a short interval only while some CLI
- * is still starting; once every CLI has settled into ready or unavailable, polling stops.
+ * is still starting; once every CLI has settled into ready, unavailable, or failing, polling stops.
  */
 export function useAgentRuntimeStatus() {
   const client = useContractsClient();
