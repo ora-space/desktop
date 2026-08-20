@@ -12,14 +12,14 @@ executes the effects this crate decides on.
   counter), and `WebviewLabel` (`remote-surface:<plugin id with '.' -> '_'>:<surface>:<instance>`,
   restricted to the Tauri label alphabet).
 - `definition`: `SurfaceDefinition` built from `ora-plugin-manager`'s already validated
-  `InstalledSurface`; `MountTarget` (`embedded` / `windowed` on the wire).
+  `InstalledSurface`; `MountTarget` (`embedded` / `windowed` on the wire, both directions).
 - `navigation`: `NavigationPolicy::allows` accepts only credential-free, port-free `https` URLs
   whose host is an exact allow-list entry or a subdomain of a suffix entry.
 - `state`: pure transition functions returning `SurfaceEffect`s (see `src/state/README.md` for
   the full transition table).
 - `registry`: `SurfaceRegistry` keeps live instances behind one mutex, enforces the singleton
-  instance policy, maps labels to records for authorization, and returns effects for lock-free
-  execution.
+  instance policy, maps labels and instance ids to record snapshots (`resolve_label`, `record`)
+  for authorization, and returns effects for lock-free execution.
 - `downloads`: `DownloadCoordinator` reserves `.part` paths per `(label, url)`, promotes or
   removes them on finish, and reports `CompletedDownload` with size and local completion time.
 - `events`: `SurfaceEvent`, the camelCase-tagged projection the desktop adapter emits verbatim.

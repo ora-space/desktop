@@ -4,7 +4,7 @@ use ora_domain::PluginId;
 use ora_plugin_manager::{
     InstalledSurface, InstalledSurfaceSource, InstancePolicy, RemoteSiteSource, WebDataPolicy,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 /// One surface as the host understands it: identity, title, content source, instance policy.
@@ -33,8 +33,8 @@ pub struct RemoteSiteDefinition {
 /// Where an instance is mounted: inside the host window or as its own window.
 ///
 /// Serialized lowercase because the frontend event contract spells targets as
-/// `"embedded"` / `"windowed"`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+/// `"embedded"` / `"windowed"`; deserialized with the same spelling for `surface_open`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MountTarget {
     Embedded,

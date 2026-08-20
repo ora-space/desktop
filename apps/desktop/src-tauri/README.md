@@ -1,6 +1,6 @@
 # Ora Desktop
 
-`ora-desktop` is the native Tauri host for Ora. It bootstraps the shared backend, exposes desktop-only commands to the frontend, owns native windows and dialogs, and adapts operating-system capabilities such as filesystem handoff, opening http(s)/mailto URLs in the host browser, and marketplace WebViews.
+`ora-desktop` is the native Tauri host for Ora. It bootstraps the shared backend, exposes desktop-only commands to the frontend, owns native windows and dialogs, and adapts operating-system capabilities such as filesystem handoff, opening http(s)/mailto URLs in the host browser, and plugin surface WebViews.
 
 Prompt-box `open_external_url` rejects disallowed schemes as `InvalidRequest` and reports OS launch failures as `Internal`, matching `open_location`. On Windows it calls `ShellExecuteW` on the async runtime thread because that API returns after handing the URL to the protocol handler; `open` / `xdg-open` on other hosts still run through `spawn_blocking`.
 
@@ -12,7 +12,15 @@ Desktop installs provisional logging from `ORA_LOG_LEVEL` or `info` before Backe
 
 The shared developer preferences are exposed through `get_developer_mode`, `set_developer_mode`, `get_runtime_log_level`, and `set_runtime_log_level`. These commands enter a request-correlated span before reading, persisting, reloading, or compensating; SQLite ownership remains in Backend rather than this crate. Desktop `config.json` does not store either preference.
 
-Native marketplace windows use isolated browser profiles and provider-specific navigation policies. Their download events are routed into Ora-owned application data before the frontend is notified.
+## Plugin surfaces
+
+`src/surface/` hosts the webviews contributed by `ui` plugins (see its README and
+`docs/surface.md`). The pure state machine and registry live in `ora-surface`; this crate
+executes their effects with Tauri, resolves per-surface web data isolation, writes downloads into
+`<data-dir>/plugin-data/<plugin_id>/downloads/`, and delivers them to the plugin process through
+`ui/downloadCompleted`. The `embedded-surfaces` Cargo feature (off by default) enables child
+webviews docked into the main window through Tauri's `unstable` API; without it every surface
+opens as its own window and `surface_capabilities` reports `embedded: false`.
 
 Ripgrep and Deno are bundled as Tauri sidecars under `binaries/rg` and
 `binaries/deno` for release builds. Their platform-specific executables are

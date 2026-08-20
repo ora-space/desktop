@@ -1,4 +1,5 @@
 use crate::config::DesktopConfigStore;
+use crate::surface::DesktopSurfaceService;
 use crate::workspace_files::WorkspaceFileApi;
 use ora_backend::{Backend, BackendPreferredLogLevelStore};
 use ora_runtime_settings::RuntimeLogLevelManager;
@@ -104,6 +105,8 @@ pub struct DesktopState {
     /// The Tauri application data directory, owner of the dashboard locator files.
     pub app_data_directory: PathBuf,
     pub stream_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    /// Plugin surface host: native webviews, download delivery, plugin process linkage.
+    pub surfaces: Arc<DesktopSurfaceService>,
 }
 
 /// Retains process-scoped writer guards for the full Tauri application lifetime.

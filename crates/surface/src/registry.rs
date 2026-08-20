@@ -163,6 +163,11 @@ impl SurfaceRegistry {
         Ok(inner.settle(instance, transition))
     }
 
+    /// Returns the current snapshot of one instance, if it is still live.
+    pub fn record(&self, instance: SurfaceInstanceId) -> Option<SurfaceRecord> {
+        self.lock().instances.get(&instance).cloned()
+    }
+
     /// Resolves a webview label to its record; the authorization source for assets, downloads,
     /// and bridge calls. Unregistered labels yield `None`.
     pub fn resolve_label(&self, label: &str) -> Option<SurfaceRecord> {
