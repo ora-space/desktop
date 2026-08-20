@@ -133,6 +133,7 @@ pub fn run() {
             commands::activate_plugin,
             commands::stop_plugin,
             commands::uninstall_plugin,
+            commands::install_plugin,
             commands::update_agent,
             commands::delete_agent,
             commands::prepare_agent_import,

@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@ora/ui";
-import type { InstalledPlugin } from "@ora/contracts";
+import type { PluginEntry } from "../settings/plugin-catalog";
 
 /** Icons beyond this count collapse into a "+N" badge so the stack stays compact. */
 const STACK_ICON_LIMIT = 3;
@@ -22,8 +22,8 @@ export function SelectedPluginsButton({
   onRemove,
   disabled = false,
 }: {
-  selected: InstalledPlugin[];
-  onRemove: (plugin: InstalledPlugin) => void;
+  selected: PluginEntry[];
+  onRemove: (plugin: PluginEntry) => void;
   disabled?: boolean;
 }) {
   const { t } = useTranslation();

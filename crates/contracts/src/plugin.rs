@@ -215,6 +215,11 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     InstalledPluginAgent::export(config)?;
     PluginRuntimeStatus::export(config)?;
     InstalledPlugin::export(config)?;
+    AvailablePlugin::export(config)?;
+    ListAvailablePluginsRequest::export(config)?;
+    ListAvailablePluginsResponse::export(config)?;
+    SyncAvailablePluginsRequest::export(config)?;
+    SyncAvailablePluginsResponse::export(config)?;
     ListInstalledPluginsRequest::export(config)?;
     ListInstalledPluginsResponse::export(config)?;
     EnablePluginRequest::export(config)?;

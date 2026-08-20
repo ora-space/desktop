@@ -16,7 +16,6 @@ use ora_db::{
 use ora_domain::{PluginEnabledState, PluginId};
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
-use serde_json::json;
 use std::fs;
 use std::future::{Future, pending};
 use std::path::{Path, PathBuf};
@@ -96,7 +95,7 @@ impl PluginStatusPublisher for NoopStatusPublisher {
 fn opens_with_discovered_plugins_disabled_and_stopped() {
     with_trace_logging(|| {
         let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-        write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+        write_plugin_package(temp_dir.path(), "example");
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -120,7 +119,7 @@ fn opens_with_discovered_plugins_disabled_and_stopped() {
 fn opens_with_persisted_plugin_eligibility() {
     with_trace_logging(|| {
         let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-        write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+        write_plugin_package(temp_dir.path(), "example");
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(
                 &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -130,7 +129,7 @@ fn opens_with_persisted_plugin_eligibility() {
         let repository = SqlitePluginStateRepository::new(pool);
         repository
             .set_plugin_enabled(
-                &PluginId::new("ora.example"),
+                &PluginId::new("official/example"),
                 PluginEnabledState::Enabled,
                 20,
             )
@@ -152,7 +151,7 @@ fn opens_with_persisted_plugin_eligibility() {
 async fn enables_plugin_without_activating_it() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -163,7 +162,7 @@ async fn enables_plugin_without_activating_it() {
 
     let response = lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
@@ -187,7 +186,7 @@ async fn enables_plugin_without_activating_it() {
 async fn disables_stopped_plugin() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -197,7 +196,7 @@ async fn disables_stopped_plugin() {
     let repository = SqlitePluginStateRepository::new(pool);
     repository
         .set_plugin_enabled(
-            &PluginId::new("ora.example"),
+            &PluginId::new("official/example"),
             PluginEnabledState::Enabled,
             20,
         )
@@ -206,7 +205,7 @@ async fn disables_stopped_plugin() {
 
     let response = lifecycle
         .disable_plugin(DisablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("disable plugin");
@@ -230,7 +229,7 @@ async fn disables_stopped_plugin() {
 async fn disabling_never_enabled_plugin_does_not_create_durable_state() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -243,7 +242,7 @@ async fn disabling_never_enabled_plugin_does_not_create_durable_state() {
 
     let response = lifecycle
         .disable_plugin(DisablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("disable never-enabled plugin");
@@ -252,7 +251,7 @@ async fn disabling_never_enabled_plugin_does_not_create_durable_state() {
         (
             response,
             repository_probe
-                .find_plugin_state(&PluginId::new("ora.example"))
+                .find_plugin_state(&PluginId::new("official/example"))
                 .expect("read durable plugin state"),
         ),
         (
@@ -276,7 +275,7 @@ async fn scans_new_packages_without_rescanning_cached_queries() {
         )
         .expect("bootstrap plugin lifecycle database");
     let lifecycle = open_without_runtime(temp_dir.path(), SqlitePluginStateRepository::new(pool));
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
 
     let before_scan = lifecycle.list_installed_plugins();
     let scan_response = lifecycle
@@ -319,14 +318,14 @@ async fn startup_reconciliation_deletes_orphaned_plugin_state() {
     let repository = SqlitePluginStateRepository::new(pool);
     repository
         .set_plugin_enabled(
-            &PluginId::new("ora.example"),
+            &PluginId::new("official/example"),
             PluginEnabledState::Enabled,
             20,
         )
         .expect("persist orphaned plugin state");
     let lifecycle = open_without_runtime(temp_dir.path(), repository);
 
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let response = lifecycle
         .scan_plugins(ScanPluginsRequest {})
         .await
@@ -345,7 +344,7 @@ async fn startup_reconciliation_deletes_orphaned_plugin_state() {
 async fn scan_reconciliation_deletes_orphaned_plugin_state() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -355,20 +354,26 @@ async fn scan_reconciliation_deletes_orphaned_plugin_state() {
     let repository = SqlitePluginStateRepository::new(pool);
     repository
         .set_plugin_enabled(
-            &PluginId::new("ora.example"),
+            &PluginId::new("official/example"),
             PluginEnabledState::Enabled,
             20,
         )
         .expect("persist enabled plugin");
     let lifecycle = open_without_runtime(temp_dir.path(), repository);
 
-    fs::remove_dir_all(temp_dir.path().join("plugins").join("example"))
-        .expect("remove plugin outside Ora");
+    fs::remove_dir_all(
+        temp_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("example"),
+    )
+    .expect("remove plugin outside Ora");
     lifecycle
         .scan_plugins(ScanPluginsRequest {})
         .await
         .expect("reconcile deleted package");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let restored = lifecycle
         .scan_plugins(ScanPluginsRequest {})
         .await
@@ -387,7 +392,7 @@ async fn scan_reconciliation_deletes_orphaned_plugin_state() {
 async fn scan_stops_runtime_for_package_deleted_outside_ora() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -410,19 +415,25 @@ async fn scan_stops_runtime_for_package_deleted_outside_ora() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
     tokio::task::yield_now().await;
-    fs::remove_dir_all(temp_dir.path().join("plugins").join("example"))
-        .expect("remove plugin outside Ora");
+    fs::remove_dir_all(
+        temp_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("example"),
+    )
+    .expect("remove plugin outside Ora");
 
     let scan_lifecycle = lifecycle.clone();
     let scan_task =
@@ -439,7 +450,7 @@ async fn scan_stops_runtime_for_package_deleted_outside_ora() {
         (
             response,
             repository_probe
-                .find_plugin_state(&PluginId::new("ora.example"))
+                .find_plugin_state(&PluginId::new("official/example"))
                 .expect("read reconciled plugin state"),
         ),
         (
@@ -456,7 +467,7 @@ async fn scan_stops_runtime_for_package_deleted_outside_ora() {
 async fn scan_reloads_durable_eligibility_for_existing_plugin() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -468,7 +479,7 @@ async fn scan_reloads_durable_eligibility_for_existing_plugin() {
     let lifecycle = open_without_runtime(temp_dir.path(), repository);
     repository_probe
         .set_plugin_enabled(
-            &PluginId::new("ora.example"),
+            &PluginId::new("official/example"),
             PluginEnabledState::Enabled,
             20,
         )
@@ -497,7 +508,7 @@ async fn scan_reloads_durable_eligibility_for_existing_plugin() {
 async fn scan_stops_runtime_invalidated_by_missing_durable_state() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -521,21 +532,21 @@ async fn scan_stops_runtime_invalidated_by_missing_durable_state() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     repository_probe
-        .delete_plugin_state(&PluginId::new("ora.example"))
+        .delete_plugin_state(&PluginId::new("official/example"))
         .expect("delete durable state outside lifecycle");
 
     let scan_lifecycle = lifecycle.clone();
@@ -548,7 +559,7 @@ async fn scan_stops_runtime_invalidated_by_missing_durable_state() {
         .await
         .expect("join scan task")
         .expect("scan plugins");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
 
     assert_eq!(
         (response, lifecycle.list_installed_plugins()),
@@ -568,7 +579,7 @@ async fn scan_stops_runtime_invalidated_by_missing_durable_state() {
 async fn activates_enabled_plugin_and_publishes_each_transition() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -590,15 +601,15 @@ async fn activates_enabled_plugin_and_publishes_each_transition() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
 
     let response = lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
@@ -611,23 +622,23 @@ async fn activates_enabled_plugin_and_publishes_each_transition() {
             ),
         },
     );
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     assert_eq!(
         launched.recv().await,
         Some(PluginLaunchRequest {
-            plugin_id: PluginId::new("ora.example"),
+            plugin_id: PluginId::new("official/example"),
             deno_path: PathBuf::from("deno"),
             entrypoint: temp_dir
                 .path()
                 .join("plugins")
+                .join("installed")
                 .join("example")
-                .join("dist")
-                .join("index.js"),
+                .join("main.js"),
         }),
     );
 
     release_launch.send(()).expect("release runtime launch");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     assert_eq!(
         lifecycle.list_installed_plugins(),
         ListInstalledPluginsResponse {
@@ -644,7 +655,7 @@ async fn activates_enabled_plugin_and_publishes_each_transition() {
 async fn stops_running_plugin_without_disabling_it() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -667,25 +678,25 @@ async fn stops_running_plugin_without_disabling_it() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
 
     let stop_lifecycle = lifecycle.clone();
     let stop_task = tokio::spawn(async move {
         stop_lifecycle
             .stop_plugin(StopPluginRequest {
-                plugin_id: "ora.example".to_string(),
+                plugin_id: "official/example".to_string(),
             })
             .await
     });
@@ -696,7 +707,7 @@ async fn stops_running_plugin_without_disabling_it() {
         .expect("join stop task")
         .expect("stop plugin");
 
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     let expected_plugin = expected_plugin(/*enabled*/ true);
     assert_eq!(
         (response, lifecycle.list_installed_plugins()),
@@ -716,7 +727,7 @@ async fn stops_running_plugin_without_disabling_it() {
 async fn disabling_running_plugin_stops_it_first() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -739,25 +750,25 @@ async fn disabling_running_plugin_stops_it_first() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
 
     let disable_lifecycle = lifecycle.clone();
     let disable_task = tokio::spawn(async move {
         disable_lifecycle
             .disable_plugin(DisablePluginRequest {
-                plugin_id: "ora.example".to_string(),
+                plugin_id: "official/example".to_string(),
             })
             .await
     });
@@ -768,7 +779,7 @@ async fn disabling_running_plugin_stops_it_first() {
         .expect("join disable task")
         .expect("disable running plugin");
 
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     let expected_plugin = expected_plugin(/*enabled*/ false);
     assert_eq!(
         (response, lifecycle.list_installed_plugins()),
@@ -788,7 +799,7 @@ async fn disabling_running_plugin_stops_it_first() {
 async fn queues_disable_behind_starting_activation() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -811,13 +822,13 @@ async fn queues_disable_behind_starting_activation() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
@@ -826,7 +837,7 @@ async fn queues_disable_behind_starting_activation() {
     let disable_task = tokio::spawn(async move {
         disable_lifecycle
             .disable_plugin(DisablePluginRequest {
-                plugin_id: "ora.example".to_string(),
+                plugin_id: "official/example".to_string(),
             })
             .await
     });
@@ -854,8 +865,12 @@ async fn queues_disable_behind_starting_activation() {
 async fn uninstalls_running_plugin_after_stopping_it() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
-    let package_root = temp_dir.path().join("plugins").join("example");
+    write_plugin_package(temp_dir.path(), "example");
+    let package_root = temp_dir
+        .path()
+        .join("plugins")
+        .join("installed")
+        .join("example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -878,25 +893,25 @@ async fn uninstalls_running_plugin_after_stopping_it() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
 
     let uninstall_lifecycle = lifecycle.clone();
     let uninstall_task = tokio::spawn(async move {
         uninstall_lifecycle
             .uninstall_plugin(UninstallPluginRequest {
-                plugin_id: "ora.example".to_string(),
+                plugin_id: "official/example".to_string(),
             })
             .await
     });
@@ -916,7 +931,7 @@ async fn uninstalls_running_plugin_after_stopping_it() {
         ),
         (
             UninstallPluginResponse {
-                plugin_id: "ora.example".to_string(),
+                plugin_id: "official/example".to_string(),
             },
             false,
             ListInstalledPluginsResponse {
@@ -931,8 +946,12 @@ async fn uninstalls_running_plugin_after_stopping_it() {
 async fn uninstall_records_stopped_state_before_package_removal() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
-    let package_root = temp_dir.path().join("plugins").join("example");
+    write_plugin_package(temp_dir.path(), "example");
+    let package_root = temp_dir
+        .path()
+        .join("plugins")
+        .join("installed")
+        .join("example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -956,19 +975,19 @@ async fn uninstall_records_stopped_state_before_package_removal() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     fs::remove_dir_all(&package_root).expect("remove package fixture directory");
     fs::write(&package_root, "not a directory").expect("replace package directory with a file");
 
@@ -976,7 +995,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
     let uninstall_task = tokio::spawn(async move {
         uninstall_lifecycle
             .uninstall_plugin(UninstallPluginRequest {
-                plugin_id: "ora.example".to_string(),
+                plugin_id: "official/example".to_string(),
             })
             .await
     });
@@ -986,7 +1005,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
         .await
         .expect("join uninstall task")
         .expect_err("package removal should fail");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     assert!(matches!(
         error,
         PluginLifecycleError::PackageRemoval { path, .. } if path == package_root
@@ -996,7 +1015,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
         (
             lifecycle.list_installed_plugins(),
             repository_probe
-                .find_plugin_state(&PluginId::new("ora.example"))
+                .find_plugin_state(&PluginId::new("official/example"))
                 .expect("read deleted durable state"),
             package_root.is_file(),
         ),
@@ -1015,7 +1034,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
 async fn records_runtime_failure_without_disabling_plugin() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "example");
     let pool = DatabaseBootstrapper::system()
         .bootstrap_repository_pool(
             &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
@@ -1037,26 +1056,26 @@ async fn records_runtime_failure_without_disabling_plugin() {
     .expect("open plugin lifecycle");
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("enable plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/example".to_string(),
         })
         .await
         .expect("activate plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
 
     fail_runtime
         .send(PluginRuntimeExit::Failed(PluginRuntimeFailure::new(
             "process crashed",
         )))
         .expect("fail runtime");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
 
     assert_eq!(
         lifecycle.list_installed_plugins(),
@@ -1089,14 +1108,14 @@ fn expected_plugin_with_runtime(
     runtime: PluginRuntimeStatus,
 ) -> InstalledPlugin {
     InstalledPlugin {
-        id: "ora.example".to_string(),
-        package_name: "@ora/example".to_string(),
-        display_name: "Example".to_string(),
+        id: "official/example".to_string(),
+        package_name: "example".to_string(),
+        display_name: "example".to_string(),
         version: "1.0.0".to_string(),
         kind: "agent".to_string(),
-        main: "dist/index.js".to_string(),
+        main: "main.js".to_string(),
         agent: InstalledPluginAgent {
-            display_name: "Example Agent".to_string(),
+            display_name: "example".to_string(),
             contract_version: 1,
         },
         enabled: enabled.is_enabled(),
@@ -1364,38 +1383,16 @@ impl PluginStatusPublisher for RecordingStatusPublisher {
     }
 }
 
-/// Writes one complete package below the plugin-manager discovery root.
-fn write_plugin_package(data_dir: &std::path::Path, directory: &str, id: &str, name: &str) {
-    let package_root = data_dir.join("plugins").join(directory);
-    fs::create_dir_all(package_root.join("dist")).expect("create plugin package");
-    fs::write(package_root.join("dist").join("index.js"), "export {};\n")
-        .expect("write plugin entrypoint");
+/// Writes one complete installed package in the shared orax manifest schema.
+fn write_plugin_package(data_dir: &std::path::Path, directory: &str) {
+    let package_root = data_dir.join("plugins").join("installed").join(directory);
+    fs::create_dir_all(&package_root).expect("create plugin package");
+    fs::write(package_root.join("main.js"), "export {};\n").expect("write plugin entrypoint");
     fs::write(
-        package_root.join("package.json"),
-        serde_json::to_vec_pretty(&json!({
-            "name": "@ora/example",
-            "version": "1.0.0",
-            "type": "module",
-            "ora": {
-                "manifestVersion": 1,
-                "id": id,
-                "displayName": name,
-                "kind": "agent",
-                "main": "dist/index.js",
-                "engines": {
-                    "ora": ">=0.1.0 <0.2.0",
-                    "pluginApi": 1,
-                    "bun": ">=1.0.0 <2.0.0"
-                },
-                "contributes": {
-                    "agent": {
-                        "displayName": "Example Agent",
-                        "contractVersion": 1
-                    }
-                }
-            }
-        }))
-        .expect("serialize plugin manifest"),
+        package_root.join("orax.toml"),
+        format!(
+            "resolver = 1\nname = {directory:?}\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Example\"\n"
+        ),
     )
     .expect("write plugin manifest");
 }

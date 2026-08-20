@@ -139,10 +139,10 @@ function InstalledPluginRow({ plugin }: { plugin: InstalledPlugin }) {
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">
-          {plugin.name}
+          {plugin.displayName}
         </span>
         <span className="block truncate text-xs text-muted-foreground">
-          {plugin.description}
+          {plugin.packageName}
         </span>
         <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
           {plugin.version} · {plugin.kind} ·{" "}
@@ -156,7 +156,9 @@ function InstalledPluginRow({ plugin }: { plugin: InstalledPlugin }) {
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label={t("settings.plugins.openMenu", { name: plugin.name })}
+              aria-label={t("settings.plugins.openMenu", {
+                name: plugin.displayName,
+              })}
               className="shrink-0 text-muted-foreground"
               disabled={busy}
             />
@@ -191,7 +193,9 @@ function InstalledPluginRow({ plugin }: { plugin: InstalledPlugin }) {
           if (next) void mutations.enable.mutate();
           else void mutations.disable.mutate();
         }}
-        aria-label={t("settings.plugins.toggleSkill", { name: plugin.name })}
+        aria-label={t("settings.plugins.toggleSkill", {
+          name: plugin.displayName,
+        })}
       />
       {(enabling || disabling) && (
         <IconLoader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
