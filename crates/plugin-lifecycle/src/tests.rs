@@ -1,7 +1,9 @@
 use super::{
-    PluginLaunchRequest, PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError,
-    PluginRuntime, PluginRuntimeExit, PluginRuntimeFailure, PluginRuntimeLauncher,
-    PluginStatusPublisher,
+    DenoPermission, EnvScope, InboundNotification, LaunchedRuntime, PLUGIN_DATA_DIR_ENV,
+    PluginCallError, PluginLaunchRequest, PluginLifecycle, PluginLifecycleConfig,
+    PluginLifecycleError, PluginNotificationSink, PluginRegistration, PluginRuntime,
+    PluginRuntimeExit, PluginRuntimeFailure, PluginRuntimeLauncher, PluginStatusPublisher,
+    ReadScope,
 };
 use ora_application::{Clock, PluginStateRepository};
 use ora_contracts::{
@@ -27,7 +29,7 @@ use tracing_subscriber::prelude::*;
 
 /// Supplies deterministic lifecycle timestamps without mutating process-global time.
 #[derive(Clone, Copy, Debug)]
-struct FixedClock;
+pub(super) struct FixedClock;
 
 impl Clock for FixedClock {
     /// Returns one stable timestamp for lifecycle repository writes.
@@ -37,7 +39,7 @@ impl Clock for FixedClock {
 }
 
 /// Installs a test-thread TRACE subscriber for the full lifetime of an async test future.
-fn trace_logging_guard() -> tracing::subscriber::DefaultGuard {
+pub(super) fn trace_logging_guard() -> tracing::subscriber::DefaultGuard {
     let subscriber = tracing_subscriber::registry().with(LevelFilter::TRACE);
     tracing::subscriber::set_default(subscriber)
 }
@@ -51,6 +53,7 @@ fn open_without_runtime(
     FixedClock,
     UnusedRuntimeLauncher,
     NoopStatusPublisher,
+    NoopNotificationSink,
 > {
     PluginLifecycle::open(
         PluginLifecycleConfig {
@@ -61,6 +64,7 @@ fn open_without_runtime(
         FixedClock,
         UnusedRuntimeLauncher,
         NoopStatusPublisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle")
 }
@@ -76,7 +80,8 @@ impl PluginRuntimeLauncher for UnusedRuntimeLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
-    ) -> impl Future<Output = Result<Self::Runtime, PluginRuntimeFailure>> + Send {
+    ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
+    {
         async { Err(PluginRuntimeFailure::new("runtime launch was not expected")) }
     }
 }
@@ -88,6 +93,28 @@ struct NoopStatusPublisher;
 impl PluginStatusPublisher for NoopStatusPublisher {
     /// Intentionally ignores an invalidation outside event-focused tests.
     fn publish_status_changed(&self, _plugin_id: &PluginId) {}
+}
+
+/// Discards plugin notifications in tests that do not observe the data plane.
+#[derive(Clone)]
+pub(super) struct NoopNotificationSink;
+
+impl PluginNotificationSink for NoopNotificationSink {
+    /// Intentionally ignores notifications outside data-plane tests.
+    fn on_notification(&self, _notification: InboundNotification) {}
+}
+
+/// Pairs a fake runtime with a notification channel whose sender stays open for the test.
+///
+/// The sender is leaked on purpose: dropping it would close the stream and make the lifecycle
+/// treat every fake launch as a dead reader.
+fn launched_runtime<Runtime>(runtime: Runtime) -> LaunchedRuntime<Runtime> {
+    let (sender, notifications) = mpsc::unbounded_channel();
+    std::mem::forget(sender);
+    LaunchedRuntime {
+        runtime,
+        notifications,
+    }
 }
 
 /// Verifies startup discovery exposes an unpersisted plugin as disabled and stopped.
@@ -411,6 +438,7 @@ async fn scan_stops_runtime_for_package_deleted_outside_ora() {
         FixedClock,
         ImmediateRuntimeLauncher { runtime },
         NoopStatusPublisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -528,6 +556,7 @@ async fn scan_stops_runtime_invalidated_by_missing_durable_state() {
         FixedClock,
         ImmediateRuntimeLauncher { runtime },
         publisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -597,6 +626,7 @@ async fn activates_enabled_plugin_and_publishes_each_transition() {
         FixedClock,
         launcher,
         publisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -633,7 +663,23 @@ async fn activates_enabled_plugin_and_publishes_each_transition() {
                 .join("plugins")
                 .join("installed")
                 .join("example")
-                .join("main.js"),
+                .join("dist")
+                .join("index.js"),
+            package_root: temp_dir.path().join("plugins").join("example"),
+            permissions: vec![
+                DenoPermission::AllowRun,
+                DenoPermission::AllowRead(ReadScope::Everything),
+                DenoPermission::AllowEnv(EnvScope::Everything),
+                DenoPermission::AllowNet,
+            ],
+            env: vec![(
+                PLUGIN_DATA_DIR_ENV.into(),
+                temp_dir
+                    .path()
+                    .join("plugin-data")
+                    .join("ora.example")
+                    .into_os_string(),
+            )],
         }),
     );
 
@@ -674,6 +720,7 @@ async fn stops_running_plugin_without_disabling_it() {
         FixedClock,
         launcher,
         publisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -746,6 +793,7 @@ async fn disabling_running_plugin_stops_it_first() {
         FixedClock,
         launcher,
         publisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -818,6 +866,7 @@ async fn queues_disable_behind_starting_activation() {
         FixedClock,
         launcher,
         publisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -889,6 +938,7 @@ async fn uninstalls_running_plugin_after_stopping_it() {
         FixedClock,
         launcher,
         publisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -971,6 +1021,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
         FixedClock,
         ImmediateRuntimeLauncher { runtime },
         publisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -1052,6 +1103,7 @@ async fn records_runtime_failure_without_disabling_plugin() {
         FixedClock,
         FailureRuntimeLauncher { runtime },
         publisher,
+        NoopNotificationSink,
     )
     .expect("open plugin lifecycle");
     lifecycle
@@ -1157,7 +1209,8 @@ impl PluginRuntimeLauncher for ControllableRuntimeLauncher {
     fn launch(
         &self,
         request: PluginLaunchRequest,
-    ) -> impl Future<Output = Result<Self::Runtime, PluginRuntimeFailure>> + Send {
+    ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
+    {
         let launched = self.launched.clone();
         let release = self
             .release
@@ -1172,7 +1225,7 @@ impl PluginRuntimeLauncher for ControllableRuntimeLauncher {
             release
                 .await
                 .map_err(|_| PluginRuntimeFailure::new("launch release dropped"))?;
-            Ok(FakeRuntime)
+            Ok(launched_runtime(FakeRuntime))
         }
     }
 }
@@ -1191,6 +1244,29 @@ impl PluginRuntime for FakeRuntime {
     fn wait_for_exit(&self) -> impl Future<Output = PluginRuntimeExit> + Send + 'static {
         pending()
     }
+
+    /// Reports an empty registration; these tests exercise agent packages, which skip validation.
+    fn registration(&self) -> PluginRegistration {
+        PluginRegistration::default()
+    }
+
+    /// Calls are not exercised by this double.
+    fn invoke(
+        &self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Result<serde_json::Value, PluginCallError>> + Send {
+        async { Err(PluginCallError::Unavailable) }
+    }
+
+    /// Notifications are not exercised by this double.
+    fn notify(
+        &self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Result<(), PluginCallError>> + Send {
+        async { Err(PluginCallError::Unavailable) }
+    }
 }
 
 /// Returns one ready runtime whose eventual exit is controlled by the test.
@@ -1206,9 +1282,10 @@ impl PluginRuntimeLauncher for FailureRuntimeLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
-    ) -> impl Future<Output = Result<Self::Runtime, PluginRuntimeFailure>> + Send {
+    ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
+    {
         let runtime = self.runtime.clone();
-        async move { Ok(runtime) }
+        async move { Ok(launched_runtime(runtime)) }
     }
 }
 
@@ -1247,6 +1324,29 @@ impl PluginRuntime for ControllableFailureRuntime {
             .expect("runtime exit is observed once");
         async move { exit.await.unwrap_or(PluginRuntimeExit::Stopped) }
     }
+
+    /// Reports an empty registration; these tests exercise agent packages, which skip validation.
+    fn registration(&self) -> PluginRegistration {
+        PluginRegistration::default()
+    }
+
+    /// Calls are not exercised by this double.
+    fn invoke(
+        &self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Result<serde_json::Value, PluginCallError>> + Send {
+        async { Err(PluginCallError::Unavailable) }
+    }
+
+    /// Notifications are not exercised by this double.
+    fn notify(
+        &self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Result<(), PluginCallError>> + Send {
+        async { Err(PluginCallError::Unavailable) }
+    }
 }
 
 /// Returns one already-ready controllable runtime for stop behavior tests.
@@ -1262,9 +1362,10 @@ impl PluginRuntimeLauncher for ImmediateRuntimeLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
-    ) -> impl Future<Output = Result<Self::Runtime, PluginRuntimeFailure>> + Send {
+    ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
+    {
         let runtime = self.runtime.clone();
-        async move { Ok(runtime) }
+        async move { Ok(launched_runtime(runtime)) }
     }
 }
 
@@ -1315,6 +1416,29 @@ impl PluginRuntime for ControllableStopRuntime {
     fn wait_for_exit(&self) -> impl Future<Output = PluginRuntimeExit> + Send + 'static {
         pending()
     }
+
+    /// Reports an empty registration; these tests exercise agent packages, which skip validation.
+    fn registration(&self) -> PluginRegistration {
+        PluginRegistration::default()
+    }
+
+    /// Calls are not exercised by this double.
+    fn invoke(
+        &self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Result<serde_json::Value, PluginCallError>> + Send {
+        async { Err(PluginCallError::Unavailable) }
+    }
+
+    /// Notifications are not exercised by this double.
+    fn notify(
+        &self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Result<(), PluginCallError>> + Send {
+        async { Err(PluginCallError::Unavailable) }
+    }
 }
 
 /// Holds one launch open while exposing a runtime whose stop is separately controllable.
@@ -1345,7 +1469,8 @@ impl PluginRuntimeLauncher for QueuedRuntimeLauncher {
     fn launch(
         &self,
         _request: PluginLaunchRequest,
-    ) -> impl Future<Output = Result<Self::Runtime, PluginRuntimeFailure>> + Send {
+    ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
+    {
         let runtime = self.runtime.clone();
         let release_launch = self
             .release_launch
@@ -1357,20 +1482,20 @@ impl PluginRuntimeLauncher for QueuedRuntimeLauncher {
             release_launch
                 .await
                 .map_err(|_| PluginRuntimeFailure::new("launch release dropped"))?;
-            Ok(runtime)
+            Ok(launched_runtime(runtime))
         }
     }
 }
 
 /// Records invalidation identifiers without coupling lifecycle tests to Backend's event hub.
 #[derive(Clone)]
-struct RecordingStatusPublisher {
+pub(super) struct RecordingStatusPublisher {
     events: mpsc::UnboundedSender<PluginId>,
 }
 
 impl RecordingStatusPublisher {
     /// Creates the publisher and its receiving observation seam.
-    fn new() -> (Self, mpsc::UnboundedReceiver<PluginId>) {
+    pub(super) fn new() -> (Self, mpsc::UnboundedReceiver<PluginId>) {
         let (events, receiver) = mpsc::unbounded_channel();
         (Self { events }, receiver)
     }
@@ -1387,12 +1512,18 @@ impl PluginStatusPublisher for RecordingStatusPublisher {
 /// wire contract unchanged.
 const PACKAGE_LOGO: &str = r#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="8"/></svg>"#;
 
-/// Writes one complete installed package in the shared orax manifest schema.
-fn write_plugin_package(data_dir: &std::path::Path, directory: &str) {
-    let package_root = data_dir.join("plugins").join("installed").join(directory);
-    fs::create_dir_all(&package_root).expect("create plugin package");
+/// Writes one complete package below the plugin-manager discovery root.
+pub(super) fn write_plugin_package(
+    data_dir: &std::path::Path,
+    directory: &str,
+    id: &str,
+    name: &str,
+) {
+    let package_root = data_dir.join("plugins").join(directory);
+    fs::create_dir_all(package_root.join("dist")).expect("create plugin package");
     fs::write(package_root.join("logo.svg"), PACKAGE_LOGO).expect("write plugin logo");
-    fs::write(package_root.join("main.js"), "export {};\n").expect("write plugin entrypoint");
+    fs::write(package_root.join("dist").join("index.js"), "export {};\n")
+        .expect("write plugin entrypoint");
     fs::write(
         package_root.join("orax.toml"),
         format!(

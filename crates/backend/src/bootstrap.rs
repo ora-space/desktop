@@ -7,6 +7,7 @@ use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::plugin::PluginApi;
+use crate::plugin_gateway::PluginGateway;
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
@@ -254,6 +255,11 @@ impl Backend {
             worktree_root,
             relative_path_base,
         })
+    }
+
+    /// Returns the plugin data-plane gateway the desktop surface layer drives.
+    pub fn plugin_gateway(&self) -> Arc<PluginGateway> {
+        Arc::new(PluginGateway::new(Arc::clone(&self.plugin)))
     }
 
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.

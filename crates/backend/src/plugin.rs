@@ -11,10 +11,10 @@ use ora_contracts::{
     SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
 use ora_db::{RepositoryPool, SqlitePluginStateRepository};
-use ora_logging::{ora_info, ora_warn};
+use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_lifecycle::{
-    DenoPluginRuntimeLauncher, PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError,
-    PluginRuntimeTimeouts,
+    DenoPluginRuntimeLauncher, InboundNotification, PluginLifecycle, PluginLifecycleConfig,
+    PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
 use ora_plugin_manager::Installer;
 use ora_plugin_registry::{
@@ -28,14 +28,37 @@ const MARKETPLACE_REPOSITORY_URL: &str = "https://github.com/ora-space/marketpla
 /// The branch tracked by the marketplace registry source.
 const MARKETPLACE_REPOSITORY_BRANCH: &str = "main";
 
+/// The concrete lifecycle composition the backend runs.
+pub(crate) type BackendPluginLifecycle = PluginLifecycle<
+    SqlitePluginStateRepository,
+    SystemClock,
+    DenoPluginRuntimeLauncher,
+    AppEventPublisher,
+    LoggingNotificationSink,
+>;
+
+/// Logs plugin-originated notifications until a surface broker consumes them.
+///
+/// The first ui plugins declare no `emits`, so nothing arrives here in practice; logging keeps
+/// the stream observable without committing to a routing design before one is needed.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LoggingNotificationSink;
+
+impl PluginNotificationSink for LoggingNotificationSink {
+    /// Records the notification at debug level and drops it.
+    fn on_notification(&self, notification: InboundNotification) {
+        ora_debug!(
+            message = "plugin notification received",
+            plugin_id = %notification.plugin_id,
+            generation = notification.generation.0,
+            method = %notification.method,
+        );
+    }
+}
+
 /// Groups plugin discovery and lifecycle operations behind the backend's plugin interface.
 pub(crate) struct PluginApi {
-    lifecycle: PluginLifecycle<
-        SqlitePluginStateRepository,
-        SystemClock,
-        DenoPluginRuntimeLauncher,
-        AppEventPublisher,
-    >,
+    lifecycle: BackendPluginLifecycle,
     registry_source: RegistrySource,
     registry_index_path: PathBuf,
     data_directory: PathBuf,
@@ -72,6 +95,7 @@ impl PluginApi {
             clock,
             DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
             publisher,
+            LoggingNotificationSink,
         )?;
 
         Ok(Self {
@@ -127,6 +151,11 @@ impl PluginApi {
                 .map(available_plugin)
                 .collect(),
         })
+    }
+
+    /// Exposes the lifecycle to the gateway that serves desktop surfaces.
+    pub(crate) fn lifecycle(&self) -> &BackendPluginLifecycle {
+        &self.lifecycle
     }
 
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
