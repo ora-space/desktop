@@ -11,6 +11,17 @@ export type ActivatePluginRequest = { pluginId: string };
 export type ActivatePluginResponse = { plugin: InstalledPlugin };
 
 /**
+ * Describes one marketplace plugin listed by the cached registry index.
+ */
+export type AvailablePlugin = {
+  id: string;
+  name: string;
+  namespace: string;
+  version: string;
+  description: string;
+};
+
+/**
  * Requests persistent ineligibility for one installed plugin.
  */
 export type DisablePluginRequest = { pluginId: string };
@@ -29,6 +40,16 @@ export type EnablePluginRequest = { pluginId: string };
  * Returns the enabled plugin snapshot observed after persistence succeeds.
  */
 export type EnablePluginResponse = { plugin: InstalledPlugin };
+
+/**
+ * Requests installation of one marketplace plugin by its registry identifier.
+ */
+export type InstallPluginRequest = { pluginId: string };
+
+/**
+ * Confirms the identifier installed after download, verification, and extraction complete.
+ */
+export type InstallPluginResponse = { pluginId: string };
 
 /**
  * Describes one installed plugin discovered from its package manifest.
@@ -56,6 +77,19 @@ export type InstalledPlugin =
 export type InstalledPluginAgent = {
   displayName: string;
   contractVersion: number;
+};
+
+/**
+ * Requests the cached marketplace registry index used to populate the plugin catalog.
+ */
+export type ListAvailablePluginsRequest = Record<symbol, never>;
+
+/**
+ * Returns the marketplace plugins cached in the registry index.
+ */
+export type ListAvailablePluginsResponse = {
+  updatedAt: bigint;
+  plugins: Array<AvailablePlugin>;
 };
 
 /**
@@ -96,6 +130,19 @@ export type StopPluginRequest = { pluginId: string };
  * Returns the stopped plugin snapshot after process exit is confirmed.
  */
 export type StopPluginResponse = { plugin: InstalledPlugin };
+
+/**
+ * Requests a marketplace source sync followed by an atomic registry-index rebuild.
+ */
+export type SyncAvailablePluginsRequest = Record<symbol, never>;
+
+/**
+ * Returns the registry index rebuilt immediately after a marketplace sync succeeds.
+ */
+export type SyncAvailablePluginsResponse = {
+  updatedAt: bigint;
+  plugins: Array<AvailablePlugin>;
+};
 
 /**
  * Requests complete removal of one plugin package and its durable lifecycle state.

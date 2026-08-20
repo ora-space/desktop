@@ -1,620 +1,199 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { InstalledPlugin } from "@ora/contracts";
+import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
+import { Button, Input, toast } from "@ora/ui";
 import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  Input,
-  Tabs,
-  TabsList,
-  TabsTrigger,
-} from "@ora/ui";
-import {
-  IconChevronDown,
-  IconChevronUp,
-  IconAlertTriangle,
-  IconDots,
-  IconFilter,
-  IconInfoCircle,
   IconLoader2,
   IconPlug,
+  IconRefresh,
   IconSearch,
-  IconSettings,
-  IconTrash,
-  IconX,
 } from "@tabler/icons-react";
-import type { AgentStatus } from "@ora/contracts";
-import { useAgentRuntimeStatus } from "../../state/hooks/use-agent-runtime-status";
-import { usePluginInstallStore } from "../../state/stores/plugin-install-store";
-import {
-  PLUGIN_CATALOG,
-  findPlugin,
-  type PluginCollection,
-  type PluginEntry,
-} from "./plugin-catalog";
-import { PluginDetail } from "./plugin-detail";
-import { PluginManager } from "./plugin-manager";
-import { PluginTile } from "./plugin-tile";
-import { SettingsHeading } from "./settings-heading";
+import { localizeContractError } from "../../i18n/contract-error";
+import { useAvailablePlugins } from "../../state/hooks/use-available-plugins";
+import { useInstallPlugin } from "../../state/hooks/use-install-plugin";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
-
-/** The number of leading names named in the collapsed "show more" row. */
-const NAMED_IN_SHOW_MORE = 2;
-
-/**
- * Beyond this many installed plugins the strip truncates and offers the manager instead.
- * Seven tiles plus the overflow tile is what fits on one line inside the settings pane's
- * ~704px content column (76px per tile, 8px gaps).
- */
-const MAX_INSTALLED_TILES = 7;
-type InstalledEntry =
-  | { source: "catalog"; plugin: PluginEntry }
-  | { source: "discovered"; plugin: InstalledPlugin };
+import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
+import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-sync";
+import { PluginManager } from "./plugin-manager";
 
 /**
- * The plugin marketplace pane: an installed strip, a public/personal browse grid and a
- * per-plugin detail page. The catalog is hard-coded and most plugins' install state lives
- * in component state, so installs reset when settings close. The three CLI plugins
- * (OpenCode, NGA, CodeAgentCLI) are the exception: their install state is read live from
- * the backend's ACP handshake status and is always read-only in this pane.
+ * The plugin marketplace pane backed by the registry contract: the browse grid reads the
+ * cached registry index, installs and lifecycle changes go through the backend commands,
+ * and the installed-plugin manager drives the durable lifecycle surface.
  */
 export function PluginsSettings() {
   const { t } = useTranslation();
-  const installedIds = usePluginInstallStore((state) => state.installedIds);
-  const toggleInstalledId = usePluginInstallStore(
-    (state) => state.toggleInstalled,
-  );
-  const disabledIds = usePluginInstallStore((state) => state.disabledIds);
-  const toggleEnabledId = usePluginInstallStore((state) => state.toggleEnabled);
-  const pendingInstallIds = usePluginInstallStore(
-    (state) => state.pendingInstallIds,
-  );
-  const pendingEnableIds = usePluginInstallStore(
-    (state) => state.pendingEnableIds,
-  );
-  const discoveredPlugins = useInstalledPlugins().data ?? [];
   const [query, setQuery] = useState("");
-  const [collection, setCollection] = useState<PluginCollection>("public");
-  const [expanded, setExpanded] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
   const [managing, setManaging] = useState(false);
-  const { data: agentRuntimeStatuses } = useAgentRuntimeStatus();
 
-  // The three CLI plugins never read from `installedIds`: their card is installed exactly
-  // when the backend's live ACP handshake for that CLI is ready. Every other plugin keeps
-  // the manual, non-persisted install toggle.
-  const detectionStatusByPluginId = useMemo(() => {
-    const statuses = new Map<string, AgentStatus>();
-    for (const plugin of PLUGIN_CATALOG) {
-      if (!plugin.detectionAgentCli) continue;
-      const match = agentRuntimeStatuses?.find(
-        (status) => status.agentRef === plugin.detectionAgentCli,
-      );
-      statuses.set(plugin.id, match?.status ?? "starting");
-    }
-    return statuses;
-  }, [agentRuntimeStatuses]);
+  const available = useAvailablePlugins();
+  const installed = useInstalledPlugins();
+  const sync = usePluginRegistrySync();
 
-  const isInstalled = useCallback(
-    (plugin: PluginEntry) =>
-      plugin.detectionAgentCli
-        ? detectionStatusByPluginId.get(plugin.id) === "ready"
-        : installedIds.includes(plugin.id),
-    [detectionStatusByPluginId, installedIds],
-  );
+  const installedById = useMemo(() => {
+    const byId = new Map<string, InstalledPlugin>();
+    for (const plugin of installed.data ?? []) byId.set(plugin.id, plugin);
+    return byId;
+  }, [installed.data]);
 
-  // Both mutations resolve behind a simulated delay owned by the store; nothing here
-  // awaits them because every control re-renders off the store's pending id lists.
-  const toggleInstall = (id: string) => {
-    if (findPlugin(id)?.detectionAgentCli) return;
-    void toggleInstalledId(id);
-  };
-  const toggleEnabled = (id: string) => void toggleEnabledId(id);
-
-  const installed = useMemo(
-    () => PLUGIN_CATALOG.filter(isInstalled),
-    [isInstalled],
-  );
-
-  const installedEntries: InstalledEntry[] = [
-    ...installed.map((plugin) => ({ source: "catalog" as const, plugin })),
-    ...discoveredPlugins.map((plugin) => ({
-      source: "discovered" as const,
-      plugin,
-    })),
-  ];
   const needle = query.trim().toLowerCase();
-  const visible = useMemo(
+  const visiblePlugins = useMemo(
     () =>
-      PLUGIN_CATALOG.filter(
+      (available.data?.plugins ?? []).filter(
         (plugin) =>
-          plugin.collection === collection &&
-          (!needle ||
-            plugin.name.toLowerCase().includes(needle) ||
-            plugin.publisher.toLowerCase().includes(needle) ||
-            t(plugin.summaryKey).toLowerCase().includes(needle)),
+          !needle ||
+          [plugin.name, plugin.namespace, plugin.description, plugin.id].some(
+            (value) => value.toLowerCase().includes(needle),
+          ),
       ),
-    [collection, needle, t],
+    [available.data, needle],
   );
 
-  const openPlugin = openId === null ? undefined : findPlugin(openId);
-  if (openPlugin) {
-    return (
-      <PluginDetail
-        plugin={openPlugin}
-        installed={isInstalled(openPlugin)}
-        enabled={!disabledIds.includes(openPlugin.id)}
-        installPending={pendingInstallIds.includes(openPlugin.id)}
-        enablePending={pendingEnableIds.includes(openPlugin.id)}
-        onBack={() => setOpenId(null)}
-        onToggleEnabled={() => toggleEnabled(openPlugin.id)}
-        onToggleInstall={() => toggleInstall(openPlugin.id)}
-      />
-    );
-  }
+  const updatedAt = available.data?.updatedAt;
+  const lastSynced =
+    updatedAt === undefined || updatedAt === 0n
+      ? t("settings.plugins.neverSynced")
+      : t("settings.plugins.lastSynced", {
+          time: new Date(Number(updatedAt) * 1000).toLocaleString(),
+        });
 
   if (managing) {
     return (
       <PluginManager
-        plugins={installed}
-        disabledIds={disabledIds}
-        pendingInstallIds={pendingInstallIds}
-        pendingEnableIds={pendingEnableIds}
+        plugins={installed.data ?? []}
         onBack={() => setManaging(false)}
-        discoveredPlugins={discoveredPlugins}
-        onOpen={setOpenId}
-        onToggleEnabled={toggleEnabled}
-        onUninstall={toggleInstall}
       />
     );
   }
 
-  // A search collapses the featured/rest split into one flat result list.
-  const searching = needle.length > 0;
-  const featured = visible.filter((plugin) => plugin.featured);
-  const rest = visible.filter((plugin) => !plugin.featured);
-  const collapsible = rest.length > NAMED_IN_SHOW_MORE;
-  const grid = {
-    installedIds,
-    pendingInstallIds,
-    detectionStatusByPluginId,
-    onOpen: setOpenId,
-    onToggleInstall: toggleInstall,
-  };
-
   return (
-    <div className="space-y-6">
-      <SettingsHeading
-        title={t("settings.plugins.title")}
-        description={t("settings.plugins.description")}
-      />
+    <div className="space-y-5">
+      <header>
+        <h2 className="text-lg font-semibold">{t("settings.plugins.title")}</h2>
+        <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+          {t("settings.plugins.description")}
+        </p>
+      </header>
 
-      <div className="relative">
-        <IconSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("settings.plugins.search")}
-          aria-label={t("settings.plugins.search")}
-          className="h-10 pl-9 pr-10"
-        />
-        {needle.length > 0 && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("settings.plugins.clearSearch")}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-            onClick={() => setQuery("")}
-          >
-            <IconX />
-          </Button>
-        )}
-      </div>
-
-      {needle.length === 0 && (
-        <section>
-          <div className="flex h-8 items-center justify-between border-b border-border">
-            <h3 className="text-sm font-medium">
-              {t("settings.plugins.installed")}
-            </h3>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("settings.plugins.manageInstalled")}
-              className="text-muted-foreground"
-              onClick={() => setManaging(true)}
-            >
-              <IconSettings />
-            </Button>
-          </div>
-          {/* Never wraps: the overflow tile is the row's last cell, not a second line. */}
-          <div className="flex flex-nowrap items-start gap-x-2 overflow-hidden pt-2">
-            {installedEntries.length === 0 && (
-              <p className="py-4 text-sm text-muted-foreground">
-                {t("settings.plugins.noneInstalled")}
-              </p>
-            )}
-            {installedEntries
-              .slice(0, MAX_INSTALLED_TILES)
-              .map((entry) =>
-                entry.source === "catalog" ? (
-                  <InstalledTile
-                    key={`catalog:${entry.plugin.id}`}
-                    plugin={entry.plugin}
-                    onOpen={() => setOpenId(entry.plugin.id)}
-                  />
-                ) : (
-                  <DiscoveredInstalledTile
-                    key={`discovered:${entry.plugin.id}`}
-                    plugin={entry.plugin}
-                  />
-                ),
-              )}
-            {installedEntries.length > MAX_INSTALLED_TILES && (
-              <InstalledOverflowTile
-                hidden={installedEntries.length - MAX_INSTALLED_TILES}
-                total={installedEntries.length}
-                onOpen={() => setManaging(true)}
-              />
-            )}
-          </div>
-        </section>
-      )}
-
-      <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-        <Tabs
-          value={collection}
-          onValueChange={(value) => {
-            setCollection(value as PluginCollection);
-            setExpanded(false);
-          }}
-        >
-          <TabsList>
-            <TabsTrigger value="public">
-              {t("settings.plugins.public")}
-            </TabsTrigger>
-            <TabsTrigger value="personal">
-              {t("settings.plugins.personal")}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {/* Placeholder: the filter affordance is drawn but carries no behaviour yet. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={t("settings.plugins.filter")}
-          className="shrink-0 text-muted-foreground"
+          variant="outline"
+          size="sm"
+          disabled={sync.isPending}
+          onClick={() => sync.mutate()}
+          aria-label={t("settings.plugins.syncMarketplace")}
         >
-          <IconFilter />
+          {sync.isPending ? (
+            <IconLoader2 className="animate-spin" />
+          ) : (
+            <IconRefresh />
+          )}
+          <span className="hidden sm:inline">
+            {t("settings.plugins.syncMarketplace")}
+          </span>
+        </Button>
+        <span className="text-xs text-muted-foreground">{lastSynced}</span>
+        <div className="relative min-w-0 flex-1 sm:ml-auto">
+          <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("settings.plugins.search")}
+            aria-label={t("settings.plugins.search")}
+            className="pl-8"
+          />
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setManaging(true)}>
+          {t("settings.plugins.manageInstalled")}
         </Button>
       </div>
 
-      {visible.length === 0 && (
+      {visiblePlugins.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
           {t("settings.plugins.empty")}
         </p>
-      )}
-
-      {visible.length > 0 && searching && (
-        <section className="space-y-2">
-          <h3 className="flex items-baseline gap-2 text-sm font-medium">
-            {t(
-              collection === "public"
-                ? "settings.plugins.public"
-                : "settings.plugins.personal",
-            )}
-            <span className="font-normal text-muted-foreground">
-              {visible.length}
-            </span>
-          </h3>
-          <PluginGrid items={visible} {...grid} />
-        </section>
-      )}
-
-      {visible.length > 0 && !searching && (
-        <>
-          {featured.length > 0 && (
-            <section className="space-y-2">
-              <h3 className="text-sm font-medium">
-                {t("settings.plugins.featured")}
-              </h3>
-              <PluginGrid items={featured} {...grid} />
-            </section>
-          )}
-          {rest.length > 0 && (!collapsible || expanded) && (
-            <section className="space-y-2">
-              <h3 className="text-sm font-medium">
-                {t("settings.plugins.more")}
-              </h3>
-              <PluginGrid items={rest} {...grid} />
-              {collapsible && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => setExpanded(false)}
-                >
-                  {t("settings.plugins.showLess")}
-                  <IconChevronUp />
-                </Button>
-              )}
-            </section>
-          )}
-          {collapsible && !expanded && (
-            <ShowMoreRow plugins={rest} onExpand={() => setExpanded(true)} />
-          )}
-        </>
+      ) : (
+        <div className="divide-y divide-border border-y border-border">
+          {visiblePlugins.map((plugin) => (
+            <AvailablePluginRow
+              key={plugin.id}
+              plugin={plugin}
+              installed={installedById.get(plugin.id)}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-/** An installed plugin in the icon strip. The name stays visible; hovering lifts the tile. */
-function InstalledTile({
-  plugin,
-  onOpen,
-}: {
-  plugin: PluginEntry;
-  onOpen: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title={plugin.name}
-      className="group flex w-[76px] shrink-0 flex-col items-center gap-1.5 rounded-lg pt-1.5 outline-none"
-    >
-      <PluginTile
-        plugin={plugin}
-        size="lg"
-        className="transition-transform duration-200 group-hover:-translate-y-1 group-focus-visible:-translate-y-1 group-focus-visible:ring-2 group-focus-visible:ring-ring"
-      />
-      <span className="w-full truncate text-center text-[11px] leading-4 text-muted-foreground transition-colors group-hover:text-foreground">
-        {plugin.name}
-      </span>
-    </button>
-  );
-}
-
-/** A discovered package is visible but intentionally has no local mutation controls. */
-function DiscoveredInstalledTile({ plugin }: { plugin: InstalledPlugin }) {
-  return (
-    <div
-      title={`${plugin.displayName} · ${plugin.packageName} · ${plugin.version}`}
-      className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 rounded-lg pt-1.5"
-    >
-      <span className="flex size-11 shrink-0 items-center justify-center text-muted-foreground">
-        <IconPlug className="size-7" />
-      </span>
-      <span className="w-full truncate text-center text-[11px] leading-4 text-muted-foreground">
-        {plugin.displayName}
-      </span>
-    </div>
-  );
-}
-
-/**
- * Closes the installed strip once it overflows. It keeps an installed tile's exact
- * footprint — square mark, label underneath — so the row stays a single even grid
- * instead of wrapping onto a second line.
- */
-
-function InstalledOverflowTile({
-  hidden,
-  total,
-  onOpen,
-}: {
-  hidden: number;
-  total: number;
-  onOpen: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title={t("settings.plugins.viewAllInstalled", { count: total })}
-      className="group flex w-[76px] shrink-0 flex-col items-center gap-1.5 rounded-lg pt-1.5 outline-none"
-    >
-      <span className="flex size-11 shrink-0 items-center justify-center text-base font-medium text-muted-foreground transition-all duration-200 group-hover:-translate-y-1 group-hover:text-foreground group-focus-visible:-translate-y-1">
-        +{hidden}
-      </span>
-      <span className="w-full truncate text-center text-[11px] leading-4 text-muted-foreground transition-colors group-hover:text-foreground">
-        {t("settings.plugins.viewAll")}
-      </span>
-    </button>
-  );
-}
-
-/** Two-column browse grid shared by the featured, expanded and search result sections. */
-function PluginGrid({
-  items,
-  installedIds,
-  pendingInstallIds,
-  detectionStatusByPluginId,
-  onOpen,
-  onToggleInstall,
-}: {
-  items: PluginEntry[];
-  installedIds: string[];
-  pendingInstallIds: string[];
-  detectionStatusByPluginId: Map<string, AgentStatus>;
-  onOpen: (id: string) => void;
-  onToggleInstall: (id: string) => void;
-}) {
-  return (
-    <div className="grid gap-x-6 sm:grid-cols-2">
-      {items.map((plugin) => {
-        const detectionStatus = detectionStatusByPluginId.get(plugin.id);
-        return (
-          <PluginCard
-            key={plugin.id}
-            plugin={plugin}
-            installed={
-              detectionStatus
-                ? detectionStatus === "ready"
-                : installedIds.includes(plugin.id)
-            }
-            pending={pendingInstallIds.includes(plugin.id)}
-            runtimeStatus={detectionStatus}
-            onOpen={() => onOpen(plugin.id)}
-            onToggleInstall={() => onToggleInstall(plugin.id)}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-/** One catalog row: the mark and copy open the detail page, the trailing control installs it. */
-function PluginCard({
+/** One registry entry with backend-driven install and uninstall actions. */
+function AvailablePluginRow({
   plugin,
   installed,
-  pending,
-  runtimeStatus,
-  onOpen,
-  onToggleInstall,
 }: {
-  plugin: PluginEntry;
-  installed: boolean;
-  pending: boolean;
-  runtimeStatus: AgentStatus | undefined;
-  onOpen: () => void;
-  onToggleInstall: () => void;
+  plugin: AvailablePlugin;
+  installed: InstalledPlugin | undefined;
 }) {
   const { t } = useTranslation();
+  const install = useInstallPlugin(plugin.id);
+  const mutations = usePluginMutations(plugin.id);
+  const busy = install.isPending || mutations.uninstall.isPending;
+
+  const failInstall = (cause: unknown) => {
+    toast.error(t("settings.plugins.installFailed"), {
+      description: localizeContractError(cause, t),
+    });
+  };
+
   return (
-    <div className="flex items-center gap-3 rounded-lg p-2 transition-colors hover:bg-muted/50">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <PluginTile plugin={plugin} />
-        <span className="min-w-0">
-          <span className="block truncate text-sm font-medium">
-            {plugin.name}
-          </span>
-          <span className="block truncate text-xs text-muted-foreground">
-            {t(plugin.summaryKey)}
-          </span>
-          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
-            {plugin.publisher}
-          </span>
+    <div className="flex items-center gap-3 py-3">
+      <span className="flex size-10 shrink-0 items-center justify-center text-muted-foreground">
+        <IconPlug className="size-6" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">
+          {plugin.name}
         </span>
-      </button>
-      {/* In flight, the menu and the install button both give way to one inert progress
-          button, so the row cannot start a second mutation or be uninstalled mid-install. */}
-      {runtimeStatus === "failing" ? (
-        <Button variant="outline" size="sm" disabled className="shrink-0">
-          <IconAlertTriangle />
-          {t("settings.plugins.runtimeFailing")}
-        </Button>
-      ) : pending ? (
+        <span className="block truncate text-xs text-muted-foreground">
+          {plugin.namespace} · {plugin.version}
+        </span>
+        {plugin.description !== "" && (
+          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
+            {plugin.description}
+          </span>
+        )}
+      </span>
+      {busy ? (
         <Button variant="outline" size="sm" disabled className="shrink-0">
           <IconLoader2 className="animate-spin" />
           {t(
-            installed
-              ? "settings.plugins.uninstalling"
-              : "settings.plugins.installing",
+            installed === undefined
+              ? "settings.plugins.installing"
+              : "settings.plugins.uninstalling",
           )}
         </Button>
-      ) : installed ? (
-        <PluginActionsMenu
-          plugin={plugin}
-          onOpen={onOpen}
-          onUninstall={onToggleInstall}
-        />
+      ) : installed === undefined ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          onClick={() => install.mutate({}, { onError: failInstall })}
+        >
+          {t("settings.plugins.install")}
+        </Button>
       ) : (
         <Button
           variant="outline"
           size="sm"
           className="shrink-0"
-          onClick={onToggleInstall}
+          onClick={() =>
+            mutations.uninstall.mutate(undefined, { onError: failInstall })
+          }
         >
-          {t("settings.plugins.install")}
+          {t("settings.plugins.uninstall")}
         </Button>
       )}
     </div>
-  );
-}
-
-/** The overflow menu shown in place of the install button once a plugin is installed. */
-function PluginActionsMenu({
-  plugin,
-  onOpen,
-  onUninstall,
-}: {
-  plugin: PluginEntry;
-  onOpen: () => void;
-  onUninstall: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("settings.plugins.openMenu", { name: plugin.name })}
-            className="shrink-0 text-muted-foreground"
-          />
-        }
-      >
-        <IconDots />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuItem onClick={onOpen}>
-          <IconInfoCircle />
-          {t("settings.plugins.viewDetails")}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onClick={onUninstall}>
-          <IconTrash />
-          {t("settings.plugins.uninstall")}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-/** Collapsed tail of the catalog, previewing the remaining plugins as stacked marks. */
-function ShowMoreRow({
-  plugins,
-  onExpand,
-}: {
-  plugins: PluginEntry[];
-  onExpand: () => void;
-}) {
-  const { t } = useTranslation();
-  const names = plugins
-    .slice(0, NAMED_IN_SHOW_MORE)
-    .map((plugin) => plugin.name)
-    .join(", ");
-  return (
-    <button
-      type="button"
-      onClick={onExpand}
-      className="flex w-full items-center gap-3 rounded-lg p-2 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {/* Bare marks cannot overlap legibly, so the preview sits in a row rather than a stack. */}
-      <span className="flex shrink-0 gap-1">
-        {plugins.slice(0, 3).map((plugin) => (
-          <PluginTile key={plugin.id} plugin={plugin} size="sm" />
-        ))}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-        {t("settings.plugins.showMore", {
-          names,
-          count: plugins.length - NAMED_IN_SHOW_MORE,
-        })}
-      </span>
-      <IconChevronDown className="size-4 shrink-0 text-muted-foreground" />
-    </button>
   );
 }

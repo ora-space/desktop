@@ -1,6 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
   Agent,
+  AvailablePlugin,
   ContractsClient,
   InstalledPlugin,
   Project,
@@ -62,6 +63,8 @@ export interface MockClientState {
   agents: Agent[];
   skills: Skill[];
   installedPlugins: InstalledPlugin[];
+  availablePlugins: AvailablePlugin[];
+  availablePluginsUpdatedAt: bigint;
   developerMode: { enabled: boolean };
   runtimeLogLevel: RuntimeLogLevelStateResponse;
   workflows: MockWorkflowRecord[];
@@ -87,6 +90,8 @@ export function createMockClientState(): MockClientState {
     agents: [],
     skills: [],
     installedPlugins: [],
+    availablePlugins: [],
+    availablePluginsUpdatedAt: 0n,
     developerMode: { enabled: false },
     runtimeLogLevel: {
       configuredLevel: "info",
@@ -344,6 +349,79 @@ export function createMockClient(state: MockClientState): ContractsClient {
     },
     plugin: {
       listInstalled: async () => ({ plugins: [...state.installedPlugins] }),
+      listAvailable: async () => ({
+        updatedAt: state.availablePluginsUpdatedAt,
+        plugins: [...state.availablePlugins],
+      }),
+      syncAvailable: async () => ({
+        updatedAt: state.availablePluginsUpdatedAt,
+        plugins: [...state.availablePlugins],
+      }),
+      scan: async () => ({ plugins: [...state.installedPlugins] }),
+      enable: async (req) => {
+        const plugin = state.installedPlugins.find(
+          (p) => p.id === req.pluginId,
+        );
+        if (!plugin)
+          throw new Error(`installed plugin ${req.pluginId} not found`);
+        plugin.enabled = true;
+        return { plugin };
+      },
+      disable: async (req) => {
+        const plugin = state.installedPlugins.find(
+          (p) => p.id === req.pluginId,
+        );
+        if (!plugin)
+          throw new Error(`installed plugin ${req.pluginId} not found`);
+        plugin.enabled = false;
+        return { plugin };
+      },
+      activate: async (req) => {
+        const plugin = state.installedPlugins.find(
+          (p) => p.id === req.pluginId,
+        );
+        if (!plugin)
+          throw new Error(`installed plugin ${req.pluginId} not found`);
+        plugin.runtime = "running";
+        return { plugin };
+      },
+      stop: async (req) => {
+        const plugin = state.installedPlugins.find(
+          (p) => p.id === req.pluginId,
+        );
+        if (!plugin)
+          throw new Error(`installed plugin ${req.pluginId} not found`);
+        plugin.runtime = "stopped";
+        return { plugin };
+      },
+      uninstall: async (req) => {
+        const idx = state.installedPlugins.findIndex(
+          (p) => p.id === req.pluginId,
+        );
+        if (idx < 0)
+          throw new Error(`installed plugin ${req.pluginId} not found`);
+        state.installedPlugins.splice(idx, 1);
+        return { pluginId: req.pluginId };
+      },
+      install: async (req) => {
+        const available = state.availablePlugins.find(
+          (p) => p.id === req.pluginId,
+        );
+        if (!available)
+          throw new Error(`available plugin ${req.pluginId} not found`);
+        state.installedPlugins.push({
+          id: available.id,
+          packageName: available.id,
+          displayName: available.name,
+          version: available.version,
+          kind: "agent",
+          main: "main.js",
+          agent: { displayName: available.name, contractVersion: 1 },
+          enabled: true,
+          runtime: "stopped",
+        });
+        return { pluginId: req.pluginId };
+      },
     },
     agent: {
       list: async () => ({ agents: [...state.agents] }),
