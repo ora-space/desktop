@@ -97,6 +97,13 @@ tasks:
     cmds:
       - task: lint:frontend
       - task: lint:crates
+      - task: lint:acl
+
+  lint:acl:
+    desc: Verify the desktop ACL command list matches the registered Tauri commands
+    silent: true
+    cmds:
+      - cargo test -p ora-desktop --lib acl_
 
   lint:frontend:
     desc: Run linters on all frontend packages

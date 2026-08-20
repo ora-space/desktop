@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-workflow-runs-by-workflow"
+description = "Enables the list_workflow_runs_by_workflow command without any pre-configured scope."
+commands.allow = ["list_workflow_runs_by_workflow"]
+
+[[permission]]
+identifier = "deny-list-workflow-runs-by-workflow"
+description = "Denies the list_workflow_runs_by_workflow command without any pre-configured scope."
+commands.deny = ["list_workflow_runs_by_workflow"]

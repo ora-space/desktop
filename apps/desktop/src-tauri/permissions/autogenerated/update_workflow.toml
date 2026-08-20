@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-workflow"
+description = "Enables the update_workflow command without any pre-configured scope."
+commands.allow = ["update_workflow"]
+
+[[permission]]
+identifier = "deny-update-workflow"
+description = "Denies the update_workflow command without any pre-configured scope."
+commands.deny = ["update_workflow"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-dashboard-compare-url"
+description = "Enables the get_dashboard_compare_url command without any pre-configured scope."
+commands.allow = ["get_dashboard_compare_url"]
+
+[[permission]]
+identifier = "deny-get-dashboard-compare-url"
+description = "Denies the get_dashboard_compare_url command without any pre-configured scope."
+commands.deny = ["get_dashboard_compare_url"]

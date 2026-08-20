@@ -22,6 +22,10 @@ The Desktop App Shell waits for the `Ready` frame before mounting normal queries
 
 Beyond the shared contract surface, Desktop registers four platform-only commands: `get_desktop_config`, `set_worktree_root`, `resolve_task_cwd`, and `open_location`. `open_location` with target `explorer` reveals a file in the system file manager (`explorer.exe /select,` on Windows, `open -R` on macOS) so the default file association — often Cursor — is not launched. Existing directories still open as folder windows.
 
+## Command access control
+
+Desktop declares its commands to Tauri's ACL through `apps/desktop/src-tauri/app_commands.rs`, shared by `build.rs` and `src/lib.rs`. The generated `allow-<command>` permissions are grouped into the `allow-app-commands` set (`permissions/app-commands.toml`) and granted by `capabilities/default.json` to the `main` webview only. Webviews outside that capability, such as `remote-surface:*` plugin surfaces, cannot invoke application, plugin, or core commands. `task lint:acl` fails when the command list and `generate_handler!` drift apart, and `tests/command_acl.rs` verifies the deny/allow behaviour against the shipped capabilities.
+
 ## Skill imports
 
 Desktop exposes the shared import session lifecycle through four unary Tauri commands:

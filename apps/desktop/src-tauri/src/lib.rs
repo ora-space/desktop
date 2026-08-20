@@ -26,6 +26,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
+// Shared with `build.rs`; see `app_commands.rs` for the ACL contract it encodes.
+include!("../app_commands.rs");
+
 const LOG_LEVEL_ENV_VAR: &str = "ORA_LOG_LEVEL";
 
 /// Starts the Tauri application with the persisted shared Backend and command adapters.
@@ -311,13 +314,14 @@ fn agent_plugin_packages(
     plugin_manager
         .installed_plugins()
         .iter()
-        .map(|plugin| {
-            let PluginContribution::Agent(_) = &plugin.contributes;
-            AgentPluginPackage {
+        .filter_map(|plugin| match &plugin.contributes {
+            PluginContribution::Agent(_) => Some(AgentPluginPackage {
                 id: plugin.id.clone(),
                 deno_path: deno_path.to_path_buf(),
                 entrypoint: plugin.package_root.join(plugin.main.as_str()),
-            }
+            }),
+            // UI plugins own no agent process; the surface host opens them on demand instead.
+            PluginContribution::Ui(_) => None,
         })
         .collect()
 }
@@ -506,6 +510,29 @@ mod tests {
         ResolvedDesktopTimezone, desktop_logging_config, load_desktop_log_level,
         read_desktop_log_level_override, resolve_desktop_log_level, resolve_system_timezone,
     };
+
+    /// Verifies the ACL command list shared with `build.rs` matches the commands
+    /// registered in `generate_handler!`, so every IPC command is covered by the app
+    /// ACL manifest and no stale permission lingers. Run by `task lint:acl`.
+    #[test]
+    fn acl_app_commands_match_generate_handler() {
+        let source = include_str!("lib.rs");
+        let start = source
+            .find("generate_handler![")
+            .expect("lib.rs registers commands with generate_handler!");
+        let block = &source[start..];
+        let end = block.find(']').expect("generate_handler! block is closed");
+        // Entries look like `module::command,` possibly surrounded by comment lines;
+        // keep only the command name so module moves do not affect the ACL list.
+        let registered: Vec<&str> = block[..end]
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.ends_with(',') && !line.starts_with("//"))
+            .map(|line| line.trim_end_matches(',').rsplit("::").next().unwrap())
+            .collect();
+
+        assert_eq!(registered, super::APP_COMMANDS.to_vec());
+    }
 
     /// Verifies Desktop accepts every supported environment-backed log level.
     #[test]

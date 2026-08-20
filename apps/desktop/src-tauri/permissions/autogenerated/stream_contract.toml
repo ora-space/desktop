@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stream-contract"
+description = "Enables the stream_contract command without any pre-configured scope."
+commands.allow = ["stream_contract"]
+
+[[permission]]
+identifier = "deny-stream-contract"
+description = "Denies the stream_contract command without any pre-configured scope."
+commands.deny = ["stream_contract"]

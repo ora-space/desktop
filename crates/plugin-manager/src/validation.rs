@@ -1,4 +1,6 @@
-use crate::manifest::{AgentManifest, PackageManifest};
+use crate::manifest::{ContributionManifest, PackageManifest};
+use crate::ui_validation::{InstalledPluginUi, validate_ui};
+use ora_utils::Slug;
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
 use std::path::{Path, PathBuf};
@@ -7,6 +9,10 @@ use thiserror::Error;
 const SUPPORTED_MANIFEST_VERSION: u32 = 1;
 const SUPPORTED_PLUGIN_API_VERSION: u32 = 1;
 const SUPPORTED_AGENT_CONTRACT_VERSION: u32 = 1;
+/// Plugin ids become webview labels and directory names, so they are bounded independently of
+/// the per-segment slug limit.
+const MAX_PLUGIN_ID_BYTES: usize = 64;
+const MAX_PLUGIN_ID_SEGMENTS: usize = 2;
 
 /// Identifies the supported JavaScript module format of an installed package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +28,7 @@ pub enum PluginPackageType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginContribution {
     Agent(InstalledPluginAgent),
+    Ui(InstalledPluginUi),
 }
 
 impl PluginContribution {
@@ -29,6 +36,7 @@ impl PluginContribution {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Agent(_) => "agent",
+            Self::Ui(_) => "ui",
         }
     }
 }
@@ -70,14 +78,14 @@ pub struct InstalledPlugin {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("{message}")]
 pub(crate) struct ManifestValidationError {
-    field_path: &'static str,
+    field_path: String,
     message: String,
 }
 
 impl ManifestValidationError {
     /// Returns the stable manifest field associated with the failed constraint.
-    pub(crate) fn field_path(&self) -> &'static str {
-        self.field_path
+    pub(crate) fn field_path(&self) -> &str {
+        &self.field_path
     }
 }
 
@@ -105,9 +113,9 @@ pub(crate) fn validate(
             ),
         ));
     }
-    require_non_empty("ora.id", &manifest.ora.id)?;
+    validate_plugin_id(&manifest.ora.id)?;
     require_non_empty("ora.displayName", &manifest.ora.display_name)?;
-    let contributes = validate_contribution(&manifest.ora.kind, manifest.ora.contributes.agent)?;
+    let contributes = validate_contribution(&manifest.ora.kind, manifest.ora.contributes)?;
     let main = validate_main_path(package_root, &manifest.ora.main)?;
     require_non_empty("ora.engines.ora", &manifest.ora.engines.ora)?;
     if manifest.ora.engines.plugin_api != SUPPORTED_PLUGIN_API_VERSION {
@@ -190,11 +198,17 @@ fn validate_main_path(
 /// Pairs the declared kind with the contribution that kind is required to carry.
 fn validate_contribution(
     kind: &str,
-    agent: Option<AgentManifest>,
+    contributes: ContributionManifest,
 ) -> Result<PluginContribution, ManifestValidationError> {
     match kind {
         "agent" => {
-            let agent = agent.ok_or_else(|| {
+            if contributes.ui.is_some() {
+                return Err(invalid(
+                    "ora.contributes.ui",
+                    "agent plugins must not declare a ui contribution",
+                ));
+            }
+            let agent = contributes.agent.ok_or_else(|| {
                 invalid(
                     "ora.contributes.agent",
                     "an agent plugin must contribute one agent",
@@ -215,11 +229,56 @@ fn validate_contribution(
                 contract_version: agent.contract_version,
             }))
         }
+        "ui" => {
+            if contributes.agent.is_some() {
+                return Err(invalid(
+                    "ora.contributes.agent",
+                    "ui plugins must not declare an agent contribution",
+                ));
+            }
+            let ui = contributes.ui.ok_or_else(|| {
+                invalid(
+                    "ora.contributes.ui",
+                    "ui plugins must declare `contributes.ui`",
+                )
+            })?;
+            Ok(PluginContribution::Ui(validate_ui(ui)?))
+        }
         value => Err(invalid(
             "ora.kind",
-            format!("unsupported plugin kind `{value}`; expected `agent`"),
+            format!("unsupported plugin kind `{value}`; expected `agent` or `ui`"),
         )),
     }
+}
+
+/// Constrains `ora.id` to one or two dot-separated slug segments within the total length budget.
+fn validate_plugin_id(id: &str) -> Result<(), ManifestValidationError> {
+    require_non_empty("ora.id", id)?;
+    if id.len() > MAX_PLUGIN_ID_BYTES {
+        return Err(invalid(
+            "ora.id",
+            format!(
+                "plugin id exceeds {MAX_PLUGIN_ID_BYTES} bytes: {}",
+                id.len()
+            ),
+        ));
+    }
+    let segments: Vec<&str> = id.split('.').collect();
+    if segments.len() > MAX_PLUGIN_ID_SEGMENTS {
+        return Err(invalid(
+            "ora.id",
+            format!("plugin id must have at most {MAX_PLUGIN_ID_SEGMENTS} dot-separated segments"),
+        ));
+    }
+    for segment in segments {
+        Slug::parse(segment).map_err(|error| {
+            invalid(
+                "ora.id",
+                format!("plugin id segment `{segment}` is not a valid slug: {error}"),
+            )
+        })?;
+    }
+    Ok(())
 }
 
 /// Rejects required strings that contain only whitespace while preserving valid values verbatim.
@@ -232,9 +291,12 @@ fn require_non_empty(field_path: &'static str, value: &str) -> Result<(), Manife
 }
 
 /// Builds one semantic error with a stable field path.
-fn invalid(field_path: &'static str, message: impl Into<String>) -> ManifestValidationError {
+pub(crate) fn invalid(
+    field_path: impl Into<String>,
+    message: impl Into<String>,
+) -> ManifestValidationError {
     ManifestValidationError {
-        field_path,
+        field_path: field_path.into(),
         message: message.into(),
     }
 }

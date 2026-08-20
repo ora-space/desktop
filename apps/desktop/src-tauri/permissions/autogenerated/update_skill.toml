@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-skill"
+description = "Enables the update_skill command without any pre-configured scope."
+commands.allow = ["update_skill"]
+
+[[permission]]
+identifier = "deny-update-skill"
+description = "Denies the update_skill command without any pre-configured scope."
+commands.deny = ["update_skill"]

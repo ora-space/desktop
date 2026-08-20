@@ -16,9 +16,10 @@ describe("useInstalledPlugins", () => {
       packageName: "@ora-plugins/reviewer",
       displayName: "Reviewer",
       version: "0.1.0",
-      kind: "agent",
       main: "dist/index.js",
-      agent: { displayName: "Reviewer", contractVersion: 1 },
+      kind: "agent",
+      agentDisplayName: "Reviewer",
+      contractVersion: 1,
       enabled: false,
       runtime: "stopped",
     });

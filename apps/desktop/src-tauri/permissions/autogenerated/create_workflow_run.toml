@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-workflow-run"
+description = "Enables the create_workflow_run command without any pre-configured scope."
+commands.allow = ["create_workflow_run"]
+
+[[permission]]
+identifier = "deny-create-workflow-run"
+description = "Denies the create_workflow_run command without any pre-configured scope."
+commands.deny = ["create_workflow_run"]

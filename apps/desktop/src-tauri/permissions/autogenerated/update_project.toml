@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-project"
+description = "Enables the update_project command without any pre-configured scope."
+commands.allow = ["update_project"]
+
+[[permission]]
+identifier = "deny-update-project"
+description = "Denies the update_project command without any pre-configured scope."
+commands.deny = ["update_project"]

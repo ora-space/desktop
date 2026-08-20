@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-dashboard-url"
+description = "Enables the get_dashboard_url command without any pre-configured scope."
+commands.allow = ["get_dashboard_url"]
+
+[[permission]]
+identifier = "deny-get-dashboard-url"
+description = "Denies the get_dashboard_url command without any pre-configured scope."
+commands.deny = ["get_dashboard_url"]

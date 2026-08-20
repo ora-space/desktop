@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-commit-agent-import"
+description = "Enables the commit_agent_import command without any pre-configured scope."
+commands.allow = ["commit_agent_import"]
+
+[[permission]]
+identifier = "deny-commit-agent-import"
+description = "Denies the commit_agent_import command without any pre-configured scope."
+commands.deny = ["commit_agent_import"]

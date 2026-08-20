@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-task-diff-comment-status"
+description = "Enables the set_task_diff_comment_status command without any pre-configured scope."
+commands.allow = ["set_task_diff_comment_status"]
+
+[[permission]]
+identifier = "deny-set-task-diff-comment-status"
+description = "Denies the set_task_diff_comment_status command without any pre-configured scope."
+commands.deny = ["set_task_diff_comment_status"]

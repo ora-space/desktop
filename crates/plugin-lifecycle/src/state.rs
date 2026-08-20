@@ -1,8 +1,12 @@
 use crate::PluginLifecycleError;
 use ora_application::PluginStateRepository;
-use ora_contracts::{InstalledPlugin, InstalledPluginAgent, PluginRuntimeStatus};
+use ora_contracts::{
+    InstalledPlugin, InstalledPluginContribution, InstalledPluginSurface,
+    InstalledPluginSurfaceSource, PluginRuntimeStatus,
+};
 use ora_domain::{PluginEnabledState, PluginId};
 use ora_plugin_manager::InstalledPlugin as DiscoveredPlugin;
+use ora_plugin_manager::{InstalledSurfaceSource, PluginContribution};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Holds the filesystem snapshot and process-scoped lifecycle state as one atomic view.
@@ -92,19 +96,40 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         ),
     };
 
-    let ora_plugin_manager::PluginContribution::Agent(agent) = &plugin.contributes;
+    // Project the validated contribution onto the wire enum; the lifecycle crate never needs the
+    // navigation policy, so only the entry URL of each surface crosses the boundary.
+    let contribution = match &plugin.contributes {
+        PluginContribution::Agent(agent) => InstalledPluginContribution::Agent {
+            agent_display_name: agent.display_name.clone(),
+            contract_version: agent.contract_version,
+        },
+        PluginContribution::Ui(ui) => InstalledPluginContribution::Ui {
+            contract_version: ui.contract_version,
+            surfaces: ui
+                .surfaces
+                .iter()
+                .map(|surface| InstalledPluginSurface {
+                    id: surface.id.to_string(),
+                    title: surface.title.clone(),
+                    source: match &surface.source {
+                        InstalledSurfaceSource::RemoteSite(site) => {
+                            InstalledPluginSurfaceSource::RemoteSite {
+                                entry_url: site.entry_url.to_string(),
+                            }
+                        }
+                    },
+                })
+                .collect(),
+        },
+    };
 
     InstalledPlugin {
         id: plugin.id.clone(),
         package_name: plugin.package_name.clone(),
         display_name: plugin.display_name.clone(),
         version: plugin.version.to_string(),
-        kind: plugin.contributes.kind().to_string(),
         main: plugin.main.as_str().to_string(),
-        agent: InstalledPluginAgent {
-            display_name: agent.display_name.clone(),
-            contract_version: agent.contract_version,
-        },
+        contribution,
         enabled,
         runtime,
     }

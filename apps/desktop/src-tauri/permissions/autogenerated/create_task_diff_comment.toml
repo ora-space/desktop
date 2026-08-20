@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-task-diff-comment"
+description = "Enables the create_task_diff_comment command without any pre-configured scope."
+commands.allow = ["create_task_diff_comment"]
+
+[[permission]]
+identifier = "deny-create-task-diff-comment"
+description = "Denies the create_task_diff_comment command without any pre-configured scope."
+commands.deny = ["create_task_diff_comment"]

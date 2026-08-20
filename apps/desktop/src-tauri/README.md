@@ -10,6 +10,10 @@ Desktop installs provisional logging from `ORA_LOG_LEVEL` or `info` before Backe
 
 The shared developer preferences are exposed through `get_developer_mode`, `set_developer_mode`, `get_runtime_log_level`, and `set_runtime_log_level`. These commands enter a request-correlated span before reading, persisting, reloading, or compensating; SQLite ownership remains in Backend rather than this crate. Desktop `config.json` does not store either preference.
 
+## Command access control
+
+Every application command is declared in `app_commands.rs`, which `build.rs` feeds to `tauri_build::AppManifest::commands` so Tauri autogenerates `allow-<command>`/`deny-<command>` permissions and enforces the ACL on each IPC call. `permissions/app-commands.toml` groups those permissions into the `allow-app-commands` set, and `capabilities/default.json` grants that set, the window controls, and the dialog permissions to the `main` **webview** only (capabilities are webview-scoped, not window-scoped). Any other webview, including `remote-surface:*` plugin surfaces, is not named by a capability and is therefore denied every app, plugin, and core command. `src/lib.rs` includes the same command list and its `acl_` test asserts it equals the `generate_handler!` registration; `task lint:acl` runs that check, and `tests/command_acl.rs` exercises the shipped ACL through `tauri::test` webviews.
+
 Native marketplace windows use isolated browser profiles and provider-specific navigation policies. Their download events are routed into Ora-owned application data before the frontend is notified.
 
 Ripgrep and Deno are bundled as Tauri sidecars under `binaries/rg` and

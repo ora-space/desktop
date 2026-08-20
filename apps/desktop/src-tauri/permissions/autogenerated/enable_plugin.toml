@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-enable-plugin"
+description = "Enables the enable_plugin command without any pre-configured scope."
+commands.allow = ["enable_plugin"]
+
+[[permission]]
+identifier = "deny-enable-plugin"
+description = "Denies the enable_plugin command without any pre-configured scope."
+commands.deny = ["enable_plugin"]

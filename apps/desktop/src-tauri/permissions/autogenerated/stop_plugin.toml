@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stop-plugin"
+description = "Enables the stop_plugin command without any pre-configured scope."
+commands.allow = ["stop_plugin"]
+
+[[permission]]
+identifier = "deny-stop-plugin"
+description = "Denies the stop_plugin command without any pre-configured scope."
+commands.deny = ["stop_plugin"]

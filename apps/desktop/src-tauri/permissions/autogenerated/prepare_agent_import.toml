@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prepare-agent-import"
+description = "Enables the prepare_agent_import command without any pre-configured scope."
+commands.allow = ["prepare_agent_import"]
+
+[[permission]]
+identifier = "deny-prepare-agent-import"
+description = "Denies the prepare_agent_import command without any pre-configured scope."
+commands.deny = ["prepare_agent_import"]

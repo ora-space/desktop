@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-agent-models"
+description = "Enables the list_agent_models command without any pre-configured scope."
+commands.allow = ["list_agent_models"]
+
+[[permission]]
+identifier = "deny-list-agent-models"
+description = "Denies the list_agent_models command without any pre-configured scope."
+commands.deny = ["list_agent_models"]

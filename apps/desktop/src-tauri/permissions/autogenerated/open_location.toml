@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-location"
+description = "Enables the open_location command without any pre-configured scope."
+commands.allow = ["open_location"]
+
+[[permission]]
+identifier = "deny-open-location"
+description = "Denies the open_location command without any pre-configured scope."
+commands.deny = ["open_location"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-workflow-versions"
+description = "Enables the list_workflow_versions command without any pre-configured scope."
+commands.allow = ["list_workflow_versions"]
+
+[[permission]]
+identifier = "deny-list-workflow-versions"
+description = "Denies the list_workflow_versions command without any pre-configured scope."
+commands.deny = ["list_workflow_versions"]

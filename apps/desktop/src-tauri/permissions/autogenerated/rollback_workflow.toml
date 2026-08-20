@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rollback-workflow"
+description = "Enables the rollback_workflow command without any pre-configured scope."
+commands.allow = ["rollback_workflow"]
+
+[[permission]]
+identifier = "deny-rollback-workflow"
+description = "Denies the rollback_workflow command without any pre-configured scope."
+commands.deny = ["rollback_workflow"]

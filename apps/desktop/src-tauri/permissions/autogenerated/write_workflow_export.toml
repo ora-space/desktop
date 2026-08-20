@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-write-workflow-export"
+description = "Enables the write_workflow_export command without any pre-configured scope."
+commands.allow = ["write_workflow_export"]
+
+[[permission]]
+identifier = "deny-write-workflow-export"
+description = "Denies the write_workflow_export command without any pre-configured scope."
+commands.deny = ["write_workflow_export"]

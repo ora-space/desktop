@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-spec"
+description = "Enables the read_spec command without any pre-configured scope."
+commands.allow = ["read_spec"]
+
+[[permission]]
+identifier = "deny-read-spec"
+description = "Denies the read_spec command without any pre-configured scope."
+commands.deny = ["read_spec"]

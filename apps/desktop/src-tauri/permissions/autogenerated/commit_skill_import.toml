@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-commit-skill-import"
+description = "Enables the commit_skill_import command without any pre-configured scope."
+commands.allow = ["commit_skill_import"]
+
+[[permission]]
+identifier = "deny-commit-skill-import"
+description = "Denies the commit_skill_import command without any pre-configured scope."
+commands.deny = ["commit_skill_import"]

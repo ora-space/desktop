@@ -40,6 +40,7 @@ pub(crate) struct EngineManifest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ContributionManifest {
     pub agent: Option<AgentManifest>,
+    pub ui: Option<UiManifest>,
 }
 
 /// Mirrors the single agent an agent-kind package contributes.
@@ -51,4 +52,66 @@ pub(crate) struct ContributionManifest {
 pub(crate) struct AgentManifest {
     pub display_name: String,
     pub contract_version: u32,
+}
+
+/// Mirrors the `contributes.ui` block of a ui-kind package.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UiManifest {
+    pub contract_version: u32,
+    pub surfaces: Vec<SurfaceManifest>,
+}
+
+/// Mirrors one declared surface before semantic validation.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SurfaceManifest {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub instance_policy: InstancePolicyManifest,
+    pub source: SurfaceSourceManifest,
+}
+
+/// Mirrors the `instancePolicy` spelling; `singleton` is the only value and the default.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum InstancePolicyManifest {
+    #[default]
+    Singleton,
+}
+
+/// Mirrors the tagged surface source union.
+///
+/// Unknown `kind` values fail structurally during deserialization, which surfaces as an invalid
+/// JSON issue with the `kind` field path rather than a semantic one.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum SurfaceSourceManifest {
+    #[serde(rename_all = "camelCase")]
+    RemoteSite {
+        entry_url: String,
+        navigation: NavigationManifest,
+        #[serde(default)]
+        web_data: WebDataPolicyManifest,
+    },
+}
+
+/// Mirrors the navigation allow lists; both lists are optional and combined by union.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NavigationManifest {
+    #[serde(default)]
+    pub allow_hosts: Vec<String>,
+    #[serde(default)]
+    pub allow_host_suffixes: Vec<String>,
+}
+
+/// Mirrors the `webData` spelling; a persistent profile is the default.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum WebDataPolicyManifest {
+    #[default]
+    PersistentProfile,
+    EphemeralIsolated,
 }

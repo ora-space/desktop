@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-task-cwd"
+description = "Enables the resolve_task_cwd command without any pre-configured scope."
+commands.allow = ["resolve_task_cwd"]
+
+[[permission]]
+identifier = "deny-resolve-task-cwd"
+description = "Denies the resolve_task_cwd command without any pre-configured scope."
+commands.deny = ["resolve_task_cwd"]

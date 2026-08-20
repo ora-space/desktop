@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-workflow"
+description = "Enables the delete_workflow command without any pre-configured scope."
+commands.allow = ["delete_workflow"]
+
+[[permission]]
+identifier = "deny-delete-workflow"
+description = "Denies the delete_workflow command without any pre-configured scope."
+commands.deny = ["delete_workflow"]

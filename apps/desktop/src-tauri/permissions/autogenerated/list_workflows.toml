@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-workflows"
+description = "Enables the list_workflows command without any pre-configured scope."
+commands.allow = ["list_workflows"]
+
+[[permission]]
+identifier = "deny-list-workflows"
+description = "Denies the list_workflows command without any pre-configured scope."
+commands.deny = ["list_workflows"]

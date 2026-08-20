@@ -12,7 +12,9 @@ export function filterDiscoveredPlugins(
       plugin.displayName,
       plugin.packageName,
       plugin.id,
-      plugin.agent.displayName,
+      ...(plugin.kind === "agent"
+        ? [plugin.agentDisplayName]
+        : plugin.surfaces.map((surface) => surface.title)),
     ].some((value) => value.toLowerCase().includes(needle)),
   );
 }
