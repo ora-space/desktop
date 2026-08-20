@@ -48,6 +48,7 @@ pub enum PluginNamespaceError {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PluginKind {
     Workbench,
+    Agent,
 }
 
 impl PluginKind {
@@ -55,6 +56,7 @@ impl PluginKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Workbench => "workbench",
+            Self::Agent => "agent",
         }
     }
 }
@@ -73,6 +75,7 @@ impl FromStr for PluginKind {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "workbench" => Ok(Self::Workbench),
+            "agent" => Ok(Self::Agent),
             found => Err(PluginKindError::Unsupported {
                 found: found.to_owned(),
             }),

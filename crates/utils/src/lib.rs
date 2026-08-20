@@ -13,6 +13,8 @@ mod git_branch;
 pub mod hash;
 #[cfg(feature = "validation")]
 pub mod html;
+#[cfg(feature = "http")]
+pub mod http;
 pub mod path;
 mod slug;
 #[cfg(feature = "validation")]

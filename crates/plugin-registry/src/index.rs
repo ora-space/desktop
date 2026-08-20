@@ -53,6 +53,31 @@ impl RegistryIndex {
         RegistryBuild { index, skipped }
     }
 
+    /// Resolves the full release manifest for a marketplace identifier by re-reading the source
+    /// `registry` directory, matching `namespace/name` against each parsed manifest.
+    ///
+    /// This is the install-time companion of [`Self::build`]: the cached index carries only the
+    /// lightweight display fields, so consumers re-read the source `orax.toml` to obtain the
+    /// release `url` and `sha256` needed to download and verify. Unparseable manifests are skipped
+    /// here exactly as they are during the index build, so one bad file never blocks a lookup.
+    pub fn resolve_manifest(
+        registry_dir: &Path,
+        id: &str,
+    ) -> Result<Option<PluginManifest>, RegistryError> {
+        for path in orax_manifest_paths(registry_dir) {
+            let manifest = match parse_manifest(&path) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    ora_warn!(path = %path.display(), %error, "skipping invalid registry plugin manifest while resolving");
+                    continue;
+                }
+            };
+            if RegistryEntry::from_manifest(&manifest).id() == id {
+                return Ok(Some(manifest));
+            }
+        }
+        Ok(None)
+    }
     /// Loads an index from a previously written JSON file so consumers can read it without rescanning.
     pub fn load(path: &Path) -> Result<Self, RegistryError> {
         let bytes = fs::read(path)?;
@@ -217,6 +242,27 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies install-time resolution re-reads a manifest from the source registry by its id.
+    #[test]
+    fn resolves_manifest_by_identifier() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+        write_manifest(
+            root.path(),
+            "weather",
+            &valid_manifest("weather", "Weather plugin"),
+        )?;
+
+        let registry_dir = root.path().join("registry");
+        let manifest = RegistryIndex::resolve_manifest(&registry_dir, "official/weather")?
+            .ok_or_else(|| std::io::Error::other("expected a resolved manifest"))?;
+
+        assert_eq!(manifest.name().as_str(), "weather");
+        assert_eq!(manifest.namespace().as_str(), "official");
+
+        let missing = RegistryIndex::resolve_manifest(&registry_dir, "official/absent")?;
+        assert!(missing.is_none());
+        Ok(())
+    }
     /// Verifies a missing or empty marketplace registry directory builds a valid empty index.
     #[test]
     fn builds_an_empty_index_for_a_missing_registry_directory()

@@ -1,22 +1,26 @@
 use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
+use crate::error::{BackendError, ErrorClassification};
 use gitlancer::{BranchName, CliGitRunner, Git};
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, DisablePluginRequest, DisablePluginResponse,
-    EnablePluginRequest, EnablePluginResponse, ListAvailablePluginsRequest,
-    ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
-    ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
-    SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
-    UninstallPluginResponse,
+    EmptyErrorParams, EnablePluginRequest, EnablePluginResponse, InstallPluginRequest,
+    InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
+    ListInstalledPluginsRequest, ListInstalledPluginsResponse, PublicError, ScanPluginsRequest,
+    ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
+    SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
 use ora_db::{RepositoryPool, SqlitePluginStateRepository};
+use ora_logging::{ora_info, ora_warn};
 use ora_plugin_lifecycle::{
     DenoPluginRuntimeLauncher, PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError,
     PluginRuntimeTimeouts,
 };
+use ora_plugin_manager::Installer;
 use ora_plugin_registry::{
     RegistryEntry, RegistryError, RegistryIndex, RegistrySource, RegistrySync,
 };
+use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
 use std::path::PathBuf;
 
 /// The marketplace repository mirrored into the local registry source checkout.
@@ -34,6 +38,8 @@ pub(crate) struct PluginApi {
     >,
     registry_source: RegistrySource,
     registry_index_path: PathBuf,
+    data_directory: PathBuf,
+    installer: Installer<ReqwestDownloader>,
 }
 
 impl PluginApi {
@@ -56,9 +62,10 @@ impl PluginApi {
                 .join("marketplace"),
         );
         let registry_index_path = plugins_directory.join("cache").join("registry_index.json");
+        let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
-                data_directory,
+                data_directory: data_directory.clone(),
                 deno_path,
             },
             SqlitePluginStateRepository::new(pool),
@@ -71,6 +78,8 @@ impl PluginApi {
             lifecycle,
             registry_source,
             registry_index_path,
+            data_directory,
+            installer,
         })
     }
 
@@ -174,6 +183,55 @@ impl PluginApi {
         request: UninstallPluginRequest,
     ) -> Result<UninstallPluginResponse, PluginLifecycleError> {
         self.lifecycle.uninstall_plugin(request).await
+    }
+    /// Installs a marketplace plugin by resolving its release manifest from the synced source and
+    /// downloading, verifying, and extracting its package through the network-backed installer.
+    ///
+    /// The source registry is read only for the release `url`/`sha256` (the cached index carries
+    /// display fields only), so this returns NotFound when the identifier is not in the checkout.
+    pub(crate) async fn install(
+        &self,
+        request: InstallPluginRequest,
+    ) -> Result<InstallPluginResponse, BackendError> {
+        let registry_directory = self.registry_source.checkout_dir().join("registry");
+        let manifest = RegistryIndex::resolve_manifest(&registry_directory, &request.plugin_id)
+            .map_err(|error| {
+                BackendError::internal("failed to resolve plugin release manifest", error)
+            })?
+            .ok_or_else(|| {
+                BackendError::new(
+                    ErrorClassification::NotFound,
+                    PublicError::PluginNotFound(EmptyErrorParams {}),
+                    "marketplace plugin was not found in the registry",
+                )
+            })?;
+        let release_url = manifest
+            .url()
+            .ok_or_else(|| {
+                BackendError::internal(
+                    "marketplace plugin manifest is missing its release url",
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "missing release url"),
+                )
+            })?
+            .as_url();
+        ora_info!(plugin_id = %request.plugin_id, url = %release_url, "installing marketplace plugin");
+        self.installer
+            .install(
+                &manifest,
+                DownloadSource::Url(release_url.clone()),
+                &self.data_directory,
+            )
+            .await
+            .map_err(|error| BackendError::internal("failed to install plugin", error))?;
+        // The installed snapshot is built once at startup, so a fresh install must re-scan for the
+        // new package to appear in the installed list without restarting the backend.
+        if let Err(error) = self.lifecycle.scan_plugins(ScanPluginsRequest {}).await {
+            ora_warn!(plugin_id = %request.plugin_id, %error, "installed the package but failed to refresh the installed-plugin snapshot");
+        }
+        ora_info!(plugin_id = %request.plugin_id, "installed marketplace plugin");
+        Ok(InstallPluginResponse {
+            plugin_id: request.plugin_id,
+        })
     }
 }
 

@@ -45,6 +45,48 @@ pub struct InstalledPlugin {
     pub runtime: PluginRuntimeStatus,
 }
 
+/// Describes one marketplace plugin listed by the cached registry index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct AvailablePlugin {
+    pub id: String,
+    pub name: String,
+    pub namespace: String,
+    pub version: String,
+    pub description: String,
+}
+
+/// Requests the cached marketplace registry index used to populate the plugin catalog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ListAvailablePluginsRequest {}
+
+/// Returns the marketplace plugins cached in the registry index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ListAvailablePluginsResponse {
+    pub updated_at: i64,
+    pub plugins: Vec<AvailablePlugin>,
+}
+
+/// Requests a marketplace source sync followed by an atomic registry-index rebuild.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct SyncAvailablePluginsRequest {}
+
+/// Returns the registry index rebuilt immediately after a marketplace sync succeeds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct SyncAvailablePluginsResponse {
+    pub updated_at: i64,
+    pub plugins: Vec<AvailablePlugin>,
+}
+
 /// Requests the immutable startup snapshot of installed plugin packages.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +195,21 @@ pub struct UninstallPluginResponse {
     pub plugin_id: String,
 }
 
+/// Requests installation of one marketplace plugin by its registry identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct InstallPluginRequest {
+    pub plugin_id: String,
+}
+
+/// Confirms the identifier installed after download, verification, and extraction complete.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct InstallPluginResponse {
+    pub plugin_id: String,
+}
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     InstalledPluginAgent::export(config)?;
@@ -172,14 +229,18 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     StopPluginResponse::export(config)?;
     UninstallPluginRequest::export(config)?;
     UninstallPluginResponse::export(config)?;
+    InstallPluginRequest::export(config)?;
+    InstallPluginResponse::export(config)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        InstalledPlugin, InstalledPluginAgent, ListInstalledPluginsRequest,
-        ListInstalledPluginsResponse, PluginRuntimeStatus,
+        AvailablePlugin, InstallPluginRequest, InstallPluginResponse, InstalledPlugin,
+        InstalledPluginAgent, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
+        ListInstalledPluginsRequest, ListInstalledPluginsResponse, PluginRuntimeStatus,
+        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -239,6 +300,77 @@ mod tests {
             })
             .unwrap(),
             json!({ "plugins": [] })
+        );
+    }
+
+    /// Verifies the marketplace registry response carries the lightweight index metadata.
+    #[test]
+    fn serializes_available_plugin_response() {
+        assert_eq!(
+            serde_json::to_value(ListAvailablePluginsRequest {}).unwrap(),
+            json!({})
+        );
+        assert_eq!(
+            serde_json::to_value(ListAvailablePluginsResponse {
+                updated_at: 1_776_244_428,
+                plugins: vec![AvailablePlugin {
+                    id: "official/weather".to_string(),
+                    name: "weather".to_string(),
+                    namespace: "official".to_string(),
+                    version: "1.2.0".to_string(),
+                    description: "Weather plugin".to_string(),
+                }],
+            })
+            .unwrap(),
+            json!({
+                "updatedAt": 1_776_244_428,
+                "plugins": [{
+                    "id": "official/weather",
+                    "name": "weather",
+                    "namespace": "official",
+                    "version": "1.2.0",
+                    "description": "Weather plugin"
+                }]
+            })
+        );
+    }
+
+    /// Verifies the marketplace sync response mirrors the rebuilt registry index wire shape.
+    #[test]
+    fn serializes_sync_available_plugin_response() {
+        assert_eq!(
+            serde_json::to_value(SyncAvailablePluginsRequest {}).unwrap(),
+            json!({})
+        );
+        assert_eq!(
+            serde_json::to_value(SyncAvailablePluginsResponse {
+                updated_at: 1_776_244_428,
+                plugins: Vec::new(),
+            })
+            .unwrap(),
+            json!({
+                "updatedAt": 1_776_244_428,
+                "plugins": []
+            })
+        );
+    }
+
+    /// Verifies the install request/response wire shape for a marketplace plugin.
+    #[test]
+    fn serializes_install_plugin_contract() {
+        assert_eq!(
+            serde_json::to_value(InstallPluginRequest {
+                plugin_id: "official/weather".to_string(),
+            })
+            .unwrap(),
+            json!({ "pluginId": "official/weather" })
+        );
+        assert_eq!(
+            serde_json::to_value(InstallPluginResponse {
+                plugin_id: "official/weather".to_string(),
+            })
+            .unwrap(),
+            json!({ "pluginId": "official/weather" })
         );
     }
 

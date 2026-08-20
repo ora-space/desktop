@@ -1,6 +1,7 @@
-//! Discovers installed Ora plugin packages without executing plugin code.
+//! Discovers installed Ora plugin packages and orchestrates new plugin installs.
 
 mod discovery;
+mod install;
 mod issue;
 mod manifest;
 mod validation;
@@ -8,6 +9,7 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+pub use install::{InstallError, Installer};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use validation::{
     InstalledPlugin, InstalledPluginAgent, PluginContribution, PluginEngines, PluginPackageType,

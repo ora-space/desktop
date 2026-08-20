@@ -198,6 +198,8 @@ export function createContractsClient(
         executeOperation("stopPlugin", request, transport, options),
       uninstall: (request, options) =>
         executeOperation("uninstallPlugin", request, transport, options),
+      install: (request, options) =>
+        executeOperation("installPlugin", request, transport, options),
     },
     fileSystem: {
       listWorkspaceDirectory: (request, options) =>

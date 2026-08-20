@@ -1027,6 +1027,13 @@ async_backend_command!(
     uninstall_plugin,
     "Stops and removes one installed plugin."
 );
+async_backend_command!(
+    install_plugin,
+    InstallPluginRequest,
+    InstallPluginResponse,
+    install_plugin,
+    "Installs one marketplace plugin by downloading, verifying, and extracting it."
+);
 
 // =============================================================================
 // gitIdentity

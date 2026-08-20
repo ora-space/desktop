@@ -147,7 +147,7 @@ fn read_and_validate_manifest(
             format!("orax.toml is not valid UTF-8: {error}"),
         )
     })?;
-    let manifest = PluginManifest::parse(source).map_err(|error| match error {
+    let manifest = PluginManifest::parse_installed(source).map_err(|error| match error {
         ManifestError::InvalidToml { source, .. } => PluginDiscoveryIssue::new(
             manifest_path.to_path_buf(),
             PluginDiscoveryIssueKind::InvalidToml,
