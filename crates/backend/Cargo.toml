@@ -22,17 +22,14 @@ ora-fs = { workspace = true }
 ora-history = { workspace = true }
 ora-logging = { workspace = true }
 ora-plugin-lifecycle = { workspace = true }
-<<<<<<< HEAD
 ora-plugin-manager = { workspace = true }
 ora-plugin-runtime = { workspace = true }
-=======
 ora-plugin-registry = { workspace = true }
->>>>>>> 0f602fd (feat(plugin): connect desktop plugin registry and lifecycle)
 ora-process = { workspace = true }
 ora-runtime-settings = { workspace = true }
 ora-scheduler = { workspace = true }
 ora-skill-package = { workspace = true }
-ora-utils = { workspace = true }
+ora-utils = { workspace = true, features = ["http-reqwest"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 similar = { workspace = true }

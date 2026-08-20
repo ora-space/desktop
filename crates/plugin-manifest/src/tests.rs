@@ -62,13 +62,13 @@ fn parses_complete_manifest_into_full_domain_object() {
             "homepage",
         )),
         license: Some("MIT".to_owned()),
-        url: success(
+        url: Some(success(
             ReleaseUrl::parse(
                 "https://github.com/user/ora-weather/releases/download/v1.2.0/ora-weather.orax?signature=abc",
             ),
             "release URL",
-        ),
-        sha256: success(Sha256Digest::parse(DIGEST), "digest"),
+        )),
+        sha256: Some(success(Sha256Digest::parse(DIGEST), "digest")),
         head: Some(PluginHead {
             repository: success(
                 RepositoryUrl::parse("https://github.com/user/ora-weather.git"),
@@ -111,6 +111,34 @@ fn normalizes_empty_dependencies_table() {
     let manifest = success(PluginManifest::parse(&source), "empty dependencies");
 
     assert_eq!(manifest.dependencies(), None);
+}
+
+/// Verifies the agent kind is accepted and round-trips to its manifest spelling.
+#[test]
+fn parses_agent_kind_manifest() {
+    let manifest = success(
+        PluginManifest::parse(&MINIMAL_MANIFEST.replacen("workbench", "agent", 1)),
+        "agent-kind manifest",
+    );
+    assert_eq!(manifest.kind(), PluginKind::Agent);
+    assert_eq!(manifest.kind().as_str(), "agent");
+}
+
+/// Verifies an installed package manifest omits download-only fields and still parses.
+#[test]
+fn parses_installed_manifest_without_download_fields() {
+    let installed = "name = \"user.ora-weather\"\nnamespace = \"official\"\nkind = \"workbench\"\nversion = \"1.2.0\"\ndescription = \"A test plugin\"\n";
+    let manifest = success(
+        PluginManifest::parse_installed(installed),
+        "installed manifest",
+    );
+
+    assert_eq!(manifest.resolver(), 1);
+    assert_eq!(manifest.name().as_str(), "user.ora-weather");
+    assert_eq!(manifest.kind(), PluginKind::Workbench);
+    assert_eq!(manifest.url(), None);
+    assert_eq!(manifest.sha256(), None);
+    assert_eq!(manifest.release(), None);
 }
 
 /// Verifies unsupported resolver versions take priority over semantic field validation.

@@ -320,6 +320,15 @@ impl Backend {
             .map_err(BackendError::from)
     }
 
+    /// Installs a marketplace plugin by resolving its release manifest from the synced source and
+    /// downloading, verifying, and extracting its package through the network-backed installer.
+    pub async fn install_plugin(
+        &self,
+        request: InstallPluginRequest,
+    ) -> Result<InstallPluginResponse, BackendError> {
+        self.plugin.install(request).await
+    }
+
     /// Starts a workflow run against its frozen snapshot graph.
     pub fn start_workflow_run(
         &self,

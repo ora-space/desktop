@@ -68,4 +68,11 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "UninstallPluginRequest",
         response_type: "UninstallPluginResponse",
     },
+    FrontendEndpoint {
+        operation_name: "installPlugin",
+        namespace: NAMESPACE,
+        member_name: "install",
+        request_type: "InstallPluginRequest",
+        response_type: "InstallPluginResponse",
+    },
 ];

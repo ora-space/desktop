@@ -28,6 +28,9 @@ use tauri::Manager;
 
 const LOG_LEVEL_ENV_VAR: &str = "ORA_LOG_LEVEL";
 
+/// The directory name under the user home where plugin and registry data lives.
+const PLUGIN_HOME_DIRECTORY_NAME: &str = ".ora";
+
 /// Starts the Tauri application with the persisted shared Backend and command adapters.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -253,7 +256,7 @@ fn bootstrap_desktop(
     let backend = Backend::open(
         BackendPaths {
             database_path: app_data_directory.join("ora.sqlite3"),
-            data_directory: app_data_directory.clone(),
+            data_directory: home_directory.join(PLUGIN_HOME_DIRECTORY_NAME),
             deno_path: binary_paths.deno_path().to_path_buf(),
             worktree_root: config_snapshot.worktree_root().to_path_buf(),
             home_directory,

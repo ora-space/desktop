@@ -12,10 +12,13 @@ workspace = true
 
 [dependencies]
 ora-plugin-manifest = { workspace = true }
-ora-utils = { workspace = true }
+ora-utils = { workspace = true, features = ["archive", "http"] }
 semver = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+futures = { workspace = true }
 pretty_assertions = { workspace = true }
+sha2 = { workspace = true }
 tempfile = { workspace = true }
+zip = { workspace = true }
