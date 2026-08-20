@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PlatformProvider } from "../../../platform";
 import type { ChatToolCall, ChatTurn } from "@ora/chat";
@@ -191,6 +191,19 @@ describe("assistant markdown artifact links", () => {
       undefined,
       undefined,
     );
+  });
+
+  it("does not nest a second file link inside a Markdown file href", async () => {
+    const { openDiff } = await renderLinkedMarkdown(
+      "See [src/main.rs](src/main.rs) in the list:\n\n- [src/main.rs](src/main.rs)",
+    );
+    const buttons = screen.getAllByRole("button", { name: /src\/main\.rs/ });
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(button.querySelector("button")).toBeNull();
+      expect(button.closest("a")).toBeNull();
+    }
+    expect(openDiff).not.toHaveBeenCalled();
   });
 
   it("keeps https links visually distinct from file citations", async () => {
@@ -565,6 +578,80 @@ describe("session-wide chat links", () => {
       undefined,
       undefined,
     );
+  });
+
+  it("keeps leading spaces in expanded tool dumps", async () => {
+    const tool = searchTool("  README.md\n    docs/guide.md");
+    const artifactIndex = collectSessionArtifactIndex([turn("turn-1", [tool])]);
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <TaskChangesNavigationProvider
+            onOpenDiff={vi.fn()}
+            onOpenWorkspaceFile={vi.fn()}
+          >
+            <ChatLinkContext.Provider
+              value={{
+                index: artifactIndex,
+                taskId: "task-1",
+              }}
+            >
+              <ToolCallBlock tool={tool} expanded />
+            </ChatLinkContext.Provider>
+          </TaskChangesNavigationProvider>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+    await flushDesktopCwd();
+
+    const output = screen.getByTestId("chat-tool-path-output");
+    for (const line of output.querySelectorAll(":scope > div")) {
+      expect(line).toHaveClass("whitespace-pre-wrap");
+    }
+    expect(output).toHaveTextContent("  README.md", {
+      normalizeWhitespace: false,
+    });
+    expect(output).toHaveTextContent("    docs/guide.md", {
+      normalizeWhitespace: false,
+    });
+  });
+
+  it("does not remount fenced code when the session artifact index updates", async () => {
+    function Harness({ referenced }: { referenced: string[] }) {
+      return (
+        <PlatformProvider adapter={createStubPlatform()}>
+          <AppI18nProvider>
+            <TaskChangesNavigationProvider
+              onOpenDiff={vi.fn()}
+              onOpenWorkspaceFile={vi.fn()}
+            >
+              <ChatLinkContext.Provider
+                value={{
+                  index: { edited: [], referenced },
+                  taskId: "task-1",
+                }}
+              >
+                <MarkdownMessage content={"```rust\nfn main() {}\n```"} />
+              </ChatLinkContext.Provider>
+            </TaskChangesNavigationProvider>
+          </AppI18nProvider>
+        </PlatformProvider>
+      );
+    }
+
+    const { rerender } = render(<Harness referenced={["src/lib.rs"]} />);
+    await flushDesktopCwd();
+    fireEvent.click(
+      screen.getByRole("button", { name: /收起代码|Collapse code/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: /展开代码|Expand code/ }),
+    ).toHaveAttribute("aria-expanded", "false");
+
+    rerender(<Harness referenced={["src/lib.rs", "README.md"]} />);
+    expect(
+      screen.getByRole("button", { name: /展开代码|Expand code/ }),
+    ).toHaveAttribute("aria-expanded", "false");
   });
 
   it("turns glob tool dump lines into Files links after expanding the tool", async () => {

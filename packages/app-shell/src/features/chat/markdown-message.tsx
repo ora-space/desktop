@@ -199,6 +199,22 @@ const markdownComponents: Components = {
   ),
 };
 
+/** Stable `pre` override so index updates do not remount CodeBlock state. */
+function ChatMarkdownPreOverride({
+  children,
+}: ComponentPropsWithoutRef<"pre">) {
+  return (
+    <ChatMarkdownPre renderCodeBlock={renderChatMarkdownCodeBlock}>
+      {children}
+    </ChatMarkdownPre>
+  );
+}
+
+/** Module-level callback so ChatMarkdownPreOverride keeps a stable component type. */
+function renderChatMarkdownCodeBlock(code: string, language: string) {
+  return <CodeBlock code={code} language={language} />;
+}
+
 /** Renders raw, non-streaming Markdown on the same safe GFM and visual foundation as chat. */
 export function MarkdownDocument({
   content,
@@ -244,15 +260,7 @@ export function MarkdownMessage({
             p: ChatMarkdownParagraph,
             li: ChatMarkdownListItem,
             td: ChatMarkdownTableCell,
-            pre: ({ children }) => (
-              <ChatMarkdownPre
-                renderCodeBlock={(code, language) => (
-                  <CodeBlock code={code} language={language} />
-                )}
-              >
-                {children}
-              </ChatMarkdownPre>
-            ),
+            pre: ChatMarkdownPreOverride,
           },
     [chatLink],
   );

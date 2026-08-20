@@ -126,7 +126,13 @@ function collectPathsFromUnknown(
   if (!isRecord(value)) return;
   for (const key of OUTPUT_ITEM_PATH_KEYS) {
     const field = value[key];
-    if (typeof field === "string") pushIndexablePath(field, paths);
+    if (typeof field === "string") {
+      pushIndexablePath(field, paths);
+    } else if (Array.isArray(field)) {
+      for (const item of field) {
+        if (typeof item === "string") pushIndexablePath(item, paths);
+      }
+    }
   }
   for (const key of OUTPUT_PATH_KEYS) {
     if (key in value) {

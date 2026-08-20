@@ -77,12 +77,7 @@ function uniqueBasenameHit(
   if (hits.length <= 1) return hits[0] ?? null;
 
   const relativeRoots = hits.filter((hit) => {
-    const relative =
-      toNavigationPath(hit, cwd) ??
-      (isAbsoluteWorkspacePath(hit) ||
-      isAbsoluteWorkspacePath(normalizeDiffPath(displayPath(hit)))
-        ? null
-        : normalizeDiffPath(displayPath(hit)));
+    const relative = toNavigationPath(hit, cwd);
     return relative !== null && relative.toLowerCase() === target;
   });
   if (relativeRoots.length === 1) return relativeRoots[0]!;

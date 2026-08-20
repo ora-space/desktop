@@ -39,6 +39,25 @@ describe("collectToolOutputPaths", () => {
       "docs/guide.md",
     ]);
   });
+
+  it("reads path arrays stored under singular provider keys", () => {
+    const tool: ChatToolCall = {
+      kind: "toolCall",
+      id: "glob-2",
+      title: "Glob",
+      toolKind: "search",
+      status: "completed",
+      content: [],
+      locations: [],
+      rawOutput: { file: ["README.md", "docs/guide.md"] },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    expect(collectToolOutputPaths(tool)).toEqual([
+      "README.md",
+      "docs/guide.md",
+    ]);
+  });
 });
 
 describe("isPlainPathList", () => {

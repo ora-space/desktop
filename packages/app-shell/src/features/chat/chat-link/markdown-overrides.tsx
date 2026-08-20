@@ -131,18 +131,20 @@ export function ChatMarkdownTableCell({
   );
 }
 
-/** Renders a fenced path list as chat file links instead of highlighted source. */
-export function ChatPathListBlock({ code }: { code: string }) {
-  const lines = code.split(/\r?\n/);
+/** Shared line renderer so path fences and tool dumps cannot drift apart. */
+function PathLinkLines({
+  text,
+  lineClassName,
+}: {
+  text: string;
+  lineClassName: string;
+}) {
   return (
-    <div
-      data-testid="chat-path-list"
-      className="my-3 max-w-full overflow-x-auto rounded-r-md border-l-2 border-border bg-[var(--code-background)] px-4 py-3 font-mono text-[13px] leading-6"
-    >
-      {lines.map((line, index) => {
+    <>
+      {text.split(/\r?\n/).map((line, index) => {
         const token = stripListMarker(line);
         return (
-          <div key={index} className="min-h-[1.5em]">
+          <div key={index} className={lineClassName}>
             {token !== "" && isPathLikeToken(token) ? (
               <ChatFileLink source="inline-code" raw={token} unmatched="text">
                 {line}
@@ -153,33 +155,37 @@ export function ChatPathListBlock({ code }: { code: string }) {
           </div>
         );
       })}
+    </>
+  );
+}
+
+/** Renders a fenced path list as chat file links instead of highlighted source. */
+export function ChatPathListBlock({ code }: { code: string }) {
+  return (
+    <div
+      data-testid="chat-path-list"
+      className="my-3 max-w-full overflow-x-auto rounded-r-md border-l-2 border-border bg-[var(--code-background)] px-4 py-3 font-mono text-[13px] leading-6"
+    >
+      <PathLinkLines
+        text={code}
+        lineClassName="min-h-[1.5em] whitespace-pre-wrap"
+      />
     </div>
   );
 }
 
 /** Makes glob/search dump lines clickable without restyling non-path output. */
 export function ChatToolOutputText({ text }: { text: string }) {
-  const lines = text.split(/\r?\n/);
   return (
     <div
       data-selectable
       data-testid="chat-tool-path-output"
       className="max-h-72 overflow-auto rounded-r-sm border-l-2 border-border bg-[var(--code-background)] px-3 py-2.5 font-mono text-[11px] leading-5"
     >
-      {lines.map((line, index) => {
-        const token = stripListMarker(line);
-        return (
-          <div key={index} className="min-h-[1.25em]">
-            {token !== "" && isPathLikeToken(token) ? (
-              <ChatFileLink source="inline-code" raw={token} unmatched="text">
-                {line}
-              </ChatFileLink>
-            ) : (
-              line || "\u00a0"
-            )}
-          </div>
-        );
-      })}
+      <PathLinkLines
+        text={text}
+        lineClassName="min-h-[1.25em] whitespace-pre-wrap"
+      />
     </div>
   );
 }
@@ -248,7 +254,7 @@ function linkifyChildren(children: ReactNode): ReactNode {
   });
 }
 
-/** Skips nodes that already own their own linking or must stay literal. */
+/** Skips nodes that already own linking so overrides are not wrapped again. */
 function shouldSkipLinkify(type: unknown): boolean {
   return (
     type === "code" ||
@@ -256,7 +262,12 @@ function shouldSkipLinkify(type: unknown): boolean {
     type === "pre" ||
     type === "p" ||
     type === ChatFileLink ||
-    type === ChatMarkdownCode
+    type === ChatMarkdownCode ||
+    type === ChatMarkdownAnchor ||
+    type === ChatMarkdownParagraph ||
+    type === ChatMarkdownListItem ||
+    type === ChatMarkdownTableCell ||
+    type === ChatMarkdownPre
   );
 }
 
