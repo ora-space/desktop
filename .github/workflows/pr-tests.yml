@@ -96,6 +96,9 @@ jobs:
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.crates == 'true'
     runs-on: ubuntu-latest
+    # apt-get has hung for the full GitHub 6h job limit on this runner image,
+    # never reaching `task test:crates`. Fail fast so the run can be retried.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: arduino/setup-task@v3.0.0
@@ -123,10 +126,15 @@ jobs:
         env:
           RG_VERSION: 15.2.0
       # System libraries required to compile Tauri 2 on ubuntu-latest (24.04).
+      # Retries and short HTTP timeouts keep a stuck mirror from hanging the job.
       - name: Install Tauri system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get update \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=5 \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
