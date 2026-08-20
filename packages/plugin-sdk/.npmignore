@@ -1,7 +1,0 @@
-node_modules
-*.test.ts
-test/
-tests/
-.env
-.gitignore
-.npmignore
