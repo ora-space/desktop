@@ -591,7 +591,7 @@ mod tests {
     #[tokio::test]
     async fn loads_persisted_desktop_log_level_after_restart() {
         let temp_dir = TempDir::new().unwrap();
-        let first = Backend::open(test_backend_paths(temp_dir.path())).unwrap();
+        let first = Backend::open(test_backend_paths(temp_dir.path()), Vec::new()).unwrap();
         assert_eq!(
             load_desktop_log_level(&first, None).await.unwrap(),
             (
@@ -606,7 +606,7 @@ mod tests {
         first.set_preferred_log_level(LogLevel::Warn).await.unwrap();
         drop(first);
 
-        let restarted = Backend::open(test_backend_paths(temp_dir.path())).unwrap();
+        let restarted = Backend::open(test_backend_paths(temp_dir.path()), Vec::new()).unwrap();
         assert_eq!(
             load_desktop_log_level(&restarted, Some(LogLevel::Trace))
                 .await
@@ -633,7 +633,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_malformed_persisted_desktop_log_level() {
         let temp_dir = TempDir::new().unwrap();
-        let backend = Backend::open(test_backend_paths(temp_dir.path())).unwrap();
+        let backend = Backend::open(test_backend_paths(temp_dir.path()), Vec::new()).unwrap();
         drop(backend);
         rusqlite::Connection::open(temp_dir.path().join("ora.sqlite3"))
             .unwrap()
@@ -642,7 +642,7 @@ mod tests {
                 [],
             )
             .unwrap();
-        let reopened = Backend::open(test_backend_paths(temp_dir.path())).unwrap();
+        let reopened = Backend::open(test_backend_paths(temp_dir.path()), Vec::new()).unwrap();
 
         assert!(load_desktop_log_level(&reopened, None).await.is_err());
     }

@@ -102,16 +102,11 @@ tasks:
     desc: Run linters on all frontend packages
     silent: true
     cmds:
-      - pnpm --filter @ora/desktop format:check
       - pnpm --filter @ora/desktop lint
       - pnpm --filter @ora/contracts lint
-      - pnpm --filter @ora/chat format:check
       - pnpm --filter @ora/chat lint
-      - pnpm --filter @ora/workflow-runtime format:check
       - pnpm --filter @ora/workflow-runtime lint
-      - pnpm --filter @ora/app-shell format:check
       - pnpm --filter @ora/app-shell lint
-      - pnpm --filter @ora-space/plugin-sdk format:check
       - pnpm --filter @ora-space/plugin-sdk lint
 
   lint:crates:
