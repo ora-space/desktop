@@ -61,21 +61,27 @@ fn remote_surface_webview_is_denied_everything() {
     let app = app_with_shipped_acl();
     let remote = webview(&app, "remote-surface:test:market:1");
 
-    let outcomes: Vec<(&str, bool)> = ["list_projects", "plugin:dialog|open", "core:event|emit"]
-        .into_iter()
-        .map(|cmd| {
-            let denied = match invoke(&remote, cmd) {
-                Ok(_) => false,
-                Err(message) => is_acl_rejection(&message),
-            };
-            (cmd, denied)
-        })
-        .collect();
+    let outcomes: Vec<(&str, bool)> = [
+        "list_projects",
+        "surface_open",
+        "plugin:dialog|open",
+        "core:event|emit",
+    ]
+    .into_iter()
+    .map(|cmd| {
+        let denied = match invoke(&remote, cmd) {
+            Ok(_) => false,
+            Err(message) => is_acl_rejection(&message),
+        };
+        (cmd, denied)
+    })
+    .collect();
 
     assert_eq!(
         outcomes,
         vec![
             ("list_projects", true),
+            ("surface_open", true),
             ("plugin:dialog|open", true),
             ("core:event|emit", true),
         ]

@@ -1,6 +1,6 @@
 # Ora Desktop
 
-`ora-desktop` is the native Tauri host for Ora. It bootstraps the shared backend, exposes desktop-only commands to the frontend, owns native windows and dialogs, and adapts operating-system capabilities such as filesystem handoff and marketplace WebViews.
+`ora-desktop` is the native Tauri host for Ora. It bootstraps the shared backend, exposes desktop-only commands to the frontend, owns native windows and dialogs, and adapts operating-system capabilities such as filesystem handoff and plugin surface WebViews.
 
 File-manager handoff lives in `src/open_location.rs`. Explorer reveals files in the **system** file manager (`explorer /select,` on Windows, `open -R` on macOS) instead of opening them with the default editor. Directories still open as folder windows.
 
@@ -14,7 +14,15 @@ The shared developer preferences are exposed through `get_developer_mode`, `set_
 
 Every application command is declared in `app_commands.rs`, which `build.rs` feeds to `tauri_build::AppManifest::commands` so Tauri autogenerates `allow-<command>`/`deny-<command>` permissions and enforces the ACL on each IPC call. `permissions/app-commands.toml` groups those permissions into the `allow-app-commands` set, and `capabilities/default.json` grants that set, the window controls, and the dialog permissions to the `main` **webview** only (capabilities are webview-scoped, not window-scoped). Any other webview, including `remote-surface:*` plugin surfaces, is not named by a capability and is therefore denied every app, plugin, and core command. `src/lib.rs` includes the same command list and its `acl_` test asserts it equals the `generate_handler!` registration; `task lint:acl` runs that check, and `tests/command_acl.rs` exercises the shipped ACL through `tauri::test` webviews.
 
-Native marketplace windows use isolated browser profiles and provider-specific navigation policies. Their download events are routed into Ora-owned application data before the frontend is notified.
+## Plugin surfaces
+
+`src/surface/` hosts the webviews contributed by `ui` plugins (see its README and
+`docs/surface.md`). The pure state machine and registry live in `ora-surface`; this crate
+executes their effects with Tauri, resolves per-surface web data isolation, writes downloads into
+`<data-dir>/plugin-data/<plugin_id>/downloads/`, and delivers them to the plugin process through
+`ui/downloadCompleted`. The `embedded-surfaces` Cargo feature (off by default) enables child
+webviews docked into the main window through Tauri's `unstable` API; without it every surface
+opens as its own window and `surface_capabilities` reports `embedded: false`.
 
 Ripgrep and Deno are bundled as Tauri sidecars under `binaries/rg` and
 `binaries/deno` for release builds. Their platform-specific executables are

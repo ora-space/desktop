@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-surface-close"
+description = "Enables the surface_close command without any pre-configured scope."
+commands.allow = ["surface_close"]
+
+[[permission]]
+identifier = "deny-surface-close"
+description = "Denies the surface_close command without any pre-configured scope."
+commands.deny = ["surface_close"]

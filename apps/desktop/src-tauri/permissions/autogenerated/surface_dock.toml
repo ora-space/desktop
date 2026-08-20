@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-surface-dock"
+description = "Enables the surface_dock command without any pre-configured scope."
+commands.allow = ["surface_dock"]
+
+[[permission]]
+identifier = "deny-surface-dock"
+description = "Denies the surface_dock command without any pre-configured scope."
+commands.deny = ["surface_dock"]

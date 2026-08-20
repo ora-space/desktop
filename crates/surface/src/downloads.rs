@@ -56,6 +56,11 @@ struct DownloadKey {
 pub struct DownloadId(u64);
 
 impl DownloadId {
+    /// Wraps a raw counter value; exposed so hosts can build fixtures and round-trip ids.
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
     /// Returns the raw counter value for events and logs.
     pub const fn value(self) -> u64 {
         self.0
