@@ -104,7 +104,7 @@ mod tests {
     /// Builds the SkillHub market surface id used by every case.
     fn definition() -> SurfaceDefinitionId {
         SurfaceDefinitionId {
-            plugin_id: PluginId::new("ora-space.skillhub"),
+            plugin_id: PluginId::new("official", "ora-space.skillhub").expect("plugin id"),
             surface_id: SurfaceId::parse("market").expect("valid surface id"),
         }
     }
@@ -150,7 +150,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let market = definition();
         let docs = SurfaceDefinitionId {
-            plugin_id: PluginId::new("ora-space.skillhub"),
+            plugin_id: PluginId::new("official", "ora-space.skillhub").expect("plugin id"),
             surface_id: SurfaceId::parse("docs").expect("valid surface id"),
         };
         let resolve_macos = |definition: &SurfaceDefinitionId| {

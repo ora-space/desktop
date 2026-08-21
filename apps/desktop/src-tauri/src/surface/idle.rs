@@ -73,7 +73,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn reopen_cancels_pending_idle_stop() {
         let timers = IdleTimers::default();
-        let plugin = PluginId::new("ora-space.skillhub");
+        let plugin = PluginId::new("official", "ora-space.skillhub").expect("plugin id");
 
         let first = tokio::spawn(wait_for_idle(timers.arm(&plugin), IDLE_GRACE));
         tokio::time::advance(Duration::from_secs(10)).await;

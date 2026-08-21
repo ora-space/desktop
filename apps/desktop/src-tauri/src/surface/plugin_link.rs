@@ -1,35 +1,33 @@
-//! Host-to-plugin notifications about surface sessions (`ui/surfaceOpened` / `ui/surfaceClosed`)
-//! and the on-demand process start triggered by opening a surface.
+//! Host-to-plugin notifications about surface sessions (`ora/ui/surface_opened` /
+//! `ora/ui/surface_closed`) and the on-demand process start triggered by opening a surface.
 
 use crate::surface::gateway::{GatewayFailure, SurfaceConnection, SurfacePluginGateway};
 use ora_domain::PluginId;
 use ora_logging::{ora_debug, ora_warn};
-use ora_plugin_lifecycle::ConnectionError;
+use ora_plugin_lifecycle::{ConnectionError, UI_SURFACE_CLOSED_METHOD, UI_SURFACE_OPENED_METHOD};
 use ora_surface::{SurfaceRecord, SurfaceRegistry, SurfaceState};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
-const SURFACE_OPENED_METHOD: &str = "ui/surfaceOpened";
-const SURFACE_CLOSED_METHOD: &str = "ui/surfaceClosed";
-
 /// How long an open waits for the plugin process before giving up on the notification.
 pub const PROCESS_START_WAIT: Duration = Duration::from_secs(15);
 
-/// Builds the `{ surfaceId, instanceId, generation }` params both notifications carry.
+/// Builds the `{ surface_id, surface_instance_id, plugin_generation }` params every `ora/ui/*`
+/// message carries.
 pub fn session_params(record: &SurfaceRecord, generation: u64) -> Value {
     json!({
-        "surfaceId": record.definition.id.surface_id.as_str(),
-        "instanceId": record.instance.value(),
-        "generation": generation,
+        "surface_id": record.definition.id.surface_id.as_str(),
+        "surface_instance_id": record.instance.value(),
+        "plugin_generation": generation,
     })
 }
 
-/// Sends `ui/surfaceOpened` for a freshly mounted instance and starts the process if needed.
+/// Sends `ora/ui/surface_opened` for a freshly mounted instance and starts the process if needed.
 ///
 /// A running process is notified directly. A stopped or failed one is started in a spawned
-/// task and, once running, receives `ui/surfaceOpened` for every open instance of the plugin
+/// task and, once running, receives `ora/ui/surface_opened` for every open instance of the plugin
 /// so it sees the complete session view. A process that is already starting only needs the
 /// new instance replayed, because the task that started it replays the rest. Startup failures
 /// are logged and never affect the surface: remote sites do not depend on the process.
@@ -98,7 +96,7 @@ impl<C: SurfaceConnection> ProcessStart<C> {
     pub async fn run<G: SurfacePluginGateway<Connection = C>>(self, gateway: &G) {
         match self {
             Self::Notify { connection, params } => {
-                notify(&connection, SURFACE_OPENED_METHOD, params).await
+                notify(&connection, UI_SURFACE_OPENED_METHOD, params).await
             }
             Self::Await {
                 plugin_id,
@@ -119,7 +117,7 @@ impl<C: SurfaceConnection> ProcessStart<C> {
                         if mounted && wanted && claim_announcement(&registry, &record, generation) {
                             notify(
                                 &connection,
-                                SURFACE_OPENED_METHOD,
+                                UI_SURFACE_OPENED_METHOD,
                                 session_params(&record, generation),
                             )
                             .await;
@@ -142,7 +140,7 @@ impl<C: SurfaceConnection> ProcessStart<C> {
 /// `Replay::All` waiter snapshots the registry after the process is up and therefore also sees
 /// instances that were opened while it was starting and got their own `Replay::Only` waiter
 /// (or were notified directly once the process was running). Without a shared record each of
-/// them would send `ui/surfaceOpened` again and plugins that create sessions on that event
+/// them would send `ora/ui/surface_opened` again and plugins that create sessions on that event
 /// would double-initialize. Keying by (generation, instance) under one lock makes the
 /// announcement exactly-once per plugin process: a restarted process is a new generation and
 /// legitimately receives every open instance again.
@@ -161,7 +159,7 @@ struct AnnouncedGeneration {
 }
 
 /// Records that `record` is about to be announced to `generation` and tells whether this caller
-/// is the first to do so; only the first caller may send `ui/surfaceOpened`.
+/// is the first to do so; only the first caller may send `ora/ui/surface_opened`.
 fn claim_announcement(
     registry: &Arc<SurfaceRegistry>,
     record: &SurfaceRecord,
@@ -185,11 +183,11 @@ fn claim_announcement(
     entry.instances.insert(record.instance.value())
 }
 
-/// Sends `ui/surfaceClosed` when the process is running; a stopped process is not started for it.
+/// Sends `ora/ui/surface_closed` when the process is running; a stopped process is not started for it.
 pub async fn announce_closed<G: SurfacePluginGateway>(gateway: &G, record: SurfaceRecord) {
     if let Ok(connection) = gateway.connection(&record.definition.id.plugin_id) {
         let params = session_params(&record, connection.generation().0);
-        notify(&connection, SURFACE_CLOSED_METHOD, params).await;
+        notify(&connection, UI_SURFACE_CLOSED_METHOD, params).await;
     }
 }
 

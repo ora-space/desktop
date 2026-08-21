@@ -38,7 +38,8 @@ use thiserror::Error;
 /// receives an already-resolved package so it never rediscovers or re-validates plugins itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentPluginPackage {
-    /// Plugin package id, which is also this agent's persisted identity.
+    /// Plugin name (the `name` segment of the plugin id, e.g. `ora-space.opencode`), which is
+    /// also this agent's persisted identity.
     pub id: String,
     /// Deno executable used to run this plugin's process.
     pub deno_path: PathBuf,

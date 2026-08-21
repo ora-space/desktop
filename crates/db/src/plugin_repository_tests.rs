@@ -34,7 +34,7 @@ fn persists_first_enabled_plugin_state() {
             )
             .expect("bootstrap plugin state database");
         let repository = SqlitePluginStateRepository::new(pool);
-        let plugin_id = PluginId::new("ora.example");
+        let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
 
         repository
             .set_plugin_enabled(&plugin_id, PluginEnabledState::Enabled, 20)
@@ -66,7 +66,7 @@ fn updates_existing_plugin_eligibility() {
             )
             .expect("bootstrap plugin state database");
         let repository = SqlitePluginStateRepository::new(pool);
-        let plugin_id = PluginId::new("ora.example");
+        let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
         repository
             .set_plugin_enabled(&plugin_id, PluginEnabledState::Enabled, 20)
             .expect("enable plugin");
@@ -96,11 +96,15 @@ fn lists_plugin_states_in_identifier_order() {
             .expect("bootstrap plugin state database");
         let repository = SqlitePluginStateRepository::new(pool);
         repository
-            .set_plugin_enabled(&PluginId::new("ora.zeta"), PluginEnabledState::Enabled, 20)
+            .set_plugin_enabled(
+                &PluginId::new("official", "ora.zeta").expect("plugin id"),
+                PluginEnabledState::Enabled,
+                20,
+            )
             .expect("enable zeta plugin");
         repository
             .set_plugin_enabled(
-                &PluginId::new("ora.alpha"),
+                &PluginId::new("official", "ora.alpha").expect("plugin id"),
                 PluginEnabledState::Disabled,
                 30,
             )
@@ -110,13 +114,13 @@ fn lists_plugin_states_in_identifier_order() {
             repository.list_plugin_states().expect("list plugin states"),
             vec![
                 PluginState::new(
-                    PluginId::new("ora.alpha"),
+                    PluginId::new("official", "ora.alpha").expect("plugin id"),
                     PluginEnabledState::Disabled,
                     30,
                     30,
                 ),
                 PluginState::new(
-                    PluginId::new("ora.zeta"),
+                    PluginId::new("official", "ora.zeta").expect("plugin id"),
                     PluginEnabledState::Enabled,
                     20,
                     20,
@@ -138,7 +142,7 @@ fn deletes_plugin_state_by_identifier() {
             )
             .expect("bootstrap plugin state database");
         let repository = SqlitePluginStateRepository::new(pool);
-        let plugin_id = PluginId::new("ora.example");
+        let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
         repository
             .set_plugin_enabled(&plugin_id, PluginEnabledState::Enabled, 20)
             .expect("enable plugin");

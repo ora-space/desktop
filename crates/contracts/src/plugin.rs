@@ -15,10 +15,8 @@ use ts_rs::TS;
 pub enum InstalledPluginContribution {
     Agent {
         agent_display_name: String,
-        contract_version: u32,
     },
     Ui {
-        contract_version: u32,
         surfaces: Vec<InstalledPluginSurface>,
     },
 }
@@ -66,15 +64,22 @@ pub enum PluginRuntimeStatus {
     Failed { failure_reason: String },
 }
 
-/// Describes one installed plugin discovered from its package manifest.
+/// Describes one installed plugin discovered from its `orax.toml` manifest.
+///
+/// `id` is the canonical `<namespace>/<name>` spelling and is what every plugin request carries
+/// back; `namespace` and `name` repeat the two segments so the frontend never has to split it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
 pub struct InstalledPlugin {
     pub id: String,
-    pub package_name: String,
+    pub namespace: String,
+    pub name: String,
     pub display_name: String,
     pub version: String,
+    pub description: String,
+    pub homepage: Option<String>,
+    pub license: Option<String>,
     pub main: String,
     #[serde(flatten)]
     #[ts(flatten)]
@@ -293,12 +298,10 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 mod tests {
     use super::{
         AvailablePlugin, InstallPluginRequest, InstallPluginResponse, InstalledPlugin,
-        ListAvailablePluginsRequest, ListAvailablePluginsResponse,
-        ListInstalledPluginsRequest, ListInstalledPluginsResponse, PluginRuntimeStatus,
-        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
-        InstalledPlugin, InstalledPluginContribution, InstalledPluginSurface,
-        InstalledPluginSurfaceSource, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
-        PluginRuntimeStatus,
+        InstalledPluginContribution, InstalledPluginSurface, InstalledPluginSurfaceSource,
+        ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest,
+        ListInstalledPluginsResponse, PluginRuntimeStatus, SyncAvailablePluginsRequest,
+        SyncAvailablePluginsResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -307,14 +310,17 @@ mod tests {
     #[test]
     fn serializes_installed_plugin_contract() {
         let plugin = InstalledPlugin {
-            id: "ora.claude-code".to_string(),
-            package_name: "@ora-plugins/claude-code".to_string(),
+            id: "official/ora.claude-code".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.claude-code".to_string(),
             display_name: "Claude Code".to_string(),
             version: "0.1.0".to_string(),
+            description: "Claude Code agent".to_string(),
+            homepage: Some("https://example.com/claude-code".to_string()),
+            license: Some("Apache-2.0".to_string()),
             main: "dist/index.js".to_string(),
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Claude Code".to_string(),
-                contract_version: 1,
             },
             enabled: false,
             logo: Some("<svg/>".to_string()),
@@ -332,14 +338,17 @@ mod tests {
             .unwrap(),
             json!({
                 "plugins": [{
-                    "id": "ora.claude-code",
-                    "packageName": "@ora-plugins/claude-code",
+                    "id": "official/ora.claude-code",
+                    "namespace": "official",
+                    "name": "ora.claude-code",
                     "displayName": "Claude Code",
                     "version": "0.1.0",
+                    "description": "Claude Code agent",
+                    "homepage": "https://example.com/claude-code",
+                    "license": "Apache-2.0",
                     "main": "dist/index.js",
                     "kind": "agent",
                     "agentDisplayName": "Claude Code",
-                    "contractVersion": 1,
                     "enabled": false,
                     "logo": "<svg/>",
                     "runtime": "stopped"
@@ -352,13 +361,16 @@ mod tests {
     #[test]
     fn serializes_ui_plugin_contract() {
         let plugin = InstalledPlugin {
-            id: "ora-space.skillhub".to_string(),
-            package_name: "@ora-space/skillhub-ui".to_string(),
-            display_name: "SkillHub".to_string(),
+            id: "official/ora-space.skillhub".to_string(),
+            namespace: "official".to_string(),
+            name: "ora-space.skillhub".to_string(),
+            display_name: "ora-space.skillhub".to_string(),
             version: "0.1.0".to_string(),
+            description: "SkillHub marketplace".to_string(),
+            homepage: None,
+            license: None,
             main: "dist/index.js".to_string(),
             contribution: InstalledPluginContribution::Ui {
-                contract_version: 1,
                 surfaces: vec![InstalledPluginSurface {
                     id: "market".to_string(),
                     title: "SkillHub".to_string(),
@@ -368,6 +380,7 @@ mod tests {
                 }],
             },
             enabled: true,
+            logo: None,
             runtime: PluginRuntimeStatus::Stopped,
         };
 
@@ -375,13 +388,16 @@ mod tests {
         assert_eq!(
             value,
             json!({
-                "id": "ora-space.skillhub",
-                "packageName": "@ora-space/skillhub-ui",
-                "displayName": "SkillHub",
+                "id": "official/ora-space.skillhub",
+                "namespace": "official",
+                "name": "ora-space.skillhub",
+                "displayName": "ora-space.skillhub",
                 "version": "0.1.0",
+                "description": "SkillHub marketplace",
+                "homepage": null,
+                "license": null,
                 "main": "dist/index.js",
                 "kind": "ui",
-                "contractVersion": 1,
                 "surfaces": [{
                     "id": "market",
                     "title": "SkillHub",
@@ -389,6 +405,7 @@ mod tests {
                     "entryUrl": "https://www.skillhub.cn/"
                 }],
                 "enabled": true,
+                "logo": null,
                 "runtime": "stopped"
             }),
         );
@@ -487,14 +504,17 @@ mod tests {
     #[test]
     fn serializes_running_plugin_lifecycle_state() {
         let plugin = InstalledPlugin {
-            id: "ora.example".to_string(),
-            package_name: "@ora/example".to_string(),
+            id: "official/ora.example".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.example".to_string(),
             display_name: "Example".to_string(),
             version: "1.0.0".to_string(),
+            description: "Example agent".to_string(),
+            homepage: None,
+            license: None,
             main: "dist/index.js".to_string(),
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Example".to_string(),
-                contract_version: 1,
             },
             enabled: true,
             logo: None,
@@ -504,14 +524,17 @@ mod tests {
         assert_eq!(
             serde_json::to_value(plugin).expect("running plugin serializes"),
             json!({
-                "id": "ora.example",
-                "packageName": "@ora/example",
+                "id": "official/ora.example",
+                "namespace": "official",
+                "name": "ora.example",
                 "displayName": "Example",
                 "version": "1.0.0",
+                "description": "Example agent",
+                "homepage": null,
+                "license": null,
                 "main": "dist/index.js",
                 "kind": "agent",
                 "agentDisplayName": "Example",
-                "contractVersion": 1,
                 "enabled": true,
                 "logo": null,
                 "runtime": "running"
@@ -523,14 +546,17 @@ mod tests {
     #[test]
     fn serializes_failed_plugin_lifecycle_state() {
         let plugin = InstalledPlugin {
-            id: "ora.example".to_string(),
-            package_name: "@ora/example".to_string(),
+            id: "official/ora.example".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.example".to_string(),
             display_name: "Example".to_string(),
             version: "1.0.0".to_string(),
+            description: "Example agent".to_string(),
+            homepage: None,
+            license: None,
             main: "dist/index.js".to_string(),
             contribution: InstalledPluginContribution::Agent {
                 agent_display_name: "Example".to_string(),
-                contract_version: 1,
             },
             enabled: true,
             logo: None,
@@ -542,14 +568,17 @@ mod tests {
         assert_eq!(
             serde_json::to_value(plugin).expect("failed plugin serializes"),
             json!({
-                "id": "ora.example",
-                "packageName": "@ora/example",
+                "id": "official/ora.example",
+                "namespace": "official",
+                "name": "ora.example",
                 "displayName": "Example",
                 "version": "1.0.0",
+                "description": "Example agent",
+                "homepage": null,
+                "license": null,
                 "main": "dist/index.js",
                 "kind": "agent",
                 "agentDisplayName": "Example",
-                "contractVersion": 1,
                 "enabled": true,
                 "logo": null,
                 "runtime": "failed",

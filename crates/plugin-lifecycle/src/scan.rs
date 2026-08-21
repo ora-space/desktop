@@ -4,7 +4,7 @@ use super::{
 };
 use ora_application::{Clock, PluginStateRepository};
 use ora_contracts::{ScanPluginsRequest, ScanPluginsResponse};
-use ora_domain::{PluginEnabledState, PluginId};
+use ora_domain::PluginEnabledState;
 use ora_plugin_manager::PluginManager;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,7 +27,7 @@ where
             .read_state()
             .installed
             .iter()
-            .map(|plugin| PluginId::new(&plugin.id))
+            .map(|plugin| plugin.id.clone())
             .collect::<BTreeSet<_>>();
         let mut _operations = Vec::with_capacity(cached_ids.len());
         // Scan is a reconciliation barrier: waiting here favors one coherent snapshot over a
@@ -41,7 +41,7 @@ where
             .to_vec();
         let installed_ids = installed
             .iter()
-            .map(|plugin| PluginId::new(&plugin.id))
+            .map(|plugin| plugin.id.clone())
             .collect::<BTreeSet<_>>();
         let removed_ids = cached_ids
             .difference(&installed_ids)
@@ -136,7 +136,7 @@ where
             let previous_ids = state
                 .installed
                 .iter()
-                .map(|plugin| PluginId::new(&plugin.id))
+                .map(|plugin| plugin.id.clone())
                 .collect::<BTreeSet<_>>();
             let mut managed_by_id = BTreeMap::new();
             let mut changed_ids = previous_ids

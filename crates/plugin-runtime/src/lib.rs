@@ -1,6 +1,7 @@
 //! Owns the lifecycle and bidirectional stdio protocol of one sandboxed Ora plugin process.
 
 mod codec;
+mod host_requests;
 mod protocol;
 mod state;
 mod tasks;
@@ -8,9 +9,11 @@ mod tasks;
 #[cfg(test)]
 mod tests;
 
+pub use host_requests::{
+    HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE, NoHostRequests,
+};
 pub use protocol::{PluginNotification, PluginRegistration};
 
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,8 +40,6 @@ pub struct PluginRuntimeConfig {
     /// Working directory of the plugin process, normally its package root so that relative
     /// imports and configuration discovery resolve against the package instead of the host.
     pub cwd: Option<PathBuf>,
-    /// Extra environment variables visible to the plugin, such as `ORA_PLUGIN_DATA_DIR`.
-    pub env: Vec<(OsString, OsString)>,
     pub ready_timeout: Duration,
     pub call_timeout: Duration,
     pub shutdown_timeout: Duration,
@@ -100,16 +101,22 @@ pub struct PluginRuntime {
 impl PluginRuntime {
     /// Launches one plugin and waits until it publishes its immutable capability registration.
     ///
+    /// `host_requests` serves every request the plugin sends to the host for the life of this
+    /// process; it is bound here, at launch, so the handler knows which plugin is calling
+    /// without ever reading an identity from request params.
+    ///
     /// The returned receiver carries every whitelisted plugin-originated notification. It is
     /// unbounded on purpose: connection-wide backpressure would let one noisy stream stall
     /// unrelated traffic on the same process, so bounded queues belong to each consumer instead.
-    pub async fn launch<P>(
+    pub async fn launch<P, H>(
         spawner: &P,
         config: PluginRuntimeConfig,
+        host_requests: H,
     ) -> Result<(Self, mpsc::UnboundedReceiver<PluginNotification>), PluginRuntimeError>
     where
         P: ProcessSpawner,
         P::Process: Send + 'static,
+        H: HostRequestHandler,
     {
         if !config.entrypoint.is_file() {
             return Err(PluginRuntimeError::MissingEntrypoint(config.entrypoint));
@@ -122,9 +129,6 @@ impl PluginRuntime {
             .arg(config.entrypoint.as_os_str());
         if let Some(cwd) = &config.cwd {
             spec = spec.cwd(cwd);
-        }
-        for (key, value) in &config.env {
-            spec = spec.env(key, value);
         }
         let mut process = spawner
             .spawn(spec)
@@ -172,7 +176,11 @@ impl PluginRuntime {
             writer_close_rx,
             Arc::clone(&inner),
         ));
-        tokio::spawn(tasks::run_reader(stdout, Arc::clone(&inner)));
+        tokio::spawn(tasks::run_reader(
+            stdout,
+            Arc::clone(&inner),
+            Arc::new(host_requests),
+        ));
         tokio::spawn(tasks::run_stderr(stderr, config.plugin_id.clone()));
         tokio::spawn(tasks::run_supervisor(
             process,

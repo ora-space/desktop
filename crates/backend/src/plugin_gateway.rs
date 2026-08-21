@@ -58,7 +58,7 @@ impl PluginGateway {
             .list_installed_plugins()
             .plugins
             .iter()
-            .any(|plugin| plugin.id == plugin_id.as_ref() && plugin.enabled)
+            .any(|plugin| plugin.id == plugin_id.canonical() && plugin.enabled)
     }
 
     /// Creates the plugin's data directory if needed and returns it.
@@ -115,7 +115,7 @@ impl PluginGateway {
 
     /// Opens a receiver of every notification running plugin processes emit from now on.
     ///
-    /// The surface host routes `ui/push` from here to the panel webview that owns the session;
+    /// The surface host routes `ora/ui/push` from here to the panel webview that owns the session;
     /// a lagging receiver loses the oldest notifications rather than slowing the plugin.
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification> {
         self.plugin.subscribe_notifications()

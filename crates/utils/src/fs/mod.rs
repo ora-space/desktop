@@ -1,4 +1,4 @@
-//! Filesystem naming helpers for files whose names originate from untrusted sources.
+//! Filesystem helpers for files whose names originate from untrusted sources.
 //!
 //! [`sanitize_file_name`] turns arbitrary text (download suggestions, URL segments, user input)
 //! into one portable basename, and [`next_available_file_name`] picks a collision-free variant of

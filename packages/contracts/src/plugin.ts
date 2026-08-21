@@ -56,14 +56,21 @@ export type InstallPluginRequest = { pluginId: string };
 export type InstallPluginResponse = { pluginId: string };
 
 /**
- * Describes one installed plugin discovered from its package manifest.
+ * Describes one installed plugin discovered from its `orax.toml` manifest.
+ *
+ * `id` is the canonical `<namespace>/<name>` spelling and is what every plugin request carries
+ * back; `namespace` and `name` repeat the two segments so the frontend never has to split it.
  */
 export type InstalledPlugin =
   & {
     id: string;
-    packageName: string;
+    namespace: string;
+    name: string;
     displayName: string;
     version: string;
+    description: string;
+    homepage: string | null;
+    license: string | null;
     main: string;
     enabled: boolean;
     /**
@@ -75,9 +82,8 @@ export type InstalledPlugin =
      */
     logo: string | null;
   }
-  & ({ "kind": "agent"; agentDisplayName: string; contractVersion: number } | {
+  & ({ "kind": "agent"; agentDisplayName: string } | {
     "kind": "ui";
-    contractVersion: number;
     surfaces: Array<InstalledPluginSurface>;
   })
   & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
@@ -93,12 +99,7 @@ export type InstalledPlugin =
 export type InstalledPluginContribution = {
   "kind": "agent";
   agentDisplayName: string;
-  contractVersion: number;
-} | {
-  "kind": "ui";
-  contractVersion: number;
-  surfaces: Array<InstalledPluginSurface>;
-};
+} | { "kind": "ui"; surfaces: Array<InstalledPluginSurface> };
 
 /**
  * Describes one surface a ui plugin contributes, with its source flattened beside the identity.

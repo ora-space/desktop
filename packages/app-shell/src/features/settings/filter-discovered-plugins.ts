@@ -10,8 +10,8 @@ export function filterDiscoveredPlugins(
   return plugins.filter((plugin) =>
     [
       plugin.displayName,
-      plugin.packageName,
       plugin.id,
+      plugin.description,
       ...(plugin.kind === "agent"
         ? [plugin.agentDisplayName]
         : plugin.surfaces.map((surface) => surface.title)),

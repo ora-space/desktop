@@ -27,9 +27,10 @@ impl SurfaceInstanceId {
 
 /// Host-generated webview label.
 ///
-/// Tauri labels only accept `[A-Za-z0-9-/:_]`, so the `.` of a two-segment plugin id maps to `_`.
-/// The mapping is unambiguous because slugs never contain `_`. Labels are never used for
-/// authorization decisions; callers resolve them through the registry instead.
+/// Tauri labels only accept `[A-Za-z0-9-/:_]`, so the plugin id is rendered as
+/// `<namespace>_<name>` with every `.` of the name mapped to `_`. The mapping is unambiguous
+/// because slugs never contain `_`. Labels are never used for authorization decisions; callers
+/// resolve them through the registry instead.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WebviewLabel(String);
 
@@ -38,13 +39,13 @@ impl WebviewLabel {
     pub const PANEL_PREFIX: &'static str = "panel-surface:";
 
     /// Builds the label of one remote site surface instance, e.g.
-    /// `remote-surface:ora-space_skillhub:market:7`.
+    /// `remote-surface:official_ora-space_skillhub:market:7`.
     pub fn remote(definition: &SurfaceDefinitionId, instance: SurfaceInstanceId) -> Self {
         Self::with_prefix(Self::REMOTE_PREFIX, definition, instance)
     }
 
     /// Builds the label of one panel surface instance, e.g.
-    /// `panel-surface:ora-space_hello-panel:counter:7`. The prefix identifies the panel family
+    /// `panel-surface:official_ora-space_hello-panel:counter:7`. The prefix identifies the panel family
     /// so the bridge can tell panel webviews apart from remote-site webviews.
     pub fn panel(definition: &SurfaceDefinitionId, instance: SurfaceInstanceId) -> Self {
         Self::with_prefix(Self::PANEL_PREFIX, definition, instance)
@@ -55,10 +56,11 @@ impl WebviewLabel {
         definition: &SurfaceDefinitionId,
         instance: SurfaceInstanceId,
     ) -> Self {
-        let plugin = definition.plugin_id.as_ref().replace('.', "_");
+        let namespace = definition.plugin_id.namespace();
+        let name = definition.plugin_id.name().replace('.', "_");
         let surface = definition.surface_id.as_str();
         let instance = instance.value();
-        Self(format!("{prefix}{plugin}:{surface}:{instance}"))
+        Self(format!("{prefix}{namespace}_{name}:{surface}:{instance}"))
     }
 
     /// Returns the label text handed to the webview runtime.
@@ -116,16 +118,16 @@ mod tests {
     use ora_plugin_manager::SurfaceId;
     use pretty_assertions::assert_eq;
 
-    /// Verifies the documented label shape for a two-segment plugin id.
+    /// Verifies the documented label shape for a namespaced two-segment plugin name.
     #[test]
-    fn remote_label_maps_plugin_dot_to_underscore() {
+    fn remote_label_joins_namespace_and_maps_name_dot_to_underscore() {
         let definition = SurfaceDefinitionId {
-            plugin_id: PluginId::new("ora-space.skillhub"),
+            plugin_id: PluginId::new("official", "ora-space.skillhub").expect("plugin id"),
             surface_id: SurfaceId::parse("market").expect("valid surface id"),
         };
         assert_eq!(
             WebviewLabel::remote(&definition, SurfaceInstanceId::new(7)).as_str(),
-            "remote-surface:ora-space_skillhub:market:7"
+            "remote-surface:official_ora-space_skillhub:market:7"
         );
     }
 
@@ -133,12 +135,12 @@ mod tests {
     #[test]
     fn panel_label_uses_panel_prefix() {
         let definition = SurfaceDefinitionId {
-            plugin_id: PluginId::new("ora-space.hello-panel"),
+            plugin_id: PluginId::new("official", "ora-space.hello-panel").expect("plugin id"),
             surface_id: SurfaceId::parse("counter").expect("valid surface id"),
         };
         assert_eq!(
             WebviewLabel::panel(&definition, SurfaceInstanceId::new(7)).as_str(),
-            "panel-surface:ora-space_hello-panel:counter:7"
+            "panel-surface:official_ora-space_hello-panel:counter:7"
         );
     }
 
@@ -147,7 +149,11 @@ mod tests {
     #[test]
     fn remote_label_only_contains_tauri_label_characters() {
         let slug_alphabet: String = ('a'..='z').chain('0'..='9').collect();
-        let plugin_id = PluginId::new(format!("{slug_alphabet}-x.{slug_alphabet}-y"));
+        let plugin_id = PluginId::new(
+            format!("{slug_alphabet}-n"),
+            format!("{slug_alphabet}-x.{slug_alphabet}-y"),
+        )
+        .expect("plugin id");
         let surface_id = SurfaceId::parse(&format!("{}-{}", &slug_alphabet[..20], "9"))
             .expect("valid surface id");
         let definition = SurfaceDefinitionId {

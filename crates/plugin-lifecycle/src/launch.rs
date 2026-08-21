@@ -16,14 +16,10 @@ use ora_application::{Clock, PluginStateRepository};
 use ora_domain::PluginId;
 use ora_plugin_manager::InstalledPlugin as DiscoveredPlugin;
 use ora_plugin_runtime::PluginNotification;
-use std::ffi::OsString;
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 use tokio::sync::{OwnedMutexGuard, mpsc};
 use tokio::time::timeout;
-
-/// Environment variable through which a plugin learns its private writable directory.
-pub const PLUGIN_DATA_DIR_ENV: &str = "ORA_PLUGIN_DATA_DIR";
 
 /// How long a closed notification stream may precede process exit before it counts as failure.
 ///
@@ -60,8 +56,8 @@ pub(crate) async fn complete_launch<
     StatusPublisher: PluginStatusPublisher,
     NotificationSink: PluginNotificationSink,
 {
-    // The data directory must exist before launch: it is both a permission scope (Deno
-    // canonicalizes granted paths) and the directory the plugin reads from its environment.
+    // The data directory must exist before launch: the storage handler canonicalizes it on every
+    // request, and the surface layer writes downloads there before the process is up.
     let data_dir = match inner.data_directories.ensure(&plugin_id) {
         Ok(data_dir) => data_dir,
         Err(error) => {
@@ -83,11 +79,8 @@ pub(crate) async fn complete_launch<
             deno_path: inner.config.deno_path.clone(),
             entrypoint: plugin.package_root.join(plugin.main.to_path_buf()),
             package_root: plugin.package_root.clone(),
-            permissions: permissions_for(&plugin.contributes, &data_dir),
-            env: vec![(
-                OsString::from(PLUGIN_DATA_DIR_ENV),
-                data_dir.into_os_string(),
-            )],
+            permissions: permissions_for(&plugin.contributes),
+            data_dir,
         })
         .await;
 

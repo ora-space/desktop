@@ -337,8 +337,11 @@ fn agent_plugin_packages(
         .installed_plugins()
         .iter()
         .filter_map(|plugin| match &plugin.contributes {
+            // The agent identity persisted in sessions (`agent_ref`, e.g. `ora-space.opencode`)
+            // is the plugin name, not the namespaced canonical id, so built-in CLIs and plugin
+            // agents keep sharing one identity space.
             PluginContribution::Agent(_) => Some(AgentPluginPackage {
-                id: plugin.id.clone(),
+                id: plugin.id.name().to_string(),
                 deno_path: deno_path.to_path_buf(),
                 entrypoint: plugin.package_root.join(plugin.main.as_str()),
             }),

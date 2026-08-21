@@ -21,7 +21,7 @@ const VIEW: ViewGeneration = ViewGeneration::INITIAL.next();
 fn definition() -> SurfaceDefinition {
     SurfaceDefinition {
         id: SurfaceDefinitionId {
-            plugin_id: PluginId::new("ora-space.skillhub"),
+            plugin_id: PluginId::new("official", "ora-space.skillhub").expect("plugin id"),
             surface_id: SurfaceId::parse("market").expect("valid surface id"),
         },
         title: "SkillHub".to_owned(),
@@ -389,7 +389,7 @@ fn completion_table() {
     let opened_event = |target: MountTarget| {
         SurfaceEffect::Emit(SurfaceEvent::Opened {
             instance: 7,
-            plugin_id: "ora-space.skillhub".to_owned(),
+            plugin_id: "official/ora-space.skillhub".to_owned(),
             surface_id: "market".to_owned(),
             target,
             title: "SkillHub".to_owned(),

@@ -7,22 +7,30 @@ mod registration;
 mod runtime;
 mod scan;
 mod state;
+mod storage;
 mod surface_closer;
 
 pub use connection::{ConnectionError, PluginConnection, PluginGeneration};
 pub use data_dir::PluginDataDirectories;
-pub use launch::PLUGIN_DATA_DIR_ENV;
 pub use ora_plugin_runtime::{PluginNotification, PluginRegistration};
 pub use permissions::{
-    DenoPermission, EnvScope, PermissionFlagError, ReadScope, agent_permissions, permissions_for,
+    DenoPermission, PermissionFlagError, ReadScope, agent_permissions, permissions_for,
 };
 pub use ports::{
     InboundNotification, LaunchedRuntime, PluginCallError, PluginLaunchRequest,
     PluginNotificationSink, PluginRuntime, PluginRuntimeExit, PluginRuntimeFailure,
     PluginRuntimeLauncher, PluginStatusPublisher,
 };
-pub use registration::{UI_DOWNLOAD_COMPLETED_METHOD, validate_registration};
+pub use registration::{
+    UI_DOWNLOAD_COMPLETED_METHOD, UI_PUSH_METHOD, UI_REQUEST_METHOD, UI_SURFACE_CLOSED_METHOD,
+    UI_SURFACE_OPENED_METHOD, validate_registration,
+};
 pub use runtime::{DenoPluginRuntime, DenoPluginRuntimeLauncher, PluginRuntimeTimeouts};
+pub use storage::{
+    MAX_STORAGE_FILE_BYTES, PluginStorage, STORAGE_LIST_METHOD, STORAGE_READ_METHOD,
+    STORAGE_REMOVE_METHOD, STORAGE_WRITE_METHOD, StorageEntry, StorageEntryKind, StorageError,
+    StorageErrorKind,
+};
 pub use surface_closer::SurfaceCloser;
 
 use launch::{complete_launch, transition_to_stopped};
@@ -181,11 +189,10 @@ where
                 .installed
                 .iter()
                 .map(|plugin| {
-                    let plugin_id = PluginId::new(&plugin.id);
                     discovered_plugin_contract(
                         plugin,
                         state
-                            .managed(&plugin_id)
+                            .managed(&plugin.id)
                             .unwrap_or(&ManagedPluginState::Disabled),
                     )
                 })
@@ -198,7 +205,7 @@ where
         self.read_state()
             .installed
             .iter()
-            .find(|plugin| plugin.id == plugin_id.as_ref())
+            .find(|plugin| plugin.id == *plugin_id)
             .cloned()
     }
 
@@ -207,9 +214,9 @@ where
         &self,
         request: EnablePluginRequest,
     ) -> Result<EnablePluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let _operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self.require_installed(&request.plugin_id)?;
+        let plugin = self.require_installed(&plugin_id)?;
         self.inner
             .repository
             .set_plugin_enabled(
@@ -248,9 +255,9 @@ where
         &self,
         request: DisablePluginRequest,
     ) -> Result<DisablePluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let _operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self.require_installed(&request.plugin_id)?;
+        let plugin = self.require_installed(&plugin_id)?;
         self.inner.surface_closer.close_all(&plugin_id).await;
         let running = self.running_runtime(&plugin_id);
         if let Some((_, runtime)) = running {
@@ -308,9 +315,9 @@ where
         &self,
         request: ActivatePluginRequest,
     ) -> Result<ActivatePluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self.require_installed(&request.plugin_id)?;
+        let plugin = self.require_installed(&plugin_id)?;
         let (attempt, response) = {
             let mut state = self.write_state();
             let attempt = state.next_attempt;
@@ -356,9 +363,9 @@ where
         &self,
         request: StopPluginRequest,
     ) -> Result<StopPluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let _operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self.require_installed(&request.plugin_id)?;
+        let plugin = self.require_installed(&plugin_id)?;
         self.inner.surface_closer.close_all(&plugin_id).await;
         let running = {
             let mut state = self.write_state();
@@ -408,7 +415,7 @@ where
         &self,
         request: UninstallPluginRequest,
     ) -> Result<UninstallPluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let _operation = self.acquire_operation(&plugin_id).await;
         let plugin = self.installed_plugin(&plugin_id);
         let persisted = self
@@ -459,9 +466,7 @@ where
             })?;
         {
             let mut state = self.write_state();
-            state
-                .installed
-                .retain(|plugin| plugin.id != request.plugin_id);
+            state.installed.retain(|plugin| plugin.id != plugin_id);
             state.remove_managed(&plugin_id);
         }
         self.inner.publisher.publish_status_changed(&plugin_id);
@@ -472,8 +477,11 @@ where
     }
 
     /// Loads one installed package from the cached discovery snapshot or fails with not-found.
-    fn require_installed(&self, plugin_id: &str) -> Result<DiscoveredPlugin, PluginLifecycleError> {
-        self.installed_plugin(&PluginId::new(plugin_id))
+    fn require_installed(
+        &self,
+        plugin_id: &PluginId,
+    ) -> Result<DiscoveredPlugin, PluginLifecycleError> {
+        self.installed_plugin(plugin_id)
             .ok_or_else(|| PluginLifecycleError::PluginNotFound {
                 plugin_id: plugin_id.to_string(),
             })
@@ -533,4 +541,17 @@ where
 #[cfg(test)]
 mod data_plane_tests;
 #[cfg(test)]
+mod storage_tests;
+#[cfg(test)]
 mod tests;
+
+/// Parses the canonical plugin id carried by a request.
+///
+/// A malformed id is reported as not found rather than as a distinct error: from the caller's
+/// point of view no installed plugin answers to that spelling, and the error contract stays the
+/// one the frontend already handles.
+fn parse_request_id(plugin_id: &str) -> Result<PluginId, PluginLifecycleError> {
+    PluginId::parse(plugin_id).map_err(|_| PluginLifecycleError::PluginNotFound {
+        plugin_id: plugin_id.to_string(),
+    })
+}

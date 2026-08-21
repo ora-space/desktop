@@ -22,18 +22,22 @@ function uiPlugin(
   surfaces: Array<{ id: string; title: string }>,
 ): InstalledPlugin {
   return {
-    id,
-    packageName: `@ora-space/${id}`,
+    id: `official/${id}`,
+    namespace: "official",
+    name: id,
     displayName,
+    description: `${displayName} plugin`,
+    homepage: null,
+    license: null,
     version: "0.1.0",
-    main: "dist/index.js",
+    main: "main.js",
     kind: "ui",
-    contractVersion: 1,
     surfaces: surfaces.map((surface) => ({
       ...surface,
       entryUrl: `https://example.test/${surface.id}`,
       source: "remote_site",
     })),
+    logo: null,
     enabled: true,
     runtime: "stopped",
   };
@@ -85,7 +89,7 @@ describe("SurfaceLauncher", () => {
     await user.click(await screen.findByRole("button", { name: "Skill Hub" }));
 
     expect(host.surfaces.open).toHaveBeenCalledWith(
-      { pluginId: "ora.hub", surfaceId: "market" },
+      { pluginId: "official/ora.hub", surfaceId: "market" },
       "embedded",
     );
     await waitFor(() =>
@@ -111,7 +115,7 @@ describe("SurfaceLauncher", () => {
     );
 
     expect(host.surfaces.open).toHaveBeenCalledWith(
-      { pluginId: "ora.hub", surfaceId: "market" },
+      { pluginId: "official/ora.hub", surfaceId: "market" },
       "windowed",
     );
     await waitFor(() => expect(host.surfaces.open).toHaveResolved());

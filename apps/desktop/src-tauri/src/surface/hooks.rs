@@ -220,7 +220,7 @@ impl<D, P> SurfaceHooks<D, P> {
                 handle_popup(&popups, opener.as_ref(), &popup_label, &url)
             })
             .on_download(move |webview, event| {
-                // The page URL is informational (it lands in `ui/downloadCompleted`), so a
+                // The page URL is informational (it lands in `ora/ui/download_completed`), so a
                 // runtime that cannot report it degrades to `None` instead of failing.
                 downloads.handle(&label, webview.url().ok(), event)
             })
@@ -275,7 +275,7 @@ mod tests {
     fn label() -> WebviewLabel {
         WebviewLabel::remote(
             &SurfaceDefinitionId {
-                plugin_id: PluginId::new("ora-space.skillhub"),
+                plugin_id: PluginId::new("official", "ora-space.skillhub").expect("plugin id"),
                 surface_id: SurfaceId::parse("market").expect("valid surface id"),
             },
             SurfaceInstanceId::new(1),

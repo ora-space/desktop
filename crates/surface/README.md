@@ -10,8 +10,9 @@ executes the effects this crate decides on.
 - `ids`: `SurfaceDefinitionId` (plugin id + surface id, stable across restarts),
   `SurfaceInstanceId` and `OperationId` (process-local counters), `ViewGeneration` (page rebuild
   counter), and `WebviewLabel` (`remote-surface:` or `panel-surface:` followed by
-  `<plugin id with '.' -> '_'>:<surface>:<instance>`, restricted to the Tauri label alphabet; the
-  prefix follows the content source because host capabilities match on it).
+  `<namespace>_<name with '.' -> '_'>:<surface>:<instance>`, restricted to the Tauri label
+  alphabet; the prefix follows the content source because host capabilities match on it).
+  Labels are names only and never an authorization input.
 - `definition`: `SurfaceDefinition` built from `ora-plugin-manager`'s already validated
   `InstalledSurface`, with `SurfaceSource::RemoteSite` or `SurfaceSource::Panel` (canonical asset
   root + entry); `MountTarget` (`embedded` / `windowed` on the wire, both directions).
@@ -21,7 +22,8 @@ executes the effects this crate decides on.
   navigating to a blob minted from a fetched response. `NavigationPolicy::PanelAssets` accepts
   only URLs below the panel's own asset base.
 - `panel`: the `ora-plugin` scheme, per-platform asset base and entry URLs, `PanelAssetRequest`
-  (splits `/<plugin>/<surface>/<path>`), the servable content-type table, and the panel CSP. Pure
+  (splits `/<namespace>/<name>/<surface>/<path>`), the servable content-type table, and the
+  panel CSP. Pure
   functions; the desktop protocol handler only adds file I/O.
 - `state`: pure transition functions returning `SurfaceEffect`s (see `src/state/README.md` for
   the full transition table).

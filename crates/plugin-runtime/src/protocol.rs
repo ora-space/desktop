@@ -1,8 +1,10 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use serde_json::Value;
 
 use crate::PluginRuntimeError;
+use crate::host_requests::{HostRequestHandler, serve_request};
 use crate::state::{ResponseRequest, RuntimeInner, RuntimeStatus};
 
 pub(crate) const JSON_RPC_VERSION: &str = "2.0";
@@ -31,12 +33,17 @@ pub struct PluginNotification {
     pub params: Value,
 }
 
-/// Applies one validated registration, notification, or response message to runtime state.
+/// Applies one validated registration, notification, request, or response message to runtime
+/// state, dispatching plugin requests to `host_requests`.
 ///
 /// Returning `Err` means the connection can no longer be trusted and the caller must invalidate
 /// the whole process; per-message recovery is intentionally absent because a host that guessed
 /// at a malformed frame could silently mis-correlate every later response.
-pub(crate) async fn handle_message(inner: &RuntimeInner, message: Value) -> Result<(), String> {
+pub(crate) async fn handle_message<H: HostRequestHandler>(
+    inner: &RuntimeInner,
+    host_requests: &Arc<H>,
+    message: Value,
+) -> Result<(), String> {
     let object = message
         .as_object()
         .ok_or_else(|| "plugin message must be a JSON object".to_string())?;
@@ -45,7 +52,7 @@ pub(crate) async fn handle_message(inner: &RuntimeInner, message: Value) -> Resu
     }
 
     if let Some(method) = object.get("method").and_then(Value::as_str) {
-        return handle_plugin_originated(inner, object, method).await;
+        return handle_plugin_originated(inner, host_requests, object, method).await;
     }
 
     let request_id = object
@@ -85,16 +92,35 @@ pub(crate) async fn handle_message(inner: &RuntimeInner, message: Value) -> Resu
     }
 }
 
-/// Splits registration from whitelisted notifications and rejects everything else.
-async fn handle_plugin_originated(
+/// Splits registration, host requests, and whitelisted notifications; rejects everything else.
+async fn handle_plugin_originated<H: HostRequestHandler>(
     inner: &RuntimeInner,
+    host_requests: &Arc<H>,
     object: &serde_json::Map<String, Value>,
     method: &str,
 ) -> Result<(), String> {
-    if object.contains_key("id") {
-        return Err(format!(
-            "plugin sent request {method}; plugins may only send notifications"
+    if let Some(request_id) = object.get("id") {
+        // Host requests are only accepted from a registered plugin: the handshake is the one
+        // message that may precede everything else, and a request during it would let a plugin
+        // act before its declaration is known.
+        if !matches!(*inner.status_tx.borrow(), RuntimeStatus::Ready) {
+            return Err(format!(
+                "plugin sent request {method} before completing registration"
+            ));
+        }
+        if !(request_id.is_number() || request_id.is_string()) {
+            return Err(format!("plugin request {method} has an invalid request ID"));
+        }
+        // Each request runs on its own task so a slow host method cannot delay the responses to
+        // the host's own calls that share this reader.
+        tokio::spawn(serve_request(
+            Arc::clone(host_requests),
+            inner.writer_tx.clone(),
+            request_id.clone(),
+            method.to_string(),
+            object.get("params").cloned().unwrap_or(Value::Null),
         ));
+        return Ok(());
     }
 
     if method == REGISTER_METHOD {

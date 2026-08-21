@@ -2,6 +2,7 @@ use crate::ports::{
     LaunchedRuntime, PluginCallError, PluginLaunchRequest, PluginRuntime, PluginRuntimeExit,
     PluginRuntimeFailure, PluginRuntimeLauncher,
 };
+use crate::storage::PluginStorage;
 use ora_plugin_runtime::{
     PluginProcessExit, PluginRegistration, PluginRuntime as ProcessPluginRuntime,
     PluginRuntimeConfig, PluginRuntimeError,
@@ -54,7 +55,8 @@ pub struct DenoPluginRuntime {
 impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
     type Runtime = DenoPluginRuntime;
 
-    /// Renders permissions, starts Deno in the package root, and waits for the handshake.
+    /// Renders permissions, starts Deno in the package root with the storage handler bound to
+    /// the plugin's data directory, and waits for the handshake.
     fn launch(
         &self,
         request: PluginLaunchRequest,
@@ -80,11 +82,11 @@ impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
                     entrypoint: request.entrypoint,
                     permissions,
                     cwd: Some(request.package_root),
-                    env: request.env,
                     ready_timeout: timeouts.ready,
                     call_timeout: timeouts.call,
                     shutdown_timeout: timeouts.shutdown,
                 },
+                PluginStorage::new(request.data_dir),
             )
             .await
             .map_err(|error| PluginRuntimeFailure::new(error.to_string()))?;

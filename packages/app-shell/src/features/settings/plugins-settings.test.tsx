@@ -65,7 +65,8 @@ it("installs a marketplace plugin through the backend", async () => {
   await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
   expect(state.installedPlugins[0]).toMatchObject({
     id: "official/weather",
-    packageName: "official/weather",
+    namespace: "official",
+    name: "weather",
     displayName: "weather",
     version: "1.2.0",
   });

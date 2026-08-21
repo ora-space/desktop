@@ -3,8 +3,11 @@
 //! This module is the single source of truth for plugin permissions: the lifecycle uses it for
 //! packages it activates, and the backend's agent connection supervisor uses the same agent set,
 //! so the two launch paths cannot drift apart.
+//!
+//! Permissions are not how a plugin gains capabilities. A ui plugin runs with no grants at all
+//! and reaches its data through the `ora/storage/*` host methods; the flags below exist only for
+//! the agent kind, whose own CLI still needs the host.
 
-use crate::launch::PLUGIN_DATA_DIR_ENV;
 use ora_plugin_manager::PluginContribution;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -19,22 +22,14 @@ pub enum ReadScope {
     Directory(PathBuf),
 }
 
-/// Names the environment variables an env grant covers, keeping an unscoped grant explicit.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvScope {
-    /// Grants `--allow-env` without a list, i.e. the whole process environment.
-    Everything,
-    /// Grants access to the named variables only.
-    Variables(Vec<&'static str>),
-}
-
 /// One Deno permission flag placed before the plugin entrypoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DenoPermission {
     AllowRead(ReadScope),
     AllowWrite(PathBuf),
     AllowRun,
-    AllowEnv(EnvScope),
+    /// Grants `--allow-env` for the whole process environment.
+    AllowEnv,
     AllowNet,
 }
 
@@ -60,12 +55,7 @@ impl DenoPermission {
             Self::AllowRead(ReadScope::Directory(path)) => scoped_flag("--allow-read", path),
             Self::AllowWrite(path) => scoped_flag("--allow-write", path),
             Self::AllowRun => Ok(OsString::from("--allow-run")),
-            Self::AllowEnv(EnvScope::Everything) => Ok(OsString::from("--allow-env")),
-            // Variable names are fixed identifiers chosen by the host, so unlike paths they
-            // never contain the comma Deno uses as the list separator.
-            Self::AllowEnv(EnvScope::Variables(names)) => {
-                Ok(OsString::from(format!("--allow-env={}", names.join(","))))
-            }
+            Self::AllowEnv => Ok(OsString::from("--allow-env")),
             Self::AllowNet => Ok(OsString::from("--allow-net")),
         }
     }
@@ -89,22 +79,15 @@ fn scoped_flag(flag: &str, path: &Path) -> Result<OsString, PermissionFlagError>
 
 /// Returns the permission set granted to every plugin of the contribution's kind.
 ///
-/// `data_dir` is the plugin's private data directory; it is the only place a ui plugin may
-/// touch, while an agent plugin keeps the broad grants it has always had (see
-/// `agent_permissions`). Narrowing agent permissions is deliberately out of scope here.
-///
-/// A ui plugin also gets read access to the single `ORA_PLUGIN_DATA_DIR` variable: the launcher
-/// injects it so the plugin can find that directory, and under `--no-prompt` an unlisted variable
-/// is a hard `PermissionDenied` rather than a prompt, so without the grant the directory would be
-/// granted but undiscoverable.
-pub fn permissions_for(contribution: &PluginContribution, data_dir: &Path) -> Vec<DenoPermission> {
+/// A ui plugin gets nothing: under `--no-prompt` every filesystem, network, and environment
+/// access is a hard `PermissionDenied`, and everything it legitimately needs (its data
+/// directory) is served by the host over `ora/storage/*`. An agent plugin keeps the broad
+/// grants it has always had (see `agent_permissions`); narrowing them is deliberately out of
+/// scope here.
+pub fn permissions_for(contribution: &PluginContribution) -> Vec<DenoPermission> {
     match contribution {
         PluginContribution::Agent(_) => agent_permissions(),
-        PluginContribution::Ui(_) => vec![
-            DenoPermission::AllowRead(ReadScope::Directory(data_dir.to_path_buf())),
-            DenoPermission::AllowWrite(data_dir.to_path_buf()),
-            DenoPermission::AllowEnv(EnvScope::Variables(vec![PLUGIN_DATA_DIR_ENV])),
-        ],
+        PluginContribution::Ui(_) => Vec::new(),
     }
 }
 
@@ -117,27 +100,25 @@ pub fn agent_permissions() -> Vec<DenoPermission> {
     vec![
         DenoPermission::AllowRun,
         DenoPermission::AllowRead(ReadScope::Everything),
-        DenoPermission::AllowEnv(EnvScope::Everything),
+        DenoPermission::AllowEnv,
         DenoPermission::AllowNet,
     ]
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DenoPermission, EnvScope, PermissionFlagError, ReadScope, permissions_for};
+    use super::{DenoPermission, PermissionFlagError, ReadScope, permissions_for};
     use ora_plugin_manager::{
         InstalledPluginAgent, InstalledPluginUi, InstalledSurface, InstalledSurfaceSource,
         InstancePolicy, PluginContribution, RemoteSiteSource, SurfaceId, WebDataPolicy,
     };
     use pretty_assertions::assert_eq;
     use std::ffi::OsString;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     /// Builds one ui contribution with a single remote-site surface.
     fn ui_contribution() -> PluginContribution {
         PluginContribution::Ui(InstalledPluginUi {
-            contract_version: 1,
             surfaces: vec![InstalledSurface {
                 id: SurfaceId::parse("market").expect("surface id"),
                 title: "Market".to_string(),
@@ -157,9 +138,8 @@ mod tests {
     fn agent_plugins_get_broad_permissions() {
         let contribution = PluginContribution::Agent(InstalledPluginAgent {
             display_name: "Agent".to_string(),
-            contract_version: 1,
         });
-        let permissions = permissions_for(&contribution, &PathBuf::from("/unused"));
+        let permissions = permissions_for(&contribution);
         let flags = permissions
             .iter()
             .map(|permission| permission.to_flag().expect("render agent flag"))
@@ -171,7 +151,7 @@ mod tests {
                 vec![
                     DenoPermission::AllowRun,
                     DenoPermission::AllowRead(ReadScope::Everything),
-                    DenoPermission::AllowEnv(EnvScope::Everything),
+                    DenoPermission::AllowEnv,
                     DenoPermission::AllowNet,
                 ],
                 vec![
@@ -184,39 +164,30 @@ mod tests {
         );
     }
 
-    /// Ui plugins may only read and write their own data directory, rendered canonically, and
-    /// may read the one environment variable that names it.
+    /// Ui plugins launch with no permission flags at all; their data goes through the host.
     #[test]
-    fn ui_plugins_are_scoped_to_their_data_directory() {
-        let temp_dir = TempDir::new().expect("create data directory");
-        let data_dir = temp_dir.path().join("plugin-data").join("ora.example");
-        std::fs::create_dir_all(&data_dir).expect("create plugin data directory");
-        let canonical = std::fs::canonicalize(&data_dir).expect("canonicalize data directory");
+    fn ui_plugins_get_no_permissions() {
+        assert_eq!(permissions_for(&ui_contribution()), Vec::new());
+    }
 
-        let permissions = permissions_for(&ui_contribution(), &data_dir);
-        let flags = permissions
-            .iter()
-            .map(|permission| permission.to_flag().expect("render ui flag"))
-            .collect::<Vec<_>>();
+    /// Scoped grants render the canonical path so Deno's own canonical comparison matches.
+    #[test]
+    fn scoped_grants_render_canonical_paths() {
+        let temp_dir = TempDir::new().expect("create data directory");
+        let data_dir = temp_dir.path().join("scoped");
+        std::fs::create_dir_all(&data_dir).expect("create scoped directory");
+        let canonical = std::fs::canonicalize(&data_dir).expect("canonicalize scoped directory");
 
         let mut read = OsString::from("--allow-read=");
         read.push(&canonical);
         let mut write = OsString::from("--allow-write=");
         write.push(&canonical);
         assert_eq!(
-            (permissions, flags),
             (
-                vec![
-                    DenoPermission::AllowRead(ReadScope::Directory(data_dir.clone())),
-                    DenoPermission::AllowWrite(data_dir),
-                    DenoPermission::AllowEnv(EnvScope::Variables(vec!["ORA_PLUGIN_DATA_DIR"])),
-                ],
-                vec![
-                    read,
-                    write,
-                    OsString::from("--allow-env=ORA_PLUGIN_DATA_DIR")
-                ],
+                DenoPermission::AllowRead(ReadScope::Directory(data_dir.clone())).to_flag(),
+                DenoPermission::AllowWrite(data_dir).to_flag(),
             ),
+            (Ok(read), Ok(write)),
         );
     }
 

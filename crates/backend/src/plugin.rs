@@ -11,6 +11,7 @@ use ora_contracts::{
     SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
 use ora_db::{RepositoryPool, SqlitePluginStateRepository};
+use ora_domain::PluginId;
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_lifecycle::{
     DenoPluginRuntimeLauncher, InboundNotification, PluginLifecycle, PluginLifecycleConfig,
@@ -41,7 +42,7 @@ pub(crate) type BackendPluginLifecycle = PluginLifecycle<
 /// Bounded fan-out buffer between the lifecycle's per-process pumps and their consumers.
 ///
 /// A slow consumer may lag and lose the oldest notifications, which is acceptable because the
-/// only producer today (`ui/push`) is best-effort by contract; the alternative, blocking the
+/// only producer today (`ora/ui/push`) is best-effort by contract; the alternative, blocking the
 /// pump, would stall every other message of that plugin process.
 const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
 
@@ -256,7 +257,16 @@ impl PluginApi {
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
         let registry_directory = self.registry_source.checkout_dir().join("registry");
-        let manifest = RegistryIndex::resolve_manifest(&registry_directory, &request.plugin_id)
+        // A malformed identifier can never name a registry entry, so it is reported the same way
+        // as an unknown one instead of leaking the id grammar as a separate error class.
+        let plugin_id = PluginId::parse(&request.plugin_id).map_err(|_| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "marketplace plugin id is not a valid `<namespace>/<name>`",
+            )
+        })?;
+        let manifest = RegistryIndex::resolve_manifest(&registry_directory, &plugin_id)
             .map_err(|error| {
                 BackendError::internal("failed to resolve plugin release manifest", error)
             })?
@@ -300,7 +310,7 @@ impl PluginApi {
 /// Converts one registry entry into the frontend-facing marketplace summary.
 fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
     ora_contracts::AvailablePlugin {
-        id: entry.id().to_owned(),
+        id: entry.id().canonical(),
         name: entry.name().to_owned(),
         namespace: entry.namespace().to_owned(),
         version: entry.version().to_string(),
@@ -323,7 +333,7 @@ mod tests {
     async fn broadcasts_to_late_subscribers_and_tolerates_none() {
         let sink = BroadcastNotificationSink::new();
         let notification = |method: &str| InboundNotification {
-            plugin_id: PluginId::new("ora-space.hello-panel"),
+            plugin_id: PluginId::new("official", "ora-space.hello-panel").expect("plugin id"),
             generation: PluginGeneration(1),
             method: method.to_owned(),
             params: json!({ "n": 1 }),
@@ -331,15 +341,15 @@ mod tests {
         sink.on_notification(notification("dropped"));
 
         let mut receiver = sink.subscribe();
-        sink.on_notification(notification("ui/push"));
-        sink.on_notification(notification("ui/other"));
+        sink.on_notification(notification("ora/ui/push"));
+        sink.on_notification(notification("ora/ui/other"));
 
         assert_eq!(
             (
                 receiver.recv().await.expect("first"),
                 receiver.recv().await.expect("second"),
             ),
-            (notification("ui/push"), notification("ui/other"))
+            (notification("ora/ui/push"), notification("ora/ui/other"))
         );
     }
 }

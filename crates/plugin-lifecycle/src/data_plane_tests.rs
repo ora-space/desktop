@@ -230,11 +230,14 @@ async fn enable_example<Sink: PluginNotificationSink>(
 ) {
     lifecycle
         .enable_plugin(EnablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/ora.example".to_string(),
         })
         .await
         .expect("enable plugin");
-    assert_eq!(events.recv().await, Some(PluginId::new("ora.example")));
+    assert_eq!(
+        events.recv().await,
+        Some(PluginId::new("official", "ora.example").expect("plugin id"))
+    );
 }
 
 /// Returns the runtime status the lifecycle currently reports for `ora.example`.
@@ -245,51 +248,36 @@ fn example_status<Sink: PluginNotificationSink>(
         .list_installed_plugins()
         .plugins
         .into_iter()
-        .find(|plugin| plugin.id == "ora.example")
+        .find(|plugin| plugin.id == "official/ora.example")
         .map(|plugin| plugin.runtime)
         .expect("example plugin is installed")
 }
 
-/// Writes one remote-site ui package below the discovery root.
-fn write_ui_plugin_package(data_dir: &Path, directory: &str, id: &str) {
-    let package_root = data_dir.join("plugins").join(directory);
-    fs::create_dir_all(package_root.join("dist")).expect("create plugin package");
-    fs::write(package_root.join("dist").join("index.js"), "export {};\n")
-        .expect("write plugin entrypoint");
+/// Writes one remote-site ui package into the flat installed layout.
+fn write_ui_plugin_package(data_dir: &Path, name: &str) {
+    let package_root = data_dir.join("plugins").join("installed").join(name);
+    fs::create_dir_all(&package_root).expect("create plugin package");
+    fs::write(package_root.join("main.js"), "export {};\n").expect("write plugin entrypoint");
     fs::write(
-        package_root.join("package.json"),
-        serde_json::to_vec_pretty(&json!({
-            "name": "@ora/example-ui",
-            "version": "1.0.0",
-            "type": "module",
-            "ora": {
-                "manifestVersion": 1,
-                "id": id,
-                "displayName": "Example UI",
-                "kind": "ui",
-                "main": "dist/index.js",
-                "engines": {
-                    "ora": ">=0.1.0 <0.2.0",
-                    "pluginApi": 1,
-                    "bun": ">=1.0.0 <2.0.0"
-                },
-                "contributes": {
-                    "ui": {
-                        "contractVersion": 1,
-                        "surfaces": [{
-                            "id": "market",
-                            "title": "Market",
-                            "source": {
-                                "kind": "remoteSite",
-                                "entryUrl": "https://example.com/",
-                                "navigation": { "allowHosts": ["example.com"] }
-                            }
-                        }]
-                    }
-                }
-            }
-        }))
-        .expect("serialize plugin manifest"),
+        package_root.join("orax.toml"),
+        format!(
+            r#"resolver = 1
+name = "{name}"
+namespace = "official"
+kind = "ui"
+version = "1.0.0"
+description = "Example ui plugin"
+
+[[ui.surfaces]]
+id = "market"
+title = "Market"
+
+[ui.surfaces.source]
+kind = "remote_site"
+entry = "https://example.com/"
+hosts = ["example.com"]
+"#
+        ),
     )
     .expect("write plugin manifest");
 }
@@ -299,11 +287,11 @@ fn write_ui_plugin_package(data_dir: &Path, directory: &str, id: &str) {
 async fn ensure_running_starts_a_stopped_plugin() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;
-    let plugin_id = PluginId::new("ora.example");
+    let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
 
     let connection = lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
@@ -323,7 +311,9 @@ async fn ensure_running_starts_a_stopped_plugin() {
             lifecycle.connection(&plugin_id).map(|c| c.generation()),
             temp_dir
                 .path()
-                .join("plugin-data")
+                .join("plugins")
+                .join("data")
+                .join("official")
                 .join("ora.example")
                 .join("downloads")
                 .is_dir(),
@@ -344,16 +334,22 @@ async fn ensure_running_starts_a_stopped_plugin() {
 async fn ensure_running_reports_disabled_and_not_found() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, _events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
 
     let disabled = lifecycle
-        .ensure_running(&PluginId::new("ora.example"), Duration::from_secs(1))
+        .ensure_running(
+            &PluginId::new("official", "ora.example").expect("plugin id"),
+            Duration::from_secs(1),
+        )
         .await
         .map(|c| c.generation());
     let missing = lifecycle
-        .ensure_running(&PluginId::new("ora.missing"), Duration::from_secs(1))
+        .ensure_running(
+            &PluginId::new("official", "ora.missing").expect("plugin id"),
+            Duration::from_secs(1),
+        )
         .await
         .map(|c| c.generation());
 
@@ -362,7 +358,7 @@ async fn ensure_running_reports_disabled_and_not_found() {
             disabled,
             missing,
             lifecycle
-                .connection(&PluginId::new("ora.example"))
+                .connection(&PluginId::new("official", "ora.example").expect("plugin id"))
                 .map(|c| c.generation()),
             log.lock().unwrap_or_else(PoisonError::into_inner).clone(),
         ),
@@ -380,12 +376,12 @@ async fn ensure_running_reports_disabled_and_not_found() {
 async fn ensure_running_reports_launch_failure() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "ora.example");
     let (mut launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     launcher.launch_failure = Some("deno exploded".to_string());
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;
-    let plugin_id = PluginId::new("ora.example");
+    let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
 
     let result = lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
@@ -410,12 +406,12 @@ async fn ensure_running_reports_launch_failure() {
 async fn ensure_running_times_out_while_starting() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (launcher, release) = launcher.gated();
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;
-    let plugin_id = PluginId::new("ora.example");
+    let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     let stopped = lifecycle.connection(&plugin_id).map(|c| c.generation());
 
     let timed_out = lifecycle
@@ -447,7 +443,7 @@ async fn ensure_running_times_out_while_starting() {
 async fn pump_forwards_notifications_with_generation() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, mut senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (sink_tx, mut received) = mpsc::unbounded_channel();
     let sink = RecordingSink {
@@ -455,7 +451,7 @@ async fn pump_forwards_notifications_with_generation() {
     };
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, sink);
     enable_example(&lifecycle, &mut events).await;
-    let plugin_id = PluginId::new("ora.example");
+    let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
         .await
@@ -485,11 +481,11 @@ async fn pump_forwards_notifications_with_generation() {
 async fn pump_close_under_live_process_fails_the_plugin() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, mut senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;
-    let plugin_id = PluginId::new("ora.example");
+    let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
         .await
@@ -514,11 +510,11 @@ async fn pump_close_under_live_process_fails_the_plugin() {
 async fn pump_close_after_stop_leaves_the_plugin_stopped() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, mut senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;
-    let plugin_id = PluginId::new("ora.example");
+    let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
         .await
@@ -526,7 +522,7 @@ async fn pump_close_after_stop_leaves_the_plugin_stopped() {
     let sender = senders.recv().await.expect("launch handed over a sender");
     lifecycle
         .stop_plugin(StopPluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/ora.example".to_string(),
         })
         .await
         .expect("stop plugin");
@@ -543,11 +539,11 @@ async fn pump_close_after_stop_leaves_the_plugin_stopped() {
 async fn ui_plugin_missing_download_completed_fails_after_launch() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_ui_plugin_package(temp_dir.path(), "example", "ora.example");
+    write_ui_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;
-    let plugin_id = PluginId::new("ora.example");
+    let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
 
     let result = lifecycle
         .ensure_running(&plugin_id, Duration::from_secs(5))
@@ -561,7 +557,7 @@ async fn ui_plugin_missing_download_completed_fails_after_launch() {
         ),
         (
             Err(ConnectionError::Failed(
-                "ui contract v1 requires method ui/downloadCompleted".to_string()
+                "ui contract v1 requires method ora/ui/download_completed".to_string()
             )),
             vec!["stop".to_string()],
         ),
@@ -573,16 +569,19 @@ async fn ui_plugin_missing_download_completed_fails_after_launch() {
 async fn ui_plugin_with_download_completed_runs() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_ui_plugin_package(temp_dir.path(), "example", "ora.example");
+    write_ui_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration {
-        methods: HashSet::from(["ui/downloadCompleted".to_string()]),
+        methods: HashSet::from(["ora/ui/download_completed".to_string()]),
         emits: HashSet::new(),
     });
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;
 
     let result = lifecycle
-        .ensure_running(&PluginId::new("ora.example"), Duration::from_secs(5))
+        .ensure_running(
+            &PluginId::new("official", "ora.example").expect("plugin id"),
+            Duration::from_secs(5),
+        )
         .await
         .map(|c| c.generation());
 
@@ -594,13 +593,13 @@ async fn ui_plugin_with_download_completed_runs() {
 async fn surfaces_close_before_the_runtime_stops() {
     let _logging = trace_logging_guard();
     let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
-    write_plugin_package(temp_dir.path(), "example", "ora.example", "Example");
+    write_plugin_package(temp_dir.path(), "ora.example");
     let (launcher, log, _senders) = ScriptedLauncher::new(PluginRegistration::default());
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     lifecycle.set_surface_closer(RecordingCloser {
         log: Arc::clone(&log),
     });
-    let plugin_id = PluginId::new("ora.example");
+    let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
     let mut observed = Vec::new();
 
     enable_example(&lifecycle, &mut events).await;
@@ -610,7 +609,7 @@ async fn surfaces_close_before_the_runtime_stops() {
         .expect("ensure running");
     lifecycle
         .stop_plugin(StopPluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/ora.example".to_string(),
         })
         .await
         .expect("stop plugin");
@@ -620,7 +619,7 @@ async fn surfaces_close_before_the_runtime_stops() {
 
     lifecycle
         .activate_plugin(ActivatePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/ora.example".to_string(),
         })
         .await
         .expect("activate plugin");
@@ -630,7 +629,7 @@ async fn surfaces_close_before_the_runtime_stops() {
         .expect("ensure running again");
     lifecycle
         .disable_plugin(DisablePluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/ora.example".to_string(),
         })
         .await
         .expect("disable plugin");
@@ -645,7 +644,7 @@ async fn surfaces_close_before_the_runtime_stops() {
         .expect("ensure running a third time");
     lifecycle
         .uninstall_plugin(UninstallPluginRequest {
-            plugin_id: "ora.example".to_string(),
+            plugin_id: "official/ora.example".to_string(),
         })
         .await
         .expect("uninstall plugin");
@@ -653,13 +652,18 @@ async fn surfaces_close_before_the_runtime_stops() {
         &mut *log.lock().unwrap_or_else(PoisonError::into_inner),
     ));
 
-    let ordered = vec!["close_all:ora.example".to_string(), "stop".to_string()];
+    let ordered = vec![
+        "close_all:official/ora.example".to_string(),
+        "stop".to_string(),
+    ];
     assert_eq!(
         (
             observed,
             temp_dir
                 .path()
-                .join("plugin-data")
+                .join("plugins")
+                .join("data")
+                .join("official")
                 .join("ora.example")
                 .exists(),
             lifecycle

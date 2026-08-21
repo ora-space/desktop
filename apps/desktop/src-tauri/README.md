@@ -17,8 +17,9 @@ The shared developer preferences are exposed through `get_developer_mode`, `set_
 `src/surface/` hosts the webviews contributed by `ui` plugins (see its README and
 `docs/surface.md`). The pure state machine and registry live in `ora-surface`; this crate
 executes their effects with Tauri, resolves per-surface web data isolation, writes downloads into
-`<data-dir>/plugin-data/<plugin_id>/downloads/`, and delivers them to the plugin process through
-`ui/downloadCompleted`. The `embedded-surfaces` Cargo feature (off by default) enables child
+`<data-dir>/plugins/data/<namespace>/<name>/downloads/`, and delivers them to the plugin process through
+`ora/ui/download_completed` as the logical path `downloads/<file_name>`, which the plugin reads
+back over `ora/storage/*`. The `embedded-surfaces` Cargo feature (off by default) enables child
 webviews docked into the main window through Tauri's `unstable` API; without it every surface
 opens as its own window and `surface_capabilities` reports `embedded: false`.
 

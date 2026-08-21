@@ -7,10 +7,16 @@ use crate::ports::PluginRuntimeFailure;
 use ora_plugin_manager::{InstalledSurfaceSource, PluginContribution};
 use ora_plugin_runtime::PluginRegistration;
 
+/// Host-to-plugin notification: one surface instance entered the open state.
+pub const UI_SURFACE_OPENED_METHOD: &str = "ora/ui/surface_opened";
+/// Host-to-plugin notification: one surface instance closed.
+pub const UI_SURFACE_CLOSED_METHOD: &str = "ora/ui/surface_closed";
 /// The request a remote-site ui plugin must serve so downloaded files can be handed to it.
-pub const UI_DOWNLOAD_COMPLETED_METHOD: &str = "ui/downloadCompleted";
+pub const UI_DOWNLOAD_COMPLETED_METHOD: &str = "ora/ui/download_completed";
 /// The request a panel ui plugin must serve so its page can reach the process.
-pub const UI_REQUEST_METHOD: &str = "ui/request";
+pub const UI_REQUEST_METHOD: &str = "ora/ui/request";
+/// Plugin-to-host notification a panel ui plugin must declare in `emits` to push to its pages.
+pub const UI_PUSH_METHOD: &str = "ora/ui/push";
 
 /// Rejects a registration that does not cover the contract implied by the manifest kind.
 ///
@@ -42,6 +48,14 @@ pub fn validate_registration(
                     "ui contract v1 requires method {UI_REQUEST_METHOD}"
                 )));
             }
+            // Push is the only way a panel plugin reaches its page unprompted, and the runtime
+            // kills a process that emits an undeclared method, so a missing declaration would
+            // otherwise surface as a crash on the first push instead of at the handshake.
+            if has_panel && !registration.emits.contains(UI_PUSH_METHOD) {
+                return Err(PluginRuntimeFailure::new(format!(
+                    "ui contract v1 requires emit {UI_PUSH_METHOD}"
+                )));
+            }
             Ok(())
         }
     }
@@ -65,7 +79,6 @@ mod tests {
     /// Builds one ui contribution with a single remote-site surface.
     fn remote_site_ui() -> PluginContribution {
         PluginContribution::Ui(InstalledPluginUi {
-            contract_version: 1,
             surfaces: vec![InstalledSurface {
                 id: SurfaceId::parse("market").expect("surface id"),
                 title: "Market".to_string(),
@@ -83,7 +96,6 @@ mod tests {
     /// Builds one ui contribution with a single panel surface.
     fn panel_ui() -> PluginContribution {
         PluginContribution::Ui(InstalledPluginUi {
-            contract_version: 1,
             surfaces: vec![InstalledSurface {
                 id: SurfaceId::parse("counter").expect("surface id"),
                 title: "Hello Panel".to_string(),
@@ -96,21 +108,30 @@ mod tests {
         })
     }
 
-    /// A panel ui plugin must serve `ui/request`; the download handler is not required of it.
+    /// A panel ui plugin must serve `ora/ui/request` and declare `ora/ui/push`; the download
+    /// handler is not required of it.
     #[test]
-    fn panel_ui_requires_request_only() {
-        let with_request = PluginRegistration {
-            methods: HashSet::from(["ui/request".to_string()]),
-            emits: HashSet::from(["ui/push".to_string()]),
+    fn panel_ui_requires_request_and_push() {
+        let without_push = PluginRegistration {
+            methods: HashSet::from(["ora/ui/request".to_string()]),
+            emits: HashSet::new(),
+        };
+        let complete = PluginRegistration {
+            methods: HashSet::from(["ora/ui/request".to_string()]),
+            emits: HashSet::from(["ora/ui/push".to_string()]),
         };
         assert_eq!(
             (
                 validate_registration(&panel_ui(), &PluginRegistration::default()),
-                validate_registration(&panel_ui(), &with_request),
+                validate_registration(&panel_ui(), &without_push),
+                validate_registration(&panel_ui(), &complete),
             ),
             (
                 Err(PluginRuntimeFailure::new(
-                    "ui contract v1 requires method ui/request"
+                    "ui contract v1 requires method ora/ui/request"
+                )),
+                Err(PluginRuntimeFailure::new(
+                    "ui contract v1 requires emit ora/ui/push"
                 )),
                 Ok(()),
             )
@@ -123,7 +144,7 @@ mod tests {
         assert_eq!(
             validate_registration(&remote_site_ui(), &PluginRegistration::default()),
             Err(PluginRuntimeFailure::new(
-                "ui contract v1 requires method ui/downloadCompleted"
+                "ui contract v1 requires method ora/ui/download_completed"
             )),
         );
     }
@@ -132,7 +153,7 @@ mod tests {
     #[test]
     fn remote_site_ui_with_download_completed_passes() {
         let registration = PluginRegistration {
-            methods: HashSet::from(["ui/downloadCompleted".to_string()]),
+            methods: HashSet::from(["ora/ui/download_completed".to_string()]),
             emits: HashSet::new(),
         };
         assert_eq!(
@@ -146,7 +167,6 @@ mod tests {
     fn agent_registrations_are_not_checked_here() {
         let contribution = PluginContribution::Agent(InstalledPluginAgent {
             display_name: "Agent".to_string(),
-            contract_version: 1,
         });
         assert_eq!(
             validate_registration(&contribution, &PluginRegistration::default()),

@@ -1,3 +1,4 @@
+use ora_domain::PluginId;
 use ora_plugin_manifest::PluginManifest;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// rather than re-validating manifest invariants at load time.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RegistryEntry {
-    id: String,
+    id: PluginId,
     name: String,
     namespace: String,
     version: Version,
@@ -36,7 +37,7 @@ impl RegistryEntry {
     }
 
     /// Returns the unique `namespace/name` identifier.
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &PluginId {
         &self.id
     }
 
@@ -70,6 +71,9 @@ impl RegistryEntry {
 ///
 /// Identifier construction is shared by index building and install-time lookup, so both agree on
 /// what a marketplace identifier means without the lookup path having to build a whole entry.
-pub(crate) fn entry_id(manifest: &PluginManifest) -> String {
-    format!("{}/{}", manifest.namespace(), manifest.name())
+pub(crate) fn entry_id(manifest: &PluginManifest) -> PluginId {
+    // The manifest grammar is a strict subset of what `PluginId` accepts, so this cannot fail for
+    // a manifest that already parsed; the fallback keeps the function total.
+    PluginId::new(manifest.namespace().as_str(), manifest.name().as_str())
+        .unwrap_or_else(|error| unreachable!("validated manifest name is a plugin id: {error}"))
 }

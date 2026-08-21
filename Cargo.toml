@@ -118,6 +118,7 @@ serde_with = { version = "3" }
 serde_yaml = "0.9"
 tar = "0.4"
 tempfile = "3"
+base64 = "0.22"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = "1"

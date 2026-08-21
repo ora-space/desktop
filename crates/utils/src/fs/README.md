@@ -1,7 +1,8 @@
 # ora-utils::fs
 
 Portable file naming for files whose names come from untrusted sources such as browser download
-suggestions, URL path segments, or user input.
+suggestions, URL path segments, or user input. Atomic whole-file replacement lives in
+`ora-utils::atomic`.
 
 ## Guarantees
 
@@ -27,4 +28,4 @@ A leading-dot name such as `.bashrc` has no extension and its stem is `bashrc` a
 ## Non-responsibilities
 
 - Validating relative paths or containment (see `ora-utils::path`).
-- Creating, renaming, or removing files.
+- Creating directories, removing files, or validating where a write may land.

@@ -1,0 +1,21 @@
+resolver = 1
+name = "ora-space.skillhub"
+namespace = "official"
+kind = "ui"
+version = "0.1.0"
+description = "Ora Space SkillHub surface"
+homepage = "https://github.com/ora-space/ui-plugins"
+license = "Apache-2.0"
+
+[[ui.surfaces]]
+id = "market"
+title = "SkillHub"
+instances = "singleton"
+
+[ui.surfaces.source]
+kind = "remote_site"
+entry = "https://www.skillhub.cn"
+hosts = ["skillhub.cn", "www.skillhub.cn"]
+
+[ui.surfaces.web_data]
+mode = "persistent"

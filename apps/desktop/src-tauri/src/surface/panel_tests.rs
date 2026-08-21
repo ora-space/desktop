@@ -14,7 +14,7 @@ use std::fs;
 use std::path::Path;
 use tauri::Manager;
 
-const LABEL: &str = "panel-surface:ora-space_hello-panel:counter:0";
+const LABEL: &str = "panel-surface:official_ora-space_hello-panel:counter:0";
 
 /// Writes the page, a nested script, a file with a refused extension, and a decoy outside the
 /// asset root that a traversal would reach.
@@ -24,7 +24,7 @@ fn write_assets(panel_root: &Path) {
     fs::write(panel_root.join("nested").join("app.js"), "export {};").expect("script");
     fs::write(panel_root.join("tool.exe"), "MZ").expect("binary");
     let package_root = panel_root.parent().expect("package root");
-    fs::write(package_root.join("package.json"), "{}").expect("decoy");
+    fs::write(package_root.join("orax.toml"), "resolver = 1").expect("decoy");
 }
 
 /// Opens the panel surface in a harness whose gateway reports a running process.
@@ -43,7 +43,7 @@ fn open_panel(
     let (app, service, _) = harness(gateway.clone());
     let record = service
         .open(
-            &PluginId::new(PANEL_PLUGIN),
+            &PluginId::new("official", PANEL_PLUGIN).expect("plugin id"),
             "counter",
             MountTarget::Windowed,
         )
@@ -66,7 +66,7 @@ fn opens_panel_with_panel_label_and_asset_url() {
         ),
         (
             LABEL,
-            "ora-plugin://localhost/ora-space.hello-panel/counter/index.html".to_owned(),
+            "ora-plugin://localhost/official/ora-space.hello-panel/counter/index.html".to_owned(),
         )
     );
 }
@@ -85,72 +85,72 @@ fn asset_resolution_table() {
     let cases = [
         (
             LABEL,
-            "/ora-space.hello-panel/counter/index.html",
+            "/official/ora-space.hello-panel/counter/index.html",
             serve("text/html; charset=utf-8", "<html></html>", true),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/counter/",
+            "/official/ora-space.hello-panel/counter/",
             serve("text/html; charset=utf-8", "<html></html>", true),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/counter/nested/app.js",
+            "/official/ora-space.hello-panel/counter/nested/app.js",
             serve("text/javascript; charset=utf-8", "export {};", false),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/counter/nested/%61pp.js",
+            "/official/ora-space.hello-panel/counter/nested/%61pp.js",
             serve("text/javascript; charset=utf-8", "export {};", false),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/counter/../package.json",
+            "/official/ora-space.hello-panel/counter/../orax.toml",
             AssetOutcome::NotFound("path is not a safe relative path"),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/counter/%2e%2e/package.json",
+            "/official/ora-space.hello-panel/counter/%2e%2e/orax.toml",
             AssetOutcome::NotFound("path is not a safe relative path"),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/counter/tool.exe",
+            "/official/ora-space.hello-panel/counter/tool.exe",
             AssetOutcome::NotFound("extension is not servable"),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/counter/nested",
+            "/official/ora-space.hello-panel/counter/nested",
             AssetOutcome::NotFound("path is not a regular file"),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/counter/missing.css",
+            "/official/ora-space.hello-panel/counter/missing.css",
             AssetOutcome::NotFound("file does not resolve inside the asset root"),
         ),
         (
             LABEL,
-            "/ora-space.skillhub/counter/index.html",
+            "/official/ora-space.skillhub/counter/index.html",
             AssetOutcome::NotFound("path names another plugin or surface"),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel/other/index.html",
+            "/official/ora-space.hello-panel/other/index.html",
             AssetOutcome::NotFound("path names another plugin or surface"),
         ),
         (
             LABEL,
-            "/ora-space.hello-panel",
+            "/official/ora-space.hello-panel",
             AssetOutcome::NotFound("path lacks plugin and surface segments"),
         ),
         (
             "main",
-            "/ora-space.hello-panel/counter/index.html",
+            "/official/ora-space.hello-panel/counter/index.html",
             AssetOutcome::NotFound("label is not a live surface"),
         ),
         (
-            "panel-surface:ora-space_hello-panel:counter:9",
-            "/ora-space.hello-panel/counter/index.html",
+            "panel-surface:official_ora-space_hello-panel:counter:9",
+            "/official/ora-space.hello-panel/counter/index.html",
             AssetOutcome::NotFound("label is not a live surface"),
         ),
     ];
@@ -168,14 +168,18 @@ fn asset_resolution_table() {
 fn remote_site_label_cannot_fetch_panel_assets() {
     let (_app, service, _gateway, _record) = open_panel(FakeProcess::Stopped);
     let remote = service
-        .open(&PluginId::new(PLUGIN), "market", MountTarget::Windowed)
+        .open(
+            &PluginId::new("official", PLUGIN).expect("plugin id"),
+            "market",
+            MountTarget::Windowed,
+        )
         .expect("open remote");
 
     assert_eq!(
         resolve_asset(
             &service.registry,
             remote.label.as_str(),
-            "/ora-space.hello-panel/counter/index.html"
+            "/official/ora-space.hello-panel/counter/index.html"
         ),
         AssetOutcome::NotFound("surface is not a panel")
     );
@@ -194,21 +198,30 @@ fn asset_response_headers() {
             .map(|value| value.to_str().expect("ascii").to_owned())
     };
 
-    let document = asset_response(registry, LABEL, "/ora-space.hello-panel/counter/index.html");
+    let document = asset_response(
+        registry,
+        LABEL,
+        "/official/ora-space.hello-panel/counter/index.html",
+    );
     let script = asset_response(
         registry,
         LABEL,
-        "/ora-space.hello-panel/counter/nested/app.js",
+        "/official/ora-space.hello-panel/counter/nested/app.js",
     );
-    let refused = asset_response(registry, LABEL, "/ora-space.hello-panel/counter/tool.exe");
+    let refused = asset_response(
+        registry,
+        LABEL,
+        "/official/ora-space.hello-panel/counter/tool.exe",
+    );
 
     assert_eq!(
         (
             document.status().as_u16(),
             header(&document, "cache-control"),
             header(&document, "x-content-type-options"),
-            header(&document, "content-security-policy").map(|csp| csp
-                .contains("script-src ora-plugin://localhost/ora-space.hello-panel/counter/;")),
+            header(&document, "content-security-policy").map(|csp| csp.contains(
+                "script-src ora-plugin://localhost/official/ora-space.hello-panel/counter/;"
+            )),
             script.status().as_u16(),
             header(&script, "cache-control"),
             header(&script, "content-security-policy"),
@@ -233,7 +246,11 @@ fn asset_response_headers() {
 async fn bridge_request_round_trip_and_refusals() {
     let (_app, service, gateway, _record) = open_panel(FakeProcess::Running);
     let remote = service
-        .open(&PluginId::new(PLUGIN), "market", MountTarget::Windowed)
+        .open(
+            &PluginId::new("official", PLUGIN).expect("plugin id"),
+            "market",
+            MountTarget::Windowed,
+        )
         .expect("open remote");
 
     let answer = service.request(LABEL, json!({ "type": "increment" })).await;
@@ -245,7 +262,7 @@ async fn bridge_request_round_trip_and_refusals() {
     let calls = gateway.connection.calls.lock().expect("calls").clone();
     let request_call = calls
         .iter()
-        .find(|(method, _)| method == "ui/request")
+        .find(|(method, _)| method == "ora/ui/request")
         .cloned();
 
     assert_eq!(
@@ -262,11 +279,11 @@ async fn bridge_request_round_trip_and_refusals() {
                 code: HostErrorCode::PayloadTooLarge
             }),
             Some((
-                "ui/request".to_owned(),
+                "ora/ui/request".to_owned(),
                 json!({
-                    "surfaceId": "counter",
-                    "instanceId": 0,
-                    "generation": 3,
+                    "surface_id": "counter",
+                    "surface_instance_id": 0,
+                    "plugin_generation": 3,
                     "payload": { "type": "increment" },
                 }),
             )),
@@ -274,25 +291,31 @@ async fn bridge_request_round_trip_and_refusals() {
     );
 }
 
-/// Builds one `ui/push` notification from the panel plugin.
+/// Builds one `ora/ui/push` notification from the panel plugin.
 fn push(plugin: &str, generation: u64, params: Value) -> InboundNotification {
     InboundNotification {
-        plugin_id: PluginId::new(plugin),
+        plugin_id: PluginId::new("official", plugin).expect("plugin id"),
         generation: PluginGeneration(generation),
-        method: "ui/push".to_owned(),
+        method: "ora/ui/push".to_owned(),
         params,
     }
 }
 
 /// Table of push deliveries: only a well-formed push from the current generation of the owning
 /// plugin to a live panel instance reaches the page, and sequence numbers count per instance.
+/// A push whose own `plugin_generation` disagrees with the emitting process is stale too.
 #[test]
 fn push_delivery_table() {
     let (_app, service, _gateway, _record) = open_panel(FakeProcess::Running);
     let remote = service
-        .open(&PluginId::new(PLUGIN), "market", MountTarget::Windowed)
+        .open(
+            &PluginId::new("official", PLUGIN).expect("plugin id"),
+            "market",
+            MountTarget::Windowed,
+        )
         .expect("open remote");
-    let session = json!({ "surfaceId": "counter", "instanceId": 0, "generation": 3 });
+    let session =
+        json!({ "surface_id": "counter", "surface_instance_id": 0, "plugin_generation": 3 });
     let with_payload = |payload: Value| {
         let mut params = session.clone();
         params["payload"] = payload;
@@ -311,21 +334,31 @@ fn push_delivery_table() {
         service.deliver_push(&push(
             PANEL_PLUGIN,
             3,
-            json!({ "surfaceId": "other", "instanceId": 0, "payload": 5 }),
+            json!({ "surface_id": "other", "surface_instance_id": 0, "plugin_generation": 3, "payload": 5 }),
         )),
         service.deliver_push(&push(
             PANEL_PLUGIN,
             3,
-            json!({ "surfaceId": "counter", "instanceId": 42, "payload": 6 }),
+            json!({ "surface_id": "counter", "surface_instance_id": 42, "plugin_generation": 3, "payload": 6 }),
         )),
         service.deliver_push(&push(
             PLUGIN,
             3,
-            json!({ "surfaceId": "market", "instanceId": remote.instance.value(), "payload": 7 }),
+            json!({ "surface_id": "market", "surface_instance_id": remote.instance.value(), "plugin_generation": 3, "payload": 7 }),
         )),
         service.deliver_push(&push(PANEL_PLUGIN, 3, json!({ "payload": 8 }))),
+        service.deliver_push(&push(
+            PANEL_PLUGIN,
+            3,
+            json!({ "surface_id": "counter", "surface_instance_id": 0, "payload": 10 }),
+        )),
+        service.deliver_push(&push(
+            PANEL_PLUGIN,
+            3,
+            json!({ "surface_id": "counter", "surface_instance_id": 0, "plugin_generation": 2, "payload": 11 }),
+        )),
         service.deliver_push(&InboundNotification {
-            method: "ui/other".to_owned(),
+            method: "ora/ui/other".to_owned(),
             ..push(PANEL_PLUGIN, 3, with_payload(json!(9)))
         }),
     ];
@@ -341,6 +374,8 @@ fn push_delivery_table() {
             Err(PushRejection::UnknownInstance),
             Err(PushRejection::NotPanel),
             Err(PushRejection::MalformedParams),
+            Err(PushRejection::MalformedParams),
+            Err(PushRejection::StaleGeneration),
             Err(PushRejection::NotPush),
         ]
     );

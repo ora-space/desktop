@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use ora_acp::AcpMessages;
 use ora_plugin_lifecycle::agent_permissions;
-use ora_plugin_runtime::{PluginRuntime, PluginRuntimeConfig};
+use ora_plugin_runtime::{NoHostRequests, PluginRuntime, PluginRuntimeConfig};
 use ora_process::TokioProcessSpawner;
 
 use crate::bootstrap::AgentPluginPackage;
@@ -76,13 +76,14 @@ pub(crate) async fn launch(
         entrypoint: spec.entrypoint.clone(),
         permissions,
         cwd: None,
-        env: Vec::new(),
         ready_timeout: PLUGIN_READY_TIMEOUT,
         call_timeout: PLUGIN_CALL_TIMEOUT,
         shutdown_timeout: PLUGIN_SHUTDOWN_TIMEOUT,
     };
+    // Agent plugins reach no host methods yet: the supervisor launches them outside the
+    // lifecycle and therefore has no storage handler bound to a data directory to offer.
     let (runtime, mut notifications) =
-        PluginRuntime::launch(&TokioProcessSpawner::new(), config).await?;
+        PluginRuntime::launch(&TokioProcessSpawner::new(), config, NoHostRequests).await?;
     if let Err(error) = control::verify_agent_contract(&runtime.registration().await) {
         runtime.shutdown_and_wait().await;
         return Err(error);

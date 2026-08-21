@@ -367,7 +367,7 @@ mod tests {
     fn label(instance: u64) -> WebviewLabel {
         WebviewLabel::remote(
             &SurfaceDefinitionId {
-                plugin_id: PluginId::new("ora-space.skillhub"),
+                plugin_id: PluginId::new("official", "ora-space.skillhub").expect("plugin id"),
                 surface_id: SurfaceId::parse("market").expect("valid surface id"),
             },
             SurfaceInstanceId::new(instance),

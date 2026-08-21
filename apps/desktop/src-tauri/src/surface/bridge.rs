@@ -1,22 +1,19 @@
 //! The panel bridge: `surface_request` carries one opaque payload from a panel page to its
-//! plugin process (`ui/request`) and returns the process's answer.
+//! plugin process (`ora/ui/request`) and returns the process's answer.
 
 use crate::state::DesktopState;
 use crate::surface::gateway::{SurfaceConnection, SurfacePluginGateway};
-use crate::surface::plugin_link::PROCESS_START_WAIT;
+use crate::surface::plugin_link::{PROCESS_START_WAIT, session_params};
 use crate::surface::service::SurfaceService;
 use ora_logging::{ora_debug, ora_warn};
-use ora_plugin_lifecycle::PluginCallError;
+use ora_plugin_lifecycle::{PluginCallError, UI_REQUEST_METHOD};
 use ora_surface::{DownloadClock, SurfaceSource};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tauri::{Runtime, State, Webview};
 
 /// JavaScript injected into every panel webview; defines `acquireOraSurfaceApi()`.
 pub const PANEL_API_SCRIPT: &str = include_str!("panel_api.js");
-
-/// Method the host invokes on the plugin for each bridge request.
-pub const UI_REQUEST_METHOD: &str = "ui/request";
 
 /// Upper bound of one request or response payload, well below the 16 MiB frame limit so a
 /// page cannot starve the plugin's protocol channel.
@@ -82,12 +79,8 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
                     code: HostErrorCode::PluginUnavailable,
                 }
             })?;
-        let params = json!({
-            "surfaceId": record.definition.id.surface_id.as_str(),
-            "instanceId": record.instance.value(),
-            "generation": connection.generation().0,
-            "payload": payload,
-        });
+        let mut params = session_params(&record, connection.generation().0);
+        params["payload"] = payload;
         ora_debug!(
             message = "panel request forwarded",
             label,

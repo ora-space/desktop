@@ -99,7 +99,7 @@ pub trait SurfacePluginGateway: Clone + Send + Sync + 'static {
     /// Reports whether the plugin is installed and enabled.
     fn plugin_enabled(&self, plugin_id: &PluginId) -> bool;
 
-    /// Creates and returns `<data-dir>/plugin-data/<plugin_id>`.
+    /// Creates and returns `<data-dir>/plugins/data/<namespace>/<name>`.
     fn data_directory(&self, plugin_id: &PluginId) -> Result<PathBuf, GatewayFailure>;
 
     /// Starts the plugin if needed and waits up to `wait` for a running connection.

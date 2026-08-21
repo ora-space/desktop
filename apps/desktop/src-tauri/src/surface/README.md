@@ -20,12 +20,13 @@ machine, and this module executes the resulting effects.
   panel CSP; every refusal is a 404 with the reason logged.
 - `bridge.rs`, `panel_api.js`: `surface_request`, the bridge command used by `panel-surface:*`
   webviews. Resolves the caller to a live panel instance, bounds the payload, starts the plugin
-  on demand, invokes `ui/request`, and maps failures onto the `{kind: host | plugin}` error union.
+  on demand, invokes `ora/ui/request`, and maps failures onto the `{kind: host | plugin}` error
+  union.
   `panel_api.js` is injected into panel webviews and defines `acquireOraSurfaceApi()`.
-- `push.rs`: routes `ui/push` notifications from the gateway's broadcast stream to the owning
+- `push.rs`: routes `ora/ui/push` notifications from the gateway's broadcast stream to the owning
   panel webview (`window.__ORA_SURFACE_PUSH__`), dropping pushes for unknown instances,
-  non-panels, other plugins/surfaces, and stale process generations; numbers envelopes per
-  instance.
+  non-panels, other plugins/surfaces, malformed params, and stale process generations (both the
+  emitting process and the `plugin_generation` it claims); numbers envelopes per instance.
 - `spec.rs`, `hooks.rs`: `SurfaceWebviewSpec` (immutable build parameters derived from the
   source: entry URL, navigation policy, web data, injected script), the local `SurfaceBuilder`
   trait implemented for both Tauri builders, `SurfaceHooks::attach` (navigation, popup, download
@@ -42,9 +43,12 @@ machine, and this module executes the resulting effects.
 - `downloads.rs`: `DownloadDispatcher`, the `DownloadSink` attached to every surface webview:
   reserves `.part` files in the plugin's `downloads/` directory, promotes or removes them,
   notifies the frontend, brings the main window forward for windowed surfaces, and delivers
-  `ui/downloadCompleted` to the plugin process under a concurrency limit of 8.
-- `plugin_link.rs`: `ui/surfaceOpened` / `ui/surfaceClosed` notifications and the on-demand
-  process start with replay of all open instances, announced exactly once per process generation.
+  `ora/ui/download_completed` (with the logical path `downloads/<file_name>`) to the plugin
+  process under a concurrency limit of 8.
+- `plugin_link.rs`: `ora/ui/surface_opened` / `ora/ui/surface_closed` notifications, the shared
+  `session_params` builder (`surface_id`, `surface_instance_id`, `plugin_generation`), and the
+  on-demand process start with replay of all open instances, announced exactly once per process
+  generation. Method names come from `ora-plugin-lifecycle`; this module declares none.
 - `idle.rs`: per-plugin idle timers; the process is stopped 30 s after the last instance closes
   unless a surface reopens.
 - `gateway.rs`: `SurfacePluginGateway` / `SurfaceConnection`, the narrow port onto
@@ -56,7 +60,8 @@ machine, and this module executes the resulting effects.
 
 - Lifecycle transitions, singleton policy, label format, navigation policy, download naming:
   `ora-surface`.
-- Manifest validation: `ora-plugin-manager`. Plugin processes and data directories:
+- Manifest validation: `ora-plugin-manager`. Plugin processes, data directories, the `ora/ui/*`
+  method names, and the `ora/storage/*` handler through which a plugin reads its downloads back:
   `ora-plugin-lifecycle` via the backend gateway.
 
 ## Invariants

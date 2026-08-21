@@ -12,7 +12,8 @@ use tauri::{LogicalPosition, LogicalSize, State};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSurfaceRequest {
-    plugin_id: String,
+    /// Canonical `<namespace>/<name>`; a malformed id is rejected during argument parsing.
+    plugin_id: PluginId,
     surface_id: String,
     target: MountTarget,
 }
@@ -117,11 +118,9 @@ pub async fn surface_open(
     state: State<'_, DesktopState>,
     request: OpenSurfaceRequest,
 ) -> Result<SurfaceRecordDto, CommandError> {
-    let record = state.surfaces.open(
-        &PluginId::new(request.plugin_id),
-        &request.surface_id,
-        request.target,
-    )?;
+    let record = state
+        .surfaces
+        .open(&request.plugin_id, &request.surface_id, request.target)?;
     Ok(SurfaceRecordDto::from(&record))
 }
 

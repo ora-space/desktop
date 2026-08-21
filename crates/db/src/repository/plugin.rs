@@ -30,7 +30,7 @@ impl PluginStateRepository for SqlitePluginStateRepository {
                      FROM plugin_state
                      WHERE plugin_id = ?1",
                 )?;
-                let mut rows = statement.query(params![plugin_id.as_ref()])?;
+                let mut rows = statement.query(params![plugin_id.canonical()])?;
 
                 match rows.next()? {
                     Some(row) => Ok(Some(map_plugin_state_row(row)?)),
@@ -78,8 +78,11 @@ impl PluginStateRepository for SqlitePluginStateRepository {
                          updated_at = excluded.updated_at
                      RETURNING plugin_id, enabled, created_at, updated_at",
                 )?;
-                let mut rows =
-                    statement.query(params![plugin_id.as_ref(), enabled.database_value(), now])?;
+                let mut rows = statement.query(params![
+                    plugin_id.canonical(),
+                    enabled.database_value(),
+                    now
+                ])?;
 
                 match rows.next()? {
                     Some(row) => map_plugin_state_row(row),
@@ -97,7 +100,7 @@ impl PluginStateRepository for SqlitePluginStateRepository {
             .with_connection(|connection| {
                 let deleted_rows = connection.execute(
                     "DELETE FROM plugin_state WHERE plugin_id = ?1",
-                    params![plugin_id.as_ref()],
+                    params![plugin_id.canonical()],
                 )?;
 
                 Ok(deleted_rows > 0)
@@ -109,7 +112,7 @@ impl PluginStateRepository for SqlitePluginStateRepository {
 /// Restores the durable enum so corrupt integer values cannot enter lifecycle orchestration.
 fn map_plugin_state_row(row: &Row<'_>) -> Result<PluginState, crate::DatabaseError> {
     Ok(PluginState::new(
-        PluginId::new(row.get::<_, String>("plugin_id")?),
+        PluginId::parse(&row.get::<_, String>("plugin_id")?)?,
         PluginEnabledState::from_database_value(row.get("enabled")?)?,
         row.get("created_at")?,
         row.get("updated_at")?,

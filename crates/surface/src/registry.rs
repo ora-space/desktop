@@ -264,7 +264,7 @@ mod tests {
     fn definition(plugin: &str, surface: &str) -> SurfaceDefinition {
         SurfaceDefinition {
             id: SurfaceDefinitionId {
-                plugin_id: PluginId::new(plugin),
+                plugin_id: PluginId::new("official", plugin).expect("plugin id"),
                 surface_id: SurfaceId::parse(surface).expect("valid surface id"),
             },
             title: surface.to_owned(),
@@ -294,7 +294,7 @@ mod tests {
             definition,
             label: WebviewLabel::remote(
                 &SurfaceDefinitionId {
-                    plugin_id: PluginId::new("ora-space.skillhub"),
+                    plugin_id: PluginId::new("official", "ora-space.skillhub").expect("plugin id"),
                     surface_id: SurfaceId::parse("market").expect("valid surface id"),
                 },
                 SurfaceInstanceId::new(0),
@@ -381,7 +381,7 @@ mod tests {
             (
                 Ok(vec![SurfaceEffect::Emit(SurfaceEvent::Opened {
                     instance: 0,
-                    plugin_id: "ora-space.skillhub".to_owned(),
+                    plugin_id: "official/ora-space.skillhub".to_owned(),
                     surface_id: "market".to_owned(),
                     target: MountTarget::Embedded,
                     title: "market".to_owned(),
@@ -474,7 +474,7 @@ mod tests {
 
         assert_eq!(
             record.label.as_str(),
-            "panel-surface:ora-space_hello-panel:counter:0"
+            "panel-surface:official_ora-space_hello-panel:counter:0"
         );
     }
 
@@ -500,7 +500,9 @@ mod tests {
 
         assert_eq!(
             (
-                registry.instances_of(&PluginId::new("ora-space.skillhub")),
+                registry.instances_of(
+                    &PluginId::new("official", "ora-space.skillhub").expect("plugin id")
+                ),
                 registry.resolve_label(other.label.as_str()),
                 registry.resolve_label("remote-surface:unknown:panel:0"),
             ),

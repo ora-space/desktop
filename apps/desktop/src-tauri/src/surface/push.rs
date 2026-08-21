@@ -1,19 +1,16 @@
-//! Routes `ui/push` notifications from plugin processes to the panel webview that owns the
+//! Routes `ora/ui/push` notifications from plugin processes to the panel webview that owns the
 //! session, numbering them per instance.
 
 use crate::surface::gateway::{SurfaceConnection, SurfacePluginGateway};
 use crate::surface::service::SurfaceService;
 use ora_logging::{ora_debug, ora_warn};
-use ora_plugin_lifecycle::InboundNotification;
+use ora_plugin_lifecycle::{InboundNotification, UI_PUSH_METHOD};
 use ora_surface::{DownloadClock, SurfaceInstanceId, SurfaceSource};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::Runtime;
 use tokio::sync::broadcast::error::RecvError;
-
-/// Notification a plugin emits to push one payload to a panel instance.
-pub const UI_PUSH_METHOD: &str = "ui/push";
 
 /// Page-side entry point the injected script defines; see `panel_api.js`.
 const PUSH_ENTRY_POINT: &str = "window.__ORA_SURFACE_PUSH__";
@@ -66,18 +63,32 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
     /// A push is only trusted when the named instance is a live panel of the emitting plugin and
     /// surface, and when the emitting process is the generation the host currently talks to;
     /// the last check is what keeps a restarted plugin's predecessor from writing into the page.
+    /// The `plugin_generation` the plugin writes into the params must also be the generation the
+    /// pump attached to the notification, so a plugin cannot speak for another process.
     pub fn deliver_push(&self, notification: &InboundNotification) -> Result<u64, PushRejection> {
         if notification.method != UI_PUSH_METHOD {
             return Err(PushRejection::NotPush);
         }
-        let surface_id = notification.params.get("surfaceId").and_then(Value::as_str);
+        let surface_id = notification
+            .params
+            .get("surface_id")
+            .and_then(Value::as_str);
         let instance = notification
             .params
-            .get("instanceId")
+            .get("surface_instance_id")
             .and_then(Value::as_u64);
-        let (Some(surface_id), Some(instance)) = (surface_id, instance) else {
+        let claimed_generation = notification
+            .params
+            .get("plugin_generation")
+            .and_then(Value::as_u64);
+        let (Some(surface_id), Some(instance), Some(claimed_generation)) =
+            (surface_id, instance, claimed_generation)
+        else {
             return Err(PushRejection::MalformedParams);
         };
+        if claimed_generation != notification.generation.0 {
+            return Err(PushRejection::StaleGeneration);
+        }
         let payload = notification
             .params
             .get("payload")

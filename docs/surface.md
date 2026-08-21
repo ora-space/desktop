@@ -2,9 +2,12 @@
 
 A surface is a piece of UI contributed by a plugin of kind `ui`, shown inside an isolated native
 webview either docked into the main window (`embedded`) or as its own window (`windowed`). Two
-content sources exist: a remote web site (`remoteSite`) and a page shipped inside the plugin
+content sources exist: a remote web site (`remote_site`) and a page shipped inside the plugin
 package (`panel`), which the host serves itself and connects to the plugin process through a
-request/push bridge.
+request/push bridge. Surfaces are declared in the plugin's `orax.toml` under `[[ui.surfaces]]`
+(see `crates/plugin-manager/README.md` for the manifest and `specs/plugin/6-ui-webview.md` for
+the normative description). Plugins are identified by `ora_domain::PluginId`, spelled
+`<namespace>/<name>` on every wire contract (`pluginId`).
 
 ## Architecture
 
@@ -26,9 +29,10 @@ authorization source: a webview label is only trusted after `resolve_label` maps
 registers an `Opening` instance, creates the webview synchronously, completes the registry with
 `Opened`, emits `opened`, and then links the plugin process:
 
-- process running: `ui/surfaceOpened { surfaceId, instanceId, generation }` is sent directly;
+- process running: `ora/ui/surface_opened { surface_id, surface_instance_id, plugin_generation }`
+  is sent directly;
 - process stopped or failed: it is started in a spawned task (`ensure_running`, 15 s) and, once
-  running, receives `ui/surfaceOpened` for every open instance of the plugin;
+  running, receives `ora/ui/surface_opened` for every open instance of the plugin;
 - process starting: the new instance is announced once the start completes. Each instance is
   announced at most once per process generation, even when several opens race one start.
 
@@ -75,36 +79,46 @@ are closed first.
 ## Plugin data directory and downloads
 
 ```
-<data-dir>/plugin-data/<plugin_id>/
+<data-dir>/plugins/installed/<name>/                         read-only package (orax.toml, main.js, panel assets)
+<data-dir>/plugins/data/<namespace>/<name>/
   downloads/                 host-written surface downloads
   web-profile/<surface_id>/  persistent web profile (Windows / Linux)
 ```
+
+The data directory is keyed by plugin identity (`<namespace>/<name>`), so it survives reinstalls;
+panel assets are read from the installed package directory selected at discovery. The plugin process has no
+filesystem permissions and no environment variable naming the directory: it reads `downloads/`
+and its own files back through the `ora/storage/*` host methods (see the `ora-plugin-lifecycle`
+README), addressed by the same logical paths the host uses in its notifications. `web-profile/`
+is never exposed to the plugin.
 
 A download is attributed solely by the webview label: `resolve_label` yields the plugin, the
 file is reserved as `<downloads>/<name>.part`, promoted to its unique final name on success
 (`ora-utils::fs` sanitization and collision handling) or removed on failure. The frontend gets
 `downloadStarted` / `downloadCompleted` / `downloadFailed`; for windowed surfaces the main window
 is brought forward on completion. Delivery to the plugin runs in a spawned task under a
-semaphore of 8: `ensure_running` (15 s) followed by `ui/downloadCompleted` with
+semaphore of 8: `ensure_running` (15 s) followed by `ora/ui/download_completed` with
 
 ```jsonc
-{ "surfaceId", "instanceId", "generation",
-  "download": { "id", "pageUrl", "sourceUrl", "fileName", "path", "sizeBytes",
-                "completedAt" /* local RFC 3339 */ } }
+{ "surface_id", "surface_instance_id", "plugin_generation",
+  "download": { "id", "page_url", "source_url", "file_name",
+                "path" /* logical: "downloads/<file_name>" */, "size_bytes",
+                "completed_at" /* local RFC 3339 */ } }
 ```
 
 Plugin errors are logged, never retried; the file stays on disk.
 
 ## Panels
 
-A `panel` surface declares `{ "kind": "panel", "root": "<dir>", "entry": "<file>.html" }`. Both
-paths are validated at discovery: `root` must be a subdirectory of the package and `entry` an
-existing `.html` file below it. The host never serves anything outside the canonical `root`.
+A `panel` surface declares `[ui.surfaces.source]` with `kind = "panel"`, `root = "<dir>"`, and
+`entry = "<file>.html"`. Both paths are validated at discovery: `root` must be a subdirectory of
+the installed package directory and `entry` an existing `.html` file below it. The host never
+serves anything outside the canonical `root`.
 
 ### Assets: `ora-plugin://`
 
-Panel webviews load `ora-plugin://localhost/<plugin_id>/<surface_id>/<entry>` (on Windows
-`http://ora-plugin.localhost/...`). The protocol handler (`panel_assets.rs`) resolves the caller
+Panel webviews load `ora-plugin://localhost/<namespace>/<name>/<surface_id>/<entry>` (on
+Windows `http://ora-plugin.localhost/...`). The protocol handler (`panel_assets.rs`) resolves the caller
 webview label through `SurfaceRegistry` — the label, not the URL, is the authorization source —
 and then requires the URL's plugin and surface segments to match that record, the remaining path
 to be a `PortableRelativePath` resolving inside the asset root (`CanonicalPathRoot`), a regular
@@ -122,7 +136,7 @@ script-src <base>; style-src <base>; img-src <base> data:; font-src <base>
 
 Inline script and style are therefore impossible; a panel page ships external JS/CSS. Panels
 always get a web profile of their own (`web-profile/<surface_id>` under the plugin data directory,
-the `persistentProfile` mechanism), may only navigate below their own asset base, and never open
+the persistent mechanism), may only navigate below their own asset base, and never open
 popups. An incognito store is deliberately not used: on Linux custom URI schemes are bound to the
 web context and an incognito webview's fresh ephemeral context never receives `ora-plugin://`.
 
@@ -148,7 +162,7 @@ label to a live panel instance, bounds the payload at 1 MiB, starts the plugin i
 
 ```jsonc
 // host → plugin request
-"ui/request" { "surfaceId", "instanceId", "generation", "payload" }  →  { "payload" }
+"ora/ui/request" { "surface_id", "surface_instance_id", "plugin_generation", "payload" }  →  { "payload" }
 ```
 
 A `PluginMethodError` from the plugin arrives as `{ kind: "plugin", code, message }` with the
@@ -159,27 +173,33 @@ Plugins push with the notification
 
 ```jsonc
 // plugin → host notification (declared in `emits`)
-"ui/push" { "surfaceId", "instanceId", "generation", "payload" }
+"ora/ui/push" { "surface_id", "surface_instance_id", "plugin_generation", "payload" }
 ```
 
 The backend's `BroadcastNotificationSink` fans every plugin notification out;
-`SurfaceService::route_pushes` delivers `ui/push` by calling `window.__ORA_SURFACE_PUSH__` in the
-owning webview after checking that the instance is a live panel of that plugin and surface and
-that the emitting `generation` is the one the host currently talks to (a restarted process's
-predecessor is dropped). Envelopes carry a per-instance `sequence` starting at 1; pushes that
+`SurfaceService::route_pushes` delivers `ora/ui/push` by calling `window.__ORA_SURFACE_PUSH__` in
+the owning webview after checking that the instance is a live panel of that plugin and surface,
+that the `plugin_generation` in the params is the generation of the emitting process, and that
+this generation is the one the host currently talks to (a restarted process's predecessor is
+dropped). Envelopes carry a per-instance `sequence` starting at 1; pushes that
 arrive before the page registered a listener are buffered (64) and replayed. Delivery is
 best-effort: a lagging router or a reload loses pushes, and a page that needs consistency re-reads
 its state through `request`.
 
-A panel plugin must register `ui/request` (checked at handshake like `ui/downloadCompleted` for
-remote sites); declaring `ui/push` in `emits` is optional.
+A panel plugin must register `ora/ui/request` and declare `ora/ui/push` in `emits` (checked at
+the handshake like `ora/ui/download_completed` for remote sites). All `ora/ui/*` names live in
+`ora-plugin-lifecycle::registration`; the desktop host imports them. Plugins written with
+`@ora-space/plugin-sdk` use `defineUiPlugin`, which registers the contract and maps the
+snake_case params to camelCase.
 
 ## Web data isolation
 
-| Policy              | Windows / Linux                      | macOS                                                                               | Other                        |
-| ------------------- | ------------------------------------ | ----------------------------------------------------------------------------------- | ---------------------------- |
-| `persistentProfile` | `web-profile/<surface_id>` directory | data store identifier = UUID v5 (URL namespace, `ora://surface/<plugin>/<surface>`) | shared default store, warned |
-| `ephemeralIsolated` | incognito                            | incognito                                                                           | incognito                    |
+`web_data.mode` of a remote-site surface (default `persistent`):
+
+| Mode         | Windows / Linux                      | macOS                                                                               | Other                        |
+| ------------ | ------------------------------------ | ----------------------------------------------------------------------------------- | ---------------------------- |
+| `persistent` | `web-profile/<surface_id>` directory | data store identifier = UUID v5 (URL namespace, `ora://surface/<plugin>/<surface>`) | shared default store, warned |
+| `ephemeral`  | incognito                            | incognito                                                                           | incognito                    |
 
 ## Idle stop
 

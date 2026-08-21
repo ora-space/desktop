@@ -36,8 +36,8 @@ pub(super) const PLUGIN: &str = "ora-space.skillhub";
 /// Second fake plugin, contributing one panel surface rooted in the gateway's data root.
 pub(super) const PANEL_PLUGIN: &str = "ora-space.hello-panel";
 
-/// Records every JSON-RPC call the fake plugin process receives and answers `ui/request` with
-/// the payload echoed back, so bridge tests can see the exact params the host built.
+/// Records every JSON-RPC call the fake plugin process receives and answers `ora/ui/request`
+/// with the payload echoed back, so bridge tests can see the exact params the host built.
 #[derive(Clone, Default)]
 pub(super) struct FakeConnection {
     pub(super) calls: Arc<Mutex<Vec<(String, Value)>>>,
@@ -53,7 +53,7 @@ impl SurfaceConnection for FakeConnection {
             .lock()
             .expect("calls")
             .push((method.to_owned(), params.clone()));
-        if method == "ui/request" {
+        if method == "ora/ui/request" {
             return Ok(json!({ "payload": { "echo": params["payload"] } }));
         }
         Ok(json!({}))
@@ -111,7 +111,7 @@ impl SurfacePluginGateway for FakeGateway {
     type Connection = FakeConnection;
 
     fn installed_surfaces(&self, plugin_id: &PluginId) -> Option<Vec<InstalledSurface>> {
-        match plugin_id.as_ref() {
+        match plugin_id.name() {
             PLUGIN => Some(vec![InstalledSurface {
                 id: SurfaceId::parse("market").expect("surface id"),
                 title: "SkillHub".to_owned(),
@@ -137,14 +137,19 @@ impl SurfacePluginGateway for FakeGateway {
     }
 
     fn plugin_enabled(&self, plugin_id: &PluginId) -> bool {
-        matches!(plugin_id.as_ref(), PLUGIN | PANEL_PLUGIN) && self.enabled
+        matches!(plugin_id.name(), PLUGIN | PANEL_PLUGIN) && self.enabled
     }
 
     fn data_directory(&self, plugin_id: &PluginId) -> Result<PathBuf, GatewayFailure> {
         if self.data_directory_unavailable.load(Ordering::SeqCst) {
             return Err(GatewayFailure::Other("plugin data unavailable".to_owned()));
         }
-        let directory = self.data_root.join("plugin-data").join(plugin_id.as_ref());
+        let directory = self
+            .data_root
+            .join("plugins")
+            .join("data")
+            .join(plugin_id.namespace())
+            .join(plugin_id.name());
         std::fs::create_dir_all(directory.join("downloads"))
             .map_err(|error| GatewayFailure::Other(error.to_string()))?;
         Ok(directory)
@@ -218,7 +223,7 @@ fn surface_window_count(app: &App<MockRuntime>) -> usize {
 }
 
 fn plugin() -> PluginId {
-    PluginId::new(PLUGIN)
+    PluginId::new("official", PLUGIN).expect("plugin id")
 }
 
 /// Verifies a singleton surface opened twice yields one window and the same record, with the
@@ -244,7 +249,7 @@ fn opening_a_singleton_twice_reuses_the_instance() {
             events.lock().expect("events").clone(),
         ),
         (
-            "remote-surface:ora-space_skillhub:market:0",
+            "remote-surface:official_ora-space_skillhub:market:0",
             SurfaceState::Windowed {
                 view: ora_surface::ViewGeneration::INITIAL,
             },
@@ -253,7 +258,7 @@ fn opening_a_singleton_twice_reuses_the_instance() {
             vec![json!({
                 "type": "opened",
                 "instance": 0,
-                "pluginId": PLUGIN,
+                "pluginId": format!("official/{PLUGIN}"),
                 "surfaceId": "market",
                 "target": "windowed",
                 "title": "SkillHub",
@@ -367,7 +372,7 @@ fn refuses_disabled_plugins_and_unknown_surfaces() {
 
     let disabled = service.open(&plugin(), "market", MountTarget::Embedded);
     let unknown_plugin = service.open(
-        &PluginId::new("acme.tools"),
+        &PluginId::new("official", "acme.tools").expect("plugin id"),
         "market",
         MountTarget::Windowed,
     );
@@ -376,7 +381,9 @@ fn refuses_disabled_plugins_and_unknown_surfaces() {
         (disabled, unknown_plugin, surface_window_count(&app)),
         (
             Err(SurfaceError::PluginDisabled(plugin())),
-            Err(SurfaceError::PluginNotFound(PluginId::new("acme.tools"))),
+            Err(SurfaceError::PluginNotFound(
+                PluginId::new("official", "acme.tools").expect("plugin id")
+            )),
             0
         )
     );
@@ -444,7 +451,9 @@ fn run_download(success: bool) -> (PathBuf, PathBuf, bool, bool, Vec<Value>) {
 fn download_hook_writes_part_file_and_promotes_it() {
     let (part_path, root, accepted, finished, events) = run_download(true);
     let final_path = root
-        .join("plugin-data")
+        .join("plugins")
+        .join("data")
+        .join("official")
         .join(PLUGIN)
         .join("downloads")
         .join("abc.zip");
@@ -468,7 +477,7 @@ fn download_hook_writes_part_file_and_promotes_it() {
                 json!({
                     "type": "opened",
                     "instance": 0,
-                    "pluginId": PLUGIN,
+                    "pluginId": format!("official/{PLUGIN}"),
                     "surfaceId": "market",
                     "target": "windowed",
                     "title": "SkillHub",
@@ -476,13 +485,13 @@ fn download_hook_writes_part_file_and_promotes_it() {
                 json!({
                     "type": "downloadStarted",
                     "instance": 0,
-                    "pluginId": PLUGIN,
+                    "pluginId": format!("official/{PLUGIN}"),
                     "fileName": "abc.zip",
                 }),
                 json!({
                     "type": "downloadCompleted",
                     "instance": 0,
-                    "pluginId": PLUGIN,
+                    "pluginId": format!("official/{PLUGIN}"),
                     "fileName": "abc.zip",
                     "path": final_path.display().to_string(),
                 }),
@@ -497,7 +506,9 @@ fn download_hook_writes_part_file_and_promotes_it() {
 fn failed_download_removes_part_file() {
     let (part_path, root, accepted, finished, events) = run_download(false);
     let final_path = root
-        .join("plugin-data")
+        .join("plugins")
+        .join("data")
+        .join("official")
         .join(PLUGIN)
         .join("downloads")
         .join("abc.zip");
@@ -518,7 +529,7 @@ fn failed_download_removes_part_file() {
             Some(json!({
                 "type": "downloadFailed",
                 "instance": 0,
-                "pluginId": PLUGIN,
+                "pluginId": format!("official/{PLUGIN}"),
                 "fileName": "abc.zip",
                 "reason": "the browser engine reported a failed transfer",
             }))
@@ -547,7 +558,8 @@ fn record() -> SurfaceRecord {
     }
 }
 
-/// Pins the `ui/downloadCompleted` params shape from 05 §4 with a fixed local timestamp.
+/// Pins the `ora/ui/download_completed` params shape (spec 6-ui-webview) with a fixed local
+/// timestamp; `path` is the logical storage path, never the host path.
 #[test]
 fn download_completed_params_match_the_contract() {
     let download = CompletedDownload {
@@ -555,7 +567,7 @@ fn download_completed_params_match_the_contract() {
         page_url: Some(Url::parse("https://www.skillhub.cn/skills/abc").expect("url")),
         source_url: Url::parse("https://cdn.skillhub.cn/abc.zip").expect("url"),
         file_name: "abc.zip".to_owned(),
-        path: PathBuf::from("/home/u/plugin-data/ora-space.skillhub/downloads/abc.zip"),
+        path: PathBuf::from("/home/u/plugins/data/official/ora-space.skillhub/downloads/abc.zip"),
         size_bytes: 10240,
         completed_at: datetime!(2026-08-20 16:30:00 +08:00),
     };
@@ -563,28 +575,28 @@ fn download_completed_params_match_the_contract() {
     assert_eq!(
         download_completed_params(&record(), 3, &download),
         json!({
-            "surfaceId": "market",
-            "instanceId": 7,
-            "generation": 3,
+            "surface_id": "market",
+            "surface_instance_id": 7,
+            "plugin_generation": 3,
             "download": {
                 "id": 12,
-                "pageUrl": "https://www.skillhub.cn/skills/abc",
-                "sourceUrl": "https://cdn.skillhub.cn/abc.zip",
-                "fileName": "abc.zip",
-                "path": "/home/u/plugin-data/ora-space.skillhub/downloads/abc.zip",
-                "sizeBytes": 10240,
-                "completedAt": "2026-08-20T16:30:00+08:00",
+                "page_url": "https://www.skillhub.cn/skills/abc",
+                "source_url": "https://cdn.skillhub.cn/abc.zip",
+                "file_name": "abc.zip",
+                "path": "downloads/abc.zip",
+                "size_bytes": 10240,
+                "completed_at": "2026-08-20T16:30:00+08:00",
             },
         })
     );
 }
 
-/// Pins the `ui/surfaceOpened` / `ui/surfaceClosed` params shape from 06 §1.2.
+/// Pins the `ora/ui/surface_opened` / `ora/ui/surface_closed` params shape.
 #[test]
 fn session_params_match_the_contract() {
     assert_eq!(
         session_params(&record(), 3),
-        json!({ "surfaceId": "market", "instanceId": 7, "generation": 3 })
+        json!({ "surface_id": "market", "surface_instance_id": 7, "plugin_generation": 3 })
     );
 }
 
@@ -663,12 +675,12 @@ fn concurrent_process_starts_announce_each_instance_once() {
         calls,
         vec![
             (
-                "ui/surfaceOpened".to_owned(),
-                json!({ "surfaceId": "market", "instanceId": instances[0], "generation": 3 })
+                "ora/ui/surface_opened".to_owned(),
+                json!({ "surface_id": "market", "surface_instance_id": instances[0], "plugin_generation": 3 })
             ),
             (
-                "ui/surfaceOpened".to_owned(),
-                json!({ "surfaceId": "second", "instanceId": instances[1], "generation": 3 })
+                "ora/ui/surface_opened".to_owned(),
+                json!({ "surface_id": "second", "surface_instance_id": instances[1], "plugin_generation": 3 })
             ),
         ]
     );

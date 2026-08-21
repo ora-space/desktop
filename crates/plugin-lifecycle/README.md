@@ -25,18 +25,50 @@ keep the two in sync.
 
 ## Launch
 
-Before launching, the lifecycle creates `<data-dir>/plugin-data/<plugin_id>/` (with `downloads/`)
-through `PluginDataDirectories`, derives Deno permissions from the plugin kind
-(`permissions_for`: ui plugins may read and write only their data directory and read only the
-`ORA_PLUGIN_DATA_DIR` environment variable that names it; agent plugins keep the
-broad historical set, also exported as `agent_permissions` for the backend's agent supervisor), and
-passes the package root as working directory plus `ORA_PLUGIN_DATA_DIR` in the environment. A
-permission path containing a comma refuses to launch, because Deno reads commas as list separators.
+Plugins are identified by `ora_domain::PluginId` (`<namespace>/<name>`); request contracts carry
+the canonical string, and a malformed id is reported as `PluginNotFound`. Installed packages live
+in `<data-dir>/plugins/installed/<name>/` (read-only, discovered by `ora-plugin-manager`);
+uninstall removes that package directory and the plugin's data directory.
+
+Before launching, the lifecycle creates `<data-dir>/plugins/data/<namespace>/<name>/` (with
+`downloads/`) through `PluginDataDirectories`, derives Deno permissions from the plugin kind
+(`permissions_for`: ui plugins get no `--allow-*` flag at all; agent plugins keep the broad
+historical set, also exported as `agent_permissions` for the backend's agent supervisor, and
+narrowing it is out of scope here), and passes the package root as working directory. No
+environment variable is injected: a plugin learns nothing about host paths. A permission path
+containing a comma refuses to launch, because Deno reads commas as list separators.
+
+The Deno launcher binds a `PluginStorage` handler to the plugin's data directory and hands it to
+the runtime as the `HostRequestHandler` for that process, so plugin identity is fixed by the
+launch, never by request params.
 
 After a successful handshake the registration is validated against the manifest kind
 (`validate_registration`): a ui plugin with any remote-site surface must serve
-`ui/downloadCompleted`; otherwise the runtime is stopped and the plugin enters `Failed`. Agent
-contracts are verified by the backend's agent runtime, not here.
+`ora/ui/download_completed`; one with any panel surface must serve `ora/ui/request` and declare
+`ora/ui/push` in `emits`; otherwise the runtime is stopped and the plugin enters `Failed`. Agent
+contracts are verified by the backend's agent runtime, not here. The `ora/ui/*` method names are
+defined once in `registration` and exported (`UI_*_METHOD`) for the desktop surface host.
+
+## Storage host methods
+
+`PluginStorage` serves `ora/storage/list`, `read`, `write`, and `remove`, all taking a logical
+`path` relative to the plugin's data directory (`""` is the directory itself for `list`):
+
+| Method               | Params                   | Result                                      |
+| -------------------- | ------------------------ | ------------------------------------------- |
+| `ora/storage/list`   | `{ path }`               | `{ entries: [{ name, kind, size_bytes }] }` |
+| `ora/storage/read`   | `{ path }`               | `{ bytes_base64 }`                          |
+| `ora/storage/write`  | `{ path, bytes_base64 }` | `{}` (parents created, atomic replace)      |
+| `ora/storage/remove` | `{ path }`               | `{}` (file or whole directory tree)         |
+
+`kind` is `file` or `directory`; symlinks and special files are never listed. Paths are parsed
+with `ora-utils::path::PortableRelativePath` (no absolute paths, `..`, or NUL), resolved under a
+`CanonicalPathRoot`, and must be reached without traversing any symlink; the host-owned
+`web-profile/` subtree is refused at the first segment and hidden from root listings. Files are
+capped at `MAX_STORAGE_FILE_BYTES` (8 MiB) in both directions because base64 must fit the 16 MiB
+frame. Failures are JSON-RPC errors whose `data.kind` is one of `invalid_params` (`-32602`),
+`invalid_path` (`-32602`), `not_found` (`-32004`), `too_large` (`-32005`), or `io` (`-32000`);
+unknown `ora/storage/*` methods get `-32601`. Filesystem work runs on the blocking pool.
 
 ## Data plane
 

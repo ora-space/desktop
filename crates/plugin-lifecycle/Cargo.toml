@@ -11,12 +11,14 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+base64 = { workspace = true }
 ora-application = { workspace = true }
 ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
 ora-plugin-manager = { workspace = true }
 ora-plugin-runtime = { workspace = true }
 ora-process = { workspace = true }
+ora-utils = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
@@ -24,7 +26,6 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 [dev-dependencies]
 ora-db = { workspace = true }
 ora-logging = { workspace = true }
-ora-utils = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

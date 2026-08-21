@@ -12,14 +12,17 @@ describe("useInstalledPlugins", () => {
   it("loads the cached installed plugin list through the contracts client", async () => {
     const state = createMockClientState();
     state.installedPlugins.push({
-      id: "ora.reviewer",
-      packageName: "@ora-plugins/reviewer",
+      id: "official/ora.reviewer",
+      namespace: "official",
+      name: "ora.reviewer",
+      description: "ora.reviewer plugin",
+      homepage: null,
+      license: null,
       displayName: "Reviewer",
       version: "0.1.0",
-      main: "dist/index.js",
+      main: "main.js",
       kind: "agent",
       agentDisplayName: "Reviewer",
-      contractVersion: 1,
       enabled: false,
       logo: null,
       runtime: "stopped",

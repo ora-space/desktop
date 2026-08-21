@@ -12,32 +12,40 @@ function uiPlugin(
   >,
 ): InstalledPlugin {
   return {
-    id,
-    packageName: `@ora-space/${id}`,
+    id: `official/${id}`,
+    namespace: "official",
+    name: id,
     displayName,
+    description: `${displayName} plugin`,
+    homepage: null,
+    license: null,
     version: "0.1.0",
-    main: "dist/index.js",
+    main: "main.js",
     kind: "ui",
-    contractVersion: 1,
     surfaces: surfaces.map((surface) =>
       "source" in surface
         ? surface
         : { ...surface, source: "remote_site" as const },
     ),
+    logo: null,
     enabled,
     runtime: "stopped",
   };
 }
 
 const agentPlugin: InstalledPlugin = {
-  id: "ora.reviewer",
-  packageName: "@ora-plugins/reviewer",
+  id: "official/ora.reviewer",
+  namespace: "official",
+  name: "ora.reviewer",
+  description: "ora.reviewer plugin",
+  homepage: null,
+  license: null,
   displayName: "Code Reviewer",
   version: "0.1.0",
-  main: "dist/index.js",
+  main: "main.js",
   kind: "agent",
   agentDisplayName: "Review Agent",
-  contractVersion: 1,
+  logo: null,
   enabled: true,
   runtime: "running",
 };
@@ -67,25 +75,25 @@ describe("listSurfaceDefinitions", () => {
 
     expect(listSurfaceDefinitions(plugins)).toEqual([
       {
-        pluginId: "ora-space.hello-panel",
+        pluginId: "official/ora-space.hello-panel",
         surfaceId: "counter",
         title: "Counter",
         pluginDisplayName: "Hello Panel",
       },
       {
-        pluginId: "ora-space.huawei",
+        pluginId: "official/ora-space.huawei",
         surfaceId: "dev",
         title: "Developer",
         pluginDisplayName: "Huawei",
       },
       {
-        pluginId: "ora-space.skillhub",
+        pluginId: "official/ora-space.skillhub",
         surfaceId: "docs",
         title: "Docs",
         pluginDisplayName: "SkillHub",
       },
       {
-        pluginId: "ora-space.skillhub",
+        pluginId: "official/ora-space.skillhub",
         surfaceId: "market",
         title: "Market",
         pluginDisplayName: "SkillHub",

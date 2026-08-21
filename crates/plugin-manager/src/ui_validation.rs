@@ -1,18 +1,15 @@
-use crate::manifest::{
-    InstancePolicyManifest, NavigationManifest, SurfaceManifest, SurfaceSourceManifest, UiManifest,
-    WebDataPolicyManifest,
-};
 use crate::surface::{HostName, InstancePolicy, SurfaceId, WebDataPolicy};
 use crate::validation::{ManifestValidationError, invalid};
+use ora_plugin_manifest::{
+    PluginUi, SurfaceDeclaration, SurfaceInstances, SurfaceSource, WebDataMode,
+};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use url::Url;
 
-const SUPPORTED_UI_CONTRACT_VERSION: u32 = 1;
 /// Surfaces per package are bounded because each one becomes a menu entry and a potential
 /// webview; an unbounded list would let one package flood the host UI.
-const MIN_SURFACES: usize = 1;
 const MAX_SURFACES: usize = 8;
 /// Titles are rendered in menus and tab strips, so they are kept short.
 const MAX_TITLE_CHARS: usize = 64;
@@ -22,7 +19,6 @@ const PANEL_ENTRY_EXTENSION: &str = "html";
 /// Holds the validated ui contribution of one ui-kind package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledPluginUi {
-    pub contract_version: u32,
     /// Deduplicated and sorted by id so snapshot order never depends on manifest order.
     pub surfaces: Vec<InstalledSurface>,
 }
@@ -60,38 +56,28 @@ pub struct PanelSource {
     pub entry: PortableRelativePath,
 }
 
-/// Validates `ora.contributes.ui` field by field, reporting the first failing field path.
+/// Applies the host's surface policy to a structurally valid `[ui]` section, reporting the
+/// first failing field path.
 ///
 /// `package_root` is needed because a panel declaration points at files that must exist inside
 /// the package; a manifest that names a missing page is rejected at discovery, not when the
 /// surface is opened.
 pub(crate) fn validate_ui(
     package_root: &Path,
-    ui: UiManifest,
+    ui: &PluginUi,
 ) -> Result<InstalledPluginUi, ManifestValidationError> {
-    if ui.contract_version != SUPPORTED_UI_CONTRACT_VERSION {
+    let count = ui.surfaces().len();
+    if count > MAX_SURFACES {
         return Err(invalid(
-            "ora.contributes.ui.contractVersion",
-            format!(
-                "unsupported ui contract version {}; expected {SUPPORTED_UI_CONTRACT_VERSION}",
-                ui.contract_version
-            ),
-        ));
-    }
-    let count = ui.surfaces.len();
-    if !(MIN_SURFACES..=MAX_SURFACES).contains(&count) {
-        return Err(invalid(
-            "ora.contributes.ui.surfaces",
-            format!(
-                "a ui plugin must declare between {MIN_SURFACES} and {MAX_SURFACES} surfaces; found {count}"
-            ),
+            "ui.surfaces",
+            format!("a ui plugin may declare at most {MAX_SURFACES} surfaces; found {count}"),
         ));
     }
 
     // A BTreeMap keyed by id gives uniqueness detection and the sorted output in one pass.
     let mut surfaces = BTreeMap::new();
-    for (index, surface) in ui.surfaces.into_iter().enumerate() {
-        let prefix = format!("ora.contributes.ui.surfaces[{index}]");
+    for (index, surface) in ui.surfaces().iter().enumerate() {
+        let prefix = format!("ui.surfaces[{index}]");
         let surface = validate_surface(package_root, &prefix, surface)?;
         if surfaces.contains_key(&surface.id) {
             return Err(invalid(
@@ -103,7 +89,6 @@ pub(crate) fn validate_ui(
     }
 
     Ok(InstalledPluginUi {
-        contract_version: ui.contract_version,
         surfaces: surfaces.into_values().collect(),
     })
 }
@@ -112,21 +97,15 @@ pub(crate) fn validate_ui(
 fn validate_surface(
     package_root: &Path,
     prefix: &str,
-    surface: SurfaceManifest,
+    surface: &SurfaceDeclaration,
 ) -> Result<InstalledSurface, ManifestValidationError> {
-    let id = SurfaceId::parse(&surface.id).map_err(|error| {
+    let id = SurfaceId::parse(surface.id().as_str()).map_err(|error| {
         invalid(
             format!("{prefix}.id"),
             format!("invalid surface id: {error}"),
         )
     })?;
-    let title = surface.title.trim();
-    if title.is_empty() {
-        return Err(invalid(
-            format!("{prefix}.title"),
-            "value must not be empty",
-        ));
-    }
+    let title = surface.title().trim();
     if title.chars().count() > MAX_TITLE_CHARS {
         return Err(invalid(
             format!("{prefix}.title"),
@@ -139,23 +118,46 @@ fn validate_surface(
             "surface title must not contain control characters",
         ));
     }
-    let instance_policy = match surface.instance_policy {
-        InstancePolicyManifest::Singleton => InstancePolicy::Singleton,
+    // The registry and the frontend panel slot only model one live instance per definition;
+    // accepting `multiple` here would silently degrade to singleton, so it is refused until the
+    // host can honour it.
+    let instance_policy = match surface.instances() {
+        SurfaceInstances::Singleton => InstancePolicy::Singleton,
+        SurfaceInstances::Multiple => {
+            return Err(invalid(
+                format!("{prefix}.instances"),
+                "`multiple` instances are not supported yet; declare `singleton` or omit the field",
+            ));
+        }
     };
-    let source = match surface.source {
-        SurfaceSourceManifest::RemoteSite {
-            entry_url,
-            navigation,
-            web_data,
+    let source = match surface.source() {
+        SurfaceSource::RemoteSite {
+            entry,
+            hosts,
+            host_suffixes,
         } => InstalledSurfaceSource::RemoteSite(validate_remote_site(
-            &format!("{prefix}.source"),
-            &entry_url,
-            navigation,
-            web_data,
+            prefix,
+            entry,
+            hosts,
+            host_suffixes,
+            surface.web_data(),
         )?),
-        SurfaceSourceManifest::Panel { root, entry } => InstalledSurfaceSource::Panel(
-            validate_panel(&format!("{prefix}.source"), package_root, &root, &entry)?,
-        ),
+        SurfaceSource::Panel { root, entry } => {
+            // Panels always get an isolated persistent profile of their own; a declared policy
+            // would either be redundant or contradict that guarantee.
+            if surface.web_data().is_some() {
+                return Err(invalid(
+                    format!("{prefix}.web_data"),
+                    "panel surfaces always use an isolated persistent profile; remove `web_data`",
+                ));
+            }
+            InstalledSurfaceSource::Panel(validate_panel(
+                &format!("{prefix}.source"),
+                package_root,
+                root,
+                entry,
+            )?)
+        }
     };
 
     Ok(InstalledSurface {
@@ -166,15 +168,16 @@ fn validate_surface(
     })
 }
 
-/// Validates the entry URL and the navigation policy that must contain it.
+/// Validates the entry URL and the navigation allow lists that must contain it.
 fn validate_remote_site(
     prefix: &str,
-    entry_url: &str,
-    navigation: NavigationManifest,
-    web_data: WebDataPolicyManifest,
+    entry: &str,
+    hosts: &[String],
+    host_suffixes: &[String],
+    web_data: Option<WebDataMode>,
 ) -> Result<RemoteSiteSource, ManifestValidationError> {
-    let entry_field = format!("{prefix}.entryUrl");
-    let entry_url = Url::parse(entry_url).map_err(|error| {
+    let entry_field = format!("{prefix}.source.entry");
+    let entry_url = Url::parse(entry).map_err(|error| {
         invalid(
             entry_field.clone(),
             format!("entry URL must be an absolute URL: {error}"),
@@ -196,18 +199,13 @@ fn validate_remote_site(
         return Err(invalid(entry_field, "entry URL must have a host"));
     };
 
-    let allow_hosts = validate_hosts(
-        &format!("{prefix}.navigation.allowHosts"),
-        navigation.allow_hosts,
-    )?;
-    let allow_host_suffixes = validate_hosts(
-        &format!("{prefix}.navigation.allowHostSuffixes"),
-        navigation.allow_host_suffixes,
-    )?;
+    let allow_hosts = validate_hosts(&format!("{prefix}.source.hosts"), hosts)?;
+    let allow_host_suffixes =
+        validate_hosts(&format!("{prefix}.source.host_suffixes"), host_suffixes)?;
     if allow_hosts.is_empty() && allow_host_suffixes.is_empty() {
         return Err(invalid(
-            format!("{prefix}.navigation"),
-            "navigation must allow at least one host or host suffix",
+            format!("{prefix}.source"),
+            "a remote site must allow at least one host or host suffix",
         ));
     }
     let entry_allowed = allow_hosts.iter().any(|host| host.as_str() == entry_host)
@@ -217,7 +215,7 @@ fn validate_remote_site(
     if !entry_allowed {
         return Err(invalid(
             entry_field,
-            format!("entry URL host `{entry_host}` is not covered by the navigation allow lists"),
+            format!("entry URL host `{entry_host}` is not covered by `hosts` or `host_suffixes`"),
         ));
     }
 
@@ -226,8 +224,8 @@ fn validate_remote_site(
         allow_hosts,
         allow_host_suffixes,
         web_data: match web_data {
-            WebDataPolicyManifest::PersistentProfile => WebDataPolicy::PersistentProfile,
-            WebDataPolicyManifest::EphemeralIsolated => WebDataPolicy::EphemeralIsolated,
+            Some(WebDataMode::Persistent) | None => WebDataPolicy::PersistentProfile,
+            Some(WebDataMode::Ephemeral) => WebDataPolicy::EphemeralIsolated,
         },
     })
 }
@@ -248,7 +246,7 @@ fn validate_panel(
             format!("panel root must be a safe relative path: {error}"),
         )
     })?;
-    // Serving the package root would expose `package.json` and the plugin source to the page.
+    // Serving the package root would expose `orax.toml` and the plugin source to the page.
     if root_relative.is_root() {
         return Err(invalid(
             root_field,
@@ -320,7 +318,7 @@ fn validate_panel(
 /// Parses one allow list, reporting the offending index on failure.
 fn validate_hosts(
     prefix: &str,
-    hosts: Vec<String>,
+    hosts: &[String],
 ) -> Result<Vec<HostName>, ManifestValidationError> {
     hosts
         .iter()

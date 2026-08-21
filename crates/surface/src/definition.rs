@@ -117,7 +117,7 @@ mod tests {
     /// Verifies the installed manifest shape is carried over field by field.
     #[test]
     fn builds_definition_from_installed_surface() {
-        let plugin_id = PluginId::new("ora-space.skillhub");
+        let plugin_id = PluginId::new("official", "ora-space.skillhub").expect("plugin id");
         let entry_url = Url::parse("https://www.skillhub.cn").expect("valid url");
         let exact = vec![HostName::parse("www.skillhub.cn").expect("valid host")];
         let suffixes = vec![HostName::parse("skillhub.cn").expect("valid host")];
@@ -154,7 +154,7 @@ mod tests {
     /// Verifies a panel carries its asset root and entry through unchanged.
     #[test]
     fn builds_definition_from_installed_panel() {
-        let plugin_id = PluginId::new("ora-space.hello-panel");
+        let plugin_id = PluginId::new("official", "ora-space.hello-panel").expect("plugin id");
         let installed = InstalledSurface {
             id: SurfaceId::parse("counter").expect("valid surface id"),
             title: "Hello Panel".to_owned(),

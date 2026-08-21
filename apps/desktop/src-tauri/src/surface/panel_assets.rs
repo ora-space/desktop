@@ -43,7 +43,8 @@ pub fn resolve_asset(registry: &SurfaceRegistry, label: &str, request_path: &str
         return AssetOutcome::NotFound("path lacks plugin and surface segments");
     };
     let id = &record.definition.id;
-    if request.plugin_id != id.plugin_id.as_ref() || request.surface_id != id.surface_id.as_str() {
+    if request.plugin_id != id.plugin_id.canonical() || request.surface_id != id.surface_id.as_str()
+    {
         return AssetOutcome::NotFound("path names another plugin or surface");
     }
     let decoded = match urlencoding::decode(&request.path) {

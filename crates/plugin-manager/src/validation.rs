@@ -1,30 +1,19 @@
-use crate::manifest::{ContributionManifest, PackageManifest};
 use crate::ui_validation::{InstalledPluginUi, validate_ui};
-use ora_utils::Slug;
+use ora_domain::PluginId;
+use ora_plugin_manifest::{PluginKind, PluginManifest};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-const SUPPORTED_MANIFEST_VERSION: u32 = 1;
-const SUPPORTED_PLUGIN_API_VERSION: u32 = 1;
-const SUPPORTED_AGENT_CONTRACT_VERSION: u32 = 1;
-/// Plugin ids become webview labels and directory names, so they are bounded independently of
-/// the per-segment slug limit.
-const MAX_PLUGIN_ID_BYTES: usize = 64;
-const MAX_PLUGIN_ID_SEGMENTS: usize = 2;
-
-/// Identifies the supported JavaScript module format of an installed package.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluginPackageType {
-    Module,
-}
+/// Installed orax packages always ship a fixed `main.js` entrypoint at the package root.
+pub const INSTALLED_ENTRYPOINT: &str = "main.js";
 
 /// Holds the validated contribution of one installed plugin.
 ///
-/// `ora.kind` selects the variant, and each variant carries everything that kind must declare.
-/// Keeping the kind and its contribution in one value is what makes an agent package without an
-/// agent declaration unrepresentable rather than a case every consumer has to re-check.
+/// `kind` selects the variant, and each variant carries everything that kind must declare.
+/// Keeping the kind and its contribution in one value is what makes a ui package without
+/// surfaces unrepresentable rather than a case every consumer has to re-check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginContribution {
     Agent(InstalledPluginAgent),
@@ -32,7 +21,7 @@ pub enum PluginContribution {
 }
 
 impl PluginContribution {
-    /// Returns the `ora.kind` spelling used on the frontend wire contract.
+    /// Returns the `kind` spelling used on the frontend wire contract.
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Agent(_) => "agent",
@@ -41,36 +30,32 @@ impl PluginContribution {
     }
 }
 
-/// Holds uninterpreted engine requirements declared by a validated plugin.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginEngines {
-    pub ora: String,
-    pub plugin_api: u32,
-    pub bun: String,
-}
-
 /// Holds the single validated agent contributed by one agent-kind package.
 ///
 /// The agent has no identifier of its own: one package provides exactly one agent, so the
-/// package's `ora.id` is that agent's identity everywhere in the host.
+/// package's plugin id is that agent's identity everywhere in the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledPluginAgent {
     pub display_name: String,
-    pub contract_version: u32,
 }
 
 /// Holds one fully validated plugin package and its package-local entrypoint.
+///
+/// `package_root` is the installed package directory (`<data-dir>/plugins/installed/<name>/`);
+/// everything the plugin ships is resolved relative to it and nothing below it is ever written
+/// by the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledPlugin {
     pub package_root: PathBuf,
-    pub package_name: String,
+    pub id: PluginId,
     pub version: Version,
-    pub package_type: PluginPackageType,
-    pub manifest_version: u32,
-    pub id: String,
+    /// The manifest carries no display name, so the plugin name stands in for every kind; a ui
+    /// plugin's user-visible entries are its surface titles rather than the package itself.
     pub display_name: String,
+    pub description: String,
+    pub homepage: Option<String>,
+    pub license: Option<String>,
     pub main: PortableRelativePath,
-    pub engines: PluginEngines,
     pub contributes: PluginContribution,
     /// Trusted SVG source for the package icon, absent when the package ships none.
     pub logo: Option<String>,
@@ -91,65 +76,56 @@ impl ManifestValidationError {
     }
 }
 
-/// Converts a structurally valid package into an installed plugin after semantic checks.
+/// Converts a parsed orax manifest into an installed plugin after host-side checks.
+///
+/// `ora_plugin_manifest` already enforced the schema, so validation here re-checks only what
+/// depends on the host or the package on disk: the fixed entrypoint must exist inside the
+/// package, the kind must be one the host can run, and ui surfaces must satisfy the navigation
+/// and asset policies the surface host enforces later.
 ///
 /// `logo` arrives already read and security-validated by the discovery layer, so this function
 /// keeps its filesystem work limited to the entrypoint it must resolve.
 pub(crate) fn validate(
     package_root: &Path,
-    manifest: PackageManifest,
+    manifest: &PluginManifest,
     logo: Option<String>,
 ) -> Result<InstalledPlugin, ManifestValidationError> {
-    require_non_empty("name", &manifest.name)?;
-    let version = Version::parse(&manifest.version).map_err(|error| {
-        invalid(
-            "version",
-            format!("package version is not valid SemVer: {error}"),
-        )
-    })?;
-    if manifest.package_type != "module" {
-        return Err(invalid("type", "package type must be `module`"));
-    }
-    if manifest.ora.manifest_version != SUPPORTED_MANIFEST_VERSION {
-        return Err(invalid(
-            "ora.manifestVersion",
-            format!(
-                "unsupported manifest version {}; expected {SUPPORTED_MANIFEST_VERSION}",
-                manifest.ora.manifest_version
-            ),
-        ));
-    }
-    validate_plugin_id(&manifest.ora.id)?;
-    require_non_empty("ora.displayName", &manifest.ora.display_name)?;
-    let contributes =
-        validate_contribution(package_root, &manifest.ora.kind, manifest.ora.contributes)?;
-    let main = validate_main_path(package_root, &manifest.ora.main)?;
-    require_non_empty("ora.engines.ora", &manifest.ora.engines.ora)?;
-    if manifest.ora.engines.plugin_api != SUPPORTED_PLUGIN_API_VERSION {
-        return Err(invalid(
-            "ora.engines.pluginApi",
-            format!(
-                "unsupported plugin API version {}; expected {SUPPORTED_PLUGIN_API_VERSION}",
-                manifest.ora.engines.plugin_api
-            ),
-        ));
-    }
-    require_non_empty("ora.engines.bun", &manifest.ora.engines.bun)?;
+    let name = manifest.name().as_str();
+    // Both segments passed the manifest grammar, which is a strict subset of what the domain
+    // id accepts, so this conversion cannot fail for a reason the user could act on.
+    let id = PluginId::new(manifest.namespace().as_str(), name)
+        .map_err(|error| invalid("name", format!("plugin id is not representable: {error}")))?;
+    let contributes = match manifest.kind() {
+        PluginKind::Agent => PluginContribution::Agent(InstalledPluginAgent {
+            display_name: name.to_owned(),
+        }),
+        PluginKind::Ui => {
+            // The manifest crate pairs `kind = "ui"` with a `[ui]` section, so a parsed manifest
+            // always takes the `Some` path; the error is reported rather than unwrapped so a
+            // future schema change cannot panic discovery.
+            let ui = manifest
+                .ui()
+                .ok_or_else(|| invalid("ui", "a ui plugin must declare a `[ui]` section"))?;
+            PluginContribution::Ui(validate_ui(package_root, ui)?)
+        }
+        PluginKind::Workbench => {
+            return Err(invalid(
+                "kind",
+                "unsupported plugin kind `workbench`; expected `agent` or `ui`",
+            ));
+        }
+    };
+    let main = validate_main_path(package_root, INSTALLED_ENTRYPOINT)?;
 
     Ok(InstalledPlugin {
         package_root: package_root.to_path_buf(),
-        package_name: manifest.name,
-        version,
-        package_type: PluginPackageType::Module,
-        manifest_version: manifest.ora.manifest_version,
-        id: manifest.ora.id,
-        display_name: manifest.ora.display_name,
+        id,
+        version: manifest.version().clone(),
+        display_name: name.to_owned(),
+        description: manifest.description().to_owned(),
+        homepage: manifest.homepage().map(|url| url.as_str().to_owned()),
+        license: manifest.license().map(str::to_owned),
         main,
-        engines: PluginEngines {
-            ora: manifest.ora.engines.ora,
-            plugin_api: manifest.ora.engines.plugin_api,
-            bun: manifest.ora.engines.bun,
-        },
         contributes,
         logo,
     })
@@ -160,143 +136,40 @@ fn validate_main_path(
     package_root: &Path,
     value: &str,
 ) -> Result<PortableRelativePath, ManifestValidationError> {
-    require_non_empty("ora.main", value)?;
     let relative = PortableRelativePath::parse(value).map_err(|error| {
         invalid(
-            "ora.main",
+            "main",
             format!("entrypoint must be a safe relative path: {error}"),
         )
     })?;
-    if relative.is_root() {
-        return Err(invalid(
-            "ora.main",
-            "entrypoint must identify a package file",
-        ));
-    }
     let root = CanonicalPathRoot::new(package_root).map_err(|error| {
         invalid(
-            "ora.main",
+            "main",
             format!("plugin package root is unavailable: {error}"),
         )
     })?;
     let resolved = root.resolve_existing(&relative).map_err(|error| {
         invalid(
-            "ora.main",
-            format!("entrypoint must resolve inside the plugin package: {error}"),
+            "main",
+            format!("entrypoint `{value}` must exist inside the plugin package: {error}"),
         )
     })?;
     // The canonical check covers the current symlink target only; is_file remains path-based and
     // cannot prevent a caller-controlled replacement between validation and later loading.
     if !resolved.is_file() {
         return Err(invalid(
-            "ora.main",
-            "entrypoint must identify a regular package file",
+            "main",
+            format!("entrypoint `{value}` must be a regular package file"),
         ));
     }
     let main = root.relative_path(&resolved).map_err(|error| {
         invalid(
-            "ora.main",
+            "main",
             format!("entrypoint must resolve inside the plugin package: {error}"),
         )
     })?;
 
     Ok(main)
-}
-
-/// Pairs the declared kind with the contribution that kind is required to carry.
-fn validate_contribution(
-    package_root: &Path,
-    kind: &str,
-    contributes: ContributionManifest,
-) -> Result<PluginContribution, ManifestValidationError> {
-    match kind {
-        "agent" => {
-            if contributes.ui.is_some() {
-                return Err(invalid(
-                    "ora.contributes.ui",
-                    "agent plugins must not declare a ui contribution",
-                ));
-            }
-            let agent = contributes.agent.ok_or_else(|| {
-                invalid(
-                    "ora.contributes.agent",
-                    "an agent plugin must contribute one agent",
-                )
-            })?;
-            require_non_empty("ora.contributes.agent.displayName", &agent.display_name)?;
-            if agent.contract_version != SUPPORTED_AGENT_CONTRACT_VERSION {
-                return Err(invalid(
-                    "ora.contributes.agent.contractVersion",
-                    format!(
-                        "unsupported agent contract version {}; expected {SUPPORTED_AGENT_CONTRACT_VERSION}",
-                        agent.contract_version
-                    ),
-                ));
-            }
-            Ok(PluginContribution::Agent(InstalledPluginAgent {
-                display_name: agent.display_name,
-                contract_version: agent.contract_version,
-            }))
-        }
-        "ui" => {
-            if contributes.agent.is_some() {
-                return Err(invalid(
-                    "ora.contributes.agent",
-                    "ui plugins must not declare an agent contribution",
-                ));
-            }
-            let ui = contributes.ui.ok_or_else(|| {
-                invalid(
-                    "ora.contributes.ui",
-                    "ui plugins must declare `contributes.ui`",
-                )
-            })?;
-            Ok(PluginContribution::Ui(validate_ui(package_root, ui)?))
-        }
-        value => Err(invalid(
-            "ora.kind",
-            format!("unsupported plugin kind `{value}`; expected `agent` or `ui`"),
-        )),
-    }
-}
-
-/// Constrains `ora.id` to one or two dot-separated slug segments within the total length budget.
-fn validate_plugin_id(id: &str) -> Result<(), ManifestValidationError> {
-    require_non_empty("ora.id", id)?;
-    if id.len() > MAX_PLUGIN_ID_BYTES {
-        return Err(invalid(
-            "ora.id",
-            format!(
-                "plugin id exceeds {MAX_PLUGIN_ID_BYTES} bytes: {}",
-                id.len()
-            ),
-        ));
-    }
-    let segments: Vec<&str> = id.split('.').collect();
-    if segments.len() > MAX_PLUGIN_ID_SEGMENTS {
-        return Err(invalid(
-            "ora.id",
-            format!("plugin id must have at most {MAX_PLUGIN_ID_SEGMENTS} dot-separated segments"),
-        ));
-    }
-    for segment in segments {
-        Slug::parse(segment).map_err(|error| {
-            invalid(
-                "ora.id",
-                format!("plugin id segment `{segment}` is not a valid slug: {error}"),
-            )
-        })?;
-    }
-    Ok(())
-}
-
-/// Rejects required strings that contain only whitespace while preserving valid values verbatim.
-fn require_non_empty(field_path: &'static str, value: &str) -> Result<(), ManifestValidationError> {
-    if value.trim().is_empty() {
-        return Err(invalid(field_path, "value must not be empty"));
-    }
-
-    Ok(())
 }
 
 /// Builds one semantic error with a stable field path.

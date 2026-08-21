@@ -1,10 +1,10 @@
 //! Download delivery: reservation into the plugin's `downloads/` directory, frontend events,
-//! and the `ui/downloadCompleted` call into the plugin process.
+//! and the `ora/ui/download_completed` call into the plugin process.
 
 use crate::surface::effects::emit_event;
 use crate::surface::gateway::{SurfaceConnection, SurfacePluginGateway};
 use crate::surface::hooks::DownloadSink;
-use crate::surface::plugin_link::PROCESS_START_WAIT;
+use crate::surface::plugin_link::{PROCESS_START_WAIT, session_params};
 use ora_logging::{ora_info, ora_warn};
 use ora_plugin_lifecycle::UI_DOWNLOAD_COMPLETED_METHOD;
 use ora_surface::{
@@ -19,9 +19,11 @@ use time::format_description::well_known::Rfc3339;
 use tokio::sync::Semaphore;
 
 /// Host-written child of the plugin data directory; mirrors `PluginDataDirectories::ensure`.
+/// It is also the first segment of the logical path handed to the plugin, which reads the file
+/// back through `ora/storage/*` under that same name.
 const DOWNLOADS_DIRECTORY: &str = "downloads";
 
-/// Upper bound on concurrent `ui/downloadCompleted` deliveries; excess deliveries queue.
+/// Upper bound on concurrent `ora/ui/download_completed` deliveries; excess deliveries queue.
 const MAX_CONCURRENT_DISPATCHES: usize = 8;
 
 /// Routes download events of every surface webview.
@@ -219,26 +221,27 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
     }
 }
 
-/// Builds the `ui/downloadCompleted` params: session identity plus the durable file facts.
+/// Builds the `ora/ui/download_completed` params: session identity plus the durable file facts.
+///
+/// `path` is the logical storage path `downloads/<file_name>`, not a host path: the plugin has
+/// no filesystem access and reads the file back through `ora/storage/read` with exactly this
+/// string. The slash is the storage namespace separator, independent of the host platform.
 pub fn download_completed_params(
     record: &SurfaceRecord,
     generation: u64,
     download: &CompletedDownload,
 ) -> Value {
-    json!({
-        "surfaceId": record.definition.id.surface_id.as_str(),
-        "instanceId": record.instance.value(),
-        "generation": generation,
-        "download": {
-            "id": download.id.value(),
-            "pageUrl": download.page_url.as_ref().map(Url::as_str),
-            "sourceUrl": download.source_url.as_str(),
-            "fileName": download.file_name,
-            "path": download.path.display().to_string(),
-            "sizeBytes": download.size_bytes,
-            "completedAt": download.completed_at.format(&Rfc3339).unwrap_or_default(),
-        },
-    })
+    let mut params = session_params(record, generation);
+    params["download"] = json!({
+        "id": download.id.value(),
+        "page_url": download.page_url.as_ref().map(Url::as_str),
+        "source_url": download.source_url.as_str(),
+        "file_name": download.file_name,
+        "path": format!("{DOWNLOADS_DIRECTORY}/{}", download.file_name),
+        "size_bytes": download.size_bytes,
+        "completed_at": download.completed_at.format(&Rfc3339).unwrap_or_default(),
+    });
+    params
 }
 
 /// Brings Ora forward so the completion toast is not hidden behind the surface window.

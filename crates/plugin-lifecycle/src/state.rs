@@ -136,7 +136,7 @@ where
 {
     let installed_ids = installed
         .iter()
-        .map(|plugin| PluginId::new(&plugin.id))
+        .map(|plugin| plugin.id.clone())
         .collect::<BTreeSet<_>>();
     let mut enabled_by_id = BTreeMap::new();
     for state in repository
@@ -197,10 +197,8 @@ pub(super) fn discovered_plugin_contract<Runtime>(
     let contribution = match &plugin.contributes {
         PluginContribution::Agent(agent) => InstalledPluginContribution::Agent {
             agent_display_name: agent.display_name.clone(),
-            contract_version: agent.contract_version,
         },
         PluginContribution::Ui(ui) => InstalledPluginContribution::Ui {
-            contract_version: ui.contract_version,
             surfaces: ui
                 .surfaces
                 .iter()
@@ -221,10 +219,14 @@ pub(super) fn discovered_plugin_contract<Runtime>(
     };
 
     InstalledPlugin {
-        id: plugin.id.clone(),
-        package_name: plugin.package_name.clone(),
+        id: plugin.id.canonical(),
+        namespace: plugin.id.namespace().to_string(),
+        name: plugin.id.name().to_string(),
         display_name: plugin.display_name.clone(),
         version: plugin.version.to_string(),
+        description: plugin.description.clone(),
+        homepage: plugin.homepage.clone(),
+        license: plugin.license.clone(),
         main: plugin.main.as_str().to_string(),
         contribution,
         enabled,

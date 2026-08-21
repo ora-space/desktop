@@ -8,7 +8,6 @@ use crate::permissions::DenoPermission;
 use ora_domain::PluginId;
 use ora_plugin_runtime::{PluginNotification, PluginRegistration};
 use serde_json::Value;
-use std::ffi::OsString;
 use std::future::Future;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -23,8 +22,9 @@ pub struct PluginLaunchRequest {
     /// Package root, used as the process working directory so relative imports resolve locally.
     pub package_root: PathBuf,
     pub permissions: Vec<DenoPermission>,
-    /// Environment handed to the process, such as `ORA_PLUGIN_DATA_DIR`.
-    pub env: Vec<(OsString, OsString)>,
+    /// The plugin's private data directory, already created; the launcher binds the
+    /// `ora/storage/*` handler to it so the process can only ever reach its own data.
+    pub data_dir: PathBuf,
 }
 
 /// Preserves the reason a plugin process could not start or stopped unexpectedly.
