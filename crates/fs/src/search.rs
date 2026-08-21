@@ -285,7 +285,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    /// Verifies protocol bookkeeping is ignored while line matches retain their location.
+    /// DT[content-search][happy] Ripgrep JSON begin/end bookkeeping is dropped while match lines keep their path, line, and column.
     #[test]
     fn parses_ripgrep_json_matches() {
         let workspace =
@@ -312,7 +312,7 @@ mod tests {
         );
     }
 
-    /// Verifies the plain-text UI search cannot interpret punctuation as regex syntax.
+    /// DT[content-search][edge] Content queries run with --fixed-strings so punctuation such as brackets is matched literally, never as regex.
     #[test]
     fn uses_fixed_strings_for_content_search() {
         let arguments = search_arguments("[main]", SearchKind::Content);

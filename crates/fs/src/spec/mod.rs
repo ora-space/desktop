@@ -237,7 +237,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
-    /// Verifies discovery and explicit enumeration share fixed generated-directory exclusions.
+    /// DT[markdown-discovery][happy] Discovery and explicit enumeration share the Markdown globs and generated-directory exclusions, and only explicit sources add --no-ignore.
     #[test]
     fn builds_bounded_markdown_arguments() {
         let discovery = markdown_arguments(&[], IgnorePolicy::Honor);
@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(explicit.last(), Some(&"docs/specs".to_string()));
     }
 
-    /// Verifies global discovery honors Git ignore while explicit sources bypass it.
+    /// DT[markdown-discovery][happy] Global discovery honors Git ignore while explicit sources return the ignored Markdown.
     #[tokio::test]
     async fn discovers_case_insensitive_markdown_and_explicit_ignored_sources() {
         let workspace = TempDir::new().expect("create temporary workspace");
@@ -292,7 +292,7 @@ mod tests {
         );
     }
 
-    /// Verifies Spec reads reject non-Markdown files and symbolic-link escapes.
+    /// DT[spec-read][error] Non-Markdown files and symbolic-link escapes are rejected while contained Markdown reads succeed.
     #[test]
     fn reads_only_contained_markdown() {
         let workspace = TempDir::new().expect("create temporary workspace");
@@ -327,7 +327,7 @@ mod tests {
         }
     }
 
-    /// Verifies result and byte-boundary truncation remain visible to catalog callers.
+    /// DT[index-truncation][edge] Result-count and byte-boundary truncation are both surfaced as a truncated index.
     #[test]
     fn reports_markdown_index_truncation() {
         let workspace = TempDir::new().expect("create temporary workspace");
