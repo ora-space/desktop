@@ -9,14 +9,20 @@ executes the effects this crate decides on.
 
 - `ids`: `SurfaceDefinitionId` (plugin id + surface id, stable across restarts),
   `SurfaceInstanceId` and `OperationId` (process-local counters), `ViewGeneration` (page rebuild
-  counter), and `WebviewLabel` (`remote-surface:<plugin id with '.' -> '_'>:<surface>:<instance>`,
-  restricted to the Tauri label alphabet).
+  counter), and `WebviewLabel` (`remote-surface:` or `panel-surface:` followed by
+  `<plugin id with '.' -> '_'>:<surface>:<instance>`, restricted to the Tauri label alphabet; the
+  prefix follows the content source because host capabilities match on it).
 - `definition`: `SurfaceDefinition` built from `ora-plugin-manager`'s already validated
-  `InstalledSurface`; `MountTarget` (`embedded` / `windowed` on the wire, both directions).
-- `navigation`: `NavigationPolicy::allows` accepts only credential-free, port-free `https` URLs
-  whose host is an exact allow-list entry or a subdomain of a suffix entry. `blob:` URLs are
+  `InstalledSurface`, with `SurfaceSource::RemoteSite` or `SurfaceSource::Panel` (canonical asset
+  root + entry); `MountTarget` (`embedded` / `windowed` on the wire, both directions).
+- `navigation`: `NavigationPolicy::RemoteSite` accepts only credential-free, port-free `https`
+  URLs whose host is an exact allow-list entry or a subdomain of a suffix entry; `blob:` URLs are
   judged by their inner origin under the same rules, because sites start in-page downloads by
-  navigating to a blob minted from a fetched response.
+  navigating to a blob minted from a fetched response. `NavigationPolicy::PanelAssets` accepts
+  only URLs below the panel's own asset base.
+- `panel`: the `ora-plugin` scheme, per-platform asset base and entry URLs, `PanelAssetRequest`
+  (splits `/<plugin>/<surface>/<path>`), the servable content-type table, and the panel CSP. Pure
+  functions; the desktop protocol handler only adds file I/O.
 - `state`: pure transition functions returning `SurfaceEffect`s (see `src/state/README.md` for
   the full transition table).
 - `registry`: `SurfaceRegistry` keeps live instances behind one mutex, enforces the singleton

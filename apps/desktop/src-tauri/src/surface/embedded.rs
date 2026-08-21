@@ -6,10 +6,10 @@
 //! the frontend reports is informational only.
 
 use crate::surface::MAIN_WINDOW_LABEL;
-use crate::surface::hooks::{DownloadSink, SurfaceHooks, apply_web_data};
+use crate::surface::hooks::{DownloadSink, PopupOpener, SurfaceHooks, apply_spec};
 use crate::surface::spec::{AdapterError, Placement, SurfaceAdapter, SurfaceWebviewSpec};
 use tauri::webview::WebviewBuilder;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Runtime, Webview, WebviewUrl};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Runtime, Webview};
 
 /// Creates child webviews inside the main window.
 pub struct EmbeddedAdapter<R: Runtime> {
@@ -23,10 +23,10 @@ impl<R: Runtime> EmbeddedAdapter<R> {
 }
 
 impl<R: Runtime> SurfaceAdapter<R> for EmbeddedAdapter<R> {
-    fn create<D: DownloadSink<R>>(
+    fn create<D: DownloadSink<R>, P: PopupOpener>(
         &self,
         spec: &SurfaceWebviewSpec,
-        hooks: SurfaceHooks<D>,
+        hooks: SurfaceHooks<D, P>,
         placement: Placement,
     ) -> Result<Webview<R>, AdapterError> {
         let (position, size) = match placement {
@@ -41,9 +41,8 @@ impl<R: Runtime> SurfaceAdapter<R> for EmbeddedAdapter<R> {
             .app
             .get_window(MAIN_WINDOW_LABEL)
             .ok_or(AdapterError::MainWindowMissing)?;
-        let builder =
-            WebviewBuilder::new(spec.label.as_str(), WebviewUrl::External(spec.url.clone()));
-        let builder = apply_web_data(hooks.attach(builder), &spec.web_data);
+        let builder = WebviewBuilder::new(spec.label.as_str(), spec.webview_url());
+        let builder = apply_spec(hooks.attach(builder), spec);
         main_window
             .add_child(builder, position, size)
             .map_err(AdapterError::Create)

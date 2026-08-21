@@ -27,7 +27,7 @@ fn definition() -> SurfaceDefinition {
         title: "SkillHub".to_owned(),
         source: SurfaceSource::RemoteSite(RemoteSiteDefinition {
             entry_url: Url::parse("https://www.skillhub.cn").expect("valid url"),
-            navigation: NavigationPolicy::new(vec![], vec![]),
+            navigation: NavigationPolicy::remote_site(vec![], vec![]),
             web_data: WebDataPolicy::PersistentProfile,
         }),
         instance_policy: InstancePolicy::Singleton,

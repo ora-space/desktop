@@ -11,8 +11,9 @@ orax package shape, and orchestrates installing new plugin releases.
   then retain its normalized portable relative path.
 - Pair `ora.kind` with the contribution that kind must declare, so a validated plugin always
   carries exactly the contribution its kind promises (`agent` or `ui`).
-- Validate ui surface declarations, including entry URL scheme and navigation allow lists, into
-  typed values (`SurfaceId`, `HostName`, `Url`) that downstream surface hosts reuse directly.
+- Validate ui surface declarations, including entry URL scheme and navigation allow lists for
+  remote sites and the on-disk asset directory and entry document for panels, into typed values
+  (`SurfaceId`, `HostName`, `Url`, `PanelSource`) that downstream surface hosts reuse directly.
 - Read the package's optional `logo.svg` icon and retain its source text once
   `ora-utils::svg` accepts it. A package without an icon is ordinary; an icon that is present but
   unreadable or unsafe becomes a discovery issue and leaves the plugin itself discovered without one.
@@ -43,9 +44,13 @@ a `Local` path for offline and test installs.
 
 One ui-kind package contributes one to eight surfaces under `ora.contributes.ui.surfaces`, exposed
 as `PluginContribution::Ui`. Each surface has a package-unique `SurfaceId` (a slug of at most 32
-bytes), a trimmed title, a singleton instance policy, and a `remoteSite` source: an `https` entry
-URL without credentials or port whose host must be covered by the union of `navigation.allowHosts`
-and `navigation.allowHostSuffixes` (lowercase DNS names). Surfaces are returned sorted by id. A ui
+bytes), a trimmed title, a singleton instance policy, and one of two sources. A `remoteSite`
+source is an `https` entry URL without credentials or port whose host must be covered by the union
+of `navigation.allowHosts` and `navigation.allowHostSuffixes` (lowercase DNS names). A `panel`
+source names a `root` subdirectory of the package and an `.html` `entry` below it; both must exist
+at discovery time and resolve canonically inside the package, and the validated `PanelSource`
+carries the canonical asset directory so hosts can serve files under it as a containment root
+without ever exposing `package.json` or the plugin source. Surfaces are returned sorted by id. A ui
 package that also declares an agent, or an agent package that declares a ui block, fails validation.
 Every plugin id, regardless of kind, is one or two dot-separated slug segments of at most 64 bytes
 in total, because ids become webview labels and directory names.

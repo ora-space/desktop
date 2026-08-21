@@ -4,13 +4,67 @@
 //! trait, so `SurfaceBuilder` is the minimal local glue that lets one `SurfaceHooks::attach`
 //! serve both paths and guarantees the two mount targets enforce the same policy.
 
+use crate::open_external::open_external_url_blocking;
+use crate::surface::spec::SurfaceWebviewSpec;
 use crate::surface::web_data::ResolvedWebData;
-use ora_logging::ora_info;
+use ora_logging::{ora_info, ora_warn};
 use ora_surface::{NavigationPolicy, WebviewLabel};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::webview::{DownloadEvent, NewWindowFeatures, NewWindowResponse};
 use tauri::{Manager, Runtime, Url, Webview, WebviewWindowBuilder};
+
+/// Opens a popup URL outside every Ora webview.
+///
+/// A popup that passes the allow list is still handed to the system browser rather than given a
+/// webview of its own: Tauri's default `Allow` creates a window with no navigation, download, or
+/// registry hooks, so the page could redirect anywhere afterwards and outlive the surface that
+/// spawned it. Implementations only receive URLs the surface policy already accepted.
+pub trait PopupOpener: Send + Sync + 'static {
+    /// Opens `url` in the host's default browser; failures are reported, never retried.
+    fn open(&self, url: &Url) -> Result<(), PopupOpenError>;
+}
+
+/// Reports that the host browser could not be launched for a popup URL.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct PopupOpenError(String);
+
+/// The production opener: the same OS launch path as the `open_external_url` command.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemBrowserOpener;
+
+impl PopupOpener for SystemBrowserOpener {
+    fn open(&self, url: &Url) -> Result<(), PopupOpenError> {
+        open_external_url_blocking(url.as_str()).map_err(|error| PopupOpenError(error.to_string()))
+    }
+}
+
+/// Decides one `window.open` request from a surface page.
+///
+/// The answer is always `Deny` for the webview: an allowed URL leaves the Ora trust boundary via
+/// the system browser, everything else is dropped and logged. A panel never needs a second
+/// window: its only allowed URLs are its own assets, and opening them outside the panel would
+/// show a page without its bridge.
+pub fn handle_popup<R: Runtime, P: PopupOpener>(
+    policy: &NavigationPolicy,
+    opener: &P,
+    label: &WebviewLabel,
+    url: &Url,
+) -> NewWindowResponse<R> {
+    let allowed = match policy {
+        NavigationPolicy::RemoteSite { .. } => policy.allows(url),
+        NavigationPolicy::PanelAssets { .. } => false,
+    };
+    if allowed {
+        if let Err(error) = opener.open(url) {
+            ora_warn!(message = "surface popup could not open in the browser", label = %label, url = %url, error = %error);
+        }
+    } else {
+        ora_info!(message = "surface popup denied", label = %label, url = %url);
+    }
+    NewWindowResponse::Deny
+}
 
 /// Receives download events from a surface webview and decides whether they proceed.
 ///
@@ -37,6 +91,7 @@ pub trait SurfaceBuilder<R: Runtime>: Sized {
     fn data_directory(self, directory: PathBuf) -> Self;
     fn incognito(self, incognito: bool) -> Self;
     fn data_store_identifier(self, identifier: [u8; 16]) -> Self;
+    fn initialization_script(self, script: &str) -> Self;
 }
 
 /// `WebviewBuilder` is only public with Tauri's `unstable` feature.
@@ -71,6 +126,10 @@ impl<R: Runtime> SurfaceBuilder<R> for tauri::webview::WebviewBuilder<R> {
     fn data_store_identifier(self, identifier: [u8; 16]) -> Self {
         tauri::webview::WebviewBuilder::data_store_identifier(self, identifier)
     }
+
+    fn initialization_script(self, script: &str) -> Self {
+        tauri::webview::WebviewBuilder::initialization_script(self, script)
+    }
 }
 
 impl<R: Runtime, M: Manager<R>> SurfaceBuilder<R> for WebviewWindowBuilder<'_, R, M> {
@@ -103,33 +162,46 @@ impl<R: Runtime, M: Manager<R>> SurfaceBuilder<R> for WebviewWindowBuilder<'_, R
     fn data_store_identifier(self, identifier: [u8; 16]) -> Self {
         WebviewWindowBuilder::data_store_identifier(self, identifier)
     }
+
+    fn initialization_script(self, script: &str) -> Self {
+        WebviewWindowBuilder::initialization_script(self, script)
+    }
 }
 
 /// The policy closures attached to one surface webview.
-pub struct SurfaceHooks<D> {
+pub struct SurfaceHooks<D, P> {
     label: WebviewLabel,
     navigation: NavigationPolicy,
     downloads: Arc<D>,
+    popups: Arc<P>,
 }
 
-impl<D> SurfaceHooks<D> {
-    /// Bundles the label, navigation policy, and download sink of one instance.
-    pub fn new(label: WebviewLabel, navigation: NavigationPolicy, downloads: Arc<D>) -> Self {
+impl<D, P> SurfaceHooks<D, P> {
+    /// Bundles the label, navigation policy, download sink, and popup opener of one instance.
+    pub fn new(
+        label: WebviewLabel,
+        navigation: NavigationPolicy,
+        downloads: Arc<D>,
+        popups: Arc<P>,
+    ) -> Self {
         Self {
             label,
             navigation,
             downloads,
+            popups,
         }
     }
 
-    /// Installs the hooks on a builder of either kind. Popups inside the allow list open with
-    /// the default system behaviour, exactly like the former marketplace window.
+    /// Installs the hooks on a builder of either kind. Popups inside the allow list are handed
+    /// to the system browser; no popup ever becomes an Ora-hosted webview (see `handle_popup`).
     pub fn attach<R: Runtime, B: SurfaceBuilder<R>>(self, builder: B) -> B
     where
         D: DownloadSink<R>,
+        P: PopupOpener,
     {
         let navigation = self.navigation.clone();
         let popups = self.navigation;
+        let opener = self.popups;
         let downloads = self.downloads;
         let label = self.label;
         let navigation_label = label.clone();
@@ -145,12 +217,7 @@ impl<D> SurfaceHooks<D> {
                 allowed
             })
             .on_new_window(move |url, _features| {
-                if popups.allows(&url) {
-                    NewWindowResponse::Allow
-                } else {
-                    ora_info!(message = "surface popup denied", label = %popup_label, url = %url);
-                    NewWindowResponse::Deny
-                }
+                handle_popup(&popups, opener.as_ref(), &popup_label, &url)
             })
             .on_download(move |webview, event| {
                 // The page URL is informational (it lands in `ui/downloadCompleted`), so a
@@ -160,15 +227,104 @@ impl<D> SurfaceHooks<D> {
     }
 }
 
-/// Applies the resolved web data mechanism to a builder of either kind.
-pub fn apply_web_data<R: Runtime, B: SurfaceBuilder<R>>(
-    builder: B,
-    web_data: &ResolvedWebData,
-) -> B {
-    match web_data {
+/// Applies the spec's web data mechanism and optional injected script to a builder of either
+/// kind, so both mount targets configure the page identically.
+pub fn apply_spec<R: Runtime, B: SurfaceBuilder<R>>(builder: B, spec: &SurfaceWebviewSpec) -> B {
+    let builder = match &spec.web_data {
         ResolvedWebData::Directory(directory) => builder.data_directory(directory.clone()),
         ResolvedWebData::StoreIdentifier(identifier) => builder.data_store_identifier(*identifier),
         ResolvedWebData::Incognito => builder.incognito(true),
         ResolvedWebData::SharedDefault => builder,
+    };
+    match spec.initialization_script {
+        Some(script) => builder.initialization_script(script),
+        None => builder,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NewWindowResponse, PopupOpenError, PopupOpener, handle_popup};
+    use ora_domain::PluginId;
+    use ora_plugin_manager::{HostName, SurfaceId};
+    use ora_surface::{NavigationPolicy, SurfaceDefinitionId, SurfaceInstanceId, WebviewLabel};
+    use pretty_assertions::assert_eq;
+    use std::sync::Mutex;
+    use tauri::Url;
+    use tauri::test::MockRuntime;
+
+    /// Records every URL handed to the browser instead of launching one.
+    #[derive(Default)]
+    struct RecordingOpener(Mutex<Vec<String>>);
+
+    impl PopupOpener for RecordingOpener {
+        fn open(&self, url: &Url) -> Result<(), PopupOpenError> {
+            self.0.lock().expect("opener lock").push(url.to_string());
+            Ok(())
+        }
+    }
+
+    /// Builds a remote-site policy that trusts exactly `skillhub.example`.
+    fn policy() -> NavigationPolicy {
+        NavigationPolicy::remote_site(
+            vec![HostName::parse("skillhub.example").expect("valid host")],
+            Vec::new(),
+        )
+    }
+
+    fn label() -> WebviewLabel {
+        WebviewLabel::remote(
+            &SurfaceDefinitionId {
+                plugin_id: PluginId::new("ora-space.skillhub"),
+                surface_id: SurfaceId::parse("market").expect("valid surface id"),
+            },
+            SurfaceInstanceId::new(1),
+        )
+    }
+
+    /// Verifies popups never become Ora webviews: an allowed URL goes to the browser and is
+    /// denied, a disallowed URL is neither opened nor allowed.
+    #[test]
+    fn popups_are_denied_and_only_allowed_urls_reach_the_browser() {
+        let opener = RecordingOpener::default();
+        let allowed = Url::parse("https://skillhub.example/skills/1").expect("url");
+        let denied = Url::parse("https://evil.example/").expect("url");
+
+        let responses = [&allowed, &denied]
+            .into_iter()
+            .map(|url| {
+                matches!(
+                    handle_popup::<MockRuntime, _>(&policy(), &opener, &label(), url),
+                    NewWindowResponse::Deny
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            (responses, opener.0.into_inner().expect("opener lock")),
+            (
+                vec![true, true],
+                vec!["https://skillhub.example/skills/1".to_owned()],
+            ),
+        );
+    }
+
+    /// Verifies a panel never opens a popup, even for its own allowed asset URLs.
+    #[test]
+    fn panels_never_open_popups() {
+        let base =
+            Url::parse("ora-plugin://localhost/ora-space_hello-panel/counter/").expect("url");
+        let policy = NavigationPolicy::panel_assets(base.clone());
+        let opener = RecordingOpener::default();
+
+        let denied = matches!(
+            handle_popup::<MockRuntime, _>(&policy, &opener, &label(), &base),
+            NewWindowResponse::Deny
+        );
+
+        assert_eq!(
+            (denied, opener.0.into_inner().expect("opener lock")),
+            (true, Vec::new())
+        );
     }
 }

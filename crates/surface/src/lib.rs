@@ -9,10 +9,13 @@ mod downloads;
 mod events;
 mod ids;
 mod navigation;
+mod panel;
 mod registry;
 mod state;
 
-pub use definition::{MountTarget, RemoteSiteDefinition, SurfaceDefinition, SurfaceSource};
+pub use definition::{
+    MountTarget, PanelDefinition, RemoteSiteDefinition, SurfaceDefinition, SurfaceSource,
+};
 pub use downloads::{
     CompletedDownload, DownloadAcceptance, DownloadClock, DownloadCoordinator, DownloadFinish,
     DownloadId, DownloadStatus, LocalDownloadClock, RejectReason, Reservation,
@@ -20,6 +23,10 @@ pub use downloads::{
 pub use events::SurfaceEvent;
 pub use ids::{OperationId, SurfaceDefinitionId, SurfaceInstanceId, ViewGeneration, WebviewLabel};
 pub use navigation::NavigationPolicy;
+pub use panel::{
+    PANEL_SCHEME, PanelAssetRequest, PanelUrlForm, panel_asset_base, panel_content_type, panel_csp,
+    panel_entry_url,
+};
 pub use registry::{CommandError, CompleteError, OpenError, SurfaceRecord, SurfaceRegistry};
 pub use state::{
     StaleCompletion, SurfaceCommand, SurfaceCompletion, SurfaceEffect, SurfaceState, Transition,

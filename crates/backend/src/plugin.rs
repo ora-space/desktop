@@ -22,6 +22,7 @@ use ora_plugin_registry::{
 };
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
 use std::path::PathBuf;
+use tokio::sync::broadcast;
 
 /// The marketplace repository mirrored into the local registry source checkout.
 const MARKETPLACE_REPOSITORY_URL: &str = "https://github.com/ora-space/marketplace";
@@ -34,25 +35,49 @@ pub(crate) type BackendPluginLifecycle = PluginLifecycle<
     SystemClock,
     DenoPluginRuntimeLauncher,
     AppEventPublisher,
-    LoggingNotificationSink,
+    BroadcastNotificationSink,
 >;
 
-/// Logs plugin-originated notifications until a surface broker consumes them.
+/// Bounded fan-out buffer between the lifecycle's per-process pumps and their consumers.
 ///
-/// The first ui plugins declare no `emits`, so nothing arrives here in practice; logging keeps
-/// the stream observable without committing to a routing design before one is needed.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct LoggingNotificationSink;
+/// A slow consumer may lag and lose the oldest notifications, which is acceptable because the
+/// only producer today (`ui/push`) is best-effort by contract; the alternative, blocking the
+/// pump, would stall every other message of that plugin process.
+const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
 
-impl PluginNotificationSink for LoggingNotificationSink {
-    /// Records the notification at debug level and drops it.
+/// Forwards plugin-originated notifications to every subscriber without blocking the pump.
+///
+/// Subscribers are attached after the backend is built (the desktop surface host is one), which
+/// is why the sink owns a broadcast sender instead of a fixed consumer.
+#[derive(Clone, Debug)]
+pub(crate) struct BroadcastNotificationSink {
+    sender: broadcast::Sender<InboundNotification>,
+}
+
+impl BroadcastNotificationSink {
+    fn new() -> Self {
+        let (sender, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
+        Self { sender }
+    }
+
+    /// Opens a new receiver that sees every notification sent from now on.
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<InboundNotification> {
+        self.sender.subscribe()
+    }
+}
+
+impl PluginNotificationSink for BroadcastNotificationSink {
+    /// Publishes the notification; with no subscriber it is dropped, which is logged at debug
+    /// level so an unexpectedly silent plugin stays diagnosable.
     fn on_notification(&self, notification: InboundNotification) {
-        ora_debug!(
-            message = "plugin notification received",
-            plugin_id = %notification.plugin_id,
-            generation = notification.generation.0,
-            method = %notification.method,
-        );
+        if self.sender.send(notification.clone()).is_err() {
+            ora_debug!(
+                message = "plugin notification dropped without subscriber",
+                plugin_id = %notification.plugin_id,
+                generation = notification.generation.0,
+                method = %notification.method,
+            );
+        }
     }
 }
 
@@ -63,6 +88,7 @@ pub(crate) struct PluginApi {
     registry_index_path: PathBuf,
     data_directory: PathBuf,
     installer: Installer<ReqwestDownloader>,
+    notifications: BroadcastNotificationSink,
 }
 
 impl PluginApi {
@@ -86,6 +112,7 @@ impl PluginApi {
         );
         let registry_index_path = plugins_directory.join("cache").join("registry_index.json");
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
+        let notifications = BroadcastNotificationSink::new();
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
                 data_directory: data_directory.clone(),
@@ -95,7 +122,7 @@ impl PluginApi {
             clock,
             DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
             publisher,
-            LoggingNotificationSink,
+            notifications.clone(),
         )?;
 
         Ok(Self {
@@ -104,6 +131,7 @@ impl PluginApi {
             registry_index_path,
             data_directory,
             installer,
+            notifications,
         })
     }
 
@@ -156,6 +184,11 @@ impl PluginApi {
     /// Exposes the lifecycle to the gateway that serves desktop surfaces.
     pub(crate) fn lifecycle(&self) -> &BackendPluginLifecycle {
         &self.lifecycle
+    }
+
+    /// Opens a receiver of every notification running plugin processes emit from now on.
+    pub(crate) fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification> {
+        self.notifications.subscribe()
     }
 
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
@@ -273,5 +306,40 @@ fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
         version: entry.version().to_string(),
         description: entry.description().to_owned(),
         logo: entry.logo().map(str::to_owned),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BroadcastNotificationSink;
+    use ora_domain::PluginId;
+    use ora_plugin_lifecycle::{InboundNotification, PluginGeneration, PluginNotificationSink};
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    /// Verifies a subscriber attached after construction receives notifications in order and a
+    /// notification without any subscriber is dropped without panicking.
+    #[tokio::test]
+    async fn broadcasts_to_late_subscribers_and_tolerates_none() {
+        let sink = BroadcastNotificationSink::new();
+        let notification = |method: &str| InboundNotification {
+            plugin_id: PluginId::new("ora-space.hello-panel"),
+            generation: PluginGeneration(1),
+            method: method.to_owned(),
+            params: json!({ "n": 1 }),
+        };
+        sink.on_notification(notification("dropped"));
+
+        let mut receiver = sink.subscribe();
+        sink.on_notification(notification("ui/push"));
+        sink.on_notification(notification("ui/other"));
+
+        assert_eq!(
+            (
+                receiver.recv().await.expect("first"),
+                receiver.recv().await.expect("second"),
+            ),
+            (notification("ui/push"), notification("ui/other"))
+        );
     }
 }

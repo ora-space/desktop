@@ -2,7 +2,7 @@
 //! windows on behalf of the surface state machine.
 
 use crate::surface::gateway::SurfacePluginGateway;
-use crate::surface::hooks::SurfaceHooks;
+use crate::surface::hooks::{SurfaceHooks, SystemBrowserOpener};
 use crate::surface::idle::{IDLE_GRACE, IdleOutcome, wait_for_idle};
 use crate::surface::plugin_link::{announce_closed, announce_opened};
 use crate::surface::service::SurfaceService;
@@ -10,11 +10,13 @@ use crate::surface::spec::{AdapterError, Placement, SurfaceAdapter, SurfaceWebvi
 use crate::surface::web_data::{self, HostPlatform};
 use crate::surface::{MAIN_WINDOW_LABEL, SURFACE_EVENT};
 use ora_logging::{ora_info, ora_warn};
+use ora_plugin_manager::WebDataPolicy;
 use ora_surface::{
     DownloadClock, MountTarget, SurfaceCompletion, SurfaceEffect, SurfaceEvent, SurfaceInstanceId,
     SurfaceRecord, SurfaceSource,
 };
 use std::collections::VecDeque;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime, Webview, WindowEvent};
 
 /// Sends one surface event to the main webview; failures are logged because the registry, not
@@ -112,19 +114,29 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
             .gateway
             .data_directory(plugin_id)
             .map_err(|error| error.to_string())?;
-        let SurfaceSource::RemoteSite(site) = &record.definition.source;
+        // Panels get a dedicated per-surface profile rather than an incognito store. Isolation is
+        // the same (one directory per plugin and surface), but on Linux custom URI schemes are
+        // bound to the web context, and an incognito webview gets a fresh ephemeral context on
+        // which `ora-plugin://` is never registered; a profile directory yields a context of its
+        // own that receives every scheme.
+        let web_data_policy = match &record.definition.source {
+            SurfaceSource::RemoteSite(site) => site.web_data,
+            SurfaceSource::Panel(_) => WebDataPolicy::PersistentProfile,
+        };
         let web_data = web_data::resolve(
-            site.web_data,
+            web_data_policy,
             &record.definition.id,
             &plugin_data,
             HostPlatform::CURRENT,
         )
         .map_err(|error| format!("failed to prepare the web profile: {error}"))?;
-        let spec = SurfaceWebviewSpec::new(&record, web_data);
+        let spec = SurfaceWebviewSpec::new(&record, web_data)
+            .map_err(|error| format!("failed to build the surface URL: {error}"))?;
         let hooks = SurfaceHooks::new(
             spec.label.clone(),
             spec.navigation.clone(),
             self.downloads.clone(),
+            Arc::new(SystemBrowserOpener),
         );
         let webview = match target {
             MountTarget::Windowed => self.windowed.create(&spec, hooks, Placement::Windowed),
@@ -142,7 +154,10 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
     fn create_embedded(
         &self,
         spec: &SurfaceWebviewSpec,
-        hooks: SurfaceHooks<crate::surface::downloads::DownloadDispatcher<G, R, C>>,
+        hooks: SurfaceHooks<
+            crate::surface::downloads::DownloadDispatcher<G, R, C>,
+            SystemBrowserOpener,
+        >,
     ) -> Result<Webview<R>, AdapterError> {
         self.embedded.create(spec, hooks, Placement::parked())
     }
@@ -153,7 +168,10 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
     fn create_embedded(
         &self,
         _spec: &SurfaceWebviewSpec,
-        _hooks: SurfaceHooks<crate::surface::downloads::DownloadDispatcher<G, R, C>>,
+        _hooks: SurfaceHooks<
+            crate::surface::downloads::DownloadDispatcher<G, R, C>,
+            SystemBrowserOpener,
+        >,
     ) -> Result<Webview<R>, AdapterError> {
         Err(AdapterError::EmbeddedUnsupported)
     }
@@ -196,6 +214,7 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
 
     /// Notifies the plugin and arms the idle timer once a plugin has no instance left.
     fn after_closed(&self, record: SurfaceRecord) {
+        self.pushes.forget(record.instance);
         let plugin_id = record.definition.id.plugin_id.clone();
         let gateway = self.gateway.clone();
         tauri::async_runtime::spawn(async move { announce_closed(&gateway, record).await });

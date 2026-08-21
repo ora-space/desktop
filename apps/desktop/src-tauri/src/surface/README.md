@@ -14,9 +14,24 @@ machine, and this module executes the resulting effects.
   the registry lock, feeds completions back, wires window close requests to `Close`, emits
   `surface://event` to the `main` webview, announces sessions to the plugin, and arms idle stop.
 - `commands.rs`: the `surface_*` Tauri commands and their DTOs; translation only.
-- `spec.rs`, `hooks.rs`: `SurfaceWebviewSpec` (immutable build parameters), the local
-  `SurfaceBuilder` trait implemented for both Tauri builders, `SurfaceHooks::attach`
-  (navigation, popup, download hooks) and `apply_web_data`.
+- `panel_assets.rs`: the `ora-plugin://` protocol serving a panel's package files. Resolves the
+  caller label through the registry, requires the URL to name that label's plugin and surface,
+  resolves the file inside the canonical asset root, applies the content-type table and the
+  panel CSP; every refusal is a 404 with the reason logged.
+- `bridge.rs`, `panel_api.js`: `surface_request`, the bridge command used by `panel-surface:*`
+  webviews. Resolves the caller to a live panel instance, bounds the payload, starts the plugin
+  on demand, invokes `ui/request`, and maps failures onto the `{kind: host | plugin}` error union.
+  `panel_api.js` is injected into panel webviews and defines `acquireOraSurfaceApi()`.
+- `push.rs`: routes `ui/push` notifications from the gateway's broadcast stream to the owning
+  panel webview (`window.__ORA_SURFACE_PUSH__`), dropping pushes for unknown instances,
+  non-panels, other plugins/surfaces, and stale process generations; numbers envelopes per
+  instance.
+- `spec.rs`, `hooks.rs`: `SurfaceWebviewSpec` (immutable build parameters derived from the
+  source: entry URL, navigation policy, web data, injected script), the local `SurfaceBuilder`
+  trait implemented for both Tauri builders, `SurfaceHooks::attach` (navigation, popup, download
+  hooks) and `apply_spec`. A popup is never given an Ora webview: an allowed remote-site URL is
+  handed to the system browser through `PopupOpener` and the request is denied; panels never
+  open popups.
 - `windowed.rs`: `WindowedAdapter` (stable `WebviewWindowBuilder`).
 - `embedded.rs`: `EmbeddedAdapter` (`Window::add_child`), compiled only with the
   `embedded-surfaces` feature.
@@ -29,7 +44,7 @@ machine, and this module executes the resulting effects.
   notifies the frontend, brings the main window forward for windowed surfaces, and delivers
   `ui/downloadCompleted` to the plugin process under a concurrency limit of 8.
 - `plugin_link.rs`: `ui/surfaceOpened` / `ui/surfaceClosed` notifications and the on-demand
-  process start with replay of all open instances.
+  process start with replay of all open instances, announced exactly once per process generation.
 - `idle.rs`: per-plugin idle timers; the process is stopped 30 s after the last instance closes
   unless a surface reopens.
 - `gateway.rs`: `SurfacePluginGateway` / `SurfaceConnection`, the narrow port onto

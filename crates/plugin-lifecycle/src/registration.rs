@@ -9,6 +9,8 @@ use ora_plugin_runtime::PluginRegistration;
 
 /// The request a remote-site ui plugin must serve so downloaded files can be handed to it.
 pub const UI_DOWNLOAD_COMPLETED_METHOD: &str = "ui/downloadCompleted";
+/// The request a panel ui plugin must serve so its page can reach the process.
+pub const UI_REQUEST_METHOD: &str = "ui/request";
 
 /// Rejects a registration that does not cover the contract implied by the manifest kind.
 ///
@@ -22,12 +24,22 @@ pub fn validate_registration(
     match contribution {
         PluginContribution::Agent(_) => Ok(()),
         PluginContribution::Ui(ui) => {
-            let has_remote_site = ui.surfaces.iter().any(|surface| match &surface.source {
-                InstalledSurfaceSource::RemoteSite(_) => true,
-            });
+            // Each source kind implies one required method; a plugin mixing both must serve both.
+            let (mut has_remote_site, mut has_panel) = (false, false);
+            for surface in &ui.surfaces {
+                match &surface.source {
+                    InstalledSurfaceSource::RemoteSite(_) => has_remote_site = true,
+                    InstalledSurfaceSource::Panel(_) => has_panel = true,
+                }
+            }
             if has_remote_site && !registration.methods.contains(UI_DOWNLOAD_COMPLETED_METHOD) {
                 return Err(PluginRuntimeFailure::new(format!(
                     "ui contract v1 requires method {UI_DOWNLOAD_COMPLETED_METHOD}"
+                )));
+            }
+            if has_panel && !registration.methods.contains(UI_REQUEST_METHOD) {
+                return Err(PluginRuntimeFailure::new(format!(
+                    "ui contract v1 requires method {UI_REQUEST_METHOD}"
                 )));
             }
             Ok(())
@@ -41,11 +53,14 @@ mod tests {
     use crate::ports::PluginRuntimeFailure;
     use ora_plugin_manager::{
         InstalledPluginAgent, InstalledPluginUi, InstalledSurface, InstalledSurfaceSource,
-        InstancePolicy, PluginContribution, RemoteSiteSource, SurfaceId, WebDataPolicy,
+        InstancePolicy, PanelSource, PluginContribution, RemoteSiteSource, SurfaceId,
+        WebDataPolicy,
     };
     use ora_plugin_runtime::PluginRegistration;
+    use ora_utils::path::PortableRelativePath;
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
+    use std::path::PathBuf;
 
     /// Builds one ui contribution with a single remote-site surface.
     fn remote_site_ui() -> PluginContribution {
@@ -63,6 +78,43 @@ mod tests {
                 }),
             }],
         })
+    }
+
+    /// Builds one ui contribution with a single panel surface.
+    fn panel_ui() -> PluginContribution {
+        PluginContribution::Ui(InstalledPluginUi {
+            contract_version: 1,
+            surfaces: vec![InstalledSurface {
+                id: SurfaceId::parse("counter").expect("surface id"),
+                title: "Hello Panel".to_string(),
+                instance_policy: InstancePolicy::Singleton,
+                source: InstalledSurfaceSource::Panel(PanelSource {
+                    asset_root: PathBuf::from("/plugins/hello-panel/ui"),
+                    entry: PortableRelativePath::parse("index.html").expect("entry"),
+                }),
+            }],
+        })
+    }
+
+    /// A panel ui plugin must serve `ui/request`; the download handler is not required of it.
+    #[test]
+    fn panel_ui_requires_request_only() {
+        let with_request = PluginRegistration {
+            methods: HashSet::from(["ui/request".to_string()]),
+            emits: HashSet::from(["ui/push".to_string()]),
+        };
+        assert_eq!(
+            (
+                validate_registration(&panel_ui(), &PluginRegistration::default()),
+                validate_registration(&panel_ui(), &with_request),
+            ),
+            (
+                Err(PluginRuntimeFailure::new(
+                    "ui contract v1 requires method ui/request"
+                )),
+                Ok(()),
+            )
+        );
     }
 
     /// A remote-site ui plugin without the download handler is rejected with the documented reason.

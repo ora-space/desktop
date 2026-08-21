@@ -193,7 +193,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
     };
 
     // Project the validated contribution onto the wire enum; the lifecycle crate never needs the
-    // navigation policy, so only the entry URL of each surface crosses the boundary.
+    // navigation policy or asset paths, so only the entry URL of a remote site crosses the boundary.
     let contribution = match &plugin.contributes {
         PluginContribution::Agent(agent) => InstalledPluginContribution::Agent {
             agent_display_name: agent.display_name.clone(),
@@ -213,6 +213,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
                                 entry_url: site.entry_url.to_string(),
                             }
                         }
+                        InstalledSurfaceSource::Panel(_) => InstalledPluginSurfaceSource::Panel {},
                     },
                 })
                 .collect(),

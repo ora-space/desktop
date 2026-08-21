@@ -3,20 +3,23 @@
 //! Surfaces live in the desktop shell, but the plugin processes they talk to are owned by the
 //! backend's lifecycle. This gateway exposes only the operations a surface needs: look up the
 //! installed package, resolve the plugin's writable directory, obtain a connection to its process
-//! (starting it on demand), stop it when idle, and register the surface closer. The wider plugin
-//! management API stays on `Backend`.
+//! (starting it on demand), stop it when idle, subscribe to the notifications plugin processes
+//! emit (`ui/push`), and register the surface closer. The wider plugin management API stays on
+//! `Backend`.
 
 use crate::plugin::PluginApi;
 use ora_contracts::StopPluginRequest;
 use ora_domain::PluginId;
 use ora_plugin_lifecycle::{
-    ConnectionError, DenoPluginRuntime, PluginConnection, PluginLifecycleError, SurfaceCloser,
+    ConnectionError, DenoPluginRuntime, InboundNotification, PluginConnection,
+    PluginLifecycleError, SurfaceCloser,
 };
 use ora_plugin_manager::InstalledPlugin;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::sync::broadcast;
 
 /// Reports why a gateway operation could not complete.
 #[derive(Debug, Error)]
@@ -108,6 +111,14 @@ impl PluginGateway {
             .await
             .map(|_| ())
             .map_err(GatewayError::Lifecycle)
+    }
+
+    /// Opens a receiver of every notification running plugin processes emit from now on.
+    ///
+    /// The surface host routes `ui/push` from here to the panel webview that owns the session;
+    /// a lagging receiver loses the oldest notifications rather than slowing the plugin.
+    pub fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification> {
+        self.plugin.subscribe_notifications()
     }
 
     /// Installs the desktop component that closes surfaces before a plugin stops or uninstalls.

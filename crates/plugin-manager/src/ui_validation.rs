@@ -4,7 +4,9 @@ use crate::manifest::{
 };
 use crate::surface::{HostName, InstancePolicy, SurfaceId, WebDataPolicy};
 use crate::validation::{ManifestValidationError, invalid};
+use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use url::Url;
 
 const SUPPORTED_UI_CONTRACT_VERSION: u32 = 1;
@@ -14,6 +16,8 @@ const MIN_SURFACES: usize = 1;
 const MAX_SURFACES: usize = 8;
 /// Titles are rendered in menus and tab strips, so they are kept short.
 const MAX_TITLE_CHARS: usize = 64;
+/// A panel entry is loaded as a document, so only HTML makes sense as the first request.
+const PANEL_ENTRY_EXTENSION: &str = "html";
 
 /// Holds the validated ui contribution of one ui-kind package.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +40,7 @@ pub struct InstalledSurface {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstalledSurfaceSource {
     RemoteSite(RemoteSiteSource),
+    Panel(PanelSource),
 }
 
 /// Holds one validated remote site: an https entry plus the navigation policy that contains it.
@@ -47,8 +52,23 @@ pub struct RemoteSiteSource {
     pub web_data: WebDataPolicy,
 }
 
+/// Holds one validated panel: the canonical asset directory inside the package and the entry
+/// document relative to it. Only files below `asset_root` are ever served to the panel webview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelSource {
+    pub asset_root: PathBuf,
+    pub entry: PortableRelativePath,
+}
+
 /// Validates `ora.contributes.ui` field by field, reporting the first failing field path.
-pub(crate) fn validate_ui(ui: UiManifest) -> Result<InstalledPluginUi, ManifestValidationError> {
+///
+/// `package_root` is needed because a panel declaration points at files that must exist inside
+/// the package; a manifest that names a missing page is rejected at discovery, not when the
+/// surface is opened.
+pub(crate) fn validate_ui(
+    package_root: &Path,
+    ui: UiManifest,
+) -> Result<InstalledPluginUi, ManifestValidationError> {
     if ui.contract_version != SUPPORTED_UI_CONTRACT_VERSION {
         return Err(invalid(
             "ora.contributes.ui.contractVersion",
@@ -72,7 +92,7 @@ pub(crate) fn validate_ui(ui: UiManifest) -> Result<InstalledPluginUi, ManifestV
     let mut surfaces = BTreeMap::new();
     for (index, surface) in ui.surfaces.into_iter().enumerate() {
         let prefix = format!("ora.contributes.ui.surfaces[{index}]");
-        let surface = validate_surface(&prefix, surface)?;
+        let surface = validate_surface(package_root, &prefix, surface)?;
         if surfaces.contains_key(&surface.id) {
             return Err(invalid(
                 format!("{prefix}.id"),
@@ -90,6 +110,7 @@ pub(crate) fn validate_ui(ui: UiManifest) -> Result<InstalledPluginUi, ManifestV
 
 /// Validates one surface entry whose field paths start with `prefix`.
 fn validate_surface(
+    package_root: &Path,
     prefix: &str,
     surface: SurfaceManifest,
 ) -> Result<InstalledSurface, ManifestValidationError> {
@@ -132,6 +153,9 @@ fn validate_surface(
             navigation,
             web_data,
         )?),
+        SurfaceSourceManifest::Panel { root, entry } => InstalledSurfaceSource::Panel(
+            validate_panel(&format!("{prefix}.source"), package_root, &root, &entry)?,
+        ),
     };
 
     Ok(InstalledSurface {
@@ -205,6 +229,91 @@ fn validate_remote_site(
             WebDataPolicyManifest::PersistentProfile => WebDataPolicy::PersistentProfile,
             WebDataPolicyManifest::EphemeralIsolated => WebDataPolicy::EphemeralIsolated,
         },
+    })
+}
+
+/// Resolves the panel asset directory and entry document, both of which must exist inside the
+/// package. The directory is canonicalized once here so the asset handler can treat it as a
+/// containment root without repeating the package-boundary reasoning.
+fn validate_panel(
+    prefix: &str,
+    package_root: &Path,
+    root: &str,
+    entry: &str,
+) -> Result<PanelSource, ManifestValidationError> {
+    let root_field = format!("{prefix}.root");
+    let root_relative = PortableRelativePath::parse(root).map_err(|error| {
+        invalid(
+            root_field.clone(),
+            format!("panel root must be a safe relative path: {error}"),
+        )
+    })?;
+    // Serving the package root would expose `package.json` and the plugin source to the page.
+    if root_relative.is_root() {
+        return Err(invalid(
+            root_field,
+            "panel root must be a subdirectory of the package",
+        ));
+    }
+    let package = CanonicalPathRoot::new(package_root).map_err(|error| {
+        invalid(
+            root_field.clone(),
+            format!("plugin package root is unavailable: {error}"),
+        )
+    })?;
+    let asset_root = package.resolve_existing(&root_relative).map_err(|error| {
+        invalid(
+            root_field.clone(),
+            format!("panel root must resolve inside the plugin package: {error}"),
+        )
+    })?;
+    if !asset_root.is_dir() {
+        return Err(invalid(root_field, "panel root must be a directory"));
+    }
+
+    let entry_field = format!("{prefix}.entry");
+    let entry_relative = PortableRelativePath::parse(entry).map_err(|error| {
+        invalid(
+            entry_field.clone(),
+            format!("panel entry must be a safe relative path: {error}"),
+        )
+    })?;
+    if entry_relative.is_root() {
+        return Err(invalid(entry_field, "panel entry must identify a file"));
+    }
+    if entry_relative
+        .to_path_buf()
+        .extension()
+        .and_then(|ext| ext.to_str())
+        != Some(PANEL_ENTRY_EXTENSION)
+    {
+        return Err(invalid(
+            entry_field,
+            format!("panel entry must be an `.{PANEL_ENTRY_EXTENSION}` document"),
+        ));
+    }
+    let assets = CanonicalPathRoot::new(&asset_root).map_err(|error| {
+        invalid(
+            entry_field.clone(),
+            format!("panel root is unavailable: {error}"),
+        )
+    })?;
+    let entry_path = assets.resolve_existing(&entry_relative).map_err(|error| {
+        invalid(
+            entry_field.clone(),
+            format!("panel entry must resolve inside the panel root: {error}"),
+        )
+    })?;
+    if !entry_path.is_file() {
+        return Err(invalid(
+            entry_field,
+            "panel entry must identify a regular file",
+        ));
+    }
+
+    Ok(PanelSource {
+        asset_root,
+        entry: entry_relative,
     })
 }
 

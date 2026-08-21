@@ -18,7 +18,7 @@ pub use install::{InstallError, Installer};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use surface::{HostName, InstancePolicy, SurfaceId, WebDataPolicy};
 pub use ui_validation::{
-    InstalledPluginUi, InstalledSurface, InstalledSurfaceSource, RemoteSiteSource,
+    InstalledPluginUi, InstalledSurface, InstalledSurfaceSource, PanelSource, RemoteSiteSource,
 };
 pub use validation::{
     InstalledPlugin, InstalledPluginAgent, PluginContribution, PluginEngines, PluginPackageType,

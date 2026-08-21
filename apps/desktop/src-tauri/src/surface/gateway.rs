@@ -7,7 +7,8 @@
 use ora_backend::{GatewayError, PluginGateway};
 use ora_domain::PluginId;
 use ora_plugin_lifecycle::{
-    ConnectionError, PluginCallError, PluginConnection, PluginGeneration, PluginRuntime,
+    ConnectionError, InboundNotification, PluginCallError, PluginConnection, PluginGeneration,
+    PluginRuntime,
 };
 use ora_plugin_manager::{InstalledSurface, PluginContribution};
 use serde_json::Value;
@@ -16,6 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::sync::broadcast;
 
 /// A live connection to one plugin process generation.
 ///
@@ -115,6 +117,9 @@ pub trait SurfacePluginGateway: Clone + Send + Sync + 'static {
         &self,
         plugin_id: &PluginId,
     ) -> impl Future<Output = Result<(), GatewayFailure>> + Send;
+
+    /// Opens a receiver of every notification running plugin processes emit from now on.
+    fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification>;
 }
 
 impl SurfacePluginGateway for Arc<PluginGateway> {
@@ -153,5 +158,9 @@ impl SurfacePluginGateway for Arc<PluginGateway> {
         PluginGateway::stop_if_idle(self, plugin_id)
             .await
             .map_err(GatewayFailure::from)
+    }
+
+    fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification> {
+        PluginGateway::subscribe_notifications(self)
     }
 }

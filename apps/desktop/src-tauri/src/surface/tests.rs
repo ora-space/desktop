@@ -5,34 +5,42 @@ use crate::surface::downloads::{bring_main_window_forward, download_completed_pa
 use crate::surface::error::SurfaceError;
 use crate::surface::gateway::{GatewayFailure, SurfaceConnection, SurfacePluginGateway};
 use crate::surface::hooks::DownloadSink;
-use crate::surface::plugin_link::session_params;
+use crate::surface::plugin_link::{ProcessStart, Replay, session_params};
 use crate::surface::{MAIN_WINDOW_LABEL, SURFACE_EVENT, SurfaceService};
 use ora_domain::PluginId;
-use ora_plugin_lifecycle::{ConnectionError, PluginCallError, PluginGeneration};
+use ora_plugin_lifecycle::{
+    ConnectionError, InboundNotification, PluginCallError, PluginGeneration,
+};
 use ora_plugin_manager::{
-    HostName, InstalledSurface, InstalledSurfaceSource, InstancePolicy, RemoteSiteSource,
-    SurfaceId, WebDataPolicy,
+    HostName, InstalledSurface, InstalledSurfaceSource, InstancePolicy, PanelSource,
+    RemoteSiteSource, SurfaceId, WebDataPolicy,
 };
 use ora_surface::{
     CompletedDownload, DownloadClock, DownloadId, MountTarget, SurfaceInstanceId, SurfaceRecord,
     SurfaceState, WebviewLabel,
 };
+use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::test::{MockRuntime, mock_app};
 use tauri::webview::DownloadEvent;
 use tauri::{App, Listener, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use time::macros::datetime;
+use tokio::sync::broadcast;
 
-const PLUGIN: &str = "ora-space.skillhub";
+pub(super) const PLUGIN: &str = "ora-space.skillhub";
+/// Second fake plugin, contributing one panel surface rooted in the gateway's data root.
+pub(super) const PANEL_PLUGIN: &str = "ora-space.hello-panel";
 
-/// Records every JSON-RPC call the fake plugin process receives.
+/// Records every JSON-RPC call the fake plugin process receives and answers `ui/request` with
+/// the payload echoed back, so bridge tests can see the exact params the host built.
 #[derive(Clone, Default)]
-struct FakeConnection {
-    calls: Arc<Mutex<Vec<(String, Value)>>>,
+pub(super) struct FakeConnection {
+    pub(super) calls: Arc<Mutex<Vec<(String, Value)>>>,
 }
 
 impl SurfaceConnection for FakeConnection {
@@ -44,7 +52,10 @@ impl SurfaceConnection for FakeConnection {
         self.calls
             .lock()
             .expect("calls")
-            .push((method.to_owned(), params));
+            .push((method.to_owned(), params.clone()));
+        if method == "ui/request" {
+            return Ok(json!({ "payload": { "echo": params["payload"] } }));
+        }
         Ok(json!({}))
     }
 
@@ -57,21 +68,42 @@ impl SurfaceConnection for FakeConnection {
     }
 }
 
-/// One installed ui plugin with a single singleton remote-site surface.
+/// Whether the fake process is currently reachable through `connection`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum FakeProcess {
+    Running,
+    Stopped,
+}
+
+/// Two installed ui plugins: `PLUGIN` with one remote-site surface and `PANEL_PLUGIN` with one
+/// panel surface whose assets live in `<data_root>/hello-panel/ui`.
 #[derive(Clone)]
-struct FakeGateway {
-    data_root: PathBuf,
-    enabled: bool,
-    connection: FakeConnection,
+pub(super) struct FakeGateway {
+    pub(super) data_root: PathBuf,
+    pub(super) enabled: bool,
+    pub(super) process: FakeProcess,
+    pub(super) connection: FakeConnection,
+    pub(super) notifications: broadcast::Sender<InboundNotification>,
+    /// While set, `data_directory` fails so webview creation fails before any window exists.
+    pub(super) data_directory_unavailable: Arc<AtomicBool>,
 }
 
 impl FakeGateway {
-    fn new(data_root: PathBuf) -> Self {
+    pub(super) fn new(data_root: PathBuf) -> Self {
+        let (notifications, _) = broadcast::channel(16);
         Self {
             data_root,
             enabled: true,
+            process: FakeProcess::Stopped,
             connection: FakeConnection::default(),
+            notifications,
+            data_directory_unavailable: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Directory the panel surface serves; tests populate it before opening the panel.
+    pub(super) fn panel_root(&self) -> PathBuf {
+        self.data_root.join("hello-panel").join("ui")
     }
 }
 
@@ -79,8 +111,8 @@ impl SurfacePluginGateway for FakeGateway {
     type Connection = FakeConnection;
 
     fn installed_surfaces(&self, plugin_id: &PluginId) -> Option<Vec<InstalledSurface>> {
-        (plugin_id.as_ref() == PLUGIN).then(|| {
-            vec![InstalledSurface {
+        match plugin_id.as_ref() {
+            PLUGIN => Some(vec![InstalledSurface {
                 id: SurfaceId::parse("market").expect("surface id"),
                 title: "SkillHub".to_owned(),
                 instance_policy: InstancePolicy::Singleton,
@@ -90,15 +122,28 @@ impl SurfacePluginGateway for FakeGateway {
                     allow_host_suffixes: vec![],
                     web_data: WebDataPolicy::EphemeralIsolated,
                 }),
-            }]
-        })
+            }]),
+            PANEL_PLUGIN => Some(vec![InstalledSurface {
+                id: SurfaceId::parse("counter").expect("surface id"),
+                title: "Hello Panel".to_owned(),
+                instance_policy: InstancePolicy::Singleton,
+                source: InstalledSurfaceSource::Panel(PanelSource {
+                    asset_root: self.panel_root(),
+                    entry: PortableRelativePath::parse("index.html").expect("entry"),
+                }),
+            }]),
+            _ => None,
+        }
     }
 
     fn plugin_enabled(&self, plugin_id: &PluginId) -> bool {
-        plugin_id.as_ref() == PLUGIN && self.enabled
+        matches!(plugin_id.as_ref(), PLUGIN | PANEL_PLUGIN) && self.enabled
     }
 
     fn data_directory(&self, plugin_id: &PluginId) -> Result<PathBuf, GatewayFailure> {
+        if self.data_directory_unavailable.load(Ordering::SeqCst) {
+            return Err(GatewayFailure::Other("plugin data unavailable".to_owned()));
+        }
         let directory = self.data_root.join("plugin-data").join(plugin_id.as_ref());
         std::fs::create_dir_all(directory.join("downloads"))
             .map_err(|error| GatewayFailure::Other(error.to_string()))?;
@@ -114,17 +159,24 @@ impl SurfacePluginGateway for FakeGateway {
     }
 
     fn connection(&self, _plugin_id: &PluginId) -> Result<FakeConnection, GatewayFailure> {
-        Err(GatewayFailure::Connection(ConnectionError::NotRunning))
+        match self.process {
+            FakeProcess::Running => Ok(self.connection.clone()),
+            FakeProcess::Stopped => Err(GatewayFailure::Connection(ConnectionError::NotRunning)),
+        }
     }
 
     async fn stop_if_idle(&self, _plugin_id: &PluginId) -> Result<(), GatewayFailure> {
         Ok(())
     }
+
+    fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification> {
+        self.notifications.subscribe()
+    }
 }
 
 /// Fixed local instant so tests never touch the process-wide logging clock.
 #[derive(Clone, Copy)]
-struct FixedClock;
+pub(super) struct FixedClock;
 
 impl DownloadClock for FixedClock {
     fn now_local(&self) -> time::OffsetDateTime {
@@ -132,10 +184,12 @@ impl DownloadClock for FixedClock {
     }
 }
 
-type TestService = SurfaceService<FakeGateway, MockRuntime, FixedClock>;
+pub(super) type TestService = SurfaceService<FakeGateway, MockRuntime, FixedClock>;
 
 /// Creates a mock app with a hidden main window that records every surface event.
-fn harness(gateway: FakeGateway) -> (App<MockRuntime>, Arc<TestService>, Arc<Mutex<Vec<Value>>>) {
+pub(super) fn harness(
+    gateway: FakeGateway,
+) -> (App<MockRuntime>, Arc<TestService>, Arc<Mutex<Vec<Value>>>) {
     let app = mock_app();
     let main = WebviewWindowBuilder::new(
         app.handle(),
@@ -204,6 +258,59 @@ fn opening_a_singleton_twice_reuses_the_instance() {
                 "target": "windowed",
                 "title": "SkillHub",
             })],
+        )
+    );
+}
+
+/// Verifies a retry on an instance whose webview creation failed rebuilds it through the
+/// registry instead of reloading a webview that never existed: the instance id is kept, a
+/// window now exists, and the frontend sees `failed` followed by `opened`.
+#[test]
+fn reload_rebuilds_a_failed_instance() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let gateway = FakeGateway::new(temp.path().to_path_buf());
+    let unavailable = gateway.data_directory_unavailable.clone();
+    let (app, service, events) = harness(gateway);
+
+    unavailable.store(true, Ordering::SeqCst);
+    let failed = service
+        .open(&plugin(), "market", MountTarget::Windowed)
+        .expect("open registers the instance even when creation fails");
+    let windows_after_failure = surface_window_count(&app);
+    unavailable.store(false, Ordering::SeqCst);
+    service.reload(failed.instance).expect("retry rebuilds");
+    let rebuilt = service.list();
+
+    assert_eq!(
+        (
+            failed.state,
+            windows_after_failure,
+            rebuilt
+                .iter()
+                .map(|record| (record.instance, record.state.clone()))
+                .collect::<Vec<_>>(),
+            surface_window_count(&app),
+            events
+                .lock()
+                .expect("events")
+                .iter()
+                .map(|event| event["type"].as_str().unwrap_or("").to_owned())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            SurfaceState::Failed {
+                target: MountTarget::Windowed,
+                reason: "plugin data unavailable".to_owned(),
+            },
+            0,
+            vec![(
+                SurfaceInstanceId::new(0),
+                SurfaceState::Windowed {
+                    view: ora_surface::ViewGeneration::INITIAL,
+                },
+            )],
+            1,
+            vec!["failed".to_owned(), "opened".to_owned()],
         )
     );
 }
@@ -498,4 +605,71 @@ fn brings_the_main_window_forward_for_completed_downloads() {
     bring_main_window_forward(&handle);
 
     assert_eq!(main_window.is_visible().expect("read visibility"), true);
+}
+
+/// Two process-start waiters resolving on the same Starting -> Running transition (a
+/// `Replay::All` one from the first open while the process was stopped and a `Replay::Only`
+/// one from a second open while it was starting) announce each instance exactly once.
+#[test]
+fn concurrent_process_starts_announce_each_instance_once() {
+    let registry = Arc::new(ora_surface::SurfaceRegistry::default());
+    let gateway = FakeGateway::new(PathBuf::from("/unused"));
+    let surface = gateway
+        .installed_surfaces(&plugin())
+        .expect("installed")
+        .remove(0);
+    let mut instances = Vec::new();
+    for surface_id in ["market", "second"] {
+        let mut definition = ora_surface::SurfaceDefinition::from_installed(&plugin(), &surface);
+        definition.id.surface_id = SurfaceId::parse(surface_id).expect("surface id");
+        let (record, effects) = registry
+            .open(definition, MountTarget::Windowed)
+            .expect("open");
+        let ora_surface::SurfaceEffect::CreateWebview { operation, .. } = effects[0] else {
+            panic!("expected create effect");
+        };
+        registry
+            .complete(
+                record.instance,
+                ora_surface::SurfaceCompletion::Opened {
+                    operation,
+                    outcome: Ok(MountTarget::Windowed),
+                },
+            )
+            .expect("complete");
+        instances.push(record.instance.value());
+    }
+    let waiters = [
+        ProcessStart::<FakeConnection>::Await {
+            plugin_id: plugin(),
+            replay: Replay::All,
+            registry: registry.clone(),
+        },
+        ProcessStart::Await {
+            plugin_id: plugin(),
+            replay: Replay::Only(instances[1]),
+            registry: registry.clone(),
+        },
+    ];
+
+    tauri::async_runtime::block_on(async {
+        for waiter in waiters {
+            waiter.run(&gateway).await;
+        }
+    });
+
+    let calls = gateway.connection.calls.lock().expect("calls").clone();
+    assert_eq!(
+        calls,
+        vec![
+            (
+                "ui/surfaceOpened".to_owned(),
+                json!({ "surfaceId": "market", "instanceId": instances[0], "generation": 3 })
+            ),
+            (
+                "ui/surfaceOpened".to_owned(),
+                json!({ "surfaceId": "second", "instanceId": instances[1], "generation": 3 })
+            ),
+        ]
+    );
 }

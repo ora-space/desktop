@@ -44,7 +44,11 @@ pub struct InstalledPluginSurface {
 )]
 #[ts(export_to = "plugin.ts")]
 pub enum InstalledPluginSurfaceSource {
-    RemoteSite { entry_url: String },
+    RemoteSite {
+        entry_url: String,
+    },
+    /// A page shipped inside the plugin package; the host serves it, so no URL crosses the wire.
+    Panel {},
 }
 
 /// Represents the process-scoped lifecycle of one installed plugin.

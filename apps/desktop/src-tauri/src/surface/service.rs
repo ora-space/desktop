@@ -6,6 +6,7 @@ use crate::surface::downloads::DownloadDispatcher;
 use crate::surface::error::SurfaceError;
 use crate::surface::gateway::SurfacePluginGateway;
 use crate::surface::idle::IdleTimers;
+use crate::surface::push::PushSequencer;
 use crate::surface::windowed::WindowedAdapter;
 use ora_domain::PluginId;
 use ora_logging::ora_warn;
@@ -35,6 +36,7 @@ pub struct SurfaceService<
     #[cfg(feature = "embedded-surfaces")]
     pub(super) embedded: crate::surface::embedded::EmbeddedAdapter<R>,
     pub(super) idle: IdleTimers,
+    pub(super) pushes: PushSequencer,
     pub(super) capabilities: SurfaceCapabilities,
     /// Handed to window callbacks so a closed window can reach the service without a cycle.
     pub(super) weak: Weak<Self>,
@@ -65,6 +67,7 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
             #[cfg(feature = "embedded-surfaces")]
             embedded: crate::surface::embedded::EmbeddedAdapter::new(app.clone()),
             idle: IdleTimers::default(),
+            pushes: PushSequencer::default(),
             capabilities,
             weak: weak.clone(),
             registry,
@@ -152,8 +155,15 @@ impl<G: SurfacePluginGateway, R: Runtime, C: DownloadClock + Send + Sync + 'stat
             .map_err(|error| SurfaceError::Internal(format!("failed to move surface: {error}")))
     }
 
-    /// Reloads the current page of an instance.
+    /// Reloads the current page of an instance, or rebuilds a failed one.
+    ///
+    /// A failed instance has no webview (its creation is what failed), so a page reload cannot
+    /// recover it; the frontend's retry therefore maps onto the registry's `Rebuild` transition,
+    /// which re-runs `CreateWebview` and emits `opened` on success.
     pub fn reload(&self, instance: SurfaceInstanceId) -> Result<(), SurfaceError> {
+        if let SurfaceState::Failed { .. } = self.state_of(instance)? {
+            return self.command(instance, SurfaceCommand::Rebuild);
+        }
         let webview = self
             .webview_of(instance)
             .ok_or(SurfaceError::InstanceNotFound(instance))?;

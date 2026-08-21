@@ -7,7 +7,8 @@ use ora_logging::{ora_debug, ora_warn};
 use ora_plugin_lifecycle::ConnectionError;
 use ora_surface::{SurfaceRecord, SurfaceRegistry, SurfaceState};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 const SURFACE_OPENED_METHOD: &str = "ui/surfaceOpened";
@@ -39,7 +40,13 @@ pub fn announce_opened<G: SurfacePluginGateway>(
 ) -> Option<ProcessStart<G::Connection>> {
     match gateway.connection(&record.definition.id.plugin_id) {
         Ok(connection) => {
-            let params = session_params(record, connection.generation().0);
+            let generation = connection.generation().0;
+            // A waiter spawned for an earlier open may still be about to replay the whole
+            // registry for this same generation, so even the direct path must claim the session.
+            if !claim_announcement(registry, record, generation) {
+                return None;
+            }
+            let params = session_params(record, generation);
             Some(ProcessStart::Notify { connection, params })
         }
         Err(GatewayFailure::Connection(ConnectionError::NotReady)) => Some(ProcessStart::Await {
@@ -109,7 +116,7 @@ impl<C: SurfaceConnection> ProcessStart<C> {
                             Replay::All => true,
                             Replay::Only(instance) => record.instance.value() == instance,
                         };
-                        if mounted && wanted {
+                        if mounted && wanted && claim_announcement(&registry, &record, generation) {
                             notify(
                                 &connection,
                                 SURFACE_OPENED_METHOD,
@@ -127,6 +134,55 @@ impl<C: SurfaceConnection> ProcessStart<C> {
             },
         }
     }
+}
+
+/// Sessions already announced to a plugin process, per registry and plugin.
+///
+/// Several `ProcessStart` follow-ups can resolve on the same Starting -> Running transition: a
+/// `Replay::All` waiter snapshots the registry after the process is up and therefore also sees
+/// instances that were opened while it was starting and got their own `Replay::Only` waiter
+/// (or were notified directly once the process was running). Without a shared record each of
+/// them would send `ui/surfaceOpened` again and plugins that create sessions on that event
+/// would double-initialize. Keying by (generation, instance) under one lock makes the
+/// announcement exactly-once per plugin process: a restarted process is a new generation and
+/// legitimately receives every open instance again.
+///
+/// The table is keyed by registry identity rather than stored on the service so that each
+/// `SurfaceRegistry` (tests run several in one process) keeps an independent view while the
+/// waiters, which only hold the registry, can reach it. Only the newest generation per plugin
+/// is retained because an older process can never be announced to again.
+static ANNOUNCED: LazyLock<Mutex<HashMap<(usize, PluginId), AnnouncedGeneration>>> =
+    LazyLock::new(Mutex::default);
+
+#[derive(Debug, Default)]
+struct AnnouncedGeneration {
+    generation: u64,
+    instances: HashSet<u64>,
+}
+
+/// Records that `record` is about to be announced to `generation` and tells whether this caller
+/// is the first to do so; only the first caller may send `ui/surfaceOpened`.
+fn claim_announcement(
+    registry: &Arc<SurfaceRegistry>,
+    record: &SurfaceRecord,
+    generation: u64,
+) -> bool {
+    let key = (
+        Arc::as_ptr(registry) as usize,
+        record.definition.id.plugin_id.clone(),
+    );
+    let mut announced = ANNOUNCED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = announced.entry(key).or_default();
+    if entry.generation != generation {
+        // A newer process generation supersedes everything announced to the previous one.
+        *entry = AnnouncedGeneration {
+            generation,
+            instances: HashSet::new(),
+        };
+    }
+    entry.instances.insert(record.instance.value())
 }
 
 /// Sends `ui/surfaceClosed` when the process is running; a stopped process is not started for it.

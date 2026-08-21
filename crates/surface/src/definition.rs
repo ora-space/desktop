@@ -2,9 +2,12 @@ use crate::ids::SurfaceDefinitionId;
 use crate::navigation::NavigationPolicy;
 use ora_domain::PluginId;
 use ora_plugin_manager::{
-    InstalledSurface, InstalledSurfaceSource, InstancePolicy, RemoteSiteSource, WebDataPolicy,
+    InstalledSurface, InstalledSurfaceSource, InstancePolicy, PanelSource, RemoteSiteSource,
+    WebDataPolicy,
 };
+use ora_utils::path::PortableRelativePath;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use url::Url;
 
 /// One surface as the host understands it: identity, title, content source, instance policy.
@@ -20,6 +23,7 @@ pub struct SurfaceDefinition {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurfaceSource {
     RemoteSite(RemoteSiteDefinition),
+    Panel(PanelDefinition),
 }
 
 /// A remote web site shown inside an isolated webview.
@@ -28,6 +32,19 @@ pub struct RemoteSiteDefinition {
     pub entry_url: Url,
     pub navigation: NavigationPolicy,
     pub web_data: WebDataPolicy,
+}
+
+/// A page shipped inside the plugin package and served by the host from `asset_root`.
+///
+/// Panels carry no web data policy: the host always gives them a web profile of their own (one
+/// per plugin and surface) so panels of different plugins never see each other's storage on
+/// platforms where they share one origin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PanelDefinition {
+    /// Canonical directory below which every servable file lives.
+    pub asset_root: PathBuf,
+    /// Entry document relative to `asset_root`.
+    pub entry: PortableRelativePath,
 }
 
 /// Where an instance is mounted: inside the host window or as its own window.
@@ -55,9 +72,18 @@ impl SurfaceDefinition {
                 web_data,
             }) => SurfaceSource::RemoteSite(RemoteSiteDefinition {
                 entry_url: entry_url.clone(),
-                navigation: NavigationPolicy::new(allow_hosts.clone(), allow_host_suffixes.clone()),
+                navigation: NavigationPolicy::remote_site(
+                    allow_hosts.clone(),
+                    allow_host_suffixes.clone(),
+                ),
                 web_data: *web_data,
             }),
+            InstalledSurfaceSource::Panel(PanelSource { asset_root, entry }) => {
+                SurfaceSource::Panel(PanelDefinition {
+                    asset_root: asset_root.clone(),
+                    entry: entry.clone(),
+                })
+            }
         };
         Self {
             id: SurfaceDefinitionId {
@@ -73,15 +99,19 @@ impl SurfaceDefinition {
 
 #[cfg(test)]
 mod tests {
-    use super::{MountTarget, RemoteSiteDefinition, SurfaceDefinition, SurfaceSource};
+    use super::{
+        MountTarget, PanelDefinition, RemoteSiteDefinition, SurfaceDefinition, SurfaceSource,
+    };
     use crate::ids::SurfaceDefinitionId;
     use crate::navigation::NavigationPolicy;
     use ora_domain::PluginId;
     use ora_plugin_manager::{
-        HostName, InstalledSurface, InstalledSurfaceSource, InstancePolicy, RemoteSiteSource,
-        SurfaceId, WebDataPolicy,
+        HostName, InstalledSurface, InstalledSurfaceSource, InstancePolicy, PanelSource,
+        RemoteSiteSource, SurfaceId, WebDataPolicy,
     };
+    use ora_utils::path::PortableRelativePath;
     use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
     use url::Url;
 
     /// Verifies the installed manifest shape is carried over field by field.
@@ -113,8 +143,39 @@ mod tests {
                 title: "SkillHub".to_owned(),
                 source: SurfaceSource::RemoteSite(RemoteSiteDefinition {
                     entry_url,
-                    navigation: NavigationPolicy::new(exact, suffixes),
+                    navigation: NavigationPolicy::remote_site(exact, suffixes),
                     web_data: WebDataPolicy::PersistentProfile,
+                }),
+                instance_policy: InstancePolicy::Singleton,
+            }
+        );
+    }
+
+    /// Verifies a panel carries its asset root and entry through unchanged.
+    #[test]
+    fn builds_definition_from_installed_panel() {
+        let plugin_id = PluginId::new("ora-space.hello-panel");
+        let installed = InstalledSurface {
+            id: SurfaceId::parse("counter").expect("valid surface id"),
+            title: "Hello Panel".to_owned(),
+            instance_policy: InstancePolicy::Singleton,
+            source: InstalledSurfaceSource::Panel(PanelSource {
+                asset_root: PathBuf::from("/plugins/hello-panel/ui"),
+                entry: PortableRelativePath::parse("index.html").expect("entry"),
+            }),
+        };
+
+        assert_eq!(
+            SurfaceDefinition::from_installed(&plugin_id, &installed),
+            SurfaceDefinition {
+                id: SurfaceDefinitionId {
+                    plugin_id,
+                    surface_id: SurfaceId::parse("counter").expect("valid surface id"),
+                },
+                title: "Hello Panel".to_owned(),
+                source: SurfaceSource::Panel(PanelDefinition {
+                    asset_root: PathBuf::from("/plugins/hello-panel/ui"),
+                    entry: PortableRelativePath::parse("index.html").expect("entry"),
                 }),
                 instance_policy: InstancePolicy::Singleton,
             }

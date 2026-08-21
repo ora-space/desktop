@@ -121,7 +121,8 @@ pub(crate) fn validate(
     }
     validate_plugin_id(&manifest.ora.id)?;
     require_non_empty("ora.displayName", &manifest.ora.display_name)?;
-    let contributes = validate_contribution(&manifest.ora.kind, manifest.ora.contributes)?;
+    let contributes =
+        validate_contribution(package_root, &manifest.ora.kind, manifest.ora.contributes)?;
     let main = validate_main_path(package_root, &manifest.ora.main)?;
     require_non_empty("ora.engines.ora", &manifest.ora.engines.ora)?;
     if manifest.ora.engines.plugin_api != SUPPORTED_PLUGIN_API_VERSION {
@@ -204,6 +205,7 @@ fn validate_main_path(
 
 /// Pairs the declared kind with the contribution that kind is required to carry.
 fn validate_contribution(
+    package_root: &Path,
     kind: &str,
     contributes: ContributionManifest,
 ) -> Result<PluginContribution, ManifestValidationError> {
@@ -249,7 +251,7 @@ fn validate_contribution(
                     "ui plugins must declare `contributes.ui`",
                 )
             })?;
-            Ok(PluginContribution::Ui(validate_ui(ui)?))
+            Ok(PluginContribution::Ui(validate_ui(package_root, ui)?))
         }
         value => Err(invalid(
             "ora.kind",

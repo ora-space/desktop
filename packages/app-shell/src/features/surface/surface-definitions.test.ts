@@ -6,7 +6,10 @@ function uiPlugin(
   id: string,
   displayName: string,
   enabled: boolean,
-  surfaces: Array<{ id: string; title: string; entryUrl: string }>,
+  surfaces: Array<
+    | { id: string; title: string; entryUrl: string }
+    | { id: string; title: string; source: "panel" }
+  >,
 ): InstalledPlugin {
   return {
     id,
@@ -16,10 +19,11 @@ function uiPlugin(
     main: "dist/index.js",
     kind: "ui",
     contractVersion: 1,
-    surfaces: surfaces.map((surface) => ({
-      ...surface,
-      source: "remote_site",
-    })),
+    surfaces: surfaces.map((surface) =>
+      "source" in surface
+        ? surface
+        : { ...surface, source: "remote_site" as const },
+    ),
     enabled,
     runtime: "stopped",
   };
@@ -56,29 +60,35 @@ describe("listSurfaceDefinitions", () => {
           entryUrl: "https://developer.huawei.com/",
         },
       ]),
+      uiPlugin("ora-space.hello-panel", "Hello Panel", true, [
+        { id: "counter", title: "Counter", source: "panel" },
+      ]),
     ];
 
     expect(listSurfaceDefinitions(plugins)).toEqual([
+      {
+        pluginId: "ora-space.hello-panel",
+        surfaceId: "counter",
+        title: "Counter",
+        pluginDisplayName: "Hello Panel",
+      },
       {
         pluginId: "ora-space.huawei",
         surfaceId: "dev",
         title: "Developer",
         pluginDisplayName: "Huawei",
-        entryUrl: "https://developer.huawei.com/",
       },
       {
         pluginId: "ora-space.skillhub",
         surfaceId: "docs",
         title: "Docs",
         pluginDisplayName: "SkillHub",
-        entryUrl: "https://docs.skillhub.cn/",
       },
       {
         pluginId: "ora-space.skillhub",
         surfaceId: "market",
         title: "Market",
         pluginDisplayName: "SkillHub",
-        entryUrl: "https://www.skillhub.cn/",
       },
     ]);
   });

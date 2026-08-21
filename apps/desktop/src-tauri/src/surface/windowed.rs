@@ -1,8 +1,8 @@
 //! Windowed adapter: one `WebviewWindow` per surface instance (stable Tauri API).
 
-use crate::surface::hooks::{DownloadSink, SurfaceHooks, apply_web_data};
+use crate::surface::hooks::{DownloadSink, PopupOpener, SurfaceHooks, apply_spec};
 use crate::surface::spec::{AdapterError, Placement, SurfaceAdapter, SurfaceWebviewSpec};
-use tauri::{AppHandle, Runtime, Webview, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Runtime, Webview, WebviewWindowBuilder};
 
 /// Default window size; matches the former marketplace window so existing users see no change.
 const INNER_SIZE: (f64, f64) = (1100.0, 760.0);
@@ -20,10 +20,10 @@ impl<R: Runtime> WindowedAdapter<R> {
 }
 
 impl<R: Runtime> SurfaceAdapter<R> for WindowedAdapter<R> {
-    fn create<D: DownloadSink<R>>(
+    fn create<D: DownloadSink<R>, P: PopupOpener>(
         &self,
         spec: &SurfaceWebviewSpec,
-        hooks: SurfaceHooks<D>,
+        hooks: SurfaceHooks<D, P>,
         placement: Placement,
     ) -> Result<Webview<R>, AdapterError> {
         // The placement rectangle only matters for embedded surfaces; a windowed surface always
@@ -33,16 +33,12 @@ impl<R: Runtime> SurfaceAdapter<R> for WindowedAdapter<R> {
             #[cfg(feature = "embedded-surfaces")]
             Placement::Embedded { .. } => {}
         }
-        let builder = WebviewWindowBuilder::new(
-            &self.app,
-            spec.label.as_str(),
-            WebviewUrl::External(spec.url.clone()),
-        )
-        .title(&spec.title)
-        .inner_size(INNER_SIZE.0, INNER_SIZE.1)
-        .min_inner_size(MIN_INNER_SIZE.0, MIN_INNER_SIZE.1)
-        .center();
-        let builder = apply_web_data(hooks.attach(builder), &spec.web_data);
+        let builder = WebviewWindowBuilder::new(&self.app, spec.label.as_str(), spec.webview_url())
+            .title(&spec.title)
+            .inner_size(INNER_SIZE.0, INNER_SIZE.1)
+            .min_inner_size(MIN_INNER_SIZE.0, MIN_INNER_SIZE.1)
+            .center();
+        let builder = apply_spec(hooks.attach(builder), spec);
         let window = builder.build().map_err(AdapterError::Create)?;
         Ok(window.as_ref().clone())
     }

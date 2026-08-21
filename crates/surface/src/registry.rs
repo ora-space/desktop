@@ -1,4 +1,4 @@
-use crate::definition::{MountTarget, SurfaceDefinition};
+use crate::definition::{MountTarget, SurfaceDefinition, SurfaceSource};
 use crate::ids::{
     OperationId, SurfaceDefinitionId, SurfaceInstanceId, ViewGeneration, WebviewLabel,
 };
@@ -90,7 +90,12 @@ impl SurfaceRegistry {
         let instance = SurfaceInstanceId::new(inner.next_instance);
         inner.next_instance += 1;
         let operation = inner.allocate_operation();
-        let label = WebviewLabel::remote(&definition.id, instance);
+        // The label family decides which Tauri capability (if any) the webview receives, so it
+        // must follow the content source rather than a caller-provided choice.
+        let label = match &definition.source {
+            SurfaceSource::RemoteSite(_) => WebviewLabel::remote(&definition.id, instance),
+            SurfaceSource::Panel(_) => WebviewLabel::panel(&definition.id, instance),
+        };
         let record = SurfaceRecord {
             instance,
             label: label.clone(),
@@ -265,7 +270,7 @@ mod tests {
             title: surface.to_owned(),
             source: SurfaceSource::RemoteSite(RemoteSiteDefinition {
                 entry_url: Url::parse("https://www.skillhub.cn").expect("valid url"),
-                navigation: NavigationPolicy::new(vec![], vec![]),
+                navigation: NavigationPolicy::remote_site(vec![], vec![]),
                 web_data: WebDataPolicy::EphemeralIsolated,
             }),
             instance_policy: InstancePolicy::Singleton,
@@ -449,6 +454,27 @@ mod tests {
                 Err(CompleteError::UnknownInstance(SurfaceInstanceId::new(42))),
                 vec![record],
             )
+        );
+    }
+
+    /// Verifies a panel definition gets the panel label family, which is what its capability
+    /// matches on.
+    #[test]
+    fn open_labels_panels_with_panel_prefix() {
+        let registry = SurfaceRegistry::default();
+        let mut definition = definition("ora-space.hello-panel", "counter");
+        definition.source = SurfaceSource::Panel(crate::definition::PanelDefinition {
+            asset_root: std::path::PathBuf::from("/plugins/hello-panel/ui"),
+            entry: ora_utils::path::PortableRelativePath::parse("index.html").expect("entry"),
+        });
+
+        let (record, _) = registry
+            .open(definition, MountTarget::Windowed)
+            .expect("open succeeds");
+
+        assert_eq!(
+            record.label.as_str(),
+            "panel-surface:ora-space_hello-panel:counter:0"
         );
     }
 

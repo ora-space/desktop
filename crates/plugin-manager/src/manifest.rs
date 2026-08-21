@@ -95,6 +95,9 @@ pub(crate) enum SurfaceSourceManifest {
         #[serde(default)]
         web_data: WebDataPolicyManifest,
     },
+    /// A page shipped inside the plugin package, served from `root` starting at `entry`.
+    #[serde(rename_all = "camelCase")]
+    Panel { root: String, entry: String },
 }
 
 /// Mirrors the navigation allow lists; both lists are optional and combined by union.

@@ -105,7 +105,7 @@ export type InstalledPluginContribution = {
  */
 export type InstalledPluginSurface =
   & { id: string; title: string }
-  & ({ "source": "remote_site"; entryUrl: string });
+  & ({ "source": "remote_site"; entryUrl: string } | { "source": "panel" });
 
 /**
  * Describes where a surface loads its content from, discriminated by `source`.
@@ -113,7 +113,7 @@ export type InstalledPluginSurface =
 export type InstalledPluginSurfaceSource = {
   "source": "remote_site";
   entryUrl: string;
-};
+} | { "source": "panel" };
 
 /**
  * Requests the cached marketplace registry index used to populate the plugin catalog.

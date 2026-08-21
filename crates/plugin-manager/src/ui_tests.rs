@@ -1,7 +1,7 @@
 use super::{
     HostName, InstalledPlugin, InstalledPluginUi, InstalledSurface, InstalledSurfaceSource,
-    InstancePolicy, PluginContribution, PluginDiscoveryIssueKind, PluginEngines, PluginManager,
-    PluginPackageType, RemoteSiteSource, SurfaceId, WebDataPolicy,
+    InstancePolicy, PanelSource, PluginContribution, PluginDiscoveryIssueKind, PluginEngines,
+    PluginManager, PluginPackageType, RemoteSiteSource, SurfaceId, WebDataPolicy,
 };
 use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
@@ -330,8 +330,8 @@ fn rejects_unsupported_surface_source_kind() {
     let temp_dir = TempDir::new().unwrap();
     let mut manifest = valid_ui_manifest();
     manifest["ora"]["contributes"]["ui"]["surfaces"][0]["source"] =
-        json!({ "kind": "panel", "entry": "./panel.js" });
-    write_manifest(temp_dir.path(), "panel", manifest);
+        json!({ "kind": "nativeView", "entry": "./panel.js" });
+    write_manifest(temp_dir.path(), "native", manifest);
 
     let manager = PluginManager::discover(temp_dir.path());
 
@@ -344,6 +344,107 @@ fn rejects_unsupported_surface_source_kind() {
         manager.discovery_issues()[0].field_path(),
         Some("ora.contributes.ui.surfaces[0].source.kind")
     );
+}
+
+/// Verifies a panel surface resolves its asset directory canonically and keeps the entry
+/// relative to it, so the asset handler can use the directory as a containment root.
+#[test]
+fn discovers_panel_surface() {
+    let temp_dir = TempDir::new().unwrap();
+    let package_root = write_manifest(temp_dir.path(), "hello-panel", valid_panel_manifest());
+    write_panel_assets(&package_root);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    assert_eq!(
+        manager.installed_plugins()[0].contributes,
+        PluginContribution::Ui(InstalledPluginUi {
+            contract_version: 1,
+            surfaces: vec![InstalledSurface {
+                id: SurfaceId::parse("counter").unwrap(),
+                title: "Hello Panel".to_string(),
+                instance_policy: InstancePolicy::Singleton,
+                source: InstalledSurfaceSource::Panel(PanelSource {
+                    asset_root: package_root.join("ui").canonicalize().unwrap(),
+                    entry: PortableRelativePath::parse("index.html").unwrap(),
+                }),
+            }],
+        })
+    );
+}
+
+/// Verifies every panel rule reports the field that violated it.
+#[test]
+fn rejects_invalid_panel_manifests_with_field_paths() {
+    let cases: Vec<(&str, &str, Value, &str)> = vec![
+        (
+            "root escapes the package",
+            "root",
+            json!("../ui"),
+            "ora.contributes.ui.surfaces[0].source.root",
+        ),
+        (
+            "root is the package itself",
+            "root",
+            json!("."),
+            "ora.contributes.ui.surfaces[0].source.root",
+        ),
+        (
+            "root does not exist",
+            "root",
+            json!("missing"),
+            "ora.contributes.ui.surfaces[0].source.root",
+        ),
+        (
+            "root is a file",
+            "root",
+            json!("ui/index.html"),
+            "ora.contributes.ui.surfaces[0].source.root",
+        ),
+        (
+            "entry is not html",
+            "entry",
+            json!("app.js"),
+            "ora.contributes.ui.surfaces[0].source.entry",
+        ),
+        (
+            "entry does not exist",
+            "entry",
+            json!("other.html"),
+            "ora.contributes.ui.surfaces[0].source.entry",
+        ),
+        (
+            "entry escapes the root",
+            "entry",
+            json!("../package.html"),
+            "ora.contributes.ui.surfaces[0].source.entry",
+        ),
+    ];
+    for (index, (label, field, replacement, expected_path)) in cases.iter().enumerate() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut manifest = valid_panel_manifest();
+        manifest["ora"]["contributes"]["ui"]["surfaces"][0]["source"][*field] = replacement.clone();
+        let package_root = write_manifest(temp_dir.path(), &format!("p{index}"), manifest);
+        write_panel_assets(&package_root);
+        fs::write(package_root.join("package.html"), "<html></html>\n").unwrap();
+
+        let manager = PluginManager::discover(temp_dir.path());
+
+        assert_eq!(
+            (
+                manager.installed_plugins().len(),
+                manager.discovery_issues()[0].kind(),
+                manager.discovery_issues()[0].field_path(),
+            ),
+            (
+                0,
+                PluginDiscoveryIssueKind::InvalidManifest,
+                Some(*expected_path)
+            ),
+            "{label}"
+        );
+    }
 }
 
 /// Verifies the general plugin id rule shared by every plugin kind.
@@ -407,6 +508,31 @@ fn valid_ui_manifest() -> Value {
             }
         }
     })
+}
+
+/// Builds the manifest of a ui plugin whose only surface is a package-shipped panel.
+fn valid_panel_manifest() -> Value {
+    let mut manifest = valid_ui_manifest();
+    manifest["name"] = json!("@ora-space/hello-panel-ui");
+    manifest["ora"]["id"] = json!("ora-space.hello-panel");
+    manifest["ora"]["displayName"] = json!("Hello Panel");
+    manifest["ora"]["contributes"]["ui"]["surfaces"] = json!([{
+        "id": "counter",
+        "title": "Hello Panel",
+        "source": { "kind": "panel", "root": "ui", "entry": "index.html" }
+    }]);
+    manifest
+}
+
+/// Writes the panel page and script a valid panel manifest points at.
+fn write_panel_assets(package_root: &Path) {
+    fs::create_dir_all(package_root.join("ui")).unwrap();
+    fs::write(
+        package_root.join("ui").join("index.html"),
+        "<html></html>\n",
+    )
+    .unwrap();
+    fs::write(package_root.join("ui").join("app.js"), "export {};\n").unwrap();
 }
 
 /// Writes one JSON manifest plus its entrypoint below the plugin discovery root.

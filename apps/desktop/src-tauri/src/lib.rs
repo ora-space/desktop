@@ -35,7 +35,8 @@ const PLUGIN_HOME_DIRECTORY_NAME: &str = ".ora";
 /// Starts the Tauri application with the persisted shared Backend and command adapters.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = surface::register_panel_protocol(tauri::Builder::default());
+    builder
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let (state, guard) = bootstrap_desktop(app)?;
@@ -201,6 +202,7 @@ pub fn run() {
             surface::commands::surface_popout,
             surface::commands::surface_dock,
             surface::commands::surface_reload,
+            surface::bridge::surface_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

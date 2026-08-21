@@ -40,6 +40,7 @@ ora-plugin-lifecycle = { path = "../../../crates/plugin-lifecycle" }
 ora-plugin-manager = { path = "../../../crates/plugin-manager" }
 ora-runtime-settings = { path = "../../../crates/runtime-settings" }
 ora-surface = { path = "../../../crates/surface" }
+ora-utils = { path = "../../../crates/utils" }
 tempfile = "3"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting"] }

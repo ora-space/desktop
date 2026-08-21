@@ -1,12 +1,17 @@
 import type { InstalledPlugin } from "@ora/contracts";
 
-/** One openable surface, flattened with the plugin identity the host needs to address it. */
+/**
+ * One openable surface, flattened with the plugin identity the host needs to address it.
+ *
+ * The content source (remote site or package-shipped panel) is deliberately absent: the
+ * host resolves it from the installed manifest when opening, so the launcher treats every
+ * surface the same way.
+ */
 export type SurfaceDefinitionRef = {
   pluginId: string;
   surfaceId: string;
   title: string;
   pluginDisplayName: string;
-  entryUrl: string;
 };
 
 /**
@@ -28,7 +33,6 @@ export function listSurfaceDefinitions(
         surfaceId: surface.id,
         title: surface.title,
         pluginDisplayName: plugin.displayName,
-        entryUrl: surface.entryUrl,
       });
     }
   }

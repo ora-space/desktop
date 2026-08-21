@@ -40,13 +40,25 @@ impl WebviewLabel {
     /// Builds the label of one remote site surface instance, e.g.
     /// `remote-surface:ora-space_skillhub:market:7`.
     pub fn remote(definition: &SurfaceDefinitionId, instance: SurfaceInstanceId) -> Self {
+        Self::with_prefix(Self::REMOTE_PREFIX, definition, instance)
+    }
+
+    /// Builds the label of one panel surface instance, e.g.
+    /// `panel-surface:ora-space_hello-panel:counter:7`. The prefix identifies the panel family
+    /// so the bridge can tell panel webviews apart from remote-site webviews.
+    pub fn panel(definition: &SurfaceDefinitionId, instance: SurfaceInstanceId) -> Self {
+        Self::with_prefix(Self::PANEL_PREFIX, definition, instance)
+    }
+
+    fn with_prefix(
+        prefix: &str,
+        definition: &SurfaceDefinitionId,
+        instance: SurfaceInstanceId,
+    ) -> Self {
         let plugin = definition.plugin_id.as_ref().replace('.', "_");
         let surface = definition.surface_id.as_str();
         let instance = instance.value();
-        Self(format!(
-            "{}{plugin}:{surface}:{instance}",
-            Self::REMOTE_PREFIX
-        ))
+        Self(format!("{prefix}{plugin}:{surface}:{instance}"))
     }
 
     /// Returns the label text handed to the webview runtime.
@@ -114,6 +126,19 @@ mod tests {
         assert_eq!(
             WebviewLabel::remote(&definition, SurfaceInstanceId::new(7)).as_str(),
             "remote-surface:ora-space_skillhub:market:7"
+        );
+    }
+
+    /// Verifies the panel family shares the shape and differs only by prefix.
+    #[test]
+    fn panel_label_uses_panel_prefix() {
+        let definition = SurfaceDefinitionId {
+            plugin_id: PluginId::new("ora-space.hello-panel"),
+            surface_id: SurfaceId::parse("counter").expect("valid surface id"),
+        };
+        assert_eq!(
+            WebviewLabel::panel(&definition, SurfaceInstanceId::new(7)).as_str(),
+            "panel-surface:ora-space_hello-panel:counter:7"
         );
     }
 
