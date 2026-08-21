@@ -8,6 +8,13 @@ File-manager handoff lives in `src/open_location.rs`. Explorer reveals files in 
 
 The crate does not own domain persistence or agent execution semantics; those remain in the shared backend and contract crates. Desktop commands translate between Tauri IPC and those stable boundaries.
 
+All Ora application commands are declared once in `src/app_commands.rs`. The
+runtime handler and Tauri ACL manifest consume that same registry so a command
+cannot be registered without entering ACL enforcement. The default capability
+targets only the trusted `main` Webview, not every Webview hosted by the main
+window; embedded plugin Webviews therefore do not inherit Ora, dialog, or core
+permissions.
+
 Desktop installs provisional logging from `ORA_LOG_LEVEL` or `info` before Backend migration, then resolves the runtime-ready level from the shared SQLite `user_config.log_level` preference when no environment override exists. It retains the logging writer guard for the process lifetime and shares a cancellation-safe runtime settings manager through Tauri state.
 
 The shared developer preferences are exposed through `get_developer_mode`, `set_developer_mode`, `get_runtime_log_level`, and `set_runtime_log_level`. These commands enter a request-correlated span before reading, persisting, reloading, or compensating; SQLite ownership remains in Backend rather than this crate. Desktop `config.json` does not store either preference.

@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
-  "windows": ["main"],
+  "description": "Enables Ora commands and native capabilities for the trusted main Webview",
+  "webviews": ["main"],
   "permissions": [
+    "allow-main-commands",
     "core:default",
     "core:window:allow-minimize",
     "core:window:allow-maximize",
