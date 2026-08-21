@@ -23,17 +23,25 @@ Tiptap preset and plain-text helpers for prompt boxes (chat composer, HITL).
   source extensions, dotfiles) and `$skill` tokens become chips on that text
   path; versions (`v1.0`), globs (`*.ts`), slash-command chips, and directory
   `kind` need TipTap JSON parking (chat composer) for a lossless round-trip.
-  Raw strings that must stay literal (`<`
+  Inline code that contains backticks, and fenced blocks that contain a ` ``` `
+  line, serialize with a longer CommonMark fence so parse cannot close early.
+  `[label](javascript:…)` / `data:` / `vbscript:` / `file:` hrefs stay literal
+  text instead of becoming a link mark. Link titles escape `\` then `"` so a
+  quoted title round-trips. Raw strings that must stay literal (`<`
   as text) use `plainTextToComposerContent`. `[ ] ` at the start of a paragraph
   or bullet becomes a task item (not a checklist nested under a disc). Marks
   reuse the kit Bold / Italic / Strike / Code / Highlight / Link / Underline
   extensions. Kit input rules require a leading ASCII space, which misses
   `你好**等等**`; composer keeps `markInputRule` and only relaxes flanking so
   CJK can sit against `*` / `**` / `***` / `~~` / `==`. Underline is Mod-u
-  (Markdown has no `__underline__` syntax; `__` is bold).
+  (Markdown has no `__underline__` syntax; `__` is bold). `documentPlainText`
+  therefore drops underline; park TipTap JSON to keep it across session switches.
 - Shift+Enter is always a newline inside the current structure (code, quote,
   list, heading). Enter leaves that structure and returns to body text, or
-  sends from a body paragraph. A trailing space after a fence info string also
+  sends from a body paragraph. An empty heading or list item is empty only
+  when it has no chips (content size, not `textContent`). Shift+Enter on an
+  empty quote lifts the quote instead of inserting another paragraph inside it.
+  A trailing space after a fence info string also
   opens the fence.
 - Prompt links open on pointerdown (not mouseup/`click`) so the first press
   leaves the editor instead of placing a caret. Desktop still routes through

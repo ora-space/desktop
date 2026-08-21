@@ -20,6 +20,10 @@ describe("prepareUserMessageMarkdown", () => {
       prepareUserMessageMarkdown("before\n```\nkeep\nme\n```\nafter\nnext"),
     ).toBe("before\n```\nkeep\nme\n```\nafter\n\nnext");
   });
+
+  it("expands every single-character line, not only the first break", () => {
+    expect(prepareUserMessageMarkdown("a\nb\nc")).toBe("a\n\nb\n\nc");
+  });
 });
 
 describe("remarkComposerHighlight", () => {

@@ -58,6 +58,8 @@ export interface ComposerEditorProps {
   initialText?: string;
   enterKey?: "submit" | "newline";
   className?: string;
+  /** Optional DOM id so a `<label htmlFor>` can focus the contenteditable. */
+  id?: string;
   ariaLabel?: string;
   ariaAutoComplete?: "list" | "none";
   ariaHasPopup?: "listbox";
@@ -94,6 +96,7 @@ export const ComposerEditor = forwardRef<
     initialText = "",
     enterKey = "submit",
     className,
+    id,
     ariaLabel,
     ariaAutoComplete,
     ariaHasPopup,
@@ -211,6 +214,7 @@ export const ComposerEditor = forwardRef<
 
   useEffect(() => {
     const dom = editor.view.dom;
+    setOptionalAttr(dom, "id", id);
     setOptionalAttr(dom, "aria-label", ariaLabel);
     setOptionalAttr(dom, "aria-autocomplete", ariaAutoComplete);
     setOptionalAttr(dom, "aria-haspopup", ariaHasPopup);
@@ -235,6 +239,7 @@ export const ComposerEditor = forwardRef<
     ariaLabel,
     disabled,
     editor,
+    id,
   ]);
 
   useImperativeHandle(
@@ -291,14 +296,16 @@ export const ComposerEditor = forwardRef<
         editor.commands.insertComposerFiles(files);
       },
       appendText: (text) => {
-        const current = documentPlainText(editor.state.doc).trimEnd();
-        const next =
-          current.length === 0 ? `${text}\n\n` : `${current}\n\n${text}\n\n`;
-        editor
-          .chain()
-          .setContent(markdownToComposerContent(next))
-          .focus("end")
-          .run();
+        // Insert parsed blocks at the end so existing `/command` chips stay
+        // nodes. A full documentPlainText round-trip cannot rebuild slash chips.
+        const blocks = markdownToComposerContent(text).content ?? [];
+        if (blocks.length === 0) {
+          return;
+        }
+        const content = editor.isEmpty
+          ? blocks
+          : [{ type: "paragraph" }, ...blocks];
+        editor.chain().focus("end").insertContent(content).run();
       },
       removeAtToken: () => {
         deleteTriggerToken(editor, AT_TRIGGER_PATTERN);

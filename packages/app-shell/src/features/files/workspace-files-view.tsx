@@ -233,6 +233,10 @@ export function WorkspaceFilesView({
     const conversationKey = conversationKeyFor(
       useWorkspaceSelectionStore.getState().selection,
     );
+    if (conversationKey === "__none__") {
+      toast.warning(t("files.lineSelectionNeedsChat"));
+      return;
+    }
     useComposerFileContextStore
       .getState()
       .addSelection(conversationKey, selection);

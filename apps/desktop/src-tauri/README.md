@@ -2,6 +2,8 @@
 
 `ora-desktop` is the native Tauri host for Ora. It bootstraps the shared backend, exposes desktop-only commands to the frontend, owns native windows and dialogs, and adapts operating-system capabilities such as filesystem handoff, opening http(s)/mailto URLs in the host browser, and marketplace WebViews.
 
+Prompt-box `open_external_url` rejects disallowed schemes as `InvalidRequest` and reports OS launch failures as `Internal`, matching `open_location`. On Windows it calls `ShellExecuteW` on the async runtime thread because that API returns after handing the URL to the protocol handler; `open` / `xdg-open` on other hosts still run through `spawn_blocking`.
+
 File-manager handoff lives in `src/open_location.rs`. Explorer reveals files in the **system** file manager (`explorer /select,` on Windows, `open -R` on macOS) instead of opening them with the default editor. Directories still open as folder windows.
 
 The crate does not own domain persistence or agent execution semantics; those remain in the shared backend and contract crates. Desktop commands translate between Tauri IPC and those stable boundaries.

@@ -20,6 +20,15 @@ export function isComposerOpenableUrl(href: string): boolean {
 }
 
 /**
+ * Schemes that must never become a link mark or agent payload, even before
+ * `sanitizeUrl` (which needs a window base URL). Kept window-free so the
+ * Markdown parser can reuse this in Node tests.
+ */
+export function isDangerousComposerHref(href: string): boolean {
+  return /^(?:javascript|data|vbscript|file):/i.test(href.trim());
+}
+
+/**
  * Returns a browser-openable href, or null when the URL is javascript/data/etc.
  * or a scheme Desktop will not launch.
  */
@@ -103,6 +112,8 @@ export const ComposerLink = Link.extend({
   autolink: true,
   linkOnPaste: true,
   markdownLinks: true,
+  // `defaultProtocol` / `markdownLinks` need @tiptap/extension-link >= 3.26,
+  // which is why that package's specifier is higher than the other @tiptap/*.
   defaultProtocol: "https",
   HTMLAttributes: {
     target: "_blank",

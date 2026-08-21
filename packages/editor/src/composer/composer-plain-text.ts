@@ -1,6 +1,9 @@
 import type { JSONContent } from "@tiptap/core";
 import type { Mark, Node as PmNode } from "@tiptap/pm/model";
-import { composerFilePlainText } from "./composer-file";
+import {
+  composerFileAttrsFromUnknown,
+  composerFilePlainText,
+} from "./composer-file";
 
 function leafPlainText(node: PmNode): string {
   switch (node.type.name) {
@@ -11,17 +14,7 @@ function leafPlainText(node: PmNode): string {
       return `${prefix}${String(node.attrs.name)}`;
     }
     case "composerFile":
-      return composerFilePlainText({
-        path: String(node.attrs.path),
-        startLine:
-          node.attrs.startLine === null || node.attrs.startLine === undefined
-            ? undefined
-            : Number(node.attrs.startLine),
-        endLine:
-          node.attrs.endLine === null || node.attrs.endLine === undefined
-            ? undefined
-            : Number(node.attrs.endLine),
-      });
+      return composerFilePlainText(composerFileAttrsFromUnknown(node.attrs));
     case "horizontalRule":
       return "---";
     default:
@@ -29,11 +22,40 @@ function leafPlainText(node: PmNode): string {
   }
 }
 
+/**
+ * CommonMark inline code: the fence is one backtick longer than the longest
+ * run inside the payload, with space padding so an inner `` ` `` cannot close
+ * the span. A single backtick stays the everyday `` `code` `` form.
+ */
+function wrapInlineCode(text: string): string {
+  const longestRun =
+    text.match(/`+/g)?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
+  const fence = "`".repeat(Math.max(1, longestRun + 1));
+  if (
+    longestRun > 0 ||
+    text.startsWith(" ") ||
+    text.endsWith(" ") ||
+    text.startsWith("`") ||
+    text.endsWith("`")
+  ) {
+    return `${fence} ${text} ${fence}`;
+  }
+  return `${fence}${text}${fence}`;
+}
+
+/**
+ * Escapes a Markdown link title so parse can find the real closing quote.
+ * Backslashes first, then quotes — otherwise `\"` would split into a stray `"`.
+ */
+function escapeLinkTitle(title: string): string {
+  return title.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 function wrapInlineMarkdown(text: string, marks: readonly Mark[]): string {
   let out = text;
   const names = new Set(marks.map((mark) => mark.type.name));
   if (names.has("code")) {
-    out = `\`${out}\``;
+    out = wrapInlineCode(out);
   } else {
     if (names.has("strike")) {
       out = `~~${out}~~`;
@@ -58,7 +80,7 @@ function wrapInlineMarkdown(text: string, marks: readonly Mark[]): string {
   }
   const title = link.attrs.title;
   if (typeof title === "string" && title.length > 0) {
-    return `[${out}](${href} "${title.replace(/"/g, '\\"')}")`;
+    return `[${out}](${href} "${escapeLinkTitle(title)}")`;
   }
   return `[${out}](${href})`;
 }
@@ -166,7 +188,14 @@ function serializeBlock(node: PmNode, indent = ""): string {
         node.attrs.language === ""
           ? ""
           : String(node.attrs.language);
-      return `${indent}\`\`\`${language}\n${node.textContent}\n${indent}\`\`\``;
+      const text = node.textContent;
+      // Longer than any backtick run in the body so a nested ``` line cannot
+      // close the fence on parse (CommonMark closing-fence rule).
+      const longestRun =
+        text.match(/`+/g)?.reduce((max, run) => Math.max(max, run.length), 0) ??
+        0;
+      const fence = "`".repeat(Math.max(3, longestRun + 1));
+      return `${indent}${fence}${language}\n${text}\n${indent}${fence}`;
     }
     case "blockquote": {
       const inner = joinChildBlocks(node, "");

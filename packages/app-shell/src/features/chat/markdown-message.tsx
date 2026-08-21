@@ -16,7 +16,7 @@ import {
   IconChevronsUp,
   IconCopy,
 } from "@tabler/icons-react";
-import { Button } from "@ora/ui";
+import { Button, cn } from "@ora/ui";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
@@ -216,10 +216,13 @@ function createMarkdownComponents(density: MarkdownDensity): Components {
         {children}
       </del>
     ),
-    mark: ({ children, ...props }) => (
+    mark: ({ children, className, ...props }) => (
       <mark
-        className="composer-user-highlight rounded-sm bg-[rgb(255,255,0)] px-0.5 text-foreground dark:bg-yellow-300/90"
         {...props}
+        className={cn(
+          "composer-user-highlight rounded-sm bg-[rgb(255,255,0)] px-0.5 text-foreground dark:bg-yellow-300/90",
+          className,
+        )}
       >
         {children}
       </mark>

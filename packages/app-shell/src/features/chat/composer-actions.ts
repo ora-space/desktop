@@ -200,17 +200,18 @@ export function mentionRelevanceScore(
 ): number {
   const base = fileBasename(entry.path).toLocaleLowerCase();
   const path = entry.path.replace(/\\/g, "/").toLocaleLowerCase();
-  if (base === normalizedQuery) return 100;
-  if (base.startsWith(normalizedQuery)) return 80;
-  if (base.includes(normalizedQuery)) return 60;
+  const query = normalizedQuery.replace(/\\/g, "/");
+  if (base === query) return 100;
+  if (base.startsWith(query)) return 80;
+  if (base.includes(query)) return 60;
   if (
-    path.startsWith(`${normalizedQuery}/`) ||
-    path.includes(`/${normalizedQuery}/`) ||
-    path.endsWith(`/${normalizedQuery}`)
+    path.startsWith(`${query}/`) ||
+    path.includes(`/${query}/`) ||
+    path.endsWith(`/${query}`)
   ) {
     return 40;
   }
-  if (path.includes(normalizedQuery)) return 20;
+  if (path.includes(query)) return 20;
   return 0;
 }
 

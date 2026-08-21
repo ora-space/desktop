@@ -465,6 +465,61 @@ test("markdownToComposerContent does not chip versions or globs", () => {
   });
 });
 
+test("markdownToComposerContent keeps backticks inside longer inline-code fences", () => {
+  assert.deepEqual(paragraphPlain(markdownToComposerContent("`` a`b ``")), {
+    text: "a`b",
+    marks: ["code"],
+  });
+});
+
+test("markdownToComposerContent does not close a fence on an inner ``` line", () => {
+  const doc = markdownToComposerContent("````\n```\ncode\n````");
+  assert.deepEqual(doc, {
+    type: "doc",
+    content: [
+      {
+        type: "codeBlock",
+        attrs: { language: null },
+        content: [{ type: "text", text: "```\ncode" }],
+      },
+    ],
+  });
+});
+
+test("markdownToComposerContent keeps escaped quotes in link titles", () => {
+  const doc = markdownToComposerContent(
+    '[Docs](https://example.com "say \\"hi\\"")',
+  );
+  assert.deepEqual(doc.content?.[0], {
+    type: "paragraph",
+    content: [
+      {
+        type: "text",
+        text: "Docs",
+        marks: [
+          {
+            type: "link",
+            attrs: { href: "https://example.com", title: 'say "hi"' },
+          },
+        ],
+      },
+    ],
+  });
+});
+
+test("markdownToComposerContent keeps javascript hrefs as literal text", () => {
+  const doc = markdownToComposerContent("[xss](javascript:alert(1))");
+  assert.deepEqual(doc, {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "[xss](javascript:alert(1))" }],
+      },
+    ],
+  });
+});
+
 function paragraphPlain(doc: {
   content?: Array<{
     content?: Array<{ text?: string; marks?: Array<{ type: string }> }>;

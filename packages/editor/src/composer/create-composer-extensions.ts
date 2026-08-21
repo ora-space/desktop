@@ -48,7 +48,8 @@ export const COMPOSER_HEADING_LEVELS = [1, 2, 3, 4, 5, 6] as const;
 /**
  * Prompt-box capability minimum set. Full-page kit nodes (images, TOC, video,
  * alignment) stay out; product chrome can replace a slot instead of forking
- * the preset.
+ * the preset. `underline` is Mod-u only — `documentPlainText` cannot encode it,
+ * so session switches must park TipTap JSON to keep the mark.
  */
 export const COMPOSER_CAPABILITIES = {
   blocks: [

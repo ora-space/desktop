@@ -403,9 +403,11 @@ export function Composer({
         editorRef.current?.focus({ at: "end" });
       } catch {
         lastInjectedRequestId.current = null;
+        consumeFileContext(keyAtSchedule, requestId);
+        setAttachmentError(t("chat.fileContext.injectFailed"));
       }
     });
-  }, [consumeFileContext, conversationKey, pendingFileContext]);
+  }, [consumeFileContext, conversationKey, pendingFileContext, t]);
   const slashQuery = query.slashQuery;
   const atQuery = query.atQuery;
   const fileMentionEnabled =

@@ -10,7 +10,9 @@ or product chrome.
 - `createComposerExtensions()` plus plain-text conversion for prompt boxes
   (`@ora/editor/composer`, no dashboard SCSS theme). `documentPlainText` is the
   payload/draft form; `markdownToComposerContent` is the inverse for paste and
-  restore. `COMPOSER_CAPABILITIES` is the prompt-box minimum set; slots can be
+  restore. Fenced code and inline code pick a fence longer than any backtick
+  run in the payload so nested ` ``` ` cannot close early; `javascript:` /
+  `data:` / `vbscript:` / `file:` hrefs stay text. `COMPOSER_CAPABILITIES` is the prompt-box minimum set; slots can be
   omitted or replaced.
 - Toolbar primitives for full-page editing; the chat composer uses `@ora/ui`
   instead so it does not pull the kit's SCSS theme.

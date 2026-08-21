@@ -55,7 +55,7 @@ function exitHeading(view: EditorView, depth: number): boolean {
   if (paragraph === undefined) {
     return false;
   }
-  if ($from.parent.textContent.length === 0) {
+  if ($from.parent.content.size === 0) {
     const from = $from.before(depth);
     view.dispatch(
       state.tr
@@ -77,7 +77,9 @@ function exitHeading(view: EditorView, depth: number): boolean {
     tr.setBlockType(start, end, paragraph);
     tr.setSelection(TextSelection.near(tr.doc.resolve(start + 1)));
   } catch {
-    return false;
+    // A failed split must not fall through to submit; insert a body paragraph
+    // after the heading so Enter still leaves the structure.
+    return insertParagraphAfter(view, depth);
   }
   view.dispatch(tr.scrollIntoView());
   return true;
@@ -87,7 +89,7 @@ function exitList(view: EditorView, itemDepth: number): boolean {
   const { state } = view;
   const { $from } = state.selection;
   const item = $from.node(itemDepth);
-  if (item.textContent.length === 0) {
+  if (item.content.size === 0) {
     return liftCurrentListItem(view, item.type);
   }
   for (let depth = itemDepth - 1; depth > 0; depth -= 1) {

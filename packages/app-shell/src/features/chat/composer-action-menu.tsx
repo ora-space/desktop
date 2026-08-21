@@ -57,7 +57,10 @@ export function ComposerActionMenu({
   selectionLocked = false,
 }: ComposerActionMenuProps) {
   const { t } = useTranslation();
-  const allVisibleActions = visibleComposerActions(actions, expandedGroups);
+  const allVisibleActions = useMemo(
+    () => visibleComposerActions(actions, expandedGroups),
+    [actions, expandedGroups],
+  );
   const indexById = useMemo(() => {
     const map = new Map<string, number>();
     allVisibleActions.forEach((action, index) => {

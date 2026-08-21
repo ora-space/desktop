@@ -564,6 +564,7 @@ export function RunHitlComposer({
                 >
                   <div className="flex flex-col p-2">
                     <label
+                      htmlFor={`hitl-text-${request.id}-${field.name}`}
                       className={cn(
                         textFields.length > 1
                           ? "px-2 pb-1 text-[11px] font-medium text-muted-foreground"
@@ -574,6 +575,7 @@ export function RunHitlComposer({
                     </label>
                     <ComposerEditor
                       key={`${request.id}-${field.name}`}
+                      id={`hitl-text-${request.id}-${field.name}`}
                       ref={(handle) => {
                         if (handle === null) {
                           editorByFieldRef.current.delete(field.name);
@@ -593,10 +595,7 @@ export function RunHitlComposer({
                       enterKey={isPrimary ? "submit" : "newline"}
                       ariaLabel={field.label}
                       onSubmit={() => {
-                        if (
-                          !gateBusy &&
-                          missingRequired(collectFieldValues()) === null
-                        ) {
+                        if (!gateBusy) {
                           void submit();
                         }
                       }}

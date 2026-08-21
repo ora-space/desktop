@@ -13,7 +13,9 @@ App-shell wrapper around `@ora/editor` for prompt boxes.
   when possible; slash-command chips and directory `kind` need the parked doc.
   Programmatic hydrate dismisses the `@`/`/` palette so a parked `@…` suffix
   does not reopen the menu. Explorer line selections queue per conversation
-  key. Pastes that include both files and plain text keep the text.
+  key and are refused (with a warning) when no session/draft/task is selected.
+  `appendText` inserts parsed blocks at the end so `/command` chips are not
+  flattened by a Markdown round-trip. Pastes that include both files and plain text keep the text.
   Typing an opener in front of existing closers (`**`, `==`, `~~`, and the
   rest of the prompt Markdown surface) stays source until a trailing space or
   newline, which then renders that line only. Backspace against contiguous
@@ -30,6 +32,9 @@ App-shell wrapper around `@ora/editor` for prompt boxes.
   type-icon + basename refs (Tabler via `WorkspaceFileIcon` / React node view),
   not bordered pills: soft teal basename ink with type-colored icons.
   `==highlight==` is a Typora yellow (`rgb(255, 255, 0)`; delimiters hidden).
+  File chips with a line range expose `data-start-line` / `data-end-line` and a
+  matching `title`. Compact user-message Markdown expands every single newline
+  outside fences (including runs of one-character lines).
   `/` skills and `$` commands are mint-wash pills with forest green ink
   (Cursor-style; no neon glow).
 - Sent user messages stay `documentPlainText` in the store and render read-only

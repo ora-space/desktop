@@ -64,14 +64,23 @@ fn is_browser_url(raw: &str) -> bool {
     lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:")
 }
 
-/// Reports a URL the host OS refused or that the prompt box is not allowed to open.
-fn open_external_url_error(source: impl std::error::Error + Send + Sync + 'static) -> BackendError {
+/// Client sent a scheme Desktop will not open (javascript/file/data, etc.).
+fn open_external_url_scheme_error(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> BackendError {
     BackendError::with_source(
         ora_backend::ErrorClassification::InvalidRequest,
         PublicError::InvalidRequest(EmptyErrorParams {}),
-        "failed to open the requested URL",
+        "URL scheme is not allowed",
         source,
     )
+}
+
+/// Host OS refused to launch the browser; not a problem with the URL itself.
+fn open_external_url_os_error(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> BackendError {
+    BackendError::internal("failed to open the requested URL", source)
 }
 
 /// Launches the OS browser for one validated URL through the Windows shell.
@@ -87,7 +96,7 @@ fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
     use std::ptr;
 
     if !is_browser_url(url) {
-        return Err(open_external_url_error(std::io::Error::other(
+        return Err(open_external_url_scheme_error(std::io::Error::other(
             "URL scheme is not allowed",
         )));
     }
@@ -122,7 +131,7 @@ fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
         )
     };
     if result <= 32 {
-        return Err(open_external_url_error(std::io::Error::other(format!(
+        return Err(open_external_url_os_error(std::io::Error::other(format!(
             "ShellExecuteW failed with code {result}"
         ))));
     }
@@ -134,18 +143,18 @@ fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
 fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
     use std::process::Command;
     if !is_browser_url(url) {
-        return Err(open_external_url_error(std::io::Error::other(
+        return Err(open_external_url_scheme_error(std::io::Error::other(
             "URL scheme is not allowed",
         )));
     }
     let status = Command::new("open")
         .arg(url)
         .status()
-        .map_err(open_external_url_error)?;
+        .map_err(open_external_url_os_error)?;
     if status.success() {
         Ok(())
     } else {
-        Err(open_external_url_error(std::io::Error::other(format!(
+        Err(open_external_url_os_error(std::io::Error::other(format!(
             "open command exited with {status}"
         ))))
     }
@@ -156,7 +165,7 @@ fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
 fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
     use std::process::Command;
     if !is_browser_url(url) {
-        return Err(open_external_url_error(std::io::Error::other(
+        return Err(open_external_url_scheme_error(std::io::Error::other(
             "URL scheme is not allowed",
         )));
     }
@@ -164,7 +173,7 @@ fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
         .arg(url)
         .spawn()
         .map(|_| ())
-        .map_err(open_external_url_error)
+        .map_err(open_external_url_os_error)
 }
 
 #[cfg(test)]

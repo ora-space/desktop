@@ -9,7 +9,10 @@ import {
   documentPlainText,
   plainTextToComposerContent,
 } from "../src/composer/composer-plain-text.ts";
-import { composerFilePlainText } from "../src/composer/composer-file.ts";
+import {
+  composerFileLabel,
+  composerFilePlainText,
+} from "../src/composer/composer-file.ts";
 import { parseFenceOpener } from "../src/composer/composer-code-fence.ts";
 import { highlightInputMatch } from "../src/composer/composer-highlight.ts";
 import { isComposerOpenableUrl } from "../src/composer/composer-link.ts";
@@ -390,4 +393,76 @@ test("range selection decorates intersecting chips for visual highlight", async 
     .filter(Boolean);
   assert.equal(classes.includes("composer-chip-in-selection"), true);
   editor.destroy();
+});
+
+test("documentPlainText uses a longer fence when the code block contains ```", () => {
+  const schema = new Schema({
+    nodes: {
+      doc: { content: "block+" },
+      paragraph: { content: "inline*", group: "block" },
+      text: { group: "inline" },
+      codeBlock: {
+        content: "text*",
+        group: "block",
+        code: true,
+        attrs: { language: { default: null } },
+      },
+    },
+  });
+  const doc = schema.node("doc", null, [
+    schema.node("codeBlock", { language: null }, [schema.text("```\ncode")]),
+  ]);
+  assert.equal(documentPlainText(doc), "````\n```\ncode\n````");
+});
+
+test("documentPlainText wraps inline code that contains backticks", () => {
+  const schema = new Schema({
+    nodes: {
+      doc: { content: "block+" },
+      paragraph: { content: "inline*", group: "block" },
+      text: { group: "inline" },
+    },
+    marks: { code: {} },
+  });
+  const doc = schema.node("doc", null, [
+    schema.node("paragraph", null, [schema.text("a`b", [schema.mark("code")])]),
+  ]);
+  assert.equal(documentPlainText(doc), "`` a`b ``");
+});
+
+test("documentPlainText escapes backslashes before quotes in link titles", () => {
+  const schema = new Schema({
+    nodes: {
+      doc: { content: "block+" },
+      paragraph: { content: "inline*", group: "block" },
+      text: { group: "inline" },
+    },
+    marks: {
+      link: {
+        attrs: { href: { default: null }, title: { default: null } },
+        inclusive: false,
+      },
+    },
+  });
+  const doc = schema.node("doc", null, [
+    schema.node("paragraph", null, [
+      schema.text("Docs", [
+        schema.mark("link", {
+          href: "https://example.com",
+          title: 'say "hi"',
+        }),
+      ]),
+    ]),
+  ]);
+  assert.equal(
+    documentPlainText(doc),
+    '[Docs](https://example.com "say \\"hi\\"")',
+  );
+});
+
+test("composerFileLabel uses the last path segment even when the path ends with a slash", () => {
+  assert.equal(
+    composerFileLabel({ path: "foo/bar/", kind: "directory" }),
+    "bar",
+  );
 });

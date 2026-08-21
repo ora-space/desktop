@@ -1126,6 +1126,7 @@ export const translationResources = {
       "加入 AI 对话（第 {{startLine}}-{{endLine}} 行）",
     "files.lineSelectionAdded":
       "已将第 {{startLine}}-{{endLine}} 行加入 AI 对话",
+    "files.lineSelectionNeedsChat": "请先打开一个对话，再把选区加入提示词",
     "files.selectLine": "选择第 {{line}} 行",
     "diff.fileTree": "变更文件目录",
     "diff.toggleFileTree": "显示或隐藏变更文件目录",
@@ -1259,6 +1260,7 @@ export const translationResources = {
     "chat.attachments.tooLarge":
       "单张图片不能超过 5 MB，总大小不能超过 10 MB。",
     "chat.attachments.readFailed": "无法读取所选图片，请重试。",
+    "chat.fileContext.injectFailed": "无法把文件选区加入提示词，请重试。",
     "chat.loadingHistory": "正在加载历史记录…",
     "chat.emptyHistory": "尚无消息",
     "chat.typing": "助手正在运行",
@@ -2685,6 +2687,8 @@ export const translationResources = {
       "Add lines {{startLine}}-{{endLine}} to AI chat",
     "files.lineSelectionAdded":
       "Added lines {{startLine}}-{{endLine}} to AI chat",
+    "files.lineSelectionNeedsChat":
+      "Open a chat first, then add the selection to the prompt",
     "files.selectLine": "Select line {{line}}",
     "diff.fileTree": "Changed file tree",
     "diff.toggleFileTree": "Show or hide changed file tree",
@@ -2826,6 +2830,8 @@ export const translationResources = {
       "Images must be at most 5 MB each and 10 MB total.",
     "chat.attachments.readFailed":
       "The selected image could not be read. Try again.",
+    "chat.fileContext.injectFailed":
+      "The file selection could not be added to the prompt. Try again.",
     "chat.loadingHistory": "Loading history…",
     "chat.emptyHistory": "No messages yet",
     "chat.typing": "Assistant is working",

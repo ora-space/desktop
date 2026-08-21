@@ -9,6 +9,7 @@ import {
   mentionEntriesFromDirectoryListing,
   mentionEntriesFromFileSearch,
   rankComposerMentionEntries,
+  mentionRelevanceScore,
   takeComposerFilePaths,
   visibleComposerActions,
 } from "./composer-actions";
@@ -49,6 +50,17 @@ describe("mentionEntriesFromDirectoryListing", () => {
       { path: "app.ts", kind: "file" },
       { path: "README.md", kind: "file" },
     ]);
+  });
+});
+
+describe("mentionRelevanceScore", () => {
+  it("matches Windows-style queries against slash-normalized paths", () => {
+    expect(
+      mentionRelevanceScore(
+        { path: "src/utils/index.ts", kind: "file" },
+        "src\\utils",
+      ),
+    ).toBeGreaterThan(0);
   });
 });
 

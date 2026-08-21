@@ -13,7 +13,7 @@ export function prepareUserMessageMarkdown(content: string): string {
       if (part.startsWith("```")) {
         return part;
       }
-      return part.replace(/([^\n])\n([^\n])/g, "$1\n\n$2");
+      return part.replace(/([^\n])\n(?=[^\n])/g, "$1\n\n");
     })
     .join("");
 }

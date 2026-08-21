@@ -35,9 +35,39 @@ export function composerFilePlainText(attrs: ComposerFileAttrs): string {
   return `\`${target}\``;
 }
 
+/**
+ * Normalizes chip attrs from TipTap/DOM so NaN line numbers never reach the
+ * agent payload as `:NaN`.
+ */
+export function composerFileAttrsFromUnknown(attrs: {
+  path?: unknown;
+  startLine?: unknown;
+  endLine?: unknown;
+  kind?: unknown;
+}): ComposerFileAttrs {
+  return {
+    path: String(attrs.path ?? ""),
+    startLine: optionalLineNumber(attrs.startLine),
+    endLine: optionalLineNumber(attrs.endLine),
+    kind: attrs.kind === "directory" ? "directory" : "file",
+  };
+}
+
 function fileName(path: string): string {
-  const parts = path.split(/[/\\]/);
+  const trimmed = path.replace(/[/\\]+$/, "");
+  const parts = trimmed.split(/[/\\]/);
   return parts[parts.length - 1] || path;
+}
+
+function optionalLineNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") {
+    return undefined;
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return parsed;
 }
 
 function lineRange(attrs: ComposerFileAttrs): string | null {
@@ -100,8 +130,8 @@ export const ComposerFile = Node.create({
           return {
             path: element.getAttribute("data-composer-file") ?? "",
             kind,
-            startLine: startLine === null ? null : Number(startLine),
-            endLine: endLine === null ? null : Number(endLine),
+            startLine: optionalLineNumber(startLine) ?? null,
+            endLine: optionalLineNumber(endLine) ?? null,
           };
         },
       },
@@ -109,16 +139,7 @@ export const ComposerFile = Node.create({
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    const attrs: ComposerFileAttrs = {
-      path: String(node.attrs.path),
-      startLine:
-        node.attrs.startLine === null
-          ? undefined
-          : Number(node.attrs.startLine),
-      endLine:
-        node.attrs.endLine === null ? undefined : Number(node.attrs.endLine),
-      kind: node.attrs.kind === "directory" ? "directory" : "file",
-    };
+    const attrs = composerFileAttrsFromUnknown(node.attrs);
     return [
       "span",
       mergeAttributes(HTMLAttributes, {
@@ -140,15 +161,7 @@ export const ComposerFile = Node.create({
   },
 
   renderText({ node }) {
-    return composerFilePlainText({
-      path: String(node.attrs.path),
-      startLine:
-        node.attrs.startLine === null
-          ? undefined
-          : Number(node.attrs.startLine),
-      endLine:
-        node.attrs.endLine === null ? undefined : Number(node.attrs.endLine),
-    });
+    return composerFilePlainText(composerFileAttrsFromUnknown(node.attrs));
   },
 
   addCommands() {

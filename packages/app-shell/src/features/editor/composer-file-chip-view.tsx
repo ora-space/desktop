@@ -1,6 +1,7 @@
 import {
+  composerFileAttrsFromUnknown,
   composerFileLabel,
-  type ComposerFileAttrs,
+  composerFilePlainText,
 } from "@ora/editor/composer";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import { WorkspaceFileIcon } from "../files/workspace-file-visuals";
@@ -10,19 +11,9 @@ import { WorkspaceFileIcon } from "../files/workspace-file-visuals";
  * Wired through `AppComposerFile` so the explorer and @ picker share one visual.
  */
 export function ComposerFileChipView({ node }: NodeViewProps) {
-  const kind =
-    node.attrs.kind === "directory"
-      ? ("directory" as const)
-      : ("file" as const);
-  const attrs: ComposerFileAttrs = {
-    path: String(node.attrs.path),
-    startLine:
-      node.attrs.startLine === null ? undefined : Number(node.attrs.startLine),
-    endLine:
-      node.attrs.endLine === null ? undefined : Number(node.attrs.endLine),
-    kind,
-  };
-  const title = attrs.path;
+  const attrs = composerFileAttrsFromUnknown(node.attrs);
+  const kind = attrs.kind === "directory" ? "directory" : "file";
+  const title = composerFilePlainText(attrs).replace(/`/g, "");
 
   return (
     <NodeViewWrapper
@@ -30,6 +21,12 @@ export function ComposerFileChipView({ node }: NodeViewProps) {
       className="composer-file-ref"
       data-composer-file={attrs.path}
       data-kind={kind}
+      {...(attrs.startLine === undefined
+        ? {}
+        : { "data-start-line": String(attrs.startLine) })}
+      {...(attrs.endLine === undefined
+        ? {}
+        : { "data-end-line": String(attrs.endLine) })}
       contentEditable={false}
       title={title}
     >

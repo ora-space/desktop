@@ -1,6 +1,7 @@
 import type { JSONContent } from "@tiptap/core";
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { isDangerousComposerHref } from "./composer-link";
 
 type MarkSpec = { type: string; attrs?: Record<string, string | null> };
 
@@ -8,8 +9,14 @@ const HEADING = /^(#{1,6})(?:\s+|$)(.*)$/;
 const TASK = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 const ORDERED = /^(\s*)(\d+)\.\s+(.*)$/;
-const FENCE = /^```([^\s`]*)$/;
+const FENCE = /^(```+)([^\s`]*)$/;
 const RULE = /^(?:---|\*\*\*|___)\s*$/;
+
+/** CommonMark: a closing fence is a line of backticks at least as long as the opener. */
+function isFenceClose(line: string, openLen: number): boolean {
+  const match = /^(```+)$/.exec(line);
+  return match !== null && (match[1]?.length ?? 0) >= openLen;
+}
 const HTML_CLIPBOARD =
   /<(p|div|h[1-6]|ul|ol|li|pre|blockquote|strong|em|a|code|hr)\b/i;
 const INLINE_MARKDOWN =
@@ -96,14 +103,21 @@ function parseBlocks(lines: string[], quoteDepth = 0): JSONContent[] {
 
     const fence = FENCE.exec(line);
     if (fence !== null) {
-      const language = fence[1] === "" ? null : fence[1];
+      const openTicks = fence[1] ?? "```";
+      const language = fence[2] === "" ? null : (fence[2] ?? null);
       const body: string[] = [];
       index += 1;
-      while (index < lines.length && lines[index] !== "```") {
+      while (
+        index < lines.length &&
+        !isFenceClose(lines[index] ?? "", openTicks.length)
+      ) {
         body.push(lines[index] ?? "");
         index += 1;
       }
-      if (index < lines.length && lines[index] === "```") {
+      if (
+        index < lines.length &&
+        isFenceClose(lines[index] ?? "", openTicks.length)
+      ) {
         index += 1;
       }
       blocks.push(codeBlock(language, body.join("\n")));
@@ -269,19 +283,16 @@ function parseInline(text: string): JSONContent[] {
   let rest = text;
 
   while (rest.length > 0) {
-    if (rest[0] === "`") {
-      const close = rest.indexOf("`", 1);
-      if (close !== -1) {
-        const inner = rest.slice(1, close);
-        const file = tryParseComposerFileChip(inner);
-        if (file !== null) {
-          nodes.push(file);
-        } else {
-          pushText(nodes, inner, [{ type: "code" }]);
-        }
-        rest = rest.slice(close + 1);
-        continue;
+    const inlineCode = takeInlineCode(rest);
+    if (inlineCode !== null) {
+      const file = tryParseComposerFileChip(inlineCode.inner);
+      if (file !== null) {
+        nodes.push(file);
+      } else {
+        pushText(nodes, inlineCode.inner, [{ type: "code" }]);
       }
+      rest = rest.slice(inlineCode.end);
+      continue;
     }
 
     const prompt = takePromptToken(rest, nodes);
@@ -309,6 +320,13 @@ function parseInline(text: string): JSONContent[] {
         last.text.endsWith("!");
       const link = afterImageBang ? null : parseLink(rest, 0);
       if (link !== null) {
+        // Dangerous schemes stay literal Markdown so they never enter a mark
+        // or the agent payload. Click-time `safeComposerHref` is the last line.
+        if (isDangerousComposerHref(link.href)) {
+          pushText(nodes, rest.slice(0, link.end), []);
+          rest = rest.slice(link.end);
+          continue;
+        }
         const attrs: Record<string, string | null> = { href: link.href };
         if (link.title !== undefined) {
           attrs.title = link.title;
@@ -460,13 +478,12 @@ function parseLink(
   let title: string | undefined;
   const quote = text[cursor];
   if (quote === '"' || quote === "'") {
-    const closeQuote = text.indexOf(quote, cursor + 1);
-    if (closeQuote === -1) {
+    const takenTitle = takeQuotedLinkTitle(text, cursor, quote);
+    if (takenTitle === null) {
       return null;
     }
-    const quoted = text.slice(cursor + 1, closeQuote);
-    title = quoted.length === 0 ? undefined : quoted;
-    cursor = closeQuote + 1;
+    title = takenTitle.title.length === 0 ? undefined : takenTitle.title;
+    cursor = takenTitle.end + 1;
     while (cursor < text.length && /\s/.test(text[cursor] ?? "")) {
       cursor += 1;
     }
@@ -475,6 +492,68 @@ function parseLink(
     return null;
   }
   return { label, href: taken.href, title, end: cursor + 1 };
+}
+
+/**
+ * CommonMark inline code: a run of opening backticks closed by the same
+ * number, not as part of a longer run. One leading/trailing space is padding
+ * so a payload that starts with a backtick can still round-trip.
+ */
+function takeInlineCode(text: string): { inner: string; end: number } | null {
+  if (text[0] !== "`") {
+    return null;
+  }
+  let ticks = 0;
+  while (text[ticks] === "`") {
+    ticks += 1;
+  }
+  let index = ticks;
+  while (index < text.length) {
+    if (text[index] !== "`") {
+      index += 1;
+      continue;
+    }
+    let run = 0;
+    while (text[index + run] === "`") {
+      run += 1;
+    }
+    if (run === ticks) {
+      let inner = text.slice(ticks, index);
+      if (inner.length >= 2 && inner.startsWith(" ") && inner.endsWith(" ")) {
+        inner = inner.slice(1, -1);
+      }
+      return { inner, end: index + ticks };
+    }
+    index += run;
+  }
+  return null;
+}
+
+/**
+ * Reads a quoted link title, honoring `\\` and `\"` / `\'` so serialization's
+ * escape of quotes does not close the title early.
+ */
+function takeQuotedLinkTitle(
+  text: string,
+  start: number,
+  quote: string,
+): { title: string; end: number } | null {
+  let index = start + 1;
+  let title = "";
+  while (index < text.length) {
+    const char = text[index];
+    if (char === "\\" && index + 1 < text.length) {
+      title += text[index + 1];
+      index += 2;
+      continue;
+    }
+    if (char === quote) {
+      return { title, end: index };
+    }
+    title += char;
+    index += 1;
+  }
+  return null;
 }
 
 function takeLinkDestination(

@@ -10,6 +10,8 @@ import { convertMarkdownFenceOpener } from "./composer-code-fence";
  */
 export const ComposerNewline = Extension.create({
   name: "composerNewline",
+  // Below composerCodeFence (1100) so Enter can still open a fence; above
+  // composerMarkdown (50) so Shift+Enter wins over paste/input rules.
   priority: 1000,
 
   addKeyboardShortcuts() {
@@ -41,11 +43,11 @@ function splitComposerBlock(editor: Editor): boolean {
     return editor.commands.splitListItem("taskItem");
   }
   const { $from } = editor.state.selection;
-  if ($from.parentOffset === 0 && $from.parent.type.isTextblock) {
-    return insertEmptyBlockBefore(editor);
-  }
   if (editor.isActive("blockquote") && $from.parent.content.size === 0) {
     return editor.commands.liftEmptyBlock();
+  }
+  if ($from.parentOffset === 0 && $from.parent.type.isTextblock) {
+    return insertEmptyBlockBefore(editor);
   }
   return editor.commands.splitBlock();
 }

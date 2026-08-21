@@ -19,6 +19,7 @@ export type { PromptTokenKind } from "./prompt-token";
 export {
   ComposerLink,
   isComposerOpenableUrl,
+  isDangerousComposerHref,
   resolveComposerLinkHref,
   safeComposerHref,
 } from "./composer-link";
@@ -57,6 +58,7 @@ export {
 export { ComposerTaskItem } from "./composer-task-item";
 export {
   ComposerFile,
+  composerFileAttrsFromUnknown,
   composerFileLabel,
   composerFilePlainText,
 } from "./composer-file";

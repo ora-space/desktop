@@ -102,6 +102,10 @@ describe("ComposerEditor", () => {
     await waitFor(() =>
       expect(textbox.querySelector("[data-composer-file]")).not.toBeNull(),
     );
+    const chip = textbox.querySelector("[data-composer-file]");
+    expect(chip).toHaveAttribute("data-start-line", "4");
+    expect(chip).toHaveAttribute("data-end-line", "12");
+    expect(chip).toHaveAttribute("title", "src/app.ts:4-12");
     expect(composerText(textbox)).toContain("`src/app.ts:4-12`");
   });
 
@@ -162,6 +166,49 @@ describe("ComposerEditor", () => {
         },
       ],
     });
+  });
+
+  it("appendText keeps slash-command chips instead of round-tripping through Markdown", async () => {
+    const editorRef = createRef<ComposerEditorHandle>();
+    render(
+      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+    );
+
+    act(() => {
+      editorRef.current?.replaceDocument({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "promptToken",
+                attrs: { kind: "command", name: "test" },
+              },
+            ],
+          },
+        ],
+      });
+    });
+    act(() => {
+      editorRef.current?.appendText("more");
+    });
+
+    await waitFor(() => {
+      expect(
+        editorRef.current
+          ?.getJSON()
+          .content?.some((block) =>
+            (block.content ?? []).some(
+              (node) =>
+                node.type === "promptToken" &&
+                node.attrs?.kind === "command" &&
+                node.attrs?.name === "test",
+            ),
+          ),
+      ).toBe(true);
+    });
+    expect(editorRef.current?.getText()).toMatch(/more/);
   });
 
   it("inserts a file chip at the caret without jumping to the document end", () => {
@@ -435,6 +482,21 @@ describe("ComposerEditor", () => {
     ).toBe(true);
   });
 
+  it("lifts an empty quote on Shift+Enter instead of inserting another paragraph inside it", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<ComposerEditor ariaLabel="Message" onSubmit={onSubmit} />);
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    await user.click(textbox);
+    await user.keyboard("> hello");
+    expect(textbox.querySelector("blockquote")).not.toBeNull();
+    await user.keyboard("{Control>}a{/Control}{Backspace}");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(textbox.querySelector("blockquote")).toBeNull();
+  });
+
   it("leaves a list on Enter and adds an item on Shift+Enter", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
@@ -454,6 +516,62 @@ describe("ComposerEditor", () => {
     expect(textbox.querySelector("ul")?.textContent).toMatch(/first/);
     expect(textbox.querySelector("ul")?.textContent).toMatch(/second/);
     expect(textbox.querySelector("ul")?.textContent).not.toMatch(/body/);
+  });
+
+  it("keeps a chip-only list item on Enter instead of lifting it as empty", async () => {
+    const user = userEvent.setup();
+    const editorRef = createRef<ComposerEditorHandle>();
+    const onSubmit = vi.fn();
+    render(
+      <ComposerEditor
+        ref={editorRef}
+        ariaLabel="Message"
+        onSubmit={onSubmit}
+      />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    act(() => {
+      editorRef.current?.replaceDocument({
+        type: "doc",
+        content: [
+          {
+            type: "bulletList",
+            content: [
+              {
+                type: "listItem",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [
+                      {
+                        type: "composerFile",
+                        attrs: {
+                          path: "src/app.ts",
+                          startLine: null,
+                          endLine: null,
+                          kind: "file",
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+    });
+    await waitFor(() =>
+      expect(textbox.querySelector("[data-composer-file]")).not.toBeNull(),
+    );
+    act(() => {
+      editorRef.current?.focus({ at: "end" });
+    });
+    await user.keyboard("{Enter}");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(textbox.querySelector("ul")).not.toBeNull();
+    expect(textbox.querySelector("[data-composer-file]")).not.toBeNull();
   });
 
   it("leaves a heading on Enter without sending", async () => {
