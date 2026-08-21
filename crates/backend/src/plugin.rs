@@ -11,10 +11,11 @@ use ora_contracts::{
     SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
 use ora_db::{RepositoryPool, SqlitePluginStateRepository};
-use ora_logging::{ora_info, ora_warn};
+use ora_domain::PluginId;
+use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_lifecycle::{
-    DenoPluginRuntimeLauncher, PluginLifecycle, PluginLifecycleConfig, PluginLifecycleError,
-    PluginRuntimeTimeouts,
+    DenoPluginRuntimeLauncher, InboundNotification, PluginLifecycle, PluginLifecycleConfig,
+    PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
 use ora_plugin_manager::Installer;
 use ora_plugin_registry::{
@@ -22,24 +23,73 @@ use ora_plugin_registry::{
 };
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
 use std::path::PathBuf;
+use tokio::sync::broadcast;
 
 /// The marketplace repository mirrored into the local registry source checkout.
 const MARKETPLACE_REPOSITORY_URL: &str = "https://github.com/ora-space/marketplace";
 /// The branch tracked by the marketplace registry source.
 const MARKETPLACE_REPOSITORY_BRANCH: &str = "main";
 
+/// The concrete lifecycle composition the backend runs.
+pub(crate) type BackendPluginLifecycle = PluginLifecycle<
+    SqlitePluginStateRepository,
+    SystemClock,
+    DenoPluginRuntimeLauncher,
+    AppEventPublisher,
+    BroadcastNotificationSink,
+>;
+
+/// Bounded fan-out buffer between the lifecycle's per-process pumps and their consumers.
+///
+/// A slow consumer may lag and lose the oldest notifications, which is acceptable because the
+/// only producer today (`ora/ui/push`) is best-effort by contract; the alternative, blocking the
+/// pump, would stall every other message of that plugin process.
+const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
+
+/// Forwards plugin-originated notifications to every subscriber without blocking the pump.
+///
+/// Subscribers are attached after the backend is built (the desktop surface host is one), which
+/// is why the sink owns a broadcast sender instead of a fixed consumer.
+#[derive(Clone, Debug)]
+pub(crate) struct BroadcastNotificationSink {
+    sender: broadcast::Sender<InboundNotification>,
+}
+
+impl BroadcastNotificationSink {
+    fn new() -> Self {
+        let (sender, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
+        Self { sender }
+    }
+
+    /// Opens a new receiver that sees every notification sent from now on.
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<InboundNotification> {
+        self.sender.subscribe()
+    }
+}
+
+impl PluginNotificationSink for BroadcastNotificationSink {
+    /// Publishes the notification; with no subscriber it is dropped, which is logged at debug
+    /// level so an unexpectedly silent plugin stays diagnosable.
+    fn on_notification(&self, notification: InboundNotification) {
+        if self.sender.send(notification.clone()).is_err() {
+            ora_debug!(
+                message = "plugin notification dropped without subscriber",
+                plugin_id = %notification.plugin_id,
+                generation = notification.generation.0,
+                method = %notification.method,
+            );
+        }
+    }
+}
+
 /// Groups plugin discovery and lifecycle operations behind the backend's plugin interface.
 pub(crate) struct PluginApi {
-    lifecycle: PluginLifecycle<
-        SqlitePluginStateRepository,
-        SystemClock,
-        DenoPluginRuntimeLauncher,
-        AppEventPublisher,
-    >,
+    lifecycle: BackendPluginLifecycle,
     registry_source: RegistrySource,
     registry_index_path: PathBuf,
     data_directory: PathBuf,
     installer: Installer<ReqwestDownloader>,
+    notifications: BroadcastNotificationSink,
 }
 
 impl PluginApi {
@@ -63,6 +113,7 @@ impl PluginApi {
         );
         let registry_index_path = plugins_directory.join("cache").join("registry_index.json");
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
+        let notifications = BroadcastNotificationSink::new();
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
                 data_directory: data_directory.clone(),
@@ -72,6 +123,7 @@ impl PluginApi {
             clock,
             DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
             publisher,
+            notifications.clone(),
         )?;
 
         Ok(Self {
@@ -80,6 +132,7 @@ impl PluginApi {
             registry_index_path,
             data_directory,
             installer,
+            notifications,
         })
     }
 
@@ -127,6 +180,16 @@ impl PluginApi {
                 .map(available_plugin)
                 .collect(),
         })
+    }
+
+    /// Exposes the lifecycle to the gateway that serves desktop surfaces.
+    pub(crate) fn lifecycle(&self) -> &BackendPluginLifecycle {
+        &self.lifecycle
+    }
+
+    /// Opens a receiver of every notification running plugin processes emit from now on.
+    pub(crate) fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification> {
+        self.notifications.subscribe()
     }
 
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
@@ -194,7 +257,16 @@ impl PluginApi {
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
         let registry_directory = self.registry_source.checkout_dir().join("registry");
-        let manifest = RegistryIndex::resolve_manifest(&registry_directory, &request.plugin_id)
+        // A malformed identifier can never name a registry entry, so it is reported the same way
+        // as an unknown one instead of leaking the id grammar as a separate error class.
+        let plugin_id = PluginId::parse(&request.plugin_id).map_err(|_| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "marketplace plugin id is not a valid `<namespace>/<name>`",
+            )
+        })?;
+        let manifest = RegistryIndex::resolve_manifest(&registry_directory, &plugin_id)
             .map_err(|error| {
                 BackendError::internal("failed to resolve plugin release manifest", error)
             })?
@@ -238,11 +310,46 @@ impl PluginApi {
 /// Converts one registry entry into the frontend-facing marketplace summary.
 fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
     ora_contracts::AvailablePlugin {
-        id: entry.id().to_owned(),
+        id: entry.id().canonical(),
         name: entry.name().to_owned(),
         namespace: entry.namespace().to_owned(),
         version: entry.version().to_string(),
         description: entry.description().to_owned(),
         logo: entry.logo().map(str::to_owned),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BroadcastNotificationSink;
+    use ora_domain::PluginId;
+    use ora_plugin_lifecycle::{InboundNotification, PluginGeneration, PluginNotificationSink};
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    /// Verifies a subscriber attached after construction receives notifications in order and a
+    /// notification without any subscriber is dropped without panicking.
+    #[tokio::test]
+    async fn broadcasts_to_late_subscribers_and_tolerates_none() {
+        let sink = BroadcastNotificationSink::new();
+        let notification = |method: &str| InboundNotification {
+            plugin_id: PluginId::new("official", "ora-space.hello-panel").expect("plugin id"),
+            generation: PluginGeneration(1),
+            method: method.to_owned(),
+            params: json!({ "n": 1 }),
+        };
+        sink.on_notification(notification("dropped"));
+
+        let mut receiver = sink.subscribe();
+        sink.on_notification(notification("ora/ui/push"));
+        sink.on_notification(notification("ora/ui/other"));
+
+        assert_eq!(
+            (
+                receiver.recv().await.expect("first"),
+                receiver.recv().await.expect("second"),
+            ),
+            (notification("ora/ui/push"), notification("ora/ui/other"))
+        );
     }
 }

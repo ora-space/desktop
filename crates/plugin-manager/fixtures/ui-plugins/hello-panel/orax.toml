@@ -1,0 +1,18 @@
+resolver = 1
+name = "ora-space.hello-panel"
+namespace = "official"
+kind = "ui"
+version = "0.1.0"
+description = "Ora Space Hello Panel sample surface"
+homepage = "https://github.com/ora-space/ui-plugins"
+license = "Apache-2.0"
+
+[[ui.surfaces]]
+id = "counter"
+title = "Hello Panel"
+instances = "singleton"
+
+[ui.surfaces.source]
+kind = "panel"
+root = "ui"
+entry = "index.html"

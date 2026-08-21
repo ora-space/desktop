@@ -1,15 +1,52 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Describes the single agent contributed by an installed agent plugin package.
+/// Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
 ///
-/// The agent carries no id: one package provides exactly one agent, identified by the package.
+/// The agent variant names its display name `agentDisplayName` because the contribution is
+/// flattened into [`InstalledPlugin`], which already owns the top-level `displayName`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum InstalledPluginContribution {
+    Agent {
+        agent_display_name: String,
+    },
+    Ui {
+        surfaces: Vec<InstalledPluginSurface>,
+    },
+}
+
+/// Describes one surface a ui plugin contributes, with its source flattened beside the identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
-pub struct InstalledPluginAgent {
-    pub display_name: String,
-    pub contract_version: u32,
+pub struct InstalledPluginSurface {
+    pub id: String,
+    pub title: String,
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub source: InstalledPluginSurfaceSource,
+}
+
+/// Describes where a surface loads its content from, discriminated by `source`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "source",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum InstalledPluginSurfaceSource {
+    RemoteSite {
+        entry_url: String,
+    },
+    /// A page shipped inside the plugin package; the host serves it, so no URL crosses the wire.
+    Panel {},
 }
 
 /// Represents the process-scoped lifecycle of one installed plugin.
@@ -27,18 +64,26 @@ pub enum PluginRuntimeStatus {
     Failed { failure_reason: String },
 }
 
-/// Describes one installed plugin discovered from its package manifest.
+/// Describes one installed plugin discovered from its `orax.toml` manifest.
+///
+/// `id` is the canonical `<namespace>/<name>` spelling and is what every plugin request carries
+/// back; `namespace` and `name` repeat the two segments so the frontend never has to split it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
 pub struct InstalledPlugin {
     pub id: String,
-    pub package_name: String,
+    pub namespace: String,
+    pub name: String,
     pub display_name: String,
     pub version: String,
-    pub kind: String,
+    pub description: String,
+    pub homepage: Option<String>,
+    pub license: Option<String>,
     pub main: String,
-    pub agent: InstalledPluginAgent,
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub contribution: InstalledPluginContribution,
     pub enabled: bool,
     /// Security-validated SVG source for the package icon, absent when the package ships none.
     ///
@@ -220,7 +265,9 @@ pub struct InstallPluginResponse {
 }
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
-    InstalledPluginAgent::export(config)?;
+    InstalledPluginContribution::export(config)?;
+    InstalledPluginSurface::export(config)?;
+    InstalledPluginSurfaceSource::export(config)?;
     PluginRuntimeStatus::export(config)?;
     InstalledPlugin::export(config)?;
     AvailablePlugin::export(config)?;
@@ -251,9 +298,10 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 mod tests {
     use super::{
         AvailablePlugin, InstallPluginRequest, InstallPluginResponse, InstalledPlugin,
-        InstalledPluginAgent, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
-        ListInstalledPluginsRequest, ListInstalledPluginsResponse, PluginRuntimeStatus,
-        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
+        InstalledPluginContribution, InstalledPluginSurface, InstalledPluginSurfaceSource,
+        ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest,
+        ListInstalledPluginsResponse, PluginRuntimeStatus, SyncAvailablePluginsRequest,
+        SyncAvailablePluginsResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -262,15 +310,17 @@ mod tests {
     #[test]
     fn serializes_installed_plugin_contract() {
         let plugin = InstalledPlugin {
-            id: "ora.claude-code".to_string(),
-            package_name: "@ora-plugins/claude-code".to_string(),
+            id: "official/ora.claude-code".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.claude-code".to_string(),
             display_name: "Claude Code".to_string(),
             version: "0.1.0".to_string(),
-            kind: "agent".to_string(),
+            description: "Claude Code agent".to_string(),
+            homepage: Some("https://example.com/claude-code".to_string()),
+            license: Some("Apache-2.0".to_string()),
             main: "dist/index.js".to_string(),
-            agent: InstalledPluginAgent {
-                display_name: "Claude Code".to_string(),
-                contract_version: 1,
+            contribution: InstalledPluginContribution::Agent {
+                agent_display_name: "Claude Code".to_string(),
             },
             enabled: false,
             logo: Some("<svg/>".to_string()),
@@ -288,21 +338,80 @@ mod tests {
             .unwrap(),
             json!({
                 "plugins": [{
-                    "id": "ora.claude-code",
-                    "packageName": "@ora-plugins/claude-code",
+                    "id": "official/ora.claude-code",
+                    "namespace": "official",
+                    "name": "ora.claude-code",
                     "displayName": "Claude Code",
                     "version": "0.1.0",
-                    "kind": "agent",
+                    "description": "Claude Code agent",
+                    "homepage": "https://example.com/claude-code",
+                    "license": "Apache-2.0",
                     "main": "dist/index.js",
-                    "agent": {
-                        "displayName": "Claude Code",
-                        "contractVersion": 1
-                    },
+                    "kind": "agent",
+                    "agentDisplayName": "Claude Code",
                     "enabled": false,
                     "logo": "<svg/>",
                     "runtime": "stopped"
                 }]
             })
+        );
+    }
+
+    /// Verifies a ui plugin flattens its surfaces and their sources onto the wire object.
+    #[test]
+    fn serializes_ui_plugin_contract() {
+        let plugin = InstalledPlugin {
+            id: "official/ora-space.skillhub".to_string(),
+            namespace: "official".to_string(),
+            name: "ora-space.skillhub".to_string(),
+            display_name: "ora-space.skillhub".to_string(),
+            version: "0.1.0".to_string(),
+            description: "SkillHub marketplace".to_string(),
+            homepage: None,
+            license: None,
+            main: "dist/index.js".to_string(),
+            contribution: InstalledPluginContribution::Ui {
+                surfaces: vec![InstalledPluginSurface {
+                    id: "market".to_string(),
+                    title: "SkillHub".to_string(),
+                    source: InstalledPluginSurfaceSource::RemoteSite {
+                        entry_url: "https://www.skillhub.cn/".to_string(),
+                    },
+                }],
+            },
+            enabled: true,
+            logo: None,
+            runtime: PluginRuntimeStatus::Stopped,
+        };
+
+        let value = serde_json::to_value(&plugin).expect("ui plugin serializes");
+        assert_eq!(
+            value,
+            json!({
+                "id": "official/ora-space.skillhub",
+                "namespace": "official",
+                "name": "ora-space.skillhub",
+                "displayName": "ora-space.skillhub",
+                "version": "0.1.0",
+                "description": "SkillHub marketplace",
+                "homepage": null,
+                "license": null,
+                "main": "dist/index.js",
+                "kind": "ui",
+                "surfaces": [{
+                    "id": "market",
+                    "title": "SkillHub",
+                    "source": "remote_site",
+                    "entryUrl": "https://www.skillhub.cn/"
+                }],
+                "enabled": true,
+                "logo": null,
+                "runtime": "stopped"
+            }),
+        );
+        assert_eq!(
+            serde_json::from_value::<InstalledPlugin>(value).expect("ui plugin round-trips"),
+            plugin
         );
     }
 
@@ -395,15 +504,17 @@ mod tests {
     #[test]
     fn serializes_running_plugin_lifecycle_state() {
         let plugin = InstalledPlugin {
-            id: "ora.example".to_string(),
-            package_name: "@ora/example".to_string(),
+            id: "official/ora.example".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.example".to_string(),
             display_name: "Example".to_string(),
             version: "1.0.0".to_string(),
-            kind: "agent".to_string(),
+            description: "Example agent".to_string(),
+            homepage: None,
+            license: None,
             main: "dist/index.js".to_string(),
-            agent: InstalledPluginAgent {
-                display_name: "Example".to_string(),
-                contract_version: 1,
+            contribution: InstalledPluginContribution::Agent {
+                agent_display_name: "Example".to_string(),
             },
             enabled: true,
             logo: None,
@@ -413,16 +524,17 @@ mod tests {
         assert_eq!(
             serde_json::to_value(plugin).expect("running plugin serializes"),
             json!({
-                "id": "ora.example",
-                "packageName": "@ora/example",
+                "id": "official/ora.example",
+                "namespace": "official",
+                "name": "ora.example",
                 "displayName": "Example",
                 "version": "1.0.0",
-                "kind": "agent",
+                "description": "Example agent",
+                "homepage": null,
+                "license": null,
                 "main": "dist/index.js",
-                "agent": {
-                    "displayName": "Example",
-                    "contractVersion": 1
-                },
+                "kind": "agent",
+                "agentDisplayName": "Example",
                 "enabled": true,
                 "logo": null,
                 "runtime": "running"
@@ -434,15 +546,17 @@ mod tests {
     #[test]
     fn serializes_failed_plugin_lifecycle_state() {
         let plugin = InstalledPlugin {
-            id: "ora.example".to_string(),
-            package_name: "@ora/example".to_string(),
+            id: "official/ora.example".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.example".to_string(),
             display_name: "Example".to_string(),
             version: "1.0.0".to_string(),
-            kind: "agent".to_string(),
+            description: "Example agent".to_string(),
+            homepage: None,
+            license: None,
             main: "dist/index.js".to_string(),
-            agent: InstalledPluginAgent {
-                display_name: "Example".to_string(),
-                contract_version: 1,
+            contribution: InstalledPluginContribution::Agent {
+                agent_display_name: "Example".to_string(),
             },
             enabled: true,
             logo: None,
@@ -454,16 +568,17 @@ mod tests {
         assert_eq!(
             serde_json::to_value(plugin).expect("failed plugin serializes"),
             json!({
-                "id": "ora.example",
-                "packageName": "@ora/example",
+                "id": "official/ora.example",
+                "namespace": "official",
+                "name": "ora.example",
                 "displayName": "Example",
                 "version": "1.0.0",
-                "kind": "agent",
+                "description": "Example agent",
+                "homepage": null,
+                "license": null,
                 "main": "dist/index.js",
-                "agent": {
-                    "displayName": "Example",
-                    "contractVersion": 1
-                },
+                "kind": "agent",
+                "agentDisplayName": "Example",
                 "enabled": true,
                 "logo": null,
                 "runtime": "failed",

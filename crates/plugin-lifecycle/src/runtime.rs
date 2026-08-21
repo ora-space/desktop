@@ -1,11 +1,14 @@
-use crate::{
-    PluginLaunchRequest, PluginRuntime, PluginRuntimeExit, PluginRuntimeFailure,
-    PluginRuntimeLauncher,
+use crate::ports::{
+    LaunchedRuntime, PluginCallError, PluginLaunchRequest, PluginRuntime, PluginRuntimeExit,
+    PluginRuntimeFailure, PluginRuntimeLauncher,
 };
+use crate::storage::PluginStorage;
 use ora_plugin_runtime::{
-    PluginProcessExit, PluginRuntime as ProcessPluginRuntime, PluginRuntimeConfig,
+    PluginProcessExit, PluginRegistration, PluginRuntime as ProcessPluginRuntime,
+    PluginRuntimeConfig, PluginRuntimeError,
 };
 use ora_process::TokioProcessSpawner;
+use serde_json::Value;
 use std::future::Future;
 use std::time::Duration;
 
@@ -40,38 +43,77 @@ impl DenoPluginRuntimeLauncher {
     }
 }
 
-/// Adapts the JSON-RPC plugin runtime to lifecycle stop and exit observation.
+/// Adapts the JSON-RPC plugin runtime to lifecycle stop, exit observation, and calls.
 #[derive(Clone)]
 pub struct DenoPluginRuntime {
     runtime: ProcessPluginRuntime,
+    /// Captured once at launch: the process runtime fixes it before reporting readiness, and
+    /// keeping a copy lets contract validation stay synchronous.
+    registration: PluginRegistration,
 }
 
 impl PluginRuntimeLauncher for DenoPluginRuntimeLauncher {
     type Runtime = DenoPluginRuntime;
 
-    /// Starts Deno and waits for the plugin registration handshake before reporting readiness.
+    /// Renders permissions, starts Deno in the package root with the storage handler bound to
+    /// the plugin's data directory, and waits for the handshake.
     fn launch(
         &self,
         request: PluginLaunchRequest,
-    ) -> impl Future<Output = Result<Self::Runtime, PluginRuntimeFailure>> + Send {
+    ) -> impl Future<Output = Result<LaunchedRuntime<Self::Runtime>, PluginRuntimeFailure>> + Send
+    {
         let timeouts = self.timeouts;
         async move {
-            ProcessPluginRuntime::launch(
+            let permissions = request
+                .permissions
+                .iter()
+                .map(|permission| {
+                    permission
+                        .to_flag()
+                        .map(|flag| flag.to_string_lossy().into_owned())
+                        .map_err(|error| PluginRuntimeFailure::new(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (runtime, notifications) = ProcessPluginRuntime::launch(
                 &TokioProcessSpawner::new(),
                 PluginRuntimeConfig {
                     plugin_id: request.plugin_id.to_string(),
                     deno_path: request.deno_path,
                     entrypoint: request.entrypoint,
-                    permissions: Vec::new(),
+                    permissions,
+                    cwd: Some(request.package_root),
                     ready_timeout: timeouts.ready,
                     call_timeout: timeouts.call,
                     shutdown_timeout: timeouts.shutdown,
                 },
+                PluginStorage::new(request.data_dir),
             )
             .await
-            .map(|(runtime, _notifications)| DenoPluginRuntime { runtime })
-            .map_err(|error| PluginRuntimeFailure::new(error.to_string()))
+            .map_err(|error| PluginRuntimeFailure::new(error.to_string()))?;
+            let registration = runtime.registration().await;
+            Ok(LaunchedRuntime {
+                runtime: DenoPluginRuntime {
+                    runtime,
+                    registration,
+                },
+                notifications,
+            })
         }
+    }
+}
+
+/// Maps process-runtime call failures onto the transport-neutral lifecycle error.
+fn map_call_error(error: PluginRuntimeError) -> PluginCallError {
+    match error {
+        PluginRuntimeError::Unavailable(_) => PluginCallError::Unavailable,
+        PluginRuntimeError::MethodNotRegistered(_) => PluginCallError::MethodNotRegistered,
+        PluginRuntimeError::CallTimeout => PluginCallError::Timeout,
+        PluginRuntimeError::Remote { code, message } => PluginCallError::Remote { code, message },
+        PluginRuntimeError::RequestChannelClosed
+        | PluginRuntimeError::MissingEntrypoint(_)
+        | PluginRuntimeError::Spawn(_)
+        | PluginRuntimeError::MissingStdio
+        | PluginRuntimeError::ReadyTimeout => PluginCallError::Transport(error.to_string()),
     }
 }
 
@@ -95,6 +137,43 @@ impl PluginRuntime for DenoPluginRuntime {
                     PluginRuntimeExit::Failed(PluginRuntimeFailure::new(reason))
                 }
             }
+        }
+    }
+
+    /// Returns the registration captured when the handshake completed.
+    fn registration(&self) -> PluginRegistration {
+        self.registration.clone()
+    }
+
+    /// Delegates the request to the process runtime and maps its error.
+    fn invoke(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> impl Future<Output = Result<Value, PluginCallError>> + Send {
+        let runtime = self.runtime.clone();
+        let method = method.to_string();
+        async move {
+            runtime
+                .invoke(&method, params)
+                .await
+                .map_err(map_call_error)
+        }
+    }
+
+    /// Delegates the notification to the process runtime and maps its error.
+    fn notify(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> impl Future<Output = Result<(), PluginCallError>> + Send {
+        let runtime = self.runtime.clone();
+        let method = method.to_string();
+        async move {
+            runtime
+                .notify(&method, params)
+                .await
+                .map_err(map_call_error)
         }
     }
 }

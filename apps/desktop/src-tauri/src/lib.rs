@@ -5,10 +5,10 @@ mod error;
 mod open_external;
 mod open_location;
 mod settings_commands;
-mod skill_marketplace;
 mod spec_commands;
 mod state;
 mod stream_forwarding;
+mod surface;
 mod workspace_files;
 
 use crate::config::DesktopConfigStore;
@@ -35,10 +35,12 @@ const PLUGIN_HOME_DIRECTORY_NAME: &str = ".ora";
 /// Starts the Tauri application with the persisted shared Backend and command adapters.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = surface::register_panel_protocol(tauri::Builder::default());
+    builder
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let (state, guard) = bootstrap_desktop(app)?;
+            surface::install(app.handle(), &state.surfaces);
             ora_info!(
                 message = "bundled binary paths registered",
                 ripgrep_path = %state.binary_paths.ripgrep_path().display(),
@@ -111,7 +113,6 @@ pub fn run() {
             commands::list_skills,
             commands::update_skill,
             commands::delete_skill,
-            skill_marketplace::open_skill_marketplace,
             // =============================================================================
             // agent
             // =============================================================================
@@ -189,6 +190,19 @@ pub fn run() {
             commands::write_workflow_export,
             dashboard::get_dashboard_url,
             dashboard::get_dashboard_compare_url,
+            // =============================================================================
+            // plugin surfaces
+            // =============================================================================
+            surface::commands::surface_capabilities,
+            surface::commands::surface_list,
+            surface::commands::surface_open,
+            surface::commands::surface_close,
+            surface::commands::surface_set_bounds,
+            surface::commands::surface_set_visible,
+            surface::commands::surface_popout,
+            surface::commands::surface_dock,
+            surface::commands::surface_reload,
+            surface::bridge::surface_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -286,6 +300,7 @@ fn bootstrap_desktop(
         log_level_source = resolved_log_level.source.as_str(),
     );
     let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
+    let surfaces = surface::SurfaceService::new(app.handle().clone(), backend.plugin_gateway());
     let runtime_log_level = RuntimeLogLevelManager::new(
         level_control,
         backend.preferred_log_level_store(),
@@ -301,6 +316,7 @@ fn bootstrap_desktop(
             binary_paths,
             app_data_directory: app_data_directory.clone(),
             stream_cancellations: Arc::new(Mutex::new(HashMap::new())),
+            surfaces,
         },
         DesktopRuntimeGuard {
             _logging: logging_guard,
@@ -320,13 +336,17 @@ fn agent_plugin_packages(
     plugin_manager
         .installed_plugins()
         .iter()
-        .map(|plugin| {
-            let PluginContribution::Agent(_) = &plugin.contributes;
-            AgentPluginPackage {
-                id: plugin.id.clone(),
+        .filter_map(|plugin| match &plugin.contributes {
+            // The agent identity persisted in sessions (`agent_ref`, e.g. `ora-space.opencode`)
+            // is the plugin name, not the namespaced canonical id, so built-in CLIs and plugin
+            // agents keep sharing one identity space.
+            PluginContribution::Agent(_) => Some(AgentPluginPackage {
+                id: plugin.id.name().to_string(),
                 deno_path: deno_path.to_path_buf(),
                 entrypoint: plugin.package_root.join(plugin.main.as_str()),
-            }
+            }),
+            // UI plugins own no agent process; the surface host opens them on demand instead.
+            PluginContribution::Ui(_) => None,
         })
         .collect()
 }

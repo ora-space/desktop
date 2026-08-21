@@ -36,10 +36,6 @@ define_id!(
     "Identifies a persisted worktree provisioning lease."
 );
 define_id!(SessionId, "Identifies a persisted session.");
-define_id!(
-    PluginId,
-    "Identifies one installed plugin package across lifecycle layers."
-);
 define_id!(SkillId, "Identifies a persisted skill.");
 define_id!(
     AgentDefinitionId,

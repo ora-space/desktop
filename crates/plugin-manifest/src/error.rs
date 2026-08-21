@@ -1,18 +1,26 @@
-use crate::{PluginKindError, PluginNameError, PluginNamespaceError, Sha256DigestError, UrlError};
-use ora_utils::GitBranchNameError;
+use crate::{
+    PluginKind, PluginKindError, PluginNameError, PluginNamespaceError, Sha256DigestError,
+    SurfaceInstancesError, UrlError, WebDataModeError,
+};
+use ora_utils::{GitBranchNameError, SlugError};
 use std::{fmt, ops::Range};
 use thiserror::Error;
 
-/// Reports structural and semantic failures while parsing one plugin release manifest.
+/// Reports structural and semantic failures while parsing one plugin manifest.
 #[derive(Debug, Error)]
 pub enum ManifestError {
     #[error("unsupported plugin manifest resolver {found}")]
     UnsupportedResolver { found: u64 },
+    /// `path` is the dotted TOML path of the offending value when the deserializer could
+    /// attribute the failure to one (`ui.surfaces[0].source.root`), so callers can report
+    /// nested structural errors as precisely as semantic ones. The TOML error is boxed because
+    /// it dominates the size of every `Result` in the crate.
     #[error("invalid TOML manifest: {source}")]
     InvalidToml {
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
         span: Option<Range<usize>>,
+        path: Option<String>,
     },
     #[error("invalid manifest field {field}: {reason}")]
     InvalidField {
@@ -36,32 +44,58 @@ pub enum ManifestField {
     HeadRepository,
     HeadBranch,
     DependenciesOra,
+    /// The whole `[ui]` section, used when its presence disagrees with `kind`.
+    Ui,
+    /// The `ui.surfaces` array as a whole.
+    UiSurfaces,
+    /// One field of the surface at `index` in `ui.surfaces`.
+    UiSurface {
+        index: usize,
+        field: SurfaceField,
+    },
 }
 
-impl ManifestField {
-    /// Returns the stable dotted manifest path for this field.
-    pub fn as_str(self) -> &'static str {
+impl fmt::Display for ManifestField {
+    /// Writes the stable dotted manifest path, with array indices in brackets.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Name => "name",
-            Self::Namespace => "namespace",
-            Self::Kind => "kind",
-            Self::Version => "version",
-            Self::Description => "description",
-            Self::Homepage => "homepage",
-            Self::License => "license",
-            Self::Url => "url",
-            Self::Sha256 => "sha256",
-            Self::HeadRepository => "head.repository",
-            Self::HeadBranch => "head.branch",
-            Self::DependenciesOra => "dependencies.ora",
+            Self::Name => formatter.write_str("name"),
+            Self::Namespace => formatter.write_str("namespace"),
+            Self::Kind => formatter.write_str("kind"),
+            Self::Version => formatter.write_str("version"),
+            Self::Description => formatter.write_str("description"),
+            Self::Homepage => formatter.write_str("homepage"),
+            Self::License => formatter.write_str("license"),
+            Self::Url => formatter.write_str("url"),
+            Self::Sha256 => formatter.write_str("sha256"),
+            Self::HeadRepository => formatter.write_str("head.repository"),
+            Self::HeadBranch => formatter.write_str("head.branch"),
+            Self::DependenciesOra => formatter.write_str("dependencies.ora"),
+            Self::Ui => formatter.write_str("ui"),
+            Self::UiSurfaces => formatter.write_str("ui.surfaces"),
+            Self::UiSurface { index, field } => write!(formatter, "ui.surfaces[{index}].{field}"),
         }
     }
 }
 
-impl fmt::Display for ManifestField {
-    /// Writes the stable dotted manifest path.
+/// Identifies one field of a `[[ui.surfaces]]` entry.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SurfaceField {
+    Id,
+    Title,
+    Instances,
+    WebDataMode,
+}
+
+impl fmt::Display for SurfaceField {
+    /// Writes the field path relative to its surface entry.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
+        formatter.write_str(match self {
+            Self::Id => "id",
+            Self::Title => "title",
+            Self::Instances => "instances",
+            Self::WebDataMode => "web_data.mode",
+        })
     }
 }
 
@@ -97,4 +131,14 @@ pub enum InvalidFieldReason {
     InvalidGitBranch(#[from] GitBranchNameError),
     #[error("invalid Ora version requirement: {0}")]
     InvalidVersionRequirement(#[source] semver::Error),
+    #[error("section is required for plugin kind `{kind}`")]
+    MissingForKind { kind: PluginKind },
+    #[error("section is not allowed for plugin kind `{kind}`")]
+    NotAllowedForKind { kind: PluginKind },
+    #[error("invalid slug: {0}")]
+    InvalidSlug(#[from] SlugError),
+    #[error(transparent)]
+    InvalidSurfaceInstances(#[from] SurfaceInstancesError),
+    #[error(transparent)]
+    InvalidWebDataMode(#[from] WebDataModeError),
 }

@@ -90,7 +90,7 @@ fn open_external_url_os_error(
 /// binary, then `start` looks up the protocol handler. Calling `ShellExecuteW`
 /// in-process skips that.
 #[cfg(target_os = "windows")]
-fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
+pub(crate) fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
@@ -140,7 +140,7 @@ fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
 
 /// Launches the OS browser through macOS `open`.
 #[cfg(target_os = "macos")]
-fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
+pub(crate) fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
     use std::process::Command;
     if !is_browser_url(url) {
         return Err(open_external_url_scheme_error(std::io::Error::other(
@@ -162,7 +162,7 @@ fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
 
 /// Linux Desktop is not a shipping host; keep the command defined for completeness.
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
+pub(crate) fn open_external_url_blocking(url: &str) -> Result<(), BackendError> {
     use std::process::Command;
     if !is_browser_url(url) {
         return Err(open_external_url_scheme_error(std::io::Error::other(

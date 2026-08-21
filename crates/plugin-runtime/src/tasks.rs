@@ -10,6 +10,7 @@ use tokio::time::timeout;
 
 use crate::PluginRuntimeError;
 use crate::codec::{read_frame, write_frame};
+use crate::host_requests::HostRequestHandler;
 use crate::protocol::handle_message;
 use crate::state::{
     RuntimeInner, RuntimeStatus, SupervisorCommand, close_inbound, fail_pending, fail_runtime,
@@ -46,10 +47,11 @@ pub(crate) async fn run_writer<W>(
     }
 }
 
-/// Reads plugin registration, notifications, and responses from the stdout protocol stream.
-pub(crate) async fn run_reader<R>(mut stdout: R, inner: Arc<RuntimeInner>)
+/// Reads plugin registration, notifications, requests, and responses from the stdout stream.
+pub(crate) async fn run_reader<R, H>(mut stdout: R, inner: Arc<RuntimeInner>, host_requests: Arc<H>)
 where
     R: AsyncRead + Unpin,
+    H: HostRequestHandler,
 {
     loop {
         let payload = match read_frame(&mut stdout).await {
@@ -70,7 +72,7 @@ where
                 return;
             }
         };
-        if let Err(reason) = handle_message(&inner, message).await {
+        if let Err(reason) = handle_message(&inner, &host_requests, message).await {
             fail_runtime(&inner, reason).await;
             return;
         }

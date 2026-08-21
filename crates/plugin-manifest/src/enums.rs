@@ -49,6 +49,7 @@ pub enum PluginNamespaceError {
 pub enum PluginKind {
     Workbench,
     Agent,
+    Ui,
 }
 
 impl PluginKind {
@@ -57,6 +58,7 @@ impl PluginKind {
         match self {
             Self::Workbench => "workbench",
             Self::Agent => "agent",
+            Self::Ui => "ui",
         }
     }
 }
@@ -76,6 +78,7 @@ impl FromStr for PluginKind {
         match value {
             "workbench" => Ok(Self::Workbench),
             "agent" => Ok(Self::Agent),
+            "ui" => Ok(Self::Ui),
             found => Err(PluginKindError::Unsupported {
                 found: found.to_owned(),
             }),

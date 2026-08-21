@@ -1,6 +1,7 @@
+use crate::ui::RawUi;
 use crate::{
     HomepageUrl, InvalidFieldReason, ManifestError, ManifestField, PluginKind, PluginName,
-    PluginNamespace, ReleaseUrl, RepositoryUrl, Sha256Digest,
+    PluginNamespace, PluginUi, ReleaseUrl, RepositoryUrl, Sha256Digest,
 };
 use ora_utils::GitBranchName;
 use semver::{Version, VersionReq};
@@ -24,6 +25,7 @@ pub struct PluginManifest {
     pub(crate) sha256: Option<Sha256Digest>,
     pub(crate) head: Option<PluginHead>,
     pub(crate) dependencies: Option<PluginDependencies>,
+    pub(crate) ui: Option<PluginUi>,
 }
 
 impl PluginManifest {
@@ -32,10 +34,7 @@ impl PluginManifest {
     /// A release manifest is the marketplace form and must declare the download metadata
     /// (`resolver`, `url`, `sha256`) needed to fetch and verify the package.
     pub fn parse(source: &str) -> Result<Self, ManifestError> {
-        let raw: RawPluginManifest = toml::from_str(source).map_err(|source| {
-            let span = source.span();
-            ManifestError::InvalidToml { source, span }
-        })?;
+        let raw: RawPluginManifest = deserialize(source)?;
         let (metadata, resolver, url, sha256) = raw.into_parts();
         Self::from_raw_parts(metadata, resolver, Some(url), Some(sha256))
     }
@@ -44,10 +43,7 @@ impl PluginManifest {
     /// package). Installed manifests carry descriptive metadata only; the download-only `url` and
     /// `sha256` fields are optional, and an omitted `resolver` is accepted as the current version.
     pub fn parse_installed(source: &str) -> Result<Self, ManifestError> {
-        let raw: RawInstalledManifest = toml::from_str(source).map_err(|source| {
-            let span = source.span();
-            ManifestError::InvalidToml { source, span }
-        })?;
+        let raw: RawInstalledManifest = deserialize(source)?;
         let (metadata, resolver, url, sha256) = raw.into_parts();
         let resolver = resolver.unwrap_or(SUPPORTED_RESOLVER);
         Self::from_raw_parts(metadata, resolver, url, sha256)
@@ -114,6 +110,7 @@ impl PluginManifest {
                     })
             })
             .transpose()?;
+        let ui = validate_ui_section(kind, metadata.ui)?;
 
         Ok(Self {
             resolver,
@@ -128,6 +125,7 @@ impl PluginManifest {
             sha256,
             head,
             dependencies,
+            ui,
         })
     }
 
@@ -198,6 +196,57 @@ impl PluginManifest {
     pub fn dependencies(&self) -> Option<&PluginDependencies> {
         self.dependencies.as_ref()
     }
+
+    /// Returns the `[ui]` section, present exactly when `kind` is [`PluginKind::Ui`].
+    pub fn ui(&self) -> Option<&PluginUi> {
+        self.ui.as_ref()
+    }
+}
+
+/// Deserializes one manifest form, keeping the TOML path of a structural failure.
+///
+/// `serde_path_to_error` is used instead of `toml::from_str` because nested sections such as
+/// `[[ui.surfaces]]` would otherwise report "unknown field" without saying which entry.
+fn deserialize<'de, T: Deserialize<'de>>(source: &'de str) -> Result<T, ManifestError> {
+    let deserializer = toml::de::Deserializer::parse(source).map_err(|source| {
+        let span = source.span();
+        ManifestError::InvalidToml {
+            source: Box::new(source),
+            span,
+            path: None,
+        }
+    })?;
+    serde_path_to_error::deserialize(deserializer).map_err(|error| {
+        let path = error.path().to_string();
+        let source = error.into_inner();
+        let span = source.span();
+        ManifestError::InvalidToml {
+            source: Box::new(source),
+            span,
+            // The root path renders as "." which carries no information.
+            path: (path != ".").then_some(path),
+        }
+    })
+}
+
+/// Pairs `kind` with the section it requires: a ui plugin must declare `[ui]` and no other kind
+/// may, so a manifest cannot be half of two kinds.
+fn validate_ui_section(
+    kind: PluginKind,
+    ui: Option<RawUi>,
+) -> Result<Option<PluginUi>, ManifestError> {
+    match (kind, ui) {
+        (PluginKind::Ui, Some(ui)) => PluginUi::try_from(ui).map(Some),
+        (PluginKind::Ui, None) => Err(invalid_field(
+            ManifestField::Ui,
+            InvalidFieldReason::MissingForKind { kind },
+        )),
+        (PluginKind::Workbench | PluginKind::Agent, Some(_)) => Err(invalid_field(
+            ManifestField::Ui,
+            InvalidFieldReason::NotAllowedForKind { kind },
+        )),
+        (PluginKind::Workbench | PluginKind::Agent, None) => Ok(None),
+    }
 }
 
 /// Holds validated source repository metadata for one plugin release.
@@ -261,6 +310,7 @@ struct RawPluginManifest {
     sha256: String,
     head: Option<RawHead>,
     dependencies: Option<RawDependencies>,
+    ui: Option<RawUi>,
 }
 
 #[derive(Deserialize)]
@@ -278,6 +328,7 @@ struct RawInstalledManifest {
     sha256: Option<String>,
     head: Option<RawHead>,
     dependencies: Option<RawDependencies>,
+    ui: Option<RawUi>,
 }
 
 #[derive(Deserialize)]
@@ -307,6 +358,7 @@ struct RawMetadata {
     license: Option<String>,
     head: Option<RawHead>,
     dependencies: Option<RawDependencies>,
+    ui: Option<RawUi>,
 }
 
 impl RawPluginManifest {
@@ -322,6 +374,7 @@ impl RawPluginManifest {
             license: self.license,
             head: self.head,
             dependencies: self.dependencies,
+            ui: self.ui,
         };
         (metadata, self.resolver, self.url, self.sha256)
     }
@@ -340,6 +393,7 @@ impl RawInstalledManifest {
             license: self.license,
             head: self.head,
             dependencies: self.dependencies,
+            ui: self.ui,
         };
         (metadata, self.resolver, self.url, self.sha256)
     }

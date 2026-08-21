@@ -1,9 +1,9 @@
 use crate::{
     HomepageUrl, InvalidFieldReason, ManifestError, ManifestField, PluginDependencies, PluginHead,
-    PluginKind, PluginManifest, PluginName, PluginNamespace, ReleaseUrl, RepositoryUrl,
-    Sha256Digest,
+    PluginKind, PluginManifest, PluginName, PluginNamespace, PluginUi, ReleaseUrl, RepositoryUrl,
+    Sha256Digest, SurfaceDeclaration, SurfaceField, SurfaceInstances, SurfaceSource, WebDataMode,
 };
-use ora_utils::{GitBranchName, GitBranchNameError};
+use ora_utils::{GitBranchName, GitBranchNameError, Slug, SlugError};
 use pretty_assertions::assert_eq;
 use semver::{Version, VersionReq};
 
@@ -79,6 +79,7 @@ fn parses_complete_manifest_into_full_domain_object() {
         dependencies: Some(PluginDependencies {
             ora: success(VersionReq::parse(">= 0.8.0"), "Ora requirement"),
         }),
+        ui: None,
     };
 
     assert_eq!(actual, expected);
@@ -448,9 +449,216 @@ fn parses_only_the_ora_dependency() {
 /// Verifies field paths have stable dotted representations for programmatic diagnostics.
 #[test]
 fn formats_structured_manifest_fields() {
-    assert_eq!(ManifestField::HeadRepository.as_str(), "head.repository");
+    assert_eq!(ManifestField::HeadRepository.to_string(), "head.repository");
+    assert_eq!(
+        ManifestField::UiSurface {
+            index: 2,
+            field: SurfaceField::WebDataMode,
+        }
+        .to_string(),
+        "ui.surfaces[2].web_data.mode"
+    );
     assert_eq!(
         ManifestField::DependenciesOra.to_string(),
         "dependencies.ora"
     );
+}
+
+const UI_MANIFEST: &str = r#"name = "ora-space.skillhub"
+namespace = "official"
+kind = "ui"
+version = "0.1.0"
+description = "Ora Space SkillHub surface"
+
+[[ui.surfaces]]
+id = "market"
+title = "SkillHub"
+instances = "singleton"
+
+[ui.surfaces.source]
+kind = "remote_site"
+entry = "https://www.skillhub.cn"
+hosts = ["skillhub.cn", "www.skillhub.cn"]
+
+[ui.surfaces.web_data]
+mode = "persistent"
+
+[[ui.surfaces]]
+id = "counter"
+title = "Hello Panel"
+
+[ui.surfaces.source]
+kind = "panel"
+root = "ui"
+entry = "index.html"
+"#;
+
+/// Verifies a ui manifest keeps every surface verbatim, defaulting only `instances`.
+#[test]
+fn parses_ui_section_into_surface_declarations() {
+    let manifest = success(PluginManifest::parse_installed(UI_MANIFEST), "ui manifest");
+
+    assert_eq!(manifest.kind(), PluginKind::Ui);
+    assert_eq!(
+        manifest.ui(),
+        Some(&PluginUi {
+            surfaces: vec![
+                SurfaceDeclaration {
+                    id: success(Slug::parse("market"), "surface id"),
+                    title: "SkillHub".to_owned(),
+                    instances: SurfaceInstances::Singleton,
+                    source: SurfaceSource::RemoteSite {
+                        entry: "https://www.skillhub.cn".to_owned(),
+                        hosts: vec!["skillhub.cn".to_owned(), "www.skillhub.cn".to_owned()],
+                        host_suffixes: vec![],
+                    },
+                    web_data: Some(WebDataMode::Persistent),
+                },
+                SurfaceDeclaration {
+                    id: success(Slug::parse("counter"), "surface id"),
+                    title: "Hello Panel".to_owned(),
+                    instances: SurfaceInstances::Singleton,
+                    source: SurfaceSource::Panel {
+                        root: "ui".to_owned(),
+                        entry: "index.html".to_owned(),
+                    },
+                    web_data: None,
+                },
+            ],
+        })
+    );
+}
+
+/// Verifies the release form accepts a `[ui]` section too, so marketplace listings can show
+/// what a ui plugin contributes before it is installed.
+#[test]
+fn release_manifest_accepts_ui_section() {
+    let source = format!(
+        "resolver = 1\nurl = \"https://example.com/skillhub.orax\"\nsha256 = \"{DIGEST}\"\n{UI_MANIFEST}"
+    );
+    let manifest = success(PluginManifest::parse(&source), "ui release manifest");
+
+    assert_eq!(manifest.ui().map(|ui| ui.surfaces().len()), Some(2));
+}
+
+/// Verifies `[ui]` is required for ui plugins and refused for every other kind.
+#[test]
+fn pairs_ui_section_with_kind() {
+    let missing = UI_MANIFEST
+        .split("\n[[ui.surfaces]]")
+        .next()
+        .unwrap_or_default();
+    assert!(matches!(
+        PluginManifest::parse_installed(missing),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Ui,
+            reason: InvalidFieldReason::MissingForKind {
+                kind: PluginKind::Ui
+            },
+        })
+    ));
+
+    let agent = UI_MANIFEST.replacen("kind = \"ui\"", "kind = \"agent\"", 1);
+    assert!(matches!(
+        PluginManifest::parse_installed(&agent),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Ui,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Agent
+            },
+        })
+    ));
+}
+
+/// Verifies each surface shape rule is attributed to the indexed surface field.
+#[test]
+fn rejects_invalid_surface_fields_with_index() {
+    let empty = UI_MANIFEST.replacen("[[ui.surfaces]]\nid = \"market\"\ntitle = \"SkillHub\"\ninstances = \"singleton\"\n\n[ui.surfaces.source]\nkind = \"remote_site\"\nentry = \"https://www.skillhub.cn\"\nhosts = [\"skillhub.cn\", \"www.skillhub.cn\"]\n\n[ui.surfaces.web_data]\nmode = \"persistent\"\n\n[[ui.surfaces]]\nid = \"counter\"\ntitle = \"Hello Panel\"\n\n[ui.surfaces.source]\nkind = \"panel\"\nroot = \"ui\"\nentry = \"index.html\"\n", "[ui]\nsurfaces = []\n", 1);
+    assert!(matches!(
+        PluginManifest::parse_installed(&empty),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::UiSurfaces,
+            reason: InvalidFieldReason::Empty,
+        })
+    ));
+
+    let cases = [
+        (
+            ("id = \"counter\"", "id = \"Counter\""),
+            ManifestField::UiSurface {
+                index: 1,
+                field: SurfaceField::Id,
+            },
+        ),
+        (
+            ("title = \"SkillHub\"", "title = \"   \""),
+            ManifestField::UiSurface {
+                index: 0,
+                field: SurfaceField::Title,
+            },
+        ),
+        (
+            ("instances = \"singleton\"", "instances = \"many\""),
+            ManifestField::UiSurface {
+                index: 0,
+                field: SurfaceField::Instances,
+            },
+        ),
+        (
+            ("mode = \"persistent\"", "mode = \"persistent_profile\""),
+            ManifestField::UiSurface {
+                index: 0,
+                field: SurfaceField::WebDataMode,
+            },
+        ),
+    ];
+    for ((valid, broken), expected_field) in cases {
+        let source = UI_MANIFEST.replacen(valid, broken, 1);
+        let Err(ManifestError::InvalidField { field, .. }) =
+            PluginManifest::parse_installed(&source)
+        else {
+            panic!("expected {broken} to produce a semantic field error");
+        };
+        assert_eq!(field, expected_field);
+    }
+
+    let uppercase = UI_MANIFEST.replacen("id = \"counter\"", "id = \"Counter\"", 1);
+    assert!(matches!(
+        PluginManifest::parse_installed(&uppercase),
+        Err(ManifestError::InvalidField {
+            reason: InvalidFieldReason::InvalidSlug(SlugError::InvalidCharacter { .. }),
+            ..
+        })
+    ));
+}
+
+/// Verifies an unknown source kind, a field of the other source form, and an unknown surface
+/// field stay structural errors that name the offending TOML path.
+#[test]
+fn reports_structural_surface_errors_with_paths() {
+    let cases = [
+        (
+            UI_MANIFEST.replacen("kind = \"panel\"", "kind = \"native_view\"", 1),
+            "ui.surfaces[1].source.kind",
+        ),
+        (
+            UI_MANIFEST.replacen("root = \"ui\"\n", "root = \"ui\"\nhosts = []\n", 1),
+            "ui.surfaces[1].source",
+        ),
+        (
+            UI_MANIFEST.replacen(
+                "title = \"SkillHub\"\n",
+                "title = \"SkillHub\"\nicon = \"x\"\n",
+                1,
+            ),
+            "ui.surfaces[0].icon",
+        ),
+    ];
+    for (source, expected_path) in cases {
+        let Err(ManifestError::InvalidToml { path, .. }) = PluginManifest::parse_installed(&source)
+        else {
+            panic!("expected {expected_path} to fail structurally");
+        };
+        assert_eq!(path.as_deref(), Some(expected_path));
+    }
 }

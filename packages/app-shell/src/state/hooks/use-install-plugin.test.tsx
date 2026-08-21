@@ -31,7 +31,8 @@ describe("useInstallPlugin", () => {
       state.installedPlugins.find((item) => item.id === "official/weather"),
     ).toMatchObject({
       id: "official/weather",
-      packageName: "official/weather",
+      namespace: "official",
+      name: "weather",
       displayName: "weather",
       version: "1.2.0",
     });

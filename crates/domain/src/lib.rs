@@ -7,6 +7,7 @@ mod git_cleanup;
 mod ids;
 mod namespace;
 mod plugin;
+mod plugin_id;
 mod project;
 mod session;
 mod session_title;
@@ -29,12 +30,12 @@ pub use git_cleanup::{
     truncate_cleanup_error,
 };
 pub use ids::{
-    AgentDefinitionId, GitCleanupJobId, PluginId, ProjectId, SessionId, SkillId, TaskId,
-    WorkflowId, WorkflowNodeRunId, WorkflowRunId, WorkflowSnapshotId, WorktreeId,
-    WorktreeProvisioningLeaseId,
+    AgentDefinitionId, GitCleanupJobId, ProjectId, SessionId, SkillId, TaskId, WorkflowId,
+    WorkflowNodeRunId, WorkflowRunId, WorkflowSnapshotId, WorktreeId, WorktreeProvisioningLeaseId,
 };
 pub use namespace::Namespace;
 pub use plugin::{PluginEnabledState, PluginState};
+pub use plugin_id::{PluginId, PluginIdError, PluginIdSegment};
 pub use project::Project;
 pub use session::{HistoryState, Session, SessionStatus};
 pub use session_title::{MAX_SESSION_TITLE_CHARS, SessionTitle, SessionTitleError};

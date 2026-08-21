@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use ora_acp::AcpMessages;
-use ora_plugin_runtime::{PluginRuntime, PluginRuntimeConfig};
+use ora_plugin_lifecycle::agent_permissions;
+use ora_plugin_runtime::{NoHostRequests, PluginRuntime, PluginRuntimeConfig};
 use ora_process::TokioProcessSpawner;
 
 use crate::bootstrap::AgentPluginPackage;
@@ -23,16 +24,6 @@ const PLUGIN_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const PLUGIN_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a plugin has to exit after `ora/shutdown` before its process tree is killed.
 const PLUGIN_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// The Deno permissions granted to an agent plugin.
-///
-/// An agent plugin spawns and owns the agent CLI itself, so it needs `--allow-run` and everything
-/// that CLI needs to work. That makes an agent plugin roughly as privileged as the host. This is a
-/// deliberate, documented gap: capability narrowing for agent plugins is deferred until the agent
-/// contract itself is proven, and closing it later changes only how the agent is started, never
-/// the `agent/acp` pipe.
-const AGENT_PLUGIN_PERMISSIONS: [&str; 4] =
-    ["--allow-run", "--allow-read", "--allow-env", "--allow-net"];
 
 /// Describes one installed agent plugin the connection supervisor can launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,17 +59,31 @@ pub(crate) async fn launch(
     home_directory: &Path,
     host_version: &str,
 ) -> Result<LaunchedPluginAgent, PluginAgentError> {
+    // Permissions come from the lifecycle crate so both launch paths grant the same set; the agent
+    // set has no path grants, so rendering cannot fail and the error branch is unreachable.
+    let permissions = agent_permissions()
+        .iter()
+        .map(|permission| {
+            permission
+                .to_flag()
+                .map(|flag| flag.to_string_lossy().into_owned())
+                .map_err(|error| PluginAgentError::Failed(error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let config = PluginRuntimeConfig {
         plugin_id: spec.plugin_id.clone(),
         deno_path: spec.deno_path.clone(),
         entrypoint: spec.entrypoint.clone(),
-        permissions: AGENT_PLUGIN_PERMISSIONS.map(str::to_string).to_vec(),
+        permissions,
+        cwd: None,
         ready_timeout: PLUGIN_READY_TIMEOUT,
         call_timeout: PLUGIN_CALL_TIMEOUT,
         shutdown_timeout: PLUGIN_SHUTDOWN_TIMEOUT,
     };
+    // Agent plugins reach no host methods yet: the supervisor launches them outside the
+    // lifecycle and therefore has no storage handler bound to a data directory to offer.
     let (runtime, mut notifications) =
-        PluginRuntime::launch(&TokioProcessSpawner::new(), config).await?;
+        PluginRuntime::launch(&TokioProcessSpawner::new(), config, NoHostRequests).await?;
     if let Err(error) = control::verify_agent_contract(&runtime.registration().await) {
         runtime.shutdown_and_wait().await;
         return Err(error);
