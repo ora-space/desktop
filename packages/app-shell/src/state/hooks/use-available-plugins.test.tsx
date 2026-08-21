@@ -17,6 +17,7 @@ describe("useAvailablePlugins", () => {
       namespace: "official",
       version: "1.2.0",
       description: "Weather plugin",
+      logo: null,
     });
     const { result, queryClient } = renderHookWithClient(
       () => useAvailablePlugins(),

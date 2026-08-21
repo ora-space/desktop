@@ -13,6 +13,7 @@ pub enum PluginDiscoveryIssueKind {
     InvalidToml,
     InvalidManifest,
     DuplicatePluginId,
+    UnusableLogo,
 }
 
 impl PluginDiscoveryIssueKind {
@@ -28,6 +29,7 @@ impl PluginDiscoveryIssueKind {
             Self::InvalidToml => "invalid_toml",
             Self::InvalidManifest => "invalid_manifest",
             Self::DuplicatePluginId => "duplicate_plugin_id",
+            Self::UnusableLogo => "unusable_logo",
         }
     }
 }

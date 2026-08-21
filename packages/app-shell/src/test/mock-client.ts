@@ -418,6 +418,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           main: "main.js",
           agent: { displayName: available.name, contractVersion: 1 },
           enabled: true,
+          logo: available.logo,
           runtime: "stopped",
         });
         return { pluginId: req.pluginId };

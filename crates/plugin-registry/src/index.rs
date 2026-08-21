@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use ora_logging::ora_warn;
 use ora_plugin_manifest::PluginManifest;
 
-use crate::entry::RegistryEntry;
+use crate::entry::{RegistryEntry, entry_id};
 use crate::error::RegistryError;
+use crate::logo;
 
 /// The index schema version reported in every built index file.
 const INDEX_VERSION: &str = "1.0";
@@ -33,7 +34,10 @@ impl RegistryIndex {
         let mut skipped = Vec::new();
         for path in orax_manifest_paths(dir) {
             match parse_manifest(&path) {
-                Ok(manifest) => entries.push(RegistryEntry::from_manifest(&manifest)),
+                Ok(manifest) => {
+                    let logo = logo::read_beside_manifest(&path);
+                    entries.push(RegistryEntry::from_manifest(&manifest, logo));
+                }
                 Err(error) => {
                     ora_warn!(path = %path.display(), %error, "skipping invalid registry plugin manifest");
                     skipped.push(SkippedManifest {
@@ -72,7 +76,7 @@ impl RegistryIndex {
                     continue;
                 }
             };
-            if RegistryEntry::from_manifest(&manifest).id() == id {
+            if entry_id(&manifest) == id {
                 return Ok(Some(manifest));
             }
         }
@@ -231,8 +235,8 @@ mod tests {
         let a_manifest = PluginManifest::parse(&valid_manifest("a", "A plugin"))?;
         let z_manifest = PluginManifest::parse(&valid_manifest("z", "Z plugin"))?;
         let expected_plugins = vec![
-            RegistryEntry::from_manifest(&a_manifest),
-            RegistryEntry::from_manifest(&z_manifest),
+            RegistryEntry::from_manifest(&a_manifest, /*logo*/ None),
+            RegistryEntry::from_manifest(&z_manifest, /*logo*/ None),
         ];
 
         assert_eq!(build.index().plugins().to_vec(), expected_plugins);
@@ -263,6 +267,47 @@ mod tests {
         assert!(missing.is_none());
         Ok(())
     }
+    /// Verifies the `logo.svg` beside a manifest is inlined into that entry's index record.
+    #[test]
+    fn inlines_the_logo_beside_each_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+        let logo = r#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="8"/></svg>"#;
+        let manifest_path = write_manifest(root.path(), "a", &valid_manifest("a", "A plugin"))?;
+        let entry_dir = manifest_path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("no parent"))?;
+        fs::write(entry_dir.join("logo.svg"), logo)?;
+        write_manifest(root.path(), "b", &valid_manifest("b", "B plugin"))?;
+
+        let build = RegistryIndex::build(root.path(), UPDATED_AT);
+
+        assert_eq!(build.index().plugins()[0].logo(), Some(logo));
+        assert_eq!(build.index().plugins()[1].logo(), None);
+        Ok(())
+    }
+
+    /// Verifies an unsafe logo is dropped while its plugin still reaches the marketplace listing.
+    #[test]
+    fn indexes_a_plugin_whose_logo_is_unsafe() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+        let manifest_path = write_manifest(root.path(), "a", &valid_manifest("a", "A plugin"))?;
+        let entry_dir = manifest_path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("no parent"))?;
+        fs::write(
+            entry_dir.join("logo.svg"),
+            "<svg><script>evil()</script></svg>",
+        )?;
+
+        let build =
+            ora_logging::with_trace_logging(|| RegistryIndex::build(root.path(), UPDATED_AT));
+
+        assert_eq!(build.index().plugins().len(), 1);
+        assert_eq!(build.index().plugins()[0].logo(), None);
+        assert_eq!(build.skipped().len(), 0);
+        Ok(())
+    }
+
     /// Verifies a missing or empty marketplace registry directory builds a valid empty index.
     #[test]
     fn builds_an_empty_index_for_a_missing_registry_directory()

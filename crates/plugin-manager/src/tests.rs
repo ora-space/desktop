@@ -483,6 +483,50 @@ fn write_orax_package(data_dir: &Path, directory: &str, toml: &str) -> std::path
     package_root
 }
 
+/// Verifies a package's `logo.svg` is discovered as trusted icon source text.
+#[test]
+fn discovers_package_logo() {
+    let temp_dir = TempDir::new().unwrap();
+    let logo = r#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="8"/></svg>"#;
+    let package_root = write_orax_package(temp_dir.path(), "demo", VALID_ORAX);
+    fs::write(package_root.join("logo.svg"), logo).unwrap();
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    assert_eq!(manager.installed_plugins()[0].logo, Some(logo.to_string()));
+}
+
+/// Verifies a package without an icon is discovered cleanly instead of reporting a problem.
+#[test]
+fn discovers_package_without_a_logo() {
+    let temp_dir = TempDir::new().unwrap();
+    write_orax_package(temp_dir.path(), "demo", VALID_ORAX);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    assert_eq!(manager.installed_plugins()[0].logo, None);
+}
+
+/// Verifies an unsafe icon is reported and dropped while the plugin itself stays discovered.
+#[test]
+fn reports_an_unsafe_logo_without_hiding_the_plugin() {
+    let temp_dir = TempDir::new().unwrap();
+    let package_root = write_orax_package(temp_dir.path(), "demo", VALID_ORAX);
+    let logo_path = package_root.join("logo.svg");
+    fs::write(&logo_path, "<svg><script>evil()</script></svg>").unwrap();
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues().len(), 1);
+    let issue = &manager.discovery_issues()[0];
+    assert_eq!(issue.path(), logo_path);
+    assert_eq!(issue.kind(), PluginDiscoveryIssueKind::UnusableLogo);
+    assert_eq!(manager.installed_plugins().len(), 1);
+    assert_eq!(manager.installed_plugins()[0].logo, None);
+}
+
 /// Writes arbitrary bytes as one installed package manifest.
 fn write_raw_orax(data_dir: &Path, directory: &str, bytes: &[u8]) {
     let package_root = data_dir.join("plugins").join("installed").join(directory);

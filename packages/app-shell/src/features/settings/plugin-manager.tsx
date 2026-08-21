@@ -20,12 +20,12 @@ import {
 import {
   IconDots,
   IconLoader2,
-  IconPlug,
   IconRefresh,
   IconSearch,
   IconTrash,
 } from "@tabler/icons-react";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
+import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 
@@ -134,9 +134,7 @@ function InstalledPluginRow({ plugin }: { plugin: InstalledPlugin }) {
 
   return (
     <div className="flex items-center gap-3 py-3">
-      <span className="flex size-10 shrink-0 items-center justify-center text-muted-foreground">
-        <IconPlug className="size-6" />
-      </span>
+      <PluginLogo logo={plugin.logo} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">
           {plugin.displayName}

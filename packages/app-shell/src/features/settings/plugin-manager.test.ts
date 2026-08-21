@@ -12,6 +12,7 @@ const plugins: InstalledPlugin[] = [
     main: "dist/index.js",
     agent: { displayName: "Review Agent", contractVersion: 1 },
     enabled: false,
+    logo: null,
     runtime: "stopped",
   },
   {
@@ -23,6 +24,7 @@ const plugins: InstalledPlugin[] = [
     main: "dist/index.js",
     agent: { displayName: "Plan Agent", contractVersion: 1 },
     enabled: false,
+    logo: null,
     runtime: "stopped",
   },
 ];

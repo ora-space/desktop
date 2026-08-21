@@ -3,6 +3,7 @@
 mod discovery;
 mod install;
 mod issue;
+mod logo;
 mod validation;
 
 #[cfg(test)]

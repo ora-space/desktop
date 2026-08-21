@@ -40,6 +40,12 @@ pub struct InstalledPlugin {
     pub main: String,
     pub agent: InstalledPluginAgent,
     pub enabled: bool,
+    /// Security-validated SVG source for the package icon, absent when the package ships none.
+    ///
+    /// The icon travels as inline source instead of a filesystem path because the webview cannot
+    /// read the plugin directory; surfaces render it from a `data:` URL and fall back to a
+    /// generic mark when it is absent.
+    pub logo: Option<String>,
     #[serde(flatten)]
     #[ts(flatten)]
     pub runtime: PluginRuntimeStatus,
@@ -55,6 +61,8 @@ pub struct AvailablePlugin {
     pub namespace: String,
     pub version: String,
     pub description: String,
+    /// Security-validated SVG source for the marketplace icon, absent when none is published.
+    pub logo: Option<String>,
 }
 
 /// Requests the cached marketplace registry index used to populate the plugin catalog.
@@ -265,6 +273,7 @@ mod tests {
                 contract_version: 1,
             },
             enabled: false,
+            logo: Some("<svg/>".to_string()),
             runtime: PluginRuntimeStatus::Stopped,
         };
 
@@ -290,6 +299,7 @@ mod tests {
                         "contractVersion": 1
                     },
                     "enabled": false,
+                    "logo": "<svg/>",
                     "runtime": "stopped"
                 }]
             })
@@ -324,6 +334,7 @@ mod tests {
                     namespace: "official".to_string(),
                     version: "1.2.0".to_string(),
                     description: "Weather plugin".to_string(),
+                    logo: None,
                 }],
             })
             .unwrap(),
@@ -334,7 +345,8 @@ mod tests {
                     "name": "weather",
                     "namespace": "official",
                     "version": "1.2.0",
-                    "description": "Weather plugin"
+                    "description": "Weather plugin",
+                    "logo": null
                 }]
             })
         );
@@ -394,6 +406,7 @@ mod tests {
                 contract_version: 1,
             },
             enabled: true,
+            logo: None,
             runtime: PluginRuntimeStatus::Running,
         };
 
@@ -411,6 +424,7 @@ mod tests {
                     "contractVersion": 1
                 },
                 "enabled": true,
+                "logo": null,
                 "runtime": "running"
             }),
         );
@@ -431,6 +445,7 @@ mod tests {
                 contract_version: 1,
             },
             enabled: true,
+            logo: None,
             runtime: PluginRuntimeStatus::Failed {
                 failure_reason: "process crashed".to_string(),
             },
@@ -450,6 +465,7 @@ mod tests {
                     "contractVersion": 1
                 },
                 "enabled": true,
+                "logo": null,
                 "runtime": "failed",
                 "failureReason": "process crashed"
             }),

@@ -16,6 +16,7 @@ describe("useInstallPlugin", () => {
       namespace: "official",
       version: "1.2.0",
       description: "Weather",
+      logo: null,
     });
     const client = createMockClient(state);
     const { result } = renderHookWithClient(

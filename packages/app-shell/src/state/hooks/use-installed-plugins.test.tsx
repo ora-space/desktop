@@ -20,6 +20,7 @@ describe("useInstalledPlugins", () => {
       main: "dist/index.js",
       agent: { displayName: "Reviewer", contractVersion: 1 },
       enabled: false,
+      logo: null,
       runtime: "stopped",
     });
     const { result, queryClient } = renderHookWithClient(

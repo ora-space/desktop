@@ -1119,6 +1119,7 @@ fn expected_plugin_with_runtime(
             contract_version: 1,
         },
         enabled: enabled.is_enabled(),
+        logo: Some(PACKAGE_LOGO.to_string()),
         runtime,
     }
 }
@@ -1383,10 +1384,15 @@ impl PluginStatusPublisher for RecordingStatusPublisher {
     }
 }
 
+/// The icon shipped by the shared package fixture, which proves a discovered logo reaches the
+/// wire contract unchanged.
+const PACKAGE_LOGO: &str = r#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="8"/></svg>"#;
+
 /// Writes one complete installed package in the shared orax manifest schema.
 fn write_plugin_package(data_dir: &std::path::Path, directory: &str) {
     let package_root = data_dir.join("plugins").join("installed").join(directory);
     fs::create_dir_all(&package_root).expect("create plugin package");
+    fs::write(package_root.join("logo.svg"), PACKAGE_LOGO).expect("write plugin logo");
     fs::write(package_root.join("main.js"), "export {};\n").expect("write plugin entrypoint");
     fs::write(
         package_root.join("orax.toml"),

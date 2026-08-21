@@ -1,5 +1,6 @@
 use crate::MAX_MANIFEST_BYTES;
 use crate::issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
+use crate::logo;
 use crate::validation::{InstalledPlugin, validate};
 use ora_plugin_manifest::{ManifestError, PluginManifest};
 use std::collections::HashMap;
@@ -31,7 +32,16 @@ pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
     let mut first_path_by_id = HashMap::<String, PathBuf>::new();
     for package_root in entries {
         let manifest_path = package_root.join("orax.toml");
-        match read_and_validate_manifest(&package_root, &manifest_path) {
+        // An unusable icon is reported on its own and never blocks the package: presentation
+        // metadata must not decide whether a plugin is discovered.
+        let logo = match logo::read(&package_root) {
+            Ok(logo) => logo,
+            Err(issue) => {
+                issues.push(issue);
+                None
+            }
+        };
+        match read_and_validate_manifest(&package_root, &manifest_path, logo) {
             Ok(plugin) => {
                 if let Some(first_path) = first_path_by_id.get(&plugin.id) {
                     issues.push(PluginDiscoveryIssue::new(
@@ -109,6 +119,7 @@ fn sorted_package_directories(
 fn read_and_validate_manifest(
     package_root: &Path,
     manifest_path: &Path,
+    logo: Option<String>,
 ) -> Result<InstalledPlugin, PluginDiscoveryIssue> {
     let file_type = match fs::symlink_metadata(manifest_path) {
         Ok(metadata) => metadata.file_type(),
@@ -168,7 +179,7 @@ fn read_and_validate_manifest(
         ),
     })?;
 
-    validate(package_root, &manifest).map_err(|error| {
+    validate(package_root, &manifest, logo).map_err(|error| {
         PluginDiscoveryIssue::new(
             manifest_path.to_path_buf(),
             PluginDiscoveryIssueKind::InvalidManifest,

@@ -2,18 +2,14 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
 import { Button, Input, toast } from "@ora/ui";
-import {
-  IconLoader2,
-  IconPlug,
-  IconRefresh,
-  IconSearch,
-} from "@tabler/icons-react";
+import { IconLoader2, IconRefresh, IconSearch } from "@tabler/icons-react";
 import { localizeContractError } from "../../i18n/contract-error";
 import { useAvailablePlugins } from "../../state/hooks/use-available-plugins";
 import { useInstallPlugin } from "../../state/hooks/use-install-plugin";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-sync";
+import { PluginLogo } from "./plugin-logo";
 import { PluginManager } from "./plugin-manager";
 
 /**
@@ -148,9 +144,7 @@ function AvailablePluginRow({
 
   return (
     <div className="flex items-center gap-3 py-3">
-      <span className="flex size-10 shrink-0 items-center justify-center text-muted-foreground">
-        <IconPlug className="size-6" />
-      </span>
+      <PluginLogo logo={plugin.logo} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">
           {plugin.name}

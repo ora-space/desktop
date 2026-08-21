@@ -12,6 +12,9 @@
   injected Unix timestamp.
 - `RegistryIndex::load` reads a previously written index file; `RegistryIndex::write` replaces the
   target file atomically through `ora-utils` so readers never observe a partial index.
+- Each entry's optional `logo.svg`, read from the directory holding its `orax.toml` and accepted by
+  `ora-utils::svg`, is inlined into the index so consumers can render the listing from the cached
+  index alone. A missing, unreadable, or unsafe icon leaves the entry listed without one.
 - A single malformed or unreadable `orax.toml` is skipped, logged as a warning, and reported through
   `RegistryBuild::skipped` without blocking the whole build.
 

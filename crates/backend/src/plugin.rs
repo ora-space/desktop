@@ -243,5 +243,6 @@ fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
         namespace: entry.namespace().to_owned(),
         version: entry.version().to_string(),
         description: entry.description().to_owned(),
+        logo: entry.logo().map(str::to_owned),
     }
 }

@@ -25,7 +25,8 @@ that any other crate can consume without introducing dependency cycles.
   scriptable HTML (forbidden tags, `on*` event handlers, `javascript:`/`data:` URIs).
 - `svg` (Cargo feature `validation`): security validation for SVG icons — accepts well-formed
   XML only, forbidding `<script>`/`<foreignObject>`, event-handler attributes, external `href`
-  references, and files over the 50 KiB cap.
+  references, and files over the 50 KiB cap. `read_validated` reads one SVG file through that
+  policy with a bounded read and returns its source text, so callers never hold untrusted markup.
 - `Slug`: an owned lowercase ASCII slug segment with stable syntax and byte-length guarantees.
 - `GitBranchName`: an owned short Git branch name validated without starting a Git process.
 

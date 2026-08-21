@@ -11,6 +11,9 @@ orax package shape, and orchestrates installing new plugin releases.
   inside its package, then retain its normalized portable relative path.
 - Normalize plugin identity to `namespace/name` and retain the validated orax metadata needed by the
   lifecycle layer.
+- Read the package's optional `logo.svg` icon and retain its source text once
+  `ora-utils::svg` accepts it. A package without an icon is ordinary; an icon that is present but
+  unreadable or unsafe becomes a discovery issue and leaves the plugin itself discovered without one.
 - Return a deterministic, immutable snapshot of valid installed plugins.
 - Isolate malformed or unsupported packages as structured discovery issues.
 - Install a plugin release: download the `.orax` package (through an injected `ora-utils::http`

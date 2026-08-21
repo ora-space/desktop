@@ -68,6 +68,8 @@ pub struct InstalledPlugin {
     pub main: PortableRelativePath,
     pub engines: PluginEngines,
     pub contributes: PluginContribution,
+    /// Trusted SVG source for the package icon, absent when the package ships none.
+    pub logo: Option<String>,
 }
 
 /// Reports a semantic manifest constraint after structural deserialization succeeds.
@@ -91,9 +93,13 @@ impl ManifestValidationError {
 /// only re-checks the runtime invariants: the entrypoint must exist inside the package and the
 /// kind must be one the host can run. Fields the orax schema omits (`display_name`, engines) fall
 /// back to stable host defaults because the rest of the codebase does not interpret them.
+///
+/// `logo` arrives already read and security-validated by the discovery layer, so this function
+/// keeps its filesystem work limited to the entrypoint it must resolve.
 pub(crate) fn validate(
     package_root: &Path,
     manifest: &PluginManifest,
+    logo: Option<String>,
 ) -> Result<InstalledPlugin, ManifestValidationError> {
     let name = manifest.name().as_str().to_owned();
     let id = format!(
@@ -119,6 +125,7 @@ pub(crate) fn validate(
             bun: String::new(),
         },
         contributes,
+        logo,
     })
 }
 

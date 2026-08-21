@@ -13,18 +13,25 @@ pub struct RegistryEntry {
     namespace: String,
     version: Version,
     description: String,
+    /// Trusted SVG source for the entry icon, absent when the entry ships none.
+    ///
+    /// The icon is inlined into the index rather than referenced by path so consumers can render
+    /// the marketplace listing straight from the cached index without reaching back into the
+    /// source checkout, which install-time resolution is the only step that still needs.
+    #[serde(default)]
+    logo: Option<String>,
 }
 
 impl RegistryEntry {
-    /// Builds one index record from a validated plugin manifest.
-    pub(crate) fn from_manifest(manifest: &PluginManifest) -> Self {
-        let id = format!("{}/{}", manifest.namespace(), manifest.name());
+    /// Builds one index record from a validated plugin manifest and its already-validated icon.
+    pub(crate) fn from_manifest(manifest: &PluginManifest, logo: Option<String>) -> Self {
         Self {
-            id,
+            id: entry_id(manifest),
             name: manifest.name().as_str().to_owned(),
             namespace: manifest.namespace().as_str().to_owned(),
             version: manifest.version().clone(),
             description: manifest.description().to_owned(),
+            logo,
         }
     }
 
@@ -52,4 +59,17 @@ impl RegistryEntry {
     pub fn description(&self) -> &str {
         &self.description
     }
+
+    /// Returns the trusted SVG source of the entry icon, when one is published.
+    pub fn logo(&self) -> Option<&str> {
+        self.logo.as_deref()
+    }
+}
+
+/// Derives the unique `namespace/name` identifier a manifest resolves to.
+///
+/// Identifier construction is shared by index building and install-time lookup, so both agree on
+/// what a marketplace identifier means without the lookup path having to build a whole entry.
+pub(crate) fn entry_id(manifest: &PluginManifest) -> String {
+    format!("{}/{}", manifest.namespace(), manifest.name())
 }

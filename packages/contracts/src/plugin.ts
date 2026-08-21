@@ -19,6 +19,10 @@ export type AvailablePlugin = {
   namespace: string;
   version: string;
   description: string;
+  /**
+   * Security-validated SVG source for the marketplace icon, absent when none is published.
+   */
+  logo: string | null;
 };
 
 /**
@@ -64,6 +68,14 @@ export type InstalledPlugin =
     main: string;
     agent: InstalledPluginAgent;
     enabled: boolean;
+    /**
+     * Security-validated SVG source for the package icon, absent when the package ships none.
+     *
+     * The icon travels as inline source instead of a filesystem path because the webview cannot
+     * read the plugin directory; surfaces render it from a `data:` URL and fall back to a
+     * generic mark when it is absent.
+     */
+    logo: string | null;
   }
   & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
     "runtime": "running";

@@ -4,6 +4,7 @@
 mod entry;
 mod error;
 mod index;
+mod logo;
 mod source;
 
 pub use entry::RegistryEntry;

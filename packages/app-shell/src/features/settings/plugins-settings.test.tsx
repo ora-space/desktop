@@ -27,7 +27,11 @@ function renderSettings(client: ContractsClient) {
   );
 }
 
-function clientWithWeather() {
+/** The registry-supplied brand mark, already security-validated by the backend. */
+const WEATHER_LOGO =
+  '<svg xmlns="http://www.w3.org/2000/svg"><rect width="8"/></svg>';
+
+function clientWithWeather(logo: string | null = null) {
   const state = createMockClientState();
   state.availablePlugins.push({
     id: "official/weather",
@@ -35,6 +39,7 @@ function clientWithWeather() {
     namespace: "official",
     version: "1.2.0",
     description: "Weather plugin",
+    logo,
   });
   return { state, client: createMockClient(state) };
 }
@@ -83,4 +88,45 @@ it("syncs the marketplace through the backend", async () => {
   );
 
   await waitFor(() => expect(syncSpy).toHaveBeenCalled());
+});
+
+/** A registry entry's own brand mark is drawn as an inert image instead of the generic mark. */
+it("renders the brand mark shipped with a marketplace plugin", async () => {
+  const { client } = clientWithWeather(WEATHER_LOGO);
+  const { container } = renderSettings(client);
+
+  await screen.findByText("weather");
+  const logo = container.querySelector("img");
+  expect(logo).toHaveAttribute(
+    "src",
+    `data:image/svg+xml;charset=utf-8,${encodeURIComponent(WEATHER_LOGO)}`,
+  );
+});
+
+/** Plugins that ship no mark keep the row shape by falling back to the generic plug icon. */
+it("falls back to the generic mark when a plugin ships no logo", async () => {
+  const { client } = clientWithWeather();
+  const { container } = renderSettings(client);
+
+  await screen.findByText("weather");
+  expect(container.querySelector("img")).toBeNull();
+});
+
+/** The installed manager surfaces the logo carried by the installed package. */
+it("renders the brand mark of an installed plugin in the manager", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithWeather(WEATHER_LOGO);
+  const { container } = renderSettings(client);
+
+  await user.click(await screen.findByRole("button", { name: /安装|Install/ }));
+  await waitFor(() => expect(state.installedPlugins).toHaveLength(1));
+  await user.click(
+    screen.getByRole("button", { name: /管理插件|Manage plugins/ }),
+  );
+
+  await screen.findByText("official/weather");
+  expect(container.querySelector("img")).toHaveAttribute(
+    "src",
+    `data:image/svg+xml;charset=utf-8,${encodeURIComponent(WEATHER_LOGO)}`,
+  );
 });

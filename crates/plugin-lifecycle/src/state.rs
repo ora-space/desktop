@@ -106,6 +106,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
             contract_version: agent.contract_version,
         },
         enabled,
+        logo: plugin.logo.clone(),
         runtime,
     }
 }
