@@ -37,7 +37,7 @@ export function useRestoreWorkspaceSelection(input: {
   projects: readonly Project[];
   tasks: readonly Task[];
   sessions: readonly Session[];
-  /** True while any of the three tree queries is still pending. */
+  /** True while any of the three tree queries is still pending or has errored. */
   treePending: boolean;
 }): void {
   const { projects, tasks, sessions, treePending } = input;
@@ -57,11 +57,16 @@ export function useRestoreWorkspaceSelection(input: {
     // Sanitized candidates always carry a projectId with a run id. Without one
     // the by-project query stays disabled and would never leave pending.
     if (workflowProjectId === null) return [];
-    if (runsQuery.isPending) return null;
+    // Treat an errored run list like a still-pending one: return null so the
+    // effect keeps waiting instead of resolving against an empty error list,
+    // which would discard a valid restore candidate as a miss. A later refetch
+    // that succeeds re-runs the effect with the real list.
+    if (runsQuery.isPending || runsQuery.isError) return null;
     return runsQuery.data ?? [];
   }, [
     needsWorkflowRuns,
     runsQuery.data,
+    runsQuery.isError,
     runsQuery.isPending,
     workflowProjectId,
   ]);

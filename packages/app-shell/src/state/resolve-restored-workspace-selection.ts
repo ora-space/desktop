@@ -32,8 +32,9 @@ export type ResolvedWorkspaceSelection =
  *
  * `ready` carries a selection for `select*` APIs. `waiting` means a workflow
  * run list is still loading. `miss` means the target no longer exists (or the
- * payload was empty). Session ownership always comes from session/task records
- * so a mismatched persisted projectId cannot point chat at the wrong project.
+ * payload was empty). Ownership always comes from the authoritative
+ * session/task/run records, so a mismatched persisted projectId cannot point
+ * chat at the wrong project.
  */
 export function resolveRestoredWorkspaceSelection(
   input: ResolveRestoredWorkspaceSelectionInput,
@@ -94,16 +95,23 @@ export function resolveRestoredWorkspaceSelection(
       return { kind: "miss" };
     }
     if (workflowRuns === null) return { kind: "waiting" };
-    if (!workflowRuns.some((run) => run.id === candidate.workflowRunId)) {
-      return { kind: "miss" };
-    }
+    // Re-derive ownership from the authoritative run record instead of the
+    // persisted candidate, matching the session/draft/task branches. The run
+    // list is project-scoped today, but a future caller passing an unscoped
+    // list must not let a corrupt candidate.projectId retarget the run.
+    const run = workflowRuns.find(
+      (item) =>
+        item.id === candidate.workflowRunId &&
+        item.projectId === candidate.projectId,
+    );
+    if (run === undefined) return { kind: "miss" };
     return {
       kind: "ready",
       selection: {
-        projectId: candidate.projectId,
+        projectId: run.projectId,
         taskId: null,
         sessionId: null,
-        workflowRunId: candidate.workflowRunId,
+        workflowRunId: run.id,
         draftId: null,
       },
     };

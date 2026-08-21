@@ -60,6 +60,23 @@ const SESSION: Session = {
   title: null,
   historyState: { type: "writable" },
 };
+// A direct (project-root) chat: its task carries workspaceMode "project_root".
+const DIRECT_TASK: Task = {
+  id: "t-direct",
+  projectId: "p1",
+  title: "Direct chat",
+  workspaceMode: "project_root",
+  type: "default",
+  workflowRunId: null,
+};
+const DIRECT_SESSION: Session = {
+  id: "s-direct",
+  taskId: "t-direct",
+  agentRef: "ora-space.opencode",
+  status: "running",
+  title: null,
+  historyState: { type: "writable" },
+};
 
 /** Renders the sidebar with the same provider stack AppShell gives it. */
 function renderSidebar(
@@ -332,21 +349,26 @@ describe("WorkspaceSidebar", () => {
 
   it("creates under a worktree after clicking that worktree row", async () => {
     const user = userEvent.setup();
-    const state = createMockClientState();
-    state.projects = [PROJECT];
-    state.tasks = [TASK];
-    state.sessions = [];
+    const state = workspaceWithOneSession();
+    // Preselect a live session so a regression that wrongly routes the worktree
+    // row through selectTask (yanking the composer) is caught: starting from
+    // an empty selection, a null-sessionId assertion would pass either way.
+    useWorkspaceSelectionStore
+      .getState()
+      .selectSession(SESSION.id, TASK.id, PROJECT.id);
     renderSidebar(state);
 
     await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
     await user.click(screen.getByText(TASK.title));
+    // Clicking a worktree row only retargets New chat; it must not move the
+    // composer off the live session.
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe(
+      SESSION.id,
+    );
     expect(useWorkspaceSelectionStore.getState().createFocus).toEqual({
       projectId: PROJECT.id,
       taskId: TASK.id,
     });
-    expect(
-      useWorkspaceSelectionStore.getState().selection.sessionId,
-    ).toBeNull();
 
     await user.click(
       await screen.findByRole("button", { name: /新建对话|New chat/ }),
@@ -361,6 +383,37 @@ describe("WorkspaceSidebar", () => {
     expect(useWorkspaceSelectionStore.getState().selection.draftId).toEqual(
       expect.any(String),
     );
+  });
+
+  it("keeps New chat visible when the selected chat is a direct (project-root) chat", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    state.projects = [PROJECT];
+    state.tasks = [DIRECT_TASK];
+    state.sessions = [DIRECT_SESSION];
+    // Selecting the direct chat syncs createFocus to its project-root task id.
+    useWorkspaceSelectionStore
+      .getState()
+      .selectSession(DIRECT_SESSION.id, DIRECT_TASK.id, PROJECT.id);
+    renderSidebar(state);
+
+    await user.click(
+      await screen.findByRole("button", { name: /新建对话|New chat/ }),
+    );
+
+    // The project-root task id must demote to a direct (project-level) draft so
+    // the row renders under the project instead of being orphaned in the
+    // worktree-draft map, which the project-root branch never renders.
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({
+      projectId: PROJECT.id,
+      taskId: null,
+      sessionId: null,
+      workflowRunId: null,
+    });
+    expect(useWorkspaceSelectionStore.getState().selection.draftId).toEqual(
+      expect.any(String),
+    );
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
   });
 
   it("discards an empty draft when another session is selected", async () => {

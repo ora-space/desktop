@@ -331,6 +331,46 @@ describe("useWorkspaceSelectionStore", () => {
     expect(useWorkspaceSelectionStore.getState().selection).toEqual(empty);
   });
 
+  it("selectProject clears pendingRestore when the user navigates", () => {
+    useWorkspaceSelectionStore.setState({
+      selection: empty,
+      pendingRestore: {
+        projectId: "p1",
+        taskId: "t1",
+        sessionId: "stale",
+        workflowRunId: null,
+        draftId: null,
+      },
+    });
+    useWorkspaceSelectionStore.getState().selectProject("p-other");
+    expect(useWorkspaceSelectionStore.getState().pendingRestore).toBeNull();
+    expect(useWorkspaceSelectionStore.getState().selection).toEqual({
+      projectId: "p-other",
+      taskId: null,
+      sessionId: null,
+      workflowRunId: null,
+      draftId: null,
+    });
+  });
+
+  it("selectSession clears pendingRestore when the user navigates", () => {
+    useWorkspaceSelectionStore.setState({
+      selection: empty,
+      pendingRestore: {
+        projectId: "p1",
+        taskId: "t1",
+        sessionId: "stale",
+        workflowRunId: null,
+        draftId: null,
+      },
+    });
+    useWorkspaceSelectionStore.getState().selectSession("s-live", "t1", "p1");
+    expect(useWorkspaceSelectionStore.getState().pendingRestore).toBeNull();
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe(
+      "s-live",
+    );
+  });
+
   it("setCreateFocus records a create target without changing selection", () => {
     useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
     useWorkspaceSelectionStore
@@ -391,6 +431,25 @@ describe("useWorkspaceSelectionStore", () => {
     useWorkspaceSelectionStore.getState().clearCreateFocusForTask("t1");
     expect(useWorkspaceSelectionStore.getState().createFocus).toEqual({
       projectId: "p1",
+      taskId: null,
+    });
+  });
+
+  it("clearCreateFocusForProject drops focus on the deleted project", () => {
+    useWorkspaceSelectionStore
+      .getState()
+      .setCreateFocus({ projectId: "p1", taskId: null });
+    useWorkspaceSelectionStore.getState().clearCreateFocusForProject("p1");
+    expect(useWorkspaceSelectionStore.getState().createFocus).toBeNull();
+  });
+
+  it("clearCreateFocusForProject leaves focus on a different project untouched", () => {
+    useWorkspaceSelectionStore
+      .getState()
+      .setCreateFocus({ projectId: "p2", taskId: null });
+    useWorkspaceSelectionStore.getState().clearCreateFocusForProject("p1");
+    expect(useWorkspaceSelectionStore.getState().createFocus).toEqual({
+      projectId: "p2",
       taskId: null,
     });
   });

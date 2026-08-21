@@ -21,6 +21,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  cn,
   toast,
 } from "@ora/ui";
 import {
@@ -181,7 +182,11 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     projects,
     tasks,
     sessions,
-    treePending: loading,
+    // Restore must wait not only while the tree queries are pending but also
+    // while any has errored: a settled-but-failed query yields an empty list,
+    // which would make the resolver discard a valid candidate as a miss and
+    // overwrite the disk selection. Keep the loading indicator on isPending.
+    treePending: loading || error !== null,
   });
 
   const tasksByProjectId = useMemo(() => {
@@ -812,15 +817,20 @@ function TreeRow({
     maxLength,
   } = useInlineTreeRename({ value: label, onCommit: onRename });
 
-  const rowTone = active
-    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-    : createFocused
-      ? "bg-sidebar-accent/45 text-sidebar-foreground ring-1 ring-inset ring-sidebar-accent/60"
-      : "hover:bg-sidebar-accent/70";
+  // Conditional class names are composed with `cn` instead of a nested ternary
+  // so each branch reads as a standalone predicate, matching the rest of the UI.
+  const rowTone = cn(
+    "group/tree flex h-9 items-center rounded-md transition-colors",
+    active && "bg-sidebar-accent text-sidebar-accent-foreground",
+    !active &&
+      createFocused &&
+      "bg-sidebar-accent/45 text-sidebar-foreground ring-1 ring-inset ring-sidebar-accent/60",
+    !active && !createFocused && "hover:bg-sidebar-accent/70",
+  );
 
   return (
     <div
-      className={`group/tree flex h-9 items-center rounded-md transition-colors ${rowTone}`}
+      className={rowTone}
       data-create-focus={createFocused && !active ? "true" : undefined}
     >
       <ContextMenu>

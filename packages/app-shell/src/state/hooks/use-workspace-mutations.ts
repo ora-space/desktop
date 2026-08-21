@@ -86,16 +86,22 @@ export function useDeleteProject() {
         ]);
       useDraftSessionsStore.getState().clearReturnToForSessions(sessionIds);
       useDraftSessionsStore.getState().removeForProject(projectId);
-      const selection = useWorkspaceSelectionStore.getState().selection;
+      const store = useWorkspaceSelectionStore.getState();
+      const selection = store.selection;
       if (selection.projectId === projectId) {
         // Pick the next surviving project from the stale cache; invalidate already triggered refetch.
         const projects = readCache<Project>(queryClient, queryKeys.projects);
         const next = projects.find((project) => project.id !== projectId);
-        useWorkspaceSelectionStore.getState().setProject(next?.id ?? null);
+        // setProject resyncs createFocus to the new selection. Preserve a
+        // create-focus the user pointed at a different surviving project so New
+        // chat still follows their last click, matching applyRestoredSelection.
+        const focusBefore = store.createFocus;
+        store.setProject(next?.id ?? null);
+        if (focusBefore !== null && focusBefore.projectId !== projectId) {
+          store.setCreateFocus(focusBefore);
+        }
       } else {
-        useWorkspaceSelectionStore
-          .getState()
-          .clearCreateFocusForProject(projectId);
+        store.clearCreateFocusForProject(projectId);
       }
     },
   });
@@ -179,13 +185,19 @@ export function useDeleteTask() {
         .clearKeys([...sessionIds, `task:${taskId}`]);
       useDraftSessionsStore.getState().clearReturnToForSessions(sessionIds);
       useDraftSessionsStore.getState().removeForTask(taskId);
-      const selection = useWorkspaceSelectionStore.getState().selection;
+      const store = useWorkspaceSelectionStore.getState();
+      const selection = store.selection;
       if (selection.taskId === taskId) {
-        useWorkspaceSelectionStore
-          .getState()
-          .clearTaskSelection(selection.projectId ?? "");
+        // clearTaskSelection resyncs createFocus to the project. Preserve a
+        // create-focus the user pointed at a different surviving task so New
+        // chat still follows their last click, matching applyRestoredSelection.
+        const focusBefore = store.createFocus;
+        store.clearTaskSelection(selection.projectId ?? "");
+        if (focusBefore !== null && focusBefore.taskId !== taskId) {
+          store.setCreateFocus(focusBefore);
+        }
       } else {
-        useWorkspaceSelectionStore.getState().clearCreateFocusForTask(taskId);
+        store.clearCreateFocusForTask(taskId);
       }
     },
   });

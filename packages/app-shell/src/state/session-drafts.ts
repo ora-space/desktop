@@ -1,5 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { JSONContent } from "@tiptap/core";
+import type { TaskWorkspaceMode } from "@ora/contracts";
 import { useDraftSessionsStore } from "./stores/draft-sessions-store";
 import type { DraftScope } from "./stores/draft-sessions-store";
 import { useComposerInputStore } from "./stores/composer-input-store";
@@ -95,24 +96,34 @@ export function reparkDraftComposerContent(args: {
   });
 }
 
+/** Loaded tree shape `resolveNewChatScope` validates New-chat targets against. */
+type NewChatTree = {
+  projects: readonly { id: string }[];
+  tasks: readonly {
+    id: string;
+    projectId: string;
+    workspaceMode: TaskWorkspaceMode;
+  }[];
+};
+
 /**
  * Picks where global New chat / Ctrl+N should create a draft.
  *
  * Prefers the last tree create-focus (project/worktree row click), then the
- * live selection's project/task, then the first project. Returns null only when
- * the workspace has no projects at all.
+ * live selection's project/task, then the first project. Returns null only
+ * when the workspace has no projects at all.
  *
- * When `tree` is provided, a create-focus whose project vanished is ignored, and
- * a missing worktree is demoted to project-root so New chat never orphans a draft.
+ * When `tree` is provided, a create-focus or selection whose project vanished
+ * is ignored, a missing worktree is demoted to project-root, and a project-root
+ * task is demoted to a direct (project-level) draft. The sidebar only renders a
+ * task-scoped draft under a worktree branch, so New chat must never keep a
+ * project-root task id — that would create a draft no tree row can show.
  */
 export function resolveNewChatScope(
   createFocus: WorkspaceCreateFocus | null,
   selection: WorkspaceSelection,
   firstProjectId: string | null,
-  tree?: {
-    projects: readonly { id: string }[];
-    tasks: readonly { id: string; projectId: string }[];
-  },
+  tree?: NewChatTree,
 ): DraftScope | null {
   const focus = clampCreateFocus(createFocus, tree);
   if (focus !== null) {
@@ -122,10 +133,11 @@ export function resolveNewChatScope(
     };
   }
   if (selection.projectId !== null) {
-    return {
-      projectId: selection.projectId,
-      taskId: selection.taskId,
-    };
+    const scope = scopeDraftTarget(
+      { projectId: selection.projectId, taskId: selection.taskId },
+      tree,
+    );
+    if (scope !== null) return scope;
   }
   if (firstProjectId !== null) {
     return { projectId: firstProjectId, taskId: null };
@@ -133,27 +145,43 @@ export function resolveNewChatScope(
   return null;
 }
 
+/**
+ * Validates a {project, task} target against the loaded tree and returns the
+ * draft scope New chat should create under. A missing/mismatched/project-root
+ * task demotes to a project-root (direct) draft — worktree drafts render under
+ * the task branch, so a project-root task id would orphan the row. Returns null
+ * only when the project itself is gone, so the caller falls through to the next
+ * preference instead of creating a draft under a deleted project.
+ */
+function scopeDraftTarget(
+  scope: { projectId: string; taskId: string | null },
+  tree: NewChatTree | undefined,
+): { projectId: string; taskId: string | null } | null {
+  if (tree === undefined) return scope;
+  if (!tree.projects.some((project) => project.id === scope.projectId)) {
+    return null;
+  }
+  if (scope.taskId === null) return scope;
+  const task = tree.tasks.find((item) => item.id === scope.taskId);
+  if (
+    task === undefined ||
+    task.projectId !== scope.projectId ||
+    task.workspaceMode === "project_root"
+  ) {
+    return { projectId: scope.projectId, taskId: null };
+  }
+  return scope;
+}
+
 /** Drops or demotes create-focus that no longer matches the loaded tree. */
 function clampCreateFocus(
   createFocus: WorkspaceCreateFocus | null,
-  tree:
-    | {
-        projects: readonly { id: string }[];
-        tasks: readonly { id: string; projectId: string }[];
-      }
-    | undefined,
+  tree: NewChatTree | undefined,
 ): WorkspaceCreateFocus | null {
   if (createFocus === null) return null;
   if (tree === undefined) return createFocus;
-  if (!tree.projects.some((project) => project.id === createFocus.projectId)) {
-    return null;
-  }
-  if (createFocus.taskId === null) return createFocus;
-  const task = tree.tasks.find((item) => item.id === createFocus.taskId);
-  if (task === undefined || task.projectId !== createFocus.projectId) {
-    return { projectId: createFocus.projectId, taskId: null };
-  }
-  return createFocus;
+  const scoped = scopeDraftTarget(createFocus, tree);
+  return scoped === null ? null : scoped;
 }
 
 /**

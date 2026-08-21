@@ -26,6 +26,16 @@ const SESSION: Session = {
   title: null,
   historyState: { type: "writable" },
 };
+const WORKFLOW_RUN: WorkflowRunSummary = {
+  id: "run-1",
+  name: "Deploy",
+  projectId: "p1",
+  workflowId: "wf-1",
+  status: "succeeded",
+  startedAt: null,
+  finishedAt: null,
+  createdAt: 0n,
+};
 
 const empty: WorkspaceSelection = {
   projectId: null,
@@ -132,6 +142,27 @@ describe("resolveRestoredWorkspaceSelection", () => {
     ).toEqual({ kind: "miss" });
   });
 
+  it("misses when the session exists but its task was deleted (orphan warm guard)", () => {
+    // The task lookup is the guard PR #424 added to stop a stale session id from
+    // warming a provider session whose owning task no longer exists.
+    expect(
+      resolveRestoredWorkspaceSelection({
+        candidate: {
+          projectId: "p1",
+          taskId: "t1",
+          sessionId: "s1",
+          workflowRunId: null,
+          draftId: null,
+        },
+        projects: [PROJECT],
+        tasks: [],
+        sessions: [SESSION],
+        drafts: [],
+        workflowRuns: [],
+      }),
+    ).toEqual({ kind: "miss" });
+  });
+
   it("resolves a typed draft that still exists", () => {
     expect(
       resolveRestoredWorkspaceSelection({
@@ -179,6 +210,72 @@ describe("resolveRestoredWorkspaceSelection", () => {
     ).toEqual({ kind: "miss" });
   });
 
+  it("resolves a draft whose task still exists and matches the project", () => {
+    expect(
+      resolveRestoredWorkspaceSelection({
+        candidate: {
+          projectId: "p1",
+          taskId: "t1",
+          sessionId: null,
+          workflowRunId: null,
+          draftId: "d1",
+        },
+        projects: [PROJECT],
+        tasks: [TASK],
+        sessions: [SESSION],
+        drafts: [draft({ taskId: "t1" })],
+        workflowRuns: [],
+      }),
+    ).toEqual({
+      kind: "ready",
+      selection: {
+        projectId: "p1",
+        taskId: "t1",
+        sessionId: null,
+        workflowRunId: null,
+        draftId: "d1",
+      },
+    });
+  });
+
+  it("misses a draft whose task was deleted", () => {
+    expect(
+      resolveRestoredWorkspaceSelection({
+        candidate: {
+          projectId: "p1",
+          taskId: "t1",
+          sessionId: null,
+          workflowRunId: null,
+          draftId: "d1",
+        },
+        projects: [PROJECT],
+        tasks: [],
+        sessions: [SESSION],
+        drafts: [draft({ taskId: "t1" })],
+        workflowRuns: [],
+      }),
+    ).toEqual({ kind: "miss" });
+  });
+
+  it("misses a draft whose task moved to another project", () => {
+    expect(
+      resolveRestoredWorkspaceSelection({
+        candidate: {
+          projectId: "p1",
+          taskId: "t1",
+          sessionId: null,
+          workflowRunId: null,
+          draftId: "d1",
+        },
+        projects: [PROJECT],
+        tasks: [{ ...TASK, projectId: "p2" }],
+        sessions: [SESSION],
+        drafts: [draft({ taskId: "t1" })],
+        workflowRuns: [],
+      }),
+    ).toEqual({ kind: "miss" });
+  });
+
   it("waits when workflow runs have not settled", () => {
     expect(
       resolveRestoredWorkspaceSelection({
@@ -198,7 +295,36 @@ describe("resolveRestoredWorkspaceSelection", () => {
     ).toEqual({ kind: "waiting" });
   });
 
-  it("misses a workflow run absent from the project list", () => {
+  it("resolves a workflow run that is still in the run list", () => {
+    expect(
+      resolveRestoredWorkspaceSelection({
+        candidate: {
+          projectId: "p1",
+          taskId: null,
+          sessionId: null,
+          workflowRunId: "run-1",
+          draftId: null,
+        },
+        projects: [PROJECT],
+        tasks: [TASK],
+        sessions: [SESSION],
+        drafts: [],
+        workflowRuns: [WORKFLOW_RUN],
+      }),
+    ).toEqual({
+      kind: "ready",
+      selection: {
+        projectId: "p1",
+        taskId: null,
+        sessionId: null,
+        workflowRunId: "run-1",
+        draftId: null,
+      },
+    });
+  });
+
+  it("misses a workflow run absent from the run list", () => {
+    // The project is still in the list; the miss comes from the empty run list.
     expect(
       resolveRestoredWorkspaceSelection({
         candidate: {
@@ -213,6 +339,46 @@ describe("resolveRestoredWorkspaceSelection", () => {
         sessions: [SESSION],
         drafts: [],
         workflowRuns: [] as WorkflowRunSummary[],
+      }),
+    ).toEqual({ kind: "miss" });
+  });
+
+  it("misses a workflow run whose project was deleted", () => {
+    expect(
+      resolveRestoredWorkspaceSelection({
+        candidate: {
+          projectId: "p1",
+          taskId: null,
+          sessionId: null,
+          workflowRunId: "run-1",
+          draftId: null,
+        },
+        projects: [],
+        tasks: [TASK],
+        sessions: [SESSION],
+        drafts: [],
+        workflowRuns: [WORKFLOW_RUN],
+      }),
+    ).toEqual({ kind: "miss" });
+  });
+
+  it("misses a workflow run whose authoritative project differs from the candidate", () => {
+    // Ownership is re-derived from the run record, so a corrupt persisted
+    // projectId cannot retarget the restored run at another project.
+    expect(
+      resolveRestoredWorkspaceSelection({
+        candidate: {
+          projectId: "p1",
+          taskId: null,
+          sessionId: null,
+          workflowRunId: "run-1",
+          draftId: null,
+        },
+        projects: [PROJECT, { ...PROJECT, id: "p2", name: "Other" }],
+        tasks: [TASK],
+        sessions: [SESSION],
+        drafts: [],
+        workflowRuns: [{ ...WORKFLOW_RUN, projectId: "p2" }],
       }),
     ).toEqual({ kind: "miss" });
   });

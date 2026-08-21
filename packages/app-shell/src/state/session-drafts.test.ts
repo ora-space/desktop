@@ -94,10 +94,104 @@ describe("resolveNewChatScope", () => {
         "p-first",
         {
           projects: [{ id: "p1" }],
-          tasks: [{ id: "t1", projectId: "p1" }],
+          tasks: [{ id: "t1", projectId: "p1", workspaceMode: "worktree" }],
         },
       ),
     ).toEqual({ projectId: "p1", taskId: null });
+  });
+
+  it("keeps a createFocus whose project and worktree task both still exist", () => {
+    expect(
+      resolveNewChatScope(
+        { projectId: "p1", taskId: "t1" },
+        emptySelection,
+        "p-first",
+        {
+          projects: [{ id: "p1" }],
+          tasks: [{ id: "t1", projectId: "p1", workspaceMode: "worktree" }],
+        },
+      ),
+    ).toEqual({ projectId: "p1", taskId: "t1" });
+  });
+
+  it("demotes a project-root task createFocus to a direct draft", () => {
+    // A project-root task id would create a draft the sidebar only renders
+    // under worktree branches, orphaning it. New chat must fall to project-root.
+    expect(
+      resolveNewChatScope(
+        { projectId: "p1", taskId: "t-direct" },
+        emptySelection,
+        "p-first",
+        {
+          projects: [{ id: "p1" }],
+          tasks: [
+            {
+              id: "t-direct",
+              projectId: "p1",
+              workspaceMode: "project_root",
+            },
+          ],
+        },
+      ),
+    ).toEqual({ projectId: "p1", taskId: null });
+  });
+
+  it("keeps the selection's worktree task when createFocus is absent and the task is in the tree", () => {
+    expect(
+      resolveNewChatScope(
+        null,
+        { ...emptySelection, projectId: "p1", taskId: "t1" },
+        "p-first",
+        {
+          projects: [{ id: "p1" }],
+          tasks: [{ id: "t1", projectId: "p1", workspaceMode: "worktree" }],
+        },
+      ),
+    ).toEqual({ projectId: "p1", taskId: "t1" });
+  });
+
+  it("demotes a project-root task in the selection fallback to a direct draft", () => {
+    expect(
+      resolveNewChatScope(
+        null,
+        {
+          ...emptySelection,
+          projectId: "p1",
+          taskId: "t-direct",
+          sessionId: "s-direct",
+        },
+        "p-first",
+        {
+          projects: [{ id: "p1" }],
+          tasks: [
+            {
+              id: "t-direct",
+              projectId: "p1",
+              workspaceMode: "project_root",
+            },
+          ],
+        },
+      ),
+    ).toEqual({ projectId: "p1", taskId: null });
+  });
+
+  it("falls back to the first project when the selection's project is gone from the tree", () => {
+    expect(
+      resolveNewChatScope(
+        null,
+        {
+          ...emptySelection,
+          projectId: "gone",
+          taskId: "t1",
+          sessionId: "s1",
+        },
+        "p-first",
+        {
+          projects: [{ id: "p1" }],
+          tasks: [{ id: "t1", projectId: "p1", workspaceMode: "worktree" }],
+        },
+      ),
+    ).toEqual({ projectId: "p-first", taskId: null });
   });
 });
 

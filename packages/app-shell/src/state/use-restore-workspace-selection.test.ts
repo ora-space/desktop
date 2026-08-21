@@ -319,6 +319,109 @@ describe("useRestoreWorkspaceSelection", () => {
     );
   });
 
+  it("applies a validated workflow run once its run list settles", async () => {
+    useWorkspaceSelectionStore.setState({
+      selection: EMPTY_WORKSPACE_SELECTION,
+      pendingRestore: {
+        projectId: "p1",
+        taskId: null,
+        sessionId: null,
+        workflowRunId: "run-1",
+        draftId: null,
+      },
+    });
+    const state = createMockClientState();
+    state.projects = [PROJECT];
+    state.tasks = [TASK];
+    state.sessions = [SESSION];
+    state.workflowRuns = [
+      {
+        id: "run-1",
+        projectId: "p1",
+        workflowId: "wf-1",
+        snapshotId: "snap-1",
+        name: "Deploy",
+        status: "succeeded",
+        taskId: "t-run",
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+    ];
+    const client = createMockClient(state);
+
+    renderHookWithClient(
+      () =>
+        useRestoreWorkspaceSelection({
+          projects: state.projects,
+          tasks: state.tasks,
+          sessions: state.sessions,
+          treePending: false,
+        }),
+      client,
+    );
+
+    await waitFor(() => {
+      expect(
+        useWorkspaceSelectionStore.getState().selection.workflowRunId,
+      ).toBe("run-1");
+    });
+    expect(useWorkspaceSelectionStore.getState().pendingRestore).toBeNull();
+    expect(useUiStore.getState().expandedProjects.has("p1")).toBe(true);
+  });
+
+  it("waits while the workflow-run query has errored instead of discarding the candidate", async () => {
+    // Offline restart: the run list query fails. A guardless implementation
+    // would resolve against the empty error list, miss the run, and clear
+    // pendingRestore — permanently losing the restore candidate.
+    useWorkspaceSelectionStore.setState({
+      selection: EMPTY_WORKSPACE_SELECTION,
+      pendingRestore: {
+        projectId: "p1",
+        taskId: null,
+        sessionId: null,
+        workflowRunId: "run-1",
+        draftId: null,
+      },
+    });
+    const state = createMockClientState();
+    state.projects = [PROJECT];
+    state.tasks = [TASK];
+    state.sessions = [SESSION];
+    state.workflowRuns = [];
+    const client = createMockClient(state);
+    const listSpy = vi
+      .spyOn(client.workflowRun, "list")
+      .mockRejectedValue(new Error("offline"));
+
+    const { queryClient } = renderHookWithClient(
+      () =>
+        useRestoreWorkspaceSelection({
+          projects: state.projects,
+          tasks: state.tasks,
+          sessions: state.sessions,
+          treePending: false,
+        }),
+      client,
+    );
+
+    await waitFor(() => {
+      expect(
+        queryClient.getQueryState(["workflowRun", "byProject", "p1"])?.status,
+      ).toBe("error");
+    });
+    // Let the errored query re-render and re-run the effect so a guardless
+    // implementation would have cleared the candidate by now.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(listSpy).toHaveBeenCalled();
+    expect(useWorkspaceSelectionStore.getState().pendingRestore).not.toBeNull();
+    expect(useWorkspaceSelectionStore.getState().selection).toEqual(
+      EMPTY_WORKSPACE_SELECTION,
+    );
+  });
+
   it("preserves a user createFocus when applying a restored session", async () => {
     useWorkspaceSelectionStore.setState({
       selection: EMPTY_WORKSPACE_SELECTION,
