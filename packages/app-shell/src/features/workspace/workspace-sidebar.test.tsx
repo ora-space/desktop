@@ -202,8 +202,10 @@ beforeEach(() => {
   });
   useDraftSessionsStore.getState().clear();
   useUiStore.setState({
+    sidebarCollapsed: false,
     expandedProjects: new Set(),
     expandedTasks: new Set(),
+    treeExpansionBootstrapped: false,
     dialog: null,
     deleteTarget: null,
   });
@@ -1205,17 +1207,185 @@ describe("WorkspaceSidebar", () => {
     expect(treeRow(TASK.title)).not.toBeNull();
   });
 
-  // The Collapsible holds the panel just long enough to animate out, then drops
-  // it, so a collapsed branch costs nothing once the close has finished.
-  it("unmounts a collapsed branch instead of leaving it hidden in the DOM", async () => {
+  // First collapse unmounts; after a reopen, collapse hides instead of remounting.
+  it("unmounts on the first collapse and retains after a reopen", async () => {
     const user = userEvent.setup();
     renderSidebar(workspaceWithOneSession());
 
     await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
 
     await user.click(screen.getByText(PROJECT.name));
+    expect(treeRow(TASK.title)).toBeNull();
+    expect(screen.queryByText(TASK.title)).toBeNull();
 
-    await waitFor(() => expect(screen.queryByText(TASK.title)).toBeNull());
+    await user.click(screen.getByText(PROJECT.name));
+    await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
+
+    await user.click(screen.getByText(PROJECT.name));
+    expect(treeRow(TASK.title)).toBeNull();
+    expect(screen.getByText(TASK.title).closest("[hidden]")).not.toBeNull();
+  });
+
+  it("keeps a previously collapsed project collapsed after hydrate", async () => {
+    useUiStore.setState({
+      expandedProjects: new Set(),
+      expandedTasks: new Set(),
+      treeExpansionBootstrapped: true,
+    });
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => expect(treeRow(PROJECT.name)).not.toBeNull());
+    expect(treeRow(TASK.title)).toBeNull();
+    expect(useUiStore.getState().expandedProjects.has(PROJECT.id)).toBe(false);
+  });
+
+  it("does not re-expand a collapsed project when restoring its selected session", async () => {
+    useUiStore.setState({
+      expandedProjects: new Set(),
+      expandedTasks: new Set(),
+      treeExpansionBootstrapped: true,
+    });
+    useWorkspaceSelectionStore.setState({
+      selection: {
+        projectId: null,
+        taskId: null,
+        sessionId: null,
+        workflowRunId: null,
+        draftId: null,
+      },
+      pendingRestore: {
+        projectId: PROJECT.id,
+        taskId: TASK.id,
+        sessionId: SESSION.id,
+        workflowRunId: null,
+        draftId: null,
+      },
+      createFocus: null,
+    });
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() =>
+      expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe(
+        SESSION.id,
+      ),
+    );
+    expect(treeRow(TASK.title)).toBeNull();
+    expect(useUiStore.getState().expandedProjects.has(PROJECT.id)).toBe(false);
+    expect(treeRowShell(PROJECT.name).dataset.selectionHint).toBe("true");
+  });
+
+  it("bubbles selection hint to collapsed ancestors and clears it on expand", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({
+      expandedProjects: new Set([PROJECT.id]),
+      expandedTasks: new Set([TASK.id]),
+      treeExpansionBootstrapped: true,
+    });
+    useWorkspaceSelectionStore
+      .getState()
+      .selectSession(SESSION.id, TASK.id, PROJECT.id);
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
+    expect(treeRowShell(PROJECT.name).dataset.selectionHint).toBeUndefined();
+    expect(treeRowShell(TASK.title).dataset.selectionHint).toBeUndefined();
+
+    await user.click(screen.getByText(TASK.title));
+    expect(useUiStore.getState().expandedTasks.has(TASK.id)).toBe(false);
+    expect(treeRow(NEW_SESSION_LABEL)).toBeNull();
+    expect(treeRowShell(TASK.title).dataset.selectionHint).toBe("true");
+    expect(treeRowShell(PROJECT.name).dataset.selectionHint).toBeUndefined();
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe(
+      SESSION.id,
+    );
+
+    await user.click(screen.getByText(PROJECT.name));
+    expect(useUiStore.getState().expandedProjects.has(PROJECT.id)).toBe(false);
+    expect(treeRow(TASK.title)).toBeNull();
+    expect(treeRowShell(PROJECT.name).dataset.selectionHint).toBe("true");
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe(
+      SESSION.id,
+    );
+
+    await user.click(screen.getByText(PROJECT.name));
+    await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
+    expect(treeRowShell(PROJECT.name).dataset.selectionHint).toBeUndefined();
+    expect(treeRowShell(TASK.title).dataset.selectionHint).toBe("true");
+
+    await user.click(screen.getByText(TASK.title));
+    await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
+    expect(treeRowShell(TASK.title).dataset.selectionHint).toBeUndefined();
+  });
+
+  it("does not show a selection hint when the project itself is selected", async () => {
+    useUiStore.setState({
+      expandedProjects: new Set(),
+      expandedTasks: new Set(),
+      treeExpansionBootstrapped: true,
+    });
+    useWorkspaceSelectionStore.getState().selectProject(PROJECT.id);
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => expect(treeRow(PROJECT.name)).not.toBeNull());
+    expect(treeRowShell(PROJECT.name).dataset.selectionHint).toBeUndefined();
+    expect(
+      treeRowShell(PROJECT.name).className.includes("bg-sidebar-accent "),
+    ).toBe(true);
+  });
+
+  it("does not seal first-run bootstrap when the tree query fails", async () => {
+    const state = workspaceWithOneSession();
+    const client = createMockClient(state);
+    vi.spyOn(client.project, "list").mockRejectedValue(
+      new LocalTransportError("tauri_invoke_failure", "projects unavailable"),
+    );
+    renderSidebar(state, undefined, client);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/projects unavailable|调用失败|tauri/i),
+      ).toBeTruthy(),
+    );
+    expect(useUiStore.getState().treeExpansionBootstrapped).toBe(false);
+    expect(useUiStore.getState().expandedProjects.size).toBe(0);
+  });
+
+  it("keeps a staged session restore when the sessions query fails", async () => {
+    useWorkspaceSelectionStore.setState({
+      selection: {
+        projectId: null,
+        taskId: null,
+        sessionId: null,
+        workflowRunId: null,
+        draftId: null,
+      },
+      pendingRestore: {
+        projectId: PROJECT.id,
+        taskId: TASK.id,
+        sessionId: SESSION.id,
+        workflowRunId: null,
+        draftId: null,
+      },
+      createFocus: null,
+    });
+    const state = workspaceWithOneSession();
+    const client = createMockClient(state);
+    vi.spyOn(client.session, "list").mockRejectedValue(
+      new LocalTransportError("tauri_invoke_failure", "sessions unavailable"),
+    );
+    renderSidebar(state, undefined, client);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/sessions unavailable|调用失败|tauri/i),
+      ).toBeTruthy(),
+    );
+    expect(
+      useWorkspaceSelectionStore.getState().pendingRestore?.sessionId,
+    ).toBe(SESSION.id);
+    expect(
+      useWorkspaceSelectionStore.getState().selection.sessionId,
+    ).toBeNull();
   });
 
   // Matches the working-indicator aria-label in either shipped locale.

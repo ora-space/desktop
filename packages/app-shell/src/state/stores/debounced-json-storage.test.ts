@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDebouncedStateStorage,
+  createSafeJSONStorage,
   DEBOUNCED_PERSIST_MS,
   flushDebouncedPersistStorage,
 } from "./debounced-json-storage";
@@ -126,5 +127,37 @@ describe("createDebouncedStateStorage", () => {
 
     expect(() => window.dispatchEvent(new Event("pagehide"))).not.toThrow();
     expect(window.localStorage.getItem("healthy")).toBe("saved");
+  });
+});
+
+describe("createSafeJSONStorage", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("treats corrupt JSON as a cache miss instead of rejecting", async () => {
+    window.localStorage.setItem("ora.test", "{not json");
+    const storage = createSafeJSONStorage();
+    await expect(storage.getItem("ora.test")).resolves.toBeNull();
+  });
+
+  it("skips setItem when the serialized payload is unchanged", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const storage = createSafeJSONStorage();
+    const payload = { state: { n: 1 }, version: 0 };
+    storage.setItem("ora.elide", payload);
+    const writesAfterFirst = setItem.mock.calls.filter(
+      ([key]) => key === "ora.elide",
+    ).length;
+    storage.setItem("ora.elide", payload);
+    const writesAfterSecond = setItem.mock.calls.filter(
+      ([key]) => key === "ora.elide",
+    ).length;
+    expect(writesAfterSecond).toBe(writesAfterFirst);
+    setItem.mockRestore();
   });
 });

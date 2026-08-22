@@ -50,15 +50,21 @@ export function useWorkflowRunsByWorkflow(
 }
 
 /** Lists the persisted workflow runs of one project. */
-export function useWorkflowRunsByProject(projectId: string | null | undefined) {
+export function useWorkflowRunsByProject(
+  projectId: string | null | undefined,
+  options?: { enabled?: boolean },
+) {
   const client = useContractsClient();
+  const enabled =
+    projectId != null && projectId !== "" && (options?.enabled ?? true);
   return useQuery({
     queryKey: runsByProjectKey(projectId ?? ""),
     queryFn: async () =>
       (await client.workflowRun.list({ projectId: projectId! })).runs,
-    enabled: projectId != null && projectId !== "",
+    enabled,
     // Completion is backend-driven with no frontend event, so poll while any run is active.
-    refetchInterval: (query) => (hasActiveRun(query.state.data) ? 4000 : false),
+    refetchInterval: (query) =>
+      enabled && hasActiveRun(query.state.data) ? 4000 : false,
   });
 }
 

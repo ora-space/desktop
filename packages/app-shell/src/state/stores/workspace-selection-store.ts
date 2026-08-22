@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import { useDraftSessionsStore } from "./draft-sessions-store";
+import { createSafeJSONStorage } from "./debounced-json-storage";
 import {
   EMPTY_WORKSPACE_SELECTION,
   isWorkspaceSelectionEmpty,
@@ -81,6 +82,11 @@ interface WorkspaceSelectionState {
   /** Replaces the project leg, clearing task/session/run (used after the selected project is deleted). */
   setProject: (projectId: string | null) => void;
   /**
+   * Applies a tree-validated restore candidate. The only path allowed to move
+   * live selection while `pendingRestore` is staged.
+   */
+  commitRestoredSelection: (selection: WorkspaceSelection) => void;
+  /**
    * Drops a consumed or abandoned restore candidate. Clears without touching
    * live selection so a user who already navigated keeps their choice.
    */
@@ -94,6 +100,47 @@ function createFocusFromSelection(
   if (selection.projectId === null) return null;
   return { projectId: selection.projectId, taskId: selection.taskId };
 }
+
+/** Builds the staged restore candidate from an untrusted disk slice. */
+export function pendingRestoreFromPersistSlice(
+  slice: Record<string, unknown> | undefined,
+): WorkspaceSelection | null {
+  const fromPending = sanitizeWorkspaceSelection(slice?.pendingRestore);
+  const fromSelection = sanitizeWorkspaceSelection(slice?.selection);
+  // Prefer an in-flight candidate (crash mid-restore) over the last live
+  // selection so a half-applied restore does not lose its intent.
+  const candidate = isWorkspaceSelectionEmpty(fromPending)
+    ? fromSelection
+    : fromPending;
+  return isWorkspaceSelectionEmpty(candidate) ? null : candidate;
+}
+
+/**
+ * Reads the selection persist key synchronously so `pendingRestore` exists on
+ * the first paint. Async rehydrate must agree; without this seed, startup
+ * chatter can select another session before the disk candidate arrives.
+ */
+export function readWorkspaceSelectionPersistFromDisk(): {
+  pendingRestore: WorkspaceSelection | null;
+} {
+  if (typeof window === "undefined") return { pendingRestore: null };
+  try {
+    const raw = window.localStorage.getItem(WORKSPACE_SELECTION_STORAGE_KEY);
+    if (raw === null) return { pendingRestore: null };
+    const parsed = JSON.parse(raw) as { state?: Record<string, unknown> };
+    return {
+      pendingRestore: pendingRestoreFromPersistSlice(
+        typeof parsed.state === "object" && parsed.state !== null
+          ? parsed.state
+          : undefined,
+      ),
+    };
+  } catch {
+    return { pendingRestore: null };
+  }
+}
+
+const initialPersist = readWorkspaceSelectionPersistFromDisk();
 
 /**
  * Owns the workspace tree selection without coupling to query data. Callers pass
@@ -113,10 +160,14 @@ export const useWorkspaceSelectionStore = create<WorkspaceSelectionState>()(
        * Navigation must remain responsive even if draft persistence cleanup fails.
        * Create focus follows the new selection so New chat stays coherent after
        * opening a leaf; empty selection clears focus.
+       *
+       * Explicit navigation cancels a staged disk restore. Keep `select*`
+       * responsive while restore waits on a successful tree fetch — do not
+       * hard-block here (a failed fetch would otherwise freeze the sidebar).
+       * False miss-clears are prevented by gating restore on `isSuccess`.
        */
       const replaceSelection = (selection: WorkspaceSelection): void => {
         const previousDraftId = get().selection.draftId;
-        // User navigation cancels any outstanding restore candidate.
         set({
           selection,
           pendingRestore: null,
@@ -129,7 +180,7 @@ export const useWorkspaceSelectionStore = create<WorkspaceSelectionState>()(
 
       return {
         selection: EMPTY_WORKSPACE_SELECTION,
-        pendingRestore: null,
+        pendingRestore: initialPersist.pendingRestore,
         createFocus: null,
         setCreateFocus: (focus) => {
           const current = get().createFocus;
@@ -249,12 +300,26 @@ export const useWorkspaceSelectionStore = create<WorkspaceSelectionState>()(
                 },
           );
         },
+        commitRestoredSelection: (selection) => {
+          const previousDraftId = get().selection.draftId;
+          set({
+            selection,
+            pendingRestore: null,
+            createFocus: createFocusFromSelection(selection),
+          });
+          if (
+            previousDraftId !== null &&
+            previousDraftId !== selection.draftId
+          ) {
+            useDraftSessionsStore.getState().discardIfEmpty(previousDraftId);
+          }
+        },
         clearPendingRestore: () => set({ pendingRestore: null }),
       };
     },
     {
       name: WORKSPACE_SELECTION_STORAGE_KEY,
-      storage: createJSONStorage(() => window.localStorage),
+      storage: createSafeJSONStorage(),
       // createFocus is intentionally omitted — it is a session gesture, not a restore target.
       partialize: (state) => ({
         selection: state.selection,
@@ -265,19 +330,21 @@ export const useWorkspaceSelectionStore = create<WorkspaceSelectionState>()(
           typeof persisted === "object" && persisted !== null
             ? (persisted as Record<string, unknown>)
             : undefined;
-        const fromPending = sanitizeWorkspaceSelection(slice?.pendingRestore);
-        const fromSelection = sanitizeWorkspaceSelection(slice?.selection);
-        // Prefer an in-flight candidate (crash mid-restore) over the last live
-        // selection so a half-applied restore does not lose its intent.
-        const candidate = isWorkspaceSelectionEmpty(fromPending)
-          ? fromSelection
-          : fromPending;
+        const diskPending = pendingRestoreFromPersistSlice(slice);
+
+        // Async rehydrate must not undo explicit navigation that happened after
+        // the sync disk seed but before `onFinishHydration`.
+        if (!isWorkspaceSelectionEmpty(current.selection)) {
+          return {
+            ...current,
+            pendingRestore: null,
+          };
+        }
+
         return {
           ...current,
           selection: EMPTY_WORKSPACE_SELECTION,
-          pendingRestore: isWorkspaceSelectionEmpty(candidate)
-            ? null
-            : candidate,
+          pendingRestore: diskPending,
           createFocus: null,
         };
       },

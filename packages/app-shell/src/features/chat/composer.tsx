@@ -279,6 +279,21 @@ export function Composer({
    */
   const syncedSurfaceRef = useRef<string | null>(null);
   if (syncedSurfaceRef.current !== conversationKey) {
+    const previousKey = syncedSurfaceRef.current;
+    // Park the surface we are leaving before adopting the new key. The editor
+    // still shows the old session until hydrate's microtask runs; without this,
+    // onTextChange would write that stale document onto the new session id.
+    if (previousKey !== null) {
+      const editor = editorRef.current;
+      if (editor !== null) {
+        useComposerInputStore.getState().setInput(previousKey, {
+          text: editor.getText(),
+          images: [...attachmentsRef.current],
+          doc: editor.getJSON(),
+        });
+      }
+    }
+    suppressPersistRef.current = true;
     syncedSurfaceRef.current = conversationKey;
     const parked = useComposerInputStore.getState().byKey[conversationKey];
     const draft =
@@ -365,19 +380,26 @@ export function Composer({
     // microtask and would wipe them.
     if (emptyPayload && previousKey === null) {
       hydratedConversationKey.current = key;
+      suppressPersistRef.current = false;
       return;
     }
 
     const generation = (hydrateGenerationRef.current += 1);
     pendingHydrateKeyRef.current = key;
     queueMicrotask(() => {
-      if (pendingHydrateKeyRef.current === key) {
-        pendingHydrateKeyRef.current = null;
+      try {
+        if (pendingHydrateKeyRef.current === key) {
+          pendingHydrateKeyRef.current = null;
+        }
+        if (hydrateGenerationRef.current !== generation) return;
+        if (conversationKeyRef.current !== key) return;
+        hydratedConversationKey.current = key;
+        applyComposerContent(text, images, doc);
+      } finally {
+        if (conversationKeyRef.current === key) {
+          suppressPersistRef.current = false;
+        }
       }
-      if (hydrateGenerationRef.current !== generation) return;
-      if (conversationKeyRef.current !== key) return;
-      hydratedConversationKey.current = key;
-      applyComposerContent(text, images, doc);
     });
   }, [applyComposerContent, conversationKey, draftId, selectedSessionId]);
 

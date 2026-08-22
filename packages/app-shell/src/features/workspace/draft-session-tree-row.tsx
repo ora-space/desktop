@@ -1,5 +1,6 @@
 import { memo, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { Button } from "@ora/ui";
 import { IconMessageCircle, IconX } from "@tabler/icons-react";
 import {
@@ -18,6 +19,32 @@ interface DraftSessionTreeRowProps {
   depth: 0 | 1 | 2;
 }
 
+type DraftRowSnapshot = {
+  id: string;
+  text: string;
+  projectId: string;
+  taskId: string | null;
+  pendingSessionId: string | null;
+  sendInFlight: boolean;
+};
+
+/** Limits re-renders to rows whose own draft fields changed. */
+function draftRowSnapshotEqual(
+  left: DraftRowSnapshot | null,
+  right: DraftRowSnapshot | null,
+): boolean {
+  if (left === right) return true;
+  if (left === null || right === null) return false;
+  return (
+    left.id === right.id &&
+    left.text === right.text &&
+    left.projectId === right.projectId &&
+    left.taskId === right.taskId &&
+    left.pendingSessionId === right.pendingSessionId &&
+    left.sendInFlight === right.sendInFlight
+  );
+}
+
 /**
  * Muted new-chat leaf. It stays visually quiet until attach turns it into a
  * real session. Bound rows open that session; unbound ones restore the
@@ -30,8 +57,21 @@ export const DraftSessionTreeRow = memo(function DraftSessionTreeRow({
 }: DraftSessionTreeRowProps) {
   const { t } = useTranslation();
   const rowRef = useRef<HTMLDivElement>(null);
-  const draft = useDraftSessionsStore((s) =>
-    s.drafts.find((candidate) => candidate.id === draftId),
+  const draft = useStoreWithEqualityFn(
+    useDraftSessionsStore,
+    (s) => {
+      const candidate = s.drafts.find((entry) => entry.id === draftId);
+      if (candidate === undefined) return null;
+      return {
+        id: candidate.id,
+        text: candidate.text,
+        projectId: candidate.projectId,
+        taskId: candidate.taskId,
+        pendingSessionId: candidate.pendingSessionId,
+        sendInFlight: candidate.sendInFlight,
+      };
+    },
+    draftRowSnapshotEqual,
   );
   const pendingSessionId = draft?.pendingSessionId ?? null;
   // O(1) compare so selection changes do not scan the drafts array per row.
@@ -41,11 +81,10 @@ export const DraftSessionTreeRow = memo(function DraftSessionTreeRow({
       s.selection.draftId === draftId ||
       (pendingSessionId !== null && s.selection.sessionId === pendingSessionId),
   );
-  if (draft === undefined) return null;
+  if (draft === null) return null;
 
   const bound = pendingSessionId !== null;
   const title = draftSidebarTitle(draft.text, t("sidebar.newSession"));
-  // Capture after the undefined guard — nested handlers do not retain the narrow.
   const current = draft;
 
   /** Bound drafts jump to the live session; others restore the parked composer. */

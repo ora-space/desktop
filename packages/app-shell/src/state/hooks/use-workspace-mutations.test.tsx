@@ -40,10 +40,12 @@ describe("useRenameSession", () => {
       },
     ];
     const client = createMockClient(state);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(queryKeys.sessions, state.sessions);
     const { result } = renderHookWithClient(
       () => useRenameSession(),
       client,
-      createTestQueryClient(),
+      queryClient,
     );
 
     await act(async () => {
@@ -51,10 +53,52 @@ describe("useRenameSession", () => {
     });
 
     expect(state.sessions[0]?.title).toBe("New title");
+    expect(queryClient.getQueryData(queryKeys.sessions)).toEqual([
+      expect.objectContaining({ id: "s1", title: "New title" }),
+    ]);
+    // Patch-only: do not force an active list refetch that rebuilds every row.
+    expect(queryClient.isFetching({ queryKey: queryKeys.sessions })).toBe(0);
   });
 });
 
 describe("delete mutations clear parked composer state", () => {
+  it("optimistically removes a session from the list cache", async () => {
+    const state = createMockClientState();
+    state.sessions = [
+      {
+        id: "s1",
+        taskId: "t1",
+        agentRef: "ora-space.opencode",
+        status: "running",
+        title: null,
+        historyState: { type: "writable" },
+      },
+      {
+        id: "s2",
+        taskId: "t1",
+        agentRef: "ora-space.opencode",
+        status: "running",
+        title: null,
+        historyState: { type: "writable" },
+      },
+    ];
+    const client = createMockClient(state);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(queryKeys.sessions, state.sessions);
+    const { result } = renderHookWithClient(
+      () => useDeleteSession(),
+      client,
+      queryClient,
+    );
+    await act(async () => {
+      await result.current.mutateAsync({ sessionId: "s1", listSync: "defer" });
+    });
+    expect(queryClient.getQueryData(queryKeys.sessions)).toEqual([
+      expect.objectContaining({ id: "s2" }),
+    ]);
+    expect(queryClient.isFetching({ queryKey: queryKeys.sessions })).toBe(0);
+  });
+
   it("clears composer input and bound drafts when a session is deleted", async () => {
     const state = createMockClientState();
     state.sessions = [

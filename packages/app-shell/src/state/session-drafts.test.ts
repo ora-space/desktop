@@ -25,6 +25,7 @@ beforeEach(() => {
   useUiStore.setState({
     expandedProjects: new Set(),
     expandedTasks: new Set(),
+    treeExpansionBootstrapped: false,
   });
 });
 

@@ -104,7 +104,10 @@ function DeleteEntityDialog({
         // Project deletion has the same running-session guard as task deletion.
         // Stop and remove every descendant session before cascading the project.
         for (const sessionId of target.sessionIds) {
-          await deleteSession.mutateAsync({ sessionId });
+          await deleteSession.mutateAsync({
+            sessionId,
+            listSync: "defer",
+          });
         }
         await deleteProject.mutateAsync({ projectId: target.id });
       }
@@ -112,7 +115,10 @@ function DeleteEntityDialog({
         // The backend protects every task with a running provider session.
         // Stop and remove each child session before deleting either task mode.
         for (const sessionId of target.sessionIds) {
-          await deleteSession.mutateAsync({ sessionId });
+          await deleteSession.mutateAsync({
+            sessionId,
+            listSync: "defer",
+          });
         }
         await deleteTask.mutateAsync({ taskId: target.id });
       }

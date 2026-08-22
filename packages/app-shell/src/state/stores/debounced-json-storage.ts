@@ -110,17 +110,73 @@ export function createDebouncedStateStorage(
  * Zustand JSON persist storage that debounces disk writes while keeping memory
  * state immediate. Call `flushDebouncedPersistStorage` in tests before reading
  * `localStorage`, or rely on pagehide / visibility for production durability.
+ *
+ * Corrupt JSON is treated as a cache miss so zustand can still flip
+ * `hasHydrated` — a thrown `JSON.parse` would otherwise stall forever and
+ * block first-run bootstrap / restore gates that wait on hydration.
  */
 export function createDebouncedJSONStorage<S>(
   debounceMs: number = DEBOUNCED_PERSIST_MS,
 ): PersistStorage<S, unknown> {
-  const json = createJSONStorage<S>(() =>
+  return createSafeJSONStorage<S>(() =>
     createDebouncedStateStorage(debounceMs),
   );
+}
+
+/**
+ * `createJSONStorage` whose `getItem` never rejects, and whose `setItem` skips
+ * writes when the serialized payload is unchanged. Corrupt JSON becomes a cache
+ * miss so persist rehydrate can still flip `hasHydrated`; write elision stops
+ * dialog / no-op expand churn from hammering localStorage.
+ */
+export function createSafeJSONStorage<S>(
+  getStorage: () => StateStorage = () => window.localStorage,
+): PersistStorage<S, unknown> {
+  let base: StateStorage;
+  try {
+    base = getStorage();
+  } catch {
+    throw new Error("createJSONStorage storage unavailable");
+  }
+
+  const lastWritten = new Map<string, string>();
+  const elidingStorage: StateStorage = {
+    getItem: (name) => {
+      const value = base.getItem(name);
+      if (typeof value === "string") lastWritten.set(name, value);
+      return value;
+    },
+    setItem: (name, value) => {
+      // Skip only when memory and disk already agree. Tests (and rare host
+      // clears) can empty localStorage while the in-memory last-write cache
+      // still holds the previous payload.
+      if (lastWritten.get(name) === value && base.getItem(name) === value) {
+        return;
+      }
+      lastWritten.set(name, value);
+      base.setItem(name, value);
+    },
+    removeItem: (name) => {
+      lastWritten.delete(name);
+      base.removeItem(name);
+    },
+  };
+
+  const json = createJSONStorage<S>(() => elidingStorage);
   if (json === undefined) {
     throw new Error("createJSONStorage returned undefined");
   }
-  return json;
+  return {
+    getItem: async (name) => {
+      try {
+        return await json.getItem(name);
+      } catch {
+        return null;
+      }
+    },
+    setItem: (name, value) => json.setItem(name, value),
+    removeItem: (name) => json.removeItem(name),
+  };
 }
 
 /** Drains every registered debounced persist queue (tests + rare sync needs). */

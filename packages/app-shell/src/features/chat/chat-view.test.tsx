@@ -564,6 +564,32 @@ describe("Composer", () => {
     expect(composerText(textarea)).toBe("on B");
   });
 
+  it("does not park the leaving session's editor onto the next session key before hydrate", async () => {
+    const user = userEvent.setup();
+    useComposerInputStore.getState().reset();
+    useWorkspaceSelectionStore
+      .getState()
+      .selectSession("session-a", "task-1", "project-1");
+
+    renderWithI18n(<Composer onSend={vi.fn()} isResponding={false} />);
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "content on A");
+
+    act(() => {
+      useWorkspaceSelectionStore
+        .getState()
+        .selectSession("session-b", "task-1", "project-1");
+    });
+
+    expect(useComposerInputStore.getState().byKey["session-a"]?.text).toBe(
+      "content on A",
+    );
+    expect(useComposerInputStore.getState().byKey["session-b"]).toBeUndefined();
+
+    await flushComposerEffects();
+    expect(composerText(textarea)).toBe("");
+  });
+
   it("restores file and skill chips (not inline code) when switching sessions", async () => {
     useComposerInputStore.getState().reset();
     const parkedDoc = {

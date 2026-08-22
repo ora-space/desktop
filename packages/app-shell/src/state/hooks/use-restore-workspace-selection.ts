@@ -1,48 +1,43 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo } from "react";
 import type { Project, Session, Task } from "@ora/contracts";
 import { useDraftSessionsStore } from "../stores/draft-sessions-store";
-import { useUiStore } from "../stores/ui-store";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
-import { isWorkspaceSelectionEmpty } from "../stores/sanitize-workspace-selection";
 import { resolveRestoredWorkspaceSelection } from "../resolve-restored-workspace-selection";
+import { usePersistHydrated } from "./use-persist-hydrated";
 import { useWorkflowRunsByProject } from "./use-workflow-runs";
-
-/**
- * Subscribes to a zustand persist store's hydration so restore can wait for
- * disk drafts before treating a missing draft id as deleted.
- */
-function usePersistHydrated(persistApi: {
-  hasHydrated: () => boolean;
-  onFinishHydration: (fn: (state: unknown) => void) => () => void;
-}): boolean {
-  return useSyncExternalStore(
-    (onStoreChange) => persistApi.onFinishHydration(onStoreChange),
-    () => persistApi.hasHydrated(),
-    () => false,
-  );
-}
 
 /**
  * Applies a validated disk selection once the workspace tree has settled.
  *
- * Must not run before projects/tasks/sessions finish their first fetch: putting
- * a session id into live selection while the sessions list is still empty would
- * look "unpersisted" to warm and open a stray provider session.
+ * Must not run before projects/tasks/sessions have **successfully** loaded:
+ * treating a failed or still-empty fetch as "session gone" would clear
+ * `pendingRestore` and persist that wipe, so the next launch has nothing left
+ * to restore (intermittent cold-start misses).
  *
  * Draft candidates also wait for `draft-sessions-store` rehydration — otherwise
  * a still-empty in-memory draft list would look like "draft deleted" and clear
  * a perfectly valid restore.
+ *
+ * Selection-store hydration is required too: until `pendingRestore` is seeded
+ * from disk, treating "null pending" as "nothing to restore" would skip the
+ * saved session entirely.
  */
 export function useRestoreWorkspaceSelection(input: {
   projects: readonly Project[];
   tasks: readonly Task[];
   sessions: readonly Session[];
-  /** True while any of the three tree queries is still pending or has errored. */
+  /**
+   * True until every tree query has `isSuccess`. Callers must not pass mere
+   * `isPending` — error/empty interim states must keep the candidate staged.
+   */
   treePending: boolean;
 }): void {
   const { projects, tasks, sessions, treePending } = input;
   const pendingRestore = useWorkspaceSelectionStore((s) => s.pendingRestore);
   const draftsHydrated = usePersistHydrated(useDraftSessionsStore.persist);
+  const selectionHydrated = usePersistHydrated(
+    useWorkspaceSelectionStore.persist,
+  );
 
   const needsWorkflowRuns =
     pendingRestore !== null && pendingRestore.workflowRunId !== null;
@@ -57,30 +52,27 @@ export function useRestoreWorkspaceSelection(input: {
     // Sanitized candidates always carry a projectId with a run id. Without one
     // the by-project query stays disabled and would never leave pending.
     if (workflowProjectId === null) return [];
-    // Treat an errored run list like a still-pending one: return null so the
-    // effect keeps waiting instead of resolving against an empty error list,
-    // which would discard a valid restore candidate as a miss. A later refetch
-    // that succeeds re-runs the effect with the real list.
-    if (runsQuery.isPending || runsQuery.isError) return null;
+    // Mirror the tree gate: wait for success. An error/`data` miss must not
+    // become `[]` → resolve miss → clearPendingRestore and wipe disk.
+    if (!runsQuery.isSuccess) return null;
     return runsQuery.data ?? [];
   }, [
     needsWorkflowRuns,
     runsQuery.data,
-    runsQuery.isError,
-    runsQuery.isPending,
+    runsQuery.isSuccess,
     workflowProjectId,
   ]);
 
   useEffect(() => {
-    if (treePending || pendingRestore === null || !draftsHydrated) return;
-    if (needsWorkflowRuns && workflowRuns === null) return;
-
-    const live = useWorkspaceSelectionStore.getState().selection;
-    if (!isWorkspaceSelectionEmpty(live)) {
-      // User already navigated; keep their choice and stop retrying disk.
-      useWorkspaceSelectionStore.getState().clearPendingRestore();
+    if (
+      treePending ||
+      !draftsHydrated ||
+      !selectionHydrated ||
+      pendingRestore === null
+    ) {
       return;
     }
+    if (needsWorkflowRuns && workflowRuns === null) return;
 
     // Read drafts at apply time so keystroke updates do not re-trigger restore,
     // while still seeing the post-rehydrate list once `draftsHydrated` flips.
@@ -106,6 +98,7 @@ export function useRestoreWorkspaceSelection(input: {
     needsWorkflowRuns,
     pendingRestore,
     projects,
+    selectionHydrated,
     sessions,
     tasks,
     treePending,
@@ -113,7 +106,7 @@ export function useRestoreWorkspaceSelection(input: {
   ]);
 }
 
-/** Routes a validated selection through the store APIs and expands ancestors. */
+/** Commits a validated selection without touching expand/collapse state. */
 function applyRestoredSelection(selection: {
   projectId: string | null;
   taskId: string | null;
@@ -129,31 +122,10 @@ function applyRestoredSelection(selection: {
 
   // A tree click during restore only sets createFocus (selection stays empty).
   // Preserve that gesture so New chat still follows the row the user pointed at
-  // instead of being overwritten when select* syncs focus from the restored leaf.
+  // instead of being overwritten when restore syncs focus from the restored leaf.
   const createFocusBefore = store.createFocus;
-
-  if (selection.sessionId !== null && selection.taskId !== null) {
-    store.selectSession(
-      selection.sessionId,
-      selection.taskId,
-      selection.projectId,
-    );
-  } else if (selection.draftId !== null) {
-    store.selectDraft(selection.draftId, selection.taskId, selection.projectId);
-  } else if (selection.workflowRunId !== null) {
-    store.selectWorkflowRun(selection.workflowRunId, selection.projectId);
-  } else if (selection.taskId !== null) {
-    store.selectTask(selection.taskId, selection.projectId);
-  } else {
-    store.selectProject(selection.projectId);
-  }
-
+  store.commitRestoredSelection(selection);
   if (createFocusBefore !== null) {
     store.setCreateFocus(createFocusBefore);
-  }
-
-  useUiStore.getState().expandProject(selection.projectId);
-  if (selection.taskId !== null) {
-    useUiStore.getState().expandTask(selection.taskId);
   }
 }

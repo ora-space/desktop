@@ -22,6 +22,7 @@ interface WorkspaceReviewFilesPanelProps {
   taskId?: string;
   toolbar?: ReactNode;
   fileRequest?: WorkspaceFileRequest;
+  onPreviewPathChange?: (path: string) => void;
 }
 
 /** Hosts project/task file browsing and the read-only Spec catalog in one review panel. */
@@ -30,6 +31,7 @@ export function WorkspaceReviewFilesPanel({
   taskId,
   toolbar,
   fileRequest,
+  onPreviewPathChange,
 }: WorkspaceReviewFilesPanelProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -133,6 +135,7 @@ export function WorkspaceReviewFilesPanel({
             surface={surface}
             hideHeader
             fileRequest={fileRequest}
+            onPreviewPathChange={onPreviewPathChange}
           />
         )}
       </div>

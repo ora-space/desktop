@@ -281,6 +281,44 @@ describe("useWorkspaceSelectionStore", () => {
     ).toBe("s1");
   });
 
+  it("keeps pre-hydration navigation when async rehydrate completes", async () => {
+    window.localStorage.setItem(
+      WORKSPACE_SELECTION_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          selection: {
+            projectId: "p1",
+            taskId: "t1",
+            sessionId: "s-old",
+            workflowRunId: null,
+            draftId: null,
+          },
+          pendingRestore: null,
+        },
+        version: 0,
+      }),
+    );
+    useWorkspaceSelectionStore.setState({
+      selection: empty,
+      pendingRestore: {
+        projectId: "p1",
+        taskId: "t1",
+        sessionId: "s-old",
+        workflowRunId: null,
+        draftId: null,
+      },
+      createFocus: null,
+    });
+    useWorkspaceSelectionStore.getState().selectSession("s-new", "t1", "p1");
+
+    await useWorkspaceSelectionStore.persist.rehydrate();
+
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe(
+      "s-new",
+    );
+    expect(useWorkspaceSelectionStore.getState().pendingRestore).toBeNull();
+  });
+
   it("sanitizes illegal session+draft combos on rehydrate", async () => {
     window.localStorage.setItem(
       WORKSPACE_SELECTION_STORAGE_KEY,
@@ -311,7 +349,50 @@ describe("useWorkspaceSelectionStore", () => {
   it("falls back to empty pendingRestore when persisted JSON is corrupt", async () => {
     window.localStorage.setItem(WORKSPACE_SELECTION_STORAGE_KEY, "{not json");
     await useWorkspaceSelectionStore.persist.rehydrate();
+    expect(useWorkspaceSelectionStore.persist.hasHydrated()).toBe(true);
     expect(useWorkspaceSelectionStore.getState().selection).toEqual(empty);
+    expect(useWorkspaceSelectionStore.getState().pendingRestore).toBeNull();
+  });
+
+  it("lets navigation cancel a staged restore candidate", () => {
+    useWorkspaceSelectionStore.setState({
+      selection: empty,
+      pendingRestore: {
+        projectId: "p1",
+        taskId: "t1",
+        sessionId: "s1",
+        workflowRunId: null,
+        draftId: null,
+      },
+    });
+    useWorkspaceSelectionStore.getState().selectSession("s-new", "t1", "p1");
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe(
+      "s-new",
+    );
+    expect(useWorkspaceSelectionStore.getState().pendingRestore).toBeNull();
+  });
+
+  it("commitRestoredSelection applies the candidate and clears pendingRestore", () => {
+    useWorkspaceSelectionStore.setState({
+      selection: empty,
+      pendingRestore: {
+        projectId: "p1",
+        taskId: "t1",
+        sessionId: "s1",
+        workflowRunId: null,
+        draftId: null,
+      },
+    });
+    useWorkspaceSelectionStore.getState().commitRestoredSelection({
+      projectId: "p1",
+      taskId: "t1",
+      sessionId: "s1",
+      workflowRunId: null,
+      draftId: null,
+    });
+    expect(useWorkspaceSelectionStore.getState().selection.sessionId).toBe(
+      "s1",
+    );
     expect(useWorkspaceSelectionStore.getState().pendingRestore).toBeNull();
   });
 

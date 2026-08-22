@@ -83,6 +83,8 @@ interface TaskDiffViewProps {
   toolbar?: ReactNode;
   onFileTreeOpenChange: (open: boolean) => void;
   onFileNotFound?: (path: string, line?: number) => void;
+  /** Reports the file currently shown so review layout can persist it. */
+  onPreviewPathChange?: (path: string) => void;
 }
 
 export type TaskDiffViewType = "unified" | "split";
@@ -102,6 +104,7 @@ export function TaskDiffView({
   toolbar,
   onFileTreeOpenChange,
   onFileNotFound,
+  onPreviewPathChange,
 }: TaskDiffViewProps) {
   const { i18n, t } = useTranslation();
   const client = useContractsClient();
@@ -124,6 +127,11 @@ export function TaskDiffView({
   // Programmatic jumps (chat links, tree clicks) must not be overwritten by the
   // scroll spy: on mount it treats an empty viewport as "scrolled to the end".
   const suppressScrollSyncRef = useRef(false);
+  const onPreviewPathChangeRef = useRef(onPreviewPathChange);
+
+  useEffect(() => {
+    onPreviewPathChangeRef.current = onPreviewPathChange;
+  });
 
   const files = useMemo(
     () =>
@@ -159,6 +167,17 @@ export function TaskDiffView({
     }
   }
 
+  useLayoutEffect(() => {
+    if (fileRequest === undefined || diffQuery.isLoading) return;
+    if (fileRequest.requestId !== appliedFileRequestId) return;
+    const matchingPath = filePaths.find((path) =>
+      pathsMatchForWorkspace(fileRequest.path, path),
+    );
+    if (matchingPath !== undefined) {
+      onPreviewPathChangeRef.current?.(matchingPath);
+    }
+  }, [appliedFileRequestId, diffQuery.isLoading, filePaths, fileRequest]);
+
   /**
    * Scrolls the Diff viewport so `path` sits near the top.
    * Returns false when the panel has not laid out yet so callers can retry
@@ -185,6 +204,7 @@ export function TaskDiffView({
     (path: string, behavior: ScrollBehavior = "smooth") => {
       suppressScrollSyncRef.current = true;
       setSelectedFilePath(path);
+      onPreviewPathChangeRef.current?.(path);
       if (scrollToPath(path, behavior)) return;
       requestAnimationFrame(() => {
         if (!scrollToPath(path, behavior))
@@ -324,9 +344,11 @@ export function TaskDiffView({
             activePath = path;
           }
         }
-        setSelectedFilePath((currentPath) =>
-          currentPath === activePath ? currentPath : activePath,
-        );
+        setSelectedFilePath((currentPath) => {
+          if (currentPath === activePath) return currentPath;
+          onPreviewPathChangeRef.current?.(activePath);
+          return activePath;
+        });
       });
     };
 

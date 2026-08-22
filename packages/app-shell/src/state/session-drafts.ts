@@ -66,6 +66,9 @@ function base64ByteLength(data: string): number {
 
 /** Expands the ancestors needed to keep a project-root or worktree draft visible. */
 function expandDraftScope(scope: DraftScope): void {
+  // A staged session restore owns layout until it commits; expanding here would
+  // reopen rows the user had collapsed before quit.
+  if (useWorkspaceSelectionStore.getState().pendingRestore !== null) return;
   useUiStore.getState().expandProject(scope.projectId);
   if (scope.taskId !== null) useUiStore.getState().expandTask(scope.taskId);
 }
