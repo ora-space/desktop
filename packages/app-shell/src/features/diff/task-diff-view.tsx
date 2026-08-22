@@ -16,7 +16,6 @@ import {
   Hunk,
   getChangeKey,
   type FileData,
-  type GutterOptions,
 } from "react-diff-view";
 import "react-diff-view/style/index.css";
 import "./task-diff-view.css";
@@ -60,6 +59,7 @@ import {
 import { countChanges, parseTaskDiffPatch } from "./task-diff-data";
 import { diffFilePath } from "./task-diff-file-tree-utils";
 import { TaskDiffFileTree } from "./task-diff-file-tree";
+import { useTaskDiffQuoteGutter } from "./task-diff-quote-gutter";
 import { TaskGitActions } from "./task-git-actions";
 import {
   animatePanelWidth,
@@ -698,6 +698,7 @@ function TaskDiffFile({ file, viewType, targetLine }: TaskDiffFileProps) {
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(
     () => new Set(),
   );
+  const { renderGutter, quoteRootRef } = useTaskDiffQuoteGutter(file, viewType);
   const fileStats = useMemo(() => countChanges([file]), [file]);
   const jumpTarget =
     targetLine === undefined
@@ -720,6 +721,10 @@ function TaskDiffFile({ file, viewType, targetLine }: TaskDiffFileProps) {
   const renderSegments = useMemo(
     () => buildCollapsedDiffSegments(file.hunks, expandedBlocks),
     [expandedBlocks, file.hunks],
+  );
+  const selectedChanges = useMemo(
+    () => (jumpChangeKey === null ? [] : [jumpChangeKey]),
+    [jumpChangeKey],
   );
 
   useLayoutEffect(() => {
@@ -770,6 +775,10 @@ function TaskDiffFile({ file, viewType, targetLine }: TaskDiffFileProps) {
           </div>
         ) : (
           <div
+            ref={(node) => {
+              quoteRootRef.current = node;
+            }}
+            data-quote-root
             className={`ora-task-diff ora-task-diff--${viewType} ora-task-diff--${file.type} overflow-x-auto`}
           >
             {viewType === "split" && (
@@ -782,10 +791,8 @@ function TaskDiffFile({ file, viewType, targetLine }: TaskDiffFileProps) {
               viewType={viewType}
               diffType={file.type}
               hunks={file.hunks}
-              selectedChanges={jumpChangeKey === null ? [] : [jumpChangeKey]}
-              renderGutter={
-                viewType === "unified" ? renderSingleLineNumber : undefined
-              }
+              selectedChanges={selectedChanges}
+              renderGutter={renderGutter}
               optimizeSelection
             >
               {() =>
@@ -971,17 +978,6 @@ function DiffMessage({ title, detail, action }: DiffMessageProps) {
       </div>
     </div>
   );
-}
-
-/** Shows one current line number for context rows while retaining old numbers for deletions. */
-function renderSingleLineNumber({
-  change,
-  side,
-  renderDefault,
-  wrapInAnchor,
-}: GutterOptions) {
-  if (change.type === "normal" && side === "old") return null;
-  return wrapInAnchor(renderDefault());
 }
 
 /** Chooses the path users expect for added, deleted, and renamed files. */

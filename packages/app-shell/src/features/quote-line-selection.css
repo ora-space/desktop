@@ -1,0 +1,177 @@
+/*
+ * Shared quote-gutter styling for the workspace file preview and the task
+ * diff. Both surfaces render the same contract:
+ *   [data-quote-root]               scroll container / diff wrapper
+ *     [data-quote-key]              quoteable row (file) or gutter cell (diff)
+ *       [data-quote-gutter]         gutter hit area
+ *         [data-quote-button]       the + control
+ *         [data-quote-number]       line number
+ * Selection state is painted imperatively by useQuoteLineSelection:
+ *   [data-quote-selected]  in-progress drag range (on the row or its <tr>)
+ *   [data-quote-anchor]    the row where the drag started (keeps its +)
+ *   [data-quote-pinned]    persistent click/shift-click selection
+ */
+
+[data-quote-root] {
+  /* Range wash is a selection hue, not brand fill: --primary is charcoal and
+     mixes to gray. `--selection-wash` (packages/ui globals.css) owns the hue
+     for every gutter surface and flips with the theme on its own. */
+  --quote-selection: var(--selection-wash);
+  --quote-accent: var(--primary, #171717);
+  --quote-tint: color-mix(in oklab, var(--quote-selection) 16%, transparent);
+  --quote-tint-strong: color-mix(
+    in oklab,
+    var(--quote-selection) 24%,
+    transparent
+  );
+}
+
+.dark [data-quote-root] {
+  --quote-tint: color-mix(in oklab, var(--quote-selection) 22%, transparent);
+  --quote-tint-strong: color-mix(
+    in oklab,
+    var(--quote-selection) 30%,
+    transparent
+  );
+}
+
+/* No stray text selection while a range drag is in progress. */
+[data-quote-root][data-quote-dragging="true"] {
+  user-select: none;
+}
+
+/* --- Selection tint ------------------------------------------------------ */
+
+/* File preview: the keyed element is the row itself. */
+[data-quote-root] [data-quote-selected="true"]:not(tr):not(td),
+[data-quote-root] [data-quote-pinned="true"]:not(tr):not(td) {
+  background: var(--quote-tint);
+}
+
+/*
+ * Diff: attributes land on the side's gutter <td> and the following code
+ * <td>, not the whole <tr>, so a split-view quote never tints the other
+ * column.
+ */
+[data-quote-root] td[data-quote-selected="true"],
+[data-quote-root] td[data-quote-pinned="true"] {
+  box-shadow: inset 0 0 0 100vmax var(--quote-tint);
+}
+
+/* Gutter of a selected row reads slightly stronger. */
+[data-quote-root] [data-quote-selected="true"] [data-quote-gutter],
+[data-quote-root] [data-quote-pinned="true"] [data-quote-gutter] {
+  background: var(--quote-tint-strong);
+}
+
+/* --- Gutter + number ----------------------------------------------------- */
+
+[data-quote-root] [data-quote-gutter] {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Overlay fills the react-diff-view gutter cell; wins over `position: relative`. */
+[data-quote-root] [data-quote-gutter].ora-diff-quote-gutter {
+  position: absolute;
+  inset: 0;
+}
+
+[data-quote-root] [data-quote-number] {
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- The + control -------------------------------------------------------- */
+
+[data-quote-root] [data-quote-button] {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  z-index: 2;
+  display: inline-flex;
+  width: 1.05rem;
+  height: 1.05rem;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--quote-accent) 92%, white);
+  color: #fff;
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--quote-accent) 35%, transparent),
+    0 1px 2px rgb(0 0 0 / 12%);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) scale(0.92);
+  transition:
+    opacity 100ms ease,
+    transform 100ms ease,
+    background-color 100ms ease;
+  -webkit-user-drag: none;
+  user-select: none;
+  touch-action: none;
+}
+
+[data-quote-root] [data-quote-button]:hover {
+  background: color-mix(in oklab, var(--quote-accent) 78%, white);
+}
+
+.dark [data-quote-root] [data-quote-button] {
+  background: color-mix(in oklab, var(--quote-accent) 70%, black);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--quote-accent) 45%, transparent),
+    0 1px 2px rgb(0 0 0 / 35%);
+}
+
+.dark [data-quote-root] [data-quote-button]:hover {
+  background: color-mix(in oklab, var(--quote-accent) 85%, black);
+}
+
+[data-quote-root] [data-quote-button]::before {
+  content: "+";
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/*
+ * Reveal: hovering the row (file preview) or the gutter (diff), the library
+ * line-hover marker (diff code cells), or keyboard focus.
+ */
+[data-quote-root] [data-quote-key]:hover [data-quote-button],
+[data-quote-root] [data-quote-hover="true"] [data-quote-button],
+[data-quote-root] [data-quote-button]:focus-visible,
+[data-quote-root].ora-task-diff--unified tr:hover [data-quote-button],
+[data-quote-root].ora-task-diff--unified .diff-line:hover [data-quote-button] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) scale(1);
+}
+
+/*
+ * During a drag only the anchor row keeps its + (matches the reference
+ * screenshot); every other + is force-hidden so no trail of icons appears.
+ */
+[data-quote-root][data-quote-dragging="true"] [data-quote-button] {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) scale(0.92);
+}
+
+[data-quote-root][data-quote-dragging="true"]
+  [data-quote-anchor="true"]
+  [data-quote-button] {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}

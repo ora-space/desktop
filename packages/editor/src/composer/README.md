@@ -23,6 +23,12 @@ Tiptap preset and plain-text helpers for prompt boxes (chat composer, HITL).
   source extensions, dotfiles) and `$skill` tokens become chips on that text
   path; versions (`v1.0`), globs (`*.ts`), slash-command chips, and directory
   `kind` need TipTap JSON parking (chat composer) for a lossless round-trip.
+  Ranged quotes may carry a `snippet` attr so send expands to a
+  `start:end:path` citation fence; Diff-gutter quotes also set `origin: "diff"`
+  and expand to a mini `diff --git` patch with unified markers. A mixed
+  add/delete range is still one chip; `diffSide` is omitted and the body
+  carries `+/-/ `.
+  Path-only `@` mentions stay backtick paths.
   Inline code that contains backticks, and fenced blocks that contain a ` ``` `
   line, serialize with a longer CommonMark fence so parse cannot close early.
   `[label](javascript:…)` / `data:` / `vbscript:` / `file:` hrefs stay literal
@@ -53,11 +59,11 @@ Tiptap preset and plain-text helpers for prompt boxes (chat composer, HITL).
 `COMPOSER_CAPABILITIES` is the supported surface. Anything else in the full-page
 kit (images, TOC, video, alignment) is out of scope.
 
-| Layer  | Nodes / marks                                                                                            |
-| ------ | -------------------------------------------------------------------------------------------------------- |
-| Blocks | paragraph, heading 1–6, blockquote, fenced code, bullet/ordered/task lists, `---`                        |
-| Marks  | bold, italic, underline, strike, inline code, highlight, link                                            |
-| Chips  | `composerFile` (chip), `promptToken` (mention); range selection paints chips via `composerChipSelection` |
+| Layer  | Nodes / marks                                                                                                                                               |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Blocks | paragraph, heading 1–6, blockquote, fenced code, bullet/ordered/task lists, `---`                                                                           |
+| Marks  | bold, italic, underline, strike, inline code, highlight, link                                                                                               |
+| Chips  | `composerFile` (chip), `promptToken` (mention); drag-select snaps onto the chip under the pointer and paints `data-chip-selected` without a React re-render |
 
 Replace a slot with `features: { link: false }` or `features: { link: MyLink }`
 and append extras via `extraExtensions`. Rendering stays CSS in the product shell

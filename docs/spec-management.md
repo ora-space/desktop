@@ -47,7 +47,8 @@ read-only sub-view in the same panel for either review context.
 The Specs sub-view places read-only content on the left and the grouped source tree on the right. It
 starts without an automatic document selection; the viewer stays empty until the user picks a tree
 entry, and clicking Specs again while already on Specs clears the current selection. It supports a
-200 ms filename/path filter, safe GFM preview, the existing line-numbered Shiki source viewer,
+200 ms filename/path filter, safe GFM preview, the existing line-numbered Shiki source viewer
+(with the same gutter `+` quote-to-chat flow as Files),
 manual refresh, and mounted-only watching. Raw HTML and MDX JSX are not executed, local images are
 blocked, and only catalog-member relative Markdown links navigate inside the panel.
 

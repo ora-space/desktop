@@ -12,7 +12,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
   ScrollArea,
-  toast,
 } from "@ora/ui";
 import {
   IconChevronDown,
@@ -35,12 +34,8 @@ import {
 } from "../../lib/workspace-path";
 import { useTaskWorkspace } from "../../state/hooks/use-task-workspace";
 import { useProjects } from "../../state/hooks/use-projects";
-import { useComposerFileContextStore } from "../../state/stores/composer-file-context-store";
-import { conversationKeyFor } from "../../state/stores/conversation-key";
-import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import {
   WorkspaceFileViewer,
-  type WorkspaceFileLineSelection,
   type WorkspaceFileMatchTarget,
 } from "./workspace-file-viewer";
 import {
@@ -263,24 +258,6 @@ export function WorkspaceFilesView({
         : null,
     );
   };
-  const addLineSelectionToChat = (selection: WorkspaceFileLineSelection) => {
-    const conversationKey = conversationKeyFor(
-      useWorkspaceSelectionStore.getState().selection,
-    );
-    if (conversationKey === "__none__") {
-      toast.warning(t("files.lineSelectionNeedsChat"));
-      return;
-    }
-    useComposerFileContextStore
-      .getState()
-      .addSelection(conversationKey, selection);
-    toast.success(
-      t("files.lineSelectionAdded", {
-        startLine: selection.startLine,
-        endLine: selection.endLine,
-      }),
-    );
-  };
   const toggleDirectory = (path: string) => {
     setExpanded((current) => {
       const next = new Set(current);
@@ -336,7 +313,6 @@ export function WorkspaceFilesView({
                       content={fileQuery.data?.content ?? ""}
                       path={selectedPath}
                       target={selectedTarget}
-                      onAddLineSelectionToChat={addLineSelectionToChat}
                     />
                   )}
                 </div>

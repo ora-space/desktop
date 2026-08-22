@@ -107,6 +107,88 @@ describe("ComposerEditor", () => {
     expect(chip).toHaveAttribute("data-end-line", "12");
     expect(chip).toHaveAttribute("title", "src/app.ts:4-12");
     expect(composerText(textbox)).toContain("`src/app.ts:4-12`");
+    expect(textbox.textContent).toContain("app.ts");
+    expect(textbox.textContent).toContain("L4-12");
+  });
+
+  it("paints file chips inside a spanning text selection", async () => {
+    const user = userEvent.setup();
+    const editorRef = createRef<ComposerEditorHandle>();
+    render(
+      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    act(() => {
+      editorRef.current?.insertFileChips([{ path: "src/app.ts" }]);
+    });
+    await waitFor(() =>
+      expect(textbox.querySelector("[data-composer-file]")).not.toBeNull(),
+    );
+
+    await user.click(textbox);
+    await user.keyboard("{Control>}a{/Control}");
+
+    await waitFor(() =>
+      expect(textbox.querySelector("[data-chip-selected]")).not.toBeNull(),
+    );
+  });
+
+  it("serializes quoted snippets as citation fences for the agent", async () => {
+    const editorRef = createRef<ComposerEditorHandle>();
+    render(
+      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    act(() => {
+      editorRef.current?.insertFileChips([
+        {
+          path: "src/app.ts",
+          startLine: 4,
+          endLine: 5,
+          snippet: "const a = 1;\nconst b = 2;",
+        },
+      ]);
+    });
+
+    await waitFor(() =>
+      expect(textbox.querySelector("[data-composer-file]")).not.toBeNull(),
+    );
+    expect(composerText(textbox)).toContain("```4:5:src/app.ts");
+    expect(composerText(textbox)).toContain("const a = 1;");
+    expect(textbox.textContent).toContain("L4-5");
+  });
+
+  it("serializes diff-gutter quotes as unified diff fences for the agent", async () => {
+    const editorRef = createRef<ComposerEditorHandle>();
+    render(
+      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    act(() => {
+      editorRef.current?.insertFileChips([
+        {
+          path: "src/example.ts",
+          startLine: 1,
+          endLine: 2,
+          snippet: " keep\n+new line",
+          origin: "diff",
+          diffSide: "new",
+        },
+      ]);
+    });
+
+    await waitFor(() =>
+      expect(textbox.querySelector("[data-composer-file]")).not.toBeNull(),
+    );
+    expect(composerText(textbox)).toContain(
+      "diff --git a/src/example.ts b/src/example.ts",
+    );
+    expect(composerText(textbox)).toContain("quoted from git diff (new side)");
+    expect(composerText(textbox)).toContain("+new line");
+    expect(textbox.textContent).toContain("L1-2");
   });
 
   it("replaceDocument restores chips from TipTap JSON without markdown round-trip", async () => {

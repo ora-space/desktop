@@ -35,12 +35,12 @@
   );
   --diff-gutter-selected-background-color: color-mix(
     in oklab,
-    var(--primary) 24%,
+    var(--selection-wash) 24%,
     transparent
   );
   --diff-code-selected-background-color: color-mix(
     in oklab,
-    var(--primary) 14%,
+    var(--selection-wash) 14%,
     transparent
   );
   font-size: 12.5px;
@@ -88,6 +88,27 @@
   cursor: default;
   border-right: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
   color: var(--muted-foreground);
+}
+
+/* Layout only — the + button and selection tints live in quote-line-selection.css. */
+.ora-diff-quote-gutter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-inline: 2px 4px;
+}
+
+.ora-diff-quote-gutter--plain {
+  cursor: default;
+}
+
+.ora-diff-quote-number {
+  min-width: 1.75rem;
+  padding-left: 1.15rem;
+  text-align: right;
 }
 
 .ora-task-diff .diff-code {

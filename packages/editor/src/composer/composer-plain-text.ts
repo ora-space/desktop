@@ -1,7 +1,7 @@
 import type { JSONContent } from "@tiptap/core";
 import type { Mark, Node as PmNode } from "@tiptap/pm/model";
 import {
-  composerFileAttrsFromUnknown,
+  composerFileAttrsFromNode,
   composerFilePlainText,
 } from "./composer-file";
 
@@ -14,7 +14,7 @@ function leafPlainText(node: PmNode): string {
       return `${prefix}${String(node.attrs.name)}`;
     }
     case "composerFile":
-      return composerFilePlainText(composerFileAttrsFromUnknown(node.attrs));
+      return composerFilePlainText(composerFileAttrsFromNode(node));
     case "horizontalRule":
       return "---";
     default:

@@ -84,16 +84,20 @@
  * a static full-strength grid, which still reads as "running".
  */
 @keyframes dot-column-bottom {
-  0%, 10% {
+  0%,
+  10% {
     opacity: 0.15;
   }
-  13%, 36% {
+  13%,
+  36% {
     opacity: 1;
   }
-  39%, 71% {
+  39%,
+  71% {
     opacity: 0.15;
   }
-  74%, 97% {
+  74%,
+  97% {
     opacity: 1;
   }
   100% {
@@ -102,25 +106,31 @@
 }
 
 @keyframes dot-column-middle {
-  0%, 20% {
+  0%,
+  20% {
     opacity: 0.15;
   }
-  23%, 87% {
+  23%,
+  87% {
     opacity: 1;
   }
-  90%, 100% {
+  90%,
+  100% {
     opacity: 0.15;
   }
 }
 
 @keyframes dot-column-top {
-  0%, 33% {
+  0%,
+  33% {
     opacity: 0.15;
   }
-  36%, 74% {
+  36%,
+  74% {
     opacity: 1;
   }
-  77%, 100% {
+  77%,
+  100% {
     opacity: 0.15;
   }
 }
@@ -145,6 +155,10 @@
   --border: oklch(0.91 0 0);
   --input: oklch(0.91 0 0);
   --ring: oklch(0.62 0 0);
+  /* Range-selection wash for line gutters (file preview, diff, specs). Kept
+     separate from --primary, which is a near-neutral brand ink and mixes to
+     gray rather than reading as a selection. */
+  --selection-wash: oklch(0.546 0.215 262.9);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -158,7 +172,11 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
-  --code-background: color-mix(in oklch, var(--background), var(--foreground) 1%);
+  --code-background: color-mix(
+    in oklch,
+    var(--background),
+    var(--foreground) 1%
+  );
 }
 
 .dark {
@@ -180,6 +198,7 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  --selection-wash: oklch(0.623 0.214 259.8);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -203,7 +222,16 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", ui-sans-serif, sans-serif;
+    font-family:
+      Inter,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      "PingFang SC",
+      "Microsoft YaHei UI",
+      "Microsoft YaHei",
+      ui-sans-serif,
+      sans-serif;
     /* Desktop chrome should not drag-select; user and agent content opts in explicitly. */
     -webkit-user-select: none;
     user-select: none;

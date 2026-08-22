@@ -1,0 +1,13 @@
+/* Layout only — the + button and selection tints live in quote-line-selection.css. */
+.workspace-file-viewer .workspace-file-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  /* Room for the compact + without covering the clickable line number. */
+  width: 3.5rem;
+  padding-right: 0.35rem;
+}
+
+.workspace-file-viewer .workspace-file-quote-btn {
+  left: 0.15rem;
+}

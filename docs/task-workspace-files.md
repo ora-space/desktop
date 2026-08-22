@@ -2,7 +2,8 @@
 
 Desktop's task workspace file feature provides a read-only view of the active
 task workspace. It supports directory browsing, bounded text viewing,
-filename/content search, line selection for chat context, and native file-change
+filename/content search, line quoting into chat via gutter `+` (click or drag,
+or Ctrl/Cmd+Enter on a focused line number), and native file-change
 refreshes.
 
 ## Ownership and flow
@@ -20,7 +21,8 @@ The layers remain narrow:
 - `apps/desktop/src-tauri/src/commands.rs` owns Tauri extraction, task-root
   resolution, and the command/channel boundary.
 - `packages/app-shell/src/features/files` owns the file tree, viewer, search UI,
-  cache invalidation, and line-selection handoff to the composer. The same
+  cache invalidation, and gutter `+` line quotes into the composer (with eager
+  snippet text). The same
   Files panel hosts the Specs sub-view; see [Specification management](spec-management.md).
   Chat inline artifact links open this panel through `openWorkspaceFile` and a
   `WorkspaceFileRequest` (`path` + `requestId` + optional line/column) so a

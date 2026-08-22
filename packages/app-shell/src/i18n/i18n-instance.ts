@@ -1118,15 +1118,14 @@ export const translationResources = {
     "files.resultsTruncated": "结果过多，仅显示前 500 条。",
     "files.largeFilePlainText": "文件较大，已关闭语法高亮以保持流畅。",
     "files.resizePanel": "调整文件资源管理器宽度",
-    "files.addLineSelectionToChat":
-      "加入 AI 对话（第 {{startLine}}-{{endLine}} 行）",
-    "files.lineSelectionAdded":
-      "已将第 {{startLine}}-{{endLine}} 行加入 AI 对话",
-    "files.lineSelectionNeedsChat": "请先打开一个对话，再把选区加入提示词",
     "files.selectLine": "选择第 {{line}} 行",
+    "files.quoteLineToChat": "引用第 {{line}} 行到 AI 对话",
+    "files.lineSelectionNeedsChat": "请先打开一个对话，再把选区加入提示词",
     "diff.fileTree": "变更文件目录",
     "diff.toggleFileTree": "显示或隐藏变更文件目录",
     "diff.expandPanel": "宽屏展开变更面板",
+    "diff.quoteLineToChat": "引用第 {{line}} 行到 AI 对话",
+    "diff.selectLine": "选择第 {{line}} 行",
     "diff.restorePanel": "还原变更面板",
     "diff.expandedPanel": "宽屏变更面板",
     "diff.closeExpandedPanel": "收起宽屏变更面板",
@@ -2667,16 +2666,15 @@ export const translationResources = {
     "files.largeFilePlainText":
       "Large file: syntax highlighting is disabled for smoother viewing.",
     "files.resizePanel": "Resize file explorer",
-    "files.addLineSelectionToChat":
-      "Add lines {{startLine}}-{{endLine}} to AI chat",
-    "files.lineSelectionAdded":
-      "Added lines {{startLine}}-{{endLine}} to AI chat",
+    "files.selectLine": "Select line {{line}}",
+    "files.quoteLineToChat": "Quote line {{line}} to AI chat",
     "files.lineSelectionNeedsChat":
       "Open a chat first, then add the selection to the prompt",
-    "files.selectLine": "Select line {{line}}",
     "diff.fileTree": "Changed file tree",
     "diff.toggleFileTree": "Show or hide changed file tree",
     "diff.expandPanel": "Expand changes panel",
+    "diff.quoteLineToChat": "Quote line {{line}} to AI chat",
+    "diff.selectLine": "Select line {{line}}",
     "diff.restorePanel": "Restore changes panel",
     "diff.expandedPanel": "Expanded changes panel",
     "diff.closeExpandedPanel": "Close expanded changes panel",
