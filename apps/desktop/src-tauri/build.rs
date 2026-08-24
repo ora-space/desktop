@@ -1,3 +1,5 @@
+use std::{fs, path::Path};
+
 macro_rules! desktop_command_registry {
     ($($module:ident::$command:ident),* $(,)?) => {
         &[$(stringify!($command)),*]
@@ -6,7 +8,34 @@ macro_rules! desktop_command_registry {
 
 const DESKTOP_COMMANDS: &[&str] = include!("src/app_commands.rs");
 
+/// Ensures every registered desktop command can be invoked by the trusted main Webview.
+fn validate_main_command_permissions() {
+    let permission_path = Path::new("permissions").join("main-commands.toml");
+    let permission_source = fs::read_to_string(&permission_path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read desktop command permissions from {}: {error}",
+            permission_path.display()
+        )
+    });
+    let missing_commands = DESKTOP_COMMANDS
+        .iter()
+        .filter(|command| !permission_source.contains(&format!("\"{command}\"")))
+        .copied()
+        .collect::<Vec<_>>();
+
+    // Tauri registers commands independently from its capability allowlist, so a missing
+    // permission otherwise survives compilation and only fails when a user opens the feature.
+    assert!(
+        missing_commands.is_empty(),
+        "registered desktop commands missing from {}: {}",
+        permission_path.display(),
+        missing_commands.join(", ")
+    );
+}
+
 fn main() {
+    validate_main_command_permissions();
+
     // Drop Tauri's resource-embedded app manifest and attach Common-Controls v6 via
     // the linker instead. Resource manifests only land on bins; cargo's lib-test
     // harness is not a bin, so it otherwise binds legacy comctl32 and dies at load

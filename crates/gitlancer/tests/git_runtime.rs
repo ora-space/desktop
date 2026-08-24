@@ -17,6 +17,7 @@ use gitlancer::git::worktree::{
 };
 use gitlancer::{BranchName, CliGitRunner, CommitId, Git, RepoRoot, WorktreeKind, WorktreeRoot};
 use ora_test_support::GitTestScaffold as TestScaffold;
+use ora_utils::path::canonicalize_longest_existing_prefix;
 use pretty_assertions::assert_eq;
 
 /// Creates an initial commit so linked worktrees can be created from a valid repository history.
@@ -37,6 +38,11 @@ fn runtime_repository(scaffold: &TestScaffold) -> (Git<CliGitRunner>, gitlancer:
         .expect("discover repository");
 
     (git, repository)
+}
+
+/// Compares filesystem identity so Windows short names and Git's long paths remain equivalent.
+fn same_path(left: &Path, right: &Path) -> bool {
+    canonicalize_longest_existing_prefix(left) == canonicalize_longest_existing_prefix(right)
 }
 
 /// Verifies fixed-baseline diffs combine committed, staged, unstaged, and untracked changes.
@@ -212,14 +218,15 @@ fn runtime_discovers_worktrees_and_branches() {
         matches!(resolved.kind(), WorktreeKind::Linked { name } if name == "feature-tree"),
         "the resolved worktree should match the linked worktree name"
     );
-    assert_eq!(
-        resolved_by_branch.worktree_root().as_path(),
-        linked_path.as_path(),
+    assert!(
+        same_path(
+            resolved_by_branch.worktree_root().as_path(),
+            linked_path.as_path(),
+        ),
         "branch metadata should resolve the authoritative linked worktree path"
     );
-    assert_eq!(
-        found.worktree_root().as_path(),
-        linked_path.as_path(),
+    assert!(
+        same_path(found.worktree_root().as_path(), linked_path.as_path()),
         "nested paths should resolve back to the owning linked worktree"
     );
     assert!(
@@ -495,15 +502,15 @@ fn runtime_creates_and_deletes_linked_worktrees() {
         worktrees_after_create
             .worktrees
             .iter()
-            .any(|worktree| worktree.worktree_root().as_path() == worktree_path.as_path()),
+            .any(|worktree| same_path(worktree.worktree_root().as_path(), &worktree_path)),
         "created worktrees should be visible through list_worktrees"
     );
-    assert_eq!(deleted.worktree_root, WorktreeRoot::new(&worktree_path));
+    assert!(same_path(deleted.worktree_root.as_path(), &worktree_path));
     assert!(
         !worktrees_after_delete
             .worktrees
             .iter()
-            .any(|worktree| worktree.worktree_root().as_path() == worktree_path.as_path()),
+            .any(|worktree| same_path(worktree.worktree_root().as_path(), &worktree_path)),
         "deleted worktrees should no longer be visible through list_worktrees"
     );
 }
@@ -580,7 +587,7 @@ fn runtime_rejects_cross_repository_worktree_deletion() {
             gitlancer::GitlancerError::Domain(gitlancer::DomainError::WorktreeMismatch {
                 worktree,
                 repo,
-            }) if worktree == linked_path && repo == right_repository.root().as_path()
+            }) if same_path(&worktree, &linked_path) && same_path(&repo, right_repository.root().as_path())
         ),
         "cross-repository deletions should fail with WorktreeMismatch"
     );
