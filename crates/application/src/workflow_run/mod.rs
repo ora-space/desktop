@@ -8,12 +8,15 @@ mod ports;
 mod tests;
 
 pub use engine::{
-    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentSkill, CancelWorkflowRunResult,
-    EngineError, ExecutionContext, FileChange, GraphError, NodeExecutor, NodeRunToStart, NodeType,
-    OutputPolicy, RestartWorkflowRunResult, StartPrerequisitesError, StartWorkflowRunResult,
-    UnknownNodeType, UpdateWorkflowRunInputResult, WorkflowGraph, WorkflowGraphNode,
-    WorkflowNodeRunIdGenerator, WorkflowRunCallback, WorkflowRunControlHandler, WorkflowRunEngine,
-    WorkflowRunEngineRepository, WorkflowRunWorktreeInitializer, WorkflowValidationError,
+    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentSkill, AgentSkillDelivery,
+    AgentSkillDeliveryError, AgentSkillDeliveryProvider, BindWorkflowNodeSessionResult,
+    CancelWorkflowRunResult, EngineError, ExecutionContext, FileChange, GraphError,
+    MaterializedSkillBinding, NodeExecutor, NodeRunToStart, NodeType, OutputPolicy,
+    RestartWorkflowRunResult, SkillDiscoveryRoots, SkillMaterializationReceipt,
+    StartPrerequisitesError, StartWorkflowRunResult, UnknownNodeType, UpdateWorkflowRunInputResult,
+    WorkflowGraph, WorkflowGraphNode, WorkflowNodeRunIdGenerator, WorkflowRunCallback,
+    WorkflowRunControlHandler, WorkflowRunEngine, WorkflowRunEngineRepository, WorkflowRunPayload,
+    WorkflowRunWorktreeInitializer, WorkflowValidationError,
 };
 pub use handlers::{
     CreateWorkflowRunHandler, DeleteWorkflowRunHandler, GetWorkflowRunHandler,

@@ -1,5 +1,4 @@
-use super::prerequisites::resolve_executable_skill_name;
-use super::prompt::{WorkflowPromptRequest, assemble_workflow_prompt};
+use super::prompt::{RequiredWorkflowSkill, WorkflowPromptRequest, assemble_workflow_prompt};
 use crate::agent_runtime::{AgentRuntimeManager, WarmOwner};
 use crate::clock::SystemClock;
 use crate::error::BackendError;
@@ -13,24 +12,19 @@ use agent_client_protocol_schema::v1::{
     SessionConfigSelectOptions,
 };
 use ora_application::{
-    AgentDefinitionRepository, AgentSkill, Clock, ExecutionContext, FileChange,
-    FilesystemSkillStorage, NodeExecutor, RepositoryError, WorkflowGraphNode, WorkflowRunCallback,
-    WorkflowRunEngineRepository,
+    AgentDefinitionRepository, AgentSkill, BindWorkflowNodeSessionResult, Clock, ExecutionContext,
+    FileChange, NodeExecutor, RepositoryError, WorkflowGraphNode, WorkflowRunCallback,
+    WorkflowRunEngineRepository, WorkflowRunPayload,
 };
 use ora_contracts::{
     AgentRef as ContractAgentRef, AttachSessionRequest, PromptSessionEvent, PromptSessionRequest,
     SetSessionConfigRequest, StopSessionRequest, WarmSessionRequest, WarmSessionTarget,
-    WorkflowRunLocale,
 };
-use ora_db::{
-    RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository,
-    SqliteWorkflowRunEngineRepository,
-};
+use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository};
 use ora_domain::{
     AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId,
 };
 use ora_logging::ora_warn;
-use serde::Deserialize;
 use similar::{ChangeTag, TextDiff};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -46,8 +40,6 @@ use thiserror::Error;
 pub struct WorkflowRunNodeExecutor {
     agent_runtime: Arc<AgentRuntimeManager>,
     pool: RepositoryPool,
-    /// Skill catalog root used to resolve an enabled skill's executable `/name` for the prompt.
-    skills_root: PathBuf,
     agent_repository: SqliteAgentDefinitionRepository,
     callback: Arc<dyn WorkflowRunCallback>,
     clock: SystemClock,
@@ -56,12 +48,10 @@ pub struct WorkflowRunNodeExecutor {
 }
 
 impl WorkflowRunNodeExecutor {
-    /// Builds an executor from the session runtime, persistence, skill catalog, role catalog, and
-    /// engine callback.
+    /// Builds an executor from the session runtime, persistence, role catalog, and engine callback.
     pub fn new(
         agent_runtime: Arc<AgentRuntimeManager>,
         pool: RepositoryPool,
-        skills_root: PathBuf,
         agent_repository: SqliteAgentDefinitionRepository,
         callback: Arc<dyn WorkflowRunCallback>,
         clock: SystemClock,
@@ -70,7 +60,6 @@ impl WorkflowRunNodeExecutor {
         Self {
             agent_runtime,
             pool,
-            skills_root,
             agent_repository,
             callback,
             clock,
@@ -88,7 +77,6 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
     ) {
         let agent_runtime = self.agent_runtime.clone();
         let pool = self.pool.clone();
-        let skills_root = self.skills_root.clone();
         let agent_repository = self.agent_repository.clone();
         let callback = self.callback.clone();
         let clock = self.clock;
@@ -100,7 +88,6 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
             match drive_agent_node(
                 &agent_runtime,
                 &pool,
-                &skills_root,
                 &agent_repository,
                 &clock,
                 &baselines_root,
@@ -161,10 +148,14 @@ pub enum NodeExecutionError {
     WorkflowModelNotFound { agent_ref: String, model_id: String },
     #[error("agent node {node_id} has no agent configuration")]
     MissingAgentConfig { node_id: String },
-    #[error("enabled skill {skill_id} could not be resolved to an executable name")]
-    SkillResolution { skill_id: String },
+    #[error("workflow run has invalid frozen execution metadata")]
+    InvalidRunPayload,
+    #[error("node {node_id} is missing the frozen materialization receipt for skill {skill_id}")]
+    MissingSkillMaterialization { node_id: String, skill_id: String },
     #[error("prompt session ended without a stop reason")]
     SessionEndedWithoutStopReason,
+    #[error("workflow node stopped before its session became visible")]
+    SessionBindingRejected,
     #[error("failed to persist worktree baseline for node {node_id}: {source}")]
     BaselinePersist {
         node_id: String,
@@ -331,7 +322,6 @@ fn persist_worktree_baseline(
 async fn drive_agent_node(
     agent_runtime: &AgentRuntimeManager,
     pool: &RepositoryPool,
-    skills_root: &Path,
     agent_repository: &SqliteAgentDefinitionRepository,
     clock: &SystemClock,
     baselines_root: &Path,
@@ -346,6 +336,7 @@ async fn drive_agent_node(
                 node_id: node.id.clone(),
             })?;
     let agent_ref = resolve_agent_ref(&config.executor.agent_cli)?;
+    let run_payload = parse_workflow_run_payload(context.run.payload.as_deref())?;
 
     // Warm a reusable provider session for this run's task.
     let warm = agent_runtime
@@ -363,150 +354,180 @@ async fn drive_agent_node(
         )
         .await?;
 
-    // Attach the warm session to the run task and bind it to the node run immediately, so the
-    // workflow cancel path can always find and stop it while the first prompt is being prepared.
+    // Attach the warm session without publishing it to the node yet. The owning prompt must win
+    // admission before workflow UI loads can discover the session; failures in the preparation
+    // block below stop this attached session so cancellation cannot leave an unbound actor behind.
     let attach = agent_runtime
         .attach_session(AttachSessionRequest {
             session_id: warm.session_id.clone(),
             task_id: context.task.id.to_string(),
         })
         .await?;
-    let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
-    let now = clock.now_timestamp_millis();
-    repository.set_node_run_session_id(node_run_id, &SessionId::new(attach.session.id), now)?;
+    let session_id = SessionId::new(attach.session.id);
 
-    // Select the graph-declared model from the warm-advertised options; no silent fallback.
-    let (config_id, model_value) = match_model_value(
-        &warm.config_options,
-        &config.executor.agent_cli,
-        &config.executor.model_id,
-    )?;
-    agent_runtime
-        .set_session_config(SetSessionConfigRequest {
-            session_id: warm.session_id.clone(),
-            config_id,
-            value: model_value,
-        })
-        .await?;
+    let outcome: Result<AgentNodeOutcome, NodeExecutionError> = async {
+        let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
 
-    // Resolve the role's system instructions from the agents catalog; an empty role means no
-    // system-instructions block is sent. Name is preferred; the id is a legacy fallback.
-    let role_content = match &config.role_id {
-        Some(role_id) if !role_id.trim().is_empty() => {
-            let by_name =
-                agent_repository.find_agent_definition_by_name(&Namespace::local(), role_id)?;
-            let definition = if by_name.is_some() {
-                by_name
-            } else {
-                agent_repository.find_agent_definition(&AgentDefinitionId::new(role_id))?
-            };
-            definition.map(|definition| definition.content)
-        }
-        _ => None,
-    };
-
-    // Assemble one explicit workflow handoff while preserving leading slash-command parsing.
-    let node_runs = repository.list_node_runs(&context.run.id)?;
-    let skill_names = resolve_skill_names(pool, skills_root, &config.skills)?;
-    let prompt = assemble_workflow_prompt(WorkflowPromptRequest {
-        node,
-        role_content: role_content.as_deref(),
-        graph_json: &context.graph_json,
-        run_input: context.run.input.as_deref(),
-        node_runs: &node_runs,
-        skill_names: &skill_names,
-        locale: workflow_prompt_locale(context.run.payload.as_deref()),
-    });
-
-    let worktree_root = agent_runtime.task_cwd(&context.task.id)?;
-
-    // Snapshot the worktree before this node runs so its completion diff is the node's own
-    // incremental change (previous nodes' changes are already in the baseline).
-    let baseline = capture_worktree_snapshot(&worktree_root);
-
-    let mut stream = agent_runtime
-        .prompt_session(PromptSessionRequest {
-            session_id: warm.session_id.clone(),
-            prompt,
-        })
-        .await?;
-
-    // Consume the owning prompt stream while `load_session` followers receive the same live turn.
-    let mut accumulator = AssistantOutputAccumulator::default();
-    let mut stop_reason = None;
-    while let Some(event) = stream.recv().await {
-        match event? {
-            PromptSessionEvent::SessionUpdate { update } => {
-                accumulator.consume(&update);
-            }
-            PromptSessionEvent::PermissionRequest(_) => {}
-            PromptSessionEvent::Completed {
-                stop_reason: reason,
-            } => {
-                stop_reason = Some(reason);
-                break;
-            }
-        }
-    }
-    let stop_reason = stop_reason.ok_or(NodeExecutionError::SessionEndedWithoutStopReason)?;
-
-    // An interactive node's first turn parks the node instead of completing it: the session stays
-    // open for follow-up turns and the baseline is persisted for completion-time diffing. A
-    // baseline is execution provenance, not a prerequisite, so a missing (oversized/unavailable)
-    // baseline or a failed write still parks the node; its completion later reports no file
-    // changes rather than failing the run.
-    if pauses_interactive_node(config.interactive, stop_reason) {
-        if let Some(baseline) = baseline.as_ref()
-            && let Err(error) = persist_worktree_baseline(baselines_root, node_run_id, baseline)
-        {
-            ora_warn!(node_run_id = %node_run_id, error = %error, "failed to persist worktree baseline; the node still parks and its completion reports no file changes");
-        }
-        let now = clock.now_timestamp_millis();
-        repository.transition_node_run_status(
-            node_run_id,
-            WorkflowNodeStatus::Running,
-            WorkflowNodeStatus::Pending,
-            now,
+        // Select the graph-declared model from the warm-advertised options; no silent fallback.
+        let (config_id, model_value) = match_model_value(
+            &warm.config_options,
+            &config.executor.agent_cli,
+            &config.executor.model_id,
         )?;
-        return Ok(AgentNodeOutcome::AwaitingInput);
-    }
+        agent_runtime
+            .set_session_config(SetSessionConfigRequest {
+                session_id: warm.session_id.clone(),
+                config_id,
+                value: model_value,
+            })
+            .await?;
 
-    // Stop the node's session; the Ora record stays queryable.
-    agent_runtime
-        .stop_session(StopSessionRequest {
-            session_id: warm.session_id.clone(),
+        // Resolve the role's system instructions from the agents catalog; an empty role means no
+        // system-instructions block is sent. Name is preferred; the id is a legacy fallback.
+        let role_content = match &config.role_id {
+            Some(role_id) if !role_id.trim().is_empty() => {
+                let by_name = agent_repository
+                    .find_agent_definition_by_name(&Namespace::local(), role_id)?;
+                let definition = if by_name.is_some() {
+                    by_name
+                } else {
+                    agent_repository.find_agent_definition(&AgentDefinitionId::new(role_id))?
+                };
+                definition.map(|definition| definition.content)
+            }
+            _ => None,
+        };
+
+        // Assemble one explicit workflow handoff while preserving leading slash-command parsing.
+        let node_runs = repository.list_node_runs(&context.run.id)?;
+        let worktree_root = agent_runtime.task_cwd(&context.task.id)?;
+        let required_skills = resolve_required_skills(
+            &run_payload,
+            &node.id,
+            &config.skills,
+            &worktree_root,
+        )?;
+        let prompt = assemble_workflow_prompt(WorkflowPromptRequest {
+            node,
+            worktree_root: &worktree_root,
+            role_content: role_content.as_deref(),
+            graph_json: &context.graph_json,
+            run_input: context.run.input.as_deref(),
+            node_runs: &node_runs,
+            required_skills: &required_skills,
+            locale: run_payload.locale,
+        });
+
+        // Snapshot the worktree before this node runs so its completion diff is the node's own
+        // incremental change (previous nodes' changes are already in the baseline).
+        let baseline = capture_worktree_snapshot(&worktree_root);
+
+        let mut stream = agent_runtime
+            .prompt_session(PromptSessionRequest {
+                session_id: warm.session_id.clone(),
+                prompt,
+            })
+            .await?;
+
+        // Publish the binding only after the actor accepts the owning prompt. A workflow chat
+        // load can now only arrive while that prompt is active, where it joins as a follower
+        // instead of unloading the new provider session and racing the prompt with session_busy.
+        let now = clock.now_timestamp_millis();
+        match repository.bind_node_run_session(node_run_id, &session_id, now)? {
+            BindWorkflowNodeSessionResult::Bound => {}
+            BindWorkflowNodeSessionResult::NotRunning
+            | BindWorkflowNodeSessionResult::NotFound => {
+                return Err(NodeExecutionError::SessionBindingRejected);
+            }
+        }
+
+        // Consume the owning prompt stream while `load_session` followers receive the same live
+        // turn.
+        let mut accumulator = AssistantOutputAccumulator::default();
+        let mut stop_reason = None;
+        while let Some(event) = stream.recv().await {
+            match event? {
+                PromptSessionEvent::SessionUpdate { update } => {
+                    accumulator.consume(&update);
+                }
+                PromptSessionEvent::PermissionRequest(_) => {}
+                PromptSessionEvent::Completed {
+                    stop_reason: reason,
+                } => {
+                    stop_reason = Some(reason);
+                    break;
+                }
+            }
+        }
+        let stop_reason = stop_reason.ok_or(NodeExecutionError::SessionEndedWithoutStopReason)?;
+
+        // An interactive node's first turn parks the node instead of completing it: the session
+        // stays open for follow-up turns and the baseline is persisted for completion-time diffing.
+        // A baseline is execution provenance, not a prerequisite, so a missing
+        // (oversized/unavailable) baseline or a failed write still parks the node; its completion
+        // later reports no file changes rather than failing the run.
+        if pauses_interactive_node(config.interactive, stop_reason) {
+            if let Some(baseline) = baseline.as_ref()
+                && let Err(error) = persist_worktree_baseline(baselines_root, node_run_id, baseline)
+            {
+                ora_warn!(node_run_id = %node_run_id, error = %error, "failed to persist worktree baseline; the node still parks and its completion reports no file changes");
+            }
+            let now = clock.now_timestamp_millis();
+            repository.transition_node_run_status(
+                node_run_id,
+                WorkflowNodeStatus::Running,
+                WorkflowNodeStatus::Pending,
+                now,
+            )?;
+            return Ok(AgentNodeOutcome::AwaitingInput);
+        }
+
+        // Stop the node's session; the Ora record stays queryable.
+        agent_runtime
+            .stop_session(StopSessionRequest {
+                session_id: session_id.to_string(),
+            })
+            .await?;
+
+        // Record the worktree delta since this node started: the baseline was captured before the
+        // prompt, so only this node's own changes are reported, not earlier nodes' work.
+        let file_changes = compute_file_changes(
+            baseline.as_ref(),
+            capture_worktree_snapshot(&worktree_root).as_ref(),
+        );
+
+        Ok(AgentNodeOutcome::Completed {
+            // Apply the node's output policy at the single place the completed output is produced,
+            // so both `complete_node` and the refusal/unknown failure branches reuse the same
+            // value: a `None` policy withholds the assistant deliverable on success and failure.
+            output: config.output_policy.apply(accumulator.into_output()),
+            stop_reason,
+            file_changes,
         })
-        .await?;
+    }
+    .await;
 
-    // Record the worktree delta since this node started: the baseline was captured before the
-    // prompt, so only this node's own changes are reported, not earlier nodes' work.
-    let file_changes = compute_file_changes(
-        baseline.as_ref(),
-        capture_worktree_snapshot(&worktree_root).as_ref(),
-    );
-
-    Ok(AgentNodeOutcome::Completed {
-        // Apply the node's output policy at the single place the completed output is produced, so
-        // both `complete_node` and the refusal/unknown failure branches reuse the same value: a
-        // `None` policy withholds the assistant deliverable on success and failure alike.
-        output: config.output_policy.apply(accumulator.into_output()),
-        stop_reason,
-        file_changes,
-    })
+    if outcome.is_err()
+        && let Err(error) = agent_runtime
+            .stop_session(StopSessionRequest {
+                session_id: session_id.to_string(),
+            })
+            .await
+    {
+        // The original node error remains the actionable failure. Cleanup is best-effort, but the
+        // warning keeps a leaked Running session diagnosable instead of silently masking it.
+        ora_warn!(session_id = %session_id, error = %error, "failed to stop workflow session after node setup failed");
+    }
+    outcome
 }
 
-/// Reads the locale frozen when the workflow run was created.
-fn workflow_prompt_locale(payload: Option<&str>) -> WorkflowRunLocale {
-    #[derive(Deserialize)]
-    struct WorkflowRunPayload {
-        locale: WorkflowRunLocale,
-    }
-
+/// Parses the immutable locale and skill placement receipt captured when the run was created.
+fn parse_workflow_run_payload(
+    payload: Option<&str>,
+) -> Result<WorkflowRunPayload, NodeExecutionError> {
     payload
-        .and_then(|payload| serde_json::from_str::<WorkflowRunPayload>(payload).ok())
-        .map(|payload| payload.locale)
-        // Chinese is Ora's default locale and remains the safe fallback for damaged old data.
-        .unwrap_or(WorkflowRunLocale::ZhCn)
+        .and_then(|payload| serde_json::from_str(payload).ok())
+        .ok_or(NodeExecutionError::InvalidRunPayload)
 }
 
 /// Reports one finished turn to the engine according to the confirmed stop-reason mapping.
@@ -638,25 +659,33 @@ fn match_model_value(
     }
 }
 
-/// Resolves each enabled skill to the executable `/name` its agent CLI uses, so the prompt can
-/// invoke it explicitly instead of relying on the agent to discover the materialized package.
-fn resolve_skill_names(
-    pool: &RepositoryPool,
-    skills_root: &Path,
+/// Resolves the current node's enabled skills exclusively from the receipt frozen at deployment.
+fn resolve_required_skills(
+    payload: &WorkflowRunPayload,
+    node_id: &str,
     skills: &[AgentSkill],
-) -> Result<Vec<String>, NodeExecutionError> {
-    let storage = FilesystemSkillStorage::new(skills_root.to_path_buf());
-    let skill_repository = SqliteSkillRepository::new(pool.clone());
-    let mut names = Vec::new();
+    worktree_root: &Path,
+) -> Result<Vec<RequiredWorkflowSkill>, NodeExecutionError> {
+    let bindings = payload.skill_materialization.bindings_for_node(node_id);
+    let mut required = Vec::new();
+    let mut seen_skill_ids = HashSet::new();
     for skill in skills.iter().filter(|skill| skill.enabled) {
-        let name =
-            resolve_executable_skill_name(&storage, Some(&skill_repository), &skill.skill_id)
-                .map_err(|_| NodeExecutionError::SkillResolution {
-                    skill_id: skill.skill_id.clone(),
-                })?;
-        names.push(name);
+        if !seen_skill_ids.insert(skill.skill_id.clone()) {
+            continue;
+        }
+        let binding = bindings
+            .iter()
+            .find(|binding| binding.skill_id == skill.skill_id)
+            .ok_or_else(|| NodeExecutionError::MissingSkillMaterialization {
+                node_id: node_id.to_string(),
+                skill_id: skill.skill_id.clone(),
+            })?;
+        required.push(RequiredWorkflowSkill {
+            invocation_name: binding.invocation_name.clone(),
+            package_paths: binding.absolute_package_paths(worktree_root),
+        });
     }
-    Ok(names)
+    Ok(required)
 }
 
 /// Accumulates only the final assistant deliverable produced by the node's prompt turn.
@@ -754,6 +783,8 @@ mod tests {
         ContentChunk, MessageId, SessionConfigId, SessionConfigSelect, SessionConfigValueId,
         TextContent, ToolCall, ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
     };
+    use ora_contracts::WorkflowRunLocale;
+    use ora_utils::path::StrictRelativePath;
     use pretty_assertions::assert_eq;
 
     fn select_option(value: &str, name: &str) -> SessionConfigSelectOption {
@@ -1048,12 +1079,54 @@ mod tests {
         assert_eq!(accumulator.into_output(), Some("hello world".to_string()));
     }
 
+    /// The executor accepts only the typed locale and receipt persisted by run deployment.
     #[test]
-    fn workflow_prompt_locale_reads_the_locale_frozen_on_the_run() {
+    fn workflow_run_payload_reads_the_execution_metadata_frozen_on_the_run() {
+        let expected = WorkflowRunPayload::new(WorkflowRunLocale::EnUs, Default::default());
+        let payload = serde_json::to_string(&expected).unwrap();
         assert_eq!(
-            workflow_prompt_locale(Some(r#"{"locale":"en-US"}"#)),
-            WorkflowRunLocale::EnUs
+            parse_workflow_run_payload(Some(&payload)).unwrap(),
+            expected
         );
-        assert_eq!(workflow_prompt_locale(None), WorkflowRunLocale::ZhCn);
+        assert!(matches!(
+            parse_workflow_run_payload(None),
+            Err(NodeExecutionError::InvalidRunPayload)
+        ));
+    }
+
+    /// Node execution uses the frozen receipt for invocation and placement, never the live catalog.
+    #[test]
+    fn required_skills_resolve_only_from_the_frozen_materialization_receipt() {
+        let payload = WorkflowRunPayload::new(
+            WorkflowRunLocale::ZhCn,
+            ora_application::SkillMaterializationReceipt {
+                bindings: vec![ora_application::MaterializedSkillBinding {
+                    node_id: "review-node".to_string(),
+                    skill_id: "catalog-id".to_string(),
+                    invocation_name: "review".to_string(),
+                    package_paths: vec![
+                        StrictRelativePath::parse(".plugin/skills/review").unwrap(),
+                    ],
+                }],
+            },
+        );
+        let skills = vec![AgentSkill {
+            skill_id: "catalog-id".to_string(),
+            enabled: true,
+        }];
+        let worktree_root = Path::new("worktrees").join("run-1");
+
+        assert_eq!(
+            resolve_required_skills(&payload, "review-node", &skills, &worktree_root).unwrap(),
+            vec![RequiredWorkflowSkill {
+                invocation_name: "review".to_string(),
+                package_paths: vec![worktree_root.join(".plugin").join("skills").join("review")],
+            }]
+        );
+        assert!(matches!(
+            resolve_required_skills(&payload, "other-node", &skills, &worktree_root),
+            Err(NodeExecutionError::MissingSkillMaterialization { node_id, skill_id })
+                if node_id == "other-node" && skill_id == "catalog-id"
+        ));
     }
 }

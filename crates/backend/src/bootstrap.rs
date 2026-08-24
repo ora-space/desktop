@@ -168,7 +168,6 @@ impl Backend {
         let workflow_run_assembly = build_workflow_run_engine(
             agent_runtime.clone(),
             pool.clone(),
-            paths.skills_root.clone(),
             baselines_root.clone(),
             clock,
         );

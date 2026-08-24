@@ -7,14 +7,14 @@ use std::{
 
 use ora_application::{
     ActivateVersionResult, AdvanceWorkflowRunResult, AgentDefinitionRepository,
-    CancelWorkflowRunResult, Clock, DeleteSnapshotResult, DeleteWorkflowResult,
-    DeleteWorkflowRunResult, EngineError, ExecutionContext, NodeExecutor, NodeRunToStart, NodeType,
-    ProjectRepository, PublishSnapshotResult, RepositoryError, RestartWorkflowRunResult,
-    RollbackDraftResult, SessionRepository, SkillRepository, StartWorkflowRunResult,
-    TaskRepository, UpdateWorkflowRunInputResult, WorkflowGraphNode, WorkflowNodeRunIdGenerator,
-    WorkflowRepository, WorkflowRunControlHandler, WorkflowRunCreateOutcome, WorkflowRunEngine,
-    WorkflowRunEngineRepository, WorkflowRunRepository, WorkflowValidationError,
-    WorktreeRepository,
+    BindWorkflowNodeSessionResult, CancelWorkflowRunResult, Clock, DeleteSnapshotResult,
+    DeleteWorkflowResult, DeleteWorkflowRunResult, EngineError, ExecutionContext, NodeExecutor,
+    NodeRunToStart, NodeType, ProjectRepository, PublishSnapshotResult, RepositoryError,
+    RestartWorkflowRunResult, RollbackDraftResult, SessionRepository, SkillRepository,
+    StartWorkflowRunResult, TaskRepository, UpdateWorkflowRunInputResult, WorkflowGraphNode,
+    WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunControlHandler,
+    WorkflowRunCreateOutcome, WorkflowRunEngine, WorkflowRunEngineRepository,
+    WorkflowRunRepository, WorkflowValidationError, WorktreeRepository,
 };
 use ora_contracts::{StartWorkflowRunRequest, WorkflowRunStatus as ContractRunStatus};
 use ora_domain::{
@@ -1235,13 +1235,16 @@ fn engine_repository_binds_a_node_run_to_its_session() {
         .start_run(&run_id, &start_node_run(None), 40)
         .unwrap();
 
-    repository
-        .set_node_run_session_id(
-            &WorkflowNodeRunId::new("node-start"),
-            &SessionId::new("session-1"),
-            41,
-        )
-        .unwrap();
+    assert_eq!(
+        repository
+            .bind_node_run_session(
+                &WorkflowNodeRunId::new("node-start"),
+                &SessionId::new("session-1"),
+                41,
+            )
+            .unwrap(),
+        BindWorkflowNodeSessionResult::Bound
+    );
     let node_runs = SqliteWorkflowRunRepository::new(pool)
         .list_node_runs(&run_id)
         .unwrap();
@@ -1249,6 +1252,36 @@ fn engine_repository_binds_a_node_run_to_its_session() {
         node_runs[0].session_id.as_ref().map(ToString::to_string),
         Some("session-1".to_string())
     );
+}
+
+/// Verifies cancellation can win before prompt admission without publishing an orphan session.
+#[test]
+fn engine_repository_rejects_session_binding_after_run_cancellation() {
+    let (_temp_dir, pool) = bootstrapped_repository_pool();
+    let (run_id, _, _) = create_pending_run_fixture(&pool);
+    let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    repository
+        .start_run(&run_id, &start_node_run(None), 40)
+        .unwrap();
+    assert_eq!(
+        repository.cancel_run(&run_id, 41).unwrap(),
+        CancelWorkflowRunResult::Cancelled
+    );
+
+    assert_eq!(
+        repository
+            .bind_node_run_session(
+                &WorkflowNodeRunId::new("node-start"),
+                &SessionId::new("session-1"),
+                42,
+            )
+            .unwrap(),
+        BindWorkflowNodeSessionResult::NotRunning
+    );
+    let node_runs = SqliteWorkflowRunRepository::new(pool)
+        .list_node_runs(&run_id)
+        .unwrap();
+    assert_eq!(node_runs[0].session_id, None);
 }
 
 /// Verifies a node that is `Pending` (an awaiting interactive node) completes the same way a
@@ -1304,7 +1337,7 @@ fn engine_repository_finds_node_run_by_session_id() {
         .start_run(&run_id, &start_node_run(None), 40)
         .unwrap();
     repository
-        .set_node_run_session_id(
+        .bind_node_run_session(
             &WorkflowNodeRunId::new("node-start"),
             &SessionId::new("session-1"),
             41,

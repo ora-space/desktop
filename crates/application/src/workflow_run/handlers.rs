@@ -2,7 +2,6 @@ use crate::task::branch::branch_name_for_task;
 use crate::task::{
     PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, WorktreeProvisioningLeaseStore,
 };
-use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -11,7 +10,7 @@ use crate::task::{CreateTaskWorktreeRequest, TaskIdGenerator, TaskWorktreeProvis
 use crate::workflow::WorkflowRepository;
 use crate::workflow_run::mapper::{map_node_run, map_run, map_run_awaiting, map_run_summary};
 use crate::workflow_run::{
-    DeleteWorkflowRunResult, WorkflowRunCreateOutcome, WorkflowRunIdGenerator,
+    DeleteWorkflowRunResult, WorkflowRunCreateOutcome, WorkflowRunIdGenerator, WorkflowRunPayload,
     WorkflowRunRepository, WorkflowRunWorktreeInitializer,
 };
 use crate::worktree::WorktreeIdGenerator;
@@ -235,14 +234,30 @@ where
         let kickoff_input = request
             .kickoff_input
             .or_else(|| graph.start_node().and_then(|node| node.instruction.clone()));
-        if let Err(error) = self
+        let skill_materialization = match self
             .worktree_initializer
             .initialize_worktree(&graph, &worktree_path)
         {
-            drop(renewal);
-            self.release_lease_to_cleanup(&lease.id);
-            return Err(ApplicationError::from_start_prerequisites_error(error));
-        }
+            Ok(receipt) => receipt,
+            Err(error) => {
+                drop(renewal);
+                self.release_lease_to_cleanup(&lease.id);
+                return Err(ApplicationError::from_start_prerequisites_error(error));
+            }
+        };
+        let run_payload = match serde_json::to_string(&WorkflowRunPayload::new(
+            request.locale,
+            skill_materialization,
+        )) {
+            Ok(payload) => payload,
+            Err(error) => {
+                drop(renewal);
+                self.release_lease_to_cleanup(&lease.id);
+                return Err(ApplicationError::WorkflowRunStartFailed {
+                    message: format!("failed to serialize workflow run payload: {error}"),
+                });
+            }
+        };
 
         let worktree = Worktree::new(
             worktree_id.clone(),
@@ -280,7 +295,7 @@ where
             kickoff_input,
             None,
             None,
-            Some(json!({ "locale": request.locale }).to_string()),
+            Some(run_payload),
             None,
             None,
             AuditFields::new(now, now, /*is_deleted*/ false),

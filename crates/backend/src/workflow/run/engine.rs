@@ -117,7 +117,6 @@ pub(crate) struct WorkflowRunEngineAssembly {
 pub(crate) fn build_workflow_run_engine(
     agent_runtime: Arc<AgentRuntimeManager>,
     pool: RepositoryPool,
-    skills_root: PathBuf,
     baselines_root: PathBuf,
     clock: SystemClock,
 ) -> WorkflowRunEngineAssembly {
@@ -126,7 +125,6 @@ pub(crate) fn build_workflow_run_engine(
     let executor = WorkflowRunNodeExecutor::new(
         agent_runtime,
         pool.clone(),
-        skills_root,
         SqliteAgentDefinitionRepository::new(pool.clone()),
         callback.clone(),
         clock,

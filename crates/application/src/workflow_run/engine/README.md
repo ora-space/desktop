@@ -14,6 +14,11 @@ real Ora session.
   engine uses, implemented in `ora-db`.
 - **Worktree initializer port** (`ports.rs`): the `WorkflowRunWorktreeInitializer` trait that the
   deploy flow calls to validate roles and materialize skills into a run worktree's initial state.
+  It returns the actual per-node skill placements as a receipt rather than exposing a directory
+  convention to later execution layers.
+- **Skill delivery model** (`skill_delivery.rs`): Agent capability, non-empty validated discovery
+  roots, frozen materialization bindings, and the typed workflow-run payload shared by deployment
+  and node execution.
 - **Run engine** (`engine.rs`): `start`/`cancel`/`restart` use cases, reactive DAG scheduling under
   a per-run serial executor, and the `NodeExecutor` port. `ora-backend` implements that port as
   `WorkflowRunNodeExecutor` and wires it in `Backend::open`.
@@ -32,7 +37,9 @@ real Ora session.
 Exported from `workflow_run::engine`: `WorkflowRunEngine`, `WorkflowRunControlHandler`,
 `NodeExecutor`, `WorkflowRunCallback`, `WorkflowRunEngineRepository`, `WorkflowGraph`,
 `WorkflowGraphNode`, `AgentConfig`, `AgentExecutor`, `AgentSkill`, `NodeType`, `GraphError`,
-`UnknownNodeType`.
+`UnknownNodeType`, `AgentSkillDeliveryProvider`, `SkillMaterializationReceipt`,
+`WorkflowRunPayload`, and the repository outcome enums including
+`BindWorkflowNodeSessionResult`.
 
 ## Module interactions
 
@@ -50,8 +57,14 @@ test-only stub.
   is React Flow's `data.kind`, read through a serde rename.
 - Full-graph order and transitive closures use the same topological rank (upstream first), giving
   agent prompt assembly a stable panorama and input lineage.
+- Skill discovery roots are validated worktree-relative paths supplied through an Agent capability
+  provider. Deployment freezes the actual invocation name and package paths per node; execution
+  does not re-resolve those values from the mutable global skill catalog.
 - An agent node's `output` is its final assistant text. Complete conversation history belongs to
   the Ora session and is never duplicated into `workflow_node_runs`.
+- A running agent node keeps `session_id` absent while its owning prompt is being prepared. The
+  backend publishes the binding only after prompt admission, and the repository rejects that
+  publication if cancellation or another terminal transition has already won.
 
 ## Failure semantics
 

@@ -62,8 +62,8 @@ impl FilesystemSkillStorage {
 
     /// Copies the entire formal package of one skill into `destination`, overwriting existing files.
     ///
-    /// Used by the workflow engine to materialize skills into a run worktree's `.claude/skills/`
-    /// directory. `destination` is created when missing.
+    /// Used by workflow deployment to materialize skills into capability-selected Agent discovery
+    /// directories. `destination` is created when missing.
     pub fn copy_package_to(&self, name: &str, destination: &Path) -> Result<(), SkillStorageError> {
         let source = self.formal_path(name);
         if !source.is_dir() {

@@ -374,6 +374,16 @@ impl ApplicationError {
             StartPrerequisitesError::SkillMaterializationError { message } => {
                 Self::WorkflowRunStartFailed { message }
             }
+            StartPrerequisitesError::AgentSkillDeliveryUnsupported { agent_ref } => {
+                Self::WorkflowRunStartFailed {
+                    message: format!("agent {agent_ref} does not support workflow-managed skills"),
+                }
+            }
+            StartPrerequisitesError::AgentSkillDeliveryError { agent_ref, message } => {
+                Self::WorkflowRunStartFailed {
+                    message: format!("failed to resolve skill delivery for {agent_ref}: {message}"),
+                }
+            }
             StartPrerequisitesError::Repository(source) => Self::WorkflowRunRepository { source },
         }
     }

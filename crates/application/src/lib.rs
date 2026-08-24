@@ -69,16 +69,18 @@ pub use workflow::{
     UpdateWorkflowResult, UuidWorkflowIdGenerator, WorkflowIdGenerator, WorkflowRepository,
 };
 pub use workflow_run::{
-    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentSkill, CancelWorkflowRunResult,
-    CreateWorkflowRunHandler, DeleteWorkflowRunHandler, DeleteWorkflowRunResult, EngineError,
-    ExecutionContext, FileChange, GetWorkflowRunHandler, GraphError, ListWorkflowNodeRunsHandler,
-    ListWorkflowRunsByWorkflowHandler, ListWorkflowRunsHandler, NodeExecutor, NodeRunToStart,
-    NodeType, OutputPolicy, RestartWorkflowRunResult, StartPrerequisitesError,
-    StartWorkflowRunResult, UnknownNodeType, UpdateWorkflowRunInputResult,
+    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentSkill, AgentSkillDelivery,
+    AgentSkillDeliveryError, AgentSkillDeliveryProvider, BindWorkflowNodeSessionResult,
+    CancelWorkflowRunResult, CreateWorkflowRunHandler, DeleteWorkflowRunHandler,
+    DeleteWorkflowRunResult, EngineError, ExecutionContext, FileChange, GetWorkflowRunHandler,
+    GraphError, ListWorkflowNodeRunsHandler, ListWorkflowRunsByWorkflowHandler,
+    ListWorkflowRunsHandler, MaterializedSkillBinding, NodeExecutor, NodeRunToStart, NodeType,
+    OutputPolicy, RestartWorkflowRunResult, SkillDiscoveryRoots, SkillMaterializationReceipt,
+    StartPrerequisitesError, StartWorkflowRunResult, UnknownNodeType, UpdateWorkflowRunInputResult,
     UuidWorkflowNodeRunIdGenerator, UuidWorkflowRunIdGenerator, WorkflowGraph, WorkflowGraphNode,
     WorkflowNodeRunIdGenerator, WorkflowRunCallback, WorkflowRunControlHandler,
     WorkflowRunCreateOutcome, WorkflowRunEngine, WorkflowRunEngineRepository,
-    WorkflowRunIdGenerator, WorkflowRunRepository, WorkflowRunWorktreeInitializer,
-    WorkflowValidationError,
+    WorkflowRunIdGenerator, WorkflowRunPayload, WorkflowRunRepository,
+    WorkflowRunWorktreeInitializer, WorkflowValidationError,
 };
 pub use worktree::{UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository};

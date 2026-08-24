@@ -1,7 +1,7 @@
 use ora_application::{
-    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
-    NodeRunToStart, RepositoryError, RestartWorkflowRunResult, StartWorkflowRunResult,
-    UpdateWorkflowRunInputResult, WorkflowRunEngineRepository,
+    AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
+    ExecutionContext, FileChange, NodeRunToStart, RepositoryError, RestartWorkflowRunResult,
+    StartWorkflowRunResult, UpdateWorkflowRunInputResult, WorkflowRunEngineRepository,
 };
 use ora_domain::{
     SessionId, SessionStatus, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
@@ -95,20 +95,42 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .map_err(engine_repository_error_from_database)
     }
 
-    fn set_node_run_session_id(
+    fn bind_node_run_session(
         &self,
         node_run_id: &WorkflowNodeRunId,
         session_id: &SessionId,
         now: i64,
-    ) -> Result<(), RepositoryError> {
+    ) -> Result<BindWorkflowNodeSessionResult, RepositoryError> {
         self.pool
-            .with_connection(|connection| {
-                connection.execute(
+            .with_connection_mut(|connection| {
+                let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
+                let state = transaction
+                    .query_row(
+                        "SELECT nr.status, wr.run_status
+                         FROM workflow_node_runs nr
+                         JOIN workflow_runs wr ON wr.id = nr.run_id
+                         WHERE nr.id = ?1 AND nr.is_deleted = 0 AND wr.is_deleted = 0",
+                        params![node_run_id.as_ref()],
+                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .optional()?;
+                let Some((node_status, run_status)) = state else {
+                    return Ok(BindWorkflowNodeSessionResult::NotFound);
+                };
+                if WorkflowNodeStatus::from_database_value(node_status)?
+                    != WorkflowNodeStatus::Running
+                    || WorkflowRunStatus::from_database_value(run_status)?
+                        != WorkflowRunStatus::Running
+                {
+                    return Ok(BindWorkflowNodeSessionResult::NotRunning);
+                }
+                transaction.execute(
                     "UPDATE workflow_node_runs SET session_id = ?2, updated_at = ?3
                      WHERE id = ?1 AND is_deleted = 0",
                     params![node_run_id.as_ref(), session_id.as_ref(), now],
                 )?;
-                Ok(())
+                transaction.commit()?;
+                Ok(BindWorkflowNodeSessionResult::Bound)
             })
             .map_err(engine_repository_error_from_database)
     }

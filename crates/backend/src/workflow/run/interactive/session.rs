@@ -338,7 +338,7 @@ mod tests {
         let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
         let session_id = SessionId::new("session-1");
         repository
-            .set_node_run_session_id(&node_run.id, &session_id, 50)
+            .bind_node_run_session(&node_run.id, &session_id, 50)
             .unwrap();
         repository
             .transition_node_run_status(
@@ -371,7 +371,7 @@ mod tests {
         let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
         let session_id = SessionId::new("session-1");
         repository
-            .set_node_run_session_id(&agent.id, &session_id, 50)
+            .bind_node_run_session(&agent.id, &session_id, 50)
             .unwrap();
         repository
             .transition_node_run_status(

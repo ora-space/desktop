@@ -1,19 +1,53 @@
 use ora_application::{
-    AgentDefinitionRepository, FilesystemSkillStorage, NodeType, RepositoryError, SkillRepository,
-    StartPrerequisitesError, WorkflowGraph, WorkflowRunWorktreeInitializer, has_usable_package,
+    AgentDefinitionRepository, AgentSkillDelivery, AgentSkillDeliveryProvider,
+    FilesystemSkillStorage, MaterializedSkillBinding, NodeType, RepositoryError,
+    SkillDiscoveryRoots, SkillMaterializationReceipt, SkillRepository, StartPrerequisitesError,
+    WorkflowGraph, WorkflowRunWorktreeInitializer, has_usable_package,
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository};
-use ora_domain::{AgentDefinitionId, Namespace, SkillId};
+use ora_domain::{AgentDefinitionId, AgentRef, Namespace, SkillId};
 use ora_skill_package::{parse_manifest, rewrite_manifest};
+use ora_utils::path::StrictRelativePath;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Upper bound for a SKILL.md manifest read during materialization.
 const MAX_SKILL_MANIFEST_BYTES: u64 = 1024 * 1024;
 
-/// The cross-tool skill root under the worktree: opencode, Claude Code, and .agents all discover
-/// `.agents/skills/<name>/` (the project-shared standard), so materializing there once serves
-/// every agent CLI.
-const SKILL_DISCOVERY_DIRS: [&str; 1] = [".agents"];
+/// Current host capability used until Agent plugins publish their own discovery roots.
+///
+/// Keeping the default behind [`AgentSkillDeliveryProvider`] means workflow materialization and
+/// prompt rendering already consume resolved placements and will not change when plugin-backed
+/// capabilities replace this implementation.
+#[derive(Clone)]
+pub struct SharedAgentSkillDeliveryProvider {
+    discovery_roots: SkillDiscoveryRoots,
+}
+
+impl SharedAgentSkillDeliveryProvider {
+    /// Builds the current shared capability after validating its worktree-relative root.
+    fn new() -> Result<Self, ora_application::AgentSkillDeliveryError> {
+        let root = StrictRelativePath::parse(".agents/skills").map_err(|error| {
+            ora_application::AgentSkillDeliveryError::Invalid {
+                message: format!("invalid built-in shared skill root: {error:?}"),
+            }
+        })?;
+        Ok(Self {
+            discovery_roots: SkillDiscoveryRoots::new(root, Vec::new()),
+        })
+    }
+}
+
+impl AgentSkillDeliveryProvider for SharedAgentSkillDeliveryProvider {
+    fn skill_delivery(
+        &self,
+        _agent_ref: &AgentRef,
+    ) -> Result<AgentSkillDelivery, ora_application::AgentSkillDeliveryError> {
+        Ok(AgentSkillDelivery::Filesystem {
+            discovery_roots: self.discovery_roots.clone(),
+        })
+    }
+}
 
 /// Validates and materializes a run worktree's initial state at deploy time.
 ///
@@ -22,25 +56,52 @@ const SKILL_DISCOVERY_DIRS: [&str; 1] = [".agents"];
 /// `<worktree>/.agents/skills/<normalized>/`, where agent CLIs auto-discover them, so the worktree
 /// is complete from the moment the run is created and `start` needs no re-validation.
 #[derive(Clone)]
-pub struct SkillRoleWorktreeInitializer {
+pub struct SkillRoleWorktreeInitializer<DeliveryProvider = SharedAgentSkillDeliveryProvider> {
     skills_root: PathBuf,
     pool: RepositoryPool,
+    delivery_provider: DeliveryProvider,
 }
 
-impl SkillRoleWorktreeInitializer {
+impl SkillRoleWorktreeInitializer<SharedAgentSkillDeliveryProvider> {
     /// Builds an initializer from the skill catalog root and the shared repository pool.
-    pub fn new(skills_root: PathBuf, pool: RepositoryPool) -> Self {
-        Self { skills_root, pool }
+    pub fn new(
+        skills_root: PathBuf,
+        pool: RepositoryPool,
+    ) -> Result<Self, ora_application::AgentSkillDeliveryError> {
+        Ok(Self::with_delivery_provider(
+            skills_root,
+            pool,
+            SharedAgentSkillDeliveryProvider::new()?,
+        ))
     }
 }
 
-impl WorkflowRunWorktreeInitializer for SkillRoleWorktreeInitializer {
+impl<DeliveryProvider> SkillRoleWorktreeInitializer<DeliveryProvider> {
+    /// Builds an initializer with an injected Agent capability provider.
+    pub fn with_delivery_provider(
+        skills_root: PathBuf,
+        pool: RepositoryPool,
+        delivery_provider: DeliveryProvider,
+    ) -> Self {
+        Self {
+            skills_root,
+            pool,
+            delivery_provider,
+        }
+    }
+}
+
+impl<DeliveryProvider> WorkflowRunWorktreeInitializer
+    for SkillRoleWorktreeInitializer<DeliveryProvider>
+where
+    DeliveryProvider: AgentSkillDeliveryProvider,
+{
     fn initialize_worktree(
         &self,
         graph: &WorkflowGraph,
         worktree_root: &Path,
-    ) -> Result<(), StartPrerequisitesError> {
-        let (skills, roles) = collect_requirements(graph);
+    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
+        let roles = collect_roles(graph);
 
         let agent_repository = SqliteAgentDefinitionRepository::new(self.pool.clone());
         for role_id in &roles {
@@ -51,14 +112,15 @@ impl WorkflowRunWorktreeInitializer for SkillRoleWorktreeInitializer {
             }
         }
 
-        if !skills.is_empty() {
-            let storage = FilesystemSkillStorage::new(self.skills_root.clone());
-            let skill_repository = SqliteSkillRepository::new(self.pool.clone());
-            for skill_id in &skills {
-                materialize_skill(&storage, Some(&skill_repository), worktree_root, skill_id)?;
-            }
-        }
-        Ok(())
+        let storage = FilesystemSkillStorage::new(self.skills_root.clone());
+        let skill_repository = SqliteSkillRepository::new(self.pool.clone());
+        materialize_graph_skills(
+            &storage,
+            &skill_repository,
+            &self.delivery_provider,
+            graph,
+            worktree_root,
+        )
     }
 }
 
@@ -75,9 +137,8 @@ fn resolve_role(
     agent_repository.find_agent_definition(&AgentDefinitionId::new(role_id))
 }
 
-/// Collects the distinct enabled skill ids and role ids declared across all agent nodes.
-fn collect_requirements(graph: &WorkflowGraph) -> (Vec<String>, Vec<String>) {
-    let mut skills = Vec::new();
+/// Collects the distinct role ids declared across all agent nodes.
+fn collect_roles(graph: &WorkflowGraph) -> Vec<String> {
     let mut roles = Vec::new();
     for node in graph.nodes() {
         if node.node_type != NodeType::Agent {
@@ -86,11 +147,6 @@ fn collect_requirements(graph: &WorkflowGraph) -> (Vec<String>, Vec<String>) {
         let Some(config) = &node.agent_config else {
             continue;
         };
-        for skill in &config.skills {
-            if skill.enabled && !skills.contains(&skill.skill_id) {
-                skills.push(skill.skill_id.clone());
-            }
-        }
         if let Some(role_id) = &config.role_id
             && !role_id.trim().is_empty()
             && !roles.contains(role_id)
@@ -98,13 +154,103 @@ fn collect_requirements(graph: &WorkflowGraph) -> (Vec<String>, Vec<String>) {
             roles.push(role_id.clone());
         }
     }
-    (skills, roles)
+    roles
+}
+
+/// Materializes every node's enabled skills according to its Agent capability and returns the
+/// immutable bindings later consumed by the executor and prompt renderer.
+fn materialize_graph_skills<DeliveryProvider>(
+    storage: &FilesystemSkillStorage,
+    skill_repository: &SqliteSkillRepository,
+    delivery_provider: &DeliveryProvider,
+    graph: &WorkflowGraph,
+    worktree_root: &Path,
+) -> Result<SkillMaterializationReceipt, StartPrerequisitesError>
+where
+    DeliveryProvider: AgentSkillDeliveryProvider,
+{
+    let mut receipt = SkillMaterializationReceipt::default();
+    let mut copied_packages = HashMap::<StrictRelativePath, String>::new();
+    for node in graph
+        .nodes()
+        .filter(|node| node.node_type == NodeType::Agent)
+    {
+        let Some(config) = &node.agent_config else {
+            continue;
+        };
+        let enabled_skills = config
+            .skills
+            .iter()
+            .filter(|skill| skill.enabled)
+            .collect::<Vec<_>>();
+        if enabled_skills.is_empty() {
+            continue;
+        }
+        let agent_ref = AgentRef::parse(&config.executor.agent_cli).map_err(|error| {
+            StartPrerequisitesError::AgentSkillDeliveryError {
+                agent_ref: config.executor.agent_cli.clone(),
+                message: error.to_string(),
+            }
+        })?;
+        let delivery = delivery_provider
+            .skill_delivery(&agent_ref)
+            .map_err(|error| StartPrerequisitesError::AgentSkillDeliveryError {
+                agent_ref: config.executor.agent_cli.clone(),
+                message: error.to_string(),
+            })?;
+        let AgentSkillDelivery::Filesystem { discovery_roots } = delivery else {
+            return Err(StartPrerequisitesError::AgentSkillDeliveryUnsupported {
+                agent_ref: config.executor.agent_cli.clone(),
+            });
+        };
+        let mut seen_skill_ids = HashSet::new();
+        for skill in enabled_skills {
+            if !seen_skill_ids.insert(skill.skill_id.clone()) {
+                continue;
+            }
+            let catalog_name =
+                resolve_skill_catalog_name(storage, Some(skill_repository), &skill.skill_id)?;
+            let invocation_name = normalize_skill_name(&catalog_name);
+            let package_paths = discovery_roots
+                .iter()
+                .map(|root| root.append_segment(&invocation_name))
+                .collect::<Vec<_>>();
+            for package_path in &package_paths {
+                if let Some(existing_catalog_name) = copied_packages.get(package_path) {
+                    if existing_catalog_name != &catalog_name {
+                        return Err(StartPrerequisitesError::SkillMaterializationError {
+                            message: format!(
+                                "skills {existing_catalog_name} and {catalog_name} resolve to the same worktree path {package_path}"
+                            ),
+                        });
+                    }
+                    continue;
+                }
+                copy_skill_package(
+                    storage,
+                    &catalog_name,
+                    worktree_root,
+                    package_path,
+                    &invocation_name,
+                )?;
+                copied_packages.insert(package_path.clone(), catalog_name.clone());
+            }
+            receipt.bindings.push(MaterializedSkillBinding {
+                node_id: node.id.clone(),
+                skill_id: skill.skill_id.clone(),
+                invocation_name,
+                package_paths,
+            });
+        }
+    }
+    Ok(receipt)
 }
 
 /// Resolves one enabled skill against the catalog and copies it into the worktree.
 ///
 /// The catalog name comes from `resolve_skill_catalog_name`; the worktree directory uses its
 /// normalized form so agent CLIs discover the package as `/name`.
+#[cfg(test)]
 fn materialize_skill(
     storage: &FilesystemSkillStorage,
     skill_repository: Option<&SqliteSkillRepository>,
@@ -113,20 +259,35 @@ fn materialize_skill(
 ) -> Result<(), StartPrerequisitesError> {
     let catalog_name = resolve_skill_catalog_name(storage, skill_repository, skill_id)?;
     let dir_name = normalize_skill_name(&catalog_name);
-    for discovery_dir in SKILL_DISCOVERY_DIRS {
-        let target = worktree_root
-            .join(discovery_dir)
-            .join("skills")
-            .join(&dir_name);
-        storage
-            .copy_package_to(&catalog_name, &target)
-            .map_err(|error| StartPrerequisitesError::SkillMaterializationError {
-                message: error.to_string(),
-            })?;
-        rewrite_manifest_name(&target, &dir_name)
-            .map_err(|message| StartPrerequisitesError::SkillMaterializationError { message })?;
-    }
-    Ok(())
+    let package_path = StrictRelativePath::parse(".agents/skills")
+        .expect("the built-in shared skill root is valid")
+        .append_segment(&dir_name);
+    copy_skill_package(
+        storage,
+        &catalog_name,
+        worktree_root,
+        &package_path,
+        &dir_name,
+    )
+}
+
+/// Copies one resolved package to its capability-selected worktree path and aligns its manifest
+/// name with the executable slash command.
+fn copy_skill_package(
+    storage: &FilesystemSkillStorage,
+    catalog_name: &str,
+    worktree_root: &Path,
+    package_path: &StrictRelativePath,
+    invocation_name: &str,
+) -> Result<(), StartPrerequisitesError> {
+    let target = package_path.to_path(worktree_root);
+    storage
+        .copy_package_to(catalog_name, &target)
+        .map_err(|error| StartPrerequisitesError::SkillMaterializationError {
+            message: error.to_string(),
+        })?;
+    rewrite_manifest_name(&target, invocation_name)
+        .map_err(|message| StartPrerequisitesError::SkillMaterializationError { message })
 }
 
 /// Resolves one enabled skill id to its catalog name.
@@ -175,7 +336,8 @@ fn skill_package_usable(
 
 /// Resolves an enabled skill id to the executable `/name` the agent CLI uses to invoke it: the
 /// normalized catalog name, matching the directory it was materialized into.
-pub(super) fn resolve_executable_skill_name(
+#[cfg(test)]
+fn resolve_executable_skill_name(
     storage: &FilesystemSkillStorage,
     skill_repository: Option<&SqliteSkillRepository>,
     skill_id: &str,
@@ -212,6 +374,30 @@ mod tests {
     use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
+
+    #[derive(Clone)]
+    struct FixedDeliveryProvider {
+        delivery: AgentSkillDelivery,
+    }
+
+    impl AgentSkillDeliveryProvider for FixedDeliveryProvider {
+        fn skill_delivery(
+            &self,
+            _agent_ref: &AgentRef,
+        ) -> Result<AgentSkillDelivery, ora_application::AgentSkillDeliveryError> {
+            Ok(self.delivery.clone())
+        }
+    }
+
+    /// Opens an isolated repository pool used by capability-driven materialization tests.
+    fn test_pool(temp: &TempDir) -> RepositoryPool {
+        DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&temp.path().join("ora.sqlite3")),
+                &default_migration_catalog().expect("create migration catalog"),
+            )
+            .expect("bootstrap repository pool")
+    }
 
     #[test]
     fn normalizes_skill_names_to_lowercase_dashes() {
@@ -254,15 +440,15 @@ mod tests {
                 &default_migration_catalog().expect("create migration catalog"),
             )
             .expect("bootstrap repository pool");
-        let initializer = SkillRoleWorktreeInitializer::new(skills_root, pool);
+        let initializer = SkillRoleWorktreeInitializer::new(skills_root, pool).unwrap();
         let graph = WorkflowGraph::parse(
-            r#"{"nodes":[{"id":"a","data":{"kind":"agent","agentConfig":{"skills":[{"skillId":"sfmea_review","enabled":true}]}}}],"edges":[]}"#,
+            r#"{"nodes":[{"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"ora-space.codex","modelId":"m"},"skills":[{"skillId":"sfmea_review","enabled":true}]}}}],"edges":[]}"#,
         )
         .unwrap();
         let worktree = temp.path().join("worktree");
         std::fs::create_dir_all(&worktree).unwrap();
 
-        initializer.initialize_worktree(&graph, &worktree).unwrap();
+        let receipt = initializer.initialize_worktree(&graph, &worktree).unwrap();
 
         assert!(
             worktree
@@ -273,6 +459,102 @@ mod tests {
                 .is_file(),
             "enabled skill is materialized into the worktree's initial state"
         );
+        assert_eq!(
+            receipt,
+            SkillMaterializationReceipt {
+                bindings: vec![MaterializedSkillBinding {
+                    node_id: "a".to_string(),
+                    skill_id: "sfmea_review".to_string(),
+                    invocation_name: "sfmea-review".to_string(),
+                    package_paths: vec![
+                        StrictRelativePath::parse(".agents/skills/sfmea-review").unwrap()
+                    ],
+                }],
+            }
+        );
+    }
+
+    /// An injected Agent capability controls both physical copies and the persisted placement
+    /// receipt without any prompt-layer directory convention.
+    #[test]
+    fn injected_agent_capability_controls_placements_and_the_frozen_receipt() {
+        let temp = TempDir::new().unwrap();
+        let skills_root = temp.path().join("skills");
+        let skill_dir = skills_root.join("review");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: review\ndescription: review\n---\n",
+        )
+        .unwrap();
+        let first_root = StrictRelativePath::parse(".claude/skills").unwrap();
+        let second_root = StrictRelativePath::parse(".vendor/agent-skills").unwrap();
+        let initializer = SkillRoleWorktreeInitializer::with_delivery_provider(
+            skills_root,
+            test_pool(&temp),
+            FixedDeliveryProvider {
+                delivery: AgentSkillDelivery::Filesystem {
+                    discovery_roots: SkillDiscoveryRoots::new(
+                        first_root.clone(),
+                        vec![second_root.clone()],
+                    ),
+                },
+            },
+        );
+        let graph = WorkflowGraph::parse(
+            r#"{"nodes":[{"id":"review-node","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"acme.agent","modelId":"m"},"skills":[{"skillId":"review","enabled":true}]}}}],"edges":[]}"#,
+        )
+        .unwrap();
+        let worktree = temp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let receipt = initializer.initialize_worktree(&graph, &worktree).unwrap();
+
+        let package_paths = vec![
+            first_root.append_segment("review"),
+            second_root.append_segment("review"),
+        ];
+        assert_eq!(
+            receipt,
+            SkillMaterializationReceipt {
+                bindings: vec![MaterializedSkillBinding {
+                    node_id: "review-node".to_string(),
+                    skill_id: "review".to_string(),
+                    invocation_name: "review".to_string(),
+                    package_paths: package_paths.clone(),
+                }],
+            }
+        );
+        assert_eq!(
+            package_paths
+                .iter()
+                .map(|path| path.to_path(&worktree).join("SKILL.md").is_file())
+                .collect::<Vec<_>>(),
+            vec![true, true]
+        );
+    }
+
+    /// Enabled skills fail deployment when the selected Agent explicitly cannot consume them.
+    #[test]
+    fn enabled_skills_reject_an_agent_without_delivery_support() {
+        let temp = TempDir::new().unwrap();
+        let initializer = SkillRoleWorktreeInitializer::with_delivery_provider(
+            temp.path().join("skills"),
+            test_pool(&temp),
+            FixedDeliveryProvider {
+                delivery: AgentSkillDelivery::Unsupported,
+            },
+        );
+        let graph = WorkflowGraph::parse(
+            r#"{"nodes":[{"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"acme.agent","modelId":"m"},"skills":[{"skillId":"review","enabled":true}]}}}],"edges":[]}"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            initializer.initialize_worktree(&graph, temp.path()),
+            Err(StartPrerequisitesError::AgentSkillDeliveryUnsupported { agent_ref })
+                if agent_ref == "acme.agent"
+        ));
     }
 
     #[test]
@@ -293,24 +575,15 @@ mod tests {
 
         materialize_skill(&storage, None, &worktree, "cdase:sfmea_review").unwrap();
 
-        // The package lands under every CLI discovery root so the agent in use finds it.
-        for discovery_dir in SKILL_DISCOVERY_DIRS {
-            let target = worktree
-                .join(discovery_dir)
-                .join("skills")
-                .join("sfmea-review");
-            assert!(
-                target.join("notes.txt").exists(),
-                "missing under {discovery_dir}"
-            );
-            let manifest = parse_manifest(
-                &std::fs::read(target.join("SKILL.md")).unwrap(),
-                MAX_SKILL_MANIFEST_BYTES,
-            )
-            .unwrap();
-            assert_eq!(manifest.name, "sfmea-review");
-            assert_eq!(manifest.description, "review");
-        }
+        let target = worktree.join(".agents").join("skills").join("sfmea-review");
+        assert!(target.join("notes.txt").exists());
+        let manifest = parse_manifest(
+            &std::fs::read(target.join("SKILL.md")).unwrap(),
+            MAX_SKILL_MANIFEST_BYTES,
+        )
+        .unwrap();
+        assert_eq!(manifest.name, "sfmea-review");
+        assert_eq!(manifest.description, "review");
     }
 
     #[test]

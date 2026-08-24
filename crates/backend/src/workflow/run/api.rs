@@ -68,6 +68,11 @@ impl WorkflowRunApi {
     ) -> Result<CreateWorkflowRunResponse, ApplicationError> {
         let project = self.find_project(&ProjectId::new(&request.project_id))?;
         let repository_root = PathBuf::from(project.root_path);
+        let initializer =
+            SkillRoleWorktreeInitializer::new(self.skills_root.clone(), self.pool.clone())
+                .map_err(|error| ApplicationError::WorkflowRunStartFailed {
+                    message: error.to_string(),
+                })?;
         let handler = CreateWorkflowRunHandler::new(
             Arc::new(SqliteWorkflowRepository::new(self.pool.clone())),
             Arc::new(SqliteWorkflowRunRepository::new(self.pool.clone())),
@@ -79,7 +84,7 @@ impl WorkflowRunApi {
                 Arc::clone(&self.repository_gates),
                 crate::git_cleanup::normalize_repository_key(&repository_root),
             ),
-            SkillRoleWorktreeInitializer::new(self.skills_root.clone(), self.pool.clone()),
+            initializer,
             SqliteWorktreeProvisioningLeaseRepository::new(self.pool.clone()),
             repository_root,
             self.worktree_root_snapshot()?,

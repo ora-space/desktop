@@ -17,8 +17,8 @@ use crate::workflow_run::mapper::{map_node_run, map_run, map_run_summary};
 use crate::workflow_run::{DeleteWorkflowRunResult, WorkflowRunIdGenerator, WorkflowRunRepository};
 use crate::worktree::WorktreeIdGenerator;
 use crate::{
-    ApplicationError, Clock, RepositoryError, StartPrerequisitesError, WorkflowGraph,
-    WorkflowRunWorktreeInitializer,
+    ApplicationError, Clock, RepositoryError, SkillMaterializationReceipt, StartPrerequisitesError,
+    WorkflowGraph, WorkflowRunWorktreeInitializer,
 };
 use ora_contracts::{
     CreateWorkflowRunRequest, DeleteWorkflowRunRequest, DeleteWorkflowRunResponse,
@@ -86,7 +86,7 @@ fn creates_run_with_explicit_snapshot() {
             Some("kickoff".to_string()),
             None,
             None,
-            Some(r#"{"locale":"zh-CN"}"#.to_string()),
+            Some(r#"{"locale":"zh-CN","skillMaterialization":{"bindings":[]}}"#.to_string(),),
             None,
             None,
             AuditFields::new(30, 30, /*is_deleted*/ false),
@@ -155,7 +155,7 @@ fn defaults_kickoff_input_to_frozen_start_instruction() {
             Some("Review the repository".to_string()),
             None,
             None,
-            Some(r#"{"locale":"zh-CN"}"#.to_string()),
+            Some(r#"{"locale":"zh-CN","skillMaterialization":{"bindings":[]}}"#.to_string(),),
             None,
             None,
             AuditFields::new(30, 30, /*is_deleted*/ false),
@@ -984,7 +984,7 @@ impl WorkflowRunWorktreeInitializer for MockWorktreeInitializer {
         &self,
         _graph: &WorkflowGraph,
         worktree_root: &Path,
-    ) -> Result<(), StartPrerequisitesError> {
+    ) -> Result<SkillMaterializationReceipt, StartPrerequisitesError> {
         self.worktrees
             .lock()
             .unwrap()
@@ -994,7 +994,7 @@ impl WorkflowRunWorktreeInitializer for MockWorktreeInitializer {
                 message: "boom".to_string(),
             });
         }
-        Ok(())
+        Ok(SkillMaterializationReceipt::default())
     }
 }
 

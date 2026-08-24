@@ -17,6 +17,7 @@ validation = ["dep:sha2", "dep:quick-xml"]
 flate2 = { workspace = true, optional = true }
 quick-xml = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+serde = { workspace = true }
 sha2 = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 tempfile = { workspace = true }
