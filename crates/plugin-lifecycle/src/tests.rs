@@ -147,6 +147,70 @@ fn opens_with_persisted_plugin_eligibility() {
     });
 }
 
+/// Startup revokes stale durable eligibility when the discovered declaration is invalid.
+#[tokio::test]
+async fn invalid_configuration_declaration_cannot_remain_enabled_or_activate() {
+    let _logging = trace_logging_guard();
+    let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
+    write_plugin_package(temp_dir.path(), "example");
+    let package_root = temp_dir
+        .path()
+        .join("plugins")
+        .join("installed")
+        .join("official")
+        .join("example")
+        .join("1.0.0");
+    fs::create_dir_all(package_root.join("assets")).expect("create configuration assets");
+    fs::write(
+        package_root.join("assets").join("config.json"),
+        r#"{"schemaVersion":1,"settings":{}}"#,
+    )
+    .expect("write invalid declaration");
+    let pool = DatabaseBootstrapper::system()
+        .bootstrap_repository_pool(
+            &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
+            &default_migration_catalog().expect("build migration catalog"),
+        )
+        .expect("bootstrap plugin lifecycle database");
+    let repository = SqlitePluginStateRepository::new(pool);
+    let plugin_id = PluginId::new("official/example");
+    repository
+        .set_plugin_enabled(&plugin_id, PluginEnabledState::Enabled, 20)
+        .expect("persist enabled plugin");
+
+    let lifecycle = open_without_runtime(temp_dir.path(), repository.clone());
+    let plugin = lifecycle
+        .list_installed_plugins()
+        .plugins
+        .into_iter()
+        .next()
+        .expect("invalid plugin remains visible");
+
+    assert!(!plugin.enabled);
+    assert_eq!(
+        plugin.installation_validity,
+        PluginInstallationValidity::InvalidDeclaration {
+            error_code: "plugin_configuration_declaration_invalid".to_string(),
+        }
+    );
+    assert_eq!(
+        repository
+            .find_plugin_state(&plugin_id)
+            .expect("read reconciled plugin state")
+            .expect("state remains explicit")
+            .enabled,
+        PluginEnabledState::Disabled
+    );
+    assert!(matches!(
+        lifecycle
+            .activate_plugin(ActivatePluginRequest {
+                plugin_id: plugin_id.to_string(),
+            })
+            .await,
+        Err(PluginLifecycleError::InvalidConfigurationDeclaration { .. })
+    ));
+}
+
 /// Verifies enabling persists eligibility and starts the runtime it implies.
 #[tokio::test]
 async fn enables_plugin_and_starts_its_runtime() {

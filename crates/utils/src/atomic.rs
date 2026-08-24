@@ -10,6 +10,18 @@ use tempfile::NamedTempFile;
 /// renamed over the destination. Readers never observe a partially written file, and a failed
 /// write leaves any existing destination untouched. The target's parent directory must exist.
 pub fn write(path: impl AsRef<Path>, contents: &[u8]) -> io::Result<()> {
+    write_with_prepare(path, contents, |_| Ok(()))
+}
+
+/// Atomically replaces `path` after preparing the same-directory temporary file.
+///
+/// The preparation hook runs after content sync but before the final rename, which lets callers
+/// apply permissions or other file metadata without changing the destination on failure.
+pub fn write_with_prepare(
+    path: impl AsRef<Path>,
+    contents: &[u8],
+    prepare: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     let target = path.as_ref();
     let parent = target
         .parent()
@@ -20,6 +32,8 @@ pub fn write(path: impl AsRef<Path>, contents: &[u8]) -> io::Result<()> {
     };
     temporary.write_all(contents)?;
     temporary.flush()?;
+    temporary.as_file().sync_all()?;
+    prepare(temporary.path())?;
     temporary.as_file().sync_all()?;
     temporary.persist(target).map_err(|error| error.error)?;
     Ok(())
@@ -61,5 +75,23 @@ mod tests {
         let target = temp_dir.path().join("missing").join("index.json");
 
         assert!(write(&target, b"data").is_err());
+    }
+
+    /// A preparation failure leaves the previous destination content untouched.
+    #[test]
+    fn prepare_failure_does_not_replace_the_destination() {
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("index.json");
+        fs::write(&target, b"old").unwrap();
+
+        let error = super::write_with_prepare(&target, b"new", |_| {
+            Err(std::io::Error::other("injected preparation failure"))
+        })
+        .expect_err("preparation must fail");
+
+        assert_eq!(
+            (error.to_string(), fs::read(&target).unwrap()),
+            ("injected preparation failure".to_string(), b"old".to_vec())
+        );
     }
 }

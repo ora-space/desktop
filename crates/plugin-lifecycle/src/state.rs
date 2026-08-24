@@ -1,4 +1,4 @@
-use crate::PluginLifecycleError;
+use crate::{PluginLifecycleError, has_valid_configuration_declaration};
 use ora_application::PluginStateRepository;
 use ora_contracts::{
     InstalledPlugin, InstalledPluginAgent, PluginConfigurationCompleteness,
@@ -37,6 +37,7 @@ pub(super) enum EnabledRuntime<Runtime> {
 pub(super) fn reconcile_persisted_state<Repository, Runtime>(
     repository: &Repository,
     installed: &[DiscoveredPlugin],
+    now: i64,
 ) -> Result<BTreeMap<PluginId, ManagedPluginState<Runtime>>, PluginLifecycleError>
 where
     Repository: PluginStateRepository,
@@ -51,7 +52,21 @@ where
         .map_err(PluginLifecycleError::Repository)?
     {
         if installed_ids.contains(&state.plugin_id) {
-            enabled_by_id.insert(state.plugin_id, state.enabled);
+            let valid = installed
+                .iter()
+                .find(|plugin| plugin.id == state.plugin_id.as_ref())
+                .is_some_and(has_valid_configuration_declaration);
+            let enabled = if valid {
+                state.enabled
+            } else {
+                if state.enabled == PluginEnabledState::Enabled {
+                    repository
+                        .set_plugin_enabled(&state.plugin_id, PluginEnabledState::Disabled, now)
+                        .map_err(PluginLifecycleError::Repository)?;
+                }
+                PluginEnabledState::Disabled
+            };
+            enabled_by_id.insert(state.plugin_id, enabled);
         } else {
             repository
                 .delete_plugin_state(&state.plugin_id)

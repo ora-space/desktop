@@ -131,6 +131,72 @@ describe("SettingsDialog developer options", () => {
       screen.getByRole("button", { name: "Developer options" }),
     ).toBeInTheDocument();
   });
+
+  it("protects unsaved plugin configuration when switching settings categories", async () => {
+    const state = createMockClientState();
+    state.installedPlugins.push({
+      id: "official/weather",
+      packageName: "weather",
+      displayName: "weather",
+      version: "1.2.0",
+      kind: "agent",
+      main: "main.js",
+      agent: { displayName: "weather", contractVersion: 1 },
+      enabled: false,
+      logo: null,
+      installationValidity: { validity: "valid" },
+      configuration: { state: "available", completeness: "incomplete" },
+      runtime: "stopped",
+    });
+    state.pluginConfigurations.set("official/weather", {
+      pluginId: "official/weather",
+      schemaVersion: 1,
+      revision: 0n,
+      declarationFingerprint: "declaration-1",
+      settings: [
+        {
+          declaration: {
+            id: "endpoint",
+            title: "Endpoint",
+            description: "Service URL",
+            type: "string",
+            required: true,
+            order: null,
+            default: null,
+          },
+          storedValue: null,
+          effectiveValue: null,
+          source: "absent",
+          valueErrorCode: null,
+        },
+      ],
+      summary: { state: "available", completeness: "incomplete" },
+    });
+    const user = userEvent.setup();
+    renderDialog(createMockClient(state));
+
+    await user.click(screen.getByRole("button", { name: "Plugins" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Manage plugins" }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Configure" }));
+    await user.type(await screen.findByLabelText("Endpoint"), "https://api");
+    await user.click(screen.getByRole("button", { name: "Appearance" }));
+
+    expect(
+      await screen.findByRole("alertdialog", {
+        name: "Save configuration changes?",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Appearance" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(
+      await screen.findByRole("heading", { name: "Appearance" }),
+    ).toBeInTheDocument();
+  });
 });
 
 /** Renders the real settings dialog with shared client, query, chat, i18n, and platform providers. */

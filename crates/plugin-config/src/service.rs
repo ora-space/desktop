@@ -1,11 +1,11 @@
 use crate::declaration::parse_strict_json;
+use crate::filesystem::{ConfigurationFileSystem, StandardConfigurationFileSystem};
+use crate::values::{StoredConfiguration, details_from, validate_values};
 use crate::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, SettingDeclaration,
     SettingValue, compile_declaration,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -92,63 +92,6 @@ pub enum ConfigurationError {
     LockUnavailable,
     #[error("Plugin Configuration recovery was requested for a readable value file")]
     RecoveryNotRequired,
-}
-
-/// Supplies bounded reads and durable writes without coupling policy to the operating system.
-///
-/// Implementations must distinguish a missing file from other I/O failures and must never return
-/// more than `limit + 1` bytes, which lets callers reject concurrently growing files safely.
-pub trait ConfigurationFileSystem: Clone {
-    /// Reads a regular file up to one byte beyond `limit`, returning `None` when it is absent.
-    fn read_bounded(&self, path: &Path, limit: usize) -> std::io::Result<Option<Vec<u8>>>;
-    /// Creates the directory hierarchy needed for one new value file.
-    fn create_dir_all(&self, path: &Path) -> std::io::Result<()>;
-    /// Atomically replaces one file with fully flushed contents.
-    fn atomic_write(&self, path: &Path, contents: &[u8]) -> std::io::Result<()>;
-    /// Renames one file without copying so corrupt evidence is retained before replacement.
-    fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()>;
-}
-
-/// Filesystem adapter used by the production configuration service.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct StandardConfigurationFileSystem;
-
-impl ConfigurationFileSystem for StandardConfigurationFileSystem {
-    fn read_bounded(&self, path: &Path, limit: usize) -> std::io::Result<Option<Vec<u8>>> {
-        let file = match std::fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let mut contents = Vec::new();
-        file.take(limit as u64 + 1).read_to_end(&mut contents)?;
-        Ok(Some(contents))
-    }
-
-    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            // The directory gate prevents exposure while atomic replacement is still in flight.
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-        }
-        Ok(())
-    }
-
-    fn atomic_write(&self, path: &Path, contents: &[u8]) -> std::io::Result<()> {
-        ora_utils::atomic::write(path, contents)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
-    }
-
-    fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
-        std::fs::rename(source, destination)
-    }
 }
 
 /// Owns declaration lookup and Stored Setting Value resolution below one host data root.
@@ -317,12 +260,31 @@ where
             .ok_or_else(|| ConfigurationError::LoadFailed {
                 reason: "value file name is not valid UTF-8".to_string(),
             })?;
-        let backup = path.with_file_name(format!("{file_name}.corrupt-{local_timestamp}"));
-        self.file_system
-            .rename(&path, &backup)
-            .map_err(|source| ConfigurationError::Io {
+        let backup = (0_u16..=u16::MAX)
+            .find_map(|attempt| {
+                let suffix = if attempt == 0 {
+                    String::new()
+                } else {
+                    format!("-{attempt}")
+                };
+                let candidate =
+                    path.with_file_name(format!("{file_name}.corrupt-{local_timestamp}{suffix}"));
+                match self.file_system.move_no_replace(&path, &candidate) {
+                    Ok(()) => Some(Ok(candidate)),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                    Err(source) => Some(Err(ConfigurationError::Io {
+                        path: path.clone(),
+                        source,
+                    })),
+                }
+            })
+            .transpose()?
+            .ok_or_else(|| ConfigurationError::Io {
                 path: path.clone(),
-                source,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "could not allocate a unique corrupt configuration backup",
+                ),
             })?;
         let replacement = StoredConfiguration {
             schema_version: 1,
@@ -330,7 +292,7 @@ where
             values: BTreeMap::new(),
         };
         if let Err(error) = self.write_store(plugin_id, &replacement) {
-            let _ = self.file_system.rename(&backup, &path);
+            let _ = self.file_system.move_no_replace(&backup, &path);
             return Err(error);
         }
         Ok(details_from(declaration, replacement))
@@ -382,7 +344,10 @@ where
             })?;
         if store.schema_version != 1 {
             return Err(ConfigurationError::LoadFailed {
-                reason: format!("unsupported value schema version {}", store.schema_version),
+                reason: format!(
+                    "unsupported value schema version {schema_version}",
+                    schema_version = store.schema_version
+                ),
             });
         }
         Ok(store)
@@ -471,144 +436,6 @@ where
 }
 
 const MAX_STORE_BYTES: usize = 1024 * 1024;
-const MAX_STRING_VALUE_BYTES: usize = 64 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct StoredConfiguration {
-    schema_version: u32,
-    revision: u64,
-    values: BTreeMap<String, SettingValue>,
-}
-
-impl Default for StoredConfiguration {
-    fn default() -> Self {
-        Self {
-            schema_version: 1,
-            revision: 0,
-            values: BTreeMap::new(),
-        }
-    }
-}
-
-/// Projects stored overrides and defaults while retaining incompatible upgrade values as errors.
-fn details_from(
-    declaration: CompiledDeclaration,
-    store: StoredConfiguration,
-) -> ConfigurationDetails {
-    let settings = declaration
-        .settings
-        .iter()
-        .cloned()
-        .map(|setting| {
-            let stored = store.values.get(&setting.id).cloned();
-            let compatible = stored
-                .as_ref()
-                .is_none_or(|value| value_matches(&setting, value));
-            let (stored_value, effective_value, source, value_error_code) = if compatible {
-                match stored {
-                    Some(value) => (
-                        Some(value.clone()),
-                        Some(value),
-                        EffectiveValueSource::Stored,
-                        None,
-                    ),
-                    None => match setting.default.clone() {
-                        Some(value) => (None, Some(value), EffectiveValueSource::Default, None),
-                        None => (None, None, EffectiveValueSource::Absent, None),
-                    },
-                }
-            } else {
-                let (effective_value, source) = match setting.default.clone() {
-                    Some(value) => (Some(value), EffectiveValueSource::Default),
-                    None => (None, EffectiveValueSource::Absent),
-                };
-                (
-                    None,
-                    effective_value,
-                    source,
-                    Some("stored_value_type_mismatch".to_string()),
-                )
-            };
-            SettingDetails {
-                declaration: setting,
-                stored_value,
-                effective_value,
-                source,
-                value_error_code,
-            }
-        })
-        .collect::<Vec<_>>();
-    let completeness = completeness(&settings);
-    ConfigurationDetails {
-        declaration,
-        settings,
-        revision: store.revision,
-        summary: ConfigurationSummary::Available { completeness },
-    }
-}
-
-/// Validates that the complete submitted override set is recognized and type-correct.
-fn validate_values(
-    declaration: &CompiledDeclaration,
-    values: &BTreeMap<String, SettingValue>,
-) -> Vec<ConfigurationFieldError> {
-    let declarations = declaration
-        .settings
-        .iter()
-        .map(|setting| (setting.id.as_str(), setting))
-        .collect::<BTreeMap<_, _>>();
-    values
-        .iter()
-        .filter_map(|(setting_id, value)| match declarations.get(setting_id.as_str()) {
-            None => Some(ConfigurationFieldError {
-                setting_id: setting_id.clone(),
-                error_code: "setting_not_declared".to_string(),
-            }),
-            Some(setting) if !value_matches(setting, value) => Some(ConfigurationFieldError {
-                setting_id: setting_id.clone(),
-                error_code: "setting_type_mismatch".to_string(),
-            }),
-            Some(_)
-                if matches!(value, SettingValue::String(value) if value.len() > MAX_STRING_VALUE_BYTES) =>
-            {
-                Some(ConfigurationFieldError {
-                    setting_id: setting_id.clone(),
-                    error_code: "string_value_too_large".to_string(),
-                })
-            }
-            Some(_) => None,
-        })
-        .collect()
-}
-
-/// Checks one scalar against its declaration without converting between JSON types.
-fn value_matches(declaration: &SettingDeclaration, value: &SettingValue) -> bool {
-    matches!(
-        (declaration.setting_type, value),
-        (crate::SettingType::String, SettingValue::String(_))
-            | (crate::SettingType::Number, SettingValue::Number(_))
-            | (crate::SettingType::Boolean, SettingValue::Boolean(_))
-    )
-}
-
-/// Evaluates required values and any stored type failures from the projected editor fields.
-fn completeness(settings: &[SettingDetails]) -> ConfigurationCompleteness {
-    let incomplete = settings.iter().any(|setting| {
-        setting.value_error_code.is_some()
-            || (setting.declaration.required
-                && match setting.effective_value.as_ref() {
-                    Some(SettingValue::String(value)) => value.trim().is_empty(),
-                    Some(SettingValue::Number(_) | SettingValue::Boolean(_)) => false,
-                    None => true,
-                })
-    });
-    if incomplete {
-        ConfigurationCompleteness::Incomplete
-    } else {
-        ConfigurationCompleteness::Complete
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -726,7 +553,7 @@ mod tests {
             .save(
                 "official/weather",
                 &package_root,
-                0,
+                /*expected_revision*/ 0,
                 &loaded.declaration.fingerprint,
                 values.clone(),
             )
@@ -775,7 +602,7 @@ mod tests {
             service.save(
                 "official/weather",
                 &package_root,
-                0,
+                /*expected_revision*/ 0,
                 &loaded.declaration.fingerprint,
                 values,
             ),
@@ -830,7 +657,7 @@ mod tests {
             .save(
                 "official/weather",
                 &package_root,
-                7,
+                /*expected_revision*/ 7,
                 &loaded.declaration.fingerprint,
                 BTreeMap::new(),
             )
@@ -887,7 +714,7 @@ mod tests {
             .save(
                 "official/weather",
                 &package_root,
-                0,
+                /*expected_revision*/ 0,
                 &loaded.declaration.fingerprint,
                 values,
             )
@@ -928,6 +755,11 @@ mod tests {
             .join("weather");
         fs::create_dir_all(&store_root).expect("create store root");
         fs::write(store_root.join("store.json"), "{not json").expect("write corrupt store");
+        fs::write(
+            store_root.join("store.json.corrupt-20260824T200000"),
+            "older backup",
+        )
+        .expect("write colliding backup");
         let service = ConfigurationService::new(temporary.path());
         let unavailable = service
             .get("official/weather", &package_root)
@@ -950,10 +782,15 @@ mod tests {
             .expect("recover corrupt configuration");
 
         assert_eq!(recovered.revision, 1);
-        assert!(
-            store_root
-                .join("store.json.corrupt-20260824T200000")
-                .is_file()
+        assert_eq!(
+            fs::read_to_string(store_root.join("store.json.corrupt-20260824T200000"))
+                .expect("read older backup"),
+            "older backup"
+        );
+        assert_eq!(
+            fs::read_to_string(store_root.join("store.json.corrupt-20260824T200000-1"))
+                .expect("read collision-free backup"),
+            "{not json"
         );
         assert_eq!(
             service

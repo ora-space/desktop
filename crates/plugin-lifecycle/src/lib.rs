@@ -8,7 +8,7 @@ use state::{
     EnabledRuntime, LifecycleState, ManagedPluginState, discovered_plugin_contract,
     reconcile_persisted_state,
 };
-use uninstall::{plugin_data_root, stage_uninstall};
+use uninstall::{StagedUninstall, plugin_data_root, stage_uninstall};
 
 use ora_application::{Clock, PluginStateRepository, RepositoryError};
 use ora_contracts::{
@@ -173,6 +173,7 @@ where
     state: RwLock<LifecycleState<RuntimeLauncher::Runtime>>,
     scan_lock: AsyncMutex<()>,
     operation_locks: Mutex<BTreeMap<PluginId, Arc<AsyncMutex<()>>>>,
+    pending_uninstall_cleanup: Mutex<Vec<StagedUninstall>>,
     repository: Repository,
     clock: LifecycleClock,
     launcher: RuntimeLauncher,
@@ -209,7 +210,8 @@ where
             );
         }
         let installed = manager.installed_plugins().to_vec();
-        let managed_by_id = reconcile_persisted_state(&repository, &installed)?;
+        let managed_by_id =
+            reconcile_persisted_state(&repository, &installed, clock.now_timestamp_millis())?;
 
         Ok(Self {
             inner: Arc::new(PluginLifecycleInner {
@@ -220,6 +222,7 @@ where
                 }),
                 scan_lock: AsyncMutex::new(()),
                 operation_locks: Mutex::new(BTreeMap::new()),
+                pending_uninstall_cleanup: Mutex::new(Vec::new()),
                 repository,
                 clock,
                 launcher,
@@ -269,10 +272,7 @@ where
         let plugin_id = PluginId::new(&request.plugin_id);
         let operation = self.acquire_operation(&plugin_id).await;
         let plugin = self.installed_plugin(&request.plugin_id)?;
-        if matches!(
-            &plugin.configuration_declaration,
-            PluginConfigurationDeclarationValidity::Invalid { .. }
-        ) {
+        if !has_valid_configuration_declaration(&plugin) {
             return Err(PluginLifecycleError::InvalidConfigurationDeclaration {
                 plugin_id: request.plugin_id,
             });
@@ -404,6 +404,11 @@ where
         let plugin_id = PluginId::new(&request.plugin_id);
         let operation = self.acquire_operation(&plugin_id).await;
         let plugin = self.installed_plugin(&request.plugin_id)?;
+        if !has_valid_configuration_declaration(&plugin) {
+            return Err(PluginLifecycleError::InvalidConfigurationDeclaration {
+                plugin_id: request.plugin_id,
+            });
+        }
         let (attempt, response) = {
             let mut state = self.write_state();
             let attempt = state.next_attempt;
@@ -467,6 +472,11 @@ where
     ) -> Result<PluginAttachment<RuntimeLauncher::Runtime>, PluginLifecycleError> {
         let _operation = self.acquire_operation(plugin_id).await;
         let plugin = self.installed_plugin(plugin_id.as_ref())?;
+        if !has_valid_configuration_declaration(&plugin) {
+            return Err(PluginLifecycleError::InvalidConfigurationDeclaration {
+                plugin_id: plugin_id.to_string(),
+            });
+        }
         let reusable = {
             let state = self.read_state();
             match state.managed_by_id.get(plugin_id) {
@@ -708,8 +718,13 @@ where
             ora_warn!(
                 plugin_id = %request.plugin_id,
                 %error,
-                "plugin uninstall committed but staging cleanup will need retry"
+                "plugin uninstall committed but staging cleanup will be retried"
             );
+            self.inner
+                .pending_uninstall_cleanup
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(staged);
         }
         if let Some(plugin) = &plugin {
             if let Some(namespace_root) = plugin.package_root.parent().and_then(Path::parent) {
@@ -774,6 +789,14 @@ where
             .write()
             .unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Keeps every launch path aligned with installation declaration validity.
+fn has_valid_configuration_declaration(plugin: &DiscoveredPlugin) -> bool {
+    !matches!(
+        plugin.configuration_declaration,
+        PluginConfigurationDeclarationValidity::Invalid { .. }
+    )
 }
 
 /// Completes one launch attempt and releases the plugin's operation queue afterwards.

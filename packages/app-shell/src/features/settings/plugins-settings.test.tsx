@@ -275,6 +275,37 @@ it("configures declared plugin settings and keeps the editor open after save", a
   expect(screen.getByLabelText(/Endpoint/)).toHaveValue("https://api.test");
 });
 
+/** Resetting one persisted field removes its override instead of restoring the same stored draft. */
+it("removes an existing stored override when one field is reset and saved", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithPluginConfiguration();
+  const configuration = state.pluginConfigurations.get("official/weather");
+  if (configuration === undefined)
+    throw new Error("configuration fixture missing");
+  configuration.settings[0] = {
+    ...configuration.settings[0]!,
+    storedValue: "https://old.test",
+    effectiveValue: "https://old.test",
+    source: "stored",
+  };
+  const save = vi.spyOn(client.plugin, "saveConfiguration");
+  renderSettings(client);
+
+  await user.click(
+    await screen.findByRole("button", { name: /管理插件|Manage plugins/ }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /配置|Configure/ }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /重置此项|Reset field/ }),
+  );
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0]?.[0].values).toEqual({});
+});
+
 /** Back navigation cannot silently discard a local configuration draft. */
 it("requires an explicit decision before leaving a dirty configuration editor", async () => {
   const user = userEvent.setup();

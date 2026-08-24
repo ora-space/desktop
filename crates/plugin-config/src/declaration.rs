@@ -168,6 +168,7 @@ enum RawDefault {
 }
 
 impl<'de> Deserialize<'de> for RawDefault {
+    /// Preserves the distinction between an omitted default and an explicit JSON null value.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,

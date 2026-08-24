@@ -188,16 +188,17 @@ function InstalledPluginRow({
           )}
         </span>
 
-        {plugin.configuration.state !== "not_declared" && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() => onConfigure(plugin.id)}
-          >
-            {t("settings.plugins.configuration.configure")}
-          </Button>
-        )}
+        {plugin.installationValidity.validity === "valid" &&
+          plugin.configuration.state !== "not_declared" && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => onConfigure(plugin.id)}
+            >
+              {t("settings.plugins.configuration.configure")}
+            </Button>
+          )}
 
         <DropdownMenu>
           <DropdownMenuTrigger

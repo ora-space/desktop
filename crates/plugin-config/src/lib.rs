@@ -1,14 +1,18 @@
 //! Compiles and persists host-owned Plugin Configuration.
 
 mod declaration;
+mod filesystem;
 mod service;
+mod values;
+#[cfg(windows)]
+mod windows_permissions;
 
 pub use declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, MAX_SETTINGS,
     SettingDeclaration, SettingType, SettingValue, compile_declaration,
 };
+pub use filesystem::{ConfigurationFileSystem, StandardConfigurationFileSystem};
 pub use service::{
     ConfigurationCompleteness, ConfigurationDetails, ConfigurationError, ConfigurationFieldError,
-    ConfigurationFileSystem, ConfigurationService, ConfigurationSummary, EffectiveValueSource,
-    SettingDetails, StandardConfigurationFileSystem,
+    ConfigurationService, ConfigurationSummary, EffectiveValueSource, SettingDetails,
 };

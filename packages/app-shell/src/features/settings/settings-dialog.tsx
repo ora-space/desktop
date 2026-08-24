@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { localizeContractError } from "../../i18n/contract-error";
 import { usePlatform } from "../../platform";
@@ -47,6 +47,7 @@ import {
 import type { Locale } from "../../i18n/i18n";
 import { RolesSettings, SkillsSettings } from "./atoms-settings";
 import { PluginsSettings } from "./plugins-settings";
+import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 import { SettingsHeading } from "./settings-heading";
 import { WorkflowSettings } from "./workflow-settings";
 import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
@@ -76,6 +77,9 @@ type SettingsCategory =
   | "privacy"
   | "developer";
 
+type PendingSettingsNavigation =
+  { kind: "close" } | { kind: "category"; category: SettingsCategory };
+
 /** Presents shared Ora preferences in a dense IDE-style settings surface. */
 export function SettingsDialog() {
   const { t } = useTranslation();
@@ -86,8 +90,35 @@ export function SettingsDialog() {
   const chatStore = useChatStore();
   const clearConversations = useStore(chatStore, (state) => state.clearAll);
   const [category, setCategory] = useState<SettingsCategory>("appearance");
+  const [pendingNavigation, setPendingNavigation] =
+    useState<PendingSettingsNavigation | null>(null);
+  const pluginConfigurationGuard =
+    useRef<PluginConfigurationNavigationGuard | null>(null);
   const developerMode = useDeveloperMode();
   const developerModeEnabled = developerMode.state?.enabled === true;
+
+  const registerPluginConfigurationGuard = useCallback(
+    (guard: PluginConfigurationNavigationGuard | null) => {
+      pluginConfigurationGuard.current = guard;
+    },
+    [],
+  );
+
+  /** Applies a navigation request after its unsaved-change decision has completed. */
+  const applyNavigation = (navigation: PendingSettingsNavigation) => {
+    setPendingNavigation(null);
+    if (navigation.kind === "close") setOpen(false);
+    else setCategory(navigation.category);
+  };
+
+  /** Defers Settings navigation while the active plugin editor owns unsaved input. */
+  const requestNavigation = (navigation: PendingSettingsNavigation) => {
+    if (pluginConfigurationGuard.current?.isDirty() === true) {
+      setPendingNavigation(navigation);
+      return;
+    }
+    applyNavigation(navigation);
+  };
 
   const categories: Array<{
     id: SettingsCategory;
@@ -117,129 +148,187 @@ export function SettingsDialog() {
   ];
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent
-        showCloseButton
-        className={cn(
-          "max-w-none gap-0 overflow-hidden p-0 transition-[width,height] duration-200 sm:max-w-none",
-          category === "workflow"
-            ? // Keep clear of the frameless titlebar controls so the app close
-              // button stays reachable beside this near-fullscreen editor.
-              "h-[calc(100dvh-6rem)] w-[calc(100vw-3rem)]"
-            : "h-[min(720px,calc(100dvh-2rem))] w-[min(1040px,calc(100vw-2rem))]",
-        )}
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (nextOpen) setOpen(true);
+          else requestNavigation({ kind: "close" });
+        }}
       >
-        <DialogHeader className="sr-only">
-          <DialogTitle>{t("common.settings")}</DialogTitle>
-          <DialogDescription>{t("settings.description")}</DialogDescription>
-        </DialogHeader>
-        <div
+        <DialogContent
+          showCloseButton
           className={cn(
-            "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-rows-1",
+            "max-w-none gap-0 overflow-hidden p-0 transition-[width,height] duration-200 sm:max-w-none",
             category === "workflow"
-              ? "sm:grid-cols-[144px_minmax(0,1fr)]"
-              : "sm:grid-cols-[210px_minmax(0,1fr)]",
+              ? // Keep clear of the frameless titlebar controls so the app close
+                // button stays reachable beside this near-fullscreen editor.
+                "h-[calc(100dvh-6rem)] w-[calc(100vw-3rem)]"
+              : "h-[min(720px,calc(100dvh-2rem))] w-[min(1040px,calc(100vw-2rem))]",
           )}
         >
-          <aside
+          <DialogHeader className="sr-only">
+            <DialogTitle>{t("common.settings")}</DialogTitle>
+            <DialogDescription>{t("settings.description")}</DialogDescription>
+          </DialogHeader>
+          <div
             className={cn(
-              "border-b border-border bg-muted/35 p-3 sm:border-b-0 sm:border-r",
-              category === "workflow" && "sm:px-2 sm:py-3",
+              "grid min-h-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-rows-1",
+              category === "workflow"
+                ? "sm:grid-cols-[144px_minmax(0,1fr)]"
+                : "sm:grid-cols-[210px_minmax(0,1fr)]",
             )}
           >
-            <div
+            <aside
               className={cn(
-                "hidden h-11 items-center gap-2 px-2 sm:flex",
-                category === "workflow" && "px-1.5",
+                "border-b border-border bg-muted/35 p-3 sm:border-b-0 sm:border-r",
+                category === "workflow" && "sm:px-2 sm:py-3",
               )}
             >
-              <div className="flex size-7 items-center justify-center rounded-md bg-foreground text-background">
-                <IconAdjustments className="size-4" />
+              <div
+                className={cn(
+                  "hidden h-11 items-center gap-2 px-2 sm:flex",
+                  category === "workflow" && "px-1.5",
+                )}
+              >
+                <div className="flex size-7 items-center justify-center rounded-md bg-foreground text-background">
+                  <IconAdjustments className="size-4" />
+                </div>
+                <span className="text-sm font-semibold">
+                  {t("common.settings")}
+                </span>
               </div>
-              <span className="text-sm font-semibold">
-                {t("common.settings")}
-              </span>
-            </div>
-            <nav
-              className="flex gap-1 overflow-x-auto sm:mt-3 sm:flex-col"
-              aria-label={t("common.settings")}
-            >
-              {categories.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setCategory(item.id)}
-                    className={cn(
-                      "flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-                      category === "workflow"
-                        ? "sm:w-full sm:px-2"
-                        : "sm:w-full",
-                      category === item.id
-                        ? "bg-background text-foreground shadow-sm ring-1 ring-border"
-                        : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
-                    )}
-                  >
-                    <Icon className="size-4" />
-                    <span className="truncate">{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-            <p
-              className={cn(
-                "mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block",
-                category === "workflow" && "sm:hidden",
-              )}
-            >
-              {t("settings.productName")}
-              <br />
-              {t("settings.prototypeLabel")}
-            </p>
-          </aside>
+              <nav
+                className="flex gap-1 overflow-x-auto sm:mt-3 sm:flex-col"
+                aria-label={t("common.settings")}
+              >
+                {categories.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        if (item.id !== category)
+                          requestNavigation({
+                            kind: "category",
+                            category: item.id,
+                          });
+                      }}
+                      className={cn(
+                        "flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                        category === "workflow"
+                          ? "sm:w-full sm:px-2"
+                          : "sm:w-full",
+                        category === item.id
+                          ? "bg-background text-foreground shadow-sm ring-1 ring-border"
+                          : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                      )}
+                    >
+                      <Icon className="size-4" />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+              <p
+                className={cn(
+                  "mt-auto hidden px-2 pb-1 pt-6 text-[10px] leading-4 text-muted-foreground sm:block",
+                  category === "workflow" && "sm:hidden",
+                )}
+              >
+                {t("settings.productName")}
+                <br />
+                {t("settings.prototypeLabel")}
+              </p>
+            </aside>
 
-          {category === "workflow" ? (
-            <div className="min-h-0 min-w-0 overflow-hidden">
-              <WorkflowSettings />
-            </div>
-          ) : (
-            <ScrollArea className="min-h-0">
-              <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
-                {category === "appearance" && (
-                  <AppearanceSettings
-                    settings={settings}
-                    onUpdate={updateSettings}
-                  />
-                )}
-                {category === "roles" && <RolesSettings />}
-                {category === "skills" && <SkillsSettings />}
-                {category === "plugins" && <PluginsSettings />}
-                {category === "permissions" && (
-                  <PermissionSettings
-                    settings={settings}
-                    onUpdate={updateSettings}
-                  />
-                )}
-                {category === "privacy" && (
-                  <PrivacySettings
-                    settings={settings}
-                    onUpdate={updateSettings}
-                    onClearHistory={clearConversations}
-                  />
-                )}
-                {category === "developer" && (
-                  <DeveloperSettings
-                    developerMode={developerMode}
-                    developerModeEnabled={developerModeEnabled}
-                  />
-                )}
+            {category === "workflow" ? (
+              <div className="min-h-0 min-w-0 overflow-hidden">
+                <WorkflowSettings />
               </div>
-            </ScrollArea>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+            ) : (
+              <ScrollArea className="min-h-0">
+                <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
+                  {category === "appearance" && (
+                    <AppearanceSettings
+                      settings={settings}
+                      onUpdate={updateSettings}
+                    />
+                  )}
+                  {category === "roles" && <RolesSettings />}
+                  {category === "skills" && <SkillsSettings />}
+                  {category === "plugins" && (
+                    <PluginsSettings
+                      onNavigationGuardChange={registerPluginConfigurationGuard}
+                    />
+                  )}
+                  {category === "permissions" && (
+                    <PermissionSettings
+                      settings={settings}
+                      onUpdate={updateSettings}
+                    />
+                  )}
+                  {category === "privacy" && (
+                    <PrivacySettings
+                      settings={settings}
+                      onUpdate={updateSettings}
+                      onClearHistory={clearConversations}
+                    />
+                  )}
+                  {category === "developer" && (
+                    <DeveloperSettings
+                      developerMode={developerMode}
+                      developerModeEnabled={developerModeEnabled}
+                    />
+                  )}
+                </div>
+              </ScrollArea>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog
+        open={pendingNavigation !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPendingNavigation(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("settings.plugins.configuration.unsavedTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("settings.plugins.configuration.unsavedDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (pendingNavigation !== null)
+                  applyNavigation(pendingNavigation);
+              }}
+            >
+              {t("settings.plugins.configuration.discard")}
+            </Button>
+            <Button
+              onClick={() => {
+                const navigation = pendingNavigation;
+                if (navigation === null) return;
+                void pluginConfigurationGuard.current
+                  ?.save()
+                  .then((saved) => saved && applyNavigation(navigation));
+              }}
+            >
+              {t("settings.plugins.configuration.save")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 

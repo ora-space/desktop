@@ -50,11 +50,11 @@ Boolean fields use an explicit three-state editor so absent, false, and true rem
 
 The editor uses an explicit Save action. A save submits the complete set of values recognized by the current declaration together with the revision the editor loaded. Ora accepts a type-correct but incomplete replacement and reports Incomplete after saving. It rejects a stale revision with `ConfigurationRevisionConflict`, preserves the editor's unsaved values, and asks the user to reload rather than overwriting or automatically merging. A successful save validates the whole replacement and atomically persists one new revision; field changes are not auto-saved.
 
-Leaving a dirty editor requires an explicit Save, Discard, or Cancel decision. Reset All is a confirmed domain operation that removes every stored override and writes a new empty-values revision; it does not delete the value file or reset the revision to zero. Defaults remain effective.
+Leaving a dirty editor through its breadcrumb, a Settings category switch, or Settings Dialog close requires an explicit Save, Discard, or Cancel decision. Reset All is a confirmed domain operation that removes every stored override and writes a new empty-values revision; it does not delete the value file or reset the revision to zero. Defaults remain effective.
 
 After Save, the editor remains open, adopts the returned revision and value sources, and displays Saved. The same response carries the authoritative Configuration Summary used to update the plugin-list cache without refetching every plugin. Save and Reset update query caches only; the first delivery does not publish a global configuration-changed event or poll for changes.
 
-A malformed or unreadable value file produces `ConfigurationLoadFailed`, makes Configuration Summary Unavailable, and is not treated as Needs Configuration. Ora preserves the original file and requires an explicit reset or replacement before writing over it. After user confirmation, recovery renames the original to a `.corrupt-<local timestamp>` backup before writing a replacement.
+A malformed or unreadable value file produces `ConfigurationLoadFailed`, makes Configuration Summary Unavailable, and is not treated as Needs Configuration. Ora preserves the original file and requires an explicit reset or replacement before writing over it. After user confirmation, recovery moves the original to a unique `.corrupt-<local timestamp>[-<counter>]` backup without overwriting an earlier backup before writing a replacement.
 
 The first delivery validates declaration constraints, value types, and Configuration Completeness only. It does not execute Agent Plugin code during Save and does not define a generic connection-test or business-validation hook.
 

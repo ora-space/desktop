@@ -23,13 +23,20 @@ import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-syn
 import { PluginLogo } from "./plugin-logo";
 import { PluginManager } from "./plugin-manager";
 import { PluginConfigurationEditor } from "./plugin-configuration-editor";
+import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 
 /**
  * The plugin marketplace pane backed by the registry contract: the browse grid reads the
  * cached registry index, installs and lifecycle changes go through the backend commands,
  * and the installed-plugin manager drives the durable lifecycle surface.
  */
-export function PluginsSettings() {
+export function PluginsSettings({
+  onNavigationGuardChange,
+}: {
+  onNavigationGuardChange?: (
+    guard: PluginConfigurationNavigationGuard | null,
+  ) => void;
+}) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [managing, setManaging] = useState(false);
@@ -78,6 +85,7 @@ export function PluginsSettings() {
           pluginId={configurationPlugin.id}
           displayName={configurationPlugin.displayName}
           onBack={() => setConfigurationPluginId(null)}
+          onNavigationGuardChange={onNavigationGuardChange}
         />
       );
     }

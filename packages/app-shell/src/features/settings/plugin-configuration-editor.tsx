@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   PluginConfigurationDetails,
@@ -32,15 +32,25 @@ import { usePluginConfiguration } from "../../state/hooks/use-plugin-configurati
 type Draft = { override: boolean; value: string | boolean | null };
 type Drafts = Record<string, Draft>;
 
+/** Lets the Settings container protect navigation without owning editor draft state. */
+export interface PluginConfigurationNavigationGuard {
+  isDirty: () => boolean;
+  save: () => Promise<boolean>;
+}
+
 /** Renders one host-owned third-level editor from the plugin's immutable declaration. */
 export function PluginConfigurationEditor({
   pluginId,
   displayName,
   onBack,
+  onNavigationGuardChange,
 }: {
   pluginId: string;
   displayName: string;
   onBack: () => void;
+  onNavigationGuardChange?: (
+    guard: PluginConfigurationNavigationGuard | null,
+  ) => void;
 }) {
   const { t } = useTranslation();
   const configuration = usePluginConfiguration(pluginId);
@@ -85,6 +95,7 @@ export function PluginConfigurationEditor({
       saving={configuration.save.isPending}
       resetting={configuration.reset.isPending}
       onBack={onBack}
+      onNavigationGuardChange={onNavigationGuardChange}
       onSave={async (values) => {
         const response = await configuration.save.mutateAsync({
           expectedRevision: details.revision,
@@ -112,6 +123,7 @@ function LoadedConfigurationEditor({
   saving,
   resetting,
   onBack,
+  onNavigationGuardChange,
   onSave,
   onReset,
 }: {
@@ -121,6 +133,9 @@ function LoadedConfigurationEditor({
   saving: boolean;
   resetting: boolean;
   onBack: () => void;
+  onNavigationGuardChange?: (
+    guard: PluginConfigurationNavigationGuard | null,
+  ) => void;
   onSave: (values: Record<string, PluginSettingValue>) => Promise<void>;
   onReset: () => Promise<unknown>;
 }) {
@@ -174,6 +189,22 @@ function LoadedConfigurationEditor({
       return false;
     }
   };
+  const dirtyRef = useRef(dirty);
+  const saveRef = useRef(save);
+
+  useEffect(() => {
+    dirtyRef.current = dirty;
+    saveRef.current = save;
+  });
+
+  useEffect(() => {
+    const guard: PluginConfigurationNavigationGuard = {
+      isDirty: () => dirtyRef.current,
+      save: () => saveRef.current(),
+    };
+    onNavigationGuardChange?.(guard);
+    return () => onNavigationGuardChange?.(null);
+  }, [onNavigationGuardChange]);
 
   return (
     <div className="space-y-5">
@@ -261,7 +292,7 @@ function LoadedConfigurationEditor({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => update(draftFrom(field))}
+                    onClick={() => update(resetDraftFrom(field))}
                   >
                     {t("settings.plugins.configuration.resetField")}
                   </Button>
@@ -438,6 +469,14 @@ function draftFrom(field: PluginSettingDetails): Draft {
   if (field.storedValue !== null)
     return { override: true, value: displayValue(field.storedValue) };
   return { override: false, value: displayValue(field.effectiveValue) };
+}
+
+/** Removes an explicit override while restoring the declaration default or absent state. */
+function resetDraftFrom(field: PluginSettingDetails): Draft {
+  return {
+    override: false,
+    value: displayValue(field.declaration.default),
+  };
 }
 
 function draftsFrom(details: PluginConfigurationDetails): Drafts {

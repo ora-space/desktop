@@ -11,8 +11,9 @@ that any other crate can consume without introducing dependency cycles.
 - `archive` (Cargo feature `archive`): safe materialization of untrusted `.zip` / `.tar.gz`
   archives and folder trees into a destination directory with zip-slip defenses, encrypted and
   special-entry rejection, portable case-conflict detection, and cumulative entry/byte budgets.
-- `atomic`: atomically replacing a file by writing a same-directory temporary file and renaming
-  it over the destination, so readers never observe partial content.
+- `atomic`: atomically replacing a file by writing a same-directory temporary file, optionally
+  preparing its metadata, and renaming it over the destination, so readers never observe partial
+  content or a destination change after preparation fails.
 - `hash` (Cargo feature `validation`): streaming SHA-256 digests over a reader or file without
   buffering the whole input.
 - `http` (Cargo feature `http`): the transport-agnostic `HttpDownload` contract plus an offline

@@ -26,6 +26,8 @@ stops the process, then atomically stages the complete
 `plugins/installed/<namespace>/<name>` tree and, when selected, `data/<namespace>/<name>` before
 deleting durable state. A repository or staging failure rolls the moves back; after commit,
 staging cleanup is independent and empty namespace directories are pruned.
+Cleanup failures retain their staged paths in memory and are retried by later scans without
+reversing the already committed uninstall.
 Each scan reapplies durable eligibility to every retained package, stops runtimes that durable state
 no longer permits, and removes durable rows for packages missing from disk. To return one coherent
 snapshot, a scan acquires cached plugin operation locks in stable identifier order and may therefore

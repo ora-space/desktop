@@ -1,6 +1,6 @@
 use super::{
     EnabledRuntime, ManagedPluginState, PluginLifecycle, PluginLifecycleError, PluginRuntime,
-    PluginRuntimeLauncher, PluginStatusPublisher,
+    PluginRuntimeLauncher, PluginStatusPublisher, has_valid_configuration_declaration,
 };
 use ora_application::{Clock, PluginStateRepository};
 use ora_contracts::{ScanPluginsRequest, ScanPluginsResponse};
@@ -22,6 +22,11 @@ where
         _request: ScanPluginsRequest,
     ) -> Result<ScanPluginsResponse, PluginLifecycleError> {
         let _scan = self.inner.scan_lock.lock().await;
+        self.inner
+            .pending_uninstall_cleanup
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|staged| staged.cleanup().is_err());
         let cached_ids = self
             .read_state()
             .installed
@@ -81,7 +86,26 @@ where
             .map_err(PluginLifecycleError::Repository)?
         {
             if installed_ids.contains(&persisted.plugin_id) {
-                persisted_by_id.insert(persisted.plugin_id, persisted.enabled);
+                let valid = installed
+                    .iter()
+                    .find(|plugin| plugin.id == persisted.plugin_id.as_ref())
+                    .is_some_and(has_valid_configuration_declaration);
+                let enabled = if valid {
+                    persisted.enabled
+                } else {
+                    if persisted.enabled == PluginEnabledState::Enabled {
+                        self.inner
+                            .repository
+                            .set_plugin_enabled(
+                                &persisted.plugin_id,
+                                PluginEnabledState::Disabled,
+                                self.inner.clock.now_timestamp_millis(),
+                            )
+                            .map_err(PluginLifecycleError::Repository)?;
+                    }
+                    PluginEnabledState::Disabled
+                };
+                persisted_by_id.insert(persisted.plugin_id, enabled);
             } else {
                 orphaned_persisted_ids.push(persisted.plugin_id);
             }
