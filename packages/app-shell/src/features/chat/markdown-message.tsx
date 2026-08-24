@@ -26,6 +26,7 @@ import {
   prepareAssistantMessageMarkdown,
   remarkSoftBreaks,
 } from "./assistant-message-markdown";
+import { ChatExternalLink } from "./chat-external-link";
 import { unwrapMarkdownDocument } from "./markdown-document";
 import { prepareStreamingMarkdown } from "./streaming-markdown";
 import {
@@ -105,15 +106,14 @@ interface StreamingRevealSpanProps extends ComponentPropsWithoutRef<"span"> {
 function createMarkdownComponents(density: MarkdownDensity): Components {
   const compact = density === "compact";
   return {
-    a: ({ children, ...props }) => (
-      <a
+    a: ({ children, href, ...props }) => (
+      <ChatExternalLink
         className="font-medium text-primary underline decoration-primary/45 underline-offset-4 transition-colors hover:decoration-primary focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        rel="noopener noreferrer"
-        target="_blank"
+        href={href ?? ""}
         {...props}
       >
         {children}
-      </a>
+      </ChatExternalLink>
     ),
     blockquote: ({ children, ...props }) => (
       <blockquote

@@ -2,6 +2,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { PlatformProvider } from "../../platform";
+import { createStubPlatform } from "../../test/stub-platform";
 import { MarkdownDocument, MarkdownMessage } from "./markdown-message";
 
 /** Renders Markdown with the production translation provider used by code controls. */
@@ -30,6 +32,28 @@ describe("MarkdownDocument", () => {
       "https://example.com",
     );
     expect(screen.queryByText(/\*\*bold\*\*/)).toBeNull();
+  });
+
+  it("opens a user-message link through the platform, not native new-window handling", async () => {
+    const user = userEvent.setup();
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PlatformProvider adapter={{ ...createStubPlatform(), openExternalUrl }}>
+        <AppI18nProvider>
+          <MarkdownDocument
+            density="compact"
+            content={"[Docs](https://example.com)"}
+          />
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+
+    // Desktop's main window registers no `on_new_window` hook, so a bare
+    // target="_blank" anchor is silently dropped there even though jsdom is
+    // happy with the attribute alone. User messages must route through the
+    // same openExternalUrl command assistant messages and the prompt box use.
+    await user.click(screen.getByRole("link", { name: "Docs" }));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://example.com");
   });
 
   it("renders compact headings 1-6, strike, highlight, and lists", () => {

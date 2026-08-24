@@ -36,8 +36,9 @@ async function flushDesktopCwd() {
 async function renderLinkedMarkdown(content: string) {
   const openDiff = vi.fn();
   const openWorkspaceFile = vi.fn();
+  const openExternalUrl = vi.fn().mockResolvedValue(undefined);
   render(
-    <PlatformProvider adapter={createStubPlatform()}>
+    <PlatformProvider adapter={{ ...createStubPlatform(), openExternalUrl }}>
       <AppI18nProvider>
         <TaskChangesNavigationProvider
           onOpenDiff={openDiff}
@@ -51,7 +52,7 @@ async function renderLinkedMarkdown(content: string) {
     </PlatformProvider>,
   );
   await flushDesktopCwd();
-  return { openDiff, openWorkspaceFile };
+  return { openDiff, openWorkspaceFile, openExternalUrl };
 }
 
 function editTool(path: string): ChatToolCall {
@@ -162,18 +163,29 @@ describe("assistant markdown artifact links", () => {
     expect(openDiff).toHaveBeenCalledWith("src/main.rs", 12);
   });
 
-  it("keeps https links as target=_blank and blocks dangerous schemes", async () => {
-    await renderLinkedMarkdown(
+  it("opens https links through the platform and blocks dangerous schemes", async () => {
+    const user = userEvent.setup();
+    const { openExternalUrl } = await renderLinkedMarkdown(
       "[docs](https://example.com) [xss](javascript:alert(1))",
     );
-    expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute(
-      "target",
-      "_blank",
-    );
+    const docsLink = screen.getByRole("link", { name: "docs" });
+    expect(docsLink).toHaveAttribute("target", "_blank");
+
+    // Desktop's main window has no `on_new_window` hook (see surface/hooks.rs),
+    // so a bare target="_blank" anchor never leaves the webview there even
+    // though it looks clickable under jsdom. The click must go through the
+    // same openExternalUrl command the prompt box uses instead.
+    await user.click(docsLink);
+    expect(openExternalUrl).toHaveBeenCalledWith("https://example.com");
+
     // react-markdown strips javascript: hrefs; the leftover anchor must not navigate.
-    expect(screen.getByText("xss").closest("a")).not.toHaveAttribute(
-      "target",
-      "_blank",
+    const xssLink = screen.getByText("xss").closest("a");
+    expect(xssLink).not.toHaveAttribute("target", "_blank");
+    if (xssLink !== null) {
+      await user.click(xssLink);
+    }
+    expect(openExternalUrl).not.toHaveBeenCalledWith(
+      expect.stringContaining("javascript:"),
     );
   });
 
