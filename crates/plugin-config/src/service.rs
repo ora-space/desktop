@@ -1,0 +1,966 @@
+use crate::declaration::parse_strict_json;
+use crate::{
+    CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, SettingDeclaration,
+    SettingValue, compile_declaration,
+};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use thiserror::Error;
+
+/// Reports whether every required Setting has an available type-correct effective value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigurationCompleteness {
+    Complete,
+    Incomplete,
+}
+
+/// Represents the exclusive host-visible configuration state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigurationSummary {
+    NotDeclared,
+    Available {
+        completeness: ConfigurationCompleteness,
+    },
+    Unavailable {
+        error_code: String,
+    },
+}
+
+/// Identifies where the currently effective value originates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectiveValueSource {
+    Stored,
+    Default,
+    Absent,
+}
+
+/// Projects one declaration together with its stored and effective values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingDetails {
+    pub declaration: SettingDeclaration,
+    pub stored_value: Option<SettingValue>,
+    pub effective_value: Option<SettingValue>,
+    pub source: EffectiveValueSource,
+    pub value_error_code: Option<String>,
+}
+
+/// Carries the complete editor snapshot bound to one revision and declaration fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigurationDetails {
+    pub declaration: CompiledDeclaration,
+    pub settings: Vec<SettingDetails>,
+    pub revision: u64,
+    pub summary: ConfigurationSummary,
+}
+
+/// Identifies one invalid submitted override without requiring consumers to parse messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigurationFieldError {
+    pub setting_id: String,
+    pub error_code: String,
+}
+
+/// Reports configuration declarations or stored values that cannot be served safely.
+#[derive(Debug, Error)]
+pub enum ConfigurationError {
+    #[error("failed to access Plugin Configuration at {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Plugin Configuration declaration is invalid: {0}")]
+    InvalidDeclaration(#[from] CompileDeclarationError),
+    #[error("plugin does not declare configuration")]
+    NotDeclared,
+    #[error("Plugin Configuration declaration changed while it was being edited")]
+    DeclarationChanged,
+    #[error("Plugin Configuration revision conflict: expected {expected}, actual {actual}")]
+    RevisionConflict { expected: u64, actual: u64 },
+    #[error("Plugin Configuration contains invalid field values")]
+    InvalidValues {
+        field_errors: Vec<ConfigurationFieldError>,
+    },
+    #[error("Plugin Configuration value file could not be loaded: {reason}")]
+    LoadFailed { reason: String },
+    #[error("Plugin Configuration revision has reached its maximum value")]
+    RevisionExhausted,
+    #[error("Plugin Configuration write lock is unavailable")]
+    LockUnavailable,
+    #[error("Plugin Configuration recovery was requested for a readable value file")]
+    RecoveryNotRequired,
+}
+
+/// Supplies bounded reads and durable writes without coupling policy to the operating system.
+///
+/// Implementations must distinguish a missing file from other I/O failures and must never return
+/// more than `limit + 1` bytes, which lets callers reject concurrently growing files safely.
+pub trait ConfigurationFileSystem: Clone {
+    /// Reads a regular file up to one byte beyond `limit`, returning `None` when it is absent.
+    fn read_bounded(&self, path: &Path, limit: usize) -> std::io::Result<Option<Vec<u8>>>;
+    /// Creates the directory hierarchy needed for one new value file.
+    fn create_dir_all(&self, path: &Path) -> std::io::Result<()>;
+    /// Atomically replaces one file with fully flushed contents.
+    fn atomic_write(&self, path: &Path, contents: &[u8]) -> std::io::Result<()>;
+    /// Renames one file without copying so corrupt evidence is retained before replacement.
+    fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()>;
+}
+
+/// Filesystem adapter used by the production configuration service.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StandardConfigurationFileSystem;
+
+impl ConfigurationFileSystem for StandardConfigurationFileSystem {
+    fn read_bounded(&self, path: &Path, limit: usize) -> std::io::Result<Option<Vec<u8>>> {
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let mut contents = Vec::new();
+        file.take(limit as u64 + 1).read_to_end(&mut contents)?;
+        Ok(Some(contents))
+    }
+
+    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // The directory gate prevents exposure while atomic replacement is still in flight.
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(())
+    }
+
+    fn atomic_write(&self, path: &Path, contents: &[u8]) -> std::io::Result<()> {
+        ora_utils::atomic::write(path, contents)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    }
+
+    fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
+        std::fs::rename(source, destination)
+    }
+}
+
+/// Owns declaration lookup and Stored Setting Value resolution below one host data root.
+#[derive(Debug, Clone)]
+pub struct ConfigurationService<FileSystem = StandardConfigurationFileSystem> {
+    data_root: std::path::PathBuf,
+    file_system: FileSystem,
+    locks: Arc<Mutex<BTreeMap<String, Arc<Mutex<()>>>>>,
+}
+
+impl ConfigurationService<StandardConfigurationFileSystem> {
+    /// Creates a production service rooted in the Ora data directory.
+    pub fn new(data_root: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            data_root: data_root.into(),
+            file_system: StandardConfigurationFileSystem,
+            locks: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+}
+
+impl<FileSystem> ConfigurationService<FileSystem>
+where
+    FileSystem: ConfigurationFileSystem,
+{
+    /// Creates a service with an injected filesystem port for deterministic fault tests.
+    pub fn with_file_system(data_root: impl Into<PathBuf>, file_system: FileSystem) -> Self {
+        Self {
+            data_root: data_root.into(),
+            file_system,
+            locks: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    /// Loads editor details for one installed plugin package.
+    pub fn get(
+        &self,
+        plugin_id: &str,
+        package_root: &Path,
+    ) -> Result<Option<ConfigurationDetails>, ConfigurationError> {
+        let Some(declaration) = self.load_declaration(package_root)? else {
+            return Ok(None);
+        };
+        match self.load_store(plugin_id) {
+            Ok(store) => Ok(Some(details_from(declaration, store))),
+            Err(ConfigurationError::LoadFailed { .. } | ConfigurationError::Io { .. }) => {
+                let mut details = details_from(declaration, StoredConfiguration::default());
+                details.summary = ConfigurationSummary::Unavailable {
+                    error_code: "configuration_load_failed".to_string(),
+                };
+                Ok(Some(details))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Loads the optional immutable declaration for installation validation and orchestration.
+    pub fn declaration(
+        &self,
+        package_root: &Path,
+    ) -> Result<Option<CompiledDeclaration>, ConfigurationError> {
+        self.load_declaration(package_root)
+    }
+
+    /// Returns the list-facing state without converting unreadable data into missing values.
+    pub fn summary(&self, plugin_id: &str, package_root: &Path) -> ConfigurationSummary {
+        match self.get(plugin_id, package_root) {
+            Ok(None) => ConfigurationSummary::NotDeclared,
+            Ok(Some(details)) => details.summary,
+            Err(ConfigurationError::InvalidDeclaration(_)) => ConfigurationSummary::Unavailable {
+                error_code: "plugin_configuration_declaration_invalid".to_string(),
+            },
+            Err(_) => ConfigurationSummary::Unavailable {
+                error_code: "configuration_load_failed".to_string(),
+            },
+        }
+    }
+
+    /// Persists a complete explicit override replacement after optimistic concurrency checks.
+    pub fn save(
+        &self,
+        plugin_id: &str,
+        package_root: &Path,
+        expected_revision: u64,
+        declaration_fingerprint: &str,
+        values: BTreeMap<String, SettingValue>,
+    ) -> Result<ConfigurationDetails, ConfigurationError> {
+        let declaration = self
+            .load_declaration(package_root)?
+            .ok_or(ConfigurationError::NotDeclared)?;
+        if declaration.fingerprint != declaration_fingerprint {
+            return Err(ConfigurationError::DeclarationChanged);
+        }
+        let field_errors = validate_values(&declaration, &values);
+        if !field_errors.is_empty() {
+            return Err(ConfigurationError::InvalidValues { field_errors });
+        }
+        let plugin_lock = self.plugin_lock(plugin_id)?;
+        let _guard = plugin_lock
+            .lock()
+            .map_err(|_| ConfigurationError::LockUnavailable)?;
+        let current = self.load_store(plugin_id)?;
+        if current.revision != expected_revision {
+            return Err(ConfigurationError::RevisionConflict {
+                expected: expected_revision,
+                actual: current.revision,
+            });
+        }
+        let revision = current
+            .revision
+            .checked_add(1)
+            .ok_or(ConfigurationError::RevisionExhausted)?;
+        let replacement = StoredConfiguration {
+            schema_version: 1,
+            revision,
+            values,
+        };
+        self.write_store(plugin_id, &replacement)?;
+        Ok(details_from(declaration, replacement))
+    }
+
+    /// Removes every explicit override while preserving revision monotonicity.
+    pub fn reset_all(
+        &self,
+        plugin_id: &str,
+        package_root: &Path,
+        expected_revision: u64,
+        declaration_fingerprint: &str,
+    ) -> Result<ConfigurationDetails, ConfigurationError> {
+        self.save(
+            plugin_id,
+            package_root,
+            expected_revision,
+            declaration_fingerprint,
+            BTreeMap::new(),
+        )
+    }
+
+    /// Backs up a malformed value file before replacing it with an empty first recovery revision.
+    pub fn recover_corrupt(
+        &self,
+        plugin_id: &str,
+        package_root: &Path,
+        declaration_fingerprint: &str,
+        local_timestamp: &str,
+    ) -> Result<ConfigurationDetails, ConfigurationError> {
+        let declaration = self
+            .load_declaration(package_root)?
+            .ok_or(ConfigurationError::NotDeclared)?;
+        if declaration.fingerprint != declaration_fingerprint {
+            return Err(ConfigurationError::DeclarationChanged);
+        }
+        let plugin_lock = self.plugin_lock(plugin_id)?;
+        let _guard = plugin_lock
+            .lock()
+            .map_err(|_| ConfigurationError::LockUnavailable)?;
+        match self.load_store(plugin_id) {
+            Err(ConfigurationError::LoadFailed { .. } | ConfigurationError::Io { .. }) => {}
+            Err(error) => return Err(error),
+            Ok(_) => return Err(ConfigurationError::RecoveryNotRequired),
+        }
+        let path = self.store_path(plugin_id)?;
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| ConfigurationError::LoadFailed {
+                reason: "value file name is not valid UTF-8".to_string(),
+            })?;
+        let backup = path.with_file_name(format!("{file_name}.corrupt-{local_timestamp}"));
+        self.file_system
+            .rename(&path, &backup)
+            .map_err(|source| ConfigurationError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        let replacement = StoredConfiguration {
+            schema_version: 1,
+            revision: 1,
+            values: BTreeMap::new(),
+        };
+        if let Err(error) = self.write_store(plugin_id, &replacement) {
+            let _ = self.file_system.rename(&backup, &path);
+            return Err(error);
+        }
+        Ok(details_from(declaration, replacement))
+    }
+
+    /// Loads and compiles the optional immutable package declaration.
+    fn load_declaration(
+        &self,
+        package_root: &Path,
+    ) -> Result<Option<CompiledDeclaration>, ConfigurationError> {
+        let declaration_path = package_root.join("assets").join("config.json");
+        let Some(source) = self
+            .file_system
+            .read_bounded(&declaration_path, MAX_DECLARATION_BYTES)
+            .map_err(|source| ConfigurationError::Io {
+                path: declaration_path,
+                source,
+            })?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(compile_declaration(&source)?))
+    }
+
+    /// Reads one revisioned value file while preserving malformed data for explicit recovery.
+    fn load_store(&self, plugin_id: &str) -> Result<StoredConfiguration, ConfigurationError> {
+        let path = self.store_path(plugin_id)?;
+        let Some(source) = self
+            .file_system
+            .read_bounded(&path, MAX_STORE_BYTES)
+            .map_err(|source| ConfigurationError::Io {
+                path: path.clone(),
+                source,
+            })?
+        else {
+            return Ok(StoredConfiguration::default());
+        };
+        if source.len() > MAX_STORE_BYTES {
+            return Err(ConfigurationError::LoadFailed {
+                reason: format!("value file exceeds the {MAX_STORE_BYTES}-byte limit"),
+            });
+        }
+        let value = parse_strict_json(&source).map_err(|error| ConfigurationError::LoadFailed {
+            reason: error.to_string(),
+        })?;
+        let store: StoredConfiguration =
+            serde_json::from_value(value).map_err(|error| ConfigurationError::LoadFailed {
+                reason: error.to_string(),
+            })?;
+        if store.schema_version != 1 {
+            return Err(ConfigurationError::LoadFailed {
+                reason: format!("unsupported value schema version {}", store.schema_version),
+            });
+        }
+        Ok(store)
+    }
+
+    /// Serializes one validated value replacement into the plugin-owned data directory.
+    fn write_store(
+        &self,
+        plugin_id: &str,
+        store: &StoredConfiguration,
+    ) -> Result<(), ConfigurationError> {
+        let path = self.store_path(plugin_id)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| ConfigurationError::LoadFailed {
+                reason: "value file has no parent directory".to_string(),
+            })?;
+        self.file_system
+            .create_dir_all(parent)
+            .map_err(|source| ConfigurationError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        let source = serde_json::to_vec(store).map_err(|error| ConfigurationError::LoadFailed {
+            reason: error.to_string(),
+        })?;
+        if source.len() > MAX_STORE_BYTES {
+            let setting_id = store
+                .values
+                .iter()
+                .max_by_key(|(_, value)| {
+                    serde_json::to_string(value).map_or(0, |value| value.len())
+                })
+                .map_or_else(String::new, |(setting_id, _)| setting_id.clone());
+            return Err(ConfigurationError::InvalidValues {
+                field_errors: vec![ConfigurationFieldError {
+                    setting_id,
+                    error_code: "configuration_too_large".to_string(),
+                }],
+            });
+        }
+        self.file_system
+            .atomic_write(&path, &source)
+            .map_err(|source| ConfigurationError::Io { path, source })
+    }
+
+    /// Resolves a plugin-global value path from a validated namespaced identifier.
+    fn store_path(&self, plugin_id: &str) -> Result<PathBuf, ConfigurationError> {
+        let Some((namespace, name)) = plugin_id.split_once('/') else {
+            return Err(ConfigurationError::LoadFailed {
+                reason: "plugin identifier must contain namespace and name".to_string(),
+            });
+        };
+        if namespace.is_empty()
+            || name.is_empty()
+            || name.contains('/')
+            || ![namespace, name].into_iter().all(|segment| {
+                segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+            })
+        {
+            return Err(ConfigurationError::LoadFailed {
+                reason: "plugin identifier contains an unsafe path segment".to_string(),
+            });
+        }
+        Ok(self
+            .data_root
+            .join("data")
+            .join(namespace)
+            .join(name)
+            .join("store.json"))
+    }
+
+    /// Returns the process-local serialization gate for one plugin identifier.
+    fn plugin_lock(&self, plugin_id: &str) -> Result<Arc<Mutex<()>>, ConfigurationError> {
+        let mut locks = self
+            .locks
+            .lock()
+            .map_err(|_| ConfigurationError::LockUnavailable)?;
+        Ok(locks
+            .entry(plugin_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone())
+    }
+}
+
+const MAX_STORE_BYTES: usize = 1024 * 1024;
+const MAX_STRING_VALUE_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredConfiguration {
+    schema_version: u32,
+    revision: u64,
+    values: BTreeMap<String, SettingValue>,
+}
+
+impl Default for StoredConfiguration {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            revision: 0,
+            values: BTreeMap::new(),
+        }
+    }
+}
+
+/// Projects stored overrides and defaults while retaining incompatible upgrade values as errors.
+fn details_from(
+    declaration: CompiledDeclaration,
+    store: StoredConfiguration,
+) -> ConfigurationDetails {
+    let settings = declaration
+        .settings
+        .iter()
+        .cloned()
+        .map(|setting| {
+            let stored = store.values.get(&setting.id).cloned();
+            let compatible = stored
+                .as_ref()
+                .is_none_or(|value| value_matches(&setting, value));
+            let (stored_value, effective_value, source, value_error_code) = if compatible {
+                match stored {
+                    Some(value) => (
+                        Some(value.clone()),
+                        Some(value),
+                        EffectiveValueSource::Stored,
+                        None,
+                    ),
+                    None => match setting.default.clone() {
+                        Some(value) => (None, Some(value), EffectiveValueSource::Default, None),
+                        None => (None, None, EffectiveValueSource::Absent, None),
+                    },
+                }
+            } else {
+                let (effective_value, source) = match setting.default.clone() {
+                    Some(value) => (Some(value), EffectiveValueSource::Default),
+                    None => (None, EffectiveValueSource::Absent),
+                };
+                (
+                    None,
+                    effective_value,
+                    source,
+                    Some("stored_value_type_mismatch".to_string()),
+                )
+            };
+            SettingDetails {
+                declaration: setting,
+                stored_value,
+                effective_value,
+                source,
+                value_error_code,
+            }
+        })
+        .collect::<Vec<_>>();
+    let completeness = completeness(&settings);
+    ConfigurationDetails {
+        declaration,
+        settings,
+        revision: store.revision,
+        summary: ConfigurationSummary::Available { completeness },
+    }
+}
+
+/// Validates that the complete submitted override set is recognized and type-correct.
+fn validate_values(
+    declaration: &CompiledDeclaration,
+    values: &BTreeMap<String, SettingValue>,
+) -> Vec<ConfigurationFieldError> {
+    let declarations = declaration
+        .settings
+        .iter()
+        .map(|setting| (setting.id.as_str(), setting))
+        .collect::<BTreeMap<_, _>>();
+    values
+        .iter()
+        .filter_map(|(setting_id, value)| match declarations.get(setting_id.as_str()) {
+            None => Some(ConfigurationFieldError {
+                setting_id: setting_id.clone(),
+                error_code: "setting_not_declared".to_string(),
+            }),
+            Some(setting) if !value_matches(setting, value) => Some(ConfigurationFieldError {
+                setting_id: setting_id.clone(),
+                error_code: "setting_type_mismatch".to_string(),
+            }),
+            Some(_)
+                if matches!(value, SettingValue::String(value) if value.len() > MAX_STRING_VALUE_BYTES) =>
+            {
+                Some(ConfigurationFieldError {
+                    setting_id: setting_id.clone(),
+                    error_code: "string_value_too_large".to_string(),
+                })
+            }
+            Some(_) => None,
+        })
+        .collect()
+}
+
+/// Checks one scalar against its declaration without converting between JSON types.
+fn value_matches(declaration: &SettingDeclaration, value: &SettingValue) -> bool {
+    matches!(
+        (declaration.setting_type, value),
+        (crate::SettingType::String, SettingValue::String(_))
+            | (crate::SettingType::Number, SettingValue::Number(_))
+            | (crate::SettingType::Boolean, SettingValue::Boolean(_))
+    )
+}
+
+/// Evaluates required values and any stored type failures from the projected editor fields.
+fn completeness(settings: &[SettingDetails]) -> ConfigurationCompleteness {
+    let incomplete = settings.iter().any(|setting| {
+        setting.value_error_code.is_some()
+            || (setting.declaration.required
+                && match setting.effective_value.as_ref() {
+                    Some(SettingValue::String(value)) => value.trim().is_empty(),
+                    Some(SettingValue::Number(_) | SettingValue::Boolean(_)) => false,
+                    None => true,
+                })
+    });
+    if incomplete {
+        ConfigurationCompleteness::Incomplete
+    } else {
+        ConfigurationCompleteness::Complete
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ConfigurationCompleteness, ConfigurationDetails, ConfigurationService,
+        ConfigurationSummary, EffectiveValueSource, SettingDetails,
+    };
+    use crate::{CompiledDeclaration, SettingDeclaration, SettingType, SettingValue};
+    use pretty_assertions::assert_eq;
+    use std::collections::BTreeMap;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// A package declaration resolves defaults without creating a Stored Setting Value file.
+    #[test]
+    fn loads_declaration_defaults_without_persisting_them() {
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package");
+        fs::create_dir_all(package_root.join("assets")).expect("create package assets");
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            r#"{
+              "schemaVersion": 1,
+              "settings": {
+                "endpoint": {"type":"string","title":"Endpoint","description":"Service URL","required":true},
+                "retries": {"type":"number","title":"Retries","description":"Attempts","default":3}
+              }
+            }"#,
+        )
+        .expect("write declaration");
+        let service = ConfigurationService::new(temporary.path());
+
+        let details = service
+            .get("official/weather", &package_root)
+            .expect("load configuration")
+            .expect("declaration exists");
+        let endpoint = SettingDeclaration {
+            id: "endpoint".to_string(),
+            title: "Endpoint".to_string(),
+            description: "Service URL".to_string(),
+            setting_type: SettingType::String,
+            required: true,
+            order: None,
+            default: None,
+        };
+        let retries = SettingDeclaration {
+            id: "retries".to_string(),
+            title: "Retries".to_string(),
+            description: "Attempts".to_string(),
+            setting_type: SettingType::Number,
+            required: false,
+            order: None,
+            default: Some(SettingValue::Number(3.into())),
+        };
+
+        assert_eq!(
+            details,
+            ConfigurationDetails {
+                declaration: CompiledDeclaration {
+                    schema_version: 1,
+                    settings: vec![endpoint.clone(), retries.clone()],
+                    fingerprint: "ed254f53f4f9ff2e8e008641b3502d6f60dcb9ac77e9839fc524a940227833dd"
+                        .to_string(),
+                },
+                settings: vec![
+                    SettingDetails {
+                        declaration: endpoint,
+                        stored_value: None,
+                        effective_value: None,
+                        source: EffectiveValueSource::Absent,
+                        value_error_code: None,
+                    },
+                    SettingDetails {
+                        declaration: retries,
+                        stored_value: None,
+                        effective_value: Some(SettingValue::Number(3.into())),
+                        source: EffectiveValueSource::Default,
+                        value_error_code: None,
+                    },
+                ],
+                revision: 0,
+                summary: ConfigurationSummary::Available {
+                    completeness: ConfigurationCompleteness::Incomplete,
+                },
+            }
+        );
+        assert!(!temporary.path().join("data").exists());
+    }
+
+    /// Save persists a complete explicit replacement and rejects a stale editor revision.
+    #[test]
+    fn saves_revisioned_overrides_and_rejects_stale_replacements() {
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package");
+        fs::create_dir_all(package_root.join("assets")).expect("create package assets");
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            r#"{"schemaVersion":1,"settings":{"endpoint":{"type":"string","title":"Endpoint","description":"Service URL","required":true},"enabled":{"type":"boolean","title":"Enabled","description":"Use it"}}}"#,
+        )
+        .expect("write declaration");
+        let service = ConfigurationService::new(temporary.path());
+        let loaded = service
+            .get("official/weather", &package_root)
+            .expect("load configuration")
+            .expect("declaration exists");
+        let values = BTreeMap::from([
+            (
+                "endpoint".to_string(),
+                SettingValue::String("  https://example.com  ".to_string()),
+            ),
+            ("enabled".to_string(), SettingValue::Boolean(false)),
+        ]);
+
+        let saved = service
+            .save(
+                "official/weather",
+                &package_root,
+                0,
+                &loaded.declaration.fingerprint,
+                values.clone(),
+            )
+            .expect("save configuration");
+
+        assert_eq!(saved.revision, 1);
+        assert_eq!(
+            saved.summary,
+            ConfigurationSummary::Available {
+                completeness: ConfigurationCompleteness::Complete,
+            }
+        );
+        assert_eq!(
+            saved
+                .settings
+                .iter()
+                .map(|setting| (
+                    setting.declaration.id.as_str(),
+                    setting.stored_value.clone(),
+                    setting.source,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "enabled",
+                    Some(SettingValue::Boolean(false)),
+                    EffectiveValueSource::Stored,
+                ),
+                (
+                    "endpoint",
+                    Some(SettingValue::String("  https://example.com  ".to_string())),
+                    EffectiveValueSource::Stored,
+                ),
+            ]
+        );
+        assert!(
+            temporary
+                .path()
+                .join("data")
+                .join("official")
+                .join("weather")
+                .join("store.json")
+                .is_file()
+        );
+        assert!(matches!(
+            service.save(
+                "official/weather",
+                &package_root,
+                0,
+                &loaded.declaration.fingerprint,
+                values,
+            ),
+            Err(super::ConfigurationError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            })
+        ));
+    }
+
+    /// Upgrades hide removed values, surface incompatible values, and prune both on the next save.
+    #[test]
+    fn upgrade_values_are_retained_until_a_successful_current_declaration_save() {
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package");
+        fs::create_dir_all(package_root.join("assets")).expect("create package assets");
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            r#"{"schemaVersion":1,"settings":{"endpoint":{"type":"string","title":"Endpoint","description":"Service URL","required":true}}}"#,
+        )
+        .expect("write upgraded declaration");
+        let store_root = temporary
+            .path()
+            .join("data")
+            .join("official")
+            .join("weather");
+        fs::create_dir_all(&store_root).expect("create store root");
+        fs::write(
+            store_root.join("store.json"),
+            r#"{"schemaVersion":1,"revision":7,"values":{"endpoint":3,"removed":true}}"#,
+        )
+        .expect("write values from old declaration");
+        let service = ConfigurationService::new(temporary.path());
+
+        let loaded = service
+            .get("official/weather", &package_root)
+            .expect("load upgraded configuration")
+            .expect("declaration exists");
+        assert_eq!(loaded.settings.len(), 1);
+        assert_eq!(
+            loaded.settings[0].value_error_code.as_deref(),
+            Some("stored_value_type_mismatch")
+        );
+        assert_eq!(
+            loaded.summary,
+            ConfigurationSummary::Available {
+                completeness: ConfigurationCompleteness::Incomplete,
+            }
+        );
+
+        service
+            .save(
+                "official/weather",
+                &package_root,
+                7,
+                &loaded.declaration.fingerprint,
+                BTreeMap::new(),
+            )
+            .expect("save current declaration values");
+
+        assert_eq!(
+            fs::read_to_string(store_root.join("store.json")).unwrap(),
+            r#"{"schemaVersion":1,"revision":8,"values":{}}"#
+        );
+    }
+
+    /// Per-field limits cannot allow the complete Stored Setting Value file to exceed its bound.
+    #[test]
+    fn rejects_a_replacement_whose_serialized_store_exceeds_the_total_limit() {
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package");
+        fs::create_dir_all(package_root.join("assets")).expect("create package assets");
+        let settings = (0..17)
+            .map(|index| {
+                (
+                    format!("value{index}"),
+                    serde_json::json!({
+                        "type": "string",
+                        "title": format!("Value {index}"),
+                        "description": "Large bounded value",
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "settings": settings,
+            }))
+            .unwrap(),
+        )
+        .expect("write declaration");
+        let service = ConfigurationService::new(temporary.path());
+        let loaded = service
+            .get("official/weather", &package_root)
+            .expect("load configuration")
+            .expect("declaration exists");
+        let values = (0..17)
+            .map(|index| {
+                (
+                    format!("value{index}"),
+                    SettingValue::String("x".repeat(64 * 1024)),
+                )
+            })
+            .collect();
+
+        let error = service
+            .save(
+                "official/weather",
+                &package_root,
+                0,
+                &loaded.declaration.fingerprint,
+                values,
+            )
+            .expect_err("reject oversized replacement");
+
+        assert!(matches!(
+            error,
+            super::ConfigurationError::InvalidValues { ref field_errors }
+                if field_errors.len() == 1
+                    && field_errors[0].error_code == "configuration_too_large"
+        ));
+        assert!(
+            !temporary
+                .path()
+                .join("data")
+                .join("official")
+                .join("weather")
+                .join("store.json")
+                .exists()
+        );
+    }
+
+    /// Corrupt storage remains unavailable until confirmed recovery preserves a timestamped backup.
+    #[test]
+    fn backs_up_corrupt_storage_before_recovery() {
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package");
+        fs::create_dir_all(package_root.join("assets")).expect("create package assets");
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            r#"{"schemaVersion":1,"settings":{"endpoint":{"type":"string","title":"Endpoint","description":"Service URL","required":true}}}"#,
+        )
+        .expect("write declaration");
+        let store_root = temporary
+            .path()
+            .join("data")
+            .join("official")
+            .join("weather");
+        fs::create_dir_all(&store_root).expect("create store root");
+        fs::write(store_root.join("store.json"), "{not json").expect("write corrupt store");
+        let service = ConfigurationService::new(temporary.path());
+        let unavailable = service
+            .get("official/weather", &package_root)
+            .expect("load declaration around corrupt store")
+            .expect("declaration exists");
+        assert_eq!(
+            unavailable.summary,
+            ConfigurationSummary::Unavailable {
+                error_code: "configuration_load_failed".to_string(),
+            }
+        );
+
+        let recovered = service
+            .recover_corrupt(
+                "official/weather",
+                &package_root,
+                &unavailable.declaration.fingerprint,
+                "20260824T200000",
+            )
+            .expect("recover corrupt configuration");
+
+        assert_eq!(recovered.revision, 1);
+        assert!(
+            store_root
+                .join("store.json.corrupt-20260824T200000")
+                .is_file()
+        );
+        assert_eq!(
+            service
+                .get("official/weather", &package_root)
+                .expect("load recovered configuration")
+                .expect("declaration exists"),
+            recovered
+        );
+    }
+}

@@ -2980,6 +2980,7 @@ dependencies = [
  "ora-fs",
  "ora-history",
  "ora-logging",
+ "ora-plugin-config",
  "ora-plugin-lifecycle",
  "ora-plugin-manager",
  "ora-plugin-registry",
@@ -3124,6 +3125,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-plugin-config"
+version = "0.0.0"
+dependencies = [
+ "ora-utils",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "ora-plugin-lifecycle"
 version = "0.0.0"
 dependencies = [
@@ -3132,6 +3145,7 @@ dependencies = [
  "ora-db",
  "ora-domain",
  "ora-logging",
+ "ora-plugin-config",
  "ora-plugin-manager",
  "ora-plugin-runtime",
  "ora-process",
@@ -3149,6 +3163,7 @@ name = "ora-plugin-manager"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "ora-plugin-config",
  "ora-plugin-manifest",
  "ora-utils",
  "pretty_assertions",

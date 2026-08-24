@@ -1,6 +1,6 @@
 use super::{
-    InstalledPluginAgent, MAX_MANIFEST_BYTES, PluginContribution, PluginDiscoveryIssueKind,
-    PluginEngines, PluginManager, PluginPackageType,
+    InstalledPluginAgent, MAX_MANIFEST_BYTES, PluginConfigurationDeclarationValidity,
+    PluginContribution, PluginDiscoveryIssueKind, PluginEngines, PluginManager, PluginPackageType,
 };
 use ora_utils::path::PortableRelativePath;
 use pretty_assertions::assert_eq;
@@ -9,6 +9,27 @@ use std::path::Path;
 use tempfile::TempDir;
 
 const VALID_ORAX: &str = "resolver = 1\nname = \"demo\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Demo plugin\"\n";
+
+/// A malformed declaration keeps an installed package visible but marks it ineligible.
+#[test]
+fn discovers_installed_plugin_with_invalid_configuration_declaration() {
+    let temporary = TempDir::new().expect("create plugin root");
+    let package_root = write_orax_package(temporary.path(), "demo", VALID_ORAX);
+    fs::create_dir_all(package_root.join("assets")).expect("create assets");
+    fs::write(
+        package_root.join("assets").join("config.json"),
+        r#"{"schemaVersion":1,"settings":{}}"#,
+    )
+    .expect("write invalid declaration");
+
+    let manager = PluginManager::discover(temporary.path());
+
+    assert_eq!(manager.installed_plugins().len(), 1);
+    assert!(matches!(
+        &manager.installed_plugins()[0].configuration_declaration,
+        PluginConfigurationDeclarationValidity::Invalid { .. }
+    ));
+}
 
 /// Verifies the complete installed manifest is retained behind the public interface.
 #[test]

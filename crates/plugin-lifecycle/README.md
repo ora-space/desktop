@@ -16,13 +16,16 @@ stream a previous consumer already claimed is restarted rather than shared. This
 runtime reaches an agent plugin: it owns the ACP stream of one launch, while enable, stop, scan,
 and uninstall keep deciding how long the process lives.
 
-Only explicit scans rebuild the installed snapshot. Per-plugin actions operate on cached identity,
-serialize changes for the same plugin, and allow unrelated plugins to progress independently.
-Missing durable state means disabled, and only the first enable creates a durable row. Uninstall
-publishes a stopped runtime before durable or filesystem cleanup so later cleanup failures never
-leave a process reported as running. Filesystem cleanup removes the complete
-`plugins/installed/<namespace>/<name>` tree so no older version can reappear after the selected
-version is uninstalled, then prunes the namespace directory when it is empty.
+Only explicit scans rebuild installed package identity. List responses resolve the current
+Plugin Configuration summary from immutable package declarations and plugin-global value files.
+Per-plugin actions operate on cached identity, serialize changes for the same plugin, and allow
+unrelated plugins to progress independently.
+Missing durable state means disabled, and only the first enable creates a durable row. A package
+with an invalid Plugin Configuration declaration remains visible but cannot be enabled. Uninstall
+stops the process, then atomically stages the complete
+`plugins/installed/<namespace>/<name>` tree and, when selected, `data/<namespace>/<name>` before
+deleting durable state. A repository or staging failure rolls the moves back; after commit,
+staging cleanup is independent and empty namespace directories are pruned.
 Each scan reapplies durable eligibility to every retained package, stops runtimes that durable state
 no longer permits, and removes durable rows for packages missing from disk. To return one coherent
 snapshot, a scan acquires cached plugin operation locks in stable identifier order and may therefore

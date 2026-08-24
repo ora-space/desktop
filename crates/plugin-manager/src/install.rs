@@ -1,5 +1,6 @@
 //! Installs a plugin release by downloading its package and safely extracting it.
 
+use ora_plugin_config::ConfigurationService;
 use ora_plugin_manifest::PluginManifest;
 use ora_utils::archive::{ArchiveFormat, ExtractLimits, extract_archive};
 use ora_utils::http::{Checksum, DownloadOptions, DownloadRequest, DownloadSource, HttpDownload};
@@ -36,6 +37,9 @@ pub enum InstallError {
         #[source]
         source: std::io::Error,
     },
+    /// The extracted package declared configuration the host cannot safely interpret.
+    #[error("plugin configuration declaration at {path} is invalid: {reason}")]
+    InvalidConfiguration { path: PathBuf, reason: String },
 }
 
 /// Orchestrates one plugin installation and stays backend-agnostic.
@@ -69,19 +73,67 @@ where
         data_dir: &Path,
     ) -> Result<PathBuf, InstallError> {
         let archive_path = self.download_package(manifest, source, data_dir).await?;
-        let package_dir = data_dir
-            .join("plugins")
-            .join(INSTALLED_ROOT)
+        let installed_root = data_dir.join("plugins").join(INSTALLED_ROOT);
+        std::fs::create_dir_all(&installed_root).map_err(|source| InstallError::Io {
+            path: installed_root.clone(),
+            source,
+        })?;
+        // Validation must happen off to the side because extraction is not a transactional write.
+        // A same-volume staging directory lets the final rename be the sole installation commit.
+        let staging = tempfile::Builder::new()
+            .prefix(".install-")
+            .tempdir_in(&installed_root)
+            .map_err(|source| InstallError::Io {
+                path: installed_root.clone(),
+                source,
+            })?;
+        let staged_package = staging.path().join("package");
+        let package_dir = installed_root
             .join(manifest.namespace().as_str())
             .join(manifest.name().as_str())
             .join(manifest.version().to_string());
         extract_archive(
             ArchiveFormat::Zip,
             &archive_path,
-            &package_dir,
+            &staged_package,
             &ExtractLimits::default(),
         )
         .map_err(|source| InstallError::Extract {
+            path: package_dir.clone(),
+            source,
+        })?;
+        if let Err(error) = ConfigurationService::new(data_dir).declaration(&staged_package) {
+            return Err(InstallError::InvalidConfiguration {
+                path: package_dir.join("assets").join("config.json"),
+                reason: error.to_string(),
+            });
+        }
+        if package_dir
+            .try_exists()
+            .map_err(|source| InstallError::Io {
+                path: package_dir.clone(),
+                source,
+            })?
+        {
+            return Err(InstallError::Io {
+                path: package_dir,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "plugin version is already installed",
+                ),
+            });
+        }
+        let Some(package_parent) = package_dir.parent() else {
+            return Err(InstallError::Io {
+                path: package_dir,
+                source: std::io::Error::other("plugin version directory has no parent"),
+            });
+        };
+        std::fs::create_dir_all(package_parent).map_err(|source| InstallError::Io {
+            path: package_parent.to_path_buf(),
+            source,
+        })?;
+        std::fs::rename(&staged_package, &package_dir).map_err(|source| InstallError::Io {
             path: package_dir.clone(),
             source,
         })?;
@@ -254,6 +306,51 @@ mod tests {
                 .join("weather")
                 .join("1.0.0")
                 .exists()
+        );
+    }
+
+    /// Declaration validation happens in staging so a rejected package cannot damage an existing install.
+    #[test]
+    fn invalid_configuration_does_not_replace_an_existing_package() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("pkg.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                ("main.js", b"export {};\n".as_slice()),
+                (
+                    "assets/config.json",
+                    br#"{"schemaVersion":1,"settings":{}}"#.as_slice(),
+                ),
+            ],
+        );
+        let manifest = PluginManifest::parse(&manifest_with_digest(
+            "weather",
+            "1.0.0",
+            sha256_file(&release_path),
+        ))
+        .unwrap();
+        let package_dir = temp_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("weather")
+            .join("1.0.0");
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(package_dir.join("existing.txt"), "keep").unwrap();
+
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(error, InstallError::InvalidConfiguration { .. }));
+        assert_eq!(
+            fs::read_to_string(package_dir.join("existing.txt")).unwrap(),
+            "keep"
         );
     }
 }

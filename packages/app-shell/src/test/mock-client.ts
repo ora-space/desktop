@@ -5,6 +5,7 @@ import type {
   AvailablePlugin,
   ContractsClient,
   InstalledPlugin,
+  PluginConfigurationDetails,
   Project,
   RuntimeLogLevelStateResponse,
   Session,
@@ -64,6 +65,7 @@ export interface MockClientState {
   agents: Agent[];
   skills: Skill[];
   installedPlugins: InstalledPlugin[];
+  pluginConfigurations: Map<string, PluginConfigurationDetails>;
   /**
    * What the agent runtime reports reaching, which is what decides the agents the pickers offer.
    *
@@ -111,6 +113,7 @@ export function createMockClientState(): MockClientState {
     agents: [],
     skills: [],
     installedPlugins: [],
+    pluginConfigurations: new Map(),
     agentRuntimeStatuses: AGENT_REFS.map((agentRef) => ({
       agentRef,
       status: "ready",
@@ -357,6 +360,79 @@ export function createMockClient(state: MockClientState): ContractsClient {
     },
     plugin: {
       listInstalled: async () => ({ plugins: [...state.installedPlugins] }),
+      getConfiguration: async (req) => {
+        const configuration = state.pluginConfigurations.get(req.pluginId);
+        if (configuration === undefined)
+          throw new Error(`plugin configuration ${req.pluginId} not found`);
+        return { configuration: structuredClone(configuration) };
+      },
+      saveConfiguration: async (req) => {
+        const current = state.pluginConfigurations.get(req.pluginId);
+        if (current === undefined)
+          throw new Error(`plugin configuration ${req.pluginId} not found`);
+        const settings = current.settings.map((field) => {
+          const storedValue = req.values[field.declaration.id];
+          if (storedValue !== undefined)
+            return {
+              ...field,
+              storedValue,
+              effectiveValue: storedValue,
+              source: "stored" as const,
+              valueErrorCode: null,
+            };
+          return {
+            ...field,
+            storedValue: null,
+            effectiveValue: field.declaration.default,
+            source:
+              field.declaration.default === null
+                ? ("absent" as const)
+                : ("default" as const),
+            valueErrorCode: null,
+          };
+        });
+        const incomplete = settings.some(
+          (field) =>
+            field.valueErrorCode !== null ||
+            (field.declaration.required &&
+              (field.effectiveValue === null ||
+                (typeof field.effectiveValue === "string" &&
+                  field.effectiveValue.trim() === ""))),
+        );
+        const configuration: PluginConfigurationDetails = {
+          ...current,
+          revision: current.revision + 1n,
+          settings,
+          summary: {
+            state: "available",
+            completeness: incomplete ? "incomplete" : "complete",
+          },
+        };
+        state.pluginConfigurations.set(req.pluginId, configuration);
+        const plugin = state.installedPlugins.find(
+          (candidate) => candidate.id === req.pluginId,
+        );
+        if (plugin !== undefined) {
+          plugin.configuration = {
+            state: "available",
+            completeness: incomplete ? "incomplete" : "complete",
+          };
+        }
+        return { configuration: structuredClone(configuration) };
+      },
+      resetConfiguration: async (req) => {
+        const current = state.pluginConfigurations.get(req.pluginId);
+        if (current === undefined)
+          throw new Error(`plugin configuration ${req.pluginId} not found`);
+        const expectedRevision =
+          req.mode === "reset_all" ? req.expectedRevision : 0n;
+        return createMockClient(state).plugin.saveConfiguration({
+          pluginId: req.pluginId,
+          expectedRevision,
+          declarationFingerprint: req.declarationFingerprint,
+          values: {},
+        });
+      },
       listAvailable: async () => ({
         updatedAt: state.availablePluginsUpdatedAt,
         plugins: [...state.availablePlugins],
@@ -413,6 +489,8 @@ export function createMockClient(state: MockClientState): ContractsClient {
         if (idx < 0)
           throw new Error(`installed plugin ${req.pluginId} not found`);
         state.installedPlugins.splice(idx, 1);
+        if (req.dataDisposition === "delete")
+          state.pluginConfigurations.delete(req.pluginId);
         return { pluginId: req.pluginId };
       },
       install: async (req) => {
@@ -431,6 +509,8 @@ export function createMockClient(state: MockClientState): ContractsClient {
           agent: { displayName: available.name, contractVersion: 1 },
           enabled: true,
           logo: available.logo,
+          installationValidity: { validity: "valid" },
+          configuration: { state: "not_declared" },
           runtime: "stopped",
         });
         return { pluginId: req.pluginId };

@@ -128,6 +128,11 @@ impl From<PluginLifecycleError> for BackendError {
                 PublicError::PluginDisabled(EmptyErrorParams {}),
                 "plugin must be enabled before activation",
             ),
+            PluginLifecycleError::InvalidConfigurationDeclaration { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::PluginConfigurationDeclarationInvalid(EmptyErrorParams {}),
+                "plugin configuration declaration is invalid",
+            ),
             PluginLifecycleError::Repository(_)
             | PluginLifecycleError::RuntimeLaunch { .. }
             | PluginLifecycleError::RuntimeStop { .. }

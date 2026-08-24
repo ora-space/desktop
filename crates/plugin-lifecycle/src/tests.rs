@@ -7,7 +7,8 @@ use ora_application::{Clock, PluginStateRepository};
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, DisablePluginRequest, DisablePluginResponse,
     EnablePluginRequest, EnablePluginResponse, InstalledPlugin, InstalledPluginAgent,
-    ListInstalledPluginsResponse, PluginRuntimeStatus, ScanPluginsRequest, ScanPluginsResponse,
+    ListInstalledPluginsResponse, PluginConfigurationSummary, PluginDataDisposition,
+    PluginInstallationValidity, PluginRuntimeStatus, ScanPluginsRequest, ScanPluginsResponse,
     StopPluginRequest, StopPluginResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
 use ora_db::{
@@ -905,6 +906,7 @@ async fn uninstalls_running_plugin_after_stopping_it() {
         uninstall_lifecycle
             .uninstall_plugin(UninstallPluginRequest {
                 plugin_id: "official/example".to_string(),
+                data_disposition: PluginDataDisposition::Delete,
             })
             .await
     });
@@ -980,6 +982,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
         uninstall_lifecycle
             .uninstall_plugin(UninstallPluginRequest {
                 plugin_id: "official/example".to_string(),
+                data_disposition: PluginDataDisposition::Delete,
             })
             .await
     });
@@ -1000,17 +1003,56 @@ async fn uninstall_records_stopped_state_before_package_removal() {
             lifecycle.list_installed_plugins(),
             repository_probe
                 .find_plugin_state(&PluginId::new("official/example"))
-                .expect("read deleted durable state"),
+                .expect("read retained durable state")
+                .map(|state| state.enabled),
             package_root.is_file(),
         ),
         (
             ListInstalledPluginsResponse {
                 plugins: vec![expected_plugin(/*enabled*/ true)],
             },
-            None,
+            Some(PluginEnabledState::Enabled),
             true,
         ),
     );
+}
+
+/// Uninstall honors the explicit plugin-data choice while removing code in both cases.
+#[tokio::test]
+async fn uninstall_deletes_or_retains_configuration_as_requested() {
+    for (data_disposition, data_remains) in [
+        (PluginDataDisposition::Delete, false),
+        (PluginDataDisposition::Retain, true),
+    ] {
+        let temporary = TempDir::new().expect("create plugin lifecycle directory");
+        write_plugin_package(temporary.path(), "example");
+        let data_root = temporary
+            .path()
+            .join("data")
+            .join("official")
+            .join("example");
+        fs::create_dir_all(&data_root).expect("create plugin data root");
+        fs::write(data_root.join("store.json"), "{}").expect("write plugin data fixture");
+        let pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(temporary.path().join("ora.sqlite3")),
+                &default_migration_catalog().expect("build migration catalog"),
+            )
+            .expect("bootstrap plugin lifecycle database");
+        let lifecycle =
+            open_without_runtime(temporary.path(), SqlitePluginStateRepository::new(pool));
+
+        lifecycle
+            .uninstall_plugin(UninstallPluginRequest {
+                plugin_id: "official/example".to_string(),
+                data_disposition,
+            })
+            .await
+            .expect("uninstall plugin");
+
+        assert_eq!(data_root.exists(), data_remains);
+        assert!(!plugin_name_root(temporary.path(), "example").exists());
+    }
 }
 
 /// Verifies an unexpected process exit records failure without clearing durable eligibility.
@@ -1097,6 +1139,8 @@ fn expected_plugin_with_runtime(
         },
         enabled: enabled.is_enabled(),
         logo: Some(PACKAGE_LOGO.to_string()),
+        installation_validity: PluginInstallationValidity::Valid,
+        configuration: PluginConfigurationSummary::NotDeclared,
         runtime,
     }
 }

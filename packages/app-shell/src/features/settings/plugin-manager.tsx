@@ -2,6 +2,13 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { InstalledPlugin } from "@ora/contracts";
 import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
   Badge,
   Breadcrumb,
   BreadcrumbItem,
@@ -33,9 +40,11 @@ import { usePluginScan } from "../../state/hooks/use-plugin-scan";
 export function PluginManager({
   plugins,
   onBack,
+  onConfigure,
 }: {
   plugins: InstalledPlugin[];
   onBack: () => void;
+  onConfigure: (pluginId: string) => void;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -116,7 +125,11 @@ export function PluginManager({
       ) : (
         <div className="divide-y divide-border border-y border-border">
           {visible.map((plugin) => (
-            <InstalledPluginRow key={plugin.id} plugin={plugin} />
+            <InstalledPluginRow
+              key={plugin.id}
+              plugin={plugin}
+              onConfigure={onConfigure}
+            />
           ))}
         </div>
       )}
@@ -124,80 +137,160 @@ export function PluginManager({
   );
 }
 
-function InstalledPluginRow({ plugin }: { plugin: InstalledPlugin }) {
+function InstalledPluginRow({
+  plugin,
+  onConfigure,
+}: {
+  plugin: InstalledPlugin;
+  onConfigure: (pluginId: string) => void;
+}) {
   const { t } = useTranslation();
   const mutations = usePluginMutations(plugin.id);
   const enabling = mutations.enable.isPending;
   const disabling = mutations.disable.isPending;
   const uninstalling = mutations.uninstall.isPending;
   const busy = enabling || disabling || uninstalling;
+  const [uninstallOpen, setUninstallOpen] = useState(false);
+  const [deleteData, setDeleteData] = useState(true);
 
   return (
-    <div className="flex items-center gap-3 py-3">
-      <PluginLogo logo={plugin.logo} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">
-          {plugin.displayName}
+    <>
+      <div className="flex items-center gap-3 py-3">
+        <PluginLogo logo={plugin.logo} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">
+            {plugin.displayName}
+          </span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {plugin.packageName}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
+            {plugin.version} · {plugin.kind} ·{" "}
+            {plugin.runtime === "failed"
+              ? plugin.failureReason
+              : plugin.runtime}
+          </span>
+          {plugin.configuration.state === "available" &&
+            plugin.configuration.completeness === "incomplete" && (
+              <Badge variant="secondary" className="mt-1">
+                {t("settings.plugins.configuration.needsConfiguration")}
+              </Badge>
+            )}
+          {plugin.configuration.state === "unavailable" && (
+            <Badge variant="destructive" className="mt-1">
+              {t("settings.plugins.configuration.unavailableBadge")}
+            </Badge>
+          )}
+          {plugin.installationValidity.validity === "invalid_declaration" && (
+            <Badge variant="destructive" className="mt-1">
+              {t("settings.plugins.invalidDeclaration")}
+            </Badge>
+          )}
         </span>
-        <span className="block truncate text-xs text-muted-foreground">
-          {plugin.packageName}
-        </span>
-        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
-          {plugin.version} · {plugin.kind} ·{" "}
-          {plugin.runtime === "failed" ? plugin.failureReason : plugin.runtime}
-        </span>
-      </span>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("settings.plugins.openMenu", {
+        {plugin.configuration.state !== "not_declared" && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() => onConfigure(plugin.id)}
+          >
+            {t("settings.plugins.configuration.configure")}
+          </Button>
+        )}
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("settings.plugins.openMenu", {
+                  name: plugin.displayName,
+                })}
+                className="shrink-0 text-muted-foreground"
+                disabled={busy}
+              />
+            }
+          >
+            <IconDots />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={uninstalling}
+              onClick={() => setUninstallOpen(true)}
+            >
+              {uninstalling ? (
+                <IconLoader2 className="animate-spin" />
+              ) : (
+                <IconTrash />
+              )}
+              {t(
+                uninstalling
+                  ? "settings.plugins.uninstalling"
+                  : "settings.plugins.uninstall",
+              )}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Switch
+          checked={plugin.enabled}
+          disabled={
+            busy ||
+            plugin.installationValidity.validity === "invalid_declaration"
+          }
+          onCheckedChange={(next) => {
+            if (next) void mutations.enable.mutate();
+            else void mutations.disable.mutate();
+          }}
+          aria-label={t("settings.plugins.toggleSkill", {
+            name: plugin.displayName,
+          })}
+        />
+        {(enabling || disabling) && (
+          <IconLoader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+        )}
+      </div>
+      <AlertDialog open={uninstallOpen} onOpenChange={setUninstallOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("settings.plugins.uninstallTitle", {
                 name: plugin.displayName,
               })}
-              className="shrink-0 text-muted-foreground"
-              disabled={busy}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("settings.plugins.uninstallDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={deleteData}
+              onChange={(event) => setDeleteData(event.target.checked)}
             />
-          }
-        >
-          <IconDots />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-44">
-          <DropdownMenuItem
-            variant="destructive"
-            disabled={uninstalling}
-            onClick={() => mutations.uninstall.mutate()}
-          >
-            {uninstalling ? (
-              <IconLoader2 className="animate-spin" />
-            ) : (
-              <IconTrash />
-            )}
-            {t(
-              uninstalling
-                ? "settings.plugins.uninstalling"
-                : "settings.plugins.uninstall",
-            )}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <Switch
-        checked={plugin.enabled}
-        disabled={busy}
-        onCheckedChange={(next) => {
-          if (next) void mutations.enable.mutate();
-          else void mutations.disable.mutate();
-        }}
-        aria-label={t("settings.plugins.toggleSkill", {
-          name: plugin.displayName,
-        })}
-      />
-      {(enabling || disabling) && (
-        <IconLoader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
-      )}
-    </div>
+            {t("settings.plugins.deleteConfigurationData")}
+          </label>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={uninstalling}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={uninstalling}
+              onClick={() =>
+                mutations.uninstall.mutate(deleteData ? "delete" : "retain", {
+                  onSuccess: () => setUninstallOpen(false),
+                })
+              }
+            >
+              {t("settings.plugins.uninstall")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

@@ -19,8 +19,12 @@ orax package shape, and orchestrates installing new plugin releases.
 - Return a deterministic, immutable snapshot of valid installed plugins.
 - Isolate malformed or unsupported packages as structured discovery issues.
 - Install a plugin release: download the `.orax` package (through an injected `ora-utils::http`
-  `HttpDownload`), verify its SHA-256 while downloading, and safely extract it into
-  `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`.
+  `HttpDownload`), verify its SHA-256 while downloading, safely extract it into same-volume
+  staging with `ora-utils::archive`, validate its optional Plugin Configuration declaration, and
+  atomically rename the validated package into
+  `<data-dir>/plugins/installed/<namespace>/<name>/<version>`.
+- Preserve discovered packages with invalid Plugin Configuration declarations as visible
+  diagnostic entries while marking them ineligible for enablement.
 
 ## Non-responsibilities
 
@@ -47,3 +51,6 @@ rejects the current target of a package-escaping symlink, but path-based validat
 concurrent symlink replacement between discovery and later loading. A missing installed-plugins
 directory represents an empty installation and is not an error. The legacy
 `<data-dir>/plugins/<package>` layout is not discovered or migrated.
+
+Installation validates `assets/config.json` before its final atomic rename. A failed declaration
+validation removes staging only and cannot replace or damage an already installed version.

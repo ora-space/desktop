@@ -21,6 +21,8 @@ describe("useInstalledPlugins", () => {
       agent: { displayName: "Reviewer", contractVersion: 1 },
       enabled: false,
       logo: null,
+      installationValidity: { validity: "valid" },
+      configuration: { state: "not_declared" },
       runtime: "stopped",
     });
     const { result, queryClient } = renderHookWithClient(

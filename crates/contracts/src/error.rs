@@ -1,3 +1,4 @@
+use crate::PluginConfigurationFieldError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use ts_rs::{Config, ExportError, TS};
@@ -73,6 +74,14 @@ pub struct TaskBaseBranchNotFoundParams {
     pub branch_name: String,
 }
 
+/// Carries Setting-addressed validation failures for a rejected configuration replacement.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct PluginConfigurationValidationParams {
+    pub field_errors: Vec<PluginConfigurationFieldError>,
+}
+
 /// Enumerates every user-visible Ora failure and its exact interpolation parameters.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(tag = "code", content = "params", rename_all = "snake_case")]
@@ -92,6 +101,13 @@ pub enum PublicError {
     AgentNotFound(EmptyErrorParams),
     PluginNotFound(EmptyErrorParams),
     PluginDisabled(EmptyErrorParams),
+    PluginConfigurationDeclarationInvalid(EmptyErrorParams),
+    PluginConfigurationNotDeclared(EmptyErrorParams),
+    ConfigurationRevisionConflict(EmptyErrorParams),
+    PluginConfigurationDeclarationChanged(EmptyErrorParams),
+    ConfigurationLoadFailed(EmptyErrorParams),
+    PluginConfigurationValidation(PluginConfigurationValidationParams),
+    PluginConfigurationRecoveryNotRequired(EmptyErrorParams),
     ProjectNotFound(EmptyErrorParams),
     TaskNotFound(EmptyErrorParams),
     ResourceInUse(EmptyErrorParams),
@@ -193,6 +209,19 @@ impl PublicError {
             Self::AgentNotFound(_) => "agent_not_found",
             Self::PluginNotFound(_) => "plugin_not_found",
             Self::PluginDisabled(_) => "plugin_disabled",
+            Self::PluginConfigurationDeclarationInvalid(_) => {
+                "plugin_configuration_declaration_invalid"
+            }
+            Self::PluginConfigurationNotDeclared(_) => "plugin_configuration_not_declared",
+            Self::ConfigurationRevisionConflict(_) => "configuration_revision_conflict",
+            Self::PluginConfigurationDeclarationChanged(_) => {
+                "plugin_configuration_declaration_changed"
+            }
+            Self::ConfigurationLoadFailed(_) => "configuration_load_failed",
+            Self::PluginConfigurationValidation(_) => "plugin_configuration_validation",
+            Self::PluginConfigurationRecoveryNotRequired(_) => {
+                "plugin_configuration_recovery_not_required"
+            }
             Self::ProjectNotFound(_) => "project_not_found",
             Self::TaskNotFound(_) => "task_not_found",
             Self::ResourceInUse(_) => "resource_in_use",
@@ -296,6 +325,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     OpenLocationFailedParams::export_all(config)?;
     SkillFolderConflictParams::export_all(config)?;
     TaskBaseBranchNotFoundParams::export_all(config)?;
+    PluginConfigurationValidationParams::export_all(config)?;
     PublicError::export_all(config)?;
     ContractError::export_all(config)?;
     Ok(())
@@ -304,8 +334,9 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget, PublicError,
-        RequestId, SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
+        ContractError, EmptyErrorParams, OpenLocationFailedParams, OpenLocationTarget,
+        PluginConfigurationValidationParams, PublicError, RequestId, SkillFolderConflictParams,
+        TaskBaseBranchNotFoundParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -350,6 +381,15 @@ mod tests {
             PublicError::AgentNotFound(empty),
             PublicError::PluginNotFound(empty),
             PublicError::PluginDisabled(empty),
+            PublicError::PluginConfigurationDeclarationInvalid(empty),
+            PublicError::PluginConfigurationNotDeclared(empty),
+            PublicError::ConfigurationRevisionConflict(empty),
+            PublicError::PluginConfigurationDeclarationChanged(empty),
+            PublicError::ConfigurationLoadFailed(empty),
+            PublicError::PluginConfigurationValidation(PluginConfigurationValidationParams {
+                field_errors: Vec::new(),
+            }),
+            PublicError::PluginConfigurationRecoveryNotRequired(empty),
             PublicError::ProjectNotFound(empty),
             PublicError::TaskNotFound(empty),
             PublicError::ResourceInUse(empty),
@@ -448,6 +488,13 @@ mod tests {
                 | PublicError::AgentNotFound(_)
                 | PublicError::PluginNotFound(_)
                 | PublicError::PluginDisabled(_)
+                | PublicError::PluginConfigurationDeclarationInvalid(_)
+                | PublicError::PluginConfigurationNotDeclared(_)
+                | PublicError::ConfigurationRevisionConflict(_)
+                | PublicError::PluginConfigurationDeclarationChanged(_)
+                | PublicError::ConfigurationLoadFailed(_)
+                | PublicError::PluginConfigurationValidation(_)
+                | PublicError::PluginConfigurationRecoveryNotRequired(_)
                 | PublicError::ProjectNotFound(_)
                 | PublicError::TaskNotFound(_)
                 | PublicError::ResourceInUse(_)
@@ -539,7 +586,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 88);
+        assert_eq!(samples.len(), 95);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

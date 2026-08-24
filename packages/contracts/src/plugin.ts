@@ -46,6 +46,18 @@ export type EnablePluginRequest = { pluginId: string };
 export type EnablePluginResponse = { plugin: InstalledPlugin };
 
 /**
+ * Requests the current editor snapshot for one installed plugin.
+ */
+export type GetPluginConfigurationRequest = { pluginId: string };
+
+/**
+ * Returns the resolved editor snapshot without exposing its filesystem location.
+ */
+export type GetPluginConfigurationResponse = {
+  configuration: PluginConfigurationDetails;
+};
+
+/**
  * Requests installation of one marketplace plugin by its registry identifier.
  */
 export type InstallPluginRequest = { pluginId: string };
@@ -76,6 +88,8 @@ export type InstalledPlugin =
      * generic mark when it is absent.
      */
     logo: string | null;
+    installationValidity: PluginInstallationValidity;
+    configuration: PluginConfigurationSummary;
   }
   & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
     "runtime": "running";
@@ -115,6 +129,52 @@ export type ListInstalledPluginsRequest = Record<symbol, never>;
 export type ListInstalledPluginsResponse = { plugins: Array<InstalledPlugin> };
 
 /**
+ * Reports whether every required Setting has an effective type-correct value.
+ */
+export type PluginConfigurationCompleteness = "complete" | "incomplete";
+
+/**
+ * Carries one complete editor snapshot bound to a revision and declaration fingerprint.
+ */
+export type PluginConfigurationDetails = {
+  pluginId: string;
+  schemaVersion: number;
+  revision: bigint;
+  declarationFingerprint: string;
+  settings: Array<PluginSettingDetails>;
+  summary: PluginConfigurationSummary;
+};
+
+/**
+ * Addresses one stable validation failure to its Setting ID.
+ */
+export type PluginConfigurationFieldError = {
+  settingId: string;
+  errorCode: string;
+};
+
+/**
+ * Represents the exclusive list-facing Plugin Configuration state.
+ */
+export type PluginConfigurationSummary = { "state": "not_declared" } | {
+  "state": "available";
+  completeness: PluginConfigurationCompleteness;
+} | { "state": "unavailable"; errorCode: string };
+
+/**
+ * Selects whether uninstall retains or deletes host-owned plugin data.
+ */
+export type PluginDataDisposition = "delete" | "retain";
+
+/**
+ * Represents whether the installed package and its immutable declaration are usable.
+ */
+export type PluginInstallationValidity = { "validity": "valid" } | {
+  "validity": "invalid_declaration";
+  errorCode: string;
+};
+
+/**
  * Represents the process-scoped lifecycle of one installed plugin.
  */
 export type PluginRuntimeStatus =
@@ -122,6 +182,86 @@ export type PluginRuntimeStatus =
   | { "runtime": "starting" }
   | { "runtime": "running" }
   | { "runtime": "failed"; failureReason: string };
+
+/**
+ * Describes one immutable plugin-authored Setting.
+ */
+export type PluginSettingDeclaration = {
+  id: string;
+  title: string;
+  description: string;
+  type: PluginSettingType;
+  required: boolean;
+  order: bigint | null;
+  default: PluginSettingValue | null;
+};
+
+/**
+ * Projects one Setting into an editor field without exposing raw files.
+ */
+export type PluginSettingDetails = {
+  declaration: PluginSettingDeclaration;
+  storedValue: PluginSettingValue | null;
+  effectiveValue: PluginSettingValue | null;
+  source: PluginSettingValueSource;
+  valueErrorCode: string | null;
+};
+
+/**
+ * Enumerates Setting types supported by declaration schema version one.
+ */
+export type PluginSettingType = "string" | "number" | "boolean";
+
+/**
+ * Carries one non-secret scalar override accepted by schema version one.
+ */
+export type PluginSettingValue = string | number | boolean;
+
+/**
+ * Identifies the source of one effective editor value.
+ */
+export type PluginSettingValueSource = "stored" | "default" | "absent";
+
+/**
+ * Selects the explicit reset operation authorized by the user.
+ */
+export type ResetPluginConfigurationMode = {
+  "mode": "reset_all";
+  expectedRevision: bigint;
+} | { "mode": "recover_corrupt" };
+
+/**
+ * Requests Reset All or confirmed damaged-data recovery for one plugin.
+ */
+export type ResetPluginConfigurationRequest =
+  & { pluginId: string; declarationFingerprint: string }
+  & ({ "mode": "reset_all"; expectedRevision: bigint } | {
+    "mode": "recover_corrupt";
+  });
+
+/**
+ * Returns the authoritative editor snapshot after a reset operation.
+ */
+export type ResetPluginConfigurationResponse = {
+  configuration: PluginConfigurationDetails;
+};
+
+/**
+ * Replaces every explicit override recognized by the loaded declaration.
+ */
+export type SavePluginConfigurationRequest = {
+  pluginId: string;
+  expectedRevision: bigint;
+  declarationFingerprint: string;
+  values: { [key in string]: PluginSettingValue };
+};
+
+/**
+ * Returns the authoritative post-save editor snapshot and list summary.
+ */
+export type SavePluginConfigurationResponse = {
+  configuration: PluginConfigurationDetails;
+};
 
 /**
  * Requests explicit filesystem discovery and state reconciliation.
@@ -159,7 +299,10 @@ export type SyncAvailablePluginsResponse = {
 /**
  * Requests complete removal of one plugin package and its durable lifecycle state.
  */
-export type UninstallPluginRequest = { pluginId: string };
+export type UninstallPluginRequest = {
+  pluginId: string;
+  dataDisposition: PluginDataDisposition;
+};
 
 /**
  * Confirms the identifier removed after process shutdown and package deletion complete.

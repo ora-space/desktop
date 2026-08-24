@@ -922,6 +922,7 @@ async fn spawn_plugin_connection(
 fn plugin_attach_error(error: PluginLifecycleError) -> StartFailure {
     match error {
         PluginLifecycleError::PluginDisabled { .. }
+        | PluginLifecycleError::InvalidConfigurationDeclaration { .. }
         | PluginLifecycleError::PluginNotFound { .. } => StartFailure::Retryable(runtime_internal(
             "agent_cli_not_found",
             "the plugin behind this agent is not available",

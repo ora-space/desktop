@@ -1,3 +1,4 @@
+use ora_plugin_config::ConfigurationService;
 use ora_plugin_manifest::{PluginKind, PluginManifest};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
@@ -70,6 +71,15 @@ pub struct InstalledPlugin {
     pub contributes: PluginContribution,
     /// Trusted SVG source for the package icon, absent when the package ships none.
     pub logo: Option<String>,
+    pub configuration_declaration: PluginConfigurationDeclarationValidity,
+}
+
+/// Records whether an immutable configuration declaration can participate in installation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginConfigurationDeclarationValidity {
+    NotDeclared,
+    Valid,
+    Invalid { reason: String },
 }
 
 /// Reports a semantic manifest constraint after structural deserialization succeeds.
@@ -109,6 +119,14 @@ pub(crate) fn validate(
     );
     let contributes = validate_contribution(&name, manifest.kind())?;
     let main = validate_main_path(package_root, INSTALLED_ENTRYPOINT)?;
+    let configuration_declaration =
+        match ConfigurationService::new(package_root).declaration(package_root) {
+            Ok(None) => PluginConfigurationDeclarationValidity::NotDeclared,
+            Ok(Some(_)) => PluginConfigurationDeclarationValidity::Valid,
+            Err(error) => PluginConfigurationDeclarationValidity::Invalid {
+                reason: error.to_string(),
+            },
+        };
 
     Ok(InstalledPlugin {
         package_root: package_root.to_path_buf(),
@@ -126,6 +144,7 @@ pub(crate) fn validate(
         },
         contributes,
         logo,
+        configuration_declaration,
     })
 }
 

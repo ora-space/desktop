@@ -1,7 +1,18 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
-import { Button, Input, toast } from "@ora/ui";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  Button,
+  Input,
+  toast,
+} from "@ora/ui";
 import { IconLoader2, IconRefresh, IconSearch } from "@tabler/icons-react";
 import { localizeContractError } from "../../i18n/contract-error";
 import { useAvailablePlugins } from "../../state/hooks/use-available-plugins";
@@ -11,6 +22,7 @@ import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-sync";
 import { PluginLogo } from "./plugin-logo";
 import { PluginManager } from "./plugin-manager";
+import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 
 /**
  * The plugin marketplace pane backed by the registry contract: the browse grid reads the
@@ -21,6 +33,9 @@ export function PluginsSettings() {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [managing, setManaging] = useState(false);
+  const [configurationPluginId, setConfigurationPluginId] = useState<
+    string | null
+  >(null);
 
   const available = useAvailablePlugins();
   const installed = useInstalledPlugins();
@@ -54,10 +69,23 @@ export function PluginsSettings() {
         });
 
   if (managing) {
+    const configurationPlugin = installed.data?.find(
+      (plugin) => plugin.id === configurationPluginId,
+    );
+    if (configurationPlugin !== undefined) {
+      return (
+        <PluginConfigurationEditor
+          pluginId={configurationPlugin.id}
+          displayName={configurationPlugin.displayName}
+          onBack={() => setConfigurationPluginId(null)}
+        />
+      );
+    }
     return (
       <PluginManager
         plugins={installed.data ?? []}
         onBack={() => setManaging(false)}
+        onConfigure={setConfigurationPluginId}
       />
     );
   }
@@ -135,6 +163,8 @@ function AvailablePluginRow({
   const install = useInstallPlugin(plugin.id);
   const mutations = usePluginMutations(plugin.id);
   const busy = install.isPending || mutations.uninstall.isPending;
+  const [uninstallOpen, setUninstallOpen] = useState(false);
+  const [deleteData, setDeleteData] = useState(true);
 
   const failInstall = (cause: unknown) => {
     toast.error(t("settings.plugins.installFailed"), {
@@ -143,51 +173,85 @@ function AvailablePluginRow({
   };
 
   return (
-    <div className="flex items-center gap-3 py-3">
-      <PluginLogo logo={plugin.logo} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">
-          {plugin.name}
-        </span>
-        <span className="block truncate text-xs text-muted-foreground">
-          {plugin.namespace} · {plugin.version}
-        </span>
-        {plugin.description !== "" && (
-          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
-            {plugin.description}
+    <>
+      <div className="flex items-center gap-3 py-3">
+        <PluginLogo logo={plugin.logo} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">
+            {plugin.name}
           </span>
-        )}
-      </span>
-      {busy ? (
-        <Button variant="outline" size="sm" disabled className="shrink-0">
-          <IconLoader2 className="animate-spin" />
-          {t(
-            installed === undefined
-              ? "settings.plugins.installing"
-              : "settings.plugins.uninstalling",
+          <span className="block truncate text-xs text-muted-foreground">
+            {plugin.namespace} · {plugin.version}
+          </span>
+          {plugin.description !== "" && (
+            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
+              {plugin.description}
+            </span>
           )}
-        </Button>
-      ) : installed === undefined ? (
-        <Button
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          onClick={() => install.mutate({}, { onError: failInstall })}
-        >
-          {t("settings.plugins.install")}
-        </Button>
-      ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          onClick={() =>
-            mutations.uninstall.mutate(undefined, { onError: failInstall })
-          }
-        >
-          {t("settings.plugins.uninstall")}
-        </Button>
-      )}
-    </div>
+        </span>
+        {busy ? (
+          <Button variant="outline" size="sm" disabled className="shrink-0">
+            <IconLoader2 className="animate-spin" />
+            {t(
+              installed === undefined
+                ? "settings.plugins.installing"
+                : "settings.plugins.uninstalling",
+            )}
+          </Button>
+        ) : installed === undefined ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => install.mutate({}, { onError: failInstall })}
+          >
+            {t("settings.plugins.install")}
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => setUninstallOpen(true)}
+          >
+            {t("settings.plugins.uninstall")}
+          </Button>
+        )}
+      </div>
+      <AlertDialog open={uninstallOpen} onOpenChange={setUninstallOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("settings.plugins.uninstallTitle", { name: plugin.name })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("settings.plugins.uninstallDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={deleteData}
+              onChange={(event) => setDeleteData(event.target.checked)}
+            />
+            {t("settings.plugins.deleteConfigurationData")}
+          </label>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={() =>
+                mutations.uninstall.mutate(deleteData ? "delete" : "retain", {
+                  onError: failInstall,
+                  onSuccess: () => setUninstallOpen(false),
+                })
+              }
+            >
+              {t("settings.plugins.uninstall")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

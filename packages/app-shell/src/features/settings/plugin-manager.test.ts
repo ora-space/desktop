@@ -13,6 +13,8 @@ const plugins: InstalledPlugin[] = [
     agent: { displayName: "Review Agent", contractVersion: 1 },
     enabled: false,
     logo: null,
+    installationValidity: { validity: "valid" },
+    configuration: { state: "not_declared" },
     runtime: "stopped",
   },
   {
@@ -25,6 +27,8 @@ const plugins: InstalledPlugin[] = [
     agent: { displayName: "Plan Agent", contractVersion: 1 },
     enabled: false,
     logo: null,
+    installationValidity: { validity: "valid" },
+    configuration: { state: "not_declared" },
     runtime: "stopped",
   },
 ];

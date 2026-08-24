@@ -173,6 +173,12 @@ export function createContractsClient(
         executeOperation("syncAvailablePlugins", request, transport, options),
       listInstalled: (request, options) =>
         executeOperation("listInstalledPlugins", request, transport, options),
+      getConfiguration: (request, options) =>
+        executeOperation("getPluginConfiguration", request, transport, options),
+      saveConfiguration: (request, options) =>
+        executeOperation("savePluginConfiguration", request, transport, options),
+      resetConfiguration: (request, options) =>
+        executeOperation("resetPluginConfiguration", request, transport, options),
       scan: (request, options) =>
         executeOperation("scanPlugins", request, transport, options),
       enable: (request, options) =>

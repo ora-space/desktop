@@ -12,7 +12,8 @@ mod tests;
 pub use install::{InstallError, Installer};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use validation::{
-    InstalledPlugin, InstalledPluginAgent, PluginContribution, PluginEngines, PluginPackageType,
+    InstalledPlugin, InstalledPluginAgent, PluginConfigurationDeclarationValidity,
+    PluginContribution, PluginEngines, PluginPackageType,
 };
 
 use std::path::Path;

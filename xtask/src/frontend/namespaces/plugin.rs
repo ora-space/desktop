@@ -27,6 +27,27 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "ListInstalledPluginsResponse",
     },
     FrontendEndpoint {
+        operation_name: "getPluginConfiguration",
+        namespace: NAMESPACE,
+        member_name: "getConfiguration",
+        request_type: "GetPluginConfigurationRequest",
+        response_type: "GetPluginConfigurationResponse",
+    },
+    FrontendEndpoint {
+        operation_name: "savePluginConfiguration",
+        namespace: NAMESPACE,
+        member_name: "saveConfiguration",
+        request_type: "SavePluginConfigurationRequest",
+        response_type: "SavePluginConfigurationResponse",
+    },
+    FrontendEndpoint {
+        operation_name: "resetPluginConfiguration",
+        namespace: NAMESPACE,
+        member_name: "resetConfiguration",
+        request_type: "ResetPluginConfigurationRequest",
+        response_type: "ResetPluginConfigurationResponse",
+    },
+    FrontendEndpoint {
         operation_name: "scanPlugins",
         namespace: NAMESPACE,
         member_name: "scan",

@@ -16,6 +16,8 @@ export const queryKeys = {
   skills: ["skills"] as const,
   availablePlugins: ["available-plugins"] as const,
   installedPlugins: ["installed-plugins"] as const,
+  pluginConfiguration: (pluginId: string) =>
+    ["plugin-configuration", pluginId] as const,
   developerMode: ["developer-mode"] as const,
   runtimeLogLevel: ["runtime-log-level"] as const,
   gitIdentity: ["gitIdentity"] as const,

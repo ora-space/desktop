@@ -42,6 +42,8 @@ function agentPlugin(
     agent: { displayName: "Review Agent", contractVersion: 1 },
     enabled,
     logo: null,
+    installationValidity: { validity: "valid" },
+    configuration: { state: "not_declared" },
     ...runtime,
   };
 }

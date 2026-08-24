@@ -1,9 +1,16 @@
 use crate::PluginLifecycleError;
 use ora_application::PluginStateRepository;
-use ora_contracts::{InstalledPlugin, InstalledPluginAgent, PluginRuntimeStatus};
+use ora_contracts::{
+    InstalledPlugin, InstalledPluginAgent, PluginConfigurationCompleteness,
+    PluginConfigurationSummary, PluginInstallationValidity, PluginRuntimeStatus,
+};
 use ora_domain::{PluginEnabledState, PluginId};
-use ora_plugin_manager::InstalledPlugin as DiscoveredPlugin;
+use ora_plugin_config::{ConfigurationCompleteness, ConfigurationService, ConfigurationSummary};
+use ora_plugin_manager::{
+    InstalledPlugin as DiscoveredPlugin, PluginConfigurationDeclarationValidity,
+};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 /// Holds the filesystem snapshot and process-scoped lifecycle state as one atomic view.
 pub(super) struct LifecycleState<Runtime> {
@@ -72,6 +79,7 @@ where
 pub(super) fn discovered_plugin_contract<Runtime>(
     plugin: &DiscoveredPlugin,
     managed: &ManagedPluginState<Runtime>,
+    data_directory: &Path,
 ) -> InstalledPlugin {
     let (enabled, runtime) = match managed {
         ManagedPluginState::Disabled => (false, PluginRuntimeStatus::Stopped),
@@ -93,6 +101,31 @@ pub(super) fn discovered_plugin_contract<Runtime>(
     };
 
     let ora_plugin_manager::PluginContribution::Agent(agent) = &plugin.contributes;
+    let installation_validity = match &plugin.configuration_declaration {
+        PluginConfigurationDeclarationValidity::Invalid { .. } => {
+            PluginInstallationValidity::InvalidDeclaration {
+                error_code: "plugin_configuration_declaration_invalid".to_string(),
+            }
+        }
+        PluginConfigurationDeclarationValidity::NotDeclared
+        | PluginConfigurationDeclarationValidity::Valid => PluginInstallationValidity::Valid,
+    };
+    let configuration = match ConfigurationService::new(data_directory)
+        .summary(&plugin.id, &plugin.package_root)
+    {
+        ConfigurationSummary::NotDeclared => PluginConfigurationSummary::NotDeclared,
+        ConfigurationSummary::Available { completeness } => PluginConfigurationSummary::Available {
+            completeness: match completeness {
+                ConfigurationCompleteness::Complete => PluginConfigurationCompleteness::Complete,
+                ConfigurationCompleteness::Incomplete => {
+                    PluginConfigurationCompleteness::Incomplete
+                }
+            },
+        },
+        ConfigurationSummary::Unavailable { error_code } => {
+            PluginConfigurationSummary::Unavailable { error_code }
+        }
+    };
 
     InstalledPlugin {
         id: plugin.id.clone(),
@@ -107,6 +140,8 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         },
         enabled,
         logo: plugin.logo.clone(),
+        installation_validity,
+        configuration,
         runtime,
     }
 }

@@ -248,6 +248,30 @@ impl Backend {
         Ok(self.plugin.list(request))
     }
 
+    /// Returns one typed Plugin Configuration editor snapshot.
+    pub fn get_plugin_configuration(
+        &self,
+        request: GetPluginConfigurationRequest,
+    ) -> Result<GetPluginConfigurationResponse, BackendError> {
+        self.plugin.get_configuration(request)
+    }
+
+    /// Persists one revision-checked Plugin Configuration replacement.
+    pub fn save_plugin_configuration(
+        &self,
+        request: SavePluginConfigurationRequest,
+    ) -> Result<SavePluginConfigurationResponse, BackendError> {
+        self.plugin.save_configuration(request)
+    }
+
+    /// Executes an explicit Reset All or damaged-data recovery operation.
+    pub fn reset_plugin_configuration(
+        &self,
+        request: ResetPluginConfigurationRequest,
+    ) -> Result<ResetPluginConfigurationResponse, BackendError> {
+        self.plugin.reset_configuration(request)
+    }
+
     /// Returns the cached marketplace registry index used to populate plugin discovery.
     pub fn list_available_plugins(
         &self,

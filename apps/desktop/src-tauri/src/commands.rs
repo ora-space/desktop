@@ -1020,6 +1020,27 @@ backend_command!(
     "Lists the cached installed-plugin lifecycle snapshot."
 );
 backend_command!(
+    get_plugin_configuration,
+    GetPluginConfigurationRequest,
+    GetPluginConfigurationResponse,
+    get_plugin_configuration,
+    "Loads one typed Plugin Configuration editor snapshot."
+);
+backend_command!(
+    save_plugin_configuration,
+    SavePluginConfigurationRequest,
+    SavePluginConfigurationResponse,
+    save_plugin_configuration,
+    "Persists one revision-checked Plugin Configuration replacement."
+);
+backend_command!(
+    reset_plugin_configuration,
+    ResetPluginConfigurationRequest,
+    ResetPluginConfigurationResponse,
+    reset_plugin_configuration,
+    "Resets explicit overrides or recovers a damaged Plugin Configuration."
+);
+backend_command!(
     list_available_plugins,
     ListAvailablePluginsRequest,
     ListAvailablePluginsResponse,

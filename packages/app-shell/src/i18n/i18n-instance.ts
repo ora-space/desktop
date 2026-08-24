@@ -21,6 +21,16 @@ export const translationResources = {
     "errors.agent_not_found": "未找到该 Agent。",
     "errors.plugin_not_found": "未找到该插件。",
     "errors.plugin_disabled": "请先启用该插件，再进行激活。",
+    "errors.plugin_configuration_declaration_invalid": "插件的配置声明无效。",
+    "errors.plugin_configuration_not_declared": "该插件没有声明配置。",
+    "errors.configuration_revision_conflict":
+      "配置已被其他操作更新，请重新加载后再保存。",
+    "errors.plugin_configuration_declaration_changed":
+      "插件配置声明已变更，请重新加载。",
+    "errors.configuration_load_failed": "插件配置数据无法读取或写入。",
+    "errors.plugin_configuration_validation": "一个或多个配置值无效。",
+    "errors.plugin_configuration_recovery_not_required":
+      "当前配置数据无需恢复。",
     "errors.workflow_name_conflict": "已存在同名工作流。",
     "errors.project_not_found": "未找到该项目。",
     "errors.task_not_found": "未找到该任务。",
@@ -769,6 +779,36 @@ export const translationResources = {
     "settings.plugins.noneInstalled": "尚未安装任何插件。",
     "settings.plugins.manageInstalled": "管理插件",
     "settings.plugins.manageDescription": "启用、停用或卸载已安装的插件。",
+    "settings.plugins.configuration.configure": "配置",
+    "settings.plugins.configuration.back": "返回插件管理",
+    "settings.plugins.configuration.description":
+      "此界面由插件声明生成。保存后配置会在所有工作区共享。",
+    "settings.plugins.configuration.needsConfiguration": "需要配置",
+    "settings.plugins.configuration.unavailableBadge": "配置不可用",
+    "settings.plugins.invalidDeclaration": "配置声明无效",
+    "settings.plugins.configuration.default": "默认值",
+    "settings.plugins.configuration.notSet": "未设置",
+    "settings.plugins.configuration.useDefault": "使用默认值",
+    "settings.plugins.configuration.on": "开启",
+    "settings.plugins.configuration.off": "关闭",
+    "settings.plugins.configuration.resetField": "重置此项",
+    "settings.plugins.configuration.save": "保存",
+    "settings.plugins.configuration.saved": "已保存",
+    "settings.plugins.configuration.saveFailed": "保存配置失败",
+    "settings.plugins.configuration.resetAll": "全部重置",
+    "settings.plugins.configuration.resetTitle": "重置所有配置？",
+    "settings.plugins.configuration.resetDescription":
+      "所有显式覆盖值将被移除，声明中的默认值仍会生效。",
+    "settings.plugins.configuration.unsavedTitle": "保存配置更改？",
+    "settings.plugins.configuration.unsavedDescription":
+      "离开前请选择保存、放弃或取消。",
+    "settings.plugins.configuration.discard": "放弃",
+    "settings.plugins.configuration.unavailable":
+      "配置数据无法读取。恢复会先保留损坏文件的备份，再重置覆盖值。",
+    "settings.plugins.configuration.recover": "备份并恢复",
+    "settings.plugins.configuration.recoverTitle": "备份损坏配置并恢复？",
+    "settings.plugins.configuration.storedValueInvalid":
+      "已保存的值与当前声明不兼容。保存新值或重置此项以修复。",
     "settings.plugins.scanInstalled": "扫描已安装插件",
     "settings.plugins.syncMarketplace": "同步插件市场",
     "settings.plugins.neverSynced": "尚未同步",
@@ -788,6 +828,10 @@ export const translationResources = {
     "settings.plugins.empty": "没有匹配的插件。",
     "settings.plugins.install": "安装",
     "settings.plugins.uninstall": "卸载",
+    "settings.plugins.uninstallTitle": "卸载“{{name}}”？",
+    "settings.plugins.uninstallDescription":
+      "插件进程会先停止，然后移除已安装的代码。",
+    "settings.plugins.deleteConfigurationData": "同时删除配置数据（推荐）",
     "settings.plugins.installing": "安装中",
     "settings.plugins.cancel": "取消",
     "settings.plugins.installFailed": "安装失败",
@@ -1435,6 +1479,20 @@ export const translationResources = {
     "errors.agent_not_found": "The agent was not found.",
     "errors.plugin_not_found": "The plugin was not found.",
     "errors.plugin_disabled": "Enable the plugin before activating it.",
+    "errors.plugin_configuration_declaration_invalid":
+      "The plugin configuration declaration is invalid.",
+    "errors.plugin_configuration_not_declared":
+      "This plugin does not declare configuration.",
+    "errors.configuration_revision_conflict":
+      "Configuration changed elsewhere. Reload before saving.",
+    "errors.plugin_configuration_declaration_changed":
+      "The plugin configuration declaration changed. Reload it.",
+    "errors.configuration_load_failed":
+      "Plugin configuration data could not be read or written.",
+    "errors.plugin_configuration_validation":
+      "One or more configuration values are invalid.",
+    "errors.plugin_configuration_recovery_not_required":
+      "Configuration recovery is not required.",
     "errors.workflow_name_conflict":
       "A workflow with this name already exists.",
     "errors.project_not_found": "The project was not found.",
@@ -2263,6 +2321,39 @@ export const translationResources = {
     "settings.plugins.manageInstalled": "Manage plugins",
     "settings.plugins.manageDescription":
       "Enable, disable, or uninstall the plugins you have installed.",
+    "settings.plugins.configuration.configure": "Configure",
+    "settings.plugins.configuration.back": "Back to plugin manager",
+    "settings.plugins.configuration.description":
+      "This host-rendered configuration is shared across workspaces.",
+    "settings.plugins.configuration.needsConfiguration": "Needs Configuration",
+    "settings.plugins.configuration.unavailableBadge":
+      "Configuration unavailable",
+    "settings.plugins.invalidDeclaration": "Invalid configuration declaration",
+    "settings.plugins.configuration.default": "Default",
+    "settings.plugins.configuration.notSet": "Not set",
+    "settings.plugins.configuration.useDefault": "Use default",
+    "settings.plugins.configuration.on": "On",
+    "settings.plugins.configuration.off": "Off",
+    "settings.plugins.configuration.resetField": "Reset field",
+    "settings.plugins.configuration.save": "Save",
+    "settings.plugins.configuration.saved": "Saved",
+    "settings.plugins.configuration.saveFailed": "Failed to save configuration",
+    "settings.plugins.configuration.resetAll": "Reset All",
+    "settings.plugins.configuration.resetTitle": "Reset all configuration?",
+    "settings.plugins.configuration.resetDescription":
+      "All explicit overrides will be removed. Declaration defaults remain effective.",
+    "settings.plugins.configuration.unsavedTitle":
+      "Save configuration changes?",
+    "settings.plugins.configuration.unsavedDescription":
+      "Choose Save, Discard, or Cancel before leaving.",
+    "settings.plugins.configuration.discard": "Discard",
+    "settings.plugins.configuration.unavailable":
+      "Configuration data cannot be read. Recovery backs up the damaged file before resetting overrides.",
+    "settings.plugins.configuration.recover": "Back up and recover",
+    "settings.plugins.configuration.recoverTitle":
+      "Back up damaged configuration and recover?",
+    "settings.plugins.configuration.storedValueInvalid":
+      "The saved value is incompatible with the current declaration. Save a replacement or reset this field.",
     "settings.plugins.scanInstalled": "Scan installed plugins",
     "settings.plugins.syncMarketplace": "Sync plugin marketplace",
     "settings.plugins.neverSynced": "Never synced",
@@ -2282,6 +2373,11 @@ export const translationResources = {
     "settings.plugins.empty": "No matching plugins.",
     "settings.plugins.install": "Install",
     "settings.plugins.uninstall": "Uninstall",
+    "settings.plugins.uninstallTitle": "Uninstall {{name}}?",
+    "settings.plugins.uninstallDescription":
+      "The plugin process will stop before installed code is removed.",
+    "settings.plugins.deleteConfigurationData":
+      "Also delete configuration data (recommended)",
     "settings.plugins.installing": "Installing",
     "settings.plugins.cancel": "Cancel",
     "settings.plugins.installFailed": "Install failed",

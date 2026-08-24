@@ -1,5 +1,126 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
+
+/// Represents whether the installed package and its immutable declaration are usable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "validity",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginInstallationValidity {
+    Valid,
+    InvalidDeclaration { error_code: String },
+}
+
+/// Reports whether every required Setting has an effective type-correct value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginConfigurationCompleteness {
+    Complete,
+    Incomplete,
+}
+
+/// Represents the exclusive list-facing Plugin Configuration state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginConfigurationSummary {
+    NotDeclared,
+    Available {
+        completeness: PluginConfigurationCompleteness,
+    },
+    Unavailable {
+        error_code: String,
+    },
+}
+
+/// Enumerates Setting types supported by declaration schema version one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginSettingType {
+    String,
+    Number,
+    Boolean,
+}
+
+/// Carries one non-secret scalar override accepted by schema version one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(untagged)]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginSettingValue {
+    String(String),
+    Number(f64),
+    Boolean(bool),
+}
+
+/// Describes one immutable plugin-authored Setting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct PluginSettingDeclaration {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    #[serde(rename = "type")]
+    #[ts(rename = "type")]
+    pub setting_type: PluginSettingType,
+    pub required: bool,
+    pub order: Option<i64>,
+    pub default: Option<PluginSettingValue>,
+}
+
+/// Identifies the source of one effective editor value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginSettingValueSource {
+    Stored,
+    Default,
+    Absent,
+}
+
+/// Projects one Setting into an editor field without exposing raw files.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct PluginSettingDetails {
+    pub declaration: PluginSettingDeclaration,
+    pub stored_value: Option<PluginSettingValue>,
+    pub effective_value: Option<PluginSettingValue>,
+    pub source: PluginSettingValueSource,
+    pub value_error_code: Option<String>,
+}
+
+/// Carries one complete editor snapshot bound to a revision and declaration fingerprint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct PluginConfigurationDetails {
+    pub plugin_id: String,
+    pub schema_version: u32,
+    pub revision: u64,
+    pub declaration_fingerprint: String,
+    pub settings: Vec<PluginSettingDetails>,
+    pub summary: PluginConfigurationSummary,
+}
+
+/// Addresses one stable validation failure to its Setting ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct PluginConfigurationFieldError {
+    pub setting_id: String,
+    pub error_code: String,
+}
 
 /// Describes the single agent contributed by an installed agent plugin package.
 ///
@@ -46,6 +167,8 @@ pub struct InstalledPlugin {
     /// read the plugin directory; surfaces render it from a `data:` URL and fall back to a
     /// generic mark when it is absent.
     pub logo: Option<String>,
+    pub installation_validity: PluginInstallationValidity,
+    pub configuration: PluginConfigurationSummary,
     #[serde(flatten)]
     #[ts(flatten)]
     pub runtime: PluginRuntimeStatus,
@@ -193,6 +316,16 @@ pub struct StopPluginResponse {
 #[ts(export_to = "plugin.ts")]
 pub struct UninstallPluginRequest {
     pub plugin_id: String,
+    pub data_disposition: PluginDataDisposition,
+}
+
+/// Selects whether uninstall retains or deletes host-owned plugin data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "plugin.ts")]
+pub enum PluginDataDisposition {
+    Delete,
+    Retain,
 }
 
 /// Confirms the identifier removed after process shutdown and package deletion complete.
@@ -218,8 +351,86 @@ pub struct InstallPluginRequest {
 pub struct InstallPluginResponse {
     pub plugin_id: String,
 }
+
+/// Requests the current editor snapshot for one installed plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct GetPluginConfigurationRequest {
+    pub plugin_id: String,
+}
+
+/// Returns the resolved editor snapshot without exposing its filesystem location.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct GetPluginConfigurationResponse {
+    pub configuration: PluginConfigurationDetails,
+}
+
+/// Replaces every explicit override recognized by the loaded declaration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct SavePluginConfigurationRequest {
+    pub plugin_id: String,
+    pub expected_revision: u64,
+    pub declaration_fingerprint: String,
+    pub values: BTreeMap<String, PluginSettingValue>,
+}
+
+/// Returns the authoritative post-save editor snapshot and list summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct SavePluginConfigurationResponse {
+    pub configuration: PluginConfigurationDetails,
+}
+
+/// Selects the explicit reset operation authorized by the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "mode",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum ResetPluginConfigurationMode {
+    ResetAll { expected_revision: u64 },
+    RecoverCorrupt,
+}
+
+/// Requests Reset All or confirmed damaged-data recovery for one plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ResetPluginConfigurationRequest {
+    pub plugin_id: String,
+    pub declaration_fingerprint: String,
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub reset: ResetPluginConfigurationMode,
+}
+
+/// Returns the authoritative editor snapshot after a reset operation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ResetPluginConfigurationResponse {
+    pub configuration: PluginConfigurationDetails,
+}
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    PluginInstallationValidity::export(config)?;
+    PluginConfigurationCompleteness::export(config)?;
+    PluginConfigurationSummary::export(config)?;
+    PluginSettingType::export(config)?;
+    PluginSettingValue::export(config)?;
+    PluginSettingDeclaration::export(config)?;
+    PluginSettingValueSource::export(config)?;
+    PluginSettingDetails::export(config)?;
+    PluginConfigurationDetails::export(config)?;
+    PluginConfigurationFieldError::export(config)?;
     InstalledPluginAgent::export(config)?;
     PluginRuntimeStatus::export(config)?;
     InstalledPlugin::export(config)?;
@@ -241,9 +452,17 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     StopPluginRequest::export(config)?;
     StopPluginResponse::export(config)?;
     UninstallPluginRequest::export(config)?;
+    PluginDataDisposition::export(config)?;
     UninstallPluginResponse::export(config)?;
     InstallPluginRequest::export(config)?;
     InstallPluginResponse::export(config)?;
+    GetPluginConfigurationRequest::export(config)?;
+    GetPluginConfigurationResponse::export(config)?;
+    SavePluginConfigurationRequest::export(config)?;
+    SavePluginConfigurationResponse::export(config)?;
+    ResetPluginConfigurationMode::export(config)?;
+    ResetPluginConfigurationRequest::export(config)?;
+    ResetPluginConfigurationResponse::export(config)?;
     Ok(())
 }
 
@@ -252,11 +471,14 @@ mod tests {
     use super::{
         AvailablePlugin, InstallPluginRequest, InstallPluginResponse, InstalledPlugin,
         InstalledPluginAgent, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
-        ListInstalledPluginsRequest, ListInstalledPluginsResponse, PluginRuntimeStatus,
-        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
+        ListInstalledPluginsRequest, ListInstalledPluginsResponse, PluginConfigurationSummary,
+        PluginInstallationValidity, PluginRuntimeStatus, PluginSettingValue,
+        ResetPluginConfigurationMode, ResetPluginConfigurationRequest,
+        SavePluginConfigurationRequest, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     /// Verifies the installed-plugin response preserves the package manifest field mapping.
     #[test]
@@ -274,6 +496,8 @@ mod tests {
             },
             enabled: false,
             logo: Some("<svg/>".to_string()),
+            installation_validity: PluginInstallationValidity::Valid,
+            configuration: PluginConfigurationSummary::NotDeclared,
             runtime: PluginRuntimeStatus::Stopped,
         };
 
@@ -300,8 +524,55 @@ mod tests {
                     },
                     "enabled": false,
                     "logo": "<svg/>",
+                    "installationValidity": { "validity": "valid" },
+                    "configuration": { "state": "not_declared" },
                     "runtime": "stopped"
                 }]
+            })
+        );
+    }
+
+    /// Configuration writes keep revision checks and reset mode tags explicit on the wire.
+    #[test]
+    fn serializes_plugin_configuration_write_contracts() {
+        assert_eq!(
+            serde_json::to_value(SavePluginConfigurationRequest {
+                plugin_id: "official/weather".to_string(),
+                expected_revision: 4,
+                declaration_fingerprint: "sha256".to_string(),
+                values: BTreeMap::from([
+                    (
+                        "endpoint".to_string(),
+                        PluginSettingValue::String("https://api.test".to_string()),
+                    ),
+                    ("enabled".to_string(), PluginSettingValue::Boolean(false)),
+                ]),
+            })
+            .unwrap(),
+            json!({
+                "pluginId": "official/weather",
+                "expectedRevision": 4,
+                "declarationFingerprint": "sha256",
+                "values": {
+                    "enabled": false,
+                    "endpoint": "https://api.test",
+                },
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ResetPluginConfigurationRequest {
+                plugin_id: "official/weather".to_string(),
+                declaration_fingerprint: "sha256".to_string(),
+                reset: ResetPluginConfigurationMode::ResetAll {
+                    expected_revision: 4,
+                },
+            })
+            .unwrap(),
+            json!({
+                "pluginId": "official/weather",
+                "declarationFingerprint": "sha256",
+                "mode": "reset_all",
+                "expectedRevision": 4,
             })
         );
     }
@@ -407,6 +678,8 @@ mod tests {
             },
             enabled: true,
             logo: None,
+            installation_validity: PluginInstallationValidity::Valid,
+            configuration: PluginConfigurationSummary::NotDeclared,
             runtime: PluginRuntimeStatus::Running,
         };
 
@@ -425,6 +698,8 @@ mod tests {
                 },
                 "enabled": true,
                 "logo": null,
+                "installationValidity": { "validity": "valid" },
+                "configuration": { "state": "not_declared" },
                 "runtime": "running"
             }),
         );
@@ -446,6 +721,8 @@ mod tests {
             },
             enabled: true,
             logo: None,
+            installation_validity: PluginInstallationValidity::Valid,
+            configuration: PluginConfigurationSummary::NotDeclared,
             runtime: PluginRuntimeStatus::Failed {
                 failure_reason: "process crashed".to_string(),
             },
@@ -466,6 +743,8 @@ mod tests {
                 },
                 "enabled": true,
                 "logo": null,
+                "installationValidity": { "validity": "valid" },
+                "configuration": { "state": "not_declared" },
                 "runtime": "failed",
                 "failureReason": "process crashed"
             }),

@@ -29,7 +29,8 @@ export function usePluginMutations(pluginId: string) {
     onSettled: invalidate,
   });
   const uninstall = useMutation({
-    mutationFn: () => client.plugin.uninstall({ pluginId }),
+    mutationFn: (dataDisposition: "delete" | "retain" = "delete") =>
+      client.plugin.uninstall({ pluginId, dataDisposition }),
     onSettled: invalidate,
   });
 
