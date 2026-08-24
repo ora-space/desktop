@@ -4,11 +4,12 @@ use crate::error::{BackendError, ErrorClassification};
 use gitlancer::{BranchName, CliGitRunner, Git};
 use ora_contracts::{
     ActivatePluginRequest, ActivatePluginResponse, DisablePluginRequest, DisablePluginResponse,
-    EmptyErrorParams, EnablePluginRequest, EnablePluginResponse, InstallPluginRequest,
-    InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
-    ListInstalledPluginsRequest, ListInstalledPluginsResponse, PublicError, ScanPluginsRequest,
-    ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
-    SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
+    EmptyErrorParams, EnablePluginRequest, EnablePluginResponse, ImportPluginRequest,
+    ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest,
+    ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
+    PublicError, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
+    SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
+    UninstallPluginResponse,
 };
 use ora_db::{RepositoryPool, SqlitePluginStateRepository};
 use ora_domain::PluginId;
@@ -386,15 +387,59 @@ impl PluginApi {
             )
             .await
             .map_err(|error| BackendError::internal("failed to install plugin", error))?;
-        // The installed snapshot is built once at startup, so a fresh install must re-scan for the
-        // new package to appear in the installed list without restarting the backend.
-        if let Err(error) = self.lifecycle.scan_plugins(ScanPluginsRequest {}).await {
-            ora_warn!(plugin_id = %request.plugin_id, %error, "installed the package but failed to refresh the installed-plugin snapshot");
-        }
+        self.finalize_new_install(&request.plugin_id).await;
         ora_info!(plugin_id = %request.plugin_id, "installed marketplace plugin");
         Ok(InstallPluginResponse {
             plugin_id: request.plugin_id,
         })
+    }
+
+    /// Imports a local `.orax` release archive: verifies and extracts it, refreshes the installed
+    /// snapshot, and enables the plugin so it is immediately usable without a restart.
+    pub(crate) async fn import(
+        &self,
+        request: ImportPluginRequest,
+    ) -> Result<ImportPluginResponse, BackendError> {
+        let archive_path = PathBuf::from(&request.path);
+        ora_info!(path = %request.path, "importing plugin release from local archive");
+        // Extracting and verifying the archive is CPU/IO bound, so it runs on the blocking
+        // pool instead of a tokio worker thread; the downloader is cloned only for the task
+        // and is needed because `install_local` is an `Installer` method.
+        let installer = self.installer.clone();
+        let data_directory = self.data_directory.clone();
+        let package = tokio::task::spawn_blocking(move || {
+            installer.install_local(&archive_path, &data_directory)
+        })
+        .await
+        .map_err(|error| BackendError::internal("failed to join plugin import task", error))?
+        .map_err(|error| BackendError::internal("failed to import plugin archive", error))?;
+        self.finalize_new_install(&package.id).await;
+        ora_info!(plugin_id = %package.id, "imported plugin release from local archive");
+        Ok(ImportPluginResponse {
+            plugin_id: package.id,
+        })
+    }
+
+    /// Refreshes the installed-plugin snapshot after a new package lands, then enables it by
+    /// default so the frontend surface reports it as immediately usable.
+    ///
+    /// The installed snapshot is built once at startup, so a fresh install must re-scan for the
+    /// new package to appear in the installed list without restarting the backend. Enabling is a
+    /// best-effort follow-up: a package that fails to launch still reports its failure through the
+    /// lifecycle runtime instead of failing the install.
+    async fn finalize_new_install(&self, plugin_id: &str) {
+        if let Err(error) = self.lifecycle.scan_plugins(ScanPluginsRequest {}).await {
+            ora_warn!(plugin_id = %plugin_id, %error, "installed the package but failed to refresh the installed-plugin snapshot");
+        }
+        if let Err(error) = self
+            .lifecycle
+            .enable_plugin(EnablePluginRequest {
+                plugin_id: plugin_id.to_string(),
+            })
+            .await
+        {
+            ora_warn!(plugin_id = %plugin_id, %error, "installed plugin could not be enabled by default");
+        }
     }
 }
 

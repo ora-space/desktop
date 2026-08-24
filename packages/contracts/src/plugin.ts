@@ -46,6 +46,21 @@ export type EnablePluginRequest = { pluginId: string };
 export type EnablePluginResponse = { plugin: InstalledPlugin };
 
 /**
+ * Requests importing one local `.orax` release archive into the installed plugins tree.
+ */
+export type ImportPluginRequest = {
+  /**
+   * Absolute path to the local `.orax` archive.
+   */
+  path: string;
+};
+
+/**
+ * Confirms the identifier imported after the archive is verified, extracted, and enabled.
+ */
+export type ImportPluginResponse = { pluginId: string };
+
+/**
  * Requests installation of one marketplace plugin by its registry identifier.
  */
 export type InstallPluginRequest = { pluginId: string };

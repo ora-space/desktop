@@ -77,6 +77,21 @@ describe("createTauriTransport", () => {
       request: { pluginId: "official/weather" },
     });
   });
+  it("maps local archive import to the Desktop plugin command", async () => {
+    const response = { pluginId: "official/weather" };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+
+    await expect(
+      transport.send({
+        operationName: "importPlugin",
+        request: { path: "C:/downloads/weather.orax" },
+      }),
+    ).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("import_plugin", {
+      request: { path: "C:/downloads/weather.orax" },
+    });
+  });
   it("maps workspace directory reads to the dedicated desktop command", async () => {
     const response = { path: "src", entries: [] };
     const invoke = vi.fn().mockResolvedValue(response);

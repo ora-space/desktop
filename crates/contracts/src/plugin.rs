@@ -243,6 +243,23 @@ pub struct InstallPluginRequest {
 pub struct InstallPluginResponse {
     pub plugin_id: String,
 }
+
+/// Requests importing one local `.orax` release archive into the installed plugins tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ImportPluginRequest {
+    /// Absolute path to the local `.orax` archive.
+    pub path: String,
+}
+
+/// Confirms the identifier imported after the archive is verified, extracted, and enabled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ImportPluginResponse {
+    pub plugin_id: String,
+}
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     InstalledPluginContribution::export(config)?;
@@ -269,16 +286,19 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     UninstallPluginResponse::export(config)?;
     InstallPluginRequest::export(config)?;
     InstallPluginResponse::export(config)?;
+    ImportPluginRequest::export(config)?;
+    ImportPluginResponse::export(config)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AvailablePlugin, InstallPluginRequest, InstallPluginResponse, InstalledPlugin,
-        InstalledPluginContribution, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
-        ListInstalledPluginsRequest, ListInstalledPluginsResponse, PluginRuntimeStatus,
-        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
+        AvailablePlugin, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest,
+        InstallPluginResponse, InstalledPlugin, InstalledPluginContribution,
+        ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest,
+        ListInstalledPluginsResponse, PluginRuntimeStatus, SyncAvailablePluginsRequest,
+        SyncAvailablePluginsResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -474,6 +494,25 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(InstallPluginResponse {
+                plugin_id: "official/weather".to_string(),
+            })
+            .unwrap(),
+            json!({ "pluginId": "official/weather" })
+        );
+    }
+
+    /// Verifies the import request/response wire shape for a local `.orax` archive.
+    #[test]
+    fn serializes_import_plugin_contract() {
+        assert_eq!(
+            serde_json::to_value(ImportPluginRequest {
+                path: "C:/downloads/weather.orax".to_string(),
+            })
+            .unwrap(),
+            json!({ "path": "C:/downloads/weather.orax" })
+        );
+        assert_eq!(
+            serde_json::to_value(ImportPluginResponse {
                 plugin_id: "official/weather".to_string(),
             })
             .unwrap(),

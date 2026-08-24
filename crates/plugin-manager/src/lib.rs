@@ -15,7 +15,7 @@ mod kind_tests;
 mod tests;
 
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
-pub use install::{InstallError, Installer};
+pub use install::{InstallError, InstalledPackage, Installer};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use validation::{
     INSTALLED_ENTRYPOINT, InstalledPlugin, InstalledPluginAgent, PluginContribution,

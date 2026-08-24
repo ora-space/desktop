@@ -13,8 +13,9 @@ workspace = true
 [dependencies]
 ora-domain = { workspace = true }
 ora-plugin-manifest = { workspace = true }
-ora-utils = { workspace = true, features = ["archive", "http"] }
+ora-utils = { workspace = true, features = ["archive", "http", "validation"] }
 semver = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 url = { workspace = true }
@@ -23,5 +24,4 @@ url = { workspace = true }
 futures = { workspace = true }
 pretty_assertions = { workspace = true }
 sha2 = { workspace = true }
-tempfile = { workspace = true }
 zip = { workspace = true }

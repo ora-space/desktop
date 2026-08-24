@@ -27,6 +27,9 @@ orchestrates checksum-verified installs of new plugin releases.
 - Install a plugin release: download the `.orax` package (through an injected `ora-utils::http`
   `HttpDownload`), verify its SHA-256 while downloading, and safely extract it into
   `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`.
+- Import one local `.orax` release archive by extracting into a disposable staging directory,
+  parsing its in-archive `orax.toml`, verifying a declared `sha256`, and then moving only the
+  validated tree into `<data-dir>/plugins/installed/<namespace>/<name>/<version>`.
 
 ## Non-responsibilities
 
@@ -40,8 +43,11 @@ orchestrates checksum-verified installs of new plugin releases.
 Call `PluginManager::discover(data_dir)` once during application bootstrap. Consumers read the
 resulting snapshot through `installed_plugins()` and report any non-fatal problems from
 `discovery_issues()`. `installed_root(data_dir)`, `MANIFEST_FILE_NAME`, and
-`INSTALLED_ENTRYPOINT` expose the layout to callers that write or inspect it. `Installer::new`
-takes any `HttpDownload` and `install` returns the package directory it extracted into.
+`INSTALLED_ENTRYPOINT` expose the layout to callers that write or inspect it. A local `.orax`
+archive is imported with `Installer::install_local(archive_path, data_dir)`, which returns an
+`InstalledPackage` carrying the materialized `package_dir` and the `namespace/name` plugin id
+derived from the in-archive manifest. `Installer::new` accepts any `HttpDownload`; `install`
+returns the package directory it extracted into.
 
 ## Validation split
 
@@ -85,7 +91,7 @@ as `invalid_install_path`. The directory names are not part of a package's ident
 alone names the plugin, and two packages claiming the same `<namespace>/<name>` keep the first in
 path order and report the second as `duplicate_plugin_id`. Discovery never recurses below one
 version directory and never reads more than 1 MiB from one manifest. The pre-versioned
-`<data-dir>/plugins/<package>` layout is not discovered or migrated. Entrypoint containment rejects the current target of a
-package-escaping symlink, but path-based validation cannot prevent a concurrent symlink
-replacement between discovery and later loading. A missing installed root represents an empty
-installation and is not an error.
+`<data-dir>/plugins/<package>` layout is not discovered or migrated. Entrypoint containment
+rejects the current target of a package-escaping symlink, but path-based validation cannot prevent
+a concurrent symlink replacement between discovery and later loading. A missing installed root
+represents an empty installation and is not an error.

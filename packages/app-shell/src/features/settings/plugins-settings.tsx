@@ -2,11 +2,18 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
 import { Button, Input, toast } from "@ora/ui";
-import { IconLoader2, IconRefresh, IconSearch } from "@tabler/icons-react";
+import {
+  IconLoader2,
+  IconRefresh,
+  IconSearch,
+  IconUpload,
+} from "@tabler/icons-react";
 import { localizeContractError } from "../../i18n/contract-error";
+import { usePlatform } from "../../platform";
 import { useAvailablePlugins } from "../../state/hooks/use-available-plugins";
 import { useInstallPlugin } from "../../state/hooks/use-install-plugin";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
+import { usePluginImport } from "../../state/hooks/use-plugin-import";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-sync";
 import { PluginLogo } from "./plugin-logo";
@@ -21,10 +28,13 @@ export function PluginsSettings() {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [managing, setManaging] = useState(false);
+  const [selecting, setSelecting] = useState(false);
 
+  const platform = usePlatform();
   const available = useAvailablePlugins();
   const installed = useInstalledPlugins();
   const sync = usePluginRegistrySync();
+  const importPlugin = usePluginImport();
 
   const installedById = useMemo(() => {
     const byId = new Map<string, InstalledPlugin>();
@@ -53,6 +63,32 @@ export function PluginsSettings() {
           time: new Date(Number(updatedAt) * 1000).toLocaleString(),
         });
 
+  const handleImport = async () => {
+    setSelecting(true);
+    try {
+      const path = await platform.selectPath({ kind: "file" });
+      if (path === null) return;
+      importPlugin.mutate(
+        { path },
+        {
+          onSuccess: () => toast.success(t("settings.plugins.importSuccess")),
+          onError: (cause) =>
+            toast.error(t("settings.plugins.importFailed"), {
+              description: localizeContractError(cause, t),
+            }),
+        },
+      );
+    } catch (error) {
+      // Surface the picker failure through the toast instead of the console: app-shell tests
+      // run under a clean-stderr gate, so a console write here would fail the whole suite.
+      toast.error(t("settings.plugins.pathSelectionError"), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSelecting(false);
+    }
+  };
+
   if (managing) {
     return (
       <PluginManager
@@ -76,7 +112,15 @@ export function PluginsSettings() {
           variant="outline"
           size="sm"
           disabled={sync.isPending}
-          onClick={() => sync.mutate()}
+          onClick={() =>
+            sync.mutate(undefined, {
+              onError: (cause) => {
+                toast.error(t("settings.plugins.syncFailed"), {
+                  description: localizeContractError(cause, t),
+                });
+              },
+            })
+          }
           aria-label={t("settings.plugins.syncMarketplace")}
         >
           {sync.isPending ? (
@@ -101,6 +145,22 @@ export function PluginsSettings() {
         </div>
         <Button variant="outline" size="sm" onClick={() => setManaging(true)}>
           {t("settings.plugins.manageInstalled")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={importPlugin.isPending || selecting}
+          onClick={() => void handleImport()}
+          aria-label={t("settings.plugins.import")}
+        >
+          {importPlugin.isPending || selecting ? (
+            <IconLoader2 className="animate-spin" />
+          ) : (
+            <IconUpload />
+          )}
+          <span className="hidden sm:inline">
+            {t("settings.plugins.import")}
+          </span>
         </Button>
       </div>
 

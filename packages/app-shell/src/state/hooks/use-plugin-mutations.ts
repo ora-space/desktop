@@ -3,16 +3,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
 import { useAgentModelStore } from "../stores/agent-model-store";
 import { queryKeys } from "./query-keys";
+import { invalidatePluginQueries } from "./plugin-invalidation";
 
 /** Provides lifecycle mutations for one installed plugin and invalidates the plugin queries on settle. */
 export function usePluginMutations(pluginId: string, agentRef?: string) {
   const client = useContractsClient();
   const queryClient = useQueryClient();
-  const invalidate = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.installedPlugins }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.availablePlugins }),
-    ]);
+  const invalidate = () => invalidatePluginQueries(queryClient);
   const refreshAgent = (agentRef: string, scope: "availability" | "models") => {
     // Every lifecycle change invalidates availability and its display cache.
     // Only a starting agent can answer model discovery; stopping one must not

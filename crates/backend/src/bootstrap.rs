@@ -366,6 +366,19 @@ impl Backend {
         Ok(response)
     }
 
+    /// Imports one local release archive and reconciles the agent set afterwards.
+    ///
+    /// The agent set is reconciled so the imported package supplies a reachable agent in this
+    /// process rather than only after the next restart.
+    pub async fn import_plugin(
+        &self,
+        request: ImportPluginRequest,
+    ) -> Result<ImportPluginResponse, BackendError> {
+        let response = self.plugin.import(request).await?;
+        self.agent_runtime.sync_plugin_agents();
+        Ok(response)
+    }
+
     /// Starts a workflow run against its frozen snapshot graph.
     pub fn start_workflow_run(
         &self,
