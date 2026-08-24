@@ -6,14 +6,18 @@ const FENCE_SPLIT = /(```[\s\S]*?```)/;
  * before read-only Markdown render.
  */
 export function prepareUserMessageMarkdown(content: string): string {
-  const normalized = content.replace(/\r\n/g, "\n");
+  const normalized = content.replace(/\r\n?/g, "\n");
   return normalized
     .split(FENCE_SPLIT)
     .map((part) => {
       if (part.startsWith("```")) {
         return part;
       }
-      return part.replace(/([^\n])\n(?=[^\n])/g, "$1\n\n");
+      return part.replace(
+        /([^\n])(\n+)(?=[^\n])/g,
+        (_match, preceding: string, lineBreaks: string) =>
+          `${preceding}\n\n${"\u00a0\n\n".repeat(lineBreaks.length - 1)}`,
+      );
     })
     .join("");
 }

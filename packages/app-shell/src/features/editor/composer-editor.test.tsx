@@ -42,6 +42,36 @@ describe("ComposerEditor", () => {
     expect(composerText(textbox)).toMatch(/second/);
   });
 
+  it("moves the caret forward across consecutive Shift+Enter newlines", async () => {
+    const user = userEvent.setup();
+    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    await user.click(textbox);
+    await user.keyboard("first");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.keyboard("last");
+
+    expect(composerText(textbox)).toBe("first\n\n\nlast");
+  });
+
+  it("preserves line breaks when plain multiline text is pasted", async () => {
+    const user = userEvent.setup();
+    render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    await user.click(textbox);
+    await user.paste(
+      "first plain line\nsecond plain line\n\n\nthird plain line",
+    );
+
+    expect(composerText(textbox)).toBe(
+      "first plain line\nsecond plain line\n\n\nthird plain line",
+    );
+  });
+
   it("turns a markdown heading prefix into a heading node", async () => {
     const user = userEvent.setup();
     render(<ComposerEditor ariaLabel="Message" onSubmit={vi.fn()} />);

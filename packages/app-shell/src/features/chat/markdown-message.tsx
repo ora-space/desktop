@@ -22,6 +22,10 @@ import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
 import type { BundledLanguage, ThemedTokenWithVariants } from "shiki";
+import {
+  prepareAssistantMessageMarkdown,
+  remarkSoftBreaks,
+} from "./assistant-message-markdown";
 import { unwrapMarkdownDocument } from "./markdown-document";
 import { prepareStreamingMarkdown } from "./streaming-markdown";
 import {
@@ -54,6 +58,7 @@ interface MarkdownDocumentProps {
 
 const LANGUAGE_CLASS_PATTERN = /(?:^|\s)language-([^\s]+)/;
 const markdownRemarkPlugins = [remarkGfm];
+const messageRemarkPlugins = [remarkGfm, remarkSoftBreaks];
 const highlightedCodeCache = new Map<
   string,
   Promise<ThemedTokenWithVariants[][] | null>
@@ -137,7 +142,7 @@ function createMarkdownComponents(density: MarkdownDensity): Components {
       <h1
         className={
           compact
-            ? "mb-1 mt-2 text-base font-semibold leading-6 first:mt-0"
+            ? "mb-2 mt-3 text-xl font-semibold leading-7 first:mt-0"
             : "mb-3 mt-6 text-2xl font-semibold leading-8 first:mt-0"
         }
         {...props}
@@ -397,11 +402,12 @@ export function MarkdownMessage({
     [chatLink],
   );
   const renderedMarkdown = useFrameBatchedMarkdown(markdown, streaming);
-  const parseableMarkdown = useMemo(
-    () =>
-      streaming ? prepareStreamingMarkdown(renderedMarkdown) : renderedMarkdown,
-    [renderedMarkdown, streaming],
-  );
+  const parseableMarkdown = useMemo(() => {
+    const completeMarkdown = streaming
+      ? prepareStreamingMarkdown(renderedMarkdown)
+      : renderedMarkdown;
+    return prepareAssistantMessageMarkdown(completeMarkdown);
+  }, [renderedMarkdown, streaming]);
   const [storedRevealState, setStoredRevealState] =
     useState<StreamingRevealState>(() => ({
       renderedLength: renderedMarkdown.length,
@@ -446,7 +452,7 @@ export function MarkdownMessage({
   const markdownBody = useMemo(
     () => (
       <ReactMarkdown
-        remarkPlugins={markdownRemarkPlugins}
+        remarkPlugins={messageRemarkPlugins}
         rehypePlugins={rehypePlugins}
         components={streaming ? streamingMarkdownComponents : markdownWithLinks}
       >

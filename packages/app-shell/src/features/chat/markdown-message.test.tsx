@@ -51,9 +51,10 @@ describe("MarkdownDocument", () => {
       </AppI18nProvider>,
     );
 
-    expect(
-      screen.getByRole("heading", { level: 1, name: "H1" }),
-    ).not.toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "H1" })).toHaveClass(
+      "text-xl",
+      "leading-7",
+    );
     expect(
       screen.getByRole("heading", { level: 6, name: "H6" }),
     ).not.toBeNull();
@@ -73,6 +74,18 @@ describe("MarkdownDocument", () => {
     expect(paragraphs).toHaveLength(2);
     expect(paragraphs[0]?.tagName).toBe("P");
     expect(paragraphs[1]?.tagName).toBe("P");
+  });
+
+  it("keeps consecutive empty composer blocks visible", () => {
+    const view = render(
+      <AppI18nProvider>
+        <MarkdownDocument density="compact" content={"first\n\n\nlast"} />
+      </AppI18nProvider>,
+    );
+
+    expect(
+      [...view.container.querySelectorAll("p")].map((node) => node.textContent),
+    ).toEqual(["first", "\u00a0", "\u00a0", "last"]);
   });
 
   it("does not expand newlines inside fenced code", async () => {
@@ -109,6 +122,20 @@ describe("MarkdownDocument", () => {
 });
 
 describe("MarkdownMessage", () => {
+  it("renders ordinary assistant newlines as visible line breaks", () => {
+    const view = renderMarkdown("first\nsecond\nthird");
+
+    expect(view.container.querySelectorAll("br")).toHaveLength(2);
+  });
+
+  it("keeps additional blank lines in assistant replies visible", () => {
+    const view = renderMarkdown("first\n\n\nsecond\n\n\n\nthird");
+
+    expect(
+      [...view.container.querySelectorAll("p")].map((node) => node.textContent),
+    ).toEqual(["first", "\u00a0", "second", "\u00a0", "\u00a0", "third"]);
+  });
+
   it("renders GitHub-flavored Markdown with semantic elements", () => {
     render(
       <MarkdownMessage

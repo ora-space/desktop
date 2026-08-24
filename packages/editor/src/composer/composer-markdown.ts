@@ -2,6 +2,7 @@ import type { JSONContent } from "@tiptap/core";
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { isDangerousComposerHref } from "./composer-link";
+import { plainTextToComposerContent } from "./composer-plain-text";
 
 type MarkSpec = { type: string; attrs?: Record<string, string | null> };
 
@@ -79,10 +80,13 @@ export const ComposerMarkdownPaste = Extension.create({
               return false;
             }
             const text = event.clipboardData.getData("text/plain");
-            if (!looksLikeComposerMarkdown(text)) {
+            const isMarkdown = looksLikeComposerMarkdown(text);
+            if (!isMarkdown && !/[\r\n]/.test(text)) {
               return false;
             }
-            const doc = markdownToComposerContent(text);
+            const doc = isMarkdown
+              ? markdownToComposerContent(text)
+              : plainTextToComposerContent(text.replace(/\r\n?/g, "\n"));
             return this.editor.commands.insertContent(doc.content ?? []);
           },
         },
