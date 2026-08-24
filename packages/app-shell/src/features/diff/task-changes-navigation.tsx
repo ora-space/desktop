@@ -5,6 +5,12 @@ interface TaskChangesNavigationProviderProps {
   children: ReactNode;
   onOpenDiff: (path: string, line?: number) => void;
   onOpenWorkspaceFile: (path: string, line?: number, column?: number) => void;
+  onOpenWorkspaceDirectory?: (path: string) => void;
+  onOpenWorkspaceArtifact?: (
+    path: string,
+    line?: number,
+    column?: number,
+  ) => void;
 }
 
 /** Shares Diff and Files navigation actions with nested conversation content. */
@@ -12,10 +18,17 @@ export function TaskChangesNavigationProvider({
   children,
   onOpenDiff,
   onOpenWorkspaceFile,
+  onOpenWorkspaceDirectory,
+  onOpenWorkspaceArtifact,
 }: TaskChangesNavigationProviderProps) {
   return (
     <TaskChangesNavigationContext.Provider
-      value={{ openDiff: onOpenDiff, openWorkspaceFile: onOpenWorkspaceFile }}
+      value={{
+        openDiff: onOpenDiff,
+        openWorkspaceFile: onOpenWorkspaceFile,
+        openWorkspaceDirectory: onOpenWorkspaceDirectory,
+        openWorkspaceArtifact: onOpenWorkspaceArtifact,
+      }}
     >
       {children}
     </TaskChangesNavigationContext.Provider>

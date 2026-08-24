@@ -1,18 +1,25 @@
 import type { ChatToolCall, ChatTurn } from "@ora/chat";
 import { displayPath } from "../turn-diff-files";
 import { normalizeDiffPath } from "../../../lib/workspace-path";
-import { isLikelyFileArtifactPath } from "./parse";
-import { collectToolOutputPaths } from "./tool-output-paths";
+import { isLikelyFileArtifactPath, looksLikeGlobPattern } from "./parse";
+import { collectToolOutputArtifacts } from "./tool-output-paths";
 
 export interface SessionArtifactIndex {
   edited: string[];
   referenced: string[];
+  directories?: string[];
+  unknown?: string[];
 }
 
 export interface TurnArtifactCacheEntry {
-  fingerprint: string;
   edited: string[];
   referenced: string[];
+  directories?: string[];
+  unknown?: string[];
+  source?: ChatTurn;
+  toolSources?: ChatToolCall[];
+  cumulative?: SessionArtifactIndex;
+  cumulativeParent?: TurnArtifactCacheEntry | null;
 }
 
 /** Stores one path after worktree-prefix stripping and slash normalization. */
@@ -91,10 +98,31 @@ function addReferencedPath(
   referenced.set(key, path);
 }
 
+/** Keeps a concrete provider path unresolved when syntax cannot prove its kind. */
+function addUnknownPath(
+  rawPath: string | null,
+  edited: Map<string, string>,
+  referenced: Map<string, string>,
+  unknown: Map<string, string>,
+): void {
+  if (
+    rawPath === null ||
+    rawPath.trim() === "" ||
+    looksLikeGlobPattern(rawPath)
+  ) {
+    return;
+  }
+  const path = storedArtifactPath(rawPath).replace(/\/+$/, "");
+  const key = path.toLowerCase();
+  if (!edited.has(key) && !referenced.has(key)) unknown.set(key, path);
+}
+
 /** Collects edited and referenced paths for one turn without reading diff text. */
 export function collectTurnArtifactPaths(turn: ChatTurn): {
   edited: string[];
   referenced: string[];
+  directories?: string[];
+  unknown?: string[];
 } {
   const edited = new Map<string, string>();
 
@@ -122,6 +150,8 @@ export function collectTurnArtifactPaths(turn: ChatTurn): {
   }
 
   const referenced = new Map<string, string>();
+  const directories = new Map<string, string>();
+  const unknown = new Map<string, string>();
   for (const item of turn.items) {
     if (
       item.kind !== "toolCall" ||
@@ -130,38 +160,47 @@ export function collectTurnArtifactPaths(turn: ChatTurn): {
     )
       continue;
     for (const location of item.locations) {
-      addReferencedPath(location.path, edited, referenced);
+      if (/[\\/]$/.test(location.path)) {
+        const path = storedArtifactPath(location.path).replace(/\/+$/, "");
+        directories.set(path.toLowerCase(), path);
+      } else {
+        addReferencedPath(location.path, edited, referenced);
+        if (!isIndexableReferencedPath(location.path)) {
+          addUnknownPath(location.path, edited, referenced, unknown);
+        }
+      }
     }
     if (item.locations.length === 0) {
-      addReferencedPath(fallbackReadPath(item), edited, referenced);
+      const fallback = fallbackReadPath(item);
+      addReferencedPath(fallback, edited, referenced);
+      if (!isIndexableReferencedPath(fallback)) {
+        addUnknownPath(fallback, edited, referenced, unknown);
+      }
     }
-    for (const outputPath of collectToolOutputPaths(item)) {
-      addReferencedPath(outputPath, edited, referenced);
+    const outputArtifacts = collectToolOutputArtifacts(item);
+    for (const outputPath of outputArtifacts.files) {
+      const path = storedArtifactPath(outputPath);
+      const key = path.toLowerCase();
+      if (!edited.has(key)) referenced.set(key, path);
+    }
+    for (const outputDirectory of outputArtifacts.directories) {
+      const path = storedArtifactPath(outputDirectory).replace(/\/+$/, "");
+      directories.set(path.toLowerCase(), path);
+    }
+    for (const outputUnknown of outputArtifacts.unknown) {
+      const path = storedArtifactPath(outputUnknown).replace(/\/+$/, "");
+      unknown.set(path.toLowerCase(), path);
     }
   }
 
   return {
     edited: [...edited.values()],
     referenced: [...referenced.values()],
+    ...(directories.size === 0
+      ? {}
+      : { directories: [...directories.values()] }),
+    ...(unknown.size === 0 ? {} : { unknown: [...unknown.values()] }),
   };
-}
-
-/** Fingerprint of the path-bearing tool fields so completed turns can be reused while streaming. */
-function turnArtifactFingerprint(turn: ChatTurn): string {
-  return turn.items
-    .filter((item): item is ChatToolCall => item.kind === "toolCall")
-    .map((item) => {
-      const diffs = item.content
-        .filter((content) => content.type === "diff")
-        .map((diff) => diff.path)
-        .join(",");
-      const locations = item.locations.map((loc) => loc.path).join(",");
-      const editFallback = fallbackEditPath(item) ?? "";
-      const readFallback = fallbackReadPath(item) ?? "";
-      const outputPaths = collectToolOutputPaths(item).join(",");
-      return `${item.id}:${item.status ?? ""}:${diffs}:${locations}:${editFallback}:${readFallback}:${outputPaths}`;
-    })
-    .join(";");
 }
 
 /**
@@ -173,24 +212,93 @@ export function collectCumulativeArtifactIndices(
   turns: ChatTurn[],
   cache?: Map<string, TurnArtifactCacheEntry>,
 ): SessionArtifactIndex[] {
+  if (cache !== undefined) {
+    const activeTurnIds = new Set(turns.map((turn) => turn.id));
+    for (const turnId of cache.keys()) {
+      if (!activeTurnIds.has(turnId)) cache.delete(turnId);
+    }
+  }
   const edited = new Map<string, string>();
   const referenced = new Map<string, string>();
+  const directories = new Map<string, string>();
+  const unknown = new Map<string, string>();
   const indices: SessionArtifactIndex[] = [];
+  let previousEntry: TurnArtifactCacheEntry | null = null;
+  let mapsHydrated = true;
 
   for (const turn of turns) {
-    const fingerprint = turnArtifactFingerprint(turn);
     let entry = cache?.get(turn.id);
-    if (entry === undefined || entry.fingerprint !== fingerprint) {
+    const toolSources = turn.items.filter(
+      (item): item is ChatToolCall => item.kind === "toolCall",
+    );
+    const toolsUnchanged =
+      entry !== undefined &&
+      entry.toolSources?.length === toolSources.length &&
+      entry.toolSources.every((tool, index) => tool === toolSources[index]);
+    if (entry !== undefined && entry.source !== turn && toolsUnchanged) {
+      entry.source = turn;
+    } else if (entry === undefined || entry.source !== turn) {
       const collected = collectTurnArtifactPaths(turn);
-      entry = { fingerprint, ...collected };
+      entry = { source: turn, toolSources, ...collected };
       cache?.set(turn.id, entry);
     }
 
+    if (
+      entry.cumulative !== undefined &&
+      entry.cumulativeParent === previousEntry
+    ) {
+      indices.push(entry.cumulative);
+      previousEntry = entry;
+      mapsHydrated = false;
+      continue;
+    }
+
+    if (!mapsHydrated) {
+      edited.clear();
+      referenced.clear();
+      directories.clear();
+      unknown.clear();
+      for (const path of previousEntry?.cumulative?.edited ?? []) {
+        edited.set(path.toLowerCase(), path);
+      }
+      for (const path of previousEntry?.cumulative?.referenced ?? []) {
+        referenced.set(path.toLowerCase(), path);
+      }
+      for (const path of previousEntry?.cumulative?.directories ?? []) {
+        directories.set(path.toLowerCase(), path);
+      }
+      for (const path of previousEntry?.cumulative?.unknown ?? []) {
+        unknown.set(path.toLowerCase(), path);
+      }
+      mapsHydrated = true;
+    }
+
     for (const path of entry.edited) {
-      edited.set(path.toLowerCase(), path);
+      const key = path.toLowerCase();
+      edited.set(key, path);
+      referenced.delete(key);
+      directories.delete(key);
+      unknown.delete(key);
     }
     for (const path of entry.referenced) {
-      referenced.set(path.toLowerCase(), path);
+      const key = path.toLowerCase();
+      if (edited.has(key)) continue;
+      referenced.set(key, path);
+      directories.delete(key);
+      unknown.delete(key);
+    }
+    for (const path of entry.directories ?? []) {
+      const key = path.toLowerCase();
+      if (edited.has(key)) continue;
+      directories.set(key, path);
+      referenced.delete(key);
+      unknown.delete(key);
+    }
+    for (const path of entry.unknown ?? []) {
+      const key = path.toLowerCase();
+      if (!edited.has(key) && !referenced.has(key) && !directories.has(key)) {
+        unknown.set(key, path);
+      }
     }
 
     const currentReferenced = new Map(referenced);
@@ -198,10 +306,18 @@ export function collectCumulativeArtifactIndices(
       currentReferenced.delete(key);
     }
 
-    indices.push({
+    const cumulative: SessionArtifactIndex = {
       edited: [...edited.values()],
       referenced: [...currentReferenced.values()],
-    });
+      ...(directories.size === 0
+        ? {}
+        : { directories: [...directories.values()] }),
+      ...(unknown.size === 0 ? {} : { unknown: [...unknown.values()] }),
+    };
+    entry.cumulative = cumulative;
+    entry.cumulativeParent = previousEntry;
+    indices.push(cumulative);
+    previousEntry = entry;
   }
 
   return indices;

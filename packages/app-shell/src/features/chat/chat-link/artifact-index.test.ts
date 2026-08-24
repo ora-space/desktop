@@ -173,7 +173,7 @@ describe("collectSessionArtifactIndex", () => {
     });
   });
 
-  it("does not treat directory-only locations as Files preview targets", () => {
+  it("indexes slash-terminated directory locations as directories", () => {
     const index = collectSessionArtifactIndex([
       turn("t1", [
         tool({
@@ -184,7 +184,39 @@ describe("collectSessionArtifactIndex", () => {
       ]),
     ]);
 
-    expect(index).toEqual({ edited: [], referenced: [] });
+    expect(index).toEqual({
+      edited: [],
+      referenced: [],
+      directories: ["src"],
+    });
+  });
+
+  it("keeps ambiguous directory-listing entries unresolved", () => {
+    const index = collectSessionArtifactIndex([
+      turn("t1", [
+        tool({
+          id: "list-1",
+          title: "Get-ChildItem -Name",
+          toolKind: "read",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "C:\\Users\\zhans\\projects\\hapi\\cli\ndocs/\nREADME.md",
+              },
+            },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(index).toEqual({
+      edited: [],
+      referenced: [],
+      directories: ["docs"],
+      unknown: ["C:/Users/zhans/projects/hapi/cli", "README.md"],
+    });
   });
 
   it("reuses completed-turn results from the per-turn cache", () => {
@@ -234,6 +266,176 @@ describe("collectSessionArtifactIndex", () => {
 
     expect(cache.get("done")).toBe(cached);
     expect(cache.get("live")?.referenced).toEqual(["src/b.ts", "src/c.ts"]);
+  });
+
+  it("reuses historical cumulative snapshots when only the live turn changes", () => {
+    const cache = new Map();
+    const completed = turn("done", [
+      tool({ id: "read-a", locations: [{ path: "src/a.ts" }] }),
+    ]);
+    const first = collectCumulativeArtifactIndices(
+      [completed, turn("live", [], "streaming")],
+      cache,
+    );
+    const second = collectCumulativeArtifactIndices(
+      [
+        completed,
+        turn(
+          "live",
+          [tool({ id: "read-b", locations: [{ path: "src/b.ts" }] })],
+          "streaming",
+        ),
+      ],
+      cache,
+    );
+
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]?.referenced).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  it("does not reparse tools when only assistant text changes in the live turn", () => {
+    const cache = new Map();
+    const live = turn(
+      "live",
+      [tool({ id: "read", locations: [{ path: "src/a.ts" }] })],
+      "streaming",
+    );
+    const first = collectCumulativeArtifactIndices([live], cache);
+    const cached = cache.get("live");
+    const withAssistantText: ChatTurn = {
+      ...live,
+      items: [
+        ...live.items,
+        {
+          kind: "message",
+          id: "assistant",
+          role: "assistant",
+          content: "streaming answer",
+          createdAt: 30,
+        },
+      ],
+    };
+    const second = collectCumulativeArtifactIndices([withAssistantText], cache);
+
+    expect(cache.get("live")).toBe(cached);
+    expect(second[0]).toBe(first[0]);
+  });
+
+  it("lets explicit file evidence replace an earlier unresolved guess", () => {
+    const index = collectSessionArtifactIndex([
+      turn("guess", [
+        tool({
+          id: "list",
+          title: "Get-ChildItem -Name",
+          toolKind: "execute",
+          rawInput: { command: "Get-ChildItem -Name" },
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: "install\ncli" },
+            },
+          ],
+        }),
+      ]),
+      turn("confirm", [
+        tool({
+          id: "mode",
+          title: "Get-ChildItem | Select Mode, Name",
+          toolKind: "execute",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: "-a---- install\nd----- cli" },
+            },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(index).toEqual({
+      edited: [],
+      referenced: ["install"],
+      directories: ["cli"],
+    });
+  });
+
+  it("uses structured provider kinds over ambiguous visible listing text", () => {
+    const index = collectSessionArtifactIndex([
+      turn("typed", [
+        tool({
+          id: "typed-list",
+          title: "Get-ChildItem -Name",
+          toolKind: "execute",
+          rawInput: { command: "Get-ChildItem -Name" },
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "cache.v1\nscripts/install",
+              },
+            },
+          ],
+          rawOutput: {
+            entries: [
+              { path: "cache.v1", type: "directory" },
+              { path: "scripts/install", kind: "file" },
+            ],
+          },
+        }),
+      ]),
+    ]);
+
+    expect(index).toEqual({
+      edited: [],
+      referenced: ["scripts/install"],
+      directories: ["cache.v1"],
+    });
+  });
+
+  it("lets later explicit directory evidence replace an earlier file guess", () => {
+    const index = collectSessionArtifactIndex([
+      turn("guess", [
+        tool({
+          id: "guess",
+          toolKind: "search",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: "cache.v1" },
+            },
+          ],
+        }),
+      ]),
+      turn("confirm", [
+        tool({
+          id: "confirm",
+          rawOutput: { path: "cache.v1", type: "directory" },
+        }),
+      ]),
+    ]);
+    expect(index).toEqual({
+      edited: [],
+      referenced: [],
+      directories: ["cache.v1"],
+    });
+  });
+
+  it("keeps extensionless provider locations unresolved", () => {
+    const index = collectSessionArtifactIndex([
+      turn("location", [
+        tool({
+          id: "location",
+          toolKind: "read",
+          locations: [{ path: "scripts/install" }],
+        }),
+      ]),
+    ]);
+    expect(index).toEqual({
+      edited: [],
+      referenced: [],
+      unknown: ["scripts/install"],
+    });
   });
 
   it("ignores failed and cancelled tool calls", () => {
@@ -430,6 +632,7 @@ describe("collectSessionArtifactIndex", () => {
       turn("t1", [
         tool({
           id: "ls-md",
+          title: "Search markdown output",
           toolKind: "execute",
           locations: [],
           content: [

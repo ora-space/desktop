@@ -12,6 +12,8 @@ import { queryKeys } from "../../state/hooks/query-keys";
 import { SpecsContent, type SpecsContentHandle } from "../specs/specs-view";
 import {
   WorkspaceFilesView,
+  type WorkspaceDirectoryRequest,
+  type WorkspaceArtifactRequest,
   type WorkspaceFileRequest,
 } from "./workspace-files-view";
 
@@ -23,6 +25,8 @@ interface WorkspaceReviewFilesPanelProps {
   toolbar?: ReactNode;
   fileRequest?: WorkspaceFileRequest;
   onPreviewPathChange?: (path: string) => void;
+  directoryRequest?: WorkspaceDirectoryRequest;
+  artifactRequest?: WorkspaceArtifactRequest;
 }
 
 /** Hosts project/task file browsing and the read-only Spec catalog in one review panel. */
@@ -32,11 +36,19 @@ export function WorkspaceReviewFilesPanel({
   toolbar,
   fileRequest,
   onPreviewPathChange,
+  directoryRequest,
+  artifactRequest,
 }: WorkspaceReviewFilesPanelProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [surface, setSurface] = useState<FilesSurface>("explorer");
   const [appliedFileRequestId, setAppliedFileRequestId] = useState<
+    number | null
+  >(null);
+  const [appliedDirectoryRequestId, setAppliedDirectoryRequestId] = useState<
+    number | null
+  >(null);
+  const [appliedArtifactRequestId, setAppliedArtifactRequestId] = useState<
     number | null
   >(null);
   const specsRef = useRef<SpecsContentHandle>(null);
@@ -47,6 +59,20 @@ export function WorkspaceReviewFilesPanel({
     fileRequest.requestId !== appliedFileRequestId
   ) {
     setAppliedFileRequestId(fileRequest.requestId);
+    setSurface("explorer");
+  }
+  if (
+    artifactRequest !== undefined &&
+    artifactRequest.requestId !== appliedArtifactRequestId
+  ) {
+    setAppliedArtifactRequestId(artifactRequest.requestId);
+    setSurface("explorer");
+  }
+  if (
+    directoryRequest !== undefined &&
+    directoryRequest.requestId !== appliedDirectoryRequestId
+  ) {
+    setAppliedDirectoryRequestId(directoryRequest.requestId);
     setSurface("explorer");
   }
 
@@ -69,6 +95,7 @@ export function WorkspaceReviewFilesPanel({
         <Button
           size="sm"
           variant={surface === "explorer" ? "secondary" : "ghost"}
+          aria-pressed={surface === "explorer"}
           onClick={() => setSurface("explorer")}
         >
           <IconFolderOpen />
@@ -77,6 +104,7 @@ export function WorkspaceReviewFilesPanel({
         <Button
           size="sm"
           variant={surface === "search" ? "secondary" : "ghost"}
+          aria-pressed={surface === "search"}
           onClick={() => setSurface("search")}
         >
           <IconSearch />
@@ -85,6 +113,7 @@ export function WorkspaceReviewFilesPanel({
         <Button
           size="sm"
           variant={surface === "specs" ? "secondary" : "ghost"}
+          aria-pressed={surface === "specs"}
           onClick={() => {
             if (surface === "specs") {
               specsRef.current?.clearSelection();
@@ -136,6 +165,8 @@ export function WorkspaceReviewFilesPanel({
             hideHeader
             fileRequest={fileRequest}
             onPreviewPathChange={onPreviewPathChange}
+            directoryRequest={directoryRequest}
+            artifactRequest={artifactRequest}
           />
         )}
       </div>

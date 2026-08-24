@@ -12,7 +12,7 @@ export type ChatLinkClassification =
   | { kind: "none" }
   | { kind: "web"; href: string }
   | {
-      kind: "diff" | "files";
+      kind: "diff" | "files" | "directory" | "artifact";
       path: string;
       line: number | undefined;
       column: number | undefined;
@@ -27,9 +27,41 @@ export interface ClassifyChatCandidateInput {
   cwd?: string | null;
 }
 
+interface PathCollectionLookup {
+  exact: Map<string, string>;
+  basenames: Map<string, string[]>;
+}
+
+const pathCollectionCache = new WeakMap<string[], PathCollectionLookup>();
+const combinedBasenameCache = new WeakMap<
+  SessionArtifactIndex,
+  Map<string, string[]>
+>();
+
 /** Last path segment after slash normalization, used for unique bare-filename hits. */
 function basename(path: string): string {
   return normalizeDiffPath(path).split("/").at(-1) ?? "";
+}
+
+/** Builds exact and basename indexes once for each immutable artifact array. */
+function pathCollectionLookup(entries: string[]): PathCollectionLookup {
+  const cached = pathCollectionCache.get(entries);
+  if (cached !== undefined) return cached;
+  const exact = new Map<string, string>();
+  const basenames = new Map<string, string[]>();
+  for (const entry of entries) {
+    const normalized = normalizeDiffPath(displayPath(entry))
+      .replace(/\/+$/, "")
+      .toLowerCase();
+    exact.set(normalized, entry);
+    const name = basename(entry).toLowerCase();
+    const hits = basenames.get(name) ?? [];
+    hits.push(entry);
+    basenames.set(name, hits);
+  }
+  const lookup = { exact, basenames };
+  pathCollectionCache.set(entries, lookup);
+  return lookup;
 }
 
 /**
@@ -40,17 +72,18 @@ export function matchIndexPath(
   candidate: string,
   entries: string[],
 ): string | null {
-  const normalized = normalizeDiffPath(displayPath(candidate));
+  const normalized = normalizeDiffPath(displayPath(candidate)).replace(
+    /\/+$/,
+    "",
+  );
   if (!normalized.includes("/")) {
     const target = normalized.toLowerCase();
-    const hits = entries.filter(
-      (entry) => basename(entry).toLowerCase() === target,
-    );
+    const hits = pathCollectionLookup(entries).basenames.get(target) ?? [];
     return hits.length === 1 ? hits[0]! : null;
   }
 
-  const exact = entries.find(
-    (entry) => entry.toLowerCase() === normalized.toLowerCase(),
+  const exact = pathCollectionLookup(entries).exact.get(
+    normalized.toLowerCase(),
   );
   if (exact !== undefined) return exact;
 
@@ -71,9 +104,18 @@ function uniqueBasenameHit(
 ): string | null {
   const target = normalizeDiffPath(displayPath(candidate)).toLowerCase();
   if (target.includes("/") || target === "") return null;
-  const hits = [...index.edited, ...index.referenced].filter(
-    (entry) => basename(entry).toLowerCase() === target,
-  );
+  let combined = combinedBasenameCache.get(index);
+  if (combined === undefined) {
+    combined = new Map<string, string[]>();
+    for (const entry of [...index.edited, ...index.referenced]) {
+      const name = basename(entry).toLowerCase();
+      const hits = combined.get(name) ?? [];
+      hits.push(entry);
+      combined.set(name, hits);
+    }
+    combinedBasenameCache.set(index, combined);
+  }
+  const hits = combined.get(target) ?? [];
   if (hits.length <= 1) return hits[0] ?? null;
 
   const relativeRoots = hits.filter((hit) => {
@@ -120,6 +162,7 @@ export function toNavigationPath(
   cwd: string | null | undefined,
 ): string | null {
   const normalized = normalizeDiffPath(displayPath(storedPath));
+  if (normalized.split("/").includes("..")) return null;
   if (cwd !== null && cwd !== undefined && cwd !== "") {
     const stripped =
       stripTaskCwdPrefix(storedPath, cwd) ??
@@ -168,8 +211,16 @@ export function classifyChatCandidate(
 
   const href = parseChatHref(input.raw);
   if (href.kind === "web") return href;
-  if (!isPathLikeToken(input.raw)) return { kind: "none" };
   const parsed = parsePathCandidate(input.raw);
+  if (
+    !isPathLikeToken(input.raw) &&
+    matchIndexPath(parsed.path, input.index.directories ?? []) === null &&
+    matchIndexPath(parsed.path, input.index.unknown ?? []) === null &&
+    matchIndexPath(parsed.path, input.index.edited) === null &&
+    matchIndexPath(parsed.path, input.index.referenced) === null
+  ) {
+    return { kind: "none" };
+  }
   return classifyFileCandidate(
     parsed.path,
     parsed.line,
@@ -188,39 +239,69 @@ function classifyFileCandidate(
   hrefMissOpensFiles: boolean,
 ): ChatLinkClassification {
   const normalized = normalizeDiffPath(displayPath(path));
-  if (!normalized.includes("/")) {
-    const unique = uniqueBasenameHit(path, input.index, input.cwd);
-    if (unique === null) {
-      if (!hrefMissOpensFiles) return { kind: "none" };
-      return navigationClassification("files", path, line, column, input);
-    }
-    const kind = input.index.edited.some(
-      (entry) => entry.toLowerCase() === unique.toLowerCase(),
-    )
+  const fileHit = normalized.includes("/")
+    ? (matchIndexPath(path, input.index.edited) ??
+      matchIndexPath(path, input.index.referenced))
+    : uniqueBasenameHit(path, input.index, input.cwd);
+  if (fileHit !== null) {
+    const fileKey = normalizeDiffPath(displayPath(fileHit))
+      .replace(/\/+$/, "")
+      .toLowerCase();
+    const kind = pathCollectionLookup(input.index.edited).exact.has(fileKey)
       ? "diff"
       : "files";
-    return navigationClassification(kind, unique, line, column, input);
+    return navigationClassification(kind, fileHit, line, column, input);
   }
 
-  const editedHit = matchIndexPath(path, input.index.edited);
-  const referencedHit =
-    editedHit === null ? matchIndexPath(path, input.index.referenced) : null;
-  const hit = editedHit ?? referencedHit;
-  if (hit === null && !hrefMissOpensFiles) return { kind: "none" };
+  const directoryHit = matchIndexPath(path, input.index.directories ?? []);
+  if (directoryHit !== null) {
+    return navigationClassification(
+      "directory",
+      directoryHit,
+      /*line*/ undefined,
+      /*column*/ undefined,
+      input,
+    );
+  }
 
-  const kind = editedHit !== null ? "diff" : "files";
-  return navigationClassification(kind, hit ?? path, line, column, input);
+  const unknownHit = matchIndexPath(path, input.index.unknown ?? []);
+  if (unknownHit !== null) {
+    return navigationClassification(
+      "artifact",
+      unknownHit,
+      line,
+      column,
+      input,
+    );
+  }
+
+  if (!hrefMissOpensFiles) return { kind: "none" };
+  const explicitDirectory = /[\\/]$/.test(path);
+  return navigationClassification(
+    explicitDirectory ? "directory" : "files",
+    path,
+    line,
+    column,
+    input,
+  );
 }
 
 /** Drops candidates whose stored path cannot be opened as a worktree-relative file. */
 function navigationClassification(
-  kind: "diff" | "files",
+  kind: "diff" | "files" | "directory" | "artifact",
   storedPath: string,
   line: number | undefined,
   column: number | undefined,
   input: ClassifyChatCandidateInput,
 ): ChatLinkClassification {
-  const navigationPath = toNavigationPath(storedPath, input.cwd);
+  const rootDirectory =
+    kind === "directory" &&
+    input.cwd !== null &&
+    input.cwd !== undefined &&
+    stripTaskCwdPrefix(storedPath, input.cwd) === "";
+  const navigationPath = rootDirectory
+    ? ""
+    : toNavigationPath(storedPath, input.cwd);
   if (navigationPath === null) return { kind: "none" };
   return {
     kind,

@@ -1,7 +1,22 @@
 import { isAbsoluteWorkspacePath } from "../../../lib/workspace-path";
 
 /** Basenames that are files even without a dotted extension (Makefile, Dockerfile). */
-const NAMED_WORKSPACE_FILES = new Set(["makefile", "dockerfile", "cargo.lock"]);
+const NAMED_WORKSPACE_FILES = new Set([
+  "makefile",
+  "dockerfile",
+  "cargo.lock",
+  "license",
+  "notice",
+  "copying",
+  "changelog",
+]);
+const KNOWN_WORKSPACE_DIRECTORIES = new Set([
+  ".git",
+  ".github",
+  ".idea",
+  ".vscode",
+  "node_modules",
+]);
 
 export interface ParsedPathCandidate {
   path: string;
@@ -28,7 +43,7 @@ function decodeHref(value: string): string {
   }
 }
 
-/** Strips wrapping quotes/backticks and trailing prose punctuation that is not an extension. */
+/** Strips wrapping quotes/backticks/brackets and trailing prose punctuation. */
 function sanitizeToken(raw: string): string {
   let value = decodeHref(raw.trim());
   value = stripTrailingPunctuation(value);
@@ -39,26 +54,83 @@ function sanitizeToken(raw: string): string {
   ) {
     value = value.slice(1, -1).trim();
   }
+  const wrappers: ReadonlyArray<readonly [string, string]> = [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["<", ">"],
+  ];
+  const wrapper = wrappers.find(
+    ([open, close]) => value.startsWith(open) && value.endsWith(close),
+  );
+  if (wrapper !== undefined) value = value.slice(1, -1).trim();
   return stripTrailingPunctuation(value);
 }
 
-/** Drops commas/semicolons and a leftover period after a completed path token. */
+/** Drops sentence punctuation and unmatched closing brackets after a path token. */
 function stripTrailingPunctuation(value: string): string {
-  return value.replace(/[,;]+$/, "").replace(/\.$/, "");
+  let stripped = value.replace(/[,;.，；。！？、：]+$/, "");
+  const pairs: ReadonlyArray<readonly [string, string]> = [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["<", ">"],
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [open, close] of pairs) {
+      if (
+        stripped.endsWith(close) &&
+        countCharacter(stripped, close) > countCharacter(stripped, open)
+      ) {
+        stripped = stripped.slice(0, -1);
+        changed = true;
+      }
+    }
+  }
+  return stripped;
 }
 
-/** Splits an optional 1-based :line / :line:col or ` (line N)` suffix from a path stem. */
+/** Counts one bracket character when deciding whether trailing prose is unmatched. */
+function countCharacter(value: string, target: string): number {
+  return [...value].filter((character) => character === target).length;
+}
+
+/** Splits supported 1-based line/column suffixes from a path stem. */
 function splitLineSuffix(value: string): ParsedPathCandidate {
-  const linePhrase = value.match(/^(.*)\s+\(line\s+(\d+)\)$/i);
+  const linePhrase = value.match(
+    /^(.*)\s+\(line\s+([1-9]\d*)(?:\s*,\s*col(?:umn)?\s+([1-9]\d*))?\)$/i,
+  );
   if (linePhrase !== null) {
     return {
       path: linePhrase[1]!.trim(),
       line: Number(linePhrase[2]),
-      column: undefined,
+      column: linePhrase[3] === undefined ? undefined : Number(linePhrase[3]),
     };
   }
 
-  const match = value.match(/^(.*?):(\d+)(?::(\d+))?$/);
+  const fragment = value.match(/^(.*?)#L([1-9]\d*)(?:C([1-9]\d*))?$/i);
+  if (fragment !== null) {
+    return {
+      path: fragment[1]!,
+      line: Number(fragment[2]),
+      column: fragment[3] === undefined ? undefined : Number(fragment[3]),
+    };
+  }
+
+  const query = value.match(
+    /^(.*?)\?(?:line|ln)=([1-9]\d*)(?:&(?:column|col)=([1-9]\d*))?$/i,
+  );
+  if (query !== null) {
+    return {
+      path: query[1]!,
+      line: Number(query[2]),
+      column: query[3] === undefined ? undefined : Number(query[3]),
+    };
+  }
+
+  const match = value.match(/^(.*?):([1-9]\d*)(?::([1-9]\d*))?$/);
   if (match === null) {
     return { path: value, line: undefined, column: undefined };
   }
@@ -138,6 +210,20 @@ export function isLikelyFileArtifactPath(path: string): boolean {
     return false;
   }
   return isNamedWorkspaceFile(trimmed);
+}
+
+/** True when tool output explicitly looks like a directory rather than a file. */
+export function isLikelyDirectoryArtifactPath(path: string): boolean {
+  const trimmed = path.trim();
+  if (trimmed === "" || looksLikeGlobPattern(trimmed)) return false;
+  if (/[\\/]$/.test(trimmed)) return true;
+  const parsed = parsePathCandidate(trimmed).path;
+  const filename = parsed.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+  if (KNOWN_WORKSPACE_DIRECTORIES.has(filename)) return true;
+  return (
+    (parsed.includes("/") || parsed.includes("\\")) &&
+    !isLikelyFileArtifactPath(parsed)
+  );
 }
 
 /**
