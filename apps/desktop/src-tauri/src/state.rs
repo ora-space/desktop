@@ -1,4 +1,5 @@
 use crate::config::DesktopConfigStore;
+use crate::surface::DesktopSurfaceService;
 use crate::workspace_files::WorkspaceFileApi;
 use ora_backend::{Backend, BackendPreferredLogLevelStore};
 use ora_runtime_settings::RuntimeLogLevelManager;
@@ -104,6 +105,97 @@ pub struct DesktopState {
     /// The Tauri application data directory, owner of the dashboard locator files.
     pub app_data_directory: PathBuf,
     pub stream_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    /// Plugin surface host: native webviews, download delivery, plugin process linkage.
+    pub surfaces: Arc<DesktopSurfaceService>,
+}
+
+impl DesktopState {
+    /// Runs one host download action chosen by the trusted main webview for a webview-plugin
+    /// download, then settles the tracked download.
+    ///
+    /// `import_skill` hands the landed archive to the existing two-phase skill import and returns
+    /// its session id so the frontend can open the import preview; `save_as` copies the artifact
+    /// to the destination the host save dialog chose. The staged host path never leaves the host.
+    pub async fn resolve_surface_download(
+        &self,
+        download_id: u64,
+        action: &str,
+        destination: Option<String>,
+    ) -> Result<crate::surface::commands::ResolveDownloadOutcome, crate::error::CommandError> {
+        use crate::error::CommandError;
+        use crate::surface::commands::ResolveDownloadOutcome;
+        use crate::surface::download_actions::DownloadActionHost;
+        use ora_backend::BackendError;
+        use ora_backend::ErrorClassification;
+        use ora_contracts::PublicError;
+        use ora_plugin_manifest::DownloadAction;
+
+        let parsed = action.parse::<DownloadAction>().map_err(|_| {
+            CommandError::from_backend(BackendError::new(
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(ora_contracts::EmptyErrorParams {}),
+                "unknown download action",
+            ))
+        })?;
+        let staged = self
+            .surfaces
+            .take_download_for_action(download_id, parsed)
+            .map_err(|_| {
+                CommandError::from_backend(BackendError::new(
+                    ErrorClassification::InvalidRequest,
+                    PublicError::InvalidRequest(ora_contracts::EmptyErrorParams {}),
+                    "download is not awaiting this action",
+                ))
+            })?;
+        let outcome = match parsed {
+            DownloadAction::ImportSkill => {
+                // Same execution path as the automatic disposition (`DownloadActionHost`), so
+                // prompt and auto can never drift apart in how an import is prepared.
+                let response = DownloadActionHost::prepare_skill_import(
+                    &self.backend,
+                    &staged.path,
+                    &staged.file_name,
+                );
+                match response {
+                    Ok(session_id) => ResolveDownloadOutcome {
+                        action: parsed.as_str().to_owned(),
+                        import_session_id: Some(session_id),
+                    },
+                    Err(error) => {
+                        self.surfaces
+                            .settle_download(download_id, Some(error.to_string()));
+                        return Err(CommandError::from_backend(error));
+                    }
+                }
+            }
+            DownloadAction::SaveAs => {
+                let Some(destination) = destination else {
+                    self.surfaces
+                        .settle_download(download_id, Some("missing destination".to_owned()));
+                    return Err(CommandError::from_backend(BackendError::new(
+                        ErrorClassification::InvalidRequest,
+                        PublicError::InvalidRequest(ora_contracts::EmptyErrorParams {}),
+                        "save_as requires a destination path",
+                    )));
+                };
+                if let Err(error) = std::fs::copy(&staged.path, &destination) {
+                    self.surfaces
+                        .settle_download(download_id, Some(error.to_string()));
+                    return Err(CommandError::from_backend(BackendError::new(
+                        ErrorClassification::Internal,
+                        PublicError::InternalError(ora_contracts::EmptyErrorParams {}),
+                        "failed to save the downloaded file",
+                    )));
+                }
+                ResolveDownloadOutcome {
+                    action: parsed.as_str().to_owned(),
+                    import_session_id: None,
+                }
+            }
+        };
+        self.surfaces.settle_download(download_id, None);
+        Ok(outcome)
+    }
 }
 
 /// Retains process-scoped writer guards for the full Tauri application lifetime.

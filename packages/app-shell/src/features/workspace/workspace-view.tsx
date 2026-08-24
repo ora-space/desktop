@@ -56,6 +56,7 @@ import { WorkflowStepper } from "../workflow/workflow-stepper";
 import { useWorkflowDetection } from "../workflow/use-workflow-detection";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
+import { SurfaceLauncher } from "../surface/surface-launcher";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
 import { directChatTitle } from "./workspace-view-utils";
 import {
@@ -656,6 +657,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             taskId={task?.id}
             projectPath={project?.rootPath}
           />
+          <SurfaceLauncher />
           <Button
             variant="ghost"
             size="icon"
@@ -774,6 +776,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           taskId={task?.id}
           projectPath={project?.rootPath}
         />
+        <SurfaceLauncher />
         <WindowControls />
       </header>
       <WorkspaceReviewLayout context={reviewContext}>

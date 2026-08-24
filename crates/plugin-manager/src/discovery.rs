@@ -2,37 +2,52 @@ use crate::MAX_MANIFEST_BYTES;
 use crate::issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 use crate::logo;
 use crate::validation::{InstalledPlugin, validate};
+use ora_domain::PluginId;
 use ora_plugin_manifest::{ManifestError, PluginManifest};
 use semver::Version;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::str;
+
+/// Directory levels below the Ora data directory that hold installed packages.
+const PLUGINS_DIRECTORY: &str = "plugins";
+const INSTALLED_DIRECTORY: &str = "installed";
+/// File name of the package manifest inside one installed package directory.
+pub const MANIFEST_FILE_NAME: &str = "orax.toml";
 
 pub(crate) struct PluginDiscovery {
     pub installed_plugins: Vec<InstalledPlugin>,
     pub discovery_issues: Vec<PluginDiscoveryIssue>,
 }
 
-/// Discovers the highest installed version of every namespaced package.
+/// Returns `<data-dir>/plugins/installed`, the root every installed package lives below.
+pub fn installed_root(data_dir: &Path) -> PathBuf {
+    data_dir.join(PLUGINS_DIRECTORY).join(INSTALLED_DIRECTORY)
+}
+
+/// Discovers the highest installed version of every `<namespace>/<name>` package below the
+/// installed root and isolates every recoverable failure so one broken package never hides its
+/// siblings.
+///
+/// The directory names are not part of a package's identity: the manifest alone names the plugin,
+/// and two packages claiming the same id are reported rather than silently merged. The version
+/// directory, however, must agree with the manifest so an installation can never advertise one
+/// version while running another.
 pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
-    let installed_root = data_dir.join("plugins").join("installed");
+    let installed_root = installed_root(data_dir);
     let mut issues = Vec::new();
-    let entries = match selected_package_directories(&installed_root, &mut issues) {
-        Some(entries) => entries,
-        None => {
-            return PluginDiscovery {
-                installed_plugins: Vec::new(),
-                discovery_issues: issues,
-            };
-        }
+    let Some(package_roots) = sorted_package_directories(&installed_root, &mut issues) else {
+        return PluginDiscovery {
+            installed_plugins: Vec::new(),
+            discovery_issues: issues,
+        };
     };
 
     let mut installed_plugins = Vec::new();
-    let mut first_path_by_id = HashMap::<String, PathBuf>::new();
-    for (package_root, directory_version) in entries {
-        let manifest_path = package_root.join("orax.toml");
+    let mut first_root_by_id = HashMap::<PluginId, PathBuf>::new();
+    for (package_root, directory_version) in package_roots {
+        let manifest_path = package_root.join(MANIFEST_FILE_NAME);
         // An unusable icon is reported on its own and never blocks the package: presentation
         // metadata must not decide whether a plugin is discovered.
         let logo = match logo::read(&package_root) {
@@ -44,19 +59,19 @@ pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
         };
         match read_and_validate_manifest(&package_root, &manifest_path, logo, &directory_version) {
             Ok(plugin) => {
-                if let Some(first_path) = first_path_by_id.get(&plugin.id) {
+                if let Some(first_root) = first_root_by_id.get(&plugin.id) {
                     issues.push(PluginDiscoveryIssue::new(
                         manifest_path,
                         PluginDiscoveryIssueKind::DuplicatePluginId,
-                        Some("id".to_string()),
+                        Some("name".to_string()),
                         format!(
-                            "plugin id `{}` was already discovered at {}",
+                            "plugin `{}` was already discovered at {}",
                             plugin.id,
-                            first_path.display()
+                            first_root.display()
                         ),
                     ));
                 } else {
-                    first_path_by_id.insert(plugin.id.clone(), plugin.package_root.clone());
+                    first_root_by_id.insert(plugin.id.clone(), plugin.package_root.clone());
                     installed_plugins.push(plugin);
                 }
             }
@@ -71,8 +86,10 @@ pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
     }
 }
 
-/// Selects the highest semantic-version directory for every namespace and package name.
-fn selected_package_directories(
+/// Selects the highest semantic-version directory for every namespace and package name, in
+/// reproducible path order, or `None` when the installed root cannot be listed at all. A missing
+/// root is an empty installation.
+fn sorted_package_directories(
     installed_root: &Path,
     issues: &mut Vec<PluginDiscoveryIssue>,
 ) -> Option<Vec<(PathBuf, Version)>> {
@@ -163,19 +180,25 @@ fn sorted_directories(
 
     let mut directories = Vec::new();
     for entry in read_dir {
-        match entry {
-            Ok(entry) => match entry.file_type() {
-                Ok(file_type) if file_type.is_dir() => directories.push(entry.path()),
-                Ok(_) => {}
-                Err(error) => issues.push(PluginDiscoveryIssue::new(
-                    entry.path(),
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                issues.push(PluginDiscoveryIssue::new(
+                    root.to_path_buf(),
                     PluginDiscoveryIssueKind::EntryUnreadable,
                     None,
                     error.to_string(),
-                )),
-            },
+                ));
+                continue;
+            }
+        };
+        // `DirEntry::file_type` never follows symlinks, so a linked directory is skipped: the
+        // installer only ever writes real directories and a link could point anywhere.
+        match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => directories.push(entry.path()),
+            Ok(_) => {}
             Err(error) => issues.push(PluginDiscoveryIssue::new(
-                root.to_path_buf(),
+                entry.path(),
                 PluginDiscoveryIssueKind::EntryUnreadable,
                 None,
                 error.to_string(),
@@ -187,7 +210,8 @@ fn sorted_directories(
     Some(directories)
 }
 
-/// Reads one bounded TOML manifest, parses it with the shared manifest crate, and validates the fixed entrypoint.
+/// Reads one bounded manifest, parses it with the shared manifest crate, and applies the
+/// host-side checks.
 fn read_and_validate_manifest(
     package_root: &Path,
     manifest_path: &Path,
@@ -201,7 +225,7 @@ fn read_and_validate_manifest(
                 manifest_path.to_path_buf(),
                 PluginDiscoveryIssueKind::MissingManifest,
                 None,
-                "plugin directory does not contain orax.toml",
+                format!("plugin directory does not contain {MANIFEST_FILE_NAME}"),
             ));
         }
         Err(error) => {
@@ -218,25 +242,25 @@ fn read_and_validate_manifest(
             manifest_path.to_path_buf(),
             PluginDiscoveryIssueKind::ManifestNotFile,
             None,
-            "orax.toml must be a regular file",
+            format!("{MANIFEST_FILE_NAME} must be a regular file"),
         ));
     }
 
     let bytes = read_bounded(manifest_path)?;
-    let source = str::from_utf8(&bytes).map_err(|error| {
+    let source = std::str::from_utf8(&bytes).map_err(|error| {
         PluginDiscoveryIssue::new(
             manifest_path.to_path_buf(),
             PluginDiscoveryIssueKind::InvalidToml,
             None,
-            format!("orax.toml is not valid UTF-8: {error}"),
+            format!("{MANIFEST_FILE_NAME} is not valid UTF-8: {error}"),
         )
     })?;
     let manifest = PluginManifest::parse_installed(source).map_err(|error| match error {
-        ManifestError::InvalidToml { source, .. } => PluginDiscoveryIssue::new(
+        ManifestError::InvalidToml { source, path, .. } => PluginDiscoveryIssue::new(
             manifest_path.to_path_buf(),
             PluginDiscoveryIssueKind::InvalidToml,
-            None,
-            source.to_string(),
+            path,
+            source.message().to_string(),
         ),
         ManifestError::UnsupportedResolver { found } => PluginDiscoveryIssue::new(
             manifest_path.to_path_buf(),

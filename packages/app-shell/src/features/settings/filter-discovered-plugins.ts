@@ -10,9 +10,9 @@ export function filterDiscoveredPlugins(
   return plugins.filter((plugin) =>
     [
       plugin.displayName,
-      plugin.packageName,
       plugin.id,
-      plugin.agent.displayName,
+      plugin.description,
+      ...(plugin.kind === "agent" ? [plugin.agentDisplayName] : [plugin.title]),
     ].some((value) => value.toLowerCase().includes(needle)),
   );
 }

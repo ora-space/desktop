@@ -423,12 +423,15 @@ export function createMockClient(state: MockClientState): ContractsClient {
           throw new Error(`available plugin ${req.pluginId} not found`);
         state.installedPlugins.push({
           id: available.id,
-          packageName: available.id,
+          namespace: available.namespace,
+          name: available.name,
           displayName: available.name,
           version: available.version,
+          description: available.description,
+          homepage: null,
+          license: null,
           kind: "agent",
-          main: "main.js",
-          agent: { displayName: available.name, contractVersion: 1 },
+          agentDisplayName: available.name,
           enabled: true,
           logo: available.logo,
           runtime: "stopped",

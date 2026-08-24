@@ -4,25 +4,31 @@ import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
 
 const plugins: InstalledPlugin[] = [
   {
-    id: "ora.reviewer",
-    packageName: "@ora-plugins/reviewer",
+    id: "official/ora.reviewer",
+    namespace: "official",
+    name: "ora.reviewer",
+    description: "ora.reviewer plugin",
+    homepage: null,
+    license: null,
     displayName: "Code Reviewer",
     version: "0.1.0",
     kind: "agent",
-    main: "dist/index.js",
-    agent: { displayName: "Review Agent", contractVersion: 1 },
+    agentDisplayName: "Review Agent",
     enabled: false,
     logo: null,
     runtime: "stopped",
   },
   {
-    id: "ora.planner",
-    packageName: "@ora-plugins/planner",
+    id: "official/ora.planner",
+    namespace: "official",
+    name: "ora.planner",
+    description: "ora.planner plugin",
+    homepage: null,
+    license: null,
     displayName: "Planner",
     version: "0.2.0",
     kind: "agent",
-    main: "dist/index.js",
-    agent: { displayName: "Plan Agent", contractVersion: 1 },
+    agentDisplayName: "Plan Agent",
     enabled: false,
     logo: null,
     runtime: "stopped",
@@ -35,10 +41,10 @@ describe("filterDiscoveredPlugins", () => {
   });
 
   it.each([
-    ["display name", "reviewer", "ora.reviewer"],
-    ["package name", "@ora-plugins/planner", "ora.planner"],
-    ["Ora id", "ora.reviewer", "ora.reviewer"],
-    ["agent display name", "plan agent", "ora.planner"],
+    ["display name", "reviewer", "official/ora.reviewer"],
+    ["description", "ora.planner plugin", "official/ora.planner"],
+    ["canonical id", "official/ora.reviewer", "official/ora.reviewer"],
+    ["agent display name", "plan agent", "official/ora.planner"],
   ])("searches by %s", (_field, query, expectedId) => {
     expect(
       filterDiscoveredPlugins(plugins, query).map((plugin) => plugin.id),

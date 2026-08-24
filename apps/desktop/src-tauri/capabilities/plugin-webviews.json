@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "plugin-webviews",
+  "description": "Grants workbench plugin Webviews the invoke bridge and nothing else",
+  "webviews": ["plugin-webview:*"],
+  "permissions": ["allow-plugin-webview-invoke"]
+}

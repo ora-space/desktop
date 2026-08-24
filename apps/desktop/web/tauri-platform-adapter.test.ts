@@ -22,41 +22,89 @@ describe("TauriPlatformAdapter", () => {
     listenMock.mockReset();
   });
 
-  it("opens provider-specific marketplaces and forwards native download status events", async () => {
+  it("maps surface commands to the desktop command names and request shapes", async () => {
+    const record = {
+      instance: 7,
+      pluginId: "ora.skill-hub",
+      kind: "webview",
+      title: "Example Hub",
+      target: "embedded",
+      state: "opening",
+    };
+    invokeMock.mockResolvedValueOnce({ embedded: true });
+    invokeMock.mockResolvedValueOnce([record]);
+    invokeMock.mockResolvedValueOnce(record);
+    const adapter = createTauriPlatformAdapter();
+    const surfaces = adapter.surfaces;
+
+    await expect(surfaces.capabilities()).resolves.toEqual({ embedded: true });
+    await expect(surfaces.list()).resolves.toEqual([record]);
+    await expect(
+      surfaces.open({ pluginId: "ora.skill-hub" }, "embedded"),
+    ).resolves.toEqual(record);
+    await surfaces.setBounds(7, { x: 1, y: 2, width: 3, height: 4, scale: 2 });
+    await surfaces.setVisible(7, false);
+    await surfaces.popout(7);
+    await surfaces.dock(7);
+    await surfaces.reload(7);
+    await surfaces.close(7);
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["surface_capabilities"],
+      ["surface_list"],
+      [
+        "surface_open",
+        {
+          request: {
+            pluginId: "ora.skill-hub",
+            target: "embedded",
+          },
+        },
+      ],
+      [
+        "surface_set_bounds",
+        { request: { instance: 7, x: 1, y: 2, width: 3, height: 4, scale: 2 } },
+      ],
+      ["surface_set_visible", { request: { instance: 7, visible: false } }],
+      ["surface_popout", { request: { instance: 7 } }],
+      ["surface_dock", { request: { instance: 7 } }],
+      ["surface_reload", { request: { instance: 7 } }],
+      ["surface_close", { request: { instance: 7 } }],
+    ]);
+  });
+
+  it("forwards surface lifecycle events and stops listening on unsubscribe", async () => {
     const stop = vi.fn();
     const listener = vi.fn();
-    let forwardStatus: ((event: { payload: unknown }) => void) | undefined;
+    let forward: ((event: { payload: unknown }) => void) | undefined;
     listenMock.mockImplementation(async (_event, handler) => {
-      forwardStatus = handler as (event: { payload: unknown }) => void;
+      forward = handler as (event: { payload: unknown }) => void;
       return stop;
     });
     const adapter = createTauriPlatformAdapter();
-    const marketplace = adapter.skillMarketplace;
 
-    await marketplace.open("huaweiAgentCenter");
-    const unsubscribe = await marketplace.onStatus(listener);
-    forwardStatus?.({
+    const unsubscribe = await adapter.surfaces.onEvent(listener);
+    forward?.({
       payload: {
-        status: "downloaded",
-        provider: "huaweiAgentCenter",
+        type: "downloadCompleted",
+        instance: 7,
+        pluginId: "ora.skill-hub",
         fileName: "skill.zip",
-        archivePath: "/app-data/skill-downloads/skill.zip",
+        path: "/downloads/skill.zip",
       },
     });
     unsubscribe();
 
-    expect(invokeMock).toHaveBeenCalledWith("open_skill_marketplace", {
-      request: { provider: "huaweiAgentCenter" },
-    });
     expect(listenMock).toHaveBeenCalledWith(
-      "skill-marketplace://status",
+      "surface://event",
       expect.any(Function),
     );
     expect(listener).toHaveBeenCalledWith({
-      status: "downloaded",
-      provider: "huaweiAgentCenter",
+      type: "downloadCompleted",
+      instance: 7,
+      pluginId: "ora.skill-hub",
       fileName: "skill.zip",
-      archivePath: "/app-data/skill-downloads/skill.zip",
+      path: "/downloads/skill.zip",
     });
     expect(stop).toHaveBeenCalledOnce();
   });

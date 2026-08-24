@@ -1,12 +1,41 @@
+mod connection;
+mod data_dir;
+mod launch;
+mod permissions;
+mod ports;
+mod registration;
 mod runtime;
 mod scan;
 mod state;
+mod storage;
+mod surface_closer;
 
+pub use connection::{ConnectionError, PluginGenerationKey, PluginGenerationLease};
+pub use data_dir::PluginDataDirectories;
+pub use ora_plugin_runtime::{PluginNotification, PluginRegistration};
+pub use permissions::{
+    DenoPermission, PermissionFlagError, ReadScope, agent_permissions, permissions_for,
+};
+pub use ports::{
+    InboundNotification, LaunchedRuntime, PluginCallError, PluginLaunchRequest,
+    PluginNotificationSink, PluginRuntime, PluginRuntimeExit, PluginRuntimeFailure,
+    PluginRuntimeLauncher, PluginStatusPublisher,
+};
+pub use registration::validate_registration;
 pub use runtime::{DenoPluginRuntime, DenoPluginRuntimeLauncher, PluginRuntimeTimeouts};
+pub use storage::{
+    MAX_STORAGE_FILE_BYTES, PluginStorage, STORAGE_LIST_METHOD, STORAGE_READ_METHOD,
+    STORAGE_REMOVE_METHOD, STORAGE_WRITE_METHOD, StorageEntry, StorageEntryKind, StorageError,
+    StorageErrorKind,
+};
+pub use surface_closer::SurfaceCloser;
+
+use launch::{complete_launch, transition_to_stopped};
 use state::{
     EnabledRuntime, LifecycleState, ManagedPluginState, discovered_plugin_contract,
     reconcile_persisted_state,
 };
+use surface_closer::SurfaceCloserSlot;
 
 use ora_application::{Clock, PluginStateRepository, RepositoryError};
 use ora_contracts::{
@@ -18,111 +47,16 @@ use ora_domain::{PluginEnabledState, PluginId};
 use ora_logging::ora_warn;
 use ora_plugin_manager::{InstalledPlugin as DiscoveredPlugin, PluginContribution, PluginManager};
 use std::collections::BTreeMap;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
-
-/// The Deno permissions granted to an agent plugin.
-///
-/// An agent plugin spawns and owns the agent CLI itself, so it needs `--allow-run` and everything
-/// that CLI needs to work. That makes an agent plugin roughly as privileged as the host. This is a
-/// deliberate, documented gap: capability narrowing for agent plugins is deferred until the agent
-/// contract itself is proven, and closing it later changes only how the plugin is started.
-const AGENT_PLUGIN_PERMISSIONS: [&str; 4] =
-    ["--allow-run", "--allow-read", "--allow-env", "--allow-net"];
 
 /// Configures the filesystem and executable inputs needed by plugin lifecycle orchestration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginLifecycleConfig {
     pub data_directory: PathBuf,
     pub deno_path: PathBuf,
-}
-
-/// Describes one concrete process launch after package discovery has resolved its entrypoint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginLaunchRequest {
-    pub plugin_id: PluginId,
-    pub deno_path: PathBuf,
-    pub entrypoint: PathBuf,
-    /// Sandbox permissions the contribution kind requires, placed before the entrypoint.
-    pub permissions: Vec<String>,
-}
-
-/// Preserves the reason a plugin process could not start or stopped unexpectedly.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("{reason}")]
-pub struct PluginRuntimeFailure {
-    reason: String,
-}
-
-/// Distinguishes an intentional process exit from an unexpected runtime failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PluginRuntimeExit {
-    Stopped,
-    Failed(PluginRuntimeFailure),
-}
-
-impl PluginRuntimeFailure {
-    /// Creates one failure reason suitable for the public failed lifecycle state.
-    pub fn new(reason: impl Into<String>) -> Self {
-        Self {
-            reason: reason.into(),
-        }
-    }
-
-    /// Returns the stable human-readable reason retained by lifecycle state.
-    pub fn reason(&self) -> &str {
-        &self.reason
-    }
-}
-
-/// Owns one launched plugin process through explicit stop and asynchronous failure observation.
-pub trait PluginRuntime: Clone + Send + Sync + 'static {
-    /// The plugin-originated notification stream produced once per launched process.
-    type Notifications: Send + 'static;
-
-    /// Takes this launch's notification stream, yielding `None` once a consumer already owns it.
-    ///
-    /// A process emits one stream, so it is moved to its single consumer rather than cloned:
-    /// splitting the frames of one plugin across two readers would silently lose traffic.
-    fn take_notifications(&self) -> Option<Self::Notifications>;
-
-    /// Stops the complete plugin process tree and resolves only after it has exited.
-    fn stop(&self) -> impl Future<Output = Result<(), PluginRuntimeFailure>> + Send;
-
-    /// Waits until the process exits and preserves whether shutdown was intentional.
-    fn wait_for_exit(&self) -> impl Future<Output = PluginRuntimeExit> + Send + 'static;
-}
-
-/// Pairs one running plugin process with the notification stream of that same launch.
-///
-/// Handing both out together is what lets a consumer speak a protocol over the process without
-/// owning its lifetime: the process stays lifecycle-owned while the stream is consumer-owned.
-pub struct PluginAttachment<Runtime>
-where
-    Runtime: PluginRuntime,
-{
-    pub runtime: Runtime,
-    pub notifications: Runtime::Notifications,
-}
-
-/// Launches plugin runtimes while allowing tests to replace the external process boundary.
-pub trait PluginRuntimeLauncher: Clone + Send + Sync + 'static {
-    type Runtime: PluginRuntime;
-
-    /// Starts one resolved plugin entrypoint and returns after runtime readiness is established.
-    fn launch(
-        &self,
-        request: PluginLaunchRequest,
-    ) -> impl Future<Output = Result<Self::Runtime, PluginRuntimeFailure>> + Send;
-}
-
-/// Publishes cache invalidations after observable plugin lifecycle transitions.
-pub trait PluginStatusPublisher: Clone + Send + Sync + 'static {
-    /// Announces that consumers should query the installed-plugin snapshot again.
-    fn publish_status_changed(&self, plugin_id: &PluginId);
 }
 
 /// Reports a failure while constructing or operating plugin lifecycle state.
@@ -134,8 +68,8 @@ pub enum PluginLifecycleError {
     PluginNotFound { plugin_id: String },
     #[error("plugin `{plugin_id}` must be enabled before activation")]
     PluginDisabled { plugin_id: String },
-    #[error("plugin `{plugin_id}` did not reach a running runtime: {reason}")]
-    RuntimeLaunch { plugin_id: String, reason: String },
+    #[error("plugin `{plugin_id}` has no process to activate")]
+    NoProcess { plugin_id: String },
     #[error("failed to stop plugin `{plugin_id}`")]
     RuntimeStop {
         plugin_id: String,
@@ -152,34 +86,56 @@ pub enum PluginLifecycleError {
 
 /// Joins discovered identity, durable eligibility, and process-scoped runtime behind one seam.
 #[derive(Clone)]
-pub struct PluginLifecycle<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>
-where
+pub struct PluginLifecycle<
+    Repository,
+    LifecycleClock,
+    RuntimeLauncher,
+    StatusPublisher,
+    NotificationSink,
+> where
     RuntimeLauncher: PluginRuntimeLauncher,
 {
-    inner: Arc<PluginLifecycleInner<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>>,
+    inner: Arc<
+        PluginLifecycleInner<
+            Repository,
+            LifecycleClock,
+            RuntimeLauncher,
+            StatusPublisher,
+            NotificationSink,
+        >,
+    >,
 }
 
-struct PluginLifecycleInner<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>
-where
+pub(crate) struct PluginLifecycleInner<
+    Repository,
+    LifecycleClock,
+    RuntimeLauncher,
+    StatusPublisher,
+    NotificationSink,
+> where
     RuntimeLauncher: PluginRuntimeLauncher,
 {
-    state: RwLock<LifecycleState<RuntimeLauncher::Runtime>>,
+    pub(crate) state: RwLock<LifecycleState<RuntimeLauncher::Runtime>>,
     scan_lock: AsyncMutex<()>,
     operation_locks: Mutex<BTreeMap<PluginId, Arc<AsyncMutex<()>>>>,
     repository: Repository,
     clock: LifecycleClock,
-    launcher: RuntimeLauncher,
-    publisher: StatusPublisher,
-    config: PluginLifecycleConfig,
+    pub(crate) launcher: RuntimeLauncher,
+    pub(crate) publisher: StatusPublisher,
+    pub(crate) sink: NotificationSink,
+    pub(crate) data_directories: PluginDataDirectories,
+    surface_closer: SurfaceCloserSlot,
+    pub(crate) config: PluginLifecycleConfig,
 }
 
-impl<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>
-    PluginLifecycle<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>
+impl<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher, NotificationSink>
+    PluginLifecycle<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher, NotificationSink>
 where
     Repository: PluginStateRepository + Send + Sync + 'static,
     LifecycleClock: Clock + Send + Sync + 'static,
     RuntimeLauncher: PluginRuntimeLauncher,
     StatusPublisher: PluginStatusPublisher,
+    NotificationSink: PluginNotificationSink,
 {
     /// Scans installed packages once, reconciles orphan rows, and composes runtime dependencies.
     pub fn open(
@@ -188,6 +144,7 @@ where
         clock: LifecycleClock,
         launcher: RuntimeLauncher,
         publisher: StatusPublisher,
+        sink: NotificationSink,
     ) -> Result<Self, PluginLifecycleError> {
         let manager = PluginManager::discover(&config.data_directory);
         // Discovery drops unusable packages silently, so startup is the only place an operator can
@@ -206,20 +163,32 @@ where
 
         Ok(Self {
             inner: Arc::new(PluginLifecycleInner {
-                state: RwLock::new(LifecycleState {
-                    installed,
-                    managed_by_id,
-                    next_attempt: 1,
-                }),
+                state: RwLock::new(LifecycleState::new(installed, managed_by_id)),
                 scan_lock: AsyncMutex::new(()),
                 operation_locks: Mutex::new(BTreeMap::new()),
                 repository,
                 clock,
                 launcher,
                 publisher,
+                sink,
+                data_directories: PluginDataDirectories::new(&config.data_directory),
+                surface_closer: SurfaceCloserSlot::default(),
                 config,
             }),
         })
+    }
+
+    /// Installs the host component that closes a plugin's surfaces before its process stops.
+    ///
+    /// Surfaces are owned by the desktop shell, which exists only after the backend (and this
+    /// lifecycle) has been constructed, so the closer arrives late rather than at `open`.
+    pub fn set_surface_closer(&self, closer: impl SurfaceCloser) {
+        self.inner.surface_closer.install(closer);
+    }
+
+    /// Returns the per-plugin data directory manager shared with the surface layer.
+    pub fn plugin_data_directories(&self) -> &PluginDataDirectories {
+        &self.inner.data_directories
     }
 
     /// Returns the cached installed snapshot without touching the filesystem.
@@ -230,12 +199,10 @@ where
                 .installed
                 .iter()
                 .map(|plugin| {
-                    let plugin_id = PluginId::new(&plugin.id);
                     discovered_plugin_contract(
                         plugin,
                         state
-                            .managed_by_id
-                            .get(&plugin_id)
+                            .managed(&plugin.id)
                             .unwrap_or(&ManagedPluginState::Disabled),
                     )
                 })
@@ -243,18 +210,29 @@ where
         }
     }
 
-    /// Persists eligibility and starts the runtime an enabled plugin is expected to have.
+    /// Returns one installed package from the cached discovery snapshot, if present.
+    pub fn installed_plugin(&self, plugin_id: &PluginId) -> Option<DiscoveredPlugin> {
+        self.read_state()
+            .installed
+            .iter()
+            .find(|plugin| plugin.id == *plugin_id)
+            .cloned()
+    }
+
+    /// Persists eligibility and, for an agent plugin, starts the runtime it is expected to have.
     ///
-    /// Enabling is the user's statement that this plugin should be live, so it also owns the
-    /// transition into a process: leaving an enabled plugin stopped would make the durable intent
-    /// and the reported runtime disagree until something else happened to activate it.
+    /// Enabling an agent plugin is the user's statement that its agent should be reachable, and
+    /// the agent supervisor attaches to a running process rather than starting one, so enabling
+    /// owns that transition: leaving it stopped would make the durable intent and the reported
+    /// runtime disagree. A ui plugin's process is started on demand by its first surface and
+    /// reaped when idle, so enabling one only records eligibility.
     pub async fn enable_plugin(
         &self,
         request: EnablePluginRequest,
     ) -> Result<EnablePluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self.installed_plugin(&request.plugin_id)?;
+        let plugin = self.require_installed(&plugin_id)?;
         self.inner
             .repository
             .set_plugin_enabled(
@@ -264,64 +242,73 @@ where
             )
             .map_err(PluginLifecycleError::Repository)?;
 
-        let (response, launch) = {
+        let (response, changed, launch) = {
             let mut state = self.write_state();
-            let attempt = state.next_attempt;
-            let managed = state
-                .managed_by_id
-                .entry(plugin_id.clone())
-                .or_insert(ManagedPluginState::Disabled);
             // Only the transition out of disabled launches: re-enabling an already enabled plugin
-            // must never restart a process an agent connection is currently speaking to.
-            let launching = matches!(managed, ManagedPluginState::Disabled);
-            if launching {
-                *managed = ManagedPluginState::Enabled(EnabledRuntime::Starting { attempt });
-            }
-            let response = EnablePluginResponse {
-                plugin: discovered_plugin_contract(&plugin, managed),
+            // must never restart a process a consumer is currently speaking to.
+            let changed = matches!(
+                state.managed(&plugin_id),
+                Some(ManagedPluginState::Disabled) | None
+            );
+            let attempt = match (&plugin.contributes, changed) {
+                (PluginContribution::Agent(_), true) => {
+                    let attempt = state.next_attempt;
+                    state.next_attempt = state.next_attempt.wrapping_add(1);
+                    state.set_managed(
+                        &plugin_id,
+                        ManagedPluginState::Enabled(EnabledRuntime::Starting { attempt }),
+                    );
+                    Some(attempt)
+                }
+                (PluginContribution::Workbench(_) | PluginContribution::Webview(_), true) => {
+                    state.set_managed(
+                        &plugin_id,
+                        ManagedPluginState::Enabled(EnabledRuntime::Stopped),
+                    );
+                    None
+                }
+                (
+                    PluginContribution::Agent(_)
+                    | PluginContribution::Workbench(_)
+                    | PluginContribution::Webview(_),
+                    false,
+                ) => None,
             };
-            if launching {
-                state.next_attempt = state.next_attempt.wrapping_add(1);
-            }
-            (response, launching.then_some(attempt))
+            let managed = state
+                .managed(&plugin_id)
+                .unwrap_or(&ManagedPluginState::Disabled);
+            (
+                EnablePluginResponse {
+                    plugin: discovered_plugin_contract(&plugin, managed),
+                },
+                changed,
+                attempt,
+            )
         };
-        if let Some(attempt) = launch {
+        if changed {
             self.inner.publisher.publish_status_changed(&plugin_id);
+        }
+        if let Some(attempt) = launch {
             let inner = Arc::clone(&self.inner);
-            let launched_id = plugin_id.clone();
             tokio::spawn(async move {
-                complete_launch(inner, launched_id, plugin, attempt, operation).await;
+                complete_launch(inner, plugin_id, plugin, attempt, operation).await;
             });
         }
 
         Ok(response)
     }
 
-    /// Persists ineligibility for an already-stopped plugin.
+    /// Closes surfaces, stops the runtime if needed, then persists ineligibility.
     pub async fn disable_plugin(
         &self,
         request: DisablePluginRequest,
     ) -> Result<DisablePluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let _operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self.installed_plugin(&request.plugin_id)?;
-        let running = {
-            let state = self.read_state();
-            match state.managed_by_id.get(&plugin_id) {
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Running { runtime, .. })) => {
-                    Some(runtime.clone())
-                }
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. })) => {
-                    // Launch normally owns this operation lock until Starting has resolved.
-                    None
-                }
-                Some(ManagedPluginState::Disabled)
-                | Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
-                | Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }))
-                | None => None,
-            }
-        };
-        if let Some(runtime) = running {
+        let plugin = self.require_installed(&plugin_id)?;
+        self.inner.surface_closer.close_all(&plugin_id).await;
+        let running = self.running_runtime(&plugin_id);
+        if let Some((_, runtime)) = running {
             runtime
                 .stop()
                 .await
@@ -352,10 +339,12 @@ where
 
         let changed = {
             let mut state = self.write_state();
-            let previous = state
-                .managed_by_id
-                .insert(plugin_id.clone(), ManagedPluginState::Disabled);
-            !matches!(previous, Some(ManagedPluginState::Disabled))
+            let changed = !matches!(
+                state.managed(&plugin_id),
+                Some(ManagedPluginState::Disabled)
+            );
+            state.set_managed(&plugin_id, ManagedPluginState::Disabled);
+            changed
         };
         if changed {
             self.inner.publisher.publish_status_changed(&plugin_id);
@@ -374,40 +363,45 @@ where
         &self,
         request: ActivatePluginRequest,
     ) -> Result<ActivatePluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self.installed_plugin(&request.plugin_id)?;
+        let plugin = self.require_installed(&plugin_id)?;
+        // A webview plugin is configuration only; activating it would launch nothing and then
+        // report a failure the user cannot act on.
+        if plugin.contributes.entrypoint().is_none() {
+            return Err(PluginLifecycleError::NoProcess {
+                plugin_id: request.plugin_id,
+            });
+        }
         let (attempt, response) = {
             let mut state = self.write_state();
             let attempt = state.next_attempt;
             state.next_attempt = state.next_attempt.wrapping_add(1);
-            let managed = state
-                .managed_by_id
-                .entry(plugin_id.clone())
-                .or_insert(ManagedPluginState::Disabled);
-            match managed {
-                ManagedPluginState::Disabled => {
+            match state.managed(&plugin_id) {
+                Some(ManagedPluginState::Disabled) | None => {
                     return Err(PluginLifecycleError::PluginDisabled {
                         plugin_id: request.plugin_id,
                     });
                 }
-                ManagedPluginState::Enabled(EnabledRuntime::Starting { .. })
-                | ManagedPluginState::Enabled(EnabledRuntime::Running { .. }) => {
+                Some(
+                    managed @ (ManagedPluginState::Enabled(EnabledRuntime::Starting { .. })
+                    | ManagedPluginState::Enabled(EnabledRuntime::Running { .. })),
+                ) => {
                     return Ok(ActivatePluginResponse {
                         plugin: discovered_plugin_contract(&plugin, managed),
                     });
                 }
-                ManagedPluginState::Enabled(EnabledRuntime::Stopped)
-                | ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }) => {
-                    *managed = ManagedPluginState::Enabled(EnabledRuntime::Starting { attempt });
+                Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
+                | Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { .. })) => {
+                    let starting =
+                        ManagedPluginState::Enabled(EnabledRuntime::Starting { attempt });
+                    let response = ActivatePluginResponse {
+                        plugin: discovered_plugin_contract(&plugin, &starting),
+                    };
+                    state.set_managed(&plugin_id, starting);
+                    (attempt, response)
                 }
             }
-            (
-                attempt,
-                ActivatePluginResponse {
-                    plugin: discovered_plugin_contract(&plugin, managed),
-                },
-            )
         };
         self.inner.publisher.publish_status_changed(&plugin_id);
 
@@ -419,137 +413,33 @@ where
         Ok(response)
     }
 
-    /// Returns a running plugin together with the unclaimed notification stream of that launch.
-    ///
-    /// This is how a protocol consumer, such as an agent connection, reaches a plugin process
-    /// without owning it: the runtime stays lifecycle-owned, so enabling, stopping, scanning, and
-    /// uninstalling keep deciding the process lifetime while the consumer only reads its stream.
-    /// A live process whose stream a previous consumer already took is restarted rather than
-    /// shared, because one process emits exactly one stream.
-    pub async fn attach_runtime(
-        &self,
-        plugin_id: &PluginId,
-    ) -> Result<PluginAttachment<RuntimeLauncher::Runtime>, PluginLifecycleError> {
-        let _operation = self.acquire_operation(plugin_id).await;
-        let plugin = self.installed_plugin(plugin_id.as_ref())?;
-        let reusable = {
-            let state = self.read_state();
-            match state.managed_by_id.get(plugin_id) {
-                Some(ManagedPluginState::Disabled) | None => {
-                    return Err(PluginLifecycleError::PluginDisabled {
-                        plugin_id: plugin_id.to_string(),
-                    });
-                }
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Running { attempt, runtime })) => {
-                    Some((*attempt, runtime.clone()))
-                }
-                Some(ManagedPluginState::Enabled(
-                    EnabledRuntime::Stopped
-                    | EnabledRuntime::Starting { .. }
-                    | EnabledRuntime::Failed { .. },
-                )) => None,
-            }
-        };
-        if let Some((attempt, runtime)) = reusable {
-            if let Some(notifications) = runtime.take_notifications() {
-                return Ok(PluginAttachment {
-                    runtime,
-                    notifications,
-                });
-            }
-            runtime
-                .stop()
-                .await
-                .map_err(|source| PluginLifecycleError::RuntimeStop {
-                    plugin_id: plugin_id.to_string(),
-                    source,
-                })?;
-            transition_to_stopped(Arc::clone(&self.inner), plugin_id.clone(), attempt);
-        }
-
-        let attempt = {
-            let mut state = self.write_state();
-            let attempt = state.next_attempt;
-            state.next_attempt = state.next_attempt.wrapping_add(1);
-            state.managed_by_id.insert(
-                plugin_id.clone(),
-                ManagedPluginState::Enabled(EnabledRuntime::Starting { attempt }),
-            );
-            attempt
-        };
-        self.inner.publisher.publish_status_changed(plugin_id);
-        launch_and_settle(Arc::clone(&self.inner), plugin_id.clone(), plugin, attempt).await;
-
-        let runtime = {
-            let state = self.read_state();
-            match state.managed_by_id.get(plugin_id) {
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Running {
-                    attempt: current,
-                    runtime,
-                })) if *current == attempt => runtime.clone(),
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { reason })) => {
-                    return Err(PluginLifecycleError::RuntimeLaunch {
-                        plugin_id: plugin_id.to_string(),
-                        reason: reason.clone(),
-                    });
-                }
-                Some(ManagedPluginState::Disabled)
-                | Some(ManagedPluginState::Enabled(
-                    EnabledRuntime::Stopped
-                    | EnabledRuntime::Starting { .. }
-                    | EnabledRuntime::Running { .. },
-                ))
-                | None => {
-                    return Err(PluginLifecycleError::RuntimeLaunch {
-                        plugin_id: plugin_id.to_string(),
-                        reason: "the launch was superseded before it could be attached".to_string(),
-                    });
-                }
-            }
-        };
-        let notifications =
-            runtime
-                .take_notifications()
-                .ok_or_else(|| PluginLifecycleError::RuntimeLaunch {
-                    plugin_id: plugin_id.to_string(),
-                    reason: "the launched runtime published no notification stream".to_string(),
-                })?;
-
-        Ok(PluginAttachment {
-            runtime,
-            notifications,
-        })
-    }
-
-    /// Stops one runtime to completion without changing durable eligibility.
+    /// Closes surfaces and stops one runtime to completion without changing durable eligibility.
     pub async fn stop_plugin(
         &self,
         request: StopPluginRequest,
     ) -> Result<StopPluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let _operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self.installed_plugin(&request.plugin_id)?;
+        let plugin = self.require_installed(&plugin_id)?;
+        self.inner.surface_closer.close_all(&plugin_id).await;
         let running = {
             let mut state = self.write_state();
-            let managed = state
-                .managed_by_id
-                .entry(plugin_id.clone())
-                .or_insert(ManagedPluginState::Disabled);
-            match managed {
-                ManagedPluginState::Disabled
-                | ManagedPluginState::Enabled(EnabledRuntime::Stopped) => None,
-                ManagedPluginState::Enabled(EnabledRuntime::Starting { .. }) => {
-                    // Launch normally owns this operation lock until Starting has resolved.
-                    *managed = ManagedPluginState::Enabled(EnabledRuntime::Stopped);
+            match state.managed(&plugin_id) {
+                Some(ManagedPluginState::Disabled)
+                | Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
+                | None => None,
+                // Launch normally owns this operation lock until Starting has resolved, so a
+                // Starting or Failed plugin can be marked stopped without touching a process.
+                Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. }))
+                | Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { .. })) => {
+                    state.set_managed(
+                        &plugin_id,
+                        ManagedPluginState::Enabled(EnabledRuntime::Stopped),
+                    );
                     self.inner.publisher.publish_status_changed(&plugin_id);
                     None
                 }
-                ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }) => {
-                    *managed = ManagedPluginState::Enabled(EnabledRuntime::Stopped);
-                    self.inner.publisher.publish_status_changed(&plugin_id);
-                    None
-                }
-                ManagedPluginState::Enabled(EnabledRuntime::Running { attempt, runtime }) => {
+                Some(ManagedPluginState::Enabled(EnabledRuntime::Running { attempt, runtime })) => {
                     Some((*attempt, runtime.clone()))
                 }
             }
@@ -563,52 +453,26 @@ where
                     plugin_id: request.plugin_id,
                     source,
                 })?;
-            let transitioned = {
-                let mut state = self.write_state();
-                if let Some(managed) = state.managed_by_id.get_mut(&plugin_id) {
-                    let owns_attempt = matches!(
-                        managed,
-                        ManagedPluginState::Enabled(EnabledRuntime::Running {
-                            attempt: current,
-                            ..
-                        }) if *current == attempt
-                    );
-                    if owns_attempt {
-                        *managed = ManagedPluginState::Enabled(EnabledRuntime::Stopped);
-                    }
-                    owns_attempt
-                } else {
-                    false
-                }
-            };
-            if transitioned {
-                self.inner.publisher.publish_status_changed(&plugin_id);
-            }
+            transition_to_stopped(Arc::clone(&self.inner), plugin_id.clone(), attempt);
         }
 
         let state = self.read_state();
         let managed = state
-            .managed_by_id
-            .get(&plugin_id)
+            .managed(&plugin_id)
             .unwrap_or(&ManagedPluginState::Disabled);
         Ok(StopPluginResponse {
             plugin: discovered_plugin_contract(&plugin, managed),
         })
     }
 
-    /// Stops a running plugin before physically removing its package and durable state.
+    /// Closes surfaces and stops the runtime before removing the package, data, and durable state.
     pub async fn uninstall_plugin(
         &self,
         request: UninstallPluginRequest,
     ) -> Result<UninstallPluginResponse, PluginLifecycleError> {
-        let plugin_id = PluginId::new(&request.plugin_id);
+        let plugin_id = parse_request_id(&request.plugin_id)?;
         let _operation = self.acquire_operation(&plugin_id).await;
-        let plugin = self
-            .read_state()
-            .installed
-            .iter()
-            .find(|plugin| plugin.id == request.plugin_id)
-            .cloned();
+        let plugin = self.installed_plugin(&plugin_id);
         let persisted = self
             .inner
             .repository
@@ -620,20 +484,10 @@ where
             });
         }
 
-        let running = {
-            let state = self.read_state();
-            match state.managed_by_id.get(&plugin_id) {
-                Some(ManagedPluginState::Enabled(EnabledRuntime::Running { attempt, runtime })) => {
-                    Some((*attempt, runtime.clone()))
-                }
-                Some(ManagedPluginState::Disabled)
-                | Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
-                | Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. }))
-                | Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }))
-                | None => None,
-            }
-        };
-        if let Some((attempt, runtime)) = running {
+        // Surfaces close before the process stops and before the package disappears, all under
+        // the same operation lock, so "uninstall while open" needs no extra coordination.
+        self.inner.surface_closer.close_all(&plugin_id).await;
+        if let Some((attempt, runtime)) = self.running_runtime(&plugin_id) {
             runtime
                 .stop()
                 .await
@@ -651,12 +505,17 @@ where
         if let Some(plugin) = &plugin {
             remove_plugin_installation(&plugin.package_root)?;
         }
+        self.inner
+            .data_directories
+            .remove(&plugin_id)
+            .map_err(|source| PluginLifecycleError::PackageRemoval {
+                path: self.inner.data_directories.path_for(&plugin_id),
+                source,
+            })?;
         {
             let mut state = self.write_state();
-            state
-                .installed
-                .retain(|plugin| plugin.id != request.plugin_id);
-            state.managed_by_id.remove(&plugin_id);
+            state.installed.retain(|plugin| plugin.id != plugin_id);
+            state.remove_managed(&plugin_id);
         }
         self.inner.publisher.publish_status_changed(&plugin_id);
 
@@ -665,16 +524,31 @@ where
         })
     }
 
-    /// Loads one installed package from the cached discovery snapshot.
-    fn installed_plugin(&self, plugin_id: &str) -> Result<DiscoveredPlugin, PluginLifecycleError> {
-        self.read_state()
-            .installed
-            .iter()
-            .find(|plugin| plugin.id == plugin_id)
-            .cloned()
+    /// Loads one installed package from the cached discovery snapshot or fails with not-found.
+    fn require_installed(
+        &self,
+        plugin_id: &PluginId,
+    ) -> Result<DiscoveredPlugin, PluginLifecycleError> {
+        self.installed_plugin(plugin_id)
             .ok_or_else(|| PluginLifecycleError::PluginNotFound {
                 plugin_id: plugin_id.to_string(),
             })
+    }
+
+    /// Returns the running attempt and runtime handle of one plugin, if it is running.
+    fn running_runtime(&self, plugin_id: &PluginId) -> Option<(u64, RuntimeLauncher::Runtime)> {
+        let state = self.read_state();
+        match state.managed(plugin_id) {
+            Some(ManagedPluginState::Enabled(EnabledRuntime::Running { attempt, runtime })) => {
+                Some((*attempt, runtime.clone()))
+            }
+            // Launch normally owns the operation lock until Starting has resolved.
+            Some(ManagedPluginState::Disabled)
+            | Some(ManagedPluginState::Enabled(EnabledRuntime::Stopped))
+            | Some(ManagedPluginState::Enabled(EnabledRuntime::Starting { .. }))
+            | Some(ManagedPluginState::Enabled(EnabledRuntime::Failed { .. }))
+            | None => None,
+        }
     }
 
     /// Acquires the independent queue associated with one plugin identifier.
@@ -713,6 +587,9 @@ where
 }
 
 /// Removes every installed version for one discovered package and prunes its empty namespace.
+///
+/// The package root is `installed/<namespace>/<name>/<version>`; removing only the selected
+/// version would let an older one reappear on the next scan, which is not what "uninstall" means.
 fn remove_plugin_installation(package_root: &Path) -> Result<(), PluginLifecycleError> {
     let package_name_root =
         package_root
@@ -753,159 +630,20 @@ fn remove_plugin_installation(package_root: &Path) -> Result<(), PluginLifecycle
     }
 }
 
-/// Completes one launch attempt and releases the plugin's operation queue afterwards.
-///
-/// The guard is owned here rather than by the caller because the launch outlives the request that
-/// started it: releasing it earlier would let a stop or disable interleave with a live launch.
-async fn complete_launch<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>(
-    inner: Arc<PluginLifecycleInner<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>>,
-    plugin_id: PluginId,
-    plugin: DiscoveredPlugin,
-    attempt: u64,
-    _operation: OwnedMutexGuard<()>,
-) where
-    Repository: PluginStateRepository + Send + Sync + 'static,
-    LifecycleClock: Clock + Send + Sync + 'static,
-    RuntimeLauncher: PluginRuntimeLauncher,
-    StatusPublisher: PluginStatusPublisher,
-{
-    launch_and_settle(inner, plugin_id, plugin, attempt).await;
-}
-
-/// Runs one launch attempt without allowing stale work to overwrite a newer transition.
-async fn launch_and_settle<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>(
-    inner: Arc<PluginLifecycleInner<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>>,
-    plugin_id: PluginId,
-    plugin: DiscoveredPlugin,
-    attempt: u64,
-) where
-    Repository: PluginStateRepository + Send + Sync + 'static,
-    LifecycleClock: Clock + Send + Sync + 'static,
-    RuntimeLauncher: PluginRuntimeLauncher,
-    StatusPublisher: PluginStatusPublisher,
-{
-    let PluginContribution::Agent(_) = &plugin.contributes;
-    let launch = inner
-        .launcher
-        .launch(PluginLaunchRequest {
-            plugin_id: plugin_id.clone(),
-            deno_path: inner.config.deno_path.clone(),
-            entrypoint: plugin.package_root.join(plugin.main.to_path_buf()),
-            permissions: AGENT_PLUGIN_PERMISSIONS.map(str::to_string).to_vec(),
-        })
-        .await;
-
-    match launch {
-        Ok(runtime) => {
-            let transitioned = {
-                let mut state = inner.state.write().unwrap_or_else(PoisonError::into_inner);
-                if let Some(managed) = state.managed_by_id.get_mut(&plugin_id) {
-                    let owns_attempt = matches!(
-                        managed,
-                        ManagedPluginState::Enabled(EnabledRuntime::Starting {
-                            attempt: current,
-                        }) if *current == attempt
-                    );
-                    if owns_attempt {
-                        *managed = ManagedPluginState::Enabled(EnabledRuntime::Running {
-                            attempt,
-                            runtime: runtime.clone(),
-                        });
-                    }
-                    owns_attempt
-                } else {
-                    false
-                }
-            };
-            if transitioned {
-                inner.publisher.publish_status_changed(&plugin_id);
-                let monitor_inner = Arc::clone(&inner);
-                tokio::spawn(async move {
-                    match runtime.wait_for_exit().await {
-                        PluginRuntimeExit::Stopped => {
-                            transition_to_stopped(monitor_inner, plugin_id, attempt);
-                        }
-                        PluginRuntimeExit::Failed(failure) => {
-                            transition_to_failed(monitor_inner, plugin_id, attempt, failure);
-                        }
-                    }
-                });
-            } else {
-                let _ = runtime.stop().await;
-            }
-        }
-        Err(failure) => transition_to_failed(inner, plugin_id, attempt, failure),
-    }
-}
-
-/// Records an intentional runtime exit only when its attempt still owns the running state.
-fn transition_to_stopped<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>(
-    inner: Arc<PluginLifecycleInner<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>>,
-    plugin_id: PluginId,
-    attempt: u64,
-) where
-    RuntimeLauncher: PluginRuntimeLauncher,
-    StatusPublisher: PluginStatusPublisher,
-{
-    let transitioned = {
-        let mut state = inner.state.write().unwrap_or_else(PoisonError::into_inner);
-        if let Some(managed) = state.managed_by_id.get_mut(&plugin_id) {
-            let owns_attempt = matches!(
-                managed,
-                ManagedPluginState::Enabled(EnabledRuntime::Running {
-                    attempt: current,
-                    ..
-                }) if *current == attempt
-            );
-            if owns_attempt {
-                *managed = ManagedPluginState::Enabled(EnabledRuntime::Stopped);
-            }
-            owns_attempt
-        } else {
-            false
-        }
-    };
-    if transitioned {
-        inner.publisher.publish_status_changed(&plugin_id);
-    }
-}
-
-/// Records a launch or runtime failure only when its attempt still owns the running state.
-fn transition_to_failed<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>(
-    inner: Arc<PluginLifecycleInner<Repository, LifecycleClock, RuntimeLauncher, StatusPublisher>>,
-    plugin_id: PluginId,
-    attempt: u64,
-    failure: PluginRuntimeFailure,
-) where
-    RuntimeLauncher: PluginRuntimeLauncher,
-    StatusPublisher: PluginStatusPublisher,
-{
-    let transitioned = {
-        let mut state = inner.state.write().unwrap_or_else(PoisonError::into_inner);
-        if let Some(managed) = state.managed_by_id.get_mut(&plugin_id) {
-            let owns_attempt = matches!(
-                managed,
-                ManagedPluginState::Enabled(EnabledRuntime::Starting {
-                    attempt: current,
-                }) | ManagedPluginState::Enabled(EnabledRuntime::Running {
-                    attempt: current,
-                    ..
-                }) if *current == attempt
-            );
-            if owns_attempt {
-                *managed = ManagedPluginState::Enabled(EnabledRuntime::Failed {
-                    reason: failure.reason().to_string(),
-                });
-            }
-            owns_attempt
-        } else {
-            false
-        }
-    };
-    if transitioned {
-        inner.publisher.publish_status_changed(&plugin_id);
-    }
-}
-
+#[cfg(test)]
+mod data_plane_tests;
+#[cfg(test)]
+mod storage_tests;
 #[cfg(test)]
 mod tests;
+
+/// Parses the canonical plugin id carried by a request.
+///
+/// A malformed id is reported as not found rather than as a distinct error: from the caller's
+/// point of view no installed plugin answers to that spelling, and the error contract stays the
+/// one the frontend already handles.
+fn parse_request_id(plugin_id: &str) -> Result<PluginId, PluginLifecycleError> {
+    PluginId::parse(plugin_id).map_err(|_| PluginLifecycleError::PluginNotFound {
+        plugin_id: plugin_id.to_string(),
+    })
+}

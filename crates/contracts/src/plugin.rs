@@ -1,15 +1,33 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Describes the single agent contributed by an installed agent plugin package.
+/// Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
 ///
-/// The agent carries no id: one package provides exactly one agent, identified by the package.
+/// The agent variant names its display name `agentDisplayName` because the contribution is
+/// flattened into [`InstalledPlugin`], which already owns the top-level `displayName`. The two
+/// surface kinds expose only what the launcher needs to render an entry: the frontend never
+/// learns asset paths, origin allow lists, or download rules, which is what keeps those host
+/// policies non-negotiable from the page side.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 #[ts(export_to = "plugin.ts")]
-pub struct InstalledPluginAgent {
-    pub display_name: String,
-    pub contract_version: u32,
+pub enum InstalledPluginContribution {
+    Agent {
+        agent_display_name: String,
+    },
+    /// A page shipped inside the package and bridged to the plugin's own process.
+    Workbench {
+        title: String,
+    },
+    /// An external HTTPS site shown in an isolated webview; `start_url` is informational only.
+    Webview {
+        title: String,
+        start_url: String,
+    },
 }
 
 /// Represents the process-scoped lifecycle of one installed plugin.
@@ -27,18 +45,25 @@ pub enum PluginRuntimeStatus {
     Failed { failure_reason: String },
 }
 
-/// Describes one installed plugin discovered from its package manifest.
+/// Describes one installed plugin discovered from its `orax.toml` manifest.
+///
+/// `id` is the canonical `<namespace>/<name>` spelling and is what every plugin request carries
+/// back; `namespace` and `name` repeat the two segments so the frontend never has to split it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
 pub struct InstalledPlugin {
     pub id: String,
-    pub package_name: String,
+    pub namespace: String,
+    pub name: String,
     pub display_name: String,
     pub version: String,
-    pub kind: String,
-    pub main: String,
-    pub agent: InstalledPluginAgent,
+    pub description: String,
+    pub homepage: Option<String>,
+    pub license: Option<String>,
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub contribution: InstalledPluginContribution,
     pub enabled: bool,
     /// Security-validated SVG source for the package icon, absent when the package ships none.
     ///
@@ -220,7 +245,7 @@ pub struct InstallPluginResponse {
 }
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
-    InstalledPluginAgent::export(config)?;
+    InstalledPluginContribution::export(config)?;
     PluginRuntimeStatus::export(config)?;
     InstalledPlugin::export(config)?;
     AvailablePlugin::export(config)?;
@@ -251,7 +276,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 mod tests {
     use super::{
         AvailablePlugin, InstallPluginRequest, InstallPluginResponse, InstalledPlugin,
-        InstalledPluginAgent, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
+        InstalledPluginContribution, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
         ListInstalledPluginsRequest, ListInstalledPluginsResponse, PluginRuntimeStatus,
         SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
     };
@@ -262,15 +287,16 @@ mod tests {
     #[test]
     fn serializes_installed_plugin_contract() {
         let plugin = InstalledPlugin {
-            id: "ora.claude-code".to_string(),
-            package_name: "@ora-plugins/claude-code".to_string(),
+            id: "official/ora.claude-code".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.claude-code".to_string(),
             display_name: "Claude Code".to_string(),
             version: "0.1.0".to_string(),
-            kind: "agent".to_string(),
-            main: "dist/index.js".to_string(),
-            agent: InstalledPluginAgent {
-                display_name: "Claude Code".to_string(),
-                contract_version: 1,
+            description: "Claude Code agent".to_string(),
+            homepage: Some("https://example.com/claude-code".to_string()),
+            license: Some("Apache-2.0".to_string()),
+            contribution: InstalledPluginContribution::Agent {
+                agent_display_name: "Claude Code".to_string(),
             },
             enabled: false,
             logo: Some("<svg/>".to_string()),
@@ -288,21 +314,85 @@ mod tests {
             .unwrap(),
             json!({
                 "plugins": [{
-                    "id": "ora.claude-code",
-                    "packageName": "@ora-plugins/claude-code",
+                    "id": "official/ora.claude-code",
+                    "namespace": "official",
+                    "name": "ora.claude-code",
                     "displayName": "Claude Code",
                     "version": "0.1.0",
+                    "description": "Claude Code agent",
+                    "homepage": "https://example.com/claude-code",
+                    "license": "Apache-2.0",
                     "kind": "agent",
-                    "main": "dist/index.js",
-                    "agent": {
-                        "displayName": "Claude Code",
-                        "contractVersion": 1
-                    },
+                    "agentDisplayName": "Claude Code",
                     "enabled": false,
                     "logo": "<svg/>",
                     "runtime": "stopped"
                 }]
             })
+        );
+    }
+
+    /// Verifies the two surface kinds flatten their entry metadata onto the wire object and
+    /// round-trip, without exposing any host policy.
+    #[test]
+    fn serializes_surface_plugin_contracts() {
+        let base = |name: &str, contribution: InstalledPluginContribution| InstalledPlugin {
+            id: format!("official/{name}"),
+            namespace: "official".to_string(),
+            name: name.to_string(),
+            display_name: name.to_string(),
+            version: "0.1.0".to_string(),
+            description: "Surface plugin".to_string(),
+            homepage: None,
+            license: None,
+            contribution,
+            enabled: true,
+            logo: None,
+            runtime: PluginRuntimeStatus::Stopped,
+        };
+        let webview = base(
+            "acme.hub",
+            InstalledPluginContribution::Webview {
+                title: "Example Hub".to_string(),
+                start_url: "https://www.example.com/".to_string(),
+            },
+        );
+        let workbench = base(
+            "acme.panel",
+            InstalledPluginContribution::Workbench {
+                title: "Example Panel".to_string(),
+            },
+        );
+
+        let webview_value = serde_json::to_value(&webview).expect("webview plugin serializes");
+        let workbench_value =
+            serde_json::to_value(&workbench).expect("workbench plugin serializes");
+        assert_eq!(
+            (
+                webview_value.get("kind"),
+                webview_value.get("title"),
+                webview_value.get("startUrl"),
+                workbench_value.get("kind"),
+                workbench_value.get("title"),
+                workbench_value.get("startUrl"),
+            ),
+            (
+                Some(&json!("webview")),
+                Some(&json!("Example Hub")),
+                Some(&json!("https://www.example.com/")),
+                Some(&json!("workbench")),
+                Some(&json!("Example Panel")),
+                None,
+            )
+        );
+        assert_eq!(
+            (
+                serde_json::from_value::<InstalledPlugin>(webview_value)
+                    .expect("webview plugin round-trips"),
+                serde_json::from_value::<InstalledPlugin>(workbench_value)
+                    .expect("workbench plugin round-trips"),
+            ),
+            (webview, workbench)
         );
     }
 
@@ -395,15 +485,16 @@ mod tests {
     #[test]
     fn serializes_running_plugin_lifecycle_state() {
         let plugin = InstalledPlugin {
-            id: "ora.example".to_string(),
-            package_name: "@ora/example".to_string(),
+            id: "official/ora.example".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.example".to_string(),
             display_name: "Example".to_string(),
             version: "1.0.0".to_string(),
-            kind: "agent".to_string(),
-            main: "dist/index.js".to_string(),
-            agent: InstalledPluginAgent {
-                display_name: "Example".to_string(),
-                contract_version: 1,
+            description: "Example agent".to_string(),
+            homepage: None,
+            license: None,
+            contribution: InstalledPluginContribution::Agent {
+                agent_display_name: "Example".to_string(),
             },
             enabled: true,
             logo: None,
@@ -413,16 +504,16 @@ mod tests {
         assert_eq!(
             serde_json::to_value(plugin).expect("running plugin serializes"),
             json!({
-                "id": "ora.example",
-                "packageName": "@ora/example",
+                "id": "official/ora.example",
+                "namespace": "official",
+                "name": "ora.example",
                 "displayName": "Example",
                 "version": "1.0.0",
+                "description": "Example agent",
+                "homepage": null,
+                "license": null,
                 "kind": "agent",
-                "main": "dist/index.js",
-                "agent": {
-                    "displayName": "Example",
-                    "contractVersion": 1
-                },
+                "agentDisplayName": "Example",
                 "enabled": true,
                 "logo": null,
                 "runtime": "running"
@@ -434,15 +525,16 @@ mod tests {
     #[test]
     fn serializes_failed_plugin_lifecycle_state() {
         let plugin = InstalledPlugin {
-            id: "ora.example".to_string(),
-            package_name: "@ora/example".to_string(),
+            id: "official/ora.example".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.example".to_string(),
             display_name: "Example".to_string(),
             version: "1.0.0".to_string(),
-            kind: "agent".to_string(),
-            main: "dist/index.js".to_string(),
-            agent: InstalledPluginAgent {
-                display_name: "Example".to_string(),
-                contract_version: 1,
+            description: "Example agent".to_string(),
+            homepage: None,
+            license: None,
+            contribution: InstalledPluginContribution::Agent {
+                agent_display_name: "Example".to_string(),
             },
             enabled: true,
             logo: None,
@@ -454,16 +546,16 @@ mod tests {
         assert_eq!(
             serde_json::to_value(plugin).expect("failed plugin serializes"),
             json!({
-                "id": "ora.example",
-                "packageName": "@ora/example",
+                "id": "official/ora.example",
+                "namespace": "official",
+                "name": "ora.example",
                 "displayName": "Example",
                 "version": "1.0.0",
+                "description": "Example agent",
+                "homepage": null,
+                "license": null,
                 "kind": "agent",
-                "main": "dist/index.js",
-                "agent": {
-                    "displayName": "Example",
-                    "contractVersion": 1
-                },
+                "agentDisplayName": "Example",
                 "enabled": true,
                 "logo": null,
                 "runtime": "failed",

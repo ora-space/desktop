@@ -140,7 +140,7 @@ function InstalledPluginRow({ plugin }: { plugin: InstalledPlugin }) {
           {plugin.displayName}
         </span>
         <span className="block truncate text-xs text-muted-foreground">
-          {plugin.packageName}
+          {plugin.id}
         </span>
         <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
           {plugin.version} · {plugin.kind} ·{" "}

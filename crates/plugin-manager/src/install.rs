@@ -1,5 +1,6 @@
 //! Installs a plugin release by downloading its package and safely extracting it.
 
+use crate::discovery::installed_root;
 use ora_plugin_manifest::PluginManifest;
 use ora_utils::archive::{ArchiveFormat, ExtractLimits, extract_archive};
 use ora_utils::http::{Checksum, DownloadOptions, DownloadRequest, DownloadSource, HttpDownload};
@@ -8,8 +9,6 @@ use thiserror::Error;
 
 /// Sub-directory of a plugin data directory that caches downloaded release archives.
 const CACHE_ROOT: &str = "cache";
-/// Sub-directory of a plugin data directory that holds installed plugin packages.
-const INSTALLED_ROOT: &str = "installed";
 /// Extension appended to a downloaded release archive filename.
 const RELEASE_EXTENSION: &str = ".orax";
 
@@ -69,9 +68,7 @@ where
         data_dir: &Path,
     ) -> Result<PathBuf, InstallError> {
         let archive_path = self.download_package(manifest, source, data_dir).await?;
-        let package_dir = data_dir
-            .join("plugins")
-            .join(INSTALLED_ROOT)
+        let package_dir = installed_root(data_dir)
             .join(manifest.namespace().as_str())
             .join(manifest.name().as_str())
             .join(manifest.version().to_string());

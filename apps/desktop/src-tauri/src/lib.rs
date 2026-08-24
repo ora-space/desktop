@@ -5,10 +5,10 @@ mod error;
 mod open_external;
 mod open_location;
 mod settings_commands;
-mod skill_marketplace;
 mod spec_commands;
 mod state;
 mod stream_forwarding;
+mod surface;
 mod workspace_files;
 
 use crate::config::DesktopConfigStore;
@@ -26,9 +26,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
+/// Expands the shared command registry (`app_commands.rs`) into the Tauri invoke handler.
+///
+/// The build script reads the same file to produce the ACL manifest, so a command cannot be
+/// registered here without also entering ACL enforcement.
 macro_rules! desktop_command_registry {
-    ($($module:ident::$command:ident),* $(,)?) => {
-        tauri::generate_handler![$($module::$command),*]
+    ($($command:path),* $(,)?) => {
+        tauri::generate_handler![$($command),*]
     };
 }
 
@@ -40,10 +44,12 @@ const PLUGIN_HOME_DIRECTORY_NAME: &str = ".ora";
 /// Starts the Tauri application with the persisted shared Backend and command adapters.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = surface::register_workbench_protocol(tauri::Builder::default());
+    builder
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let (state, guard) = bootstrap_desktop(app)?;
+            surface::install(app.handle(), &state.surfaces, &state.backend);
             ora_info!(
                 message = "bundled binary paths registered",
                 ripgrep_path = %state.binary_paths.ripgrep_path().display(),
@@ -135,6 +141,7 @@ fn bootstrap_desktop(
         log_level_source = resolved_log_level.source.as_str(),
     );
     let workspace_files = Arc::new(workspace_files::WorkspaceFileApi::new(ripgrep_path));
+    let surfaces = surface::SurfaceService::new(app.handle().clone(), backend.plugin_gateway());
     let runtime_log_level = RuntimeLogLevelManager::new(
         level_control,
         backend.preferred_log_level_store(),
@@ -150,6 +157,7 @@ fn bootstrap_desktop(
             binary_paths,
             app_data_directory: app_data_directory.clone(),
             stream_cancellations: Arc::new(Mutex::new(HashMap::new())),
+            surfaces,
         },
         DesktopRuntimeGuard {
             _logging: logging_guard,

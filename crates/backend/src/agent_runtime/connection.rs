@@ -20,11 +20,13 @@ use agent_client_protocol_schema::v1::{
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use ora_acp::{AcpClient, AcpInboundEvent, AcpMessages, AcpPeer, NdjsonTransport};
 use ora_application::{Clock, SessionRepository};
-use ora_contracts::{ListInstalledPluginsRequest, PublicError, StopPluginRequest};
+use ora_contracts::{
+    InstalledPluginContribution, ListInstalledPluginsRequest, PublicError, StopPluginRequest,
+};
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use ora_domain::{AgentCli, AgentRef, PluginId, SessionStatus};
 use ora_logging::{ora_error, ora_info, ora_warn};
-use ora_plugin_lifecycle::PluginLifecycleError;
+use ora_plugin_lifecycle::ConnectionError;
 use ora_plugin_runtime::PluginRuntime;
 use ora_process::{
     ManagedProcess, ProcessSpawner, ProcessSpec, TokioManagedProcess, TokioProcessSpawner,
@@ -85,7 +87,7 @@ impl AgentSource {
     fn label(&self) -> &str {
         match self {
             Self::Cli(agent_cli) => agent_cli.executable_name(),
-            Self::Plugin { plugin_id, .. } => plugin_id.as_ref(),
+            Self::Plugin { plugin_id, .. } => plugin_id.name(),
         }
     }
 }
@@ -210,14 +212,27 @@ impl ConnectionSupervisors {
     /// Built-in CLIs are always part of the desired set, so they are established on the first call
     /// and never removed by a later one.
     pub fn sync_plugin_agents(&self) {
+        // Only agent-kind packages supply an agent; ui packages contribute surfaces and are never
+        // supervised here. Ids in the snapshot are canonical, so an unparsable one cannot occur
+        // and is simply skipped rather than aborting the reconciliation.
         let agent_plugins = self
             .plugin_host
             .list(ListInstalledPluginsRequest {})
             .plugins
             .into_iter()
-            .map(|plugin| AgentSource::Plugin {
-                plugin_id: PluginId::new(plugin.id),
-                package_name: plugin.package_name,
+            .filter(|plugin| {
+                matches!(
+                    plugin.contribution,
+                    InstalledPluginContribution::Agent { .. }
+                )
+            })
+            .filter_map(|plugin| {
+                PluginId::parse(&plugin.id)
+                    .ok()
+                    .map(|plugin_id| AgentSource::Plugin {
+                        plugin_id,
+                        package_name: plugin.name,
+                    })
             });
         let desired = resolve_supervised_agents(
             AgentCli::ALL
@@ -527,7 +542,7 @@ impl AgentProcess {
             } => {
                 // Stopping the agent is the plugin's chance to reap the CLI it owns before the
                 // lifecycle ends the plugin process itself.
-                plugin_agent::stop_agent(runtime, plugin_id.as_ref()).await;
+                plugin_agent::stop_agent(runtime, &plugin_id.canonical()).await;
                 stop_plugin_runtime(host, plugin_id).await;
             }
         }
@@ -876,12 +891,12 @@ async fn spawn_plugin_connection(
     home_directory: &Path,
 ) -> Result<StartedAgent, StartFailure> {
     let attachment = plugin_host
-        .attach_runtime(plugin_id)
+        .attach_agent(plugin_id)
         .await
         .map_err(plugin_attach_error)?;
     let LaunchedPluginAgent { runtime, messages } = match plugin_agent::attach(
         attachment,
-        plugin_id.as_ref(),
+        &plugin_id.canonical(),
         home_directory,
         env!("CARGO_PKG_VERSION"),
     )
@@ -896,7 +911,7 @@ async fn spawn_plugin_connection(
     let models = match plugin_agent::list_models(&runtime).await {
         Ok(models) => models,
         Err(error) => {
-            plugin_agent::stop_agent(&runtime, plugin_id.as_ref()).await;
+            plugin_agent::stop_agent(&runtime, &plugin_id.canonical()).await;
             stop_plugin_runtime(plugin_host, plugin_id).await;
             return Err(plugin_start_error(error));
         }
@@ -919,17 +934,18 @@ async fn spawn_plugin_connection(
 /// A plugin the user has not enabled, or has uninstalled, is an expected local configuration and
 /// is reported exactly like a missing CLI so the supervisor retries it without logging: the
 /// settings surface already tells the user why that agent is unavailable.
-fn plugin_attach_error(error: PluginLifecycleError) -> StartFailure {
+fn plugin_attach_error(error: ConnectionError) -> StartFailure {
     match error {
-        PluginLifecycleError::PluginDisabled { .. }
-        | PluginLifecycleError::PluginNotFound { .. } => StartFailure::Retryable(runtime_internal(
-            "agent_cli_not_found",
-            "the plugin behind this agent is not available",
-        )),
-        PluginLifecycleError::RuntimeLaunch { .. }
-        | PluginLifecycleError::RuntimeStop { .. }
-        | PluginLifecycleError::Repository(_)
-        | PluginLifecycleError::PackageRemoval { .. } => {
+        ConnectionError::Disabled | ConnectionError::NotFound | ConnectionError::NoProcess => {
+            StartFailure::Retryable(runtime_internal(
+                "agent_cli_not_found",
+                "the plugin behind this agent is not available",
+            ))
+        }
+        ConnectionError::Failed(_)
+        | ConnectionError::Timeout
+        | ConnectionError::NotReady
+        | ConnectionError::NotRunning => {
             StartFailure::Retryable(runtime_internal("agent_start_failed", error.to_string()))
         }
     }
@@ -975,7 +991,7 @@ fn mark_running_sessions_stopped(pool: &RepositoryPool, clock: SystemClock, agen
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentSource, ConnectionSupervisors, PluginAgentError, PluginLifecycleError, StartFailure,
+        AgentSource, ConnectionError, ConnectionSupervisors, PluginAgentError, StartFailure,
         plugin_attach_error, plugin_start_error, resolve_supervised_agents, spawn_runtime_thread,
     };
     use crate::app_event::AppEventHub;
@@ -993,8 +1009,12 @@ mod tests {
 
     /// Builds one agent plugin source for a package published under the official namespace.
     fn plugin_source(package_name: &str) -> AgentSource {
+        // Identity resolution reads only the agent identity; a blank one still needs a
+        // well-formed package address, so the fixture falls back to a fixed address.
+        let plugin_id = PluginId::new("official", package_name)
+            .unwrap_or_else(|_| PluginId::new("official", "fixture").expect("plugin id"));
         AgentSource::Plugin {
-            plugin_id: PluginId::new(format!("official/{package_name}")),
+            plugin_id,
             package_name: package_name.to_string(),
         }
     }
@@ -1010,7 +1030,7 @@ mod tests {
     fn supervises_a_plugin_under_its_agent_identity_rather_than_its_package_address() {
         let resolved = resolve_supervised_agents(
             [AgentSource::Plugin {
-                plugin_id: PluginId::new("official/ora-space.opencode"),
+                plugin_id: PluginId::new("official", "ora-space.opencode").expect("plugin id"),
                 package_name: "ora-space.opencode".to_string(),
             }]
             .into_iter(),
@@ -1136,9 +1156,7 @@ mod tests {
     /// supervisor logs only genuine startup failures.
     #[test]
     fn treats_a_disabled_plugin_like_a_missing_cli() {
-        let failure = plugin_attach_error(PluginLifecycleError::PluginDisabled {
-            plugin_id: "acme.my-agent".to_string(),
-        });
+        let failure = plugin_attach_error(ConnectionError::Disabled);
 
         let StartFailure::Retryable(error) = failure else {
             panic!("a disabled plugin must stay retryable");
@@ -1230,10 +1248,7 @@ mod tests {
     /// Verifies a plugin process that refused to start is retried as a genuine failure.
     #[test]
     fn retries_a_plugin_whose_runtime_could_not_launch() {
-        let failure = plugin_attach_error(PluginLifecycleError::RuntimeLaunch {
-            plugin_id: "acme.my-agent".to_string(),
-            reason: "deno is missing".to_string(),
-        });
+        let failure = plugin_attach_error(ConnectionError::Failed("deno is missing".to_string()));
 
         let StartFailure::Retryable(error) = failure else {
             panic!("a failed launch must stay retryable");

@@ -64,7 +64,6 @@ import {
 } from "../../state/hooks/use-atom-mutations";
 import { SettingsHeading } from "./settings-heading";
 import { queryKeys } from "../../state/hooks/query-keys";
-import { SkillMarketplacePanel } from "./skill-marketplace-panel";
 
 type AtomRecord = Agent | Skill;
 type TablerIcon = typeof IconRobot;
@@ -99,8 +98,6 @@ interface AtomManagerConfig {
   isItemUnavailable?: (item: AtomRecord) => boolean;
   /** Opens pane-owned recovery when an unavailable row is activated. */
   onActivateUnavailable?: (item: AtomRecord) => void;
-  /** Optional host-specific surface shown between the pane heading and local atom controls. */
-  intro?: ReactNode;
   /** Chooses between compact rows and the wider card grid used by Skills. */
   presentation?: "list" | "grid";
 }
@@ -225,7 +222,6 @@ export function SkillsSettings() {
             {t("settings.skills.import")}
           </Button>
         }
-        intro={<SkillMarketplacePanel />}
         presentation="grid"
         notice={
           unavailableCount > 0 ? (
@@ -314,7 +310,6 @@ function AtomManager({
   notice,
   isItemUnavailable,
   onActivateUnavailable,
-  intro,
   presentation = "list",
 }: AtomManagerConfig) {
   const { t } = useTranslation();
@@ -371,8 +366,6 @@ function AtomManager({
       />
 
       {notice}
-
-      {intro}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative min-w-0 flex-1">

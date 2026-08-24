@@ -730,36 +730,23 @@ export const translationResources = {
     "settings.skills.importReason.stale_conflict":
       "目标技能已变化，请重新导入。",
     "settings.skills.importReason.unknown": "导入失败。",
-    "settings.skills.marketplacesTitle": "Skill 市场",
-    "settings.skills.marketplacesDescription":
-      "从公开市场发现 Skill，或在企业内网接入组织专属能力。",
-    "settings.skills.marketplaceTitle": "SkillHub 技能市场",
-    "settings.skills.marketplaceDescription":
-      "浏览真实 SkillHub 市场；下载 ZIP 后，Ora 会自动校验并安装 Skill。",
-    "settings.skills.marketplacePublicBadge": "公开市场",
-    "settings.skills.marketplaceOpen": "打开技能市场",
-    "settings.skills.marketplaceOpening": "正在打开…",
-    "settings.skills.marketplaceConnectionFailed":
-      "无法打开技能市场或读取下载状态，请重试。",
-    "settings.skills.marketplaceDownloading": "正在下载 {{fileName}}…",
-    "settings.skills.marketplaceSavedTo": "保存位置",
-    "settings.skills.marketplaceOpenFolderFailed": "无法打开 Skill 下载目录。",
-    "settings.skills.marketplaceDownloadFailed":
-      "下载失败，请在技能市场中重试。",
-    "settings.skills.marketplaceInstalling":
-      "已下载 {{fileName}}，正在自动安装…",
-    "settings.skills.marketplaceInstallReview":
-      "{{fileName}} 需要确认冲突或无效候选项。",
-    "settings.skills.marketplaceInstalled": "已自动安装 {{count}} 个 Skill。",
-    "settings.skills.marketplaceInstallIncomplete":
-      "{{fileName}} 未能完整安装，请查看处理结果。",
-    "settings.skills.marketplaceInstallFailed": "无法安装 {{fileName}}。",
-    "settings.skills.marketplaceInstallReviewed": "Skill 安装处理已完成。",
-    "settings.skills.huaweiTitle": "华为 Skill Market",
-    "settings.skills.huaweiDescription":
-      "浏览华为内部 Skill 市场，发现并接入企业专属 Skill；连接华为内网后即可打开。",
-    "settings.skills.huaweiBadge": "企业内网",
-    "settings.skills.huaweiOpen": "打开内网 Skill Market",
+    "surface.launcher": "扩展面板",
+    "surface.reload": "重新加载",
+    "surface.popout": "在新窗口打开",
+    "surface.close": "关闭",
+    "surface.failed": "无法加载：{{reason}}",
+    "surface.retry": "重试",
+    "surface.downloaded": "已下载 {{fileName}}",
+    "surface.downloadFailed": "下载失败：{{fileName}}",
+    "surface.downloadChoiceTitle": "插件下载",
+    "surface.downloadChoiceDescription":
+      "{{origin}} 提供了文件 {{fileName}}（{{size}}），请选择处理方式。",
+    "surface.downloadImportSkill": "导入为技能",
+    "surface.downloadSaveAs": "另存为…",
+    "surface.downloadDismiss": "忽略",
+    "surface.downloadActionFailed": "下载处理失败",
+    "surface.openDirectory": "打开目录",
+    "surface.openFailed": "无法打开扩展面板",
     "settings.plugins.title": "插件",
     "settings.plugins.description":
       "在你常用的工具中与 Ora Agent 协作。插件目录为原型数据，安装状态不会持久化。",
@@ -2219,40 +2206,23 @@ export const translationResources = {
     "settings.skills.importReason.stale_conflict":
       "The target skill changed. Import it again.",
     "settings.skills.importReason.unknown": "Import failed.",
-    "settings.skills.marketplacesTitle": "Skill marketplaces",
-    "settings.skills.marketplacesDescription":
-      "Discover public skills or connect organization-specific capabilities on an enterprise network.",
-    "settings.skills.marketplaceTitle": "SkillHub marketplace",
-    "settings.skills.marketplaceDescription":
-      "Browse the live SkillHub marketplace. Ora validates and installs downloaded ZIP archives automatically.",
-    "settings.skills.marketplacePublicBadge": "Public",
-    "settings.skills.marketplaceOpen": "Open marketplace",
-    "settings.skills.marketplaceOpening": "Opening...",
-    "settings.skills.marketplaceConnectionFailed":
-      "Unable to open the skill marketplace or read download status. Try again.",
-    "settings.skills.marketplaceDownloading": "Downloading {{fileName}}...",
-    "settings.skills.marketplaceSavedTo": "Saved to",
-    "settings.skills.marketplaceOpenFolderFailed":
-      "Could not open the Skill download folder.",
-    "settings.skills.marketplaceDownloadFailed":
-      "Download failed. Try again in the marketplace.",
-    "settings.skills.marketplaceInstalling":
-      "Downloaded {{fileName}}. Installing automatically...",
-    "settings.skills.marketplaceInstallReview":
-      "{{fileName}} needs conflict or invalid-candidate review.",
-    "settings.skills.marketplaceInstalled":
-      "Automatically installed {{count}} skills.",
-    "settings.skills.marketplaceInstallIncomplete":
-      "{{fileName}} was not fully installed. Review the results.",
-    "settings.skills.marketplaceInstallFailed":
-      "Could not install {{fileName}}.",
-    "settings.skills.marketplaceInstallReviewed":
-      "Skill installation processing completed.",
-    "settings.skills.huaweiTitle": "Huawei Skill Market",
-    "settings.skills.huaweiDescription":
-      "Browse Huawei's internal Skill Market to discover and connect enterprise skills. Huawei internal network access is required.",
-    "settings.skills.huaweiBadge": "Enterprise",
-    "settings.skills.huaweiOpen": "Open internal Skill Market",
+    "surface.launcher": "Surfaces",
+    "surface.reload": "Reload",
+    "surface.popout": "Open in new window",
+    "surface.close": "Close",
+    "surface.failed": "Failed to load: {{reason}}",
+    "surface.retry": "Retry",
+    "surface.downloaded": "Downloaded {{fileName}}",
+    "surface.downloadFailed": "Download failed: {{fileName}}",
+    "surface.downloadChoiceTitle": "Plugin download",
+    "surface.downloadChoiceDescription":
+      "{{origin}} provided {{fileName}} ({{size}}). Choose what to do with it.",
+    "surface.downloadImportSkill": "Import as skill",
+    "surface.downloadSaveAs": "Save as…",
+    "surface.downloadDismiss": "Dismiss",
+    "surface.downloadActionFailed": "The download action failed",
+    "surface.openDirectory": "Open folder",
+    "surface.openFailed": "Could not open the surface",
     "settings.plugins.title": "Plugins",
     "settings.plugins.description":
       "Work with Ora agents inside the tools you already use. The catalog is prototype data and install state is not persisted.",

@@ -1,0 +1,7 @@
+# The only command a workbench page may reach. Everything a page needs from the host travels as
+# a JSON request through this one bridge, whose identity comes from the calling webview label, so
+# widening this list would widen what any plugin page can do to Ora.
+[[permission]]
+identifier = "allow-plugin-webview-invoke"
+description = "Allows workbench plugin Webviews to invoke the plugin bridge command."
+commands.allow = ["plugin_webview_invoke"]

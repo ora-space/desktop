@@ -56,17 +56,21 @@ export type InstallPluginRequest = { pluginId: string };
 export type InstallPluginResponse = { pluginId: string };
 
 /**
- * Describes one installed plugin discovered from its package manifest.
+ * Describes one installed plugin discovered from its `orax.toml` manifest.
+ *
+ * `id` is the canonical `<namespace>/<name>` spelling and is what every plugin request carries
+ * back; `namespace` and `name` repeat the two segments so the frontend never has to split it.
  */
 export type InstalledPlugin =
   & {
     id: string;
-    packageName: string;
+    namespace: string;
+    name: string;
     displayName: string;
     version: string;
-    kind: string;
-    main: string;
-    agent: InstalledPluginAgent;
+    description: string;
+    homepage: string | null;
+    license: string | null;
     enabled: boolean;
     /**
      * Security-validated SVG source for the package icon, absent when the package ships none.
@@ -77,19 +81,27 @@ export type InstalledPlugin =
      */
     logo: string | null;
   }
+  & ({ "kind": "agent"; agentDisplayName: string } | {
+    "kind": "workbench";
+    title: string;
+  } | { "kind": "webview"; title: string; startUrl: string })
   & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
     "runtime": "running";
   } | { "runtime": "failed"; failureReason: string });
 
 /**
- * Describes the single agent contributed by an installed agent plugin package.
+ * Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
  *
- * The agent carries no id: one package provides exactly one agent, identified by the package.
+ * The agent variant names its display name `agentDisplayName` because the contribution is
+ * flattened into [`InstalledPlugin`], which already owns the top-level `displayName`. The two
+ * surface kinds expose only what the launcher needs to render an entry: the frontend never
+ * learns asset paths, origin allow lists, or download rules, which is what keeps those host
+ * policies non-negotiable from the page side.
  */
-export type InstalledPluginAgent = {
-  displayName: string;
-  contractVersion: number;
-};
+export type InstalledPluginContribution =
+  | { "kind": "agent"; agentDisplayName: string }
+  | { "kind": "workbench"; title: string }
+  | { "kind": "webview"; title: string; startUrl: string };
 
 /**
  * Requests the cached marketplace registry index used to populate the plugin catalog.

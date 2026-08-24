@@ -128,8 +128,12 @@ impl From<PluginLifecycleError> for BackendError {
                 PublicError::PluginDisabled(EmptyErrorParams {}),
                 "plugin must be enabled before activation",
             ),
+            PluginLifecycleError::NoProcess { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "plugin kind has no process to activate",
+            ),
             PluginLifecycleError::Repository(_)
-            | PluginLifecycleError::RuntimeLaunch { .. }
             | PluginLifecycleError::RuntimeStop { .. }
             | PluginLifecycleError::PackageRemoval { .. } => (
                 ErrorClassification::Internal,

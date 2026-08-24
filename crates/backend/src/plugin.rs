@@ -12,10 +12,11 @@ use ora_contracts::{
 };
 use ora_db::{RepositoryPool, SqlitePluginStateRepository};
 use ora_domain::PluginId;
-use ora_logging::{ora_info, ora_warn};
+use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_lifecycle::{
-    DenoPluginRuntime, DenoPluginRuntimeLauncher, PluginAttachment, PluginLifecycle,
-    PluginLifecycleConfig, PluginLifecycleError, PluginRuntimeTimeouts,
+    ConnectionError, DenoPluginRuntime, DenoPluginRuntimeLauncher, InboundNotification,
+    PluginGenerationKey, PluginGenerationLease, PluginLifecycle, PluginLifecycleConfig,
+    PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
 use ora_plugin_manager::Installer;
 use ora_plugin_registry::{
@@ -23,24 +24,140 @@ use ora_plugin_registry::{
 };
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+use tokio::sync::{broadcast, mpsc};
 
 /// The marketplace repository mirrored into the local registry source checkout.
 const MARKETPLACE_REPOSITORY_URL: &str = "https://github.com/ora-space/marketplace";
 /// The branch tracked by the marketplace registry source.
 const MARKETPLACE_REPOSITORY_BRANCH: &str = "main";
 
+/// The concrete lifecycle composition the backend runs.
+pub(crate) type BackendPluginLifecycle = PluginLifecycle<
+    SqlitePluginStateRepository,
+    SystemClock,
+    DenoPluginRuntimeLauncher,
+    AppEventPublisher,
+    BroadcastNotificationSink,
+>;
+
+/// Bounded fan-out buffer between the lifecycle's per-process pumps and their consumers.
+///
+/// A slow broadcast subscriber may lag and lose the oldest notifications, which is acceptable
+/// because the broadcast path carries only best-effort traffic (`ora/ui/push`); the alternative,
+/// blocking the pump, would stall every other message of that plugin process. Traffic that must
+/// not be dropped goes through a per-generation tap instead.
+const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
+
+/// How long an agent attachment waits for a plugin launch to settle.
+///
+/// This exceeds the runtime's ready timeout so a slow handshake is reported by the launch itself
+/// as a failed runtime, with its reason, rather than as an opaque attach timeout.
+const AGENT_ATTACH_WAIT: Duration = Duration::from_secs(15);
+
+/// Forwards plugin-originated notifications to every subscriber without blocking the pump.
+///
+/// Subscribers are attached after the backend is built (the desktop surface host is one), which
+/// is why the sink owns a broadcast sender instead of a fixed consumer. Consumers that cannot
+/// tolerate a dropped frame, such as an agent connection reading ACP, tap one process generation
+/// through an unbounded channel: the process runtime already buffers unboundedly, so the tap adds
+/// no new loss point, and the pump never waits on either path.
+#[derive(Clone, Debug)]
+pub(crate) struct BroadcastNotificationSink {
+    sender: broadcast::Sender<InboundNotification>,
+    taps: Arc<Mutex<Vec<NotificationTap>>>,
+}
+
+/// One lossless subscription to the notifications of a single process generation.
+#[derive(Debug)]
+struct NotificationTap {
+    plugin_id: PluginId,
+    generation: PluginGenerationKey,
+    sender: mpsc::UnboundedSender<InboundNotification>,
+}
+
+impl BroadcastNotificationSink {
+    fn new() -> Self {
+        let (sender, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
+        Self {
+            sender,
+            taps: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Opens a new receiver that sees every notification sent from now on.
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<InboundNotification> {
+        self.sender.subscribe()
+    }
+
+    /// Opens a lossless receiver of every notification `generation` of `plugin_id` emits from now
+    /// on. The tap is released when its receiver is dropped.
+    fn tap(
+        &self,
+        plugin_id: &PluginId,
+        generation: PluginGenerationKey,
+    ) -> mpsc::UnboundedReceiver<InboundNotification> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.taps
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(NotificationTap {
+                plugin_id: plugin_id.clone(),
+                generation,
+                sender,
+            });
+        receiver
+    }
+}
+
+impl PluginNotificationSink for BroadcastNotificationSink {
+    /// Publishes the notification to the broadcast subscribers and to the taps of its generation.
+    ///
+    /// With no broadcast subscriber it is dropped there, which is logged at debug level so an
+    /// unexpectedly silent plugin stays diagnosable; taps whose receiver went away are pruned as
+    /// they are encountered.
+    fn on_notification(&self, notification: InboundNotification) {
+        if self.sender.send(notification.clone()).is_err() {
+            ora_debug!(
+                message = "plugin notification dropped without subscriber",
+                plugin_id = %notification.plugin_id,
+                generation = notification.generation.0,
+                method = %notification.method,
+            );
+        }
+        self.taps
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|tap| {
+                if tap.plugin_id != notification.plugin_id
+                    || tap.generation != notification.generation
+                {
+                    return !tap.sender.is_closed();
+                }
+                tap.sender.send(notification.clone()).is_ok()
+            });
+    }
+}
+
+/// A running agent plugin process together with a lossless stream of what it emits.
+///
+/// The process stays owned by the lifecycle: the connection is pinned to one generation and the
+/// notification stream covers exactly that generation, so a restarted plugin can never leak frames
+/// into a connection that belonged to its predecessor.
+pub(crate) struct AgentPluginAttachment {
+    pub connection: PluginGenerationLease<DenoPluginRuntime>,
+    pub notifications: mpsc::UnboundedReceiver<InboundNotification>,
+}
+
 /// Groups plugin discovery and lifecycle operations behind the backend's plugin interface.
 pub(crate) struct PluginApi {
-    lifecycle: PluginLifecycle<
-        SqlitePluginStateRepository,
-        SystemClock,
-        DenoPluginRuntimeLauncher,
-        AppEventPublisher,
-    >,
+    lifecycle: BackendPluginLifecycle,
     registry_source: RegistrySource,
     registry_index_path: PathBuf,
     data_directory: PathBuf,
     installer: Installer<ReqwestDownloader>,
+    notifications: BroadcastNotificationSink,
 }
 
 impl PluginApi {
@@ -64,6 +181,7 @@ impl PluginApi {
         );
         let registry_index_path = plugins_directory.join("cache").join("registry_index.json");
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
+        let notifications = BroadcastNotificationSink::new();
         let lifecycle = PluginLifecycle::open(
             PluginLifecycleConfig {
                 data_directory: data_directory.clone(),
@@ -73,6 +191,7 @@ impl PluginApi {
             clock,
             DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
             publisher,
+            notifications.clone(),
         )?;
 
         Ok(Self {
@@ -81,6 +200,7 @@ impl PluginApi {
             registry_index_path,
             data_directory,
             installer,
+            notifications,
         })
     }
 
@@ -130,6 +250,16 @@ impl PluginApi {
         })
     }
 
+    /// Exposes the lifecycle to the gateway that serves desktop surfaces.
+    pub(crate) fn lifecycle(&self) -> &BackendPluginLifecycle {
+        &self.lifecycle
+    }
+
+    /// Opens a receiver of every notification running plugin processes emit from now on.
+    pub(crate) fn subscribe_notifications(&self) -> broadcast::Receiver<InboundNotification> {
+        self.notifications.subscribe()
+    }
+
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
     pub(crate) fn list(
         &self,
@@ -170,16 +300,27 @@ impl PluginApi {
         self.lifecycle.activate_plugin(request).await
     }
 
-    /// Returns a running plugin runtime plus the unclaimed notification stream of that launch.
+    /// Returns a connection to a running plugin plus a lossless stream of its notifications,
+    /// starting the plugin when it is enabled but stopped.
     ///
     /// This is the single seam through which the agent runtime reaches a plugin process. The
     /// process stays owned by the lifecycle, so an agent connection can never leave one running
-    /// that the settings surface reports as stopped.
-    pub(crate) async fn attach_runtime(
+    /// that the settings surface reports as stopped. The tap is opened after the connection is
+    /// pinned so it observes exactly that generation; frames the plugin emitted before the agent
+    /// was started belong to no connection and are discarded by the caller.
+    pub(crate) async fn attach_agent(
         &self,
         plugin_id: &PluginId,
-    ) -> Result<PluginAttachment<DenoPluginRuntime>, PluginLifecycleError> {
-        self.lifecycle.attach_runtime(plugin_id).await
+    ) -> Result<AgentPluginAttachment, ConnectionError> {
+        let connection = self
+            .lifecycle
+            .ensure_running(plugin_id, AGENT_ATTACH_WAIT)
+            .await?;
+        let notifications = self.notifications.tap(plugin_id, connection.key());
+        Ok(AgentPluginAttachment {
+            connection,
+            notifications,
+        })
     }
 
     /// Stops one plugin process without changing durable eligibility.
@@ -207,7 +348,16 @@ impl PluginApi {
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
         let registry_directory = self.registry_source.checkout_dir().join("registry");
-        let manifest = RegistryIndex::resolve_manifest(&registry_directory, &request.plugin_id)
+        // A malformed identifier can never name a registry entry, so it is reported the same way
+        // as an unknown one instead of leaking the id grammar as a separate error class.
+        let plugin_id = PluginId::parse(&request.plugin_id).map_err(|_| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "marketplace plugin id is not a valid `<namespace>/<name>`",
+            )
+        })?;
+        let manifest = RegistryIndex::resolve_manifest(&registry_directory, &plugin_id)
             .map_err(|error| {
                 BackendError::internal("failed to resolve plugin release manifest", error)
             })?
@@ -251,11 +401,82 @@ impl PluginApi {
 /// Converts one registry entry into the frontend-facing marketplace summary.
 fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
     ora_contracts::AvailablePlugin {
-        id: entry.id().to_owned(),
+        id: entry.id().canonical(),
         name: entry.name().to_owned(),
         namespace: entry.namespace().to_owned(),
         version: entry.version().to_string(),
         description: entry.description().to_owned(),
         logo: entry.logo().map(str::to_owned),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BroadcastNotificationSink;
+    use ora_domain::PluginId;
+    use ora_plugin_lifecycle::{InboundNotification, PluginGenerationKey, PluginNotificationSink};
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    /// Verifies a tap sees only its own plugin generation, in order, and that dropping the
+    /// receiver releases the tap instead of failing later publications.
+    #[tokio::test]
+    async fn taps_receive_only_their_generation_and_release_on_drop() {
+        let sink = BroadcastNotificationSink::new();
+        let plugin_id = PluginId::new("official", "ora-space.agent").expect("plugin id");
+        let notification = |generation: u64, method: &str| InboundNotification {
+            plugin_id: plugin_id.clone(),
+            generation: PluginGenerationKey(generation),
+            method: method.to_owned(),
+            params: json!({}),
+        };
+        let mut tap = sink.tap(&plugin_id, PluginGenerationKey(2));
+        sink.on_notification(notification(1, "agent/acp"));
+        sink.on_notification(notification(2, "agent/acp"));
+        sink.on_notification(notification(2, "agent/modelsChanged"));
+
+        let received = (
+            tap.recv().await.expect("first"),
+            tap.recv().await.expect("second"),
+        );
+        drop(tap);
+        sink.on_notification(notification(2, "agent/acp"));
+
+        assert_eq!(
+            (received, sink.taps.lock().expect("lock taps").len(),),
+            (
+                (
+                    notification(2, "agent/acp"),
+                    notification(2, "agent/modelsChanged"),
+                ),
+                0,
+            )
+        );
+    }
+
+    /// Verifies a subscriber attached after construction receives notifications in order and a
+    /// notification without any subscriber is dropped without panicking.
+    #[tokio::test]
+    async fn broadcasts_to_late_subscribers_and_tolerates_none() {
+        let sink = BroadcastNotificationSink::new();
+        let notification = |method: &str| InboundNotification {
+            plugin_id: PluginId::new("official", "acme.panel").expect("plugin id"),
+            generation: PluginGenerationKey(1),
+            method: method.to_owned(),
+            params: json!({ "n": 1 }),
+        };
+        sink.on_notification(notification("dropped"));
+
+        let mut receiver = sink.subscribe();
+        sink.on_notification(notification("ora/ui/push"));
+        sink.on_notification(notification("ora/ui/other"));
+
+        assert_eq!(
+            (
+                receiver.recv().await.expect("first"),
+                receiver.recv().await.expect("second"),
+            ),
+            (notification("ora/ui/push"), notification("ora/ui/other"))
+        );
     }
 }

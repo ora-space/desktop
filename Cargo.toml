@@ -21,6 +21,7 @@ members = [
     "crates/runtime-settings",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/surface",
     "crates/test-support",
     "crates/utils",
     "xtask",
@@ -45,6 +46,7 @@ default-members = [
     "crates/pty",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/surface",
     "crates/test-support",
     "crates/utils",
     "xtask",
@@ -81,6 +83,7 @@ ora-pty = { path = "crates/pty" }
 ora-runtime-settings = { path = "crates/runtime-settings" }
 ora-scheduler = { path = "crates/scheduler" }
 ora-skill-package = { path = "crates/skill-package" }
+ora-surface = { path = "crates/surface" }
 ora-test-support = { path = "crates/test-support" }
 ora-utils = { path = "crates/utils" }
 
@@ -115,6 +118,7 @@ serde_with = { version = "3" }
 serde_yaml = "0.9"
 tar = "0.4"
 tempfile = "3"
+base64 = "0.22"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = "1"

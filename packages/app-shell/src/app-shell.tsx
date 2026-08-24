@@ -18,7 +18,10 @@ import { WorkspaceSidebar } from "./features/workspace/workspace-sidebar";
 import { WorkspaceView } from "./features/workspace/workspace-view";
 import { WorkspaceDialogs } from "./features/workspace/workspace-dialogs";
 import { SettingsDialog } from "./features/settings/settings-dialog";
-import { SkillMarketplaceInstallController } from "./features/settings/skill-marketplace-install-controller";
+import { SurfaceDownloadPrompt } from "./features/surface/surface-download-prompt";
+import { SurfaceDownloadToaster } from "./features/surface/surface-download-toaster";
+import { SurfaceEventBridge } from "./features/surface/surface-event-bridge";
+import { useEmbeddedSurfaceVisible } from "./features/surface/surface-occlusion";
 import { TraceDashboardPanel } from "./features/trace-dashboard/trace-dashboard-panel";
 import type {
   DashboardCompareResolver,
@@ -112,6 +115,8 @@ function AppShellContent({
   const user = injectedUser ?? gitIdentityUser;
 
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
+  // A native embedded surface paints over the bottom-right corner, so toasts move aside.
+  const surfaceVisible = useEmbeddedSurfaceVisible();
   const { t } = useTranslation();
   const sidebarPanelRef = useRef<ResizablePanelHandle | null>(null);
   const handleSignOut = () => {
@@ -163,7 +168,9 @@ function AppShellContent({
                 </ResizablePanelGroup>
               )}
               <SettingsDialog />
-              <SkillMarketplaceInstallController />
+              <SurfaceEventBridge />
+              <SurfaceDownloadToaster />
+              <SurfaceDownloadPrompt />
               <TraceDashboardPanel
                 resolveDashboardUrl={resolveDashboardUrl ?? null}
                 resolveDashboardCompareUrl={resolveDashboardCompareUrl ?? null}
@@ -172,7 +179,10 @@ function AppShellContent({
                   not take the workspace dialogs down with it. */}
               <WorkspaceDialogs />
             </div>
-            <Toaster position="bottom-right" closeButton />
+            <Toaster
+              position={surfaceVisible ? "bottom-left" : "bottom-right"}
+              closeButton
+            />
           </TooltipProvider>
         </PlatformProvider>
       </ChatStoreContext.Provider>

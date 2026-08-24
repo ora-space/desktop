@@ -1,6 +1,6 @@
 {
   "name": "@ora-space/plugin-sdk",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Ora plugin development SDK",
   "type": "module",
   "license": "Apache-2.0",
@@ -18,7 +18,7 @@
   "scripts": {
     "format": "deno fmt src tests deno.json package.json README.md",
     "format:check": "deno fmt --check src tests deno.json package.json README.md",
-    "lint": "deno lint src tests && deno check src/mod.ts tests/plugin.test.ts tests/agent.test.ts",
+    "lint": "deno lint src tests && deno check src/mod.ts tests/plugin.test.ts tests/agent.test.ts tests/storage.test.ts tests/workbench.test.ts",
     "test": "deno test tests"
   },
   "publishConfig": {

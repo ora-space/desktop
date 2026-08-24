@@ -7,6 +7,7 @@ use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::plugin::PluginApi;
+use crate::plugin_gateway::PluginGateway;
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
@@ -240,6 +241,11 @@ impl Backend {
         })
     }
 
+    /// Returns the plugin data-plane gateway the desktop surface layer drives.
+    pub fn plugin_gateway(&self) -> Arc<PluginGateway> {
+        Arc::new(PluginGateway::new(Arc::clone(&self.plugin)))
+    }
+
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
     pub fn list_installed_plugins(
         &self,
@@ -296,7 +302,7 @@ impl Backend {
             .enable(request)
             .await
             .map_err(BackendError::from)?;
-        if let Ok(agent_ref) = AgentRef::parse(&response.plugin.package_name) {
+        if let Ok(agent_ref) = AgentRef::parse(&response.plugin.name) {
             self.agent_runtime.wake_agent(&agent_ref);
         }
         Ok(response)

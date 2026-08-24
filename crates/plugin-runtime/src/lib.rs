@@ -1,6 +1,7 @@
 //! Owns the lifecycle and bidirectional stdio protocol of one sandboxed Ora plugin process.
 
 mod codec;
+mod host_requests;
 mod protocol;
 mod state;
 mod tasks;
@@ -8,6 +9,9 @@ mod tasks;
 #[cfg(test)]
 mod tests;
 
+pub use host_requests::{
+    HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE, NoHostRequests,
+};
 pub use protocol::{PluginNotification, PluginRegistration};
 
 use std::path::PathBuf;
@@ -33,6 +37,9 @@ pub struct PluginRuntimeConfig {
     pub entrypoint: PathBuf,
     /// Extra Deno permission flags placed before the entrypoint, such as `--allow-run`.
     pub permissions: Vec<String>,
+    /// Working directory of the plugin process, normally its package root so that relative
+    /// imports and configuration discovery resolve against the package instead of the host.
+    pub cwd: Option<PathBuf>,
     pub ready_timeout: Duration,
     pub call_timeout: Duration,
     pub shutdown_timeout: Duration,
@@ -94,26 +101,35 @@ pub struct PluginRuntime {
 impl PluginRuntime {
     /// Launches one plugin and waits until it publishes its immutable capability registration.
     ///
+    /// `host_requests` serves every request the plugin sends to the host for the life of this
+    /// process; it is bound here, at launch, so the handler knows which plugin is calling
+    /// without ever reading an identity from request params.
+    ///
     /// The returned receiver carries every whitelisted plugin-originated notification. It is
     /// unbounded on purpose: connection-wide backpressure would let one noisy stream stall
     /// unrelated traffic on the same process, so bounded queues belong to each consumer instead.
-    pub async fn launch<P>(
+    pub async fn launch<P, H>(
         spawner: &P,
         config: PluginRuntimeConfig,
+        host_requests: H,
     ) -> Result<(Self, mpsc::UnboundedReceiver<PluginNotification>), PluginRuntimeError>
     where
         P: ProcessSpawner,
         P::Process: Send + 'static,
+        H: HostRequestHandler,
     {
         if !config.entrypoint.is_file() {
             return Err(PluginRuntimeError::MissingEntrypoint(config.entrypoint));
         }
 
-        let spec = ProcessSpec::new(config.deno_path.as_os_str())
+        let mut spec = ProcessSpec::new(config.deno_path.as_os_str())
             .arg("run")
             .arg("--no-prompt")
             .args(config.permissions.iter().map(String::as_str))
             .arg(config.entrypoint.as_os_str());
+        if let Some(cwd) = &config.cwd {
+            spec = spec.cwd(cwd);
+        }
         let mut process = spawner
             .spawn(spec)
             .map_err(|error| PluginRuntimeError::Spawn(error.to_string()))?;
@@ -160,7 +176,11 @@ impl PluginRuntime {
             writer_close_rx,
             Arc::clone(&inner),
         ));
-        tokio::spawn(tasks::run_reader(stdout, Arc::clone(&inner)));
+        tokio::spawn(tasks::run_reader(
+            stdout,
+            Arc::clone(&inner),
+            Arc::new(host_requests),
+        ));
         tokio::spawn(tasks::run_stderr(stderr, config.plugin_id.clone()));
         tokio::spawn(tasks::run_supervisor(
             process,

@@ -8,8 +8,10 @@ down the complete child process tree.
 
 The crate does not discover, install, select, or configure plugins. Callers supply a
 plugin identifier, an entrypoint, a Deno executable, the permission flags the plugin
-was granted, and the exact method to invoke. Application-level code remains
-responsible for mapping Ora capabilities to those plugin methods.
+was granted, an optional working directory, a `HostRequestHandler` that serves the
+plugin's requests to the host, and the exact method to invoke. Application-level code
+remains responsible for mapping Ora capabilities to those plugin methods and for
+deciding which host methods exist.
 
 ## Protocol
 
@@ -30,20 +32,22 @@ A plugin declares both traffic directions once, in its `ora/register` notificati
 - `methods` lists what the host may `invoke`. Invoking anything else fails locally
   without reaching the plugin.
 - `emits` lists what the plugin may send on its own initiative. Notifications outside
-  the whitelist, and any plugin message carrying a JSON-RPC id, invalidate the
-  connection: a plugin whose behaviour exceeds its declaration cannot be trusted to
-  correlate correctly.
+  the whitelist invalidate the connection: a plugin whose behaviour exceeds its
+  declaration cannot be trusted to correlate correctly.
+- Plugin requests to the host (`ora/storage/*` and the like) need no declaration: the
+  launch-time handler decides what it serves and answers method-not-found otherwise.
 
 Both fields are fixed for the life of the process; a second registration is a protocol
 error.
 
 ## Traffic shapes
 
-| Direction     | Shape                     | Correlation        | Bounded by     |
-| ------------- | ------------------------- | ------------------ | -------------- |
-| Host → plugin | `invoke` request/response | runtime request id | `call_timeout` |
-| Host → plugin | `notify` notification     | none               | nothing        |
-| Plugin → host | whitelisted notification  | none               | nothing        |
+| Direction     | Shape                         | Correlation        | Bounded by     |
+| ------------- | ----------------------------- | ------------------ | -------------- |
+| Host → plugin | `invoke` request/response     | runtime request id | `call_timeout` |
+| Host → plugin | `notify` notification         | none               | nothing        |
+| Plugin → host | whitelisted notification      | none               | nothing        |
+| Plugin → host | request served by the handler | plugin request id  | the handler    |
 
 `call_timeout` deliberately covers `invoke` only. Notifications carry payloads whose
 own protocol owns correlation and cancellation — ACP traffic streams for minutes, which
@@ -65,6 +69,16 @@ stdio, registration timeout, contract rejection, and agent control-call failure.
 exit also closes the plugin-originated notification receiver even while public runtime handles still
 exist, so the connection owner can fail the generation and apply its restart policy immediately.
 
-Reverse request/response — a plugin calling into the host — is intentionally absent.
-No current plugin contract needs it, and the pending-request table stays single-purpose
-until one does.
+## Host requests
+
+A registered plugin may send JSON-RPC requests (messages with a numeric or string `id`).
+Each one is dispatched to the `HostRequestHandler` passed to `launch` on its own task, so a
+slow host method never delays the reader that also carries responses to the host's own
+calls, and concurrent requests are answered under their own ids whatever order they finish
+in. The handler returns a JSON result or a `HostRequestError` (`code`, `message`, optional
+structured `data`); unknown methods must be answered with `HostRequestError::method_not_found`
+(`-32601`). A request before registration, or one whose id is neither a number nor a string,
+is a protocol failure. Launches without host methods pass `NoHostRequests`.
+
+The handler is bound to one process at launch; that binding, not anything in the request
+params, is how a handler knows which plugin is calling.
