@@ -12,6 +12,7 @@ import { useSessions } from "./use-sessions";
 import { usePendingSwitch } from "../stores/pending-agent-store";
 import { useAgentModelStore } from "../stores/agent-model-store";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
+import { useAgentRuntimeStatus } from "./use-agent-runtime-status";
 
 /** The provider session backing one chat surface, and whether it is still being opened. */
 export interface WarmSession {
@@ -77,7 +78,7 @@ export function useWarmSession(
     taskId: string | null;
     sessionId: string | null;
   },
-  agentCli: KnownAgentCli,
+  agentCli: KnownAgentCli | null,
 ): WarmSession {
   const client = useContractsClient();
   const queryClient = useQueryClient();
@@ -87,6 +88,7 @@ export function useWarmSession(
     (state) => state.setConfigOptions,
   );
   const { data: sessions = [] } = useSessions();
+  const { data: runtimeStatuses } = useAgentRuntimeStatus();
   const pendingSwitch = usePendingSwitch(selection.sessionId);
   const rememberModels = useAgentModelStore((state) => state.remember);
   // Two-phase selection restore stages disk ids in `pendingRestore` until the
@@ -101,6 +103,17 @@ export function useWarmSession(
   const isPersisted =
     selection.sessionId !== null &&
     sessions.some((session) => session.id === selection.sessionId);
+  const runtimeStatus = runtimeStatuses?.find(
+    (status) => status.agentRef === agentCli,
+  )?.status;
+  // Agent entries become visible while their plugin is still starting, but its
+  // model endpoint is not safe to call until the runtime handshake is ready.
+  // Waiting here also prevents a failed pre-ready query from being pinned by the
+  // warm cache before the status transition that can actually satisfy it.
+  const agentReady = runtimeStatus === "ready";
+  const agentStarting =
+    agentCli !== null &&
+    (runtimeStatuses === undefined || runtimeStatus === "starting");
   // A persisted session normally has nothing to warm: its options arrive with
   // `session/load`. A pending move is the exception — the CLI it is moving to
   // has not handshaken here yet, and warming is the only way to show its models
@@ -118,7 +131,8 @@ export function useWarmSession(
   // same request would hand the backend two provider sessions for one surface.
   const queryOptions = {
     queryKey: queryKeys.warmSession(target, agentCli),
-    queryFn: () => client.session.warm({ target: target!, agentRef: agentCli }),
+    queryFn: () =>
+      client.session.warm({ target: target!, agentRef: agentCli! }),
     // A warm session is owned by the backend and only changes when this client
     // asks it to, so re-fetching it on remount would only risk creating another.
     staleTime: Infinity,
@@ -127,11 +141,12 @@ export function useWarmSession(
   };
   const { data, isLoading } = useQuery({
     ...queryOptions,
-    enabled: target !== null,
+    enabled: target !== null && agentCli !== null && agentReady,
   });
 
   const ensureSessionId = async (): Promise<string | null> => {
-    if (target === null) return null;
+    if (target === null || agentCli === null) return null;
+    if (!agentReady) throw new Error(`Agent runtime ${agentCli} is not ready`);
     // Goes through the cache rather than calling the backend directly, so a
     // handshake this hook already started is awaited instead of duplicated.
     // Because warming does not retry, a previously failed one is retried here.
@@ -159,7 +174,7 @@ export function useWarmSession(
   // the CLI, not to the session, and it is the only thing that lets the *next*
   // surface opening on this CLI paint a model list before its own handshake.
   useEffect(() => {
-    if (data === undefined) return;
+    if (data === undefined || agentCli === null) return;
     rememberModels(agentCli, data.configOptions);
   }, [agentCli, data, rememberModels]);
 
@@ -168,7 +183,7 @@ export function useWarmSession(
   // Only a request actually in flight counts as still opening.
   return {
     sessionId: data?.sessionId ?? null,
-    isOpening: isLoading,
+    isOpening: isLoading || (target !== null && agentStarting),
     ensureSessionId,
   };
 }

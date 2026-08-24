@@ -47,7 +47,9 @@ const TASK2: Task = {
 beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
   useDraftSessionsStore.getState().clear();
-  useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  useSettingsStore.setState({
+    settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+  });
   usePendingAgentStore.setState({ selections: {} });
 });
 

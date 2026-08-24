@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@ora/ui";
 import { PlatformProvider } from "../../platform";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {
   createHookWrapper,
@@ -23,20 +23,26 @@ import {
 import { usePendingAgentStore } from "../../state/stores/pending-agent-store";
 import type { AgentStatus } from "@ora/contracts";
 import { ModelSelector } from "./model-selector";
+import { queryKeys } from "../../state/hooks/query-keys";
+import { useAgentModelStore } from "../../state/stores/agent-model-store";
 
 beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
-  useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  useSettingsStore.setState({
+    settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+  });
   usePendingAgentStore.setState({ selections: {} });
+  useAgentModelStore.setState({ known: {} });
 });
 
 /** Replaces what the runtime reports about OpenCode, leaving every other agent detected. */
 function reportOpenCode(status: AgentStatus) {
   return (state: MockClientState) => {
-    const entry = state.agentRuntimeStatuses.find(
-      (candidate) => candidate.agentRef === "ora-space.opencode",
+    state.agentRuntimeStatuses = state.agentRuntimeStatuses.map((candidate) =>
+      candidate.agentRef === "ora-space.opencode"
+        ? { ...candidate, status }
+        : candidate,
     );
-    entry!.status = status;
   };
 }
 
@@ -46,8 +52,10 @@ function renderModelSelector(
   const state = createMockClientState();
   seed(state);
   const client = createMockClient(state);
+  const warm = vi.spyOn(client.session, "warm");
   const chatStore = createChatStore(client.session);
-  const Wrapper = createHookWrapper(client, createTestQueryClient(), chatStore);
+  const queryClient = createTestQueryClient();
+  const Wrapper = createHookWrapper(client, queryClient, chatStore);
   render(
     <Wrapper>
       <AppI18nProvider>
@@ -59,6 +67,7 @@ function renderModelSelector(
       </AppI18nProvider>
     </Wrapper>,
   );
+  return { queryClient, state, warm };
 }
 
 /** The collapsed trigger, which names the agent this surface is currently on. */
@@ -159,17 +168,124 @@ describe("ModelSelector agent availability", () => {
     await waitFor(() =>
       expect(within(menu).queryByText("OpenCode")).toBeNull(),
     );
+    expect(within(picker()).queryByText("OpenCode")).toBeNull();
+    expect(picker().querySelectorAll("svg")).toHaveLength(1);
+    expect(useSettingsStore.getState().settings.agentCli).toBe(
+      "ora-space.opencode",
+    );
   });
 
-  it("moves a surface off a stored default the installation can no longer reach", async () => {
+  it("keeps a stored choice when its agent is temporarily unavailable", async () => {
     renderModelSelector(reportOpenCode("unavailable"));
 
     act(() => useWorkspaceSelectionStore.getState().selectTask("t1", "p1"));
 
-    // The stored default names OpenCode, which the runtime cannot reach here, so
-    // the surface must settle on the first agent that is genuinely available.
     await waitFor(() =>
-      expect(within(picker()).queryByText("NGA")).not.toBeNull(),
+      expect(within(picker()).queryByText("OpenCode")).toBeNull(),
+    );
+    expect(useSettingsStore.getState().settings.agentCli).toBe(
+      "ora-space.opencode",
+    );
+    expect(picker().querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("removes a disabled agent's previously warmed models", async () => {
+    const user = userEvent.setup();
+    const { queryClient, state } = renderModelSelector();
+
+    act(() => useWorkspaceSelectionStore.getState().selectTask("t1", "p1"));
+    const menu = await openAgentList(user);
+    await waitFor(() =>
+      expect(within(menu).queryByText("Big Pickle")).not.toBeNull(),
+    );
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKeys.agentRuntimeStatus)).toEqual(
+        state.agentRuntimeStatuses,
+      ),
+    );
+
+    reportOpenCode("unavailable")(state);
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentRuntimeStatus }),
+    );
+
+    await waitFor(() =>
+      expect(within(menu).queryByText("OpenCode")).toBeNull(),
+    );
+    expect(within(menu).queryByText("Big Pickle")).toBeNull();
+    expect(within(menu).queryByText("Small Pickle")).toBeNull();
+    expect(within(picker()).queryByText("Big Pickle")).toBeNull();
+    expect(within(picker()).queryByText("OpenCode")).toBeNull();
+    expect(picker().querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("does not select a newly enabled agent for an untouched surface", async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } });
+    const { queryClient, state } = renderModelSelector(
+      reportOpenCode("unavailable"),
+    );
+
+    act(() => useWorkspaceSelectionStore.getState().selectTask("t1", "p1"));
+    expect(within(picker()).queryByText("OpenCode")).toBeNull();
+    expect(within(picker()).queryByText("NGA")).toBeNull();
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKeys.agentRuntimeStatus)).toEqual(
+        state.agentRuntimeStatuses,
+      ),
+    );
+
+    reportOpenCode("ready")(state);
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentRuntimeStatus }),
+    );
+
+    const user = userEvent.setup();
+    const menu = await openAgentList(user);
+    await waitFor(() =>
+      expect(within(menu).queryByText("OpenCode")).not.toBeNull(),
+    );
+    expect(within(picker()).queryByText("OpenCode")).toBeNull();
+    expect(within(picker()).queryByText("NGA")).toBeNull();
+  });
+
+  it("waits for an enabled plugin to become ready before warming its models", async () => {
+    const user = userEvent.setup();
+    const { queryClient, state, warm } = renderModelSelector(
+      reportOpenCode("unavailable"),
+    );
+
+    act(() => useWorkspaceSelectionStore.getState().selectTask("t1", "p1"));
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKeys.agentRuntimeStatus)).toEqual(
+        state.agentRuntimeStatuses,
+      ),
+    );
+    expect(warm).not.toHaveBeenCalled();
+
+    reportOpenCode("starting")(state);
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentRuntimeStatus }),
+    );
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKeys.agentRuntimeStatus)).toEqual(
+        state.agentRuntimeStatuses,
+      ),
+    );
+    expect(warm).not.toHaveBeenCalled();
+
+    const menu = await openAgentList(user);
+    await waitFor(() =>
+      expect(within(menu).queryByText(/加载中|Loading/)).not.toBeNull(),
+    );
+
+    reportOpenCode("ready")(state);
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentRuntimeStatus }),
+    );
+
+    await waitFor(() => expect(warm).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(within(menu).queryByText("Big Pickle")).not.toBeNull(),
     );
   });
 });

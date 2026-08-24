@@ -31,7 +31,7 @@ interface ChatViewProps {
   error: string | null;
   pendingPermissions?: SessionPermissionRequest[];
   disabled?: boolean;
-  /** Keeps the current model visible while preventing model changes on this surface. */
+  /** Overrides composer disablement for the agent/model picker. */
   modelSelectorDisabled?: boolean;
   /** Session whose model configuration the selector should display. */
   modelSelectorSessionId?: string;
@@ -94,7 +94,7 @@ export function ChatView({
   error,
   pendingPermissions = [],
   disabled = false,
-  modelSelectorDisabled = false,
+  modelSelectorDisabled = disabled,
   modelSelectorSessionId,
   composerVisible = true,
   onSend,

@@ -25,6 +25,10 @@ import { useDraftSessionsStore } from "../../state/stores/draft-sessions-store";
 import { useComposerInputStore } from "../../state/stores/composer-input-store";
 import { startSessionDraft } from "../../state/session-drafts";
 import { useAgentModelStore } from "../../state/stores/agent-model-store";
+import {
+  DEFAULT_SETTINGS,
+  useSettingsStore,
+} from "../../state/stores/settings-store";
 import { WorkspaceView } from "./workspace-view";
 import { directChatTitle } from "./workspace-view-utils";
 
@@ -51,6 +55,9 @@ beforeEach(() => {
   // Agent picks outlive a render, so a test that leaves one recorded would hand
   // the next one a surface already pointing somewhere it never chose.
   usePendingAgentStore.setState({ selections: {}, switches: {} });
+  useSettingsStore.setState({
+    settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+  });
 });
 
 describe("WorkspaceView", () => {
@@ -246,6 +253,47 @@ describe("WorkspaceView", () => {
     const textbox = await screen.findByRole("textbox");
     expect(textbox).toHaveAttribute("aria-disabled", "true");
     expect(textbox).toHaveAttribute("contenteditable", "false");
+  });
+
+  it("keeps agent selection enabled while an untouched chat cannot send", async () => {
+    const user = userEvent.setup();
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } });
+    const state = createMockClientState();
+    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    const client = createMockClient(state);
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useWorkspaceSelectionStore.getState().selectProject("p1");
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const textbox = await screen.findByRole("textbox");
+    expect(textbox).toHaveAttribute("aria-disabled", "true");
+    const modelSelector = screen.getByRole("button", {
+      name: /选择模型|Select model/,
+    });
+    expect(modelSelector).toBeEnabled();
+
+    await user.click(modelSelector);
+    await user.click(await screen.findByText("OpenCode"));
+
+    await waitFor(() => expect(textbox).toBeEnabled());
+    expect(useSettingsStore.getState().settings.agentCli).toBe(
+      "ora-space.opencode",
+    );
   });
 
   it("does not repeat the default direct-chat mode in the composer context", async () => {

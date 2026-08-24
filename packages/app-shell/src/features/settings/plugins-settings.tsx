@@ -133,7 +133,10 @@ function AvailablePluginRow({
 }) {
   const { t } = useTranslation();
   const install = useInstallPlugin(plugin.id);
-  const mutations = usePluginMutations(plugin.id);
+  const mutations = usePluginMutations(
+    plugin.id,
+    installed?.kind === "agent" ? installed.name : undefined,
+  );
   const busy = install.isPending || mutations.uninstall.isPending;
 
   const failInstall = (cause: unknown) => {

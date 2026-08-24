@@ -271,6 +271,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     agentText: string | undefined,
     images: acp.ImageContent[] = [],
   ) => {
+    if (targetAgentCli === null) return;
     const currentKey = conversationKeyFor(
       useWorkspaceSelectionStore.getState().selection,
     );
@@ -590,9 +591,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     session === undefined || (task !== undefined && project !== undefined);
 
   if (chatIsOpen) {
-    const canChat = session
-      ? session.status === "running" || conversation?.isLoaded === true
-      : project !== undefined;
+    const canChat =
+      targetAgentCli !== null &&
+      (session
+        ? session.status === "running" || conversation?.isLoaded === true
+        : project !== undefined);
     // A failed background session-create settles onto the draft conversation, so
     // the conversation error already covers the start-up failure path. A pending
     // send has no conversation to settle onto and carries its own.
@@ -698,7 +701,16 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             skills={skillsQuery.data ?? []}
             availableCommands={conversation?.availableCommands ?? []}
             disabled={!canChat}
-            disabledHint={canChat ? undefined : t("chat.pickProject")}
+            // An untouched chat cannot send yet, but disabling this picker as
+            // part of the composer would make choosing its first agent impossible.
+            modelSelectorDisabled={targetAgentCli !== null && !canChat}
+            disabledHint={
+              canChat
+                ? undefined
+                : project === undefined
+                  ? t("chat.pickProject")
+                  : t("chat.pickAgent")
+            }
             // A persisted or optimistic session already fixes its project and
             // execution context, so the pickers only belong to a blank composer.
             contextBar={

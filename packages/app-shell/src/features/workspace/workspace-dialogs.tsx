@@ -276,6 +276,7 @@ function WorkspaceEntityDialog({
     fields = [];
     submit = async () => {
       if (!dialog.entity) {
+        if (settingsAgentCli === null) throw new Error(t("chat.pickAgent"));
         await createSession.mutateAsync({
           taskId: dialog.taskId,
           agentCli: settingsAgentCli,
