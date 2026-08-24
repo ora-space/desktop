@@ -21,6 +21,9 @@ orax package shape, and orchestrates installing new plugin releases.
 - Install a plugin release: download the `.orax` package (through an injected `ora-utils::http`
   `HttpDownload`), verify its SHA-256 while downloading, and safely extract it into
   `<data-dir>/plugins/installed/<namespace>/<name>/<version>` with `ora-utils::archive`.
+- Import one local `.orax` release archive by extracting into a disposable staging directory,
+  parsing its in-archive `orax.toml`, verifying a declared `sha256`, and then moving only the
+  validated tree into `<data-dir>/plugins/installed/<namespace>/<name>/<version>`.
 
 ## Non-responsibilities
 
@@ -40,6 +43,11 @@ resulting snapshot through `installed_plugins()` and report any non-fatal proble
 Build an `Installer::new(downloader)` with any `HttpDownload` implementation and call
 `install(&manifest, source, data_dir)`, passing a `DownloadSource::Url(...)` for online installs or
 a `Local` path for offline and test installs.
+
+Import a local `.orax` release archive with `InstallError`-returning
+`Installer::install_local(archive_path, data_dir)`, which returns an `InstalledPackage` carrying
+the materialized `package_dir` and the `namespace/name` plugin id derived from the in-archive
+manifest.
 
 Discovery never follows symlinked package directories and never reads more than 1 MiB from one
 manifest. The manifest version must match the selected version directory. Entrypoint containment

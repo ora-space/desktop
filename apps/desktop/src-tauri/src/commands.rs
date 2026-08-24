@@ -1082,6 +1082,13 @@ async_backend_command!(
     install_plugin,
     "Installs one marketplace plugin by downloading, verifying, and extracting it."
 );
+async_backend_command!(
+    import_plugin,
+    ImportPluginRequest,
+    ImportPluginResponse,
+    import_plugin,
+    "Imports one local .orax release archive, then enables the imported plugin."
+);
 
 // =============================================================================
 // gitIdentity

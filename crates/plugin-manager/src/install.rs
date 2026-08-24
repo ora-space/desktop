@@ -2,6 +2,7 @@
 
 use ora_plugin_manifest::PluginManifest;
 use ora_utils::archive::{ArchiveFormat, ExtractLimits, extract_archive};
+use ora_utils::hash;
 use ora_utils::http::{Checksum, DownloadOptions, DownloadRequest, DownloadSource, HttpDownload};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -18,7 +19,7 @@ const RELEASE_EXTENSION: &str = ".orax";
 pub enum InstallError {
     /// The release package could not be fetched or verified.
     #[error("failed to download release package: {0}")]
-    Download(#[from] ora_utils::http::DownloadError),
+    Download(#[source] Box<ora_utils::http::DownloadError>),
     /// The manifest does not declare a downloadable release package.
     #[error("plugin manifest declares no release package to download")]
     MissingRelease,
@@ -29,6 +30,25 @@ pub enum InstallError {
         #[source]
         source: ora_utils::archive::ArchiveError,
     },
+    /// The imported archive does not contain an `orax.toml` manifest at its root.
+    #[error("imported archive does not contain orax.toml at its root")]
+    MissingManifest,
+    /// The in-archive `orax.toml` could not be parsed or validated.
+    #[error("imported plugin manifest is invalid: {0}")]
+    InvalidManifest(#[from] ora_plugin_manifest::ManifestError),
+    /// The imported archive digest does not match the digest the in-archive manifest declares.
+    #[error("imported archive digest {actual} does not match the declared sha256 {expected}")]
+    ChecksumMismatch { expected: String, actual: String },
+    /// A plugin with the same namespace, name, and version is already installed.
+    #[error(
+        "a plugin with namespace `{namespace}` name `{name}` version `{version}` is already installed at {path}"
+    )]
+    AlreadyInstalled {
+        path: PathBuf,
+        namespace: String,
+        name: String,
+        version: String,
+    },
     /// A prerequisite directory could not be prepared.
     #[error("failed to prepare {path}: {source}")]
     Io {
@@ -36,6 +56,21 @@ pub enum InstallError {
         #[source]
         source: std::io::Error,
     },
+}
+
+impl From<ora_utils::http::DownloadError> for InstallError {
+    fn from(source: ora_utils::http::DownloadError) -> Self {
+        Self::Download(Box::new(source))
+    }
+}
+
+/// Describes one package materialized from a local release archive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledPackage {
+    /// The package directory below `<data-dir>/plugins/installed/<namespace>/<name>/<version>`.
+    pub package_dir: PathBuf,
+    /// The plugin identifier (`namespace/name`) derived from the in-archive manifest.
+    pub id: String,
 }
 
 /// Orchestrates one plugin installation and stays backend-agnostic.
@@ -86,6 +121,93 @@ where
             source,
         })?;
         Ok(package_dir)
+    }
+
+    /// Imports an already-downloaded release archive from `archive_path` into the installed tree.
+    ///
+    /// Unlike a marketplace install, the manifest lives inside the archive, so this extracts into
+    /// a disposable staging directory first, reads and validates the in-archive `orax.toml`, and
+    /// only then moves the verified tree into
+    /// `<data-dir>/plugins/installed/<namespace>/<name>/<version>`. A `sha256` declared by the
+    /// in-archive manifest is checked against the archive before anything is committed.
+    pub fn install_local(
+        &self,
+        archive_path: &Path,
+        data_dir: &Path,
+    ) -> Result<InstalledPackage, InstallError> {
+        let plugins_dir = data_dir.join("plugins");
+        let staging = tempfile::tempdir_in(&plugins_dir).map_err(|source| InstallError::Io {
+            path: plugins_dir.clone(),
+            source,
+        })?;
+        extract_archive(
+            ArchiveFormat::Zip,
+            archive_path,
+            staging.path(),
+            &ExtractLimits::default(),
+        )
+        .map_err(|source| InstallError::Extract {
+            path: staging.path().to_path_buf(),
+            source,
+        })?;
+
+        let manifest_path = staging.path().join("orax.toml");
+        if !manifest_path.is_file() {
+            return Err(InstallError::MissingManifest);
+        }
+        let manifest_source =
+            std::fs::read_to_string(&manifest_path).map_err(|source| InstallError::Io {
+                path: manifest_path,
+                source,
+            })?;
+        let manifest = PluginManifest::parse_installed(&manifest_source)?;
+
+        // A released package self-declares its own digest, so verifying it here still catches a
+        // tampered or degraded archive before the package is committed to the installed tree.
+        if let Some(digest) = manifest.sha256() {
+            let expected = digest.to_string();
+            let actual = hash::sha256_file(archive_path).map_err(|source| InstallError::Io {
+                path: archive_path.to_path_buf(),
+                source,
+            })?;
+            if actual != expected {
+                return Err(InstallError::ChecksumMismatch { expected, actual });
+            }
+        }
+
+        let namespace = manifest.namespace();
+        let name = manifest.name();
+        let version = manifest.version().to_string();
+        let destination = plugins_dir
+            .join(INSTALLED_ROOT)
+            .join(namespace.as_str())
+            .join(name.as_str())
+            .join(&version);
+        if destination.exists() {
+            return Err(InstallError::AlreadyInstalled {
+                path: destination,
+                namespace: namespace.as_str().to_owned(),
+                name: name.as_str().to_owned(),
+                version,
+            });
+        }
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| InstallError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        // The staged tree is fully materialized and validated, so one rename commits the package
+        // atomically; the disposable staging root is cleaned up when it drops afterwards.
+        std::fs::rename(staging.path(), &destination).map_err(|source| InstallError::Io {
+            path: destination.clone(),
+            source,
+        })?;
+
+        Ok(InstalledPackage {
+            package_dir: destination,
+            id: format!("{}/{}", namespace.as_str(), name.as_str()),
+        })
     }
 
     /// Fetches and verifies one release archive into the cache, returning its path.
@@ -242,7 +364,10 @@ mod tests {
         .unwrap_err();
 
         match error {
-            InstallError::Download(ora_utils::http::DownloadError::ChecksumMismatch { .. }) => {}
+            InstallError::Download(error) => match error.as_ref() {
+                ora_utils::http::DownloadError::ChecksumMismatch { .. } => {}
+                other => panic!("expected checksum mismatch, got {other:?}"),
+            },
             other => panic!("expected checksum mismatch, got {other:?}"),
         }
         assert!(

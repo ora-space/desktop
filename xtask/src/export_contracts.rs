@@ -367,7 +367,9 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "UninstallPluginRequest"
         | "UninstallPluginResponse"
         | "InstallPluginRequest"
-        | "InstallPluginResponse" => "plugin",
+        | "InstallPluginResponse"
+        | "ImportPluginRequest"
+        | "ImportPluginResponse" => "plugin",
         // workflow
         "CreateWorkflowRequest"
         | "CreateWorkflowResponse"

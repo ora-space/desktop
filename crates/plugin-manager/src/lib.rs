@@ -9,7 +9,7 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
-pub use install::{InstallError, Installer};
+pub use install::{InstallError, InstalledPackage, Installer};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use validation::{
     InstalledPlugin, InstalledPluginAgent, PluginContribution, PluginEngines, PluginPackageType,

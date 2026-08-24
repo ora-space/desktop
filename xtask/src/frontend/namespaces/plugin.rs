@@ -75,4 +75,11 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         request_type: "InstallPluginRequest",
         response_type: "InstallPluginResponse",
     },
+    FrontendEndpoint {
+        operation_name: "importPlugin",
+        namespace: NAMESPACE,
+        member_name: "import",
+        request_type: "ImportPluginRequest",
+        response_type: "ImportPluginResponse",
+    },
 ];

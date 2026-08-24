@@ -72,6 +72,13 @@ export interface MockClientState {
   agentRuntimeStatuses: AgentRuntimeStatus[];
   availablePlugins: AvailablePlugin[];
   availablePluginsUpdatedAt: bigint;
+  /**
+   * The package a local `.orax` import should materialize; `null` rejects that import.
+   * Undefined means imports are not configured and always fail in tests. A concrete target is
+   * committed with `enabled: true`, mirroring the backend finalize step that auto-enables the
+   * imported package.
+   */
+  importTarget?: InstalledPlugin | null;
   developerMode: { enabled: boolean };
   runtimeLogLevel: RuntimeLogLevelStateResponse;
   workflows: MockWorkflowRecord[];
@@ -414,6 +421,14 @@ export function createMockClient(state: MockClientState): ContractsClient {
           throw new Error(`installed plugin ${req.pluginId} not found`);
         state.installedPlugins.splice(idx, 1);
         return { pluginId: req.pluginId };
+      },
+      import: async (req) => {
+        const target = state.importTarget;
+        if (target === undefined)
+          throw new Error(`import not configured for ${req.path}`);
+        if (target === null) throw new Error(`import failed for ${req.path}`);
+        state.installedPlugins.push({ ...target, enabled: true });
+        return { pluginId: target.id };
       },
       install: async (req) => {
         const available = state.availablePlugins.find(
