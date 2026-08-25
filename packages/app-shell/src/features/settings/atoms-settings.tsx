@@ -33,12 +33,16 @@ import {
   Input,
   Label,
   Textarea,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
   cn,
 } from "@ora/ui";
 import {
   IconAlertTriangle,
   IconPencil,
   IconPlus,
+  IconPuzzle,
   IconRobot,
   IconSearch,
   IconSparkles,
@@ -53,6 +57,7 @@ import {
   localizeSkillImportStatus,
 } from "../../i18n/skill-import-reason";
 import { useAgents } from "../../state/hooks/use-agents";
+import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import { useSkills } from "../../state/hooks/use-skills";
 import {
   useCreateAgent,
@@ -96,6 +101,11 @@ interface AtomManagerConfig {
   notice?: ReactNode;
   /** Marks rows that cannot be edited and should open recovery instead. */
   isItemUnavailable?: (item: AtomRecord) => boolean;
+  /** Marks rows supplied by immutable sources such as installed plugins. */
+  isItemReadOnly?: (item: AtomRecord) => boolean;
+
+  /** Renders source ownership in the row's top-right action area. */
+  getItemBadge?: (item: AtomRecord) => ReactNode;
   /** Opens pane-owned recovery when an unavailable row is activated. */
   onActivateUnavailable?: (item: AtomRecord) => void;
   /** Chooses between compact rows and the wider card grid used by Skills. */
@@ -163,10 +173,39 @@ export function RolesSettings() {
 
 /** The Skills pane manages the reusable skills surfaced to Ora sessions. */
 const EMPTY_SKILLS: Skill[] = [];
+const MAX_INLINE_PLUGIN_ID_LENGTH = 24;
+
+function PluginSourceBadge({ pluginId }: { pluginId: string }) {
+  if (pluginId.length <= MAX_INLINE_PLUGIN_ID_LENGTH) {
+    return (
+      <Badge variant="secondary" className="max-w-52 normal-case">
+        <IconPuzzle aria-hidden="true" />
+        {pluginId}
+      </Badge>
+    );
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        aria-label={pluginId}
+        className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary text-secondary-foreground"
+      >
+        <IconPuzzle className="size-3" aria-hidden="true" />
+      </TooltipTrigger>
+      <TooltipContent
+        align="end"
+        className="max-w-64 whitespace-normal break-all text-left"
+      >
+        {pluginId}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 export function SkillsSettings() {
   const { t } = useTranslation();
   const skillsQuery = useSkills();
+  const installedPluginsQuery = useInstalledPlugins();
   const createSkill = useCreateSkill();
   const updateSkill = useUpdateSkill();
   const deleteSkill = useDeleteSkill();
@@ -177,6 +216,15 @@ export function SkillsSettings() {
   const [recoverTarget, setRecoverTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
   const skills = skillsQuery.data ?? EMPTY_SKILLS;
+  const disabledPluginIds = useMemo(
+    () =>
+      new Set(
+        (installedPluginsQuery.data ?? [])
+          .filter((plugin) => !plugin.enabled)
+          .map((plugin) => plugin.id),
+      ),
+    [installedPluginsQuery.data],
+  );
   const unavailableCount = skills.filter(
     (skill) => skill.availability === "unavailable",
   ).length;
@@ -236,8 +284,30 @@ export function SkillsSettings() {
           ) : undefined
         }
         isItemUnavailable={(item) =>
-          "availability" in item && item.availability === "unavailable"
+          "availability" in item &&
+          item.availability === "unavailable" &&
+          item.source.kind === "local"
         }
+        isItemReadOnly={(item) =>
+          "source" in item && item.source.kind === "plugin"
+        }
+
+        getItemBadge={(item) => {
+          if (!("source" in item) || item.source.kind !== "plugin") {
+            return undefined;
+          }
+          const disabled = disabledPluginIds.has(item.source.pluginId);
+          return (
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
+              <PluginSourceBadge pluginId={item.source.pluginId} />
+              {disabled && (
+                <Badge variant="outline" className="text-muted-foreground">
+                  {t("settings.skills.pluginDisabled")}
+                </Badge>
+              )}
+            </div>
+          );
+        }}
         onActivateUnavailable={(item) => {
           if ("availability" in item) setRecoverTarget(item);
         }}
@@ -309,6 +379,9 @@ function AtomManager({
   extraAction,
   notice,
   isItemUnavailable,
+  isItemReadOnly,
+
+  getItemBadge,
   onActivateUnavailable,
   presentation = "list",
 }: AtomManagerConfig) {
@@ -452,6 +525,9 @@ function AtomManager({
             visibleItems.map((item) => {
               const Icon = icon;
               const unavailable = isItemUnavailable?.(item) === true;
+              const readOnly = isItemReadOnly?.(item) === true;
+
+              const itemBadge = getItemBadge?.(item);
               return (
                 <div
                   key={item.id}
@@ -497,36 +573,41 @@ function AtomManager({
                       </p>
                     </div>
                   </div>
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-muted-foreground"
-                      aria-label={
-                        unavailable
-                          ? t(`${tPrefix}.unavailableAction`)
-                          : t("common.edit")
-                      }
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (unavailable) onActivateUnavailable?.(item);
-                        else setEditing({ item });
-                      }}
-                    >
-                      {unavailable ? <IconAlertTriangle /> : <IconPencil />}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      aria-label={t("common.delete")}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setDeleteTarget(item);
-                      }}
-                    >
-                      <IconTrash />
-                    </Button>
+                  <div className="flex items-start justify-end gap-1">
+                    {itemBadge}
+                    {!readOnly && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-muted-foreground"
+                          aria-label={
+                            unavailable
+                              ? t(`${tPrefix}.unavailableAction`)
+                              : t("common.edit")
+                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (unavailable) onActivateUnavailable?.(item);
+                            else setEditing({ item });
+                          }}
+                        >
+                          {unavailable ? <IconAlertTriangle /> : <IconPencil />}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          aria-label={t("common.delete")}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDeleteTarget(item);
+                          }}
+                        >
+                          <IconTrash />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               );

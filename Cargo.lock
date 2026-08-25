@@ -3200,6 +3200,7 @@ dependencies = [
  "ora-domain",
  "ora-plugin-config",
  "ora-plugin-manifest",
+ "ora-skill-package",
  "ora-utils",
  "pretty_assertions",
  "semver",

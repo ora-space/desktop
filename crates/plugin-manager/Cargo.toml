@@ -14,6 +14,7 @@ workspace = true
 ora-domain = { workspace = true }
 ora-plugin-config = { workspace = true }
 ora-plugin-manifest = { workspace = true }
+ora-skill-package = { workspace = true }
 ora-utils = { workspace = true, features = ["archive", "http", "validation"] }
 semver = { workspace = true }
 tempfile = { workspace = true }

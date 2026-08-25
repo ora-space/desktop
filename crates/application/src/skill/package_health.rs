@@ -1,7 +1,7 @@
 use super::storage::{CreateHandle, JournalOp, SkillStorage, SwapHandle};
 use crate::ApplicationError;
 use ora_contracts::SkillAvailability;
-use ora_domain::{Namespace, SkillId};
+use ora_domain::{Namespace, Skill, SkillId, SkillOrigin};
 use ora_skill_package::Limits;
 use ora_skill_package::manifest::parse_manifest;
 use std::path::Path;
@@ -56,14 +56,24 @@ pub fn has_usable_package<Storage: SkillStorage>(
         .is_some_and(|bytes| manifest_is_usable(&bytes)))
 }
 
-/// Derives catalog availability from the on-disk package. Missing or unreadable files do
-/// not forget the row; the skill stays visible as unavailable until the user deletes it
-/// or restores a package with the same name.
+/// Reads the manifest from either mutable local storage or an immutable plugin package.
+pub(crate) fn read_skill_manifest<Storage: SkillStorage>(
+    storage: &Storage,
+    skill: &Skill,
+) -> Result<Option<Vec<u8>>, ApplicationError> {
+    match &skill.origin {
+        SkillOrigin::Local => storage.read_manifest(&skill.name),
+        SkillOrigin::Plugin { package_root, .. } => storage.read_package_manifest(package_root),
+    }
+    .map_err(ApplicationError::from_skill_storage_error)
+}
+
+/// Derives catalog availability from the package owned by the Skill's source.
 pub(crate) fn package_availability<Storage: SkillStorage>(
     storage: &Storage,
-    name: &str,
+    skill: &Skill,
 ) -> Result<SkillAvailability, ApplicationError> {
-    if has_usable_package(storage, name)? {
+    if read_skill_manifest(storage, skill)?.is_some_and(|bytes| manifest_is_usable(&bytes)) {
         Ok(SkillAvailability::Available)
     } else {
         Ok(SkillAvailability::Unavailable)

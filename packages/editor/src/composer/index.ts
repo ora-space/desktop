@@ -34,6 +34,7 @@ export {
 } from "./composer-markdown-revert";
 export {
   ComposerChipSelection,
+  chipCaretStep,
   pinComposerChipSelection,
   textSelectionForChipDrag,
   chipRangeAt,

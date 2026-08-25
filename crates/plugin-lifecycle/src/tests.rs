@@ -141,6 +141,81 @@ fn opens_with_discovered_plugins_disabled_and_stopped() {
     });
 }
 
+/// Verifies a static Skill plugin can be listed and managed but never activated.
+#[tokio::test]
+async fn manages_static_skill_plugin_without_a_runtime() {
+    let _logging = trace_logging_guard();
+    let temp_dir = TempDir::new().expect("create plugin lifecycle directory");
+    write_skill_plugin_package(temp_dir.path(), "ora.skill-pack");
+    let pool = DatabaseBootstrapper::system()
+        .bootstrap_repository_pool(
+            &DatabaseLocation::path(temp_dir.path().join("ora.sqlite3")),
+            &default_migration_catalog().expect("build migration catalog"),
+        )
+        .expect("bootstrap plugin lifecycle database");
+    let lifecycle = open_without_runtime(temp_dir.path(), SqlitePluginStateRepository::new(pool));
+    let plugin_id = "official/ora.skill-pack".to_string();
+
+    assert_eq!(
+        lifecycle.list_installed_plugins(),
+        ListInstalledPluginsResponse {
+            plugins: vec![expected_skill_plugin(false)],
+        }
+    );
+    assert_eq!(
+        lifecycle
+            .enable_plugin(EnablePluginRequest {
+                plugin_id: plugin_id.clone(),
+            })
+            .await
+            .expect("enable Skill plugin"),
+        EnablePluginResponse {
+            plugin: expected_skill_plugin(true),
+        }
+    );
+    assert!(matches!(
+        lifecycle
+            .activate_plugin(ActivatePluginRequest {
+                plugin_id: plugin_id.clone(),
+            })
+            .await,
+        Err(PluginLifecycleError::NoProcess { plugin_id: found }) if found == plugin_id
+    ));
+    assert_eq!(
+        lifecycle
+            .disable_plugin(DisablePluginRequest {
+                plugin_id: plugin_id.clone(),
+            })
+            .await
+            .expect("disable Skill plugin"),
+        DisablePluginResponse {
+            plugin: expected_skill_plugin(false),
+        }
+    );
+    lifecycle
+        .enable_plugin(EnablePluginRequest {
+            plugin_id: plugin_id.clone(),
+        })
+        .await
+        .expect("re-enable Skill plugin");
+    assert_eq!(
+        lifecycle
+            .uninstall_plugin(UninstallPluginRequest {
+                plugin_id: plugin_id.clone(),
+                data_disposition: PluginDataDisposition::Delete,
+            })
+            .await
+            .expect("uninstall Skill plugin"),
+        UninstallPluginResponse { plugin_id }
+    );
+    assert_eq!(
+        lifecycle.list_installed_plugins(),
+        ListInstalledPluginsResponse {
+            plugins: Vec::new(),
+        }
+    );
+    assert!(!package_version_root(temp_dir.path(), "ora.skill-pack").exists());
+}
 /// Verifies startup joins a discovered package with the user's durable enabled intent.
 #[test]
 fn opens_with_persisted_plugin_eligibility() {
@@ -1242,6 +1317,25 @@ fn expected_plugin(enabled: bool) -> InstalledPlugin {
     )
 }
 
+/// Builds the expected wire contract for the static Skill package fixture.
+fn expected_skill_plugin(enabled: bool) -> InstalledPlugin {
+    InstalledPlugin {
+        id: "official/ora.skill-pack".to_string(),
+        namespace: "official".to_string(),
+        name: "ora.skill-pack".to_string(),
+        display_name: "ora.skill-pack".to_string(),
+        version: "1.0.0".to_string(),
+        description: "Example Skill plugin".to_string(),
+        homepage: None,
+        license: None,
+        contribution: InstalledPluginContribution::Skill,
+        enabled,
+        logo: Some(PACKAGE_LOGO.to_string()),
+        installation_validity: PluginInstallationValidity::Valid,
+        configuration: PluginConfigurationSummary::NotDeclared,
+        runtime: PluginRuntimeStatus::Stopped,
+    }
+}
 /// Builds the expected package contract with an explicit lifecycle state.
 fn expected_plugin_with_runtime(
     enabled: PluginEnabledState,
@@ -1592,6 +1686,30 @@ pub(super) fn package_version_root(data_dir: &std::path::Path, name: &str) -> st
         .join("1.0.0")
 }
 
+/// Writes one static Skill package without a process entrypoint.
+fn write_skill_plugin_package(data_dir: &std::path::Path, name: &str) {
+    let package_root = package_version_root(data_dir, name);
+    fs::create_dir_all(package_root.join("assets/skills/review"))
+        .expect("create Skill plugin assets");
+    fs::write(
+        package_root.join("assets/skills/review/SKILL.md"),
+        "---\nname: review\ndescription: Reviews code\n---\n",
+    )
+    .expect("write bundled Skill manifest");
+    fs::write(package_root.join("logo.svg"), PACKAGE_LOGO).expect("write plugin logo");
+    fs::write(
+        package_root.join("orax.toml"),
+        format!(
+            r#"name = "{name}"
+namespace = "official"
+kind = "skill"
+version = "1.0.0"
+description = "Example Skill plugin"
+"#
+        ),
+    )
+    .expect("write Skill plugin manifest");
+}
 /// Writes one complete agent package into the versioned installed layout.
 pub(super) fn write_plugin_package(data_dir: &std::path::Path, name: &str) {
     let package_root = package_version_root(data_dir, name);

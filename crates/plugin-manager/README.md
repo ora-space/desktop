@@ -10,10 +10,14 @@ orchestrates checksum-verified installs of new plugin releases.
   when that selected package is invalid.
 - Read the selected package's `orax.toml` through `ora-plugin-manifest`, which owns the manifest
   schema, and require the manifest version to match the version directory.
-- Resolve the fixed `main.js` entrypoint at the package root as an existing regular file whose
-  canonical target remains inside its package, then retain its normalized portable relative path.
-- Keep `kind` and its contribution in one value (`PluginContribution::Agent`, `::Workbench`, or
-  `::Webview`), so a validated plugin always carries exactly what its kind promises.
+- Resolve the fixed `main.js` entrypoint for agent and workbench packages as an existing regular
+  file whose canonical target remains inside its package, then retain its portable relative path.
+  Webview and skill packages have no process entrypoint.
+- Keep `kind` and its contribution in one value (`PluginContribution::Agent`, `::Workbench`,
+  `::Webview`, or `::Skill`), so a validated plugin always carries exactly what its kind promises.
+  Skill contributions carry no additional contract fields, but the package must contain one or
+  more `assets/skills/<name>/SKILL.md` trees. Each Skill manifest is parsed and its declared name
+  must match the package directory before it can be cataloged.
 - Compile an optional `assets/config.json` through `ora-plugin-config` without treating the
   package directory as a data root, and record whether the immutable declaration is absent, valid,
   or invalid so lifecycle can refuse to enable a broken package.
@@ -59,8 +63,10 @@ grammar, enum spellings, that `[ui]` is present exactly for `kind = "ui"`, that 
 a slug `id` and a non-empty `title`, and that each `source.kind` carries its own fields. This
 crate adds what depends on the host or on the package on disk:
 
-- `kind = "workbench"` is rejected; only `agent` and `ui` run here.
-- `main.js` must exist at the package root; the manifest has no entrypoint field.
+- Agent and workbench packages must contain `main.js`; webview and skill packages do not.
+- A skill package must contain `assets/skills/` with at least one immediate Skill directory, and
+  every such directory must contain a regular root `SKILL.md`. Optional `scripts/`, `references/`,
+  and nested `assets/` contents are preserved but not interpreted in this release.
 - `display_name` is the plugin `name` for every kind; a ui plugin's user-visible entries are its
   surface titles. One agent-kind package contributes exactly one agent with no identifier of its
   own: the package's plugin id is that agent's identity everywhere in the host.

@@ -17,8 +17,8 @@ import {
   IconCopy,
 } from "@tabler/icons-react";
 import { Button, cn } from "@ora/ui";
-import type { Components } from "react-markdown";
-import ReactMarkdown from "react-markdown";
+import type { Components, UrlTransform } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
 import type { BundledLanguage, ThemedTokenWithVariants } from "shiki";
@@ -334,6 +334,17 @@ const compactRemarkPlugins = [
   remarkComposerFileQuote,
 ];
 
+/**
+ * Preserves assistant link destinations for chat-link while keeping media URLs
+ * sanitized. A rejected media URL is dropped rather than emptied: `src=""` makes
+ * React warn and the browser refetch the page.
+ */
+const assistantUrlTransform: UrlTransform = (url, key, node) => {
+  if (node.tagName === "a" && key === "href") return url;
+  const transformed = defaultUrlTransform(url);
+  return transformed === "" ? undefined : transformed;
+};
+
 /** Stable `pre` override so index updates do not remount CodeBlock state. */
 function ChatMarkdownPreOverride({
   children,
@@ -464,6 +475,7 @@ export function MarkdownMessage({
         remarkPlugins={messageRemarkPlugins}
         rehypePlugins={rehypePlugins}
         components={streaming ? streamingMarkdownComponents : markdownWithLinks}
+        urlTransform={chatLink === null ? undefined : assistantUrlTransform}
       >
         {parseableMarkdown}
       </ReactMarkdown>
@@ -474,6 +486,7 @@ export function MarkdownMessage({
       streaming,
       streamingMarkdownComponents,
       markdownWithLinks,
+      chatLink,
     ],
   );
 

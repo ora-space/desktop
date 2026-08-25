@@ -25,7 +25,7 @@ pub use git_cleanup_job::SqliteGitCleanupJobRepository;
 pub use plugin::SqlitePluginStateRepository;
 pub use project::SqliteProjectRepository;
 pub use session::SqliteSessionRepository;
-pub use skill::SqliteSkillRepository;
+pub use skill::{PluginSkillProjection, SqliteSkillRepository};
 pub use task::SqliteTaskRepository;
 pub use task_workspace::SqliteTaskWorkspaceRepository;
 pub use user_config::SqliteUserConfigRepository;

@@ -170,6 +170,7 @@ function renderSettings(
       namespace: "local",
       name: "openspec-verify-change",
       description: "skill",
+      source: { kind: "local" } as const,
       availability: "available",
     },
     {
@@ -177,6 +178,7 @@ function renderSettings(
       namespace: "local",
       name: "openspec-archive-change",
       description: "skill",
+      source: { kind: "local" } as const,
       availability: "available",
     },
     {
@@ -184,6 +186,7 @@ function renderSettings(
       namespace: "local",
       name: "openspec-explore",
       description: "skill",
+      source: { kind: "local" } as const,
       availability: "available",
     },
     {
@@ -191,6 +194,7 @@ function renderSettings(
       namespace: "local",
       name: "cdase:sfmea_review",
       description: "skill",
+      source: { kind: "local" } as const,
       availability: "available",
     },
     {
@@ -198,6 +202,7 @@ function renderSettings(
       namespace: "local",
       name: "missing-skill",
       description: "skill",
+      source: { kind: "local" } as const,
       availability: "unavailable",
     },
   ];
@@ -922,6 +927,7 @@ describe("WorkflowSettings", () => {
         namespace: "local",
         name: "openspec-verify-change",
         description: "skill",
+        source: { kind: "local" } as const,
         availability: "available",
       },
     ];

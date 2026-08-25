@@ -29,6 +29,7 @@ const SKILL_X: Skill = {
   namespace: "local",
   name: "Refactor",
   description: "Refactoring skill",
+  source: { kind: "local" } as const,
   availability: "available",
 };
 
@@ -186,6 +187,7 @@ describe("useUpdateSkill", () => {
       namespace: "local",
       name: "Renamed",
       description: "new desc",
+      source: { kind: "local" } as const,
       availability: "available",
     });
   });

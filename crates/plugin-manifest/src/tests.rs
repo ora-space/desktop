@@ -128,6 +128,57 @@ fn parses_agent_kind_manifest() {
     assert_eq!(manifest.kind().as_str(), "agent");
 }
 
+/// Verifies the Skill kind is accepted by the marketplace manifest schema.
+#[test]
+fn parses_skill_kind_marketplace_manifest() {
+    let manifest = success(
+        PluginManifest::parse(&MINIMAL_MANIFEST.replacen("workbench", "skill", 1)),
+        "skill-kind marketplace manifest",
+    );
+
+    assert_eq!(manifest.kind(), PluginKind::Skill);
+    assert_eq!(manifest.kind().as_str(), "skill");
+}
+
+/// Verifies a local Skill plugin needs only the installed-manifest core fields.
+#[test]
+fn parses_installed_skill_manifest_without_resolver_or_download_fields() {
+    let installed = "name = \"user.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.2.0\"\ndescription = \"A Skill package\"\n";
+    let manifest = success(
+        PluginManifest::parse_installed(installed),
+        "installed Skill manifest",
+    );
+
+    assert_eq!(manifest.resolver(), 1);
+    assert_eq!(manifest.kind(), PluginKind::Skill);
+    assert_eq!(manifest.release(), None);
+}
+
+/// Verifies Skill plugins cannot smuggle either existing kind-specific section.
+#[test]
+fn skill_kind_rejects_workbench_and_webview_sections() {
+    let workbench = WORKBENCH_MANIFEST.replacen("kind = \"workbench\"", "kind = \"skill\"", 1);
+    let webview = WEBVIEW_MANIFEST.replacen("kind = \"webview\"", "kind = \"skill\"", 1);
+
+    assert!(matches!(
+        PluginManifest::parse_installed(&workbench),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Workbench,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Skill
+            },
+        })
+    ));
+    assert!(matches!(
+        PluginManifest::parse_installed(&webview),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Webview,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Skill
+            },
+        })
+    ));
+}
 /// Verifies an installed package manifest omits download-only fields and still parses.
 #[test]
 fn parses_installed_manifest_without_download_fields() {

@@ -27,6 +27,99 @@ describe("classifyChatCandidate", () => {
     ).toMatchObject({ kind: "files", path: "src/lib.rs" });
   });
 
+  it("routes absolute and slash-terminated directory output to the Files tree", () => {
+    const directoryIndex: SessionArtifactIndex = {
+      edited: [],
+      referenced: [],
+      directories: ["C:/repo/cli", "docs"],
+    };
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "C:\\repo\\cli",
+        index: directoryIndex,
+        hasNavigation: true,
+        cwd: "C:/repo",
+      }),
+    ).toMatchObject({ kind: "directory", path: "cli" });
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "docs/",
+        index: directoryIndex,
+        hasNavigation: true,
+      }),
+    ).toMatchObject({ kind: "directory", path: "docs" });
+  });
+
+  it("prefers explicit file evidence over directory heuristics and conflicts", () => {
+    expect(
+      classifyChatCandidate({
+        source: "href",
+        raw: "scripts/install",
+        index: {
+          edited: [],
+          referenced: ["scripts/install"],
+          directories: ["scripts/install"],
+        },
+        hasNavigation: true,
+      }),
+    ).toMatchObject({ kind: "files", path: "scripts/install" });
+  });
+
+  it("links a directory the index holds both qualified and bare", () => {
+    // One listing reaches the index twice: qualified with its listing root from
+    // the visible output, and bare from `rawOutput`. Both name the same entry.
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "docs",
+        index: {
+          edited: [],
+          referenced: ["C:/repo/main.py", "main.py"],
+          directories: ["C:/repo/docs", "docs"],
+        },
+        hasNavigation: true,
+        cwd: "C:/repo",
+      }),
+    ).toMatchObject({ kind: "directory", path: "docs" });
+  });
+
+  it("keeps only explicit trailing-slash href misses as directories", () => {
+    expect(
+      classifyChatCandidate({
+        source: "href",
+        raw: "scripts/install",
+        index: { edited: [], referenced: [] },
+        hasNavigation: true,
+      }),
+    ).toMatchObject({ kind: "files", path: "scripts/install" });
+    expect(
+      classifyChatCandidate({
+        source: "href",
+        raw: "scripts/generated/",
+        index: { edited: [], referenced: [] },
+        hasNavigation: true,
+      }),
+    ).toMatchObject({ kind: "directory", path: "scripts/generated/" });
+  });
+
+  it("opens an indexed checkout root as the Files root directory", () => {
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "C:/repo",
+        index: {
+          edited: [],
+          referenced: [],
+          directories: ["C:/repo"],
+        },
+        hasNavigation: true,
+        cwd: "C:/repo",
+      }),
+    ).toMatchObject({ kind: "directory", path: "" });
+  });
+
   it("keeps commands and type names as plain code", () => {
     expect(
       classifyChatCandidate({
@@ -297,4 +390,19 @@ describe("classifyChatCandidate", () => {
       }),
     ).toEqual({ kind: "none" });
   });
+
+  it.each(["../outside.txt", "%2e%2e/outside.txt", "src/../../outside.txt"])(
+    "rejects parent traversal before Files or OS navigation: %s",
+    (raw) => {
+      expect(
+        classifyChatCandidate({
+          source: "href",
+          raw,
+          index,
+          hasNavigation: true,
+          cwd: "C:/repo",
+        }),
+      ).toEqual({ kind: "none" });
+    },
+  );
 });

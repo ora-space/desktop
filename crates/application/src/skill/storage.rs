@@ -193,6 +193,22 @@ pub trait SkillStorage {
     /// Returns whether a formal directory exists for the name.
     fn formal_exists(&self, name: &str) -> bool;
 
+    /// Reads `SKILL.md` from an immutable package root outside local formal storage.
+    fn read_package_manifest(
+        &self,
+        package_root: &Path,
+    ) -> Result<Option<Vec<u8>>, SkillStorageError> {
+        let manifest = package_root.join("SKILL.md");
+        if !manifest.is_file() {
+            return Ok(None);
+        }
+        std::fs::read(&manifest)
+            .map(Some)
+            .map_err(|error| SkillStorageError::OperationFailed {
+                message: format!("failed to read {}: {error}", manifest.display()),
+            })
+    }
+
     /// Reads the formal `SKILL.md` bytes, if the directory exists.
     fn read_manifest(&self, name: &str) -> Result<Option<Vec<u8>>, SkillStorageError>;
 

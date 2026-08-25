@@ -207,6 +207,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
             title: plugin.display_name.clone(),
             start_url: webview.start_url.to_string(),
         },
+        PluginContribution::Skill(_) => InstalledPluginContribution::Skill,
     };
 
     let installation_validity = match &plugin.configuration_declaration {

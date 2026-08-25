@@ -254,13 +254,13 @@ fn validate_kind_sections(
     let workbench = match (kind, workbench) {
         (PluginKind::Workbench, Some(workbench)) => Some(PluginWorkbench::try_from(workbench)?),
         (PluginKind::Workbench, None) => None,
-        (PluginKind::Agent | PluginKind::Webview, Some(_)) => {
+        (PluginKind::Agent | PluginKind::Webview | PluginKind::Skill, Some(_)) => {
             return Err(invalid_field(
                 ManifestField::Workbench,
                 InvalidFieldReason::NotAllowedForKind { kind },
             ));
         }
-        (PluginKind::Agent | PluginKind::Webview, None) => None,
+        (PluginKind::Agent | PluginKind::Webview | PluginKind::Skill, None) => None,
     };
     let webview = match (kind, webview) {
         (PluginKind::Webview, Some(webview)) => Some(PluginWebview::try_from(webview)?),
@@ -270,13 +270,13 @@ fn validate_kind_sections(
                 InvalidFieldReason::MissingForKind { kind },
             ));
         }
-        (PluginKind::Agent | PluginKind::Workbench, Some(_)) => {
+        (PluginKind::Agent | PluginKind::Workbench | PluginKind::Skill, Some(_)) => {
             return Err(invalid_field(
                 ManifestField::Webview,
                 InvalidFieldReason::NotAllowedForKind { kind },
             ));
         }
-        (PluginKind::Agent | PluginKind::Workbench, None) => None,
+        (PluginKind::Agent | PluginKind::Workbench | PluginKind::Skill, None) => None,
     };
 
     Ok((workbench, webview))

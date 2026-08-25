@@ -35,6 +35,9 @@ pub enum InstallError {
     /// The in-archive `orax.toml` could not be parsed or validated.
     #[error("imported plugin manifest is invalid: {0}")]
     InvalidManifest(#[from] ora_plugin_manifest::ManifestError),
+    /// The extracted package does not satisfy the host-side requirements for its kind.
+    #[error("plugin package is invalid at `{field_path}`: {message}")]
+    InvalidPackage { field_path: String, message: String },
     /// The imported archive digest does not match the digest the in-archive manifest declares.
     #[error("imported archive digest {actual} does not match the declared sha256 {expected}")]
     ChecksumMismatch { expected: String, actual: String },
@@ -60,6 +63,15 @@ pub enum InstallError {
 impl From<ora_utils::http::DownloadError> for InstallError {
     fn from(source: ora_utils::http::DownloadError) -> Self {
         Self::Download(Box::new(source))
+    }
+}
+
+impl InstallError {
+    fn invalid_package(source: crate::validation::ManifestValidationError) -> Self {
+        Self::InvalidPackage {
+            field_path: source.field_path().to_owned(),
+            message: source.to_string(),
+        }
     }
 }
 
@@ -104,17 +116,42 @@ where
         data_dir: &Path,
     ) -> Result<PathBuf, InstallError> {
         let archive_path = self.download_package(manifest, source, data_dir).await?;
-        let package_dir = installed_root(data_dir)
-            .join(manifest.namespace().as_str())
-            .join(manifest.name().as_str())
-            .join(manifest.version().to_string());
+        let namespace = manifest.namespace();
+        let name = manifest.name();
+        let version = manifest.version().to_string();
+        let package_parent = installed_root(data_dir)
+            .join(namespace.as_str())
+            .join(name.as_str());
+        let package_dir = package_parent.join(&version);
+        if package_dir.exists() {
+            return Err(InstallError::AlreadyInstalled {
+                path: package_dir,
+                namespace: namespace.as_str().to_owned(),
+                name: name.as_str().to_owned(),
+                version,
+            });
+        }
+        std::fs::create_dir_all(&package_parent).map_err(|source| InstallError::Io {
+            path: package_parent.clone(),
+            source,
+        })?;
+        let staging = tempfile::tempdir_in(&package_parent).map_err(|source| InstallError::Io {
+            path: package_parent,
+            source,
+        })?;
         extract_archive(
             ArchiveFormat::Zip,
             &archive_path,
-            &package_dir,
+            staging.path(),
             &ExtractLimits::default(),
         )
         .map_err(|source| InstallError::Extract {
+            path: staging.path().to_path_buf(),
+            source,
+        })?;
+        crate::validation::validate(staging.path(), manifest, None)
+            .map_err(InstallError::invalid_package)?;
+        std::fs::rename(staging.path(), &package_dir).map_err(|source| InstallError::Io {
             path: package_dir.clone(),
             source,
         })?;
@@ -196,6 +233,8 @@ where
                 version,
             });
         }
+        crate::validation::validate(staging.path(), &manifest, None)
+            .map_err(InstallError::invalid_package)?;
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent).map_err(|source| InstallError::Io {
                 path: parent.to_path_buf(),
@@ -291,10 +330,20 @@ mod tests {
         writer.finish().unwrap();
     }
 
-    /// Builds an orax manifest whose sha256 matches `digest`.
+    /// Builds an agent orax manifest whose sha256 matches `digest`.
     fn manifest_with_digest(name: &str, version: &str, digest: [u8; 32]) -> String {
+        manifest_with_kind_digest(name, version, "agent", digest)
+    }
+
+    /// Builds a marketplace manifest for `kind` whose sha256 matches `digest`.
+    fn manifest_with_kind_digest(
+        name: &str,
+        version: &str,
+        kind: &str,
+        digest: [u8; 32],
+    ) -> String {
         format!(
-            "resolver = 1\nname = \"{name}\"\nnamespace = \"official\"\nkind = \"workbench\"\nversion = \"{version}\"\ndescription = \"A test plugin\"\nurl = \"https://example.com/{name}.orax\"\nsha256 = \"{}\"\n",
+            "resolver = 1\nname = \"{name}\"\nnamespace = \"official\"\nkind = \"{kind}\"\nversion = \"{version}\"\ndescription = \"A test plugin\"\nurl = \"https://example.com/{name}.orax\"\nsha256 = \"{}\"\n",
             hex(digest)
         )
     }
@@ -351,6 +400,43 @@ mod tests {
         );
     }
 
+    /// A marketplace Skill release is validated and committed with its complete static tree.
+    #[test]
+    fn installs_marketplace_skill_release_with_required_assets() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("skill-pack.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"name = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Skill plugin test\"\n".as_slice(),
+                ),
+                (
+                    "assets/skills/review/SKILL.md",
+                    b"---\nname: review\ndescription: Reviews code\n---\n".as_slice(),
+                ),
+            ],
+        );
+        let manifest = PluginManifest::parse(&manifest_with_kind_digest(
+            "ora.skill-pack",
+            "1.0.0",
+            "skill",
+            sha256_file(&release_path),
+        ))
+        .unwrap();
+
+        let package_dir = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            DownloadSource::Local(release_path),
+            temp_dir.path(),
+        ))
+        .expect("install marketplace Skill release");
+
+        assert!(package_dir.join("assets/skills/review/SKILL.md").is_file());
+        assert!(!package_dir.join("main.js").exists());
+    }
+
     /// A mismatched digest aborts before any package lands in the installed tree.
     #[test]
     fn rejects_checksum_mismatch_and_installs_nothing() {
@@ -383,6 +469,93 @@ mod tests {
                 .join("official")
                 .join("weather")
                 .join("1.0.0")
+                .exists()
+        );
+    }
+    /// Imports a Skill archive that contains one or more required static Skill packages.
+    #[test]
+    fn imports_local_skill_archive_with_required_skill_assets() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("skill-pack.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    &b"name = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"0.1.1\"\ndescription = \"Skill plugin test\"\n"[..],
+                ),
+                (
+                    "assets/skills/review/SKILL.md",
+                    b"---\nname: review\ndescription: Reviews code\n---\n".as_slice(),
+                ),
+                (
+                    "assets/skills/testing/SKILL.md",
+                    b"---\nname: testing\ndescription: Tests code\n---\n".as_slice(),
+                ),
+                (
+                    "assets/skills/review/scripts/check.js",
+                    b"export {};\n".as_slice(),
+                ),
+            ],
+        );
+
+        let installer = Installer::new(LocalFileDownloader);
+        let package = installer
+            .install_local(&release_path, temp_dir.path())
+            .expect("import static Skill archive");
+
+        assert_eq!(package.id, "official/ora.skill-pack");
+        assert_eq!(
+            package.package_dir,
+            temp_dir
+                .path()
+                .join("plugins")
+                .join("installed")
+                .join("official")
+                .join("ora.skill-pack")
+                .join("0.1.1")
+        );
+        assert!(package.package_dir.join("orax.toml").is_file());
+        assert!(
+            package
+                .package_dir
+                .join("assets/skills/review/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            package
+                .package_dir
+                .join("assets/skills/testing/SKILL.md")
+                .is_file()
+        );
+        assert!(!package.package_dir.join("main.js").exists());
+    }
+
+    /// A Skill archive without `assets/skills/<name>/SKILL.md` is never committed.
+    #[test]
+    fn rejects_local_skill_archive_without_skill_assets() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("incomplete-skill.orax");
+        write_orax_zip(
+            &release_path,
+            &[(
+                "orax.toml",
+                &b"name = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"0.1.1\"\ndescription = \"Skill plugin test\"\n"[..],
+            )],
+        );
+
+        let error = Installer::new(LocalFileDownloader)
+            .install_local(&release_path, temp_dir.path())
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InstallError::InvalidPackage { ref field_path, .. } if field_path == "skill"
+        ));
+        assert!(
+            !temp_dir
+                .path()
+                .join("plugins/installed/official/ora.skill-pack/0.1.1")
                 .exists()
         );
     }

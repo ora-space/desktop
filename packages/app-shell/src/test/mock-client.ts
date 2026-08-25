@@ -587,6 +587,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           namespace: "local",
           name: req.name,
           description: req.description,
+          source: { kind: "local" } as const,
           availability: "available",
         };
         state.skills.push(skill);
@@ -601,6 +602,7 @@ export function createMockClient(state: MockClientState): ContractsClient {
           namespace: existing.namespace,
           name: req.name,
           description: req.description,
+          source: { kind: "local" } as const,
           availability: existing.availability,
         };
         state.skills[idx] = updated;

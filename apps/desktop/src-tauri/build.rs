@@ -21,8 +21,16 @@ fn desktop_commands() -> Vec<String> {
 }
 
 /// Ensures every registered desktop command can be invoked by the trusted main Webview.
+///
+/// Parses `commands.allow` from TOML rather than scanning quoted lines so permission metadata
+/// keys cannot be mistaken for grants. The path is rooted at `CARGO_MANIFEST_DIR` so the check
+/// stays correct when cargo invokes the build script from another working directory.
 fn validate_main_command_permissions(commands: &[String]) {
-    let permission_path = Path::new("permissions").join("main-commands.toml");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .expect("CARGO_MANIFEST_DIR is always set when cargo runs a build script");
+    let permission_path = Path::new(&manifest_dir)
+        .join("permissions")
+        .join("main-commands.toml");
     let permission_source = fs::read_to_string(&permission_path).unwrap_or_else(|error| {
         panic!(
             "failed to read desktop command permissions from {}: {error}",
@@ -67,6 +75,11 @@ fn main() {
         !commands.is_empty(),
         "src/app_commands.rs declares no commands; the ACL manifest would allow nothing"
     );
+    // The ACL invariant (README "Command ACL"): every command in the registry must be granted to
+    // the main Webview in `permissions/main-commands.toml`. A command registered here but missing
+    // from that file is callable by nobody, so the main Webview invoke is denied at runtime and
+    // surfaces to the user as "tauri_invoke_failure". Enforce it at build time so the two files
+    // cannot drift.
     validate_main_command_permissions(&commands);
     // `AppManifest::commands` keeps a `'static` slice; leaking the build-time list is the
     // cheapest way to hand it one, and a build script's memory ends with the process anyway.

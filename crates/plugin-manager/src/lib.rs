@@ -5,6 +5,7 @@ mod discovery;
 mod install;
 mod issue;
 mod logo;
+mod skill;
 mod validation;
 mod webview;
 mod workbench;
@@ -17,6 +18,9 @@ mod tests;
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
 pub use install::{InstallError, InstalledPackage, Installer};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
+pub use skill::{
+    InstalledSkill, InstalledSkillDescriptor, SKILL_ASSET_DIRECTORY, SKILL_MANIFEST_FILE_NAME,
+};
 pub use validation::{
     INSTALLED_ENTRYPOINT, InstalledPlugin, InstalledPluginAgent,
     PluginConfigurationDeclarationValidity, PluginContribution,

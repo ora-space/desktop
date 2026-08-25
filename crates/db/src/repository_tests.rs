@@ -1,20 +1,22 @@
 use ora_application::{
-    ProjectRepository, SessionRepository, WorkflowRepository, WorkflowRunCreateOutcome,
-    WorkflowRunRepository,
+    ProjectRepository, SessionRepository, SkillRepository, WorkflowRepository,
+    WorkflowRunCreateOutcome, WorkflowRunRepository,
 };
 use ora_domain::{
-    AgentRef, AuditFields, Namespace, Project, ProjectId, Session, SessionId, SessionStatus,
-    Workflow, WorkflowId, WorkflowRun, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot,
-    WorkflowSnapshotId, Workspace, WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
+    AgentRef, AuditFields, Namespace, PluginId, Project, ProjectId, Session, SessionId,
+    SessionStatus, SkillOrigin, Workflow, WorkflowId, WorkflowRun, WorkflowRunId,
+    WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Workspace, WorkspaceKind,
+    WorkspaceLifecycle, WorkspaceLocation,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use crate::{
-    DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqliteProjectRepository,
-    SqliteSessionRepository, SqliteWorkflowRepository, SqliteWorkflowRunRepository,
-    SqliteWorkspaceRepository, TimestampSource, default_migration_catalog,
+    DatabaseBootstrapper, DatabaseLocation, PluginSkillProjection, RepositoryPool,
+    SqliteProjectRepository, SqliteSessionRepository, SqliteSkillRepository,
+    SqliteWorkflowRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
+    TimestampSource, default_migration_catalog,
 };
 
 /// Supplies deterministic timestamps for repository integration fixtures.
@@ -28,6 +30,42 @@ impl TimestampSource for FixedTimestampSource {
     }
 }
 
+/// Verifies plugin Skills use the existing Effect source table as their origin and package locator.
+#[test]
+fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let repository = SqliteSkillRepository::new(pool);
+    let plugin_id = PluginId::new("official", "review-pack").unwrap();
+    let package_root = temp_dir.path().join("plugins/review-pack/review");
+    repository
+        .replace_plugin_skills(
+            &plugin_id,
+            "1.2.3",
+            &[PluginSkillProjection {
+                name: "review".to_string(),
+                description: "Reviews changes".to_string(),
+                package_root: package_root.clone(),
+                skill_md_digest: format!("sha256:{}", "a".repeat(64)),
+            }],
+            10,
+        )
+        .unwrap();
+
+    let skills = repository.list_skills().unwrap();
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0].namespace.as_ref(), "official/review-pack");
+    assert_eq!(skills[0].name, "review");
+    assert_eq!(
+        skills[0].origin,
+        SkillOrigin::Plugin {
+            plugin_id: plugin_id.clone(),
+            package_root,
+        }
+    );
+
+    repository.remove_plugin_skills(&plugin_id, 20).unwrap();
+    assert!(repository.list_skills().unwrap().is_empty());
+}
 /// Verifies project creation materializes the shared main workspace used by ordinary sessions.
 #[test]
 fn project_creation_creates_main_workspace() {

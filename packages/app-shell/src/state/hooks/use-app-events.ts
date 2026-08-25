@@ -35,6 +35,7 @@ export function useAppEvents(client: ContractsClient) {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.agentRuntimeStatus,
       });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.skills });
     };
     const scheduleReconnect = () => {
       if (disposed) return;

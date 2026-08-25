@@ -12,7 +12,11 @@ export function filterDiscoveredPlugins(
       plugin.displayName,
       plugin.id,
       plugin.description,
-      ...(plugin.kind === "agent" ? [plugin.agentDisplayName] : [plugin.title]),
+      ...(plugin.kind === "agent"
+        ? [plugin.agentDisplayName]
+        : plugin.kind === "skill"
+          ? []
+          : [plugin.title]),
     ].some((value) => value.toLowerCase().includes(needle)),
   );
 }

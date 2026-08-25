@@ -44,6 +44,69 @@ fn discovers_complete_manifest() {
     );
 }
 
+/// Verifies a Skill plugin is static but must contain at least one complete Skill package.
+#[test]
+fn discovers_skill_plugin_with_required_skill_assets() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut manifest = agent_manifest();
+    manifest["name"] = Value::from("ora.skill-pack");
+    manifest["kind"] = Value::from("skill");
+    let package_root = write_manifest(temp_dir.path(), "ora.skill-pack", manifest);
+    fs::remove_file(package_root.join("main.js")).unwrap();
+    for name in ["review", "testing"] {
+        let skill_root = package_root.join("assets/skills").join(name);
+        fs::create_dir_all(&skill_root).unwrap();
+        fs::write(
+            skill_root.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Example\n---\n"),
+        )
+        .unwrap();
+    }
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    assert_eq!(manager.installed_plugins().len(), 1);
+    let PluginContribution::Skill(descriptor) = &manager.installed_plugins()[0].contributes else {
+        panic!("expected Skill contribution");
+    };
+    assert_eq!(
+        descriptor
+            .skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["review", "testing"]
+    );
+}
+
+/// Verifies missing, empty, or incomplete `assets/skills` trees are not discovered.
+#[test]
+fn rejects_skill_plugins_without_complete_skill_assets() {
+    let mut managers = Vec::new();
+    for case in ["missing", "empty", "incomplete"] {
+        let temp_dir = TempDir::new().unwrap();
+        let mut manifest = agent_manifest();
+        manifest["name"] = Value::from(format!("ora.skill-{case}"));
+        manifest["kind"] = Value::from("skill");
+        let package_root = write_manifest(temp_dir.path(), case, manifest);
+        fs::remove_file(package_root.join("main.js")).unwrap();
+        if case != "missing" {
+            fs::create_dir_all(package_root.join("assets/skills")).unwrap();
+        }
+        if case == "incomplete" {
+            fs::create_dir_all(package_root.join("assets/skills/review")).unwrap();
+        }
+
+        let manager = PluginManager::discover(temp_dir.path());
+        managers.push((temp_dir, manager));
+    }
+
+    for (_, manager) in managers {
+        assert_eq!(manager.installed_plugins(), &[]);
+        assert_eq!(manager.discovery_issues()[0].field_path(), Some("skill"));
+    }
+}
 /// Verifies a missing installed root represents an empty installation.
 #[test]
 fn missing_installed_root_is_empty() {

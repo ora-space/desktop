@@ -46,6 +46,9 @@ pub(crate) fn reconcile_skill_storage(
     let visible = repository.list_skills().map_err(operation_failed)?;
     let mut claimed = BTreeSet::new();
     for skill in visible {
+        if skill.is_read_only() {
+            continue;
+        }
         let has_directory = storage.formal_exists(&skill.name);
         let manifest = storage
             .read_manifest(&skill.name)

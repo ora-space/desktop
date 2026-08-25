@@ -42,7 +42,7 @@ pub use session::{HistoryState, Session, SessionStatus};
 pub use session_title::{MAX_SESSION_TITLE_CHARS, SessionTitle, SessionTitleError};
 pub use skill::{
     BACKUP_DIR_NAME, JOURNAL_DIR_NAME, STAGING_DIR_NAME, Skill, SkillDescriptionError,
-    SkillNameError, validate_skill_description, validate_skill_name,
+    SkillNameError, SkillOrigin, validate_skill_description, validate_skill_name,
 };
 pub use task::Task;
 pub use workflow::{

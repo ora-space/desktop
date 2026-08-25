@@ -44,6 +44,7 @@ function renderSettings(
         namespace: "local",
         name: "review-skill",
         description: "Reviews changes",
+        source: { kind: "local" } as const,
         availability: "available",
       },
     ];
@@ -115,6 +116,85 @@ describe("atom settings content", () => {
     );
   });
 
+  it("labels disabled plugin Skills with their source and status and hides mutation actions", async () => {
+    renderSettings("skill", (client) => {
+      client.skill.list = async () => ({
+        skills: [
+          {
+            id: "plugin:official/review-pack:review",
+            namespace: "official/review-pack",
+            name: "review",
+            description: "Reviews changes",
+            source: { kind: "plugin", pluginId: "official/review-pack" },
+            availability: "available",
+          },
+        ],
+      });
+      client.plugin.listInstalled = async () => ({
+        plugins: [
+          {
+            id: "official/review-pack",
+            namespace: "official",
+            name: "review-pack",
+            description: "Review skills",
+            homepage: null,
+            license: null,
+            displayName: "Review pack",
+            version: "1.0.0",
+            kind: "skill",
+            enabled: false,
+            logo: null,
+            runtime: "stopped",
+          },
+        ],
+      });
+    });
+
+    const item = await screen.findByRole("listitem");
+    const source = within(item).getByText("official/review-pack");
+    expect(source).toBeVisible();
+    expect(
+      source.closest('[data-slot="badge"]')?.querySelector("svg"),
+    ).not.toBeNull();
+    expect(await within(item).findByText("已禁用")).toBeVisible();
+    expect(within(item).queryByText(/来自/)).toBeNull();
+    expect(within(item).queryByRole("button", { name: "编辑" })).toBeNull();
+    expect(within(item).queryByRole("button", { name: "删除" })).toBeNull();
+  });
+  it("collapses long plugin sources to an icon and reveals the full id on hover", async () => {
+    const user = userEvent.setup();
+    const pluginId = "official/review-pack-with-a-name-that-does-not-fit";
+    renderSettings("skill", (client) => {
+      client.skill.list = async () => ({
+        skills: [
+          {
+            id: "plugin:" + pluginId + ":review",
+            namespace: pluginId,
+            name: "review",
+            description: "Reviews changes",
+            source: { kind: "plugin", pluginId },
+            availability: "available",
+          },
+        ],
+      });
+      client.plugin.listInstalled = async () => ({ plugins: [] });
+    });
+
+    const item = await screen.findByRole("listitem");
+    const sourceIcon = within(item).getByRole("button", { name: pluginId });
+    expect(within(item).queryByText(pluginId)).toBeNull();
+
+    await user.hover(sourceIcon);
+    const tooltip = await screen.findByText(pluginId);
+    expect(tooltip).toBeVisible();
+    expect(tooltip).toHaveClass(
+      "max-w-64",
+      "whitespace-normal",
+      "break-all",
+      "text-left",
+    );
+  });
+
   it("loads and clears editable Skill content", async () => {
     const user = userEvent.setup();
     const update = vi.fn(async () => ({
@@ -123,6 +203,7 @@ describe("atom settings content", () => {
         namespace: "local",
         name: "review-skill",
         description: "Reviews changes",
+        source: { kind: "local" } as const,
         availability: "available" as const,
       },
     }));
@@ -202,6 +283,7 @@ describe("atom settings content", () => {
             namespace: "local",
             name: request.name,
             description: request.description,
+            source: { kind: "local" } as const,
             availability: "available" as const,
           },
         }),
@@ -277,6 +359,7 @@ describe("atom settings content", () => {
         name: "review-skill",
         namespace: "local",
         description: "Reviews changes",
+        source: { kind: "local" } as const,
         availability: "unavailable",
       },
     ];

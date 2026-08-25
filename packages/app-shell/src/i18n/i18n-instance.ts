@@ -698,6 +698,7 @@ export const translationResources = {
     "settings.skills.deleteDescription":
       "该技能将从可用命令中移除，此操作无法撤销。",
     "settings.skills.unavailable": "不可用",
+    "settings.skills.pluginDisabled": "已禁用",
     "settings.skills.unavailableTitle": "“{{name}}”的技能包已丢失",
     "settings.skills.unavailableDescription":
       "这个技能还在列表里，但本地文件找不到了。请删除，或重新上传同名技能包。",
@@ -1211,6 +1212,7 @@ export const translationResources = {
     "chat.add": "添加",
     "chat.attachments": "附件",
     "chat.removeAttachment": "移除附件 {{fileName}}",
+    "chat.removeFileReference": "移除文件引用 {{name}}",
     "chat.agentMode": "Agent",
     "chat.chatMode": "问答",
     "chat.local": "本地",
@@ -1387,6 +1389,7 @@ export const translationResources = {
     "chat.turnDiff.viewerStats": "增加 {{additions}} 行，删除 {{deletions}} 行",
     "chat.fileLink.previewInFiles": "在文件中预览",
     "chat.fileLink.aria": "打开文件 {{path}}",
+    "chat.fileLink.pathAria": "打开路径 {{path}}",
     "chat.unsupportedContent": "暂不支持显示 {{type}} 内容",
     "chat.content.generatedImage": "Agent 生成的图片",
     "chat.content.previewImage": "预览图片 {{name}}",
@@ -2220,6 +2223,7 @@ export const translationResources = {
     "settings.skills.deleteDescription":
       "This skill will be removed from available commands. This cannot be undone.",
     "settings.skills.unavailable": "Unavailable",
+    "settings.skills.pluginDisabled": "Disabled",
     "settings.skills.unavailableTitle":
       "The “{{name}}” skill package is missing",
     "settings.skills.unavailableDescription":
@@ -2803,6 +2807,7 @@ export const translationResources = {
     "chat.add": "Add",
     "chat.attachments": "Attachments",
     "chat.removeAttachment": "Remove attachment {{fileName}}",
+    "chat.removeFileReference": "Remove file reference {{name}}",
     "chat.agentMode": "Agent",
     "chat.chatMode": "Chat",
     "chat.local": "Local",
@@ -3009,6 +3014,7 @@ export const translationResources = {
       "{{additions}} lines added, {{deletions}} removed",
     "chat.fileLink.previewInFiles": "Preview in Files",
     "chat.fileLink.aria": "Open file {{path}}",
+    "chat.fileLink.pathAria": "Open path {{path}}",
     "chat.unsupportedContent": "Unsupported {{type}} content",
     "chat.content.generatedImage": "Agent-generated image",
     "chat.content.previewImage": "Preview image {{name}}",

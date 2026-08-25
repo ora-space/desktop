@@ -79,7 +79,9 @@ fn discovers_workbench_package_with_and_without_methods() {
                 descriptor.asset_root.clone(),
                 descriptor.declared_methods.clone(),
             ),
-            PluginContribution::Agent(_) | PluginContribution::Webview(_) => {
+            PluginContribution::Agent(_)
+            | PluginContribution::Webview(_)
+            | PluginContribution::Skill(_) => {
                 panic!("expected workbench contributions")
             }
         })
@@ -145,7 +147,9 @@ allowed_origins = ["https://www.example.com", "https://example.com"]
             .iter()
             .map(|origin| origin.as_str().to_string())
             .collect::<Vec<_>>(),
-        PluginContribution::Agent(_) | PluginContribution::Workbench(_) => {
+        PluginContribution::Agent(_)
+        | PluginContribution::Workbench(_)
+        | PluginContribution::Skill(_) => {
             panic!("expected a webview contribution")
         }
     };

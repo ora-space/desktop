@@ -1,10 +1,11 @@
-import { Extension } from "@tiptap/core";
+import { Extension, type Editor } from "@tiptap/core";
 import type { Node as PmNode } from "@tiptap/pm/model";
 import {
   NodeSelection,
   Plugin,
   PluginKey,
   TextSelection,
+  type EditorState,
 } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 
@@ -51,6 +52,40 @@ export function chipRangeAt(
   return { start: pos, end: pos + node.nodeSize };
 }
 
+/**
+ * Caret target for an arrow press that sits against a chip atom, or null when
+ * the default handling applies.
+ *
+ * ProseMirror turns ArrowLeft/ArrowRight next to a selectable inline atom into
+ * a NodeSelection. A NodeSelection has no text caret, so the press reads as
+ * "the caret vanished" instead of "the chip is selected", and a second press is
+ * needed to get past a chip. Stepping the caret across the whole atom keeps a
+ * caret on screen and makes one press cross one chip. Shift-extension is left
+ * to ProseMirror: it already builds a TextSelection over the atom, which the
+ * `data-chip-selected` painting picks up.
+ */
+export function chipCaretStep(
+  state: Pick<EditorState, "doc" | "selection">,
+  direction: 1 | -1,
+): TextSelection | null {
+  const { selection, doc } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const $head = selection.$head;
+  // A caret inside a text node has text on that side, never an atom.
+  if ($head.textOffset !== 0) return null;
+  const node = direction < 0 ? $head.nodeBefore : $head.nodeAfter;
+  if (node === null || !CHIP_NODE_TYPES.has(node.type.name)) return null;
+  return TextSelection.create(doc, $head.pos + node.nodeSize * direction);
+}
+
+/** Applies `chipCaretStep`, reporting whether the arrow press was consumed. */
+function moveCaretPastChip(editor: Editor, direction: 1 | -1): boolean {
+  const next = chipCaretStep(editor.state, direction);
+  if (next === null) return false;
+  editor.view.dispatch(editor.state.tr.setSelection(next).scrollIntoView());
+  return true;
+}
+
 /** Selects exactly one chip atom so ctrl/double-clicks cannot span siblings. */
 export function pinComposerChipSelection(
   view: Pick<EditorView, "dispatch" | "state">,
@@ -72,6 +107,13 @@ export function pinComposerChipSelection(
  */
 export const ComposerChipSelection = Extension.create({
   name: "composerChipSelection",
+
+  addKeyboardShortcuts() {
+    return {
+      ArrowRight: ({ editor }) => moveCaretPastChip(editor, 1),
+      ArrowLeft: ({ editor }) => moveCaretPastChip(editor, -1),
+    };
+  },
 
   addProseMirrorPlugins() {
     /** Document position where the current button-1 drag started. */

@@ -52,6 +52,7 @@ export type Skill = {
   namespace: string;
   name: string;
   description: string;
+  source: SkillSource;
   availability: SkillAvailability;
 };
 
@@ -69,7 +70,16 @@ export type SkillDetails = {
   name: string;
   description: string;
   content: string;
+  source: SkillSource;
   availability: SkillAvailability;
+};
+
+/**
+ * Identifies whether a Skill is user-owned or supplied by an immutable plugin package.
+ */
+export type SkillSource = { "kind": "local" } | {
+  "kind": "plugin";
+  pluginId: string;
 };
 
 /**

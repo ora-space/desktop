@@ -1,6 +1,9 @@
 import { createElement, type ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { RemoteContractError } from "@ora/contracts";
+import {
+  RemoteContractError,
+  type ListWorkspaceDirectoryResponse,
+} from "@ora/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -56,8 +59,10 @@ describe("WorkspaceFilesView missing files", () => {
     renderMissingFile();
 
     expect(
-      await screen.findByText(/所选路径不存在|The selected path was not found/),
-    ).toBeInTheDocument();
+      await screen.findAllByText(
+        /所选路径不存在|The selected path was not found/,
+      ),
+    ).not.toHaveLength(0);
     expect(screen.queryByText(/Remote Ora request failed/)).toBeNull();
   });
 });
@@ -187,9 +192,273 @@ describe("WorkspaceFilesView file requests", () => {
       />,
     );
     expect(
+      await screen.findAllByText(
+        /所选路径不存在|The selected path was not found/,
+      ),
+    ).not.toHaveLength(0);
+    expect(document.body.textContent).not.toMatch(/fn\s*main/);
+  });
+});
+
+describe("WorkspaceFilesView directory requests", () => {
+  it("expands and selects an absolute directory without reading it as a file", async () => {
+    const client = createMockClient(createMockClientState());
+    const readWorkspaceFile = vi.fn(client.fileSystem.readWorkspaceFile);
+    client.fileSystem.readWorkspaceFile = readWorkspaceFile;
+    client.fileSystem.listWorkspaceDirectory = vi.fn(async (request) => ({
+      path: request.path ?? "",
+      entries:
+        request.path === undefined || request.path === ""
+          ? [
+              {
+                name: "docs",
+                path: "docs",
+                kind: "directory" as const,
+                isSymbolicLink: false,
+              },
+            ]
+          : [],
+    }));
+    client.task.getWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContractsClientContext.Provider value={client}>
+          <AppI18nProvider>
+            <WorkspaceFilesView
+              projectId="project-1"
+              taskId="task-1"
+              hideHeader
+              directoryRequest={{ path: "C:/repo/docs", requestId: 1 }}
+            />
+          </AppI18nProvider>
+        </ContractsClientContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const directory = await screen.findByRole("button", { name: /docs/ });
+    expect(directory).toHaveClass("border-primary");
+    expect(readWorkspaceFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceFilesView artifact requests", () => {
+  it("resolves unknown entries through the parent directory before navigating", async () => {
+    const client = createMockClient(createMockClientState());
+    const readWorkspaceFile = vi.fn(async (request: { path: string }) => ({
+      path: request.path,
+      content: "#!/bin/sh\n",
+      version: "test",
+      sizeBytes: 10,
+    }));
+    client.fileSystem.readWorkspaceFile = readWorkspaceFile;
+    client.fileSystem.listWorkspaceDirectory = vi.fn(async (request) => ({
+      path: request.path ?? "",
+      entries: [
+        {
+          name: "install",
+          path: "install",
+          kind: "file" as const,
+          isSymbolicLink: false,
+        },
+        {
+          name: "cli",
+          path: "cli",
+          kind: "directory" as const,
+          isSymbolicLink: false,
+        },
+      ],
+    }));
+    client.task.getWorkspace = async () => ({
+      workspace: { rootPath: "C:/repo", branchName: "task/task-1" },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ContractsClientContext.Provider value={client}>
+          <AppI18nProvider>
+            <WorkspaceFilesView
+              projectId="project-1"
+              taskId="task-1"
+              hideHeader
+              artifactRequest={{ path: "install", requestId: 1 }}
+            />
+          </AppI18nProvider>
+        </ContractsClientContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(readWorkspaceFile).toHaveBeenCalledWith(
+        { taskId: "task-1", path: "install" },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ContractsClientContext.Provider value={client}>
+          <AppI18nProvider>
+            <WorkspaceFilesView
+              projectId="project-1"
+              taskId="task-1"
+              hideHeader
+              artifactRequest={{ path: "cli", requestId: 2 }}
+            />
+          </AppI18nProvider>
+        </ContractsClientContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const directory = await screen.findByRole("button", { name: /cli/ });
+    await waitFor(() => {
+      expect(directory).toHaveAttribute("aria-current", "page");
+    });
+    expect(readWorkspaceFile).not.toHaveBeenCalledWith(
+      { taskId: "task-1", path: "cli" },
+      expect.anything(),
+    );
+  });
+
+  it("does not let an older artifact lookup overwrite a newer file request", async () => {
+    const client = createMockClient(createMockClientState());
+    let resolveDirectory!: (value: {
+      path: string;
+      entries: Array<{
+        name: string;
+        path: string;
+        kind: "directory";
+        isSymbolicLink: boolean;
+      }>;
+    }) => void;
+    client.fileSystem.listWorkspaceDirectory = vi.fn(
+      () =>
+        new Promise<ListWorkspaceDirectoryResponse>((resolve) => {
+          resolveDirectory = resolve;
+        }),
+    );
+    client.fileSystem.readWorkspaceFile = vi.fn(async (request) => ({
+      path: request.path,
+      content: "readme",
+      version: "test",
+      sizeBytes: 6,
+    }));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const renderView = (requests: {
+      artifactRequest?: { path: string; requestId: number };
+      fileRequest?: { path: string; requestId: number };
+    }) => (
+      <QueryClientProvider client={queryClient}>
+        <ContractsClientContext.Provider value={client}>
+          <AppI18nProvider>
+            <WorkspaceFilesView
+              projectId="project-1"
+              taskId="task-1"
+              hideHeader
+              {...requests}
+            />
+          </AppI18nProvider>
+        </ContractsClientContext.Provider>
+      </QueryClientProvider>
+    );
+    const view = render(
+      renderView({ artifactRequest: { path: "cli", requestId: 1 } }),
+    );
+    view.rerender(
+      renderView({ fileRequest: { path: "README.md", requestId: 1 } }),
+    );
+    await act(async () => {
+      resolveDirectory({
+        path: "",
+        entries: [
+          {
+            name: "cli",
+            path: "cli",
+            kind: "directory",
+            isSymbolicLink: false,
+          },
+        ],
+      });
+    });
+
+    expect(await screen.findByText("README.md")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "cli", current: "page" }),
+    ).toBeNull();
+  });
+
+  it("shows a localized missing message when the parent has no matching entry", async () => {
+    const client = createMockClient(createMockClientState());
+    client.fileSystem.listWorkspaceDirectory = vi.fn(async () => ({
+      path: "",
+      entries: [],
+    }));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContractsClientContext.Provider value={client}>
+          <AppI18nProvider>
+            <WorkspaceFilesView
+              projectId="project-1"
+              taskId="task-1"
+              hideHeader
+              artifactRequest={{ path: "missing", requestId: 1 }}
+            />
+          </AppI18nProvider>
+        </ContractsClientContext.Provider>
+      </QueryClientProvider>,
+    );
+    expect(
       await screen.findByText(/所选路径不存在|The selected path was not found/),
     ).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/fn\s*main/);
+  });
+
+  it("shows the parent directory query error instead of staying in loading", async () => {
+    const client = createMockClient(createMockClientState());
+    client.fileSystem.listWorkspaceDirectory = vi.fn(async () => {
+      throw new RemoteContractError(
+        {
+          code: "file_system_path_not_found",
+          params: {},
+          requestId: "artifact-parent",
+        },
+        null,
+      );
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContractsClientContext.Provider value={client}>
+          <AppI18nProvider>
+            <WorkspaceFilesView
+              projectId="project-1"
+              taskId="task-1"
+              hideHeader
+              artifactRequest={{ path: "broken", requestId: 1 }}
+            />
+          </AppI18nProvider>
+        </ContractsClientContext.Provider>
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findAllByText(
+        /所选路径不存在|The selected path was not found/,
+      ),
+    ).not.toHaveLength(0);
+    expect(screen.queryByText(/加载中|Loading/)).toBeNull();
   });
 });
 
@@ -234,6 +503,59 @@ describe("WorkspaceFilesView project scope", () => {
       { projectId: "project-1", path: "README.md" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("resolves an unknown project artifact without calling task APIs", async () => {
+    const client = createMockClient(createMockClientState());
+    const listProjectDirectory = vi.fn(async () => ({
+      path: "",
+      entries: [
+        {
+          name: "install",
+          path: "install",
+          kind: "file" as const,
+          isSymbolicLink: false,
+        },
+      ],
+    }));
+    const readProjectFile = vi.fn(async (request: { path: string }) => ({
+      path: request.path,
+      content: "project install",
+      version: "test",
+      sizeBytes: 15,
+    }));
+    client.fileSystem.listProjectDirectory = listProjectDirectory;
+    client.fileSystem.readProjectFile = readProjectFile;
+    client.fileSystem.listWorkspaceDirectory = vi.fn();
+    client.fileSystem.readWorkspaceFile = vi.fn();
+    client.project.list = async () => ({
+      projects: [{ id: "project-1", name: "Ora", rootPath: "C:/repo" }],
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContractsClientContext.Provider value={client}>
+          <AppI18nProvider>
+            <WorkspaceFilesView
+              projectId="project-1"
+              hideHeader
+              artifactRequest={{ path: "install", requestId: 1 }}
+            />
+          </AppI18nProvider>
+        </ContractsClientContext.Provider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(readProjectFile).toHaveBeenCalledWith(
+        { projectId: "project-1", path: "install" },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect(listProjectDirectory).toHaveBeenCalled();
+    expect(client.fileSystem.listWorkspaceDirectory).not.toHaveBeenCalled();
+    expect(client.fileSystem.readWorkspaceFile).not.toHaveBeenCalled();
   });
 
   it("opens a project watch stream when no task is selected", async () => {

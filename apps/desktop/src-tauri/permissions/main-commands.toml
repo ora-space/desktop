@@ -92,6 +92,7 @@ commands.allow = [
     "list_workflow_runs",
     "list_workflow_runs_by_workflow",
     "list_workflow_node_runs",
+    "rename_workflow_run",
     "delete_workflow_run",
     "rename_workflow_run",
     "start_workflow_run",

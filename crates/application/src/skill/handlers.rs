@@ -2,7 +2,7 @@ use crate::skill::mapper::{map_skill, map_skill_details};
 use crate::skill::package_health::{
     claim_untracked_name, commit_existing_package, commit_restored_package,
     commit_unclaimed_package, has_usable_package, manifest_is_usable, package_availability,
-    persist_promoted_package,
+    persist_promoted_package, read_skill_manifest,
 };
 use crate::skill::ports::{
     LocalSkillSourceRevision, SkillDeleteOutcome, SkillIdGenerator, SkillRepository,
@@ -159,10 +159,7 @@ where
             .ok_or_else(|| ApplicationError::SkillNotFound {
                 skill_id: skill_id.to_string(),
             })?;
-        let manifest = self
-            .storage
-            .read_manifest(&skill.name)
-            .map_err(ApplicationError::from_skill_storage_error)?;
+        let manifest = read_skill_manifest(&self.storage, &skill)?;
         let Some(manifest) = manifest else {
             return Ok(GetSkillResponse {
                 skill: map_skill_details(skill, String::new(), SkillAvailability::Unavailable),
@@ -215,7 +212,7 @@ where
             .map_err(ApplicationError::from_skill_repository_error)?;
         let mut mapped = Vec::new();
         for skill in skills {
-            let availability = package_availability(&self.storage, &skill.name)?;
+            let availability = package_availability(&self.storage, &skill)?;
             mapped.push(map_skill(skill, availability));
         }
         Ok(ListSkillsResponse { skills: mapped })
@@ -259,6 +256,9 @@ where
             .ok_or_else(|| ApplicationError::SkillNotFound {
                 skill_id: skill_id.to_string(),
             })?;
+        if existing.is_read_only() {
+            return Err(ApplicationError::SkillReadOnly);
+        }
 
         let name = request.name.trim().to_string();
         reject_conflicting_name(&self.repository, &existing.namespace, &name, &existing.id)?;
@@ -406,6 +406,9 @@ where
             .ok_or_else(|| ApplicationError::SkillNotFound {
                 skill_id: skill_id.to_string(),
             })?;
+        if existing.is_read_only() {
+            return Err(ApplicationError::SkillReadOnly);
+        }
 
         let handle = match self.storage.commit_delete(&existing.name, &skill_id) {
             Ok(handle) => Some(handle),

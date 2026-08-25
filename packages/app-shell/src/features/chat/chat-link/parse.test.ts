@@ -41,15 +41,20 @@ describe("parsePathCandidate", () => {
     });
   });
 
-  it("strips wrapping quotes and trailing punctuation that is not an extension", () => {
+  it("strips wrapping delimiters and English or CJK prose punctuation", () => {
     expect(parsePathCandidate('"src/main.rs",')).toEqual({
+      path: "src/main.rs",
+      line: undefined,
+      column: undefined,
+    });
+    expect(parsePathCandidate("(src/main.rs)。")).toEqual({
       path: "src/main.rs",
       line: undefined,
       column: undefined,
     });
   });
 
-  it("parses :line, :line:col, and cheap file (line N) suffixes", () => {
+  it("parses colon, fragment, query, and natural-language locations", () => {
     expect(parsePathCandidate("src/main.rs:12")).toEqual({
       path: "src/main.rs",
       line: 12,
@@ -63,6 +68,29 @@ describe("parsePathCandidate", () => {
     expect(parsePathCandidate("src/main.rs (line 12)")).toEqual({
       path: "src/main.rs",
       line: 12,
+      column: undefined,
+    });
+    expect(parsePathCandidate("src/main.rs (line 12, column 3)。")).toEqual({
+      path: "src/main.rs",
+      line: 12,
+      column: 3,
+    });
+    expect(parsePathCandidate("src/main.rs#L12C3")).toEqual({
+      path: "src/main.rs",
+      line: 12,
+      column: 3,
+    });
+    expect(parsePathCandidate("src/main.rs?line=12&column=3")).toEqual({
+      path: "src/main.rs",
+      line: 12,
+      column: 3,
+    });
+  });
+
+  it("does not accept zero as a source location", () => {
+    expect(parsePathCandidate("src/main.rs:0")).toEqual({
+      path: "src/main.rs:0",
+      line: undefined,
       column: undefined,
     });
   });

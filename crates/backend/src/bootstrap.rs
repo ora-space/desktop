@@ -71,6 +71,8 @@ pub enum BackendBootstrapError {
     Database(#[source] ora_db::DatabaseError),
     #[error("failed to initialize plugin lifecycle")]
     PluginLifecycle(#[source] ora_plugin_lifecycle::PluginLifecycleError),
+    #[error("failed to synchronize installed plugin Skills")]
+    PluginSkillCatalog(#[source] BackendError),
     #[error("failed to reconcile skill storage")]
     SkillStorage(#[source] ApplicationError),
     #[error("failed to initialize agent runtime")]
@@ -145,6 +147,9 @@ impl Backend {
             )
             .map_err(BackendBootstrapError::PluginLifecycle)?,
         );
+        plugin
+            .sync_installed_skills()
+            .map_err(BackendBootstrapError::PluginSkillCatalog)?;
         let scheduler = Scheduler::new(paths.timezone);
         let worktree_root = Arc::new(RwLock::new(paths.worktree_root));
         let sessions_root = paths.sessions_root;
@@ -361,11 +366,7 @@ impl Backend {
         &self,
         request: UninstallPluginRequest,
     ) -> Result<UninstallPluginResponse, BackendError> {
-        let response = self
-            .plugin
-            .uninstall(request)
-            .await
-            .map_err(BackendError::from)?;
+        let response = self.plugin.uninstall(request).await?;
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -1698,6 +1699,58 @@ mod tests {
         assert_eq!(error.public_error().code(), "project_not_found");
     }
 
+    /// Verifies startup projects installed Skill plugins into the shared Skill catalog.
+    #[test]
+    fn opens_with_plugin_skills_written_to_the_existing_database_schema() {
+        let temporary = TempDir::new().expect("create temporary backend directory");
+        let package_root = temporary
+            .path()
+            .join("plugins/installed/official/review-pack/1.0.0");
+        let skill_root = package_root.join("assets/skills/review");
+        fs::create_dir_all(&skill_root).expect("create installed Skill tree");
+        fs::write(
+            package_root.join("orax.toml"),
+            "name = \"review-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Review skills\"\n",
+        )
+        .expect("write plugin manifest");
+        fs::write(
+            skill_root.join("SKILL.md"),
+            "---\nname: review\ndescription: Reviews changes\n---\n# Review instructions\n",
+        )
+        .expect("write Skill manifest");
+
+        let backend = Backend::open(BackendPaths {
+            database_path: temporary.path().join("ora.sqlite3"),
+            data_directory: temporary.path().to_path_buf(),
+            deno_path: std::path::PathBuf::from("deno"),
+            worktree_root: temporary.path().join("worktrees"),
+            home_directory: temporary.path().to_path_buf(),
+            relative_path_base: temporary.path().to_path_buf(),
+            sessions_root: temporary.path().join("sessions"),
+            skills_root: temporary.path().join("atoms/skills"),
+            ripgrep_path: std::path::PathBuf::from("rg"),
+            timezone: chrono_tz::UTC,
+        })
+        .expect("open shared backend");
+
+        let skills = backend
+            .list_skills(ListSkillsRequest {})
+            .expect("list plugin Skills")
+            .skills;
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].namespace, "official/review-pack");
+        assert_eq!(skills[0].name, "review");
+        assert_eq!(
+            skills[0].source,
+            ora_contracts::SkillSource::Plugin {
+                plugin_id: "official/review-pack".to_string(),
+            }
+        );
+        assert_eq!(
+            skills[0].availability,
+            ora_contracts::SkillAvailability::Available
+        );
+    }
     /// Verifies an update rewrites only the manifest and preserves other package files.
     #[test]
     fn update_preserves_other_package_files() {

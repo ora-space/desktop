@@ -412,6 +412,7 @@ describe("Composer", () => {
             namespace: "local",
             name: "code-review",
             description: "Review the current diff",
+            source: { kind: "local" } as const,
             availability: "available",
           },
         ]}
@@ -441,6 +442,7 @@ describe("Composer", () => {
             namespace: "local",
             name: "code-review",
             description: "Review the current diff",
+            source: { kind: "local" } as const,
             availability: "available",
           },
           {
@@ -448,6 +450,7 @@ describe("Composer", () => {
             namespace: "local",
             name: "missing-skill",
             description: "Lost package",
+            source: { kind: "local" } as const,
             availability: "unavailable",
           },
         ]}
@@ -1003,6 +1006,7 @@ describe("Composer", () => {
             namespace: "local",
             name: "code-review",
             description: "Review",
+            source: { kind: "local" } as const,
             availability: "available",
           },
         ]}

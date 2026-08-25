@@ -33,7 +33,10 @@ async function flushDesktopCwd() {
   });
 }
 
-async function renderLinkedMarkdown(content: string) {
+async function renderLinkedMarkdown(
+  content: string,
+  options: { index?: SessionArtifactIndex; cwd?: string } = {},
+) {
   const openDiff = vi.fn();
   const openWorkspaceFile = vi.fn();
   const openExternalUrl = vi.fn().mockResolvedValue(undefined);
@@ -44,7 +47,13 @@ async function renderLinkedMarkdown(content: string) {
           onOpenDiff={openDiff}
           onOpenWorkspaceFile={openWorkspaceFile}
         >
-          <ChatLinkContext.Provider value={{ index, taskId: "task-1" }}>
+          <ChatLinkContext.Provider
+            value={{
+              index: options.index ?? index,
+              taskId: "task-1",
+              cwd: options.cwd,
+            }}
+          >
             <MarkdownMessage content={content} />
           </ChatLinkContext.Provider>
         </TaskChangesNavigationProvider>
@@ -102,6 +111,16 @@ function searchTool(
     locations,
     createdAt: 10,
     updatedAt: 20,
+  };
+}
+
+function directoryListingTool(text: string): ChatToolCall {
+  return {
+    ...searchTool(text),
+    id: "list-directory",
+    title: "Get-ChildItem -Name",
+    toolKind: "execute",
+    rawInput: { command: "Get-ChildItem -Name" },
   };
 }
 
@@ -179,11 +198,10 @@ describe("assistant markdown artifact links", () => {
     expect(openExternalUrl).toHaveBeenCalledWith("https://example.com");
 
     // react-markdown strips javascript: hrefs; the leftover anchor must not navigate.
-    const xssLink = screen.getByText("xss").closest("a");
-    expect(xssLink).not.toHaveAttribute("target", "_blank");
-    if (xssLink !== null) {
-      await user.click(xssLink);
-    }
+    // Assistant anchors bypass react-markdown's URL filter, so the href is not
+    // stripped upstream of this module; the classifier marks the scheme inert
+    // and it renders as plain text rather than a dead anchor.
+    expect(screen.getByText("xss").closest("a")).toBeNull();
     expect(openExternalUrl).not.toHaveBeenCalledWith(
       expect.stringContaining("javascript:"),
     );
@@ -205,8 +223,55 @@ describe("assistant markdown artifact links", () => {
     );
   });
 
+  it.each([
+    "file:///C:/repo/docs/foo%20bar.md:12:3",
+    "C:/repo/docs/foo%20bar.md#L12C3",
+    "C:%5Crepo%5Cdocs%5Cfoo%20bar.md#L12C3",
+    "/C:/repo/docs/foo%20bar.md?line=12&column=3",
+  ])("preserves and opens Windows Markdown href %s", async (href) => {
+    const user = userEvent.setup();
+    const { openWorkspaceFile } = await renderLinkedMarkdown(
+      `[guide](<${href}>)`,
+      {
+        cwd: "C:/repo",
+        index: { edited: [], referenced: ["docs/foo bar.md"] },
+      },
+    );
+
+    await user.click(screen.getByRole("button", { name: /docs\/foo bar\.md/ }));
+    expect(openWorkspaceFile).toHaveBeenCalledWith("docs/foo bar.md", 12, 3);
+  });
+
+  it("keeps dangerous assistant hrefs out of the DOM", async () => {
+    // React drops an empty `src` but warns about it first, and that warning is
+    // deduplicated per worker: whichever test file renders one first fails the
+    // clean-stderr gate. Asserting the missing attribute alone cannot see the
+    // difference, so watch the warning itself.
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    await renderLinkedMarkdown(
+      "[js](javascript:alert(1)) [data](data:text/html,boom) ![local](file:///C:/secret.png)",
+    );
+    expect(screen.getByText(/js\s+data/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "js" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "data" })).toBeNull();
+    expect(screen.getByAltText("local")).not.toHaveAttribute("src");
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("links prose paths with CJK punctuation and natural line locations", async () => {
+    const user = userEvent.setup();
+    const { openWorkspaceFile } = await renderLinkedMarkdown(
+      "查看 src/lib.rs (line 12, column 3)。",
+    );
+    await user.click(screen.getByRole("button", { name: /src\/lib\.rs/ }));
+    expect(openWorkspaceFile).toHaveBeenCalledWith("src/lib.rs", 12, 3);
+  });
+
   it("does not nest a second file link inside a Markdown file href", async () => {
-    const { openDiff } = await renderLinkedMarkdown(
+    await renderLinkedMarkdown(
       "See [src/main.rs](src/main.rs) in the list:\n\n- [src/main.rs](src/main.rs)",
     );
     const buttons = screen.getAllByRole("button", { name: /src\/main\.rs/ });
@@ -215,7 +280,6 @@ describe("assistant markdown artifact links", () => {
       expect(button.querySelector("button")).toBeNull();
       expect(button.closest("a")).toBeNull();
     }
-    expect(openDiff).not.toHaveBeenCalled();
   });
 
   it("keeps https links visually distinct from file citations", async () => {
@@ -246,6 +310,13 @@ describe("assistant markdown artifact links", () => {
     expect(screen.queryByRole("button", { name: /src\/main\.rs/ })).toBeNull();
     expect(screen.getByText("src/main.rs").tagName).toBe("CODE");
   });
+
+  it("keeps local hrefs filtered when assistant Markdown has no navigation context", () => {
+    render(<MarkdownMessage content="[local](file:///C:/secret.txt)" />);
+    // No context means react-markdown's default filter runs, so the local path
+    // never reaches the DOM and the anchor is left with nothing to navigate to.
+    expect(screen.getByText("local").closest("a")).toHaveAttribute("href", "");
+  });
 });
 
 async function renderMessageList(
@@ -253,6 +324,12 @@ async function renderMessageList(
   options: {
     openDiff?: (path: string, line?: number) => void;
     openWorkspaceFile?: (path: string, line?: number, column?: number) => void;
+    openWorkspaceDirectory?: (path: string) => void;
+    openWorkspaceArtifact?: (
+      path: string,
+      line?: number,
+      column?: number,
+    ) => void;
     workspaceRoot?: string;
   } = {},
 ) {
@@ -273,6 +350,8 @@ async function renderMessageList(
             <TaskChangesNavigationProvider
               onOpenDiff={options.openDiff ?? vi.fn()}
               onOpenWorkspaceFile={options.openWorkspaceFile ?? vi.fn()}
+              onOpenWorkspaceDirectory={options.openWorkspaceDirectory}
+              onOpenWorkspaceArtifact={options.openWorkspaceArtifact}
             >
               <MessageList
                 taskId="task-1"
@@ -313,9 +392,11 @@ describe("session-wide chat links", () => {
   it("opens a path that was only read in Files", async () => {
     const user = userEvent.setup();
     const openWorkspaceFile = vi.fn();
+    const openDiff = vi.fn();
+    const openWorkspaceArtifact = vi.fn();
     await renderMessageList(
       [turn("turn-1", [readTool("src/lib.rs")], "See `src/lib.rs`")],
-      { openWorkspaceFile },
+      { openWorkspaceFile, openDiff, openWorkspaceArtifact },
     );
 
     await user.click(
@@ -328,6 +409,8 @@ describe("session-wide chat links", () => {
       undefined,
       undefined,
     );
+    expect(openDiff).not.toHaveBeenCalled();
+    expect(openWorkspaceArtifact).not.toHaveBeenCalled();
   });
 
   it("keeps a read-only Files link on an earlier turn even if a later turn edits the file", async () => {
@@ -704,6 +787,327 @@ describe("session-wide chat links", () => {
       "docs/guide.md",
       undefined,
       undefined,
+    );
+  });
+
+  it("opens ripgrep output at its reported line and column", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    const tool = searchTool("src/lib.rs:12:3:export function run() {}", []);
+    const artifactIndex = collectSessionArtifactIndex([turn("turn-1", [tool])]);
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <TaskChangesNavigationProvider
+            onOpenDiff={vi.fn()}
+            onOpenWorkspaceFile={openWorkspaceFile}
+          >
+            <ChatLinkContext.Provider
+              value={{ index: artifactIndex, taskId: "task-1" }}
+            >
+              <ToolCallBlock tool={tool} expanded />
+            </ChatLinkContext.Provider>
+          </TaskChangesNavigationProvider>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+    await flushDesktopCwd();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开文件 src\/lib\.rs|Open file src\/lib\.rs/,
+      }),
+    );
+    expect(openWorkspaceFile).toHaveBeenCalledWith("src/lib.rs", 12, 3);
+  });
+
+  it("opens absolute and slash-terminated tool directories in the Files tree", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceDirectory = vi.fn();
+    const openWorkspaceArtifact = vi.fn();
+    const tool = directoryListingTool("C:\\repo\\cli\ndocs/");
+    const artifactIndex = collectSessionArtifactIndex([turn("turn-1", [tool])]);
+    render(
+      <PlatformProvider adapter={createStubPlatform()}>
+        <AppI18nProvider>
+          <TaskChangesNavigationProvider
+            onOpenDiff={vi.fn()}
+            onOpenWorkspaceFile={vi.fn()}
+            onOpenWorkspaceDirectory={openWorkspaceDirectory}
+            onOpenWorkspaceArtifact={openWorkspaceArtifact}
+          >
+            <ChatLinkContext.Provider
+              value={{
+                index: artifactIndex,
+                taskId: "task-1",
+                cwd: "C:/repo",
+              }}
+            >
+              <ToolCallBlock tool={tool} expanded />
+            </ChatLinkContext.Provider>
+          </TaskChangesNavigationProvider>
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+    await flushDesktopCwd();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开路径 cli|Open path cli/,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开路径 docs|Open path docs/,
+      }),
+    );
+    expect(openWorkspaceArtifact.mock.calls).toEqual([
+      ["cli", undefined, undefined],
+      ["docs"],
+    ]);
+    expect(openWorkspaceDirectory).not.toHaveBeenCalled();
+  });
+
+  it("links bare directories and extensionless files from the real name-list output", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceDirectory = vi.fn();
+    const openWorkspaceFile = vi.fn();
+    const openWorkspaceArtifact = vi.fn();
+    const output =
+      ".git\n.github\ncli\ndocs\nhub\nnode_modules\nscripts\nshared\nweb\nwebsite\n.gitignore\nAGENTS.md\nbun.lock\nCONTRIBUTING.md\nLICENSE\npackage.json";
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [directoryListingTool(output)],
+          "**目录**\n- `cli`\n- `docs`\n\n**文件**\n- `LICENSE`\n- `AGENTS.md`",
+        ),
+      ],
+      {
+        workspaceRoot: "C:/repo",
+        openWorkspaceDirectory,
+        openWorkspaceFile,
+        openWorkspaceArtifact,
+      },
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /打开路径 cli|Open path cli/ }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开路径 LICENSE|Open path LICENSE/,
+      }),
+    );
+    expect(openWorkspaceDirectory).not.toHaveBeenCalled();
+    expect(openWorkspaceFile).not.toHaveBeenCalled();
+    expect(openWorkspaceArtifact.mock.calls).toEqual([
+      ["cli", undefined, undefined],
+      ["LICENSE", undefined, undefined],
+    ]);
+  });
+
+  it("links a PowerShell listing delivered with locations and rawOutput", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    const openWorkspaceArtifact = vi.fn();
+    const esc = String.fromCharCode(27);
+    const output = [
+      "",
+      `${esc}[32;1mName           ${esc}[0m${esc}[32;1m PSIsContainer${esc}[0m`,
+      `${esc}[32;1m----           ${esc}[0m ${esc}[32;1m-------------${esc}[0m`,
+      "docs                     True",
+      "main.py                 False",
+      "",
+    ].join(String.fromCharCode(13, 10));
+    // A real ACP execute call carries the same text twice (visible content and
+    // `rawOutput`) plus the cwd location, so each entry reaches the index both
+    // qualified with its listing root and bare.
+    const listing: ChatToolCall = {
+      kind: "toolCall",
+      id: "ps-list",
+      title: "Get-ChildItem -Force | Select-Object Name, PSIsContainer",
+      toolKind: "execute",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: output } }],
+      locations: [{ path: "C:/repo" }],
+      rawInput: {
+        command: "Get-ChildItem -Force | Select-Object Name, PSIsContainer",
+        cwd: "C:/repo",
+      },
+      rawOutput: { output },
+      createdAt: 10,
+      updatedAt: 20,
+    };
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [listing],
+          ["**目录**：`docs`", "", "**文件**：`main.py`"].join(
+            String.fromCharCode(10),
+          ),
+        ),
+      ],
+      { workspaceRoot: "C:/repo", openWorkspaceFile, openWorkspaceArtifact },
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /打开路径 docs|Open path docs/ }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开文件 main.py|Open file main.py/,
+      }),
+    );
+    // The directory branch resolves its kind from the parent listing, so it
+    // hands over the path alone; files carry their line/column slots.
+    expect(openWorkspaceArtifact.mock.calls).toEqual([["docs"]]);
+    expect(openWorkspaceFile.mock.calls).toEqual([
+      ["main.py", undefined, undefined],
+    ]);
+  });
+
+  it("links indexed bare names in plain lists and tree fences", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceDirectory = vi.fn();
+    const openWorkspaceArtifact = vi.fn();
+    const output = "cli\ndocs\nLICENSE\nAGENTS.md";
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [directoryListingTool(output)],
+          "目录：\n- cli\n\n```text\nC:\\repo\n├── docs\n└── LICENSE\n```",
+        ),
+      ],
+      {
+        workspaceRoot: "C:/repo",
+        openWorkspaceDirectory,
+        openWorkspaceArtifact,
+      },
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /打开路径 cli|Open path cli/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /打开路径 docs|Open path docs/ }),
+    );
+    expect(openWorkspaceDirectory).not.toHaveBeenCalled();
+    expect(openWorkspaceArtifact.mock.calls).toEqual([
+      ["cli", undefined, undefined],
+      ["docs", undefined, undefined],
+    ]);
+  });
+
+  it("links artifacts from the real PowerShell Name Mode output", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceDirectory = vi.fn();
+    const openWorkspaceFile = vi.fn();
+    const output =
+      "Name       Mode\n----       ----\n.codex     d-----\npackages   d-----\ninstall    -a----\nLICENSE    -a----";
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [searchTool(output)],
+          "**目录：** `.codex` `packages`\n\n**文件：** `install` `LICENSE`",
+        ),
+      ],
+      {
+        workspaceRoot: "C:/repo",
+        openWorkspaceDirectory,
+        openWorkspaceFile,
+      },
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开路径 \.codex|Open path \.codex/,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开文件 install|Open file install/,
+      }),
+    );
+    expect(openWorkspaceDirectory).toHaveBeenCalledWith(".codex");
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "install",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("links comma-separated prose from ANSI PowerShell tables", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceDirectory = vi.fn();
+    const openWorkspaceFile = vi.fn();
+    const output =
+      "\u001b[32;1mMode \u001b[0m\u001b[32;1m Length\u001b[0m\u001b[32;1m Name\u001b[0m\n" +
+      "d----        packages\n-a--- 14150  install\n-a--- 1086   LICENSE";
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [directoryListingTool(output)],
+          "**目录：**\n- packages,\n\n**文件：**\n- install, LICENSE",
+        ),
+      ],
+      { openWorkspaceDirectory, openWorkspaceFile },
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开路径 packages|Open path packages/,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开文件 install|Open file install/,
+      }),
+    );
+    expect(openWorkspaceDirectory).toHaveBeenCalledWith("packages");
+    expect(openWorkspaceFile).toHaveBeenCalledWith(
+      "install",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("links individual tokens inside aligned plaintext fences", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceArtifact = vi.fn();
+    const output =
+      ".github        .husky       packages\ninstall        LICENSE      README.md";
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [directoryListingTool(output)],
+          "```text\n.github  .husky  packages\ninstall  LICENSE  README.*.md  README.md\n```",
+        ),
+      ],
+      { openWorkspaceArtifact },
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开路径 \.github|Open path \.github/,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开路径 LICENSE|Open path LICENSE/,
+      }),
+    );
+    expect(openWorkspaceArtifact.mock.calls).toEqual([
+      [".github", undefined, undefined],
+      ["LICENSE", undefined, undefined],
+    ]);
+    expect(screen.getByTestId("chat-path-list")).toHaveTextContent(
+      "README.*.md",
     );
   });
 

@@ -43,6 +43,9 @@ pub fn validate_registration(
         PluginContribution::Webview(_) => Err(PluginRuntimeFailure::new(
             "webview plugins have no process and cannot register",
         )),
+        PluginContribution::Skill(_) => Err(PluginRuntimeFailure::new(
+            "skill plugins have no process and cannot register",
+        )),
     }
 }
 
@@ -117,6 +120,20 @@ mod tests {
         assert_eq!(
             validate_registration(&contribution, &PluginRegistration::default()),
             Ok(()),
+        );
+    }
+
+    /// Static skill plugins have no runtime handshake.
+    #[test]
+    fn skill_plugins_cannot_register() {
+        assert_eq!(
+            validate_registration(
+                &PluginContribution::Skill(Default::default()),
+                &PluginRegistration::default(),
+            ),
+            Err(PluginRuntimeFailure::new(
+                "skill plugins have no process and cannot register",
+            )),
         );
     }
 }

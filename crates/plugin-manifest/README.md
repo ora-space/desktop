@@ -9,7 +9,7 @@ immutable domain object whose public types preserve the schema's semantic invari
 
 - Reject malformed TOML, missing or unknown fields, unsupported resolver versions, and invalid
   field values with structured errors.
-- Model plugin names, source categories, plugin kinds (`workbench`, `agent`, `ui`), HTTPS URLs,
+- Model plugin names, source categories, plugin kinds (`workbench`, `agent`, `webview`, `skill`), HTTPS URLs,
   SHA-256 digests, optional source repository metadata, and optional Ora host version
   requirements as validated values.
 - Parse the `[ui]` section of a ui-kind plugin: every `[[ui.surfaces]]` entry has a slug `id`, a

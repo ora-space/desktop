@@ -29,6 +29,8 @@ pub enum InstalledPluginContribution {
         title: String,
         start_url: String,
     },
+    /// A static package kind whose Skill assets are cataloged without a runtime process.
+    Skill,
 }
 
 /// Represents whether the installed package and its immutable declaration are usable.
@@ -632,6 +634,34 @@ mod tests {
         );
     }
 
+    /// Verifies the static Skill contribution adds only its kind discriminator.
+    #[test]
+    fn serializes_skill_plugin_contract() {
+        let plugin = InstalledPlugin {
+            id: "official/ora.skill-pack".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.skill-pack".to_string(),
+            display_name: "ora.skill-pack".to_string(),
+            version: "0.1.1".to_string(),
+            description: "Skill plugin test".to_string(),
+            homepage: None,
+            license: None,
+            contribution: InstalledPluginContribution::Skill,
+            enabled: true,
+            logo: None,
+            installation_validity: PluginInstallationValidity::Valid,
+            configuration: PluginConfigurationSummary::NotDeclared,
+            runtime: PluginRuntimeStatus::Stopped,
+        };
+
+        let value = serde_json::to_value(&plugin).expect("Skill plugin serializes");
+        assert_eq!(value.get("kind"), Some(&json!("skill")));
+        assert_eq!(value.as_object().map(serde_json::Map::len), Some(14));
+        assert_eq!(
+            serde_json::from_value::<InstalledPlugin>(value).expect("Skill plugin round-trips"),
+            plugin
+        );
+    }
     /// Verifies an empty startup snapshot has a stable collection shape.
     #[test]
     fn serializes_empty_installed_plugin_response() {

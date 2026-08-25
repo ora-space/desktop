@@ -190,6 +190,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::ResourceInUse(EmptyErrorParams {}),
                 "skill is referenced by Workspace desired state",
             ),
+            ApplicationError::SkillReadOnly => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "plugin-provided skills are read-only",
+            ),
             ApplicationError::SkillStorageInconsistent { .. } => (
                 ErrorClassification::Internal,
                 PublicError::SkillStorageInconsistent(EmptyErrorParams {}),

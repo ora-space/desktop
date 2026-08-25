@@ -110,18 +110,14 @@ export type InstalledPlugin = {
   configuration: PluginConfigurationSummary;
 } & (
   | { kind: "agent"; agentDisplayName: string }
-  | {
-      kind: "workbench";
-      title: string;
-    }
+  | { kind: "workbench"; title: string }
   | { kind: "webview"; title: string; startUrl: string }
+  | { kind: "skill" }
 ) &
   (
     | { runtime: "stopped" }
     | { runtime: "starting" }
-    | {
-        runtime: "running";
-      }
+    | { runtime: "running" }
     | { runtime: "failed"; failureReason: string }
   );
 
@@ -137,7 +133,8 @@ export type InstalledPlugin = {
 export type InstalledPluginContribution =
   | { kind: "agent"; agentDisplayName: string }
   | { kind: "workbench"; title: string }
-  | { kind: "webview"; title: string; startUrl: string };
+  | { kind: "webview"; title: string; startUrl: string }
+  | { kind: "skill" };
 
 /**
  * Requests the cached marketplace registry index used to populate the plugin catalog.

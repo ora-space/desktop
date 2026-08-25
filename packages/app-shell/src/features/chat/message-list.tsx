@@ -31,10 +31,11 @@ interface MessageListProps {
   conversationNavigation?: ConversationNavigationPresentation;
 }
 
+const EMPTY_MODEL_CHANGES: ChatModelChange[] = [];
 /** The scrollable turn thread, kept pinned to live ACP activity unless the reader scrolls away. */
 export function MessageList({
   turns,
-  modelChanges = [],
+  modelChanges = EMPTY_MODEL_CHANGES,
   userName,
   isResponding,
   taskId,
@@ -115,20 +116,14 @@ export function MessageList({
                 edited: [],
                 referenced: [],
               };
-              const turnChatLinkValue = (() => {
-                if (taskId !== undefined) {
-                  return { index: turnIndex, taskId, cwd };
-                }
-                if (projectId !== undefined) {
-                  return { index: turnIndex, cwd };
-                }
-                return null;
-              })();
+              const turnChatLinkValue =
+                taskId !== undefined
+                  ? { index: turnIndex, taskId, cwd }
+                  : projectId !== undefined
+                    ? { index: turnIndex, cwd }
+                    : null;
               return (
                 <div key={turn.id}>
-                  {/* Markers sit between turns rather than inside them, so they are
-                    rendered here instead of carrying a turn anchor: the navigator
-                    maps prompts and responses, and a divider is neither. */}
                   {modelChangesAt(modelChanges, index).map((change) => (
                     <ModelChangeDivider
                       key={change.id}

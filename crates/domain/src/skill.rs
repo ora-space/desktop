@@ -1,5 +1,17 @@
-use crate::{AuditFields, DomainModelError, Namespace, SkillId};
+use crate::{AuditFields, DomainModelError, Namespace, PluginId, SkillId};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// Identifies who owns a Skill package and whether users may mutate it directly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SkillOrigin {
+    Local,
+    Plugin {
+        plugin_id: PluginId,
+        package_root: PathBuf,
+    },
+}
 
 /// Represents one reusable skill definition available to configurable agents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -8,6 +20,7 @@ pub struct Skill {
     pub namespace: Namespace,
     pub name: String,
     pub description: String,
+    pub origin: SkillOrigin,
     pub audit_fields: AuditFields,
 }
 
@@ -38,8 +51,32 @@ impl Skill {
             namespace,
             name,
             description,
+            origin: SkillOrigin::Local,
             audit_fields,
         })
+    }
+
+    /// Creates an immutable Skill projected from an installed plugin package.
+    pub fn new_plugin(
+        id: SkillId,
+        namespace: Namespace,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        plugin_id: PluginId,
+        package_root: PathBuf,
+        audit_fields: AuditFields,
+    ) -> Result<Self, DomainModelError> {
+        let mut skill = Self::new(id, namespace, name, description, audit_fields)?;
+        skill.origin = SkillOrigin::Plugin {
+            plugin_id,
+            package_root,
+        };
+        Ok(skill)
+    }
+
+    /// Returns whether this Skill is owned by an installed plugin and therefore immutable.
+    pub fn is_read_only(&self) -> bool {
+        matches!(self.origin, SkillOrigin::Plugin { .. })
     }
 }
 

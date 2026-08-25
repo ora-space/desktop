@@ -6,9 +6,10 @@ use super::{
 use crate::skill::storage::{CreateHandle, DeleteHandle, SwapHandle, TransactionJournal};
 use crate::{ApplicationError, Clock, RepositoryError};
 use ora_contracts::{
-    CreateSkillRequest, DeleteSkillRequest, GetSkillRequest, ListSkillsRequest, UpdateSkillRequest,
+    CreateSkillRequest, DeleteSkillRequest, GetSkillRequest, ListSkillsRequest, SkillSource,
+    UpdateSkillRequest,
 };
-use ora_domain::{AuditFields, Namespace, Skill, SkillId};
+use ora_domain::{AuditFields, Namespace, PluginId, Skill, SkillId};
 use ora_skill_package::manifest::{render_manifest, render_minimal_manifest};
 use ora_utils::path::StrictRelativePath;
 use pretty_assertions::assert_eq;
@@ -398,6 +399,60 @@ fn recreates_a_deleted_unavailable_skill_under_the_same_name() {
     assert!(storage.formal_exists("review"));
 }
 
+#[test]
+fn plugin_skills_load_from_their_package_and_reject_user_mutations() {
+    let package = TempDir::new().unwrap();
+    fs::write(
+        package.path().join("SKILL.md"),
+        "---\nname: review\ndescription: Reviews changes\n---\n# Plugin body\n",
+    )
+    .unwrap();
+    let plugin_id = PluginId::new("official", "review-pack").unwrap();
+    let plugin_skill = Skill::new_plugin(
+        SkillId::new("plugin:official/review-pack:review"),
+        Namespace::new(plugin_id.canonical()).unwrap(),
+        "review",
+        "Reviews changes",
+        plugin_id.clone(),
+        package.path().to_path_buf(),
+        AuditFields::new(10, 10, false),
+    )
+    .unwrap();
+    let repository = Rc::new(FakeSkillRepository::with_skills(vec![plugin_skill]));
+    let storage = Rc::new(FakeSkillStorage::default());
+
+    let details = GetSkillHandler::new(repository.clone(), storage.clone())
+        .handle(GetSkillRequest {
+            skill_id: "plugin:official/review-pack:review".to_string(),
+        })
+        .unwrap()
+        .skill;
+    assert_eq!(details.content, "# Plugin body");
+    assert_eq!(
+        details.source,
+        SkillSource::Plugin {
+            plugin_id: plugin_id.canonical(),
+        }
+    );
+
+    assert!(matches!(
+        UpdateSkillHandler::new(repository.clone(), storage.clone(), FixedClock(20)).handle(
+            UpdateSkillRequest {
+                skill_id: details.id.clone(),
+                name: "renamed".to_string(),
+                description: "Changed".to_string(),
+                content: None,
+            }
+        ),
+        Err(ApplicationError::SkillReadOnly)
+    ));
+    assert!(matches!(
+        DeleteSkillHandler::new(repository, storage, FixedClock(20)).handle(DeleteSkillRequest {
+            skill_id: details.id,
+        }),
+        Err(ApplicationError::SkillReadOnly)
+    ));
+}
 #[test]
 fn reports_unavailable_skills_and_restores_them_by_same_name() {
     let repository = Rc::new(FakeSkillRepository::with_skills(vec![

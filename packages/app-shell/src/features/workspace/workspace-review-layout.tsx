@@ -30,7 +30,11 @@ import {
 } from "../diff/task-diff-view";
 import { TaskChangesNavigationProvider } from "../diff/task-changes-navigation";
 import { WorkspaceReviewFilesPanel } from "../files/workspace-review-files-panel";
-import type { WorkspaceFileRequest } from "../files/workspace-files-view";
+import type {
+  WorkspaceDirectoryRequest,
+  WorkspaceArtifactRequest,
+  WorkspaceFileRequest,
+} from "../files/workspace-files-view";
 import { SurfaceHost } from "../surface/surface-host";
 import { usePlatform } from "../../platform";
 import { useSurfaceStore } from "../../state/stores/surface-store";
@@ -99,10 +103,18 @@ export function WorkspaceReviewLayout({
     WorkspaceFileRequest | undefined
   >();
   const [reviewFilePath, setReviewFilePath] = useState<string | undefined>();
+  const [workspaceDirectoryRequest, setWorkspaceDirectoryRequest] = useState<
+    WorkspaceDirectoryRequest | undefined
+  >();
+  const [workspaceArtifactRequest, setWorkspaceArtifactRequest] = useState<
+    WorkspaceArtifactRequest | undefined
+  >();
   const [previousContextKind, setPreviousContextKind] = useState(context.kind);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRequestSequence = useRef(0);
   const workspaceFileRequestSequence = useRef(0);
+  const workspaceDirectoryRequestSequence = useRef(0);
+  const workspaceArtifactRequestSequence = useRef(0);
   const onOpenChangeRef = useRef(onOpenChange);
   /** Mirrors `panel`/`open` for the surface-store subscription, which runs outside render. */
   const panelStateRef = useRef({ panel, open });
@@ -367,6 +379,8 @@ export function WorkspaceReviewLayout({
     if (savedForContext !== undefined && !savedForContext.open) {
       setOpen(false);
     }
+    setWorkspaceDirectoryRequest(undefined);
+    setWorkspaceArtifactRequest(undefined);
     // Project review has no Changes surface; coerce so Files chrome matches content.
     if (context.kind === "project") setPanel("files");
   }
@@ -382,6 +396,44 @@ export function WorkspaceReviewLayout({
         column,
       });
       setReviewFilePath(path);
+      setWorkspaceDirectoryRequest(undefined);
+      setWorkspaceArtifactRequest(undefined);
+      setPanel("files");
+      setReviewOpen(true);
+      if (panelAnimationRef.current !== null) slidePanelOpen();
+    },
+    [context.kind, setReviewOpen, slidePanelOpen],
+  );
+
+  const openWorkspaceDirectory = useCallback(
+    (path: string) => {
+      if (context.kind === "none") return;
+      workspaceDirectoryRequestSequence.current += 1;
+      setWorkspaceDirectoryRequest({
+        path,
+        requestId: workspaceDirectoryRequestSequence.current,
+      });
+      setWorkspaceFileRequest(undefined);
+      setWorkspaceArtifactRequest(undefined);
+      setPanel("files");
+      setReviewOpen(true);
+      if (panelAnimationRef.current !== null) slidePanelOpen();
+    },
+    [context.kind, setReviewOpen, slidePanelOpen],
+  );
+
+  const openWorkspaceArtifact = useCallback(
+    (path: string, line?: number, column?: number) => {
+      if (context.kind === "none") return;
+      workspaceArtifactRequestSequence.current += 1;
+      setWorkspaceArtifactRequest({
+        path,
+        requestId: workspaceArtifactRequestSequence.current,
+        line,
+        column,
+      });
+      setWorkspaceFileRequest(undefined);
+      setWorkspaceDirectoryRequest(undefined);
       setPanel("files");
       setReviewOpen(true);
       if (panelAnimationRef.current !== null) slidePanelOpen();
@@ -613,6 +665,8 @@ export function WorkspaceReviewLayout({
         toolbar={controls}
         fileRequest={workspaceFileRequest}
         onPreviewPathChange={rememberReviewFile}
+        directoryRequest={workspaceDirectoryRequest}
+        artifactRequest={workspaceArtifactRequest}
       />
     );
 
@@ -688,6 +742,8 @@ export function WorkspaceReviewLayout({
     <TaskChangesNavigationProvider
       onOpenDiff={openDiff}
       onOpenWorkspaceFile={openWorkspaceFile}
+      onOpenWorkspaceDirectory={openWorkspaceDirectory}
+      onOpenWorkspaceArtifact={openWorkspaceArtifact}
     >
       <div className="relative flex min-h-0 min-w-0 flex-1">
         {context.kind !== "none" && !open && (

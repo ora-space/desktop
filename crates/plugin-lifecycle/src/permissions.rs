@@ -84,11 +84,14 @@ fn scoped_flag(flag: &str, path: &Path) -> Result<OsString, PermissionFlagError>
 /// environment access is a hard `PermissionDenied`, and everything it legitimately needs (its
 /// data directory) is served by the host over `ora/storage/*`. An agent plugin keeps the broad
 /// grants it has always had (see `agent_permissions`); narrowing them is deliberately out of
-/// scope here. A webview plugin is never launched, so its (empty) set is only exhaustiveness.
+/// scope here. Webview and skill plugins are never launched, so their empty sets only make the
+/// match exhaustive.
 pub fn permissions_for(contribution: &PluginContribution) -> Vec<DenoPermission> {
     match contribution {
         PluginContribution::Agent(_) => agent_permissions(),
-        PluginContribution::Workbench(_) | PluginContribution::Webview(_) => Vec::new(),
+        PluginContribution::Workbench(_)
+        | PluginContribution::Webview(_)
+        | PluginContribution::Skill(_) => Vec::new(),
     }
 }
 
@@ -164,6 +167,15 @@ mod tests {
     #[test]
     fn workbench_plugins_get_no_permissions() {
         assert_eq!(permissions_for(&workbench_contribution()), Vec::new());
+    }
+
+    /// Skill plugins are static packages and never receive runtime permissions.
+    #[test]
+    fn skill_plugins_get_no_permissions() {
+        assert_eq!(
+            permissions_for(&PluginContribution::Skill(Default::default())),
+            Vec::new()
+        );
     }
 
     /// Scoped grants render the canonical path so Deno's own canonical comparison matches.

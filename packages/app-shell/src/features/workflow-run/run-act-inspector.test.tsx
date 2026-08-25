@@ -51,6 +51,7 @@ function renderInspector() {
       namespace: "local",
       name: "openspec-explore",
       description: "探索仓库结构与约束",
+      source: { kind: "local" } as const,
       availability: "available",
     },
     {
@@ -58,6 +59,7 @@ function renderInspector() {
       namespace: "local",
       name: "hidden-skill",
       description: "Should not appear",
+      source: { kind: "local" } as const,
       availability: "available",
     },
   ];

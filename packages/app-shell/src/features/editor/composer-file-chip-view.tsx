@@ -1,12 +1,15 @@
 import {
   composerFileAttrsFromUnknown,
   composerFileChipTitle,
+  composerFileLabel,
 } from "@ora/editor/composer";
+import { IconX } from "@tabler/icons-react";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import type {
   DragEvent as ReactDragEvent,
   MouseEvent as ReactMouseEvent,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { FileRefChipContent } from "../file-ref-chip";
 
 /**
@@ -14,6 +17,7 @@ import { FileRefChipContent } from "../file-ref-chip";
  * Wired through `AppComposerFile` so the explorer and @ picker share one visual.
  */
 export function ComposerFileChipView({ node, editor, getPos }: NodeViewProps) {
+  const { t } = useTranslation();
   const attrs = composerFileAttrsFromUnknown(node.attrs);
   const kind = attrs.kind === "directory" ? "directory" : "file";
   const title = composerFileChipTitle(attrs);
@@ -24,6 +28,19 @@ export function ComposerFileChipView({ node, editor, getPos }: NodeViewProps) {
     const pos = getPos();
     if (typeof pos !== "number") return;
     editor.chain().focus().setNodeSelection(pos).run();
+  };
+
+  /** Drops this reference from the prompt; hover swaps the type icon for it. */
+  const removeThisChip = (event: ReactMouseEvent<HTMLElement>): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    const pos = getPos();
+    if (typeof pos !== "number") return;
+    editor
+      .chain()
+      .focus()
+      .deleteRange({ from: pos, to: pos + node.nodeSize })
+      .run();
   };
 
   return (
@@ -52,6 +69,27 @@ export function ComposerFileChipView({ node, editor, getPos }: NodeViewProps) {
       }}
       onDoubleClick={selectOnlyThisChip}
     >
+      {editor.isEditable && (
+        <button
+          type="button"
+          // Chips sit in a contenteditable; a tab stop per chip would bury the
+          // send button. Keyboard removal stays select-the-chip plus Backspace.
+          tabIndex={-1}
+          className="composer-file-ref-remove"
+          aria-label={t("chat.removeFileReference", {
+            name: composerFileLabel(attrs),
+          })}
+          onMouseDown={(event: ReactMouseEvent<HTMLElement>) => {
+            // Claim the press so the editor cannot node-select the chip first.
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={removeThisChip}
+        >
+          <IconX className="composer-file-ref-remove-glyph" />
+        </button>
+      )}
+      {/* Renders after the button so hover can swap them in the same slot. */}
       <FileRefChipContent attrs={attrs} />
     </NodeViewWrapper>
   );

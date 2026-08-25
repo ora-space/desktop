@@ -102,6 +102,7 @@ fn constructs_schema_backed_entities() {
             namespace: Namespace::local(),
             name: "review".to_string(),
             description: "Reviews implementation changes".to_string(),
+            origin: crate::SkillOrigin::Local,
             audit_fields: audit_fields.clone(),
         }
     );

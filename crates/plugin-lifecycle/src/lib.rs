@@ -293,7 +293,12 @@ where
                     );
                     Some(attempt)
                 }
-                (PluginContribution::Workbench(_) | PluginContribution::Webview(_), true) => {
+                (
+                    PluginContribution::Workbench(_)
+                    | PluginContribution::Webview(_)
+                    | PluginContribution::Skill(_),
+                    true,
+                ) => {
                     state.set_managed(
                         &plugin_id,
                         ManagedPluginState::Enabled(EnabledRuntime::Stopped),
@@ -303,7 +308,8 @@ where
                 (
                     PluginContribution::Agent(_)
                     | PluginContribution::Workbench(_)
-                    | PluginContribution::Webview(_),
+                    | PluginContribution::Webview(_)
+                    | PluginContribution::Skill(_),
                     false,
                 ) => None,
             };
