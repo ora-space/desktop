@@ -1,21 +1,22 @@
 import type * as acp from "@agentclientprotocol/sdk";
-import type {
-  Agent,
-  AgentRuntimeStatus,
-  AvailablePlugin,
-  ContractsClient,
-  InstalledPlugin,
-  PluginConfigurationDetails,
-  Project,
-  RuntimeLogLevelStateResponse,
-  Session,
-  Skill,
-  Task,
-  Workflow,
-  WorkflowRun,
-  WorkflowSnapshot,
-  WorkflowSummary,
-  WorkflowVersion,
+import {
+  RemoteContractError,
+  type Agent,
+  type AgentRuntimeStatus,
+  type AvailablePlugin,
+  type ContractsClient,
+  type InstalledPlugin,
+  type PluginConfigurationDetails,
+  type Project,
+  type RuntimeLogLevelStateResponse,
+  type Session,
+  type Skill,
+  type Task,
+  type Workflow,
+  type WorkflowRun,
+  type WorkflowSnapshot,
+  type WorkflowSummary,
+  type WorkflowVersion,
 } from "@ora/contracts";
 
 /** One in-memory workflow with its editable draft and published history. */
@@ -370,6 +371,12 @@ export function createMockClient(state: MockClientState): ContractsClient {
         const current = state.pluginConfigurations.get(req.pluginId);
         if (current === undefined)
           throw new Error(`plugin configuration ${req.pluginId} not found`);
+        if (req.declarationFingerprint !== current.declarationFingerprint)
+          throw configurationWriteConflict(
+            "plugin_configuration_declaration_changed",
+          );
+        if (req.expectedRevision !== current.revision)
+          throw configurationWriteConflict("configuration_revision_conflict");
         const settings = current.settings.map((field) => {
           const storedValue = req.values[field.declaration.id];
           if (storedValue !== undefined)
@@ -982,4 +989,20 @@ export function createMockClient(state: MockClientState): ContractsClient {
       },
     },
   };
+}
+
+/** Mirrors the two optimistic-concurrency failures returned by the desktop contract. */
+function configurationWriteConflict(
+  code:
+    | "configuration_revision_conflict"
+    | "plugin_configuration_declaration_changed",
+): RemoteContractError {
+  return new RemoteContractError(
+    {
+      code,
+      params: {},
+      requestId: "00000000-0000-4000-8000-000000000001",
+    },
+    null,
+  );
 }

@@ -1,15 +1,19 @@
 import type {
   InstalledPlugin,
   PluginConfigurationDetails,
+  ResetPluginConfigurationRequest,
   SavePluginConfigurationRequest,
 } from "@ora/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
 import { queryKeys } from "./query-keys";
 
-type ResetConfigurationInput = { declarationFingerprint: string } & (
-  { mode: "reset_all"; expectedRevision: bigint } | { mode: "recover_corrupt" }
-);
+type ResetConfigurationInput =
+  ResetPluginConfigurationRequest extends infer Request
+    ? Request extends unknown
+      ? Omit<Request, "pluginId">
+      : never
+    : never;
 
 /** Loads and mutates one Plugin Configuration while keeping list and detail caches coherent. */
 export function usePluginConfiguration(pluginId: string) {
@@ -21,6 +25,7 @@ export function usePluginConfiguration(pluginId: string) {
       client.plugin
         .getConfiguration({ pluginId })
         .then((response) => response.configuration),
+    enabled: pluginId !== "",
   });
 
   const adopt = (configuration: PluginConfigurationDetails) => {

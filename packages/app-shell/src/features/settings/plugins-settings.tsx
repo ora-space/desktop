@@ -40,9 +40,10 @@ export function PluginsSettings({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [managing, setManaging] = useState(false);
-  const [configurationPluginId, setConfigurationPluginId] = useState<
-    string | null
-  >(null);
+  const [configurationPlugin, setConfigurationPlugin] = useState<{
+    id: string;
+    displayName: string;
+  } | null>(null);
 
   const available = useAvailablePlugins();
   const installed = useInstalledPlugins();
@@ -76,15 +77,12 @@ export function PluginsSettings({
         });
 
   if (managing) {
-    const configurationPlugin = installed.data?.find(
-      (plugin) => plugin.id === configurationPluginId,
-    );
-    if (configurationPlugin !== undefined) {
+    if (configurationPlugin !== null) {
       return (
         <PluginConfigurationEditor
           pluginId={configurationPlugin.id}
           displayName={configurationPlugin.displayName}
-          onBack={() => setConfigurationPluginId(null)}
+          onBack={() => setConfigurationPlugin(null)}
           onNavigationGuardChange={onNavigationGuardChange}
         />
       );
@@ -93,7 +91,12 @@ export function PluginsSettings({
       <PluginManager
         plugins={installed.data ?? []}
         onBack={() => setManaging(false)}
-        onConfigure={setConfigurationPluginId}
+        onConfigure={(plugin) =>
+          setConfigurationPlugin({
+            id: plugin.id,
+            displayName: plugin.displayName,
+          })
+        }
       />
     );
   }
@@ -179,6 +182,11 @@ function AvailablePluginRow({
       description: localizeContractError(cause, t),
     });
   };
+  const failUninstall = (cause: unknown) => {
+    toast.error(t("settings.plugins.uninstallFailed"), {
+      description: localizeContractError(cause, t),
+    });
+  };
 
   return (
     <>
@@ -226,7 +234,13 @@ function AvailablePluginRow({
           </Button>
         )}
       </div>
-      <AlertDialog open={uninstallOpen} onOpenChange={setUninstallOpen}>
+      <AlertDialog
+        open={uninstallOpen}
+        onOpenChange={(open) => {
+          setUninstallOpen(open);
+          if (open) setDeleteData(true);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -245,12 +259,15 @@ function AvailablePluginRow({
             {t("settings.plugins.deleteConfigurationData")}
           </label>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={mutations.uninstall.isPending}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
             <Button
               variant="destructive"
+              disabled={mutations.uninstall.isPending}
               onClick={() =>
                 mutations.uninstall.mutate(deleteData ? "delete" : "retain", {
-                  onError: failInstall,
+                  onError: failUninstall,
                   onSuccess: () => setUninstallOpen(false),
                 })
               }

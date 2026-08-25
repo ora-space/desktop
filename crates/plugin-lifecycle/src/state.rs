@@ -46,16 +46,19 @@ where
         .iter()
         .map(|plugin| PluginId::new(&plugin.id))
         .collect::<BTreeSet<_>>();
+    let installed_by_id = installed
+        .iter()
+        .map(|plugin| (PluginId::new(&plugin.id), plugin))
+        .collect::<BTreeMap<_, _>>();
     let mut enabled_by_id = BTreeMap::new();
     for state in repository
         .list_plugin_states()
         .map_err(PluginLifecycleError::Repository)?
     {
         if installed_ids.contains(&state.plugin_id) {
-            let valid = installed
-                .iter()
-                .find(|plugin| plugin.id == state.plugin_id.as_ref())
-                .is_some_and(has_valid_configuration_declaration);
+            let valid = installed_by_id
+                .get(&state.plugin_id)
+                .is_some_and(|plugin| has_valid_configuration_declaration(plugin));
             let enabled = if valid {
                 state.enabled
             } else {

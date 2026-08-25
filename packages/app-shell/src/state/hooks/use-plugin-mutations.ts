@@ -1,3 +1,4 @@
+import type { PluginDataDisposition } from "@ora/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useContractsClient } from "../../contracts-client-context";
 import { queryKeys } from "./query-keys";
@@ -29,7 +30,7 @@ export function usePluginMutations(pluginId: string) {
     onSettled: invalidate,
   });
   const uninstall = useMutation({
-    mutationFn: (dataDisposition: "delete" | "retain" = "delete") =>
+    mutationFn: (dataDisposition: PluginDataDisposition = "delete") =>
       client.plugin.uninstall({ pluginId, dataDisposition }),
     onSettled: invalidate,
   });

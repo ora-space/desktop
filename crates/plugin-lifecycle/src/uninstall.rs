@@ -1,5 +1,6 @@
 use super::PluginLifecycleError;
 use ora_contracts::PluginDataDisposition;
+use ora_logging::ora_warn;
 use ora_plugin_manager::InstalledPlugin as DiscoveredPlugin;
 use std::path::{Path, PathBuf};
 
@@ -65,18 +66,35 @@ where
 {
     /// Restores every successful move in reverse order after a later staging or repository failure.
     pub(crate) fn rollback(self) -> Result<(), PluginLifecycleError> {
+        let mut failure = None;
         for (original, staged) in self.moved.into_iter().rev() {
-            if self.file_system.exists(&staged) {
-                self.file_system
-                    .rename(&staged, &original)
-                    .map_err(|source| PluginLifecycleError::PackageRemoval {
-                        path: staged,
-                        source,
-                    })?;
+            if self.file_system.exists(&staged)
+                && let Err(source) = self.file_system.rename(&staged, &original)
+            {
+                ora_warn!(
+                    staged = %staged.display(),
+                    original = %original.display(),
+                    %source,
+                    "could not restore one staged plugin uninstall path"
+                );
+                failure.get_or_insert(PluginLifecycleError::UninstallStaging {
+                    path: staged,
+                    source,
+                });
             }
         }
-        let _ = self.file_system.remove_dir_all(&self.staging_root);
-        Ok(())
+        if let Err(source) = self.file_system.remove_dir_all(&self.staging_root) {
+            ora_warn!(
+                staging_root = %self.staging_root.display(),
+                %source,
+                "could not remove plugin uninstall staging directory after rollback"
+            );
+            failure.get_or_insert(PluginLifecycleError::UninstallStaging {
+                path: self.staging_root,
+                source,
+            });
+        }
+        failure.map_or(Ok(()), Err)
     }
 
     /// Removes committed staging content; callers may retry independently after a failure.
@@ -113,7 +131,7 @@ where
         plugin
             .package_root
             .parent()
-            .ok_or_else(|| PluginLifecycleError::PackageRemoval {
+            .ok_or_else(|| PluginLifecycleError::UninstallStaging {
                 path: plugin.package_root.clone(),
                 source: std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -121,7 +139,7 @@ where
                 ),
             })?;
     if !file_system.is_directory(package_name_root) {
-        return Err(PluginLifecycleError::PackageRemoval {
+        return Err(PluginLifecycleError::UninstallStaging {
             path: package_name_root.to_path_buf(),
             source: std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -132,7 +150,7 @@ where
     let staging_parent = data_directory.join(".uninstall-staging");
     file_system
         .create_dir_all(&staging_parent)
-        .map_err(|source| PluginLifecycleError::PackageRemoval {
+        .map_err(|source| PluginLifecycleError::UninstallStaging {
             path: staging_parent.clone(),
             source,
         })?;
@@ -146,14 +164,14 @@ where
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(source) => {
-                return Err(PluginLifecycleError::PackageRemoval {
+                return Err(PluginLifecycleError::UninstallStaging {
                     path: candidate,
                     source,
                 });
             }
         }
     }
-    let staging_root = staging_root.ok_or_else(|| PluginLifecycleError::PackageRemoval {
+    let staging_root = staging_root.ok_or_else(|| PluginLifecycleError::UninstallStaging {
         path: staging_parent,
         source: std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
@@ -168,7 +186,7 @@ where
     let staged_installation = staging_root.join("installation");
     if let Err(source) = file_system.rename(package_name_root, &staged_installation) {
         let _ = file_system.remove_dir_all(&staging_root);
-        return Err(PluginLifecycleError::PackageRemoval {
+        return Err(PluginLifecycleError::UninstallStaging {
             path: package_name_root.to_path_buf(),
             source,
         });
@@ -182,8 +200,16 @@ where
         if file_system.exists(&data_root) {
             let staged_data = staging_root.join("data");
             if let Err(source) = file_system.rename(&data_root, &staged_data) {
-                staged.rollback()?;
-                return Err(PluginLifecycleError::PackageRemoval {
+                if let Err(rollback_error) = staged.rollback() {
+                    ora_warn!(
+                        data_root = %data_root.display(),
+                        %source,
+                        %rollback_error,
+                        "could not stage plugin data and rollback also failed"
+                    );
+                    return Err(rollback_error);
+                }
+                return Err(PluginLifecycleError::UninstallStaging {
                     path: data_root,
                     source,
                 });
@@ -200,7 +226,7 @@ pub(crate) fn plugin_data_root(
     plugin_id: &str,
 ) -> Result<PathBuf, PluginLifecycleError> {
     let Some((namespace, name)) = plugin_id.split_once('/') else {
-        return Err(PluginLifecycleError::PackageRemoval {
+        return Err(PluginLifecycleError::UninstallStaging {
             path: data_directory.to_path_buf(),
             source: std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -303,7 +329,7 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "failed to remove plugin package at `{}`",
+                "failed to stage plugin uninstall at `{}`",
                 data_root.display()
             )
         );

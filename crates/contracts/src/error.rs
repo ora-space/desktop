@@ -1,4 +1,3 @@
-use crate::PluginConfigurationFieldError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use ts_rs::{Config, ExportError, TS};
@@ -72,6 +71,15 @@ pub struct SkillFolderConflictParams {
 #[ts(export_to = "error.ts")]
 pub struct TaskBaseBranchNotFoundParams {
     pub branch_name: String,
+}
+
+/// Addresses one stable validation failure to its Setting ID.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct PluginConfigurationFieldError {
+    pub setting_id: String,
+    pub error_code: String,
 }
 
 /// Carries Setting-addressed validation failures for a rejected configuration replacement.
@@ -325,6 +333,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     OpenLocationFailedParams::export_all(config)?;
     SkillFolderConflictParams::export_all(config)?;
     TaskBaseBranchNotFoundParams::export_all(config)?;
+    PluginConfigurationFieldError::export_all(config)?;
     PluginConfigurationValidationParams::export_all(config)?;
     PublicError::export_all(config)?;
     ContractError::export_all(config)?;

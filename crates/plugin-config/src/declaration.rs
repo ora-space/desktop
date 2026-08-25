@@ -81,7 +81,9 @@ pub fn compile_declaration(source: &[u8]) -> Result<CompiledDeclaration, Compile
         return Err(CompileDeclarationError::TooLarge);
     }
     let value = parse_strict_json(source)?;
-    let raw: RawDeclaration = serde_json::from_value(value.clone())
+    let canonical = serde_json::to_vec(&value)
+        .map_err(|error| CompileDeclarationError::Fingerprint(error.to_string()))?;
+    let raw: RawDeclaration = serde_json::from_value(value)
         .map_err(|error| CompileDeclarationError::InvalidStructure(error.to_string()))?;
     if raw.schema_version != 1 {
         return Err(CompileDeclarationError::UnsupportedSchemaVersion(
@@ -108,8 +110,6 @@ pub fn compile_declaration(source: &[u8]) -> Result<CompiledDeclaration, Compile
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => left.id.cmp(&right.id),
     });
-    let canonical = serde_json::to_vec(&value)
-        .map_err(|error| CompileDeclarationError::Fingerprint(error.to_string()))?;
     let fingerprint = sha256_reader(Cursor::new(canonical))
         .map_err(|error| CompileDeclarationError::Fingerprint(error.to_string()))?;
 

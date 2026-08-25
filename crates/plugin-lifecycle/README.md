@@ -24,8 +24,9 @@ Missing durable state means disabled, and only the first enable creates a durabl
 with an invalid Plugin Configuration declaration remains visible but cannot be enabled. Uninstall
 stops the process, then atomically stages the complete
 `plugins/installed/<namespace>/<name>` tree and, when selected, `data/<namespace>/<name>` before
-deleting durable state. A repository or staging failure rolls the moves back; after commit,
-staging cleanup is independent and empty namespace directories are pruned.
+deleting durable state. A repository or staging failure attempts every staged move in reverse order
+and reports any rollback failure; after commit, staging cleanup is independent and empty namespace
+directories are pruned.
 Cleanup failures retain their staged paths in memory and are retried by later scans without
 reversing the already committed uninstall.
 Each scan reapplies durable eligibility to every retained package, stops runtimes that durable state

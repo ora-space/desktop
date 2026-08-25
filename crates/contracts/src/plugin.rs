@@ -113,15 +113,6 @@ pub struct PluginConfigurationDetails {
     pub summary: PluginConfigurationSummary,
 }
 
-/// Addresses one stable validation failure to its Setting ID.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct PluginConfigurationFieldError {
-    pub setting_id: String,
-    pub error_code: String,
-}
-
 /// Describes the single agent contributed by an installed agent plugin package.
 ///
 /// The agent carries no id: one package provides exactly one agent, identified by the package.
@@ -419,6 +410,7 @@ pub struct ResetPluginConfigurationRequest {
 pub struct ResetPluginConfigurationResponse {
     pub configuration: PluginConfigurationDetails,
 }
+
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     PluginInstallationValidity::export(config)?;
@@ -430,7 +422,6 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     PluginSettingValueSource::export(config)?;
     PluginSettingDetails::export(config)?;
     PluginConfigurationDetails::export(config)?;
-    PluginConfigurationFieldError::export(config)?;
     InstalledPluginAgent::export(config)?;
     PluginRuntimeStatus::export(config)?;
     InstalledPlugin::export(config)?;
@@ -573,6 +564,19 @@ mod tests {
                 "declarationFingerprint": "sha256",
                 "mode": "reset_all",
                 "expectedRevision": 4,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ResetPluginConfigurationRequest {
+                plugin_id: "official/weather".to_string(),
+                declaration_fingerprint: "sha256".to_string(),
+                reset: ResetPluginConfigurationMode::RecoverCorrupt,
+            })
+            .unwrap(),
+            json!({
+                "pluginId": "official/weather",
+                "declarationFingerprint": "sha256",
+                "mode": "recover_corrupt",
             })
         );
     }

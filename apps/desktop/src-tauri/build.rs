@@ -17,9 +17,23 @@ fn validate_main_command_permissions() {
             permission_path.display()
         )
     });
+    let permissions = toml::from_str::<toml::Value>(&permission_source)
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", permission_path.display()));
+    let allowed_commands = permissions
+        .get("permission")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|permission| permission.get("commands"))
+        .filter_map(toml::Value::as_table)
+        .filter_map(|commands| commands.get("allow"))
+        .filter_map(toml::Value::as_array)
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
     let missing_commands = DESKTOP_COMMANDS
         .iter()
-        .filter(|command| !permission_source.contains(&format!("\"{command}\"")))
+        .filter(|command| !allowed_commands.contains(**command))
         .copied()
         .collect::<Vec<_>>();
 
@@ -34,6 +48,8 @@ fn validate_main_command_permissions() {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=permissions/main-commands.toml");
+    println!("cargo:rerun-if-changed=src/app_commands.rs");
     validate_main_command_permissions();
 
     // Drop Tauri's resource-embedded app manifest and attach Common-Controls v6 via

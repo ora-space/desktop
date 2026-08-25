@@ -5,6 +5,7 @@ use crate::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, SettingDeclaration,
     SettingValue, compile_declaration,
 };
+use ora_utils::Slug;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -92,6 +93,15 @@ pub enum ConfigurationError {
     LockUnavailable,
     #[error("Plugin Configuration recovery was requested for a readable value file")]
     RecoveryNotRequired,
+    #[error(
+        "Plugin Configuration recovery could not restore `{path}` after write failure `{write_error}`: {restore_error}"
+    )]
+    RecoveryRestoreFailed {
+        path: PathBuf,
+        write_error: String,
+        #[source]
+        restore_error: std::io::Error,
+    },
 }
 
 /// Owns declaration lookup and Stored Setting Value resolution below one host data root.
@@ -99,7 +109,7 @@ pub enum ConfigurationError {
 pub struct ConfigurationService<FileSystem = StandardConfigurationFileSystem> {
     data_root: std::path::PathBuf,
     file_system: FileSystem,
-    locks: Arc<Mutex<BTreeMap<String, Arc<Mutex<()>>>>>,
+    locks: Arc<Mutex<BTreeMap<PathBuf, Arc<Mutex<()>>>>>,
 }
 
 impl ConfigurationService<StandardConfigurationFileSystem> {
@@ -292,7 +302,13 @@ where
             values: BTreeMap::new(),
         };
         if let Err(error) = self.write_store(plugin_id, &replacement) {
-            let _ = self.file_system.move_no_replace(&backup, &path);
+            if let Err(restore_error) = self.file_system.move_no_replace(&backup, &path) {
+                return Err(ConfigurationError::RecoveryRestoreFailed {
+                    path,
+                    write_error: error.to_string(),
+                    restore_error,
+                });
+            }
             return Err(error);
         }
         Ok(details_from(declaration, replacement))
@@ -401,35 +417,31 @@ where
                 reason: "plugin identifier must contain namespace and name".to_string(),
             });
         };
-        if namespace.is_empty()
-            || name.is_empty()
-            || name.contains('/')
-            || ![namespace, name].into_iter().all(|segment| {
-                segment
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-            })
-        {
-            return Err(ConfigurationError::LoadFailed {
-                reason: "plugin identifier contains an unsafe path segment".to_string(),
-            });
-        }
+        let namespace = Slug::parse(namespace).map_err(|error| ConfigurationError::LoadFailed {
+            reason: format!("plugin namespace is invalid: {error}"),
+        })?;
+        let name = Slug::parse(name).map_err(|error| ConfigurationError::LoadFailed {
+            reason: format!("plugin name is invalid: {error}"),
+        })?;
         Ok(self
             .data_root
             .join("data")
-            .join(namespace)
-            .join(name)
+            .join(namespace.as_str())
+            .join(name.as_str())
             .join("store.json"))
     }
 
     /// Returns the process-local serialization gate for one plugin identifier.
     fn plugin_lock(&self, plugin_id: &str) -> Result<Arc<Mutex<()>>, ConfigurationError> {
+        // The store path is constructed from canonical Slugs, so differently cased requests use
+        // the same lock on case-insensitive filesystems as well as the same value file.
+        let lock_key = self.store_path(plugin_id)?;
         let mut locks = self
             .locks
             .lock()
             .map_err(|_| ConfigurationError::LockUnavailable)?;
         Ok(locks
-            .entry(plugin_id.to_string())
+            .entry(lock_key)
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone())
     }

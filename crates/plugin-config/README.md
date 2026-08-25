@@ -11,3 +11,6 @@ layers map the resulting value-oriented types into their own contracts.
 Declaration parsing is strict and bounded. Stored values are independent of installed versions,
 writes replace the complete explicit override set atomically, and optimistic revision plus
 declaration-fingerprint checks prevent stale editors from overwriting newer state.
+Recovery preserves malformed files under a collision-free local-time backup name; if replacement
+or restoration cannot complete, the caller receives an explicit failure instead of a recovered
+snapshot.

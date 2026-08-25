@@ -149,8 +149,8 @@ pub enum PluginLifecycleError {
         #[source]
         source: PluginRuntimeFailure,
     },
-    #[error("failed to remove plugin package at `{path}`")]
-    PackageRemoval {
+    #[error("failed to stage plugin uninstall at `{path}`")]
+    UninstallStaging {
         path: PathBuf,
         #[source]
         source: std::io::Error,
@@ -698,8 +698,16 @@ where
             None => None,
         };
         if let Err(error) = self.inner.repository.delete_plugin_state(&plugin_id) {
-            if let Some(staged) = staged {
-                staged.rollback()?;
+            if let Some(staged) = staged
+                && let Err(rollback_error) = staged.rollback()
+            {
+                ora_warn!(
+                    plugin_id = %request.plugin_id,
+                    %error,
+                    %rollback_error,
+                    "plugin state deletion failed and staged uninstall rollback also failed"
+                );
+                return Err(rollback_error);
             }
             return Err(PluginLifecycleError::Repository(error));
         }
@@ -728,14 +736,14 @@ where
         }
         if let Some(plugin) = &plugin {
             if let Some(namespace_root) = plugin.package_root.parent().and_then(Path::parent) {
-                let _ = std::fs::remove_dir(namespace_root);
+                remove_empty_namespace_directory(namespace_root);
             }
             if matches!(request.data_disposition, PluginDataDisposition::Delete)
                 && let Ok(data_root) =
                     plugin_data_root(&self.inner.config.data_directory, &plugin.id)
                 && let Some(namespace_root) = data_root.parent()
             {
-                let _ = std::fs::remove_dir(namespace_root);
+                remove_empty_namespace_directory(namespace_root);
             }
         }
 
@@ -788,6 +796,18 @@ where
             .state
             .write()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Removes an empty namespace directory while retaining unexpected filesystem failures in logs.
+fn remove_empty_namespace_directory(path: &Path) {
+    if let Err(error) = std::fs::remove_dir(path)
+        && !matches!(
+            error.kind(),
+            std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+        )
+    {
+        ora_warn!(path = %path.display(), %error, "could not remove empty plugin namespace directory");
     }
 }
 

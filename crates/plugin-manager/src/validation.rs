@@ -1,4 +1,4 @@
-use ora_plugin_config::ConfigurationService;
+use ora_plugin_config::{ConfigurationError, ConfigurationService};
 use ora_plugin_manifest::{PluginKind, PluginManifest};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
@@ -123,9 +123,17 @@ pub(crate) fn validate(
         match ConfigurationService::new(package_root).declaration(package_root) {
             Ok(None) => PluginConfigurationDeclarationValidity::NotDeclared,
             Ok(Some(_)) => PluginConfigurationDeclarationValidity::Valid,
-            Err(error) => PluginConfigurationDeclarationValidity::Invalid {
-                reason: error.to_string(),
-            },
+            Err(ConfigurationError::InvalidDeclaration(error)) => {
+                PluginConfigurationDeclarationValidity::Invalid {
+                    reason: error.to_string(),
+                }
+            }
+            Err(error) => {
+                return Err(invalid(
+                    "assets/config.json",
+                    format!("configuration declaration could not be read: {error}"),
+                ));
+            }
         };
 
     Ok(InstalledPlugin {

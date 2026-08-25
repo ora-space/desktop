@@ -1059,7 +1059,7 @@ async fn uninstall_records_stopped_state_before_package_removal() {
     assert_eq!(events.recv().await, Some(PluginId::new("official/example")));
     assert!(matches!(
         error,
-        PluginLifecycleError::PackageRemoval { path, .. } if path == package_root
+        PluginLifecycleError::UninstallStaging { path, .. } if path == package_root
     ));
 
     assert_eq!(

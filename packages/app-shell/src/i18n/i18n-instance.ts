@@ -806,6 +806,9 @@ export const translationResources = {
     "settings.plugins.configuration.unavailable":
       "配置数据无法读取。恢复会先保留损坏文件的备份，再重置覆盖值。",
     "settings.plugins.configuration.recover": "备份并恢复",
+    "settings.plugins.configuration.reload": "重新加载",
+    "settings.plugins.configuration.reloadRequired":
+      "配置已在其他位置更新。重新加载会保留当前草稿，并以最新配置作为保存基线。",
     "settings.plugins.configuration.recoverTitle": "备份损坏配置并恢复？",
     "settings.plugins.configuration.storedValueInvalid":
       "已保存的值与当前声明不兼容。保存新值或重置此项以修复。",
@@ -835,6 +838,7 @@ export const translationResources = {
     "settings.plugins.installing": "安装中",
     "settings.plugins.cancel": "取消",
     "settings.plugins.installFailed": "安装失败",
+    "settings.plugins.uninstallFailed": "卸载失败",
     "settings.plugins.uninstalling": "卸载中",
     "settings.plugins.runtimeFailing": "运行失败",
     "settings.plugins.viewDetails": "查看详情",
@@ -2350,6 +2354,9 @@ export const translationResources = {
     "settings.plugins.configuration.unavailable":
       "Configuration data cannot be read. Recovery backs up the damaged file before resetting overrides.",
     "settings.plugins.configuration.recover": "Back up and recover",
+    "settings.plugins.configuration.reload": "Reload",
+    "settings.plugins.configuration.reloadRequired":
+      "Configuration changed elsewhere. Reload keeps this draft and uses the latest configuration as the save baseline.",
     "settings.plugins.configuration.recoverTitle":
       "Back up damaged configuration and recover?",
     "settings.plugins.configuration.storedValueInvalid":
@@ -2381,6 +2388,7 @@ export const translationResources = {
     "settings.plugins.installing": "Installing",
     "settings.plugins.cancel": "Cancel",
     "settings.plugins.installFailed": "Install failed",
+    "settings.plugins.uninstallFailed": "Uninstall failed",
     "settings.plugins.uninstalling": "Uninstalling",
     "settings.plugins.runtimeFailing": "Runtime failed",
     "settings.plugins.viewDetails": "View details",

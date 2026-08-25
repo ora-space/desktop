@@ -28,23 +28,31 @@ impl ConfigurationFileSystem for StandardConfigurationFileSystem {
             Err(error) => return Err(error),
         };
         let mut contents = Vec::new();
-        file.take(limit as u64 + 1).read_to_end(&mut contents)?;
+        // Read one extra byte so callers can distinguish an at-limit file from one that grew
+        // beyond the accepted bound without risking integer wraparound on this public port.
+        file.take((limit as u64).saturating_add(1))
+            .read_to_end(&mut contents)?;
         Ok(Some(contents))
     }
 
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            // Apply restrictive permissions when each directory is created. Tightening the mode
+            // afterwards would leave a crash-visible interval with the process umask's defaults.
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(path)?;
+        }
+        #[cfg(not(unix))]
         std::fs::create_dir_all(path)?;
         #[cfg(windows)]
         crate::windows_permissions::restrict_to_current_user(
             path,
             crate::windows_permissions::AccessControlTarget::Directory,
         )?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            // The directory gate prevents exposure while atomic replacement is still in flight.
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-        }
         Ok(())
     }
 

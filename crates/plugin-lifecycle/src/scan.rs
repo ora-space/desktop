@@ -5,6 +5,7 @@ use super::{
 use ora_application::{Clock, PluginStateRepository};
 use ora_contracts::{ScanPluginsRequest, ScanPluginsResponse};
 use ora_domain::{PluginEnabledState, PluginId};
+use ora_logging::ora_warn;
 use ora_plugin_manager::PluginManager;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,7 +27,13 @@ where
             .pending_uninstall_cleanup
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .retain(|staged| staged.cleanup().is_err());
+            .retain(|staged| match staged.cleanup() {
+                Ok(()) => false,
+                Err(error) => {
+                    ora_warn!(%error, "plugin uninstall staging cleanup retry failed");
+                    true
+                }
+            });
         let cached_ids = self
             .read_state()
             .installed
@@ -47,6 +54,10 @@ where
             .iter()
             .map(|plugin| PluginId::new(&plugin.id))
             .collect::<BTreeSet<_>>();
+        let installed_by_id = installed
+            .iter()
+            .map(|plugin| (PluginId::new(&plugin.id), plugin))
+            .collect::<BTreeMap<_, _>>();
         let removed_ids = cached_ids
             .difference(&installed_ids)
             .cloned()
@@ -86,10 +97,9 @@ where
             .map_err(PluginLifecycleError::Repository)?
         {
             if installed_ids.contains(&persisted.plugin_id) {
-                let valid = installed
-                    .iter()
-                    .find(|plugin| plugin.id == persisted.plugin_id.as_ref())
-                    .is_some_and(has_valid_configuration_declaration);
+                let valid = installed_by_id
+                    .get(&persisted.plugin_id)
+                    .is_some_and(|plugin| has_valid_configuration_declaration(plugin));
                 let enabled = if valid {
                     persisted.enabled
                 } else {

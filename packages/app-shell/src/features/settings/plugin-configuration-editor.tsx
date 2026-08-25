@@ -88,7 +88,6 @@ export function PluginConfigurationEditor({
 
   return (
     <LoadedConfigurationEditor
-      key={`${details.declarationFingerprint}:${details.revision}`}
       details={details}
       displayName={displayName}
       saved={savedRevision === details.revision}
@@ -103,12 +102,24 @@ export function PluginConfigurationEditor({
           values,
         });
         setSavedRevision(response.configuration.revision);
+        return response.configuration;
       }}
-      onReset={() =>
-        configuration.reset.mutateAsync({
+      onReset={async () => {
+        const response = await configuration.reset.mutateAsync({
           declarationFingerprint: details.declarationFingerprint,
           mode: "reset_all",
           expectedRevision: details.revision,
+        });
+        return response.configuration;
+      }}
+      onReload={() =>
+        configuration.query.refetch().then((result) => {
+          if (result.data === undefined)
+            throw (
+              result.error ??
+              new Error("plugin configuration reload returned no data")
+            );
+          return result.data;
         })
       }
     />
@@ -126,6 +137,7 @@ function LoadedConfigurationEditor({
   onNavigationGuardChange,
   onSave,
   onReset,
+  onReload,
 }: {
   details: PluginConfigurationDetails;
   displayName: string;
@@ -136,8 +148,11 @@ function LoadedConfigurationEditor({
   onNavigationGuardChange?: (
     guard: PluginConfigurationNavigationGuard | null,
   ) => void;
-  onSave: (values: Record<string, PluginSettingValue>) => Promise<void>;
-  onReset: () => Promise<unknown>;
+  onSave: (
+    values: Record<string, PluginSettingValue>,
+  ) => Promise<PluginConfigurationDetails>;
+  onReset: () => Promise<PluginConfigurationDetails>;
+  onReload: () => Promise<PluginConfigurationDetails>;
 }) {
   const { t } = useTranslation();
   const baseline = useMemo(() => draftsFrom(details), [details]);
@@ -145,7 +160,14 @@ function LoadedConfigurationEditor({
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
+  const [reloadRequired, setReloadRequired] = useState(false);
+  const inputBySettingId = useRef<
+    Map<string, HTMLInputElement | HTMLSelectElement>
+  >(new Map());
   const dirty = !sameDrafts(drafts, baseline);
+
+  const focusField = (settingId: string) =>
+    inputBySettingId.current.get(settingId)?.focus();
 
   const save = async () => {
     const values: Record<string, PluginSettingValue> = {};
@@ -157,20 +179,25 @@ function LoadedConfigurationEditor({
         const value = Number(text);
         if (text.trim() === "" || !Number.isFinite(value)) {
           setFieldError(field.declaration.id);
-          document.getElementById(fieldId(field))?.focus();
+          focusField(field.declaration.id);
           return false;
         }
         values[field.declaration.id] = value;
       } else if (field.declaration.type === "boolean") {
-        if (typeof draft.value === "boolean")
-          values[field.declaration.id] = draft.value;
+        if (typeof draft.value !== "boolean") {
+          setFieldError(field.declaration.id);
+          focusField(field.declaration.id);
+          return false;
+        }
+        values[field.declaration.id] = draft.value;
       } else {
         values[field.declaration.id] = String(draft.value ?? "");
       }
     }
     setFieldError(null);
     try {
-      await onSave(values);
+      const saved = await onSave(values);
+      setDrafts(draftsFrom(saved));
       return true;
     } catch (error) {
       if (
@@ -180,9 +207,15 @@ function LoadedConfigurationEditor({
         const first = error.payload.params.fieldErrors[0]?.settingId;
         if (first !== undefined) {
           setFieldError(first);
-          document.getElementById(`plugin-setting-${first}`)?.focus();
+          focusField(first);
         }
       }
+      if (
+        error instanceof RemoteContractError &&
+        (error.payload.code === "configuration_revision_conflict" ||
+          error.payload.code === "plugin_configuration_declaration_changed")
+      )
+        setReloadRequired(true);
       toast.error(t("settings.plugins.configuration.saveFailed"), {
         description: localizeContractError(error, t),
       });
@@ -223,13 +256,35 @@ function LoadedConfigurationEditor({
       </header>
 
       <div className="space-y-5">
+        {reloadRequired && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
+            <span>{t("settings.plugins.configuration.reloadRequired")}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void onReload()
+                  .then(() => setReloadRequired(false))
+                  .catch((error: unknown) =>
+                    toast.error(localizeContractError(error, t)),
+                  )
+              }
+            >
+              {t("settings.plugins.configuration.reload")}
+            </Button>
+          </div>
+        )}
         {details.settings.map((field) => {
           const draft = drafts[field.declaration.id] ?? draftFrom(field);
-          const update = (next: Draft) =>
+          const update = (next: Draft) => {
+            setFieldError((current) =>
+              current === field.declaration.id ? null : current,
+            );
             setDrafts((current) => ({
               ...current,
               [field.declaration.id]: next,
             }));
+          };
           return (
             <div key={field.declaration.id} className="space-y-1.5">
               <label htmlFor={fieldId(field)} className="text-sm font-medium">
@@ -244,6 +299,15 @@ function LoadedConfigurationEditor({
               {field.declaration.type === "boolean" ? (
                 <select
                   id={fieldId(field)}
+                  ref={(element) => {
+                    if (element === null)
+                      inputBySettingId.current.delete(field.declaration.id);
+                    else
+                      inputBySettingId.current.set(
+                        field.declaration.id,
+                        element,
+                      );
+                  }}
                   aria-label={field.declaration.title}
                   className="h-8 w-full rounded-lg border border-input bg-background px-2 text-sm"
                   value={draft.override ? String(draft.value) : "unset"}
@@ -271,6 +335,15 @@ function LoadedConfigurationEditor({
               ) : (
                 <Input
                   id={fieldId(field)}
+                  ref={(element) => {
+                    if (element === null)
+                      inputBySettingId.current.delete(field.declaration.id);
+                    else
+                      inputBySettingId.current.set(
+                        field.declaration.id,
+                        element,
+                      );
+                  }}
                   aria-label={field.declaration.title}
                   inputMode={
                     field.declaration.type === "number" ? "decimal" : undefined
@@ -369,7 +442,10 @@ function LoadedConfigurationEditor({
               disabled={resetting}
               onClick={() =>
                 void onReset()
-                  .then(() => setResetOpen(false))
+                  .then((configuration) => {
+                    setDrafts(draftsFrom(configuration));
+                    setResetOpen(false);
+                  })
                   .catch((error: unknown) =>
                     toast.error(localizeContractError(error, t)),
                   )

@@ -4,12 +4,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { expect, it, vi } from "vitest";
 import type { ContractsClient } from "@ora/contracts";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { appI18n } from "../../i18n/i18n-instance";
 import { ContractsClientContext } from "../../contracts-client-context";
 import {
   createMockClient,
   createMockClientState,
 } from "../../test/mock-client";
 import { PluginsSettings } from "./plugins-settings";
+
+// Keep this test worker responsible for initializing the instance used by useTranslation.
+void appI18n;
 
 /** Renders plugin settings with isolated query and contracts-client state. */
 function renderSettings(client: ContractsClient) {
@@ -329,6 +333,41 @@ it("requires an explicit decision before leaving a dirty configuration editor", 
   ).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: /取消|Cancel/ }));
   expect(screen.getByLabelText(/Endpoint/)).toHaveValue("draft");
+});
+
+/** A stale editor keeps its local input until the user reloads the latest save baseline. */
+it("preserves a configuration draft when the declaration changes during save", async () => {
+  const user = userEvent.setup();
+  const { state, client } = clientWithPluginConfiguration();
+  renderSettings(client);
+
+  await user.click(
+    await screen.findByRole("button", { name: /管理插件|Manage plugins/ }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /配置|Configure/ }),
+  );
+  await user.type(await screen.findByLabelText(/Endpoint/), "draft");
+
+  const latest = state.pluginConfigurations.get("official/weather");
+  if (latest === undefined) throw new Error("configuration fixture missing");
+  state.pluginConfigurations.set("official/weather", {
+    ...latest,
+    revision: 1n,
+    declarationFingerprint: "declaration-2",
+  });
+
+  await user.click(screen.getByRole("button", { name: /保存|Save/ }));
+  expect(
+    await screen.findByText(
+      /配置已在其他位置更新|Configuration changed elsewhere/,
+    ),
+  ).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: /重新加载|Reload/ }));
+  await waitFor(() =>
+    expect(screen.getByLabelText(/Endpoint/)).toHaveValue("draft"),
+  );
 });
 
 /** Damaged storage needs a second confirmation before the recovery domain operation runs. */

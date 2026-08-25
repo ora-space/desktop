@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
   Input,
   Switch,
+  toast,
 } from "@ora/ui";
 import {
   IconDots,
@@ -32,6 +33,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
+import { localizeContractError } from "../../i18n/contract-error";
 import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginScan } from "../../state/hooks/use-plugin-scan";
@@ -44,7 +46,7 @@ export function PluginManager({
 }: {
   plugins: InstalledPlugin[];
   onBack: () => void;
-  onConfigure: (pluginId: string) => void;
+  onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -142,7 +144,7 @@ function InstalledPluginRow({
   onConfigure,
 }: {
   plugin: InstalledPlugin;
-  onConfigure: (pluginId: string) => void;
+  onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
 }) {
   const { t } = useTranslation();
   const mutations = usePluginMutations(plugin.id);
@@ -152,6 +154,11 @@ function InstalledPluginRow({
   const busy = enabling || disabling || uninstalling;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
+  const failUninstall = (cause: unknown) => {
+    toast.error(t("settings.plugins.uninstallFailed"), {
+      description: localizeContractError(cause, t),
+    });
+  };
 
   return (
     <>
@@ -194,7 +201,7 @@ function InstalledPluginRow({
               variant="outline"
               size="sm"
               disabled={busy}
-              onClick={() => onConfigure(plugin.id)}
+              onClick={() => onConfigure(plugin)}
             >
               {t("settings.plugins.configuration.configure")}
             </Button>
@@ -254,7 +261,13 @@ function InstalledPluginRow({
           <IconLoader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
         )}
       </div>
-      <AlertDialog open={uninstallOpen} onOpenChange={setUninstallOpen}>
+      <AlertDialog
+        open={uninstallOpen}
+        onOpenChange={(open) => {
+          setUninstallOpen(open);
+          if (open) setDeleteData(true);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -283,6 +296,7 @@ function InstalledPluginRow({
               disabled={uninstalling}
               onClick={() =>
                 mutations.uninstall.mutate(deleteData ? "delete" : "retain", {
+                  onError: failUninstall,
                   onSuccess: () => setUninstallOpen(false),
                 })
               }

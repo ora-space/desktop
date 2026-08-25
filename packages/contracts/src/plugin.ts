@@ -146,14 +146,6 @@ export type PluginConfigurationDetails = {
 };
 
 /**
- * Addresses one stable validation failure to its Setting ID.
- */
-export type PluginConfigurationFieldError = {
-  settingId: string;
-  errorCode: string;
-};
-
-/**
  * Represents the exclusive list-facing Plugin Configuration state.
  */
 export type PluginConfigurationSummary = { "state": "not_declared" } | {
