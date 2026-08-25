@@ -144,6 +144,8 @@ describe("atom settings content", () => {
             kind: "skill",
             enabled: false,
             logo: null,
+            installationValidity: { validity: "valid" },
+            configuration: { state: "not_declared" },
             runtime: "stopped",
           },
         ],
