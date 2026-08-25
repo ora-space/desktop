@@ -13,7 +13,7 @@ import {
 } from "@ora/ui";
 import { IconTrash } from "@tabler/icons-react";
 import { EntityDialog, type EntityField } from "./entity-dialog";
-import { DeployToProjectDialog } from "../workflow-run/deploy-to-project-dialog";
+import { RunWorkflowDialog } from "../workflow-run/run-workflow-dialog";
 import {
   useCreateProject,
   useDeleteProject,
@@ -48,9 +48,8 @@ export function WorkspaceDialogs() {
   const setDialog = useUiStore((s) => s.setDialog);
   const deleteTarget = useUiStore((s) => s.deleteTarget);
   const setDeleteTarget = useUiStore((s) => s.setDeleteTarget);
-  const deployDialog = dialog?.kind === "deployWorkflow" ? dialog : null;
-  const entityDialog =
-    dialog && dialog.kind !== "deployWorkflow" ? dialog : null;
+  const runWorkflowDialog = dialog?.kind === "runWorkflow" ? dialog : null;
+  const entityDialog = dialog && dialog.kind !== "runWorkflow" ? dialog : null;
 
   return (
     <>
@@ -60,14 +59,24 @@ export function WorkspaceDialogs() {
           onOpenChange={(open) => !open && setDialog(null)}
         />
       )}
-      <DeployToProjectDialog
-        open={deployDialog !== null}
+      <RunWorkflowDialog
+        open={runWorkflowDialog !== null}
         workflow={
-          deployDialog
-            ? { id: deployDialog.workflowId, name: deployDialog.workflowName }
+          runWorkflowDialog
+            ? {
+                id: runWorkflowDialog.workflowId,
+                name: runWorkflowDialog.workflowName,
+              }
             : null
         }
-        initialProjectId={deployDialog?.projectId ?? null}
+        target={
+          runWorkflowDialog
+            ? {
+                projectId: runWorkflowDialog.projectId,
+                workspaceId: runWorkflowDialog.workspaceId,
+              }
+            : null
+        }
         onOpenChange={(open) => !open && setDialog(null)}
       />
       <DeleteEntityDialog
@@ -188,7 +197,7 @@ function WorkspaceEntityDialog({
   dialog,
   onOpenChange,
 }: {
-  dialog: Exclude<DialogState, { kind: "deployWorkflow" }>;
+  dialog: Exclude<DialogState, { kind: "runWorkflow" }>;
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useTranslation();

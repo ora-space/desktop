@@ -463,7 +463,7 @@ describe("WorkspaceSidebar", () => {
     );
   });
 
-  it("starts a muted draft from the worktree plus, not the row click", async () => {
+  it("starts a muted draft from the Workspace create menu", async () => {
     const user = userEvent.setup();
     useWorkspaceSelectionStore
       .getState()
@@ -473,8 +473,11 @@ describe("WorkspaceSidebar", () => {
     await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
     await user.click(
       within(treeRowShell(TASK.title)).getByRole("button", {
-        name: /^新建会话$|^New session$/,
+        name: /在此任务中新建|Create in this task/,
       }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /^新建任务$|^New task$/ }),
     );
 
     expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({
@@ -496,8 +499,11 @@ describe("WorkspaceSidebar", () => {
     await waitFor(() => expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull());
     await user.click(
       within(treeRowShell(TASK.title)).getByRole("button", {
-        name: /^新建会话$|^New session$/,
+        name: /在此任务中新建|Create in this task/,
       }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /^新建任务$|^New task$/ }),
     );
     expect(treeRow(NEW_SESSION_LABEL)).not.toBeNull();
 
@@ -519,8 +525,11 @@ describe("WorkspaceSidebar", () => {
     await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
     await user.click(
       within(treeRowShell(TASK.title)).getByRole("button", {
-        name: /^新建会话$|^New session$/,
+        name: /在此任务中新建|Create in this task/,
       }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /^新建任务$|^New task$/ }),
     );
     const draftId = useWorkspaceSelectionStore.getState().selection.draftId!;
     act(() => {
@@ -784,7 +793,7 @@ describe("WorkspaceSidebar", () => {
     });
   });
 
-  it("opens deploy dialog state when a workflow template is chosen", async () => {
+  it("opens run dialog state when a workflow template is chosen", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const state = workspaceWithOneSession();
     state.workflows = [
@@ -815,10 +824,41 @@ describe("WorkspaceSidebar", () => {
     await user.click(await screen.findByRole("button", { name: "Deploy bot" }));
 
     expect(useUiStore.getState().dialog).toEqual({
-      kind: "deployWorkflow",
+      kind: "runWorkflow",
       projectId: PROJECT.id,
+      workspaceId: "workspace-p1",
       workflowId: "wf1",
       workflowName: "Deploy bot",
+    });
+  });
+
+  it("targets the Task Workspace when a workflow is chosen from its plus menu", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const state = workspaceWithOneSession();
+    state.workflows = [mockPublishedWorkflow("wf1", "Task review")];
+    renderSidebar(state);
+
+    await waitFor(() => expect(treeRow(TASK.title)).not.toBeNull());
+    await user.click(
+      within(treeRowShell(TASK.title)).getByRole("button", {
+        name: /在此任务中新建|Create in this task/,
+      }),
+    );
+    await user.hover(
+      await screen.findByRole("button", {
+        name: /运行工作流|Run workflow/,
+      }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Task review" }),
+    );
+
+    expect(useUiStore.getState().dialog).toEqual({
+      kind: "runWorkflow",
+      projectId: PROJECT.id,
+      workspaceId: TASK.workspaceId,
+      workflowId: "wf1",
+      workflowName: "Task review",
     });
   });
 

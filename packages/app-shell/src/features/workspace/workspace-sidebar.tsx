@@ -214,6 +214,15 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
       ),
     [workspaces],
   );
+  const mainWorkspaceByProjectId = useMemo(
+    () =>
+      new Map(
+        workspaces
+          .filter((workspace) => workspace.kind === "main")
+          .map((workspace) => [workspace.projectId, workspace.id]),
+      ),
+    [workspaces],
+  );
   const directSessionsByProjectId = useStableGroupBy(
     useMemo(
       () =>
@@ -471,6 +480,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
             <ProjectTreeNode
               key={project.id}
               project={project}
+              mainWorkspaceId={mainWorkspaceByProjectId.get(project.id) ?? null}
               tasks={tasksByProjectId.get(project.id) ?? EMPTY_TASKS}
               sessionsByWorkspaceId={sessionsByWorkspaceId}
               directSessions={

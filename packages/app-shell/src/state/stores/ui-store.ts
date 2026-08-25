@@ -9,8 +9,9 @@ export type DialogState =
   | { kind: "task"; projectId: string }
   | { kind: "session"; workspaceId: string; entity?: Session }
   | {
-      kind: "deployWorkflow";
-      projectId: string | null;
+      kind: "runWorkflow";
+      projectId: string;
+      workspaceId: string;
       workflowId: string;
       workflowName: string;
     };

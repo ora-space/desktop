@@ -1,12 +1,13 @@
 use ora_application::{
-    ProjectRepository, SessionRepository, SkillRepository, WorkflowRepository,
-    WorkflowRunCreateOutcome, WorkflowRunRepository,
+    BindWorkflowNodeSessionResult, NodeRunToStart, ProjectRepository, SessionRepository,
+    SkillRepository, StartWorkflowRunResult, WorkflowRepository, WorkflowRunCreateOutcome,
+    WorkflowRunEngineRepository, WorkflowRunRepository,
 };
 use ora_domain::{
     AgentRef, AuditFields, Namespace, PluginId, Project, ProjectId, Session, SessionId,
-    SessionStatus, SkillOrigin, Workflow, WorkflowId, WorkflowRun, WorkflowRunId,
-    WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Workspace, WorkspaceKind,
-    WorkspaceLifecycle, WorkspaceLocation,
+    SessionStatus, SkillOrigin, Workflow, WorkflowId, WorkflowNodeRunId, WorkflowRun,
+    WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Workspace,
+    WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
 };
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
@@ -15,8 +16,8 @@ use tempfile::TempDir;
 use crate::{
     DatabaseBootstrapper, DatabaseLocation, PluginSkillProjection, RepositoryPool,
     SqliteProjectRepository, SqliteSessionRepository, SqliteSkillRepository,
-    SqliteWorkflowRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
-    TimestampSource, default_migration_catalog,
+    SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository,
+    SqliteWorkspaceRepository, TimestampSource, default_migration_catalog,
 };
 
 /// Supplies deterministic timestamps for repository integration fixtures.
@@ -171,6 +172,129 @@ fn session_round_trip_uses_workspace_id() {
             .find_session(&SessionId::new("session-1"))
             .unwrap(),
         Some(session)
+    );
+}
+
+/// Verifies ordinary session lists exclude sessions owned by workflow node execution.
+#[test]
+fn standalone_session_list_excludes_workflow_node_sessions() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let workspace_path = existing_workspace_path(&temp_dir);
+    let project_repository = SqliteProjectRepository::new(pool.clone());
+    let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
+    let session_repository = SqliteSessionRepository::new(pool.clone());
+    let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool);
+    project_repository
+        .create_project(
+            Project::new(
+                ProjectId::new("project-1"),
+                "Demo",
+                AuditFields::new(10, 10, false),
+            ),
+            WorkspaceLocation::local_filesystem(workspace_path.to_string_lossy()),
+        )
+        .unwrap();
+    let workspace = workspace_repository
+        .find_main_workspace(&ProjectId::new("project-1"))
+        .unwrap()
+        .unwrap();
+    let standalone = Session::new(
+        SessionId::new("session-standalone"),
+        workspace.id.clone(),
+        AgentRef::parse("ora-space.opencode").unwrap(),
+        "provider-standalone",
+        SessionStatus::Running,
+        AuditFields::new(20, 20, false),
+    );
+    let workflow_session = Session::new(
+        SessionId::new("session-workflow"),
+        workspace.id.clone(),
+        AgentRef::parse("ora-space.opencode").unwrap(),
+        "provider-workflow",
+        SessionStatus::Running,
+        AuditFields::new(21, 21, false),
+    );
+    session_repository
+        .create_session(standalone.clone())
+        .unwrap();
+    session_repository
+        .create_session(workflow_session.clone())
+        .unwrap();
+
+    let workflow_id = WorkflowId::new("workflow-1");
+    let snapshot_id = WorkflowSnapshotId::new("snapshot-1");
+    workflow_repository
+        .create_workflow(
+            Workflow::new(
+                workflow_id.clone(),
+                Namespace::local(),
+                "Review",
+                None,
+                AuditFields::new(10, 10, false),
+            )
+            .unwrap(),
+            WorkflowSnapshot::new(
+                snapshot_id.clone(),
+                workflow_id.clone(),
+                "draft",
+                "{}",
+                10,
+                Some(10),
+                false,
+            ),
+        )
+        .unwrap();
+    let run_id = WorkflowRunId::new("run-1");
+    run_repository
+        .create_run(WorkflowRun::new(
+            run_id.clone(),
+            workspace.id,
+            workflow_id,
+            snapshot_id,
+            "Review run",
+            WorkflowRunStatus::Pending,
+            Some("{\"current_nodes\":[]}".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            AuditFields::new(30, 30, false),
+        ))
+        .unwrap();
+    let node_run_id = WorkflowNodeRunId::new("node-run-1");
+    assert_eq!(
+        engine_repository
+            .start_run(
+                &run_id,
+                &NodeRunToStart {
+                    id: node_run_id.clone(),
+                    node_id: "agent-1".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+                40,
+            )
+            .unwrap(),
+        StartWorkflowRunResult::Started
+    );
+    assert_eq!(
+        engine_repository
+            .bind_node_run_session(&node_run_id, &workflow_session.id, 50)
+            .unwrap(),
+        BindWorkflowNodeSessionResult::Bound
+    );
+
+    assert_eq!(
+        session_repository.list_sessions().unwrap(),
+        vec![standalone.clone(), workflow_session]
+    );
+    assert_eq!(
+        session_repository.list_standalone_sessions().unwrap(),
+        vec![standalone]
     );
 }
 

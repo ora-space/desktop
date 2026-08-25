@@ -98,6 +98,33 @@ impl SessionRepository for SqliteSessionRepository {
             .map_err(session_repository_error_from_database)
     }
 
+    /// Lists visible sessions that are not bound to a visible workflow node run.
+    fn list_standalone_sessions(&self) -> Result<Vec<Session>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, created_at, updated_at, is_deleted
+                     FROM sessions s
+                     WHERE s.is_deleted = 0
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM workflow_node_runs nr
+                           WHERE nr.session_id = s.id AND nr.is_deleted = 0
+                       )
+                     ORDER BY s.created_at, s.id",
+                )?;
+                let mut rows = statement.query([])?;
+                let mut sessions = Vec::new();
+
+                while let Some(row) = rows.next()? {
+                    sessions.push(map_session_row(row)?);
+                }
+
+                Ok(sessions)
+            })
+            .map_err(session_repository_error_from_database)
+    }
+
     /// Updates only the title so lifecycle or binding changes cannot be overwritten by a stale snapshot.
     fn update_session_title(
         &self,

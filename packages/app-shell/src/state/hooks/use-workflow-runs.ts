@@ -15,8 +15,6 @@ import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store"
 import type { WorkflowRunSummary } from "@ora/contracts";
 import { activeLocale } from "../../i18n/i18n-instance";
 
-const runsByWorkflowKey = (workflowId: string) =>
-  ["workflowRun", "byWorkflow", workflowId] as const;
 const runsByProjectKey = (projectId: string) =>
   ["workflowRun", "byProject", projectId] as const;
 const runDetailKey = (runId: string) =>
@@ -28,25 +26,6 @@ function hasActiveRun(runs: WorkflowRunSummary[] | undefined): boolean {
     runs?.some((run) => run.status === "pending" || run.status === "running") ??
     false
   );
-}
-
-/**
- * Lists the runs of one workflow so the deploy dialog can derive the projects the
- * workflow already runs in (a run-task's project is the deploy target).
- */
-export function useWorkflowRunsByWorkflow(
-  workflowId: string | null | undefined,
-) {
-  const client = useContractsClient();
-  return useQuery({
-    queryKey: runsByWorkflowKey(workflowId ?? ""),
-    queryFn: async () =>
-      (await client.workflowRun.listByWorkflow({ workflowId: workflowId! }))
-        .runs,
-    enabled: workflowId != null && workflowId !== "",
-    // Completion is backend-driven with no frontend event, so poll while any run is active.
-    refetchInterval: (query) => (hasActiveRun(query.state.data) ? 4000 : false),
-  });
 }
 
 /** Lists the persisted workflow runs of one project. */
@@ -91,9 +70,6 @@ export function useCreateWorkflowRun() {
           queryKey: runsByProjectKey(variables.projectId),
         });
       }
-      void queryClient.invalidateQueries({
-        queryKey: runsByWorkflowKey(variables.workflowId),
-      });
     },
   });
 }

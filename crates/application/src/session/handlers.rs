@@ -58,14 +58,14 @@ impl<Repository> ListSessionsHandler<Repository>
 where
     Repository: SessionRepository,
 {
-    /// Lists every visible session and maps each one into the shared contract view.
+    /// Lists user-created sessions without leaking workflow node execution sessions.
     pub fn handle(
         &self,
         _request: ListSessionsRequest,
     ) -> Result<ListSessionsResponse, ApplicationError> {
         let sessions = self
             .repository
-            .list_sessions()
+            .list_standalone_sessions()
             .map_err(ApplicationError::from_session_repository_error)?;
         Ok(ListSessionsResponse {
             sessions: sessions.into_iter().map(map_session).collect(),
@@ -209,6 +209,10 @@ mod tests {
         }
 
         fn list_sessions(&self) -> Result<Vec<Session>, RepositoryError> {
+            Ok(self.sessions.lock().unwrap().clone())
+        }
+
+        fn list_standalone_sessions(&self) -> Result<Vec<Session>, RepositoryError> {
             Ok(self.sessions.lock().unwrap().clone())
         }
 

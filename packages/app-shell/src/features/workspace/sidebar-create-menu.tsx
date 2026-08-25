@@ -19,16 +19,19 @@ import { useWorkflowLibrary } from "../settings/workflow-definitions";
 import { useUiStore } from "../../state/stores/ui-store";
 
 interface SidebarCreateMenuProps {
-  /** Project this control creates under. Always the row's own project. */
+  /** Project used to group the created draft or workflow run in the sidebar. */
   projectId: string;
-  onNewTask: (projectId: string) => void;
+  /** Exact Workspace that owns chats and workflow execution created from this row. */
+  workspaceId: string | null;
+  scope: "project" | "task";
+  onNewTask: () => void;
 }
 
 const ITEM_CLASS =
   "flex w-full cursor-default items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent";
 
 /**
- * Compact plus on a project row: direct task, worktree task, or workflow deploy.
+ * Compact plus on a Workspace row: ordinary task, optional worktree task, or workflow run.
  *
  * The first panel is a Popover. Workflow templates open as a second floating
  * panel to the right and list only workflows that already have a published
@@ -36,6 +39,8 @@ const ITEM_CLASS =
  */
 export function SidebarCreateMenu({
   projectId,
+  workspaceId,
+  scope,
   onNewTask,
 }: SidebarCreateMenuProps) {
   const { t } = useTranslation();
@@ -102,8 +107,16 @@ export function SidebarCreateMenu({
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={t("sidebar.createInProject")}
-            title={t("sidebar.createInProject")}
+            aria-label={t(
+              scope === "project"
+                ? "sidebar.createInProject"
+                : "sidebar.createInTask",
+            )}
+            title={t(
+              scope === "project"
+                ? "sidebar.createInProject"
+                : "sidebar.createInTask",
+            )}
             onClick={(event) => {
               // The project row toggles expansion; opening create must not.
               event.stopPropagation();
@@ -125,24 +138,26 @@ export function SidebarCreateMenu({
           onMouseEnter={() => setWorkflowOpen(false)}
           onClick={() => {
             closeAll();
-            onNewTask(projectId);
+            onNewTask();
           }}
         >
           <IconMessageCircle className="size-4" />
           {t("sidebar.newDirectChat")}
         </button>
-        <button
-          type="button"
-          className={ITEM_CLASS}
-          onMouseEnter={() => setWorkflowOpen(false)}
-          onClick={() => {
-            closeAll();
-            setDialog({ kind: "task", projectId });
-          }}
-        >
-          <IconGitBranch className="size-4" />
-          {t("sidebar.newTask")}
-        </button>
+        {scope === "project" && (
+          <button
+            type="button"
+            className={ITEM_CLASS}
+            onMouseEnter={() => setWorkflowOpen(false)}
+            onClick={() => {
+              closeAll();
+              setDialog({ kind: "task", projectId });
+            }}
+          >
+            <IconGitBranch className="size-4" />
+            {t("sidebar.newTask")}
+          </button>
+        )}
         <Popover
           open={workflowOpen}
           onOpenChange={(open, details) => {
@@ -164,6 +179,7 @@ export function SidebarCreateMenu({
               <button
                 type="button"
                 className={ITEM_CLASS}
+                disabled={workspaceId === null}
                 aria-haspopup="true"
                 aria-expanded={workflowOpen}
                 onMouseEnter={() => setWorkflowOpen(true)}
@@ -230,10 +246,12 @@ export function SidebarCreateMenu({
                   title={workflow.name}
                   className={`${ITEM_CLASS} min-w-0`}
                   onClick={() => {
+                    if (workspaceId === null) return;
                     closeAll();
                     setDialog({
-                      kind: "deployWorkflow",
+                      kind: "runWorkflow",
                       projectId,
+                      workspaceId,
                       workflowId: workflow.id,
                       workflowName: workflow.name,
                     });
