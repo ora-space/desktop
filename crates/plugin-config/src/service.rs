@@ -351,15 +351,22 @@ where
         package_root: &Path,
     ) -> Result<Option<CompiledDeclaration>, ConfigurationError> {
         let declaration_path = package_root.join("assets").join("config.json");
-        let Some(source) = self
+        // `NotADirectory` means an intermediate path component is a file (common when uninstall
+        // staging leaves a non-directory package root). That is the same as a missing declaration
+        // for list summaries: there is no `assets/config.json` to compile.
+        let source = match self
             .file_system
             .read_bounded(&declaration_path, MAX_DECLARATION_BYTES)
-            .map_err(|source| ConfigurationError::Io {
-                path: declaration_path,
-                source,
-            })?
-        else {
-            return Ok(None);
+        {
+            Ok(None) => return Ok(None),
+            Ok(Some(contents)) => contents,
+            Err(source) if source.kind() == std::io::ErrorKind::NotADirectory => return Ok(None),
+            Err(source) => {
+                return Err(ConfigurationError::Io {
+                    path: declaration_path,
+                    source,
+                });
+            }
         };
         Ok(Some(compile_declaration(&source)?))
     }
@@ -841,6 +848,61 @@ mod tests {
                 .expect("load recovered configuration")
                 .expect("declaration exists"),
             recovered
+        );
+    }
+
+    /// A package root that cannot be traversed is treated as undeclared, not load-failed.
+    ///
+    /// Linux reports `NotADirectory` when `assets/config.json` is opened through a file that
+    /// replaced the package tree; Windows often reports `NotFound`. List summaries must stay
+    /// `NotDeclared` in both cases so uninstall staging failures do not look like corrupt values.
+    #[test]
+    fn treats_non_directory_package_root_as_undeclared() {
+        use crate::filesystem::ConfigurationFileSystem;
+        use std::path::Path;
+
+        #[derive(Clone, Copy)]
+        struct NotADirectoryFileSystem;
+
+        impl ConfigurationFileSystem for NotADirectoryFileSystem {
+            fn read_bounded(
+                &self,
+                _path: &Path,
+                _limit: usize,
+            ) -> std::io::Result<Option<Vec<u8>>> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotADirectory,
+                    "package root is not a directory",
+                ))
+            }
+
+            fn create_dir_all(&self, _path: &Path) -> std::io::Result<()> {
+                unreachable!("declaration summary must not create directories")
+            }
+
+            fn atomic_write(&self, _path: &Path, _contents: &[u8]) -> std::io::Result<()> {
+                unreachable!("declaration summary must not write")
+            }
+
+            fn move_no_replace(&self, _source: &Path, _destination: &Path) -> std::io::Result<()> {
+                unreachable!("declaration summary must not move files")
+            }
+        }
+
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package-as-file");
+        let service =
+            ConfigurationService::with_file_system(temporary.path(), NotADirectoryFileSystem);
+
+        assert_eq!(
+            service.summary("official/weather", &package_root),
+            ConfigurationSummary::NotDeclared
+        );
+        assert_eq!(
+            service
+                .get("official/weather", &package_root)
+                .expect("non-directory package root is undeclared"),
+            None
         );
     }
 }

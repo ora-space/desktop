@@ -24,7 +24,8 @@ process lives.
 Only explicit scans rebuild the installed snapshot. List responses additionally read the current
 Plugin Configuration summary from immutable package declarations and plugin-global value files
 under `<data-dir>/plugins/data/<namespace>/<name>/store.json`, so the settings list reflects
-persisted completeness without a separate editor fetch. Per-plugin actions operate on cached
+persisted completeness without a separate editor fetch. When the cached package root is no longer
+a traversable directory, the summary stays `NotDeclared` rather than `configuration_load_failed`. Per-plugin actions operate on cached
 identity, serialize changes for the same plugin, and allow unrelated plugins to progress
 independently.
 Missing durable state means disabled, and only the first enable creates a durable row. A package
