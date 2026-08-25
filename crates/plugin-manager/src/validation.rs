@@ -108,8 +108,12 @@ pub(crate) fn validate(
     let name = manifest.name().as_str();
     // Both segments passed the manifest grammar, which is a strict subset of what the domain
     // id accepts, so this conversion cannot fail for a reason the user could act on.
-    let id = PluginId::new(manifest.namespace().as_str(), name)
-        .map_err(|error| invalid("name", format!("plugin id is not representable: {error}")))?;
+    let id = PluginId::new(manifest.namespace().as_str(), name).map_err(|error| {
+        invalid(
+            "identifier",
+            format!("plugin id is not representable: {error}"),
+        )
+    })?;
     let contributes = match manifest.kind() {
         PluginKind::Agent => PluginContribution::Agent(InstalledPluginAgent {
             display_name: name.to_owned(),

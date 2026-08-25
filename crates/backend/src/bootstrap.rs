@@ -1686,7 +1686,7 @@ mod tests {
         fs::create_dir_all(&skill_root).expect("create installed Skill tree");
         fs::write(
             package_root.join("orax.toml"),
-            "name = \"review-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Review skills\"\n",
+            "identifier = \"review-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Review skills\"\n",
         )
         .expect("write plugin manifest");
         fs::write(

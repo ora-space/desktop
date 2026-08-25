@@ -28,15 +28,17 @@ use ora_plugin_registry::{
     RegistryEntry, RegistryError, RegistryIndex, RegistrySource, RegistrySync,
 };
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
-/// The marketplace repository mirrored into the local registry source checkout.
-const MARKETPLACE_REPOSITORY_URL: &str = "https://github.com/ora-space/marketplace";
-/// The branch tracked by the marketplace registry source.
-const MARKETPLACE_REPOSITORY_BRANCH: &str = "main";
+/// The default marketplace sources this backend syncs, each tracked on its own branch.
+///
+/// Order matters only for overlapping plugin ids: when two sources publish the same plugin, the
+/// earlier source wins both the merged listing and the install-time lookup.
+const MARKETPLACE_SOURCES: &[(&str, &str)] =
+    &[("https://github.com/ora-space/marketplace", "main")];
 
 /// The concrete lifecycle composition the backend runs.
 pub(crate) type BackendPluginLifecycle = PluginLifecycle<
@@ -158,7 +160,7 @@ pub(crate) struct AgentPluginAttachment {
 /// Groups plugin discovery and lifecycle operations behind the backend's plugin interface.
 pub(crate) struct PluginApi {
     lifecycle: BackendPluginLifecycle,
-    registry_source: RegistrySource,
+    registry_sources: Vec<RegistrySource>,
     registry_index_path: PathBuf,
     data_directory: PathBuf,
     installer: Installer<ReqwestDownloader>,
@@ -177,15 +179,13 @@ impl PluginApi {
         publisher: AppEventPublisher,
     ) -> Result<Self, PluginLifecycleError> {
         let plugins_directory = data_directory.join("plugins");
-        let registry_source = RegistrySource::new(
-            MARKETPLACE_REPOSITORY_URL,
-            BranchName::new(MARKETPLACE_REPOSITORY_BRANCH),
-            plugins_directory
-                .join("sources")
-                .join("github.com")
-                .join("ora-space")
-                .join("marketplace"),
-        );
+        let sources_root = plugins_directory.join("sources");
+        let registry_sources = MARKETPLACE_SOURCES
+            .iter()
+            .map(|(url, branch)| {
+                RegistrySource::from_git(*url, BranchName::new(*branch), &sources_root)
+            })
+            .collect();
         let registry_index_path = plugins_directory.join("cache").join("registry_index.json");
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
         let notifications = BroadcastNotificationSink::new();
@@ -203,7 +203,7 @@ impl PluginApi {
 
         Ok(Self {
             lifecycle,
-            registry_source,
+            registry_sources,
             registry_index_path,
             data_directory,
             installer,
@@ -243,15 +243,21 @@ impl PluginApi {
         }
     }
 
-    /// Pulls the marketplace source, rebuilds its registry index, and atomically replaces the cache.
+    /// Pulls every marketplace source, merges their registry indexes, and atomically replaces the
+    /// cache.
     pub(crate) fn sync_available_plugins(
         &self,
         _request: SyncAvailablePluginsRequest,
     ) -> Result<SyncAvailablePluginsResponse, RegistryError> {
-        let checkout_directory =
-            RegistrySync::sync(&Git::new(CliGitRunner), &self.registry_source)?;
-        let build = RegistryIndex::build(
-            &checkout_directory.join("registry"),
+        let git = Git::new(CliGitRunner);
+        let mut registry_dirs: Vec<PathBuf> = Vec::with_capacity(self.registry_sources.len());
+        for source in &self.registry_sources {
+            let checkout_directory = RegistrySync::sync(&git, source)?;
+            registry_dirs.push(checkout_directory.join("registry"));
+        }
+        let registry_dir_refs: Vec<&Path> = registry_dirs.iter().map(PathBuf::as_path).collect();
+        let build = RegistryIndex::build_all(
+            &registry_dir_refs,
             ora_logging::clock::now_local().unix_timestamp(),
         );
         if let Some(cache_directory) = self.registry_index_path.parent() {
@@ -364,16 +370,22 @@ impl PluginApi {
             .map_err(|error| BackendError::internal("failed to remove plugin Skills", error))?;
         Ok(response)
     }
-    /// Installs a marketplace plugin by resolving its release manifest from the synced source and
+    /// Installs a marketplace plugin by resolving its release manifest from the synced sources and
     /// downloading, verifying, and extracting its package through the network-backed installer.
     ///
-    /// The source registry is read only for the release `url`/`sha256` (the cached index carries
-    /// display fields only), so this returns NotFound when the identifier is not in the checkout.
+    /// The source registries are read only for the release `url`/`sha256` (the cached index
+    /// carries display fields only), so this returns NotFound when the identifier is not in any
+    /// checkout.
     pub(crate) async fn install(
         &self,
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
-        let registry_directory = self.registry_source.checkout_dir().join("registry");
+        let registry_dirs: Vec<PathBuf> = self
+            .registry_sources
+            .iter()
+            .map(|source| source.checkout_dir().join("registry"))
+            .collect();
+        let registry_dir_refs: Vec<&Path> = registry_dirs.iter().map(PathBuf::as_path).collect();
         // A malformed identifier can never name a registry entry, so it is reported the same way
         // as an unknown one instead of leaking the id grammar as a separate error class.
         let plugin_id = PluginId::parse(&request.plugin_id).map_err(|_| {
@@ -383,7 +395,7 @@ impl PluginApi {
                 "marketplace plugin id is not a valid `<namespace>/<name>`",
             )
         })?;
-        let manifest = RegistryIndex::resolve_manifest(&registry_directory, &plugin_id)
+        let manifest = RegistryIndex::resolve_manifest_all(&registry_dir_refs, &plugin_id)
             .map_err(|error| {
                 BackendError::internal("failed to resolve plugin release manifest", error)
             })?
@@ -533,6 +545,8 @@ fn available_plugin(entry: &RegistryEntry) -> ora_contracts::AvailablePlugin {
     ora_contracts::AvailablePlugin {
         id: entry.id().canonical(),
         name: entry.name().to_owned(),
+        title: entry.title().to_owned(),
+        kind: entry.kind().to_owned(),
         namespace: entry.namespace().to_owned(),
         version: entry.version().to_string(),
         description: entry.description().to_owned(),

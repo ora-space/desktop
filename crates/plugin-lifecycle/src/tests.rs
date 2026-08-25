@@ -1691,7 +1691,7 @@ fn write_skill_plugin_package(data_dir: &std::path::Path, name: &str) {
     fs::write(
         package_root.join("orax.toml"),
         format!(
-            r#"name = "{name}"
+            r#"identifier = "{name}"
 namespace = "official"
 kind = "skill"
 version = "1.0.0"
@@ -1711,7 +1711,7 @@ pub(super) fn write_plugin_package(data_dir: &std::path::Path, name: &str) {
         package_root.join("orax.toml"),
         format!(
             r#"resolver = 1
-name = "{name}"
+identifier = "{name}"
 namespace = "official"
 kind = "agent"
 version = "1.0.0"

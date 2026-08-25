@@ -85,6 +85,11 @@ pub struct InstalledPlugin {
 pub struct AvailablePlugin {
     pub id: String,
     pub name: String,
+    /// Human-readable display title declared by the manifest; falls back to `name` when a cached
+    /// index or older manifest omits it.
+    pub title: String,
+    /// The plugin kind (`agent`, `workbench`, or `webview`).
+    pub kind: String,
     pub namespace: String,
     pub version: String,
     pub description: String,
@@ -469,6 +474,8 @@ mod tests {
                 plugins: vec![AvailablePlugin {
                     id: "official/weather".to_string(),
                     name: "weather".to_string(),
+                    title: "Weather".to_string(),
+                    kind: "agent".to_string(),
                     namespace: "official".to_string(),
                     version: "1.2.0".to_string(),
                     description: "Weather plugin".to_string(),
@@ -481,6 +488,8 @@ mod tests {
                 "plugins": [{
                     "id": "official/weather",
                     "name": "weather",
+                    "title": "Weather",
+                    "kind": "agent",
                     "namespace": "official",
                     "version": "1.2.0",
                     "description": "Weather plugin",

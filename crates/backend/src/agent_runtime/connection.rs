@@ -1180,7 +1180,7 @@ mod tests {
         fs::write(
             package_root.join("orax.toml"),
             format!(
-                "resolver = 1\nname = {package_name:?}\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Example\"\n"
+                "resolver = 1\nidentifier = {package_name:?}\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Example\"\n"
             ),
         )
         .expect("write plugin manifest");

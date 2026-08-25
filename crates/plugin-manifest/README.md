@@ -3,7 +3,8 @@
 `ora-plugin-manifest` parses and validates the `orax.toml` manifest of one Ora plugin, in its
 marketplace release form (`PluginManifest::parse`) and in the form shipped inside an installed
 package (`PluginManifest::parse_installed`). It accepts caller-provided text and returns an
-immutable domain object whose public types preserve the schema's semantic invariants.
+immutable domain object whose public types preserve the schema's semantic invariants. Both
+forms accept an optional human-readable `title` that falls back to the identifier when omitted.
 
 ## Responsibilities and boundaries
 

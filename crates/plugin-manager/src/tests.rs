@@ -48,7 +48,7 @@ fn discovers_complete_manifest() {
 fn discovers_skill_plugin_with_required_skill_assets() {
     let temp_dir = TempDir::new().unwrap();
     let mut manifest = agent_manifest();
-    manifest["name"] = Value::from("ora.skill-pack");
+    manifest["identifier"] = Value::from("ora.skill-pack");
     manifest["kind"] = Value::from("skill");
     let package_root = write_manifest(temp_dir.path(), "ora.skill-pack", manifest);
     fs::remove_file(package_root.join("main.js")).unwrap();
@@ -86,7 +86,7 @@ fn rejects_skill_plugins_without_complete_skill_assets() {
     for case in ["missing", "empty", "incomplete"] {
         let temp_dir = TempDir::new().unwrap();
         let mut manifest = agent_manifest();
-        manifest["name"] = Value::from(format!("ora.skill-{case}"));
+        manifest["identifier"] = Value::from(format!("ora.skill-{case}"));
         manifest["kind"] = Value::from("skill");
         let package_root = write_manifest(temp_dir.path(), case, manifest);
         fs::remove_file(package_root.join("main.js")).unwrap();
@@ -123,7 +123,7 @@ fn missing_installed_root_is_empty() {
 fn sorts_plugins_by_identifier_and_accepts_minimal_metadata() {
     let temp_dir = TempDir::new().unwrap();
     let mut zeta = agent_manifest();
-    zeta["name"] = Value::from("ora.zeta");
+    zeta["identifier"] = Value::from("ora.zeta");
     zeta["version"] = Value::from("1.2.3-alpha.1+build.7");
     zeta.as_table_mut().unwrap().remove("homepage");
     zeta.as_table_mut().unwrap().remove("license");
@@ -131,7 +131,7 @@ fn sorts_plugins_by_identifier_and_accepts_minimal_metadata() {
     // The directory is deliberately named against sort order: identity comes from the manifest.
     write_manifest(temp_dir.path(), "a-directory", zeta);
     let mut alpha = agent_manifest();
-    alpha["name"] = Value::from("ora.alpha");
+    alpha["identifier"] = Value::from("ora.alpha");
     alpha["version"] = Value::from("2.0.0");
     write_manifest(temp_dir.path(), "z-directory", alpha);
 
@@ -192,7 +192,10 @@ fn reports_duplicate_plugin_ids() {
             .iter()
             .map(|issue| (issue.kind(), issue.field_path()))
             .collect::<Vec<_>>(),
-        vec![(PluginDiscoveryIssueKind::DuplicatePluginId, Some("name"))]
+        vec![(
+            PluginDiscoveryIssueKind::DuplicatePluginId,
+            Some("identifier")
+        )]
     );
 }
 
@@ -201,7 +204,7 @@ fn reports_duplicate_plugin_ids() {
 fn isolates_malformed_and_unsupported_packages() {
     let temp_dir = TempDir::new().unwrap();
     write_manifest(temp_dir.path(), "ora.valid", named("ora.valid"));
-    write_raw_manifest(temp_dir.path(), "ora.broken", b"name = [");
+    write_raw_manifest(temp_dir.path(), "ora.broken", b"identifier = [");
     let mut unsupported = named("ora.future");
     unsupported["resolver"] = Value::from(2);
     write_manifest(temp_dir.path(), "ora.future", unsupported);
@@ -366,15 +369,15 @@ fn rejects_invalid_names_and_namespaces() {
     let long_segment = "a".repeat(70);
     let long_name = format!("{long_segment}.{long_segment}");
     let cases = [
-        ("name", ""),
-        ("name", "   "),
-        ("name", "Ora.example"),
-        ("name", "ora.skill_hub"),
-        ("name", "ora.space.example"),
-        ("name", "ora."),
-        ("name", ".example"),
-        ("name", "ora..example"),
-        ("name", long_name.as_str()),
+        ("identifier", ""),
+        ("identifier", "   "),
+        ("identifier", "Ora.example"),
+        ("identifier", "ora.skill_hub"),
+        ("identifier", "ora.space.example"),
+        ("identifier", "ora."),
+        ("identifier", ".example"),
+        ("identifier", "ora..example"),
+        ("identifier", long_name.as_str()),
         ("namespace", ""),
         ("namespace", "Official"),
         ("namespace", "community"),
@@ -668,7 +671,7 @@ pub(crate) fn agent_manifest() -> Value {
     toml::from_str(
         r#"
 resolver = 1
-name = "ora.claude-code"
+identifier = "ora.claude-code"
 namespace = "official"
 kind = "agent"
 version = "0.1.0"
@@ -686,7 +689,7 @@ ora = ">=0.1.0, <0.2.0"
 /// Creates the agent manifest under another plugin name.
 fn named(name: &str) -> Value {
     let mut manifest = agent_manifest();
-    manifest["name"] = Value::from(name);
+    manifest["identifier"] = Value::from(name);
     manifest
 }
 

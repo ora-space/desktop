@@ -48,9 +48,14 @@ export function PluginsSettings() {
       (available.data?.plugins ?? []).filter(
         (plugin) =>
           !needle ||
-          [plugin.name, plugin.namespace, plugin.description, plugin.id].some(
-            (value) => value.toLowerCase().includes(needle),
-          ),
+          [
+            plugin.title,
+            plugin.name,
+            plugin.kind,
+            plugin.namespace,
+            plugin.description,
+            plugin.id,
+          ].some((value) => value.toLowerCase().includes(needle)),
       ),
     [available.data, needle],
   );
@@ -210,10 +215,12 @@ function AvailablePluginRow({
       <PluginLogo logo={plugin.logo} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">
-          {plugin.name}
+          {plugin.title || plugin.name}
         </span>
         <span className="block truncate text-xs text-muted-foreground">
-          {plugin.namespace} · {plugin.version}
+          {[plugin.name, plugin.namespace, plugin.kind, plugin.version]
+            .filter(Boolean)
+            .join(" · ")}
         </span>
         {plugin.description !== "" && (
           <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">

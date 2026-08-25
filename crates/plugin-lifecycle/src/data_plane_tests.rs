@@ -259,7 +259,7 @@ fn write_workbench_plugin_package(data_dir: &Path, name: &str) {
         package_root.join("orax.toml"),
         format!(
             r#"resolver = 1
-name = "{name}"
+identifier = "{name}"
 namespace = "official"
 kind = "workbench"
 version = "1.0.0"

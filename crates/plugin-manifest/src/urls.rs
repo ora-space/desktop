@@ -141,8 +141,27 @@ pub enum UrlError {
     QueryNotAllowed,
 }
 
+/// Unwraps a Markdown `[label](target)` value into its embedded `target`, leaving strings that
+/// do not use that wrapper unchanged.
+///
+/// Marketplace authors write link-valued fields as Markdown links, so the validators strip the
+/// wrapper before applying HTTPS invariants to the embedded URL.
+fn strip_markdown_link(value: &str) -> &str {
+    let Some(rest) = value.strip_prefix('[') else {
+        return value;
+    };
+    let Some(close_bracket) = rest.find("](") else {
+        return value;
+    };
+    let Some(target) = rest[close_bracket + 2..].strip_suffix(')') else {
+        return value;
+    };
+    target
+}
+
 /// Applies common HTTPS URL invariants plus one field-specific query policy.
 fn parse_https_url(value: &str, query_policy: QueryPolicy) -> Result<Url, UrlError> {
+    let value = strip_markdown_link(value);
     if value.len() > MAX_URL_BYTES {
         return Err(UrlError::TooLong {
             max_bytes: MAX_URL_BYTES,
@@ -202,6 +221,25 @@ mod tests {
             ReleaseUrl::parse("https://example.com/plugin.orax#digest"),
             Err(UrlError::FragmentNotAllowed)
         ));
+    }
+
+    /// Verifies Markdown-wrapped URLs (as marketplace authors write them) unwrap before validation.
+    #[test]
+    fn unwraps_markdown_linked_urls() {
+        let homepage = "[https://example.com/ora-weather](https://example.com/ora-weather)";
+        assert_eq!(
+            HomepageUrl::parse(homepage).expect("homepage").as_str(),
+            "https://example.com/ora-weather"
+        );
+
+        let release = "[https://example.com/plugin.orax](https://example.com/plugin.orax)";
+        assert_eq!(
+            ReleaseUrl::parse(release).expect("release").as_str(),
+            "https://example.com/plugin.orax"
+        );
+
+        // Plain URLs pass through unchanged.
+        assert!(ReleaseUrl::parse("https://example.com/plugin.orax").is_ok());
     }
 
     /// Verifies the shared URL byte limit accepts its boundary and rejects one byte above it.

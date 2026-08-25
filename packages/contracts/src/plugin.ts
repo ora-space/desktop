@@ -16,6 +16,15 @@ export type ActivatePluginResponse = { plugin: InstalledPlugin };
 export type AvailablePlugin = {
   id: string;
   name: string;
+  /**
+   * Human-readable display title declared by the manifest; falls back to `name` when a cached
+   * index or older manifest omits it.
+   */
+  title: string;
+  /**
+   * The plugin kind (`agent`, `workbench`, or `webview`).
+   */
+  kind: string;
   namespace: string;
   version: string;
   description: string;

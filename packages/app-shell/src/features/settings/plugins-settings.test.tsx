@@ -44,6 +44,8 @@ function clientWithWeather(logo: string | null = null) {
   state.availablePlugins.push({
     id: "official/weather",
     name: "weather",
+    title: "Weather",
+    kind: "agent",
     namespace: "official",
     version: "1.2.0",
     description: "Weather plugin",
@@ -76,8 +78,10 @@ it("renders marketplace plugins from the registry index", async () => {
   const { client } = clientWithWeather();
   renderSettings(client);
 
-  expect(await screen.findByText("weather")).toBeInTheDocument();
-  expect(screen.getByText(/official · 1.2.0/)).toBeInTheDocument();
+  expect(await screen.findByText("Weather")).toBeInTheDocument();
+  expect(
+    screen.getByText(/weather · official · agent · 1.2.0/),
+  ).toBeInTheDocument();
   expect(screen.getByText("Weather plugin")).toBeInTheDocument();
 });
 
@@ -205,7 +209,7 @@ it("renders the brand mark shipped with a marketplace plugin", async () => {
   const { client } = clientWithWeather(WEATHER_LOGO);
   const { container } = renderSettings(client);
 
-  await screen.findByText("weather");
+  await screen.findByText("Weather");
   const logo = container.querySelector("img");
   expect(logo).toHaveAttribute(
     "src",
@@ -218,7 +222,7 @@ it("falls back to the generic mark when a plugin ships no logo", async () => {
   const { client } = clientWithWeather();
   const { container } = renderSettings(client);
 
-  await screen.findByText("weather");
+  await screen.findByText("Weather");
   expect(container.querySelector("img")).toBeNull();
 });
 
