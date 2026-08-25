@@ -12,15 +12,18 @@ orchestrates checksum-verified installs of new plugin releases.
   schema, and require the manifest version to match the version directory.
 - Resolve the fixed `main.js` entrypoint for agent and workbench packages as an existing regular
   file whose canonical target remains inside its package, then retain its portable relative path.
-  Webview and skill packages have no process entrypoint.
+  Webview, skill, and MCP packages have no process entrypoint.
 - Keep `kind` and its contribution in one value (`PluginContribution::Agent`, `::Workbench`,
-  `::Webview`, or `::Skill`), so a validated plugin always carries exactly what its kind promises.
-  Skill contributions carry no additional contract fields, but the package must contain one or
-  more `assets/skills/<name>/SKILL.md` trees. Each Skill manifest is parsed and its declared name
-  must match the package directory before it can be cataloged.
+  `::Webview`, `::Skill`, or `::Mcp`), so a validated plugin always carries exactly what its kind
+  promises. Skill contributions carry no additional contract fields, but the package must contain
+  one or more `assets/skills/<name>/SKILL.md` trees. Each Skill manifest is parsed and its
+  declared name must match the package directory before it can be cataloged. MCP contributions
+  carry the immutable Installed MCP Descriptor compiled from `assets/config.json`.
 - Compile an optional `assets/config.json` through `ora-plugin-config` without treating the
   package directory as a data root, and record whether the immutable declaration is absent, valid,
-  or invalid so lifecycle can refuse to enable a broken package.
+  or invalid so lifecycle can refuse to enable a broken package. A transport-bearing (MCP-shaped)
+  `assets/config.json` is only accepted on `kind = "mcp"` packages, and an MCP package requires
+  one.
 - Apply host-side workbench and webview policy that the manifest crate cannot check: a workbench
   package must ship `assets/index.html` beside `main.js`; a webview package must not ship
   `main.js`, must cover `start_url` with `allowed_origins`, and must not declare shadowed
@@ -63,8 +66,8 @@ returns the package directory it extracted into.
 and that `[workbench]` is refused for every other kind. This crate adds what depends on the host
 or on the package on disk:
 
-- Agent and workbench packages must contain `main.js`; webview packages must not. Skill packages
-  have no process entrypoint.
+- Agent and workbench packages must contain `main.js`; webview and MCP packages must not. Skill
+  packages have no process entrypoint.
 - A workbench package must ship `assets/index.html`; the canonical `assets/` directory is the
   only tree ever served to the page.
 - A webview package is configuration-only: `start_url` must belong to `allowed_origins`, origins
@@ -72,6 +75,9 @@ or on the package on disk:
 - A skill package must contain `assets/skills/` with at least one immediate Skill directory, and
   every such directory must contain a regular root `SKILL.md`. Optional `scripts/`, `references/`,
   and nested `assets/` contents are preserved but not interpreted in this release.
+- An MCP package is configuration-only: it must not ship `main.js`, must provide an MCP-shaped
+  `assets/config.json` (settings subset plus exactly one transport), and, for a stdio transport,
+  its command must resolve to a regular file inside the package (executable on Unix).
 - `display_name` is the plugin identifier for every kind. One agent-kind package contributes
   exactly one agent with no identifier of its own: the package's plugin id is that agent's
   identity everywhere in the host.

@@ -296,7 +296,8 @@ where
                 (
                     PluginContribution::Workbench(_)
                     | PluginContribution::Webview(_)
-                    | PluginContribution::Skill(_),
+                    | PluginContribution::Skill(_)
+                    | PluginContribution::Mcp(_),
                     true,
                 ) => {
                     state.set_managed(
@@ -309,7 +310,8 @@ where
                     PluginContribution::Agent(_)
                     | PluginContribution::Workbench(_)
                     | PluginContribution::Webview(_)
-                    | PluginContribution::Skill(_),
+                    | PluginContribution::Skill(_)
+                    | PluginContribution::Mcp(_),
                     false,
                 ) => None,
             };

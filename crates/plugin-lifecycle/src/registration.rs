@@ -46,6 +46,9 @@ pub fn validate_registration(
         PluginContribution::Skill(_) => Err(PluginRuntimeFailure::new(
             "skill plugins have no process and cannot register",
         )),
+        PluginContribution::Mcp(_) => Err(PluginRuntimeFailure::new(
+            "mcp plugins have no process and cannot register",
+        )),
     }
 }
 
@@ -133,6 +136,27 @@ mod tests {
             ),
             Err(PluginRuntimeFailure::new(
                 "skill plugins have no process and cannot register",
+            )),
+        );
+    }
+
+    /// MCP plugins are configuration-only and have no runtime handshake.
+    #[test]
+    fn mcp_plugins_cannot_register() {
+        use ora_plugin_config::{CompiledConfigurationFile, compile_configuration_file};
+        use ora_plugin_manager::InstalledMcpDescriptor;
+
+        let CompiledConfigurationFile::Mcp(configuration) = compile_configuration_file(
+            br#"{ "schemaVersion": 1, "transport": { "type": "http", "url": "https://mcp.example.com/v1" } }"#,
+        )
+        .expect("compile fixture") else {
+            panic!("expected the MCP shape");
+        };
+        let contribution = PluginContribution::Mcp(InstalledMcpDescriptor { configuration });
+        assert_eq!(
+            validate_registration(&contribution, &PluginRegistration::default()),
+            Err(PluginRuntimeFailure::new(
+                "mcp plugins have no process and cannot register",
             )),
         );
     }

@@ -82,7 +82,11 @@ impl SurfaceDefinition {
     /// truth and this is a pure type transfer.
     pub fn from_installed(plugin: &InstalledPlugin) -> Option<Self> {
         let source = match &plugin.contributes {
-            PluginContribution::Agent(_) | PluginContribution::Skill(_) => return None,
+            PluginContribution::Agent(_)
+            | PluginContribution::Skill(_)
+            | PluginContribution::Mcp(_) => {
+                return None;
+            }
             PluginContribution::Workbench(descriptor) => {
                 SurfaceSource::Workbench(WorkbenchDefinition {
                     asset_root: descriptor.asset_root.clone(),

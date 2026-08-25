@@ -122,6 +122,7 @@ export type InstalledPlugin = {
   | { kind: "workbench"; title: string }
   | { kind: "webview"; title: string; startUrl: string }
   | { kind: "skill" }
+  | { kind: "mcp" }
 ) &
   (
     | { runtime: "stopped" }
@@ -143,7 +144,8 @@ export type InstalledPluginContribution =
   | { kind: "agent"; agentDisplayName: string }
   | { kind: "workbench"; title: string }
   | { kind: "webview"; title: string; startUrl: string }
-  | { kind: "skill" };
+  | { kind: "skill" }
+  | { kind: "mcp" };
 
 /**
  * Requests the cached marketplace registry index used to populate the plugin catalog.

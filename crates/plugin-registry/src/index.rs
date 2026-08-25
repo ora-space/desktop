@@ -278,6 +278,26 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies `kind = "mcp"` is indexed rather than skipped as an unsupported kind.
+    #[test]
+    fn indexes_an_mcp_kind_marketplace_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+        let source = valid_manifest("ora-space.tavily", "Tavily MCP")
+            .replace("kind = \"workbench\"", "kind = \"mcp\"");
+        write_manifest(root.path(), "ora-space.tavily", &source)?;
+
+        let build = RegistryIndex::build(root.path(), UPDATED_AT);
+
+        assert_eq!(build.skipped().len(), 0);
+        assert_eq!(build.index().plugins().len(), 1);
+        assert_eq!(build.index().plugins()[0].kind(), "mcp");
+        assert_eq!(
+            build.index().plugins()[0].id().canonical(),
+            "official/ora-space.tavily"
+        );
+        Ok(())
+    }
+
     /// Verifies install-time resolution re-reads a manifest from the source registry by its id.
     #[test]
     fn resolves_manifest_by_identifier() -> Result<(), Box<dyn std::error::Error>> {

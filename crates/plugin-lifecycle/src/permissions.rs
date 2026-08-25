@@ -6,8 +6,8 @@
 //!
 //! Permissions are not how a plugin gains capabilities. A workbench plugin runs with no grants
 //! at all and reaches its data through the `ora/storage/*` host methods; the flags below exist
-//! only for the agent kind, whose own CLI still needs the host. A webview plugin has no process
-//! and is never launched.
+//! only for the agent kind, whose own CLI still needs the host. A webview, skill, or MCP plugin
+//! has no process and is never launched.
 
 use ora_plugin_manager::PluginContribution;
 use std::ffi::OsString;
@@ -84,14 +84,15 @@ fn scoped_flag(flag: &str, path: &Path) -> Result<OsString, PermissionFlagError>
 /// environment access is a hard `PermissionDenied`, and everything it legitimately needs (its
 /// data directory) is served by the host over `ora/storage/*`. An agent plugin keeps the broad
 /// grants it has always had (see `agent_permissions`); narrowing them is deliberately out of
-/// scope here. Webview and skill plugins are never launched, so their empty sets only make the
-/// match exhaustive.
+/// scope here. Webview, skill, and MCP plugins are never launched, so their empty sets only make
+/// the match exhaustive.
 pub fn permissions_for(contribution: &PluginContribution) -> Vec<DenoPermission> {
     match contribution {
         PluginContribution::Agent(_) => agent_permissions(),
         PluginContribution::Workbench(_)
         | PluginContribution::Webview(_)
-        | PluginContribution::Skill(_) => Vec::new(),
+        | PluginContribution::Skill(_)
+        | PluginContribution::Mcp(_) => Vec::new(),
     }
 }
 
@@ -174,6 +175,26 @@ mod tests {
     fn skill_plugins_get_no_permissions() {
         assert_eq!(
             permissions_for(&PluginContribution::Skill(Default::default())),
+            Vec::new()
+        );
+    }
+
+    /// MCP plugins are configuration-only and never receive Deno permissions.
+    #[test]
+    fn mcp_plugins_get_no_permissions() {
+        use ora_plugin_config::{CompiledConfigurationFile, compile_configuration_file};
+        use ora_plugin_manager::InstalledMcpDescriptor;
+
+        let CompiledConfigurationFile::Mcp(configuration) = compile_configuration_file(
+            br#"{ "schemaVersion": 1, "transport": { "type": "http", "url": "https://mcp.example.com/v1" } }"#,
+        )
+        .expect("compile fixture") else {
+            panic!("expected the MCP shape");
+        };
+        assert_eq!(
+            permissions_for(&PluginContribution::Mcp(InstalledMcpDescriptor {
+                configuration
+            })),
             Vec::new()
         );
     }

@@ -1,12 +1,15 @@
-//! Discovery tests for the host-side policy of the `workbench` and `webview` kinds.
+//! Discovery tests for the host-side policy of the `workbench`, `webview`, and `mcp` kinds.
 
 use super::tests::{agent_manifest, replace_path, write_manifest};
 use super::{PluginContribution, PluginManager};
+use ora_plugin_config::{McpHttpTransport, McpTransport, McpValueExpression};
 use ora_plugin_manifest::MethodName;
 use pretty_assertions::assert_eq;
+use std::collections::BTreeMap;
 use std::fs;
 use tempfile::TempDir;
 use toml::Value;
+use url::Url;
 
 const NAME: &str = "ora.claude-code";
 
@@ -81,7 +84,8 @@ fn discovers_workbench_package_with_and_without_methods() {
             ),
             PluginContribution::Agent(_)
             | PluginContribution::Webview(_)
-            | PluginContribution::Skill(_) => {
+            | PluginContribution::Skill(_)
+            | PluginContribution::Mcp(_) => {
                 panic!("expected workbench contributions")
             }
         })
@@ -149,7 +153,8 @@ allowed_origins = ["https://www.example.com", "https://example.com"]
             .collect::<Vec<_>>(),
         PluginContribution::Agent(_)
         | PluginContribution::Workbench(_)
-        | PluginContribution::Skill(_) => {
+        | PluginContribution::Skill(_)
+        | PluginContribution::Mcp(_) => {
             panic!("expected a webview contribution")
         }
     };
@@ -169,6 +174,193 @@ allowed_origins = ["https://www.example.com", "https://example.com"]
             0,
             Some("kind"),
         )
+    );
+}
+
+/// Builds an mcp-kind manifest from the shared fixture.
+fn mcp_manifest() -> Value {
+    let mut manifest = agent_manifest();
+    manifest["kind"] = Value::from("mcp");
+    manifest
+}
+
+/// The HTTP MCP configuration shape the Tavily package ships.
+///
+/// Setting ID is `apiKey` because the host Setting grammar does not accept underscores.
+const HTTP_MCP_CONFIG: &str = r#"{
+    "schemaVersion": 1,
+    "settings": {
+        "apiKey": {
+            "type": "string",
+            "title": "API key",
+            "description": "Key used to authenticate with the MCP server",
+            "required": true
+        }
+    },
+    "transport": {
+        "type": "http",
+        "url": "https://mcp.tavily.com/mcp",
+        "headers": {
+            "Authorization": { "setting": "apiKey", "prefix": "Bearer " }
+        }
+    }
+}"#;
+
+/// Writes one `assets/config.json` into a package and removes the fixture entrypoint the shared
+/// manifest writer creates, leaving a config-only MCP package.
+fn write_mcp_package(package_root: &std::path::Path, config: &str) {
+    fs::create_dir_all(package_root.join("assets")).unwrap();
+    fs::write(package_root.join("assets").join("config.json"), config).unwrap();
+    fs::remove_file(package_root.join("main.js")).unwrap();
+}
+
+/// An MCP package compiles into an Installed MCP Descriptor carrying the exclusive transport,
+/// and its Settings subset registers as a valid configuration declaration.
+#[test]
+fn discovers_mcp_package_with_http_transport() {
+    let temp_dir = TempDir::new().unwrap();
+    let package_root = write_manifest(temp_dir.path(), NAME, mcp_manifest());
+    write_mcp_package(&package_root, HTTP_MCP_CONFIG);
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.discovery_issues(), &[]);
+    let plugin = &manager.installed_plugins()[0];
+    assert_eq!(
+        plugin.configuration_declaration,
+        super::PluginConfigurationDeclarationValidity::Valid
+    );
+    let PluginContribution::Mcp(descriptor) = &plugin.contributes else {
+        panic!("expected an mcp contribution, got {:?}", plugin.contributes)
+    };
+    assert_eq!(
+        descriptor.configuration.transport,
+        McpTransport::Http(McpHttpTransport {
+            url: Url::parse("https://mcp.tavily.com/mcp").unwrap(),
+            headers: BTreeMap::from([(
+                "Authorization".to_string(),
+                McpValueExpression::Setting {
+                    id: "apiKey".to_string(),
+                    prefix: "Bearer ".to_string(),
+                    suffix: String::new(),
+                },
+            )]),
+        })
+    );
+    assert_eq!(
+        descriptor
+            .configuration
+            .settings
+            .as_ref()
+            .map(|settings| settings.settings[0].id.clone()),
+        Some("apiKey".to_string())
+    );
+}
+
+/// An MCP package must be config-only and must ship a transport-bearing `assets/config.json`:
+/// an entrypoint, a missing file, and a Settings-only file each report their field.
+#[test]
+fn rejects_mcp_package_entrypoint_and_config_shape_violations() {
+    let with_entrypoint = TempDir::new().unwrap();
+    let package_root = write_manifest(with_entrypoint.path(), NAME, mcp_manifest());
+    fs::create_dir_all(package_root.join("assets")).unwrap();
+    fs::write(
+        package_root.join("assets").join("config.json"),
+        HTTP_MCP_CONFIG,
+    )
+    .unwrap();
+    let without_config = TempDir::new().unwrap();
+    let package_root = write_manifest(without_config.path(), NAME, mcp_manifest());
+    fs::remove_file(package_root.join("main.js")).unwrap();
+    let settings_only = TempDir::new().unwrap();
+    let package_root = write_manifest(settings_only.path(), NAME, mcp_manifest());
+    write_mcp_package(
+        &package_root,
+        r#"{
+            "schemaVersion": 1,
+            "settings": {
+                "apiKey": {"type":"string","title":"API key","description":"Key"}
+            }
+        }"#,
+    );
+
+    for (data_dir, expected_field) in [
+        (&with_entrypoint, "kind"),
+        (&without_config, "assets/config.json"),
+        (&settings_only, "assets/config.json"),
+    ] {
+        let manager = PluginManager::discover(data_dir.path());
+        assert_eq!(manager.installed_plugins(), &[], "{expected_field}");
+        assert_eq!(
+            manager.discovery_issues()[0].field_path(),
+            Some(expected_field),
+        );
+    }
+}
+
+/// The MCP shape is exclusive to the mcp kind: a Skill package shipping a transport is refused.
+#[test]
+fn rejects_transport_bearing_configuration_on_other_kinds() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut manifest = agent_manifest();
+    manifest["kind"] = Value::from("skill");
+    let package_root = write_manifest(temp_dir.path(), NAME, manifest);
+    fs::remove_file(package_root.join("main.js")).unwrap();
+    let skill_root = package_root.join("assets").join("skills").join("review");
+    fs::create_dir_all(&skill_root).unwrap();
+    fs::write(
+        skill_root.join("SKILL.md"),
+        "---\nname: review\ndescription: Test skill\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        package_root.join("assets").join("config.json"),
+        HTTP_MCP_CONFIG,
+    )
+    .unwrap();
+
+    let manager = PluginManager::discover(temp_dir.path());
+
+    assert_eq!(manager.installed_plugins(), &[]);
+    assert_eq!(
+        manager.discovery_issues()[0].field_path(),
+        Some("assets/config.json"),
+    );
+}
+
+/// A stdio MCP package must contain its command below `assets/` as a real file.
+#[test]
+fn validates_stdio_command_containment_on_disk() {
+    let stdio_config = r#"{
+        "schemaVersion": 1,
+        "transport": { "type": "stdio", "command": "assets/server" }
+    }"#;
+    let present = TempDir::new().unwrap();
+    let package_root = write_manifest(present.path(), NAME, mcp_manifest());
+    write_mcp_package(&package_root, stdio_config);
+    fs::write(package_root.join("assets").join("server"), b"#!/bin/sh\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            package_root.join("assets").join("server"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    let missing = TempDir::new().unwrap();
+    let package_root = write_manifest(missing.path(), NAME, mcp_manifest());
+    write_mcp_package(&package_root, stdio_config);
+
+    let present_manager = PluginManager::discover(present.path());
+    let missing_manager = PluginManager::discover(missing.path());
+
+    assert_eq!(present_manager.discovery_issues(), &[]);
+    assert_eq!(present_manager.installed_plugins().len(), 1);
+    assert_eq!(missing_manager.installed_plugins(), &[]);
+    assert_eq!(
+        missing_manager.discovery_issues()[0].field_path(),
+        Some("transport.command"),
     );
 }
 

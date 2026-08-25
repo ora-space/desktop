@@ -2,6 +2,7 @@
 
 mod declaration;
 mod filesystem;
+mod mcp;
 mod service;
 mod values;
 #[cfg(windows)]
@@ -12,6 +13,11 @@ pub use declaration::{
     SettingDeclaration, SettingType, SettingValue, compile_declaration,
 };
 pub use filesystem::{ConfigurationFileSystem, StandardConfigurationFileSystem};
+pub use mcp::{
+    CompileConfigurationFileError, CompileMcpConfigurationError, CompiledConfigurationFile,
+    CompiledMcpConfiguration, MCP_COMMAND_DIRECTORY, McpArgument, McpHttpTransport,
+    McpStdioTransport, McpTransport, McpValueExpression, compile_configuration_file,
+};
 pub use service::{
     ConfigurationCompleteness, ConfigurationDetails, ConfigurationError, ConfigurationFieldError,
     ConfigurationService, ConfigurationSummary, EffectiveValueSource, SettingDetails,

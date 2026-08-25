@@ -1,8 +1,9 @@
+use crate::mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE, validate_mcp};
 use crate::skill::{InstalledSkillDescriptor, validate_skill};
 use crate::webview::{InstalledWebviewDescriptor, validate_webview};
 use crate::workbench::{InstalledWorkbenchDescriptor, validate_workbench};
 use ora_domain::PluginId;
-use ora_plugin_config::{ConfigurationError, ConfigurationService};
+use ora_plugin_config::{CompiledConfigurationFile, ConfigurationError, ConfigurationService};
 use ora_plugin_manifest::{PluginKind, PluginManifest};
 use ora_utils::path::{CanonicalPathRoot, PortableRelativePath};
 use semver::Version;
@@ -24,6 +25,7 @@ pub enum PluginContribution {
     Workbench(InstalledWorkbenchDescriptor),
     Webview(InstalledWebviewDescriptor),
     Skill(InstalledSkillDescriptor),
+    Mcp(InstalledMcpDescriptor),
 }
 
 impl PluginContribution {
@@ -34,6 +36,7 @@ impl PluginContribution {
             Self::Workbench(_) => "workbench",
             Self::Webview(_) => "webview",
             Self::Skill(_) => "skill",
+            Self::Mcp(_) => "mcp",
         }
     }
 
@@ -42,7 +45,7 @@ impl PluginContribution {
         match self {
             Self::Agent(agent) => Some(&agent.entrypoint),
             Self::Workbench(workbench) => Some(&workbench.entrypoint),
-            Self::Webview(_) | Self::Skill(_) => None,
+            Self::Webview(_) | Self::Skill(_) | Self::Mcp(_) => None,
         }
     }
 }
@@ -124,6 +127,35 @@ pub(crate) fn validate(
             format!("plugin id is not representable: {error}"),
         )
     })?;
+    // The one bounded read of `assets/config.json` serves both the kind policy below and the
+    // Settings-declaration validity, so the two views can never disagree about the same file.
+    let configuration_file =
+        match ConfigurationService::configuration_file_from_package(package_root) {
+            Ok(file) => Ok(file),
+            Err(ConfigurationError::InvalidDeclaration(error)) => Err(error),
+            Err(error) => {
+                return Err(invalid(
+                    MCP_CONFIGURATION_FILE,
+                    format!("configuration declaration could not be read: {error}"),
+                ));
+            }
+        };
+    // The MCP shape is exclusive to the mcp kind: any other kind shipping a transport is either
+    // a mispackaged MCP or an attempt to smuggle connection state into a process kind.
+    if !matches!(manifest.kind(), PluginKind::Mcp)
+        && matches!(
+            configuration_file,
+            Ok(Some(CompiledConfigurationFile::Mcp(_)))
+        )
+    {
+        return Err(invalid(
+            MCP_CONFIGURATION_FILE,
+            format!(
+                "only `mcp` packages may declare an MCP transport (kind is `{}`)",
+                manifest.kind()
+            ),
+        ));
+    }
     let contributes = match manifest.kind() {
         PluginKind::Agent => PluginContribution::Agent(InstalledPluginAgent {
             display_name: name.to_owned(),
@@ -145,23 +177,28 @@ pub(crate) fn validate(
             PluginContribution::Webview(validate_webview(package_root, webview)?)
         }
         PluginKind::Skill => PluginContribution::Skill(validate_skill(package_root)?),
+        PluginKind::Mcp => {
+            PluginContribution::Mcp(validate_mcp(package_root, &configuration_file)?)
+        }
     };
-    let configuration_declaration =
-        match ConfigurationService::declaration_from_package(package_root) {
-            Ok(None) => PluginConfigurationDeclarationValidity::NotDeclared,
-            Ok(Some(_)) => PluginConfigurationDeclarationValidity::Valid,
-            Err(ConfigurationError::InvalidDeclaration(error)) => {
-                PluginConfigurationDeclarationValidity::Invalid {
-                    reason: error.to_string(),
-                }
+    let configuration_declaration = match &configuration_file {
+        Ok(None) => PluginConfigurationDeclarationValidity::NotDeclared,
+        Ok(Some(CompiledConfigurationFile::Settings(_))) => {
+            PluginConfigurationDeclarationValidity::Valid
+        }
+        // An MCP file contributes exactly its Settings subset to the configuration editor, so a
+        // transport-only file behaves like a package without a declaration.
+        Ok(Some(CompiledConfigurationFile::Mcp(configuration))) => {
+            if configuration.settings.is_some() {
+                PluginConfigurationDeclarationValidity::Valid
+            } else {
+                PluginConfigurationDeclarationValidity::NotDeclared
             }
-            Err(error) => {
-                return Err(invalid(
-                    "assets/config.json",
-                    format!("configuration declaration could not be read: {error}"),
-                ));
-            }
-        };
+        }
+        Err(error) => PluginConfigurationDeclarationValidity::Invalid {
+            reason: error.to_string(),
+        },
+    };
 
     Ok(InstalledPlugin {
         package_root: package_root.to_path_buf(),

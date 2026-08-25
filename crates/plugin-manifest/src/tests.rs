@@ -153,6 +153,44 @@ fn parses_skill_kind_marketplace_manifest() {
     assert_eq!(manifest.kind().as_str(), "skill");
 }
 
+/// Verifies the MCP kind is accepted by the marketplace manifest schema.
+#[test]
+fn parses_mcp_kind_marketplace_manifest() {
+    let manifest = success(
+        PluginManifest::parse(&MINIMAL_MANIFEST.replacen("workbench", "mcp", 1)),
+        "mcp-kind marketplace manifest",
+    );
+
+    assert_eq!(manifest.kind(), PluginKind::Mcp);
+    assert_eq!(manifest.kind().as_str(), "mcp");
+}
+
+/// Verifies MCP plugins cannot smuggle either process-facing kind-specific section.
+#[test]
+fn mcp_kind_rejects_workbench_and_webview_sections() {
+    let workbench = WORKBENCH_MANIFEST.replacen("kind = \"workbench\"", "kind = \"mcp\"", 1);
+    let webview = WEBVIEW_MANIFEST.replacen("kind = \"webview\"", "kind = \"mcp\"", 1);
+
+    assert!(matches!(
+        PluginManifest::parse_installed(&workbench),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Workbench,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Mcp
+            },
+        })
+    ));
+    assert!(matches!(
+        PluginManifest::parse_installed(&webview),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Webview,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Mcp
+            },
+        })
+    ));
+}
+
 /// Verifies a local Skill plugin needs only the installed-manifest core fields.
 #[test]
 fn parses_installed_skill_manifest_without_resolver_or_download_fields() {

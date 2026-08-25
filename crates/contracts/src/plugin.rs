@@ -31,6 +31,8 @@ pub enum InstalledPluginContribution {
     },
     /// A static package kind whose Skill assets are cataloged without a runtime process.
     Skill,
+    /// A configuration-only kind describing one MCP Server; transport details stay host-side.
+    Mcp,
 }
 
 /// Represents whether the installed package and its immutable declaration are usable.
@@ -202,7 +204,7 @@ pub struct AvailablePlugin {
     /// Human-readable display title declared by the manifest; falls back to `name` when a cached
     /// index or older manifest omits it.
     pub title: String,
-    /// The plugin kind (`agent`, `workbench`, or `webview`).
+    /// The plugin kind (`agent`, `workbench`, `webview`, `skill`, or `mcp`).
     pub kind: String,
     pub namespace: String,
     pub version: String,
@@ -667,6 +669,36 @@ mod tests {
             plugin
         );
     }
+
+    /// Verifies the configuration-only MCP contribution adds only its kind discriminator.
+    #[test]
+    fn serializes_mcp_plugin_contract() {
+        let plugin = InstalledPlugin {
+            id: "official/ora.tavily".to_string(),
+            namespace: "official".to_string(),
+            name: "ora.tavily".to_string(),
+            display_name: "Tavily".to_string(),
+            version: "0.1.0".to_string(),
+            description: "MCP plugin test".to_string(),
+            homepage: None,
+            license: None,
+            contribution: InstalledPluginContribution::Mcp,
+            enabled: true,
+            logo: None,
+            installation_validity: PluginInstallationValidity::Valid,
+            configuration: PluginConfigurationSummary::NotDeclared,
+            runtime: PluginRuntimeStatus::Stopped,
+        };
+
+        let value = serde_json::to_value(&plugin).expect("MCP plugin serializes");
+        assert_eq!(value.get("kind"), Some(&json!("mcp")));
+        assert_eq!(value.as_object().map(serde_json::Map::len), Some(14));
+        assert_eq!(
+            serde_json::from_value::<InstalledPlugin>(value).expect("MCP plugin round-trips"),
+            plugin
+        );
+    }
+
     /// Verifies an empty startup snapshot has a stable collection shape.
     #[test]
     fn serializes_empty_installed_plugin_response() {

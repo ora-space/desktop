@@ -11,11 +11,11 @@ forms accept an optional human-readable `title` that falls back to the identifie
 - Reject malformed TOML, missing or unknown fields, unsupported resolver versions, and invalid
   field values with structured errors.
 - Model plugin identifiers (`identifier`), source categories, plugin kinds (`workbench`, `agent`,
-  `webview`, `skill`), HTTPS URLs, SHA-256 digests, optional source repository metadata, and
-  optional Ora host version requirements as validated values.
+  `webview`, `skill`, `mcp`), HTTPS URLs, SHA-256 digests, optional source repository metadata,
+  and optional Ora host version requirements as validated values.
 - Pair kind-specific sections with the matching `kind`: optional `[workbench]` (page-visible
   method names) for workbench plugins, required `[webview]` (`start_url`, `allowed_origins`,
-  download policy) for webview plugins. Agent and skill plugins reject both sections.
+  download policy) for webview plugins. Agent, skill, and MCP plugins reject both sections.
 - Report structural failures with the TOML path of the offending value and semantic failures with
   a typed `ManifestField`, including the index of a webview origin or download rule.
 - Preserve deterministic validation order so callers receive a stable first error.

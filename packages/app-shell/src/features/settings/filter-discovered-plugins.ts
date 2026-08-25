@@ -14,9 +14,9 @@ export function filterDiscoveredPlugins(
       plugin.description,
       ...(plugin.kind === "agent"
         ? [plugin.agentDisplayName]
-        : plugin.kind === "skill"
-          ? []
-          : [plugin.title]),
+        : plugin.kind === "workbench" || plugin.kind === "webview"
+          ? [plugin.title]
+          : []),
     ].some((value) => value.toLowerCase().includes(needle)),
   );
 }

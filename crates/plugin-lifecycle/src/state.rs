@@ -208,6 +208,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
             start_url: webview.start_url.to_string(),
         },
         PluginContribution::Skill(_) => InstalledPluginContribution::Skill,
+        PluginContribution::Mcp(_) => InstalledPluginContribution::Mcp,
     };
 
     let installation_validity = match &plugin.configuration_declaration {

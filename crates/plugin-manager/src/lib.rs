@@ -5,6 +5,7 @@ mod discovery;
 mod install;
 mod issue;
 mod logo;
+mod mcp;
 mod skill;
 mod validation;
 mod webview;
@@ -18,6 +19,7 @@ mod tests;
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
 pub use install::{InstallError, InstalledPackage, Installer};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
+pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};
 pub use skill::{
     InstalledSkill, InstalledSkillDescriptor, SKILL_ASSET_DIRECTORY, SKILL_MANIFEST_FILE_NAME,
 };

@@ -1,9 +1,12 @@
 use crate::declaration::parse_strict_json;
 use crate::filesystem::{ConfigurationFileSystem, StandardConfigurationFileSystem};
+use crate::mcp::{
+    CompileConfigurationFileError, CompiledConfigurationFile, compile_configuration_file,
+};
 use crate::values::{StoredConfiguration, details_from, validate_values};
 use crate::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, SettingDeclaration,
-    SettingValue, compile_declaration,
+    SettingValue,
 };
 use ora_utils::Slug;
 use std::collections::BTreeMap;
@@ -86,7 +89,7 @@ pub enum ConfigurationError {
         source: std::io::Error,
     },
     #[error("Plugin Configuration declaration is invalid: {0}")]
-    InvalidDeclaration(#[from] CompileDeclarationError),
+    InvalidDeclaration(#[from] CompileConfigurationFileError),
     #[error("plugin does not declare configuration")]
     NotDeclared,
     #[error("Plugin Configuration declaration changed while it was being edited")]
@@ -120,6 +123,14 @@ pub enum ConfigurationError {
     },
 }
 
+impl From<CompileDeclarationError> for ConfigurationError {
+    /// Keeps `?` working for Settings-only compile failures after the variant broadened to
+    /// carry both strict `assets/config.json` shapes.
+    fn from(error: CompileDeclarationError) -> Self {
+        Self::InvalidDeclaration(error.into())
+    }
+}
+
 /// Owns declaration lookup and Stored Setting Value resolution below one host data root.
 #[derive(Debug, Clone)]
 pub struct ConfigurationService<FileSystem = StandardConfigurationFileSystem> {
@@ -145,12 +156,26 @@ impl ConfigurationService<StandardConfigurationFileSystem> {
     pub fn declaration_from_package(
         package_root: &Path,
     ) -> Result<Option<CompiledDeclaration>, ConfigurationError> {
+        Self::package_service().load_declaration(package_root)
+    }
+
+    /// Loads and compiles one package `assets/config.json` in whichever strict shape it declares.
+    ///
+    /// Package validation dispatches on the result to enforce kind policy: an MCP package must
+    /// compile to the MCP shape and every other kind must not.
+    pub fn configuration_file_from_package(
+        package_root: &Path,
+    ) -> Result<Option<CompiledConfigurationFile>, ConfigurationError> {
+        Self::package_service().load_configuration_file(package_root)
+    }
+
+    /// Builds a throwaway service for package-scoped reads that never touch a data root.
+    fn package_service() -> Self {
         Self {
             data_root: PathBuf::new(),
             file_system: StandardConfigurationFileSystem,
             locks: Arc::new(Mutex::new(BTreeMap::new())),
         }
-        .load_declaration(package_root)
     }
 }
 
@@ -346,10 +371,26 @@ where
     }
 
     /// Loads and compiles the optional immutable package declaration.
+    ///
+    /// An MCP-shaped file contributes exactly its Settings subset here, so the value editor and
+    /// summaries treat an MCP package without Settings like any package without a declaration.
     fn load_declaration(
         &self,
         package_root: &Path,
     ) -> Result<Option<CompiledDeclaration>, ConfigurationError> {
+        Ok(self
+            .load_configuration_file(package_root)?
+            .and_then(|file| match file {
+                CompiledConfigurationFile::Settings(declaration) => Some(declaration),
+                CompiledConfigurationFile::Mcp(configuration) => configuration.settings,
+            }))
+    }
+
+    /// Loads and compiles the optional `assets/config.json` in whichever strict shape it declares.
+    fn load_configuration_file(
+        &self,
+        package_root: &Path,
+    ) -> Result<Option<CompiledConfigurationFile>, ConfigurationError> {
         let declaration_path = package_root.join("assets").join("config.json");
         // `NotADirectory` means an intermediate path component is a file (common when uninstall
         // staging leaves a non-directory package root). That is the same as a missing declaration
@@ -368,7 +409,7 @@ where
                 });
             }
         };
-        Ok(Some(compile_declaration(&source)?))
+        Ok(Some(compile_configuration_file(&source)?))
     }
 
     /// Reads one revisioned value file while preserving malformed data for explicit recovery.

@@ -51,6 +51,7 @@ pub enum PluginKind {
     Agent,
     Webview,
     Skill,
+    Mcp,
 }
 
 impl PluginKind {
@@ -61,6 +62,7 @@ impl PluginKind {
             Self::Agent => "agent",
             Self::Webview => "webview",
             Self::Skill => "skill",
+            Self::Mcp => "mcp",
         }
     }
 }
@@ -82,6 +84,7 @@ impl FromStr for PluginKind {
             "agent" => Ok(Self::Agent),
             "webview" => Ok(Self::Webview),
             "skill" => Ok(Self::Skill),
+            "mcp" => Ok(Self::Mcp),
             found => Err(PluginKindError::Unsupported {
                 found: found.to_owned(),
             }),

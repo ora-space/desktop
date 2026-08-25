@@ -13,8 +13,9 @@ that actually exist. When a process starts depends on the contribution kind: ena
 plugin also launches it, because its agent supervisor attaches to a running process rather than
 starting one, so durable intent and reported runtime never disagree beyond the transition itself;
 enabling a workbench plugin only records eligibility, because its process is started on demand by
-the first surface that needs it and stopped again when it has been idle. Webview and skill plugins
-have no process; enabling them records eligibility and reports an `enabled` + `stopped` state.
+the first surface that needs it and stopped again when it has been idle. Webview, skill, and MCP
+plugins have no process; enabling them records eligibility and reports an `enabled` + `stopped`
+state.
 
 Consumers that need to speak a protocol over a plugin connect to it instead of launching it
 (`ensure_running` / `connection`, see the data plane below). This is how the agent runtime reaches
@@ -57,8 +58,8 @@ directory.
 
 Before launching, the lifecycle creates `<data-dir>/plugins/data/<namespace>/<name>/` (with
 `downloads/`) through `PluginDataDirectories`, derives Deno permissions from the plugin kind
-(`permissions_for`: workbench plugins get no `--allow-*` flag at all; webview and skill plugins
-are never launched; agent plugins keep the broad historical set, also exported as
+(`permissions_for`: workbench plugins get no `--allow-*` flag at all; webview, skill, and MCP
+plugins are never launched; agent plugins keep the broad historical set, also exported as
 `agent_permissions` for the backend's agent supervisor, and narrowing it is out of scope here),
 and passes the package root as working directory. No
 environment variable is injected: a plugin learns nothing about host paths. A permission path
@@ -70,8 +71,8 @@ launch, never by request params.
 
 After a successful handshake the registration is validated against the manifest kind
 (`validate_registration`). Workbench registrations may expose well-formed methods but cannot
-declare emitted notifications. Webview and skill plugins cannot register because they have no
-process. Agent contracts are verified by the backend's agent runtime, not here.
+declare emitted notifications. Webview, skill, and MCP plugins cannot register because they have
+no process. Agent contracts are verified by the backend's agent runtime, not here.
 
 ## Storage host methods
 
