@@ -1,7 +1,7 @@
 # workflow-run
 
-Product UI for **graph workflow runs** attached to projects (sibling to tasks
-in the workspace tree). Host/Run ports and the memory mock engine live in
+Product UI for **graph workflow runs** executed inside project Workspaces
+(sibling to task projections in the workspace tree). Host/Run ports and the memory mock engine live in
 [`@ora/workflow-runtime`](../../../../workflow-runtime/README.md).
 
 ## Three surfaces (D5.2 boundaries)
@@ -88,7 +88,8 @@ Keep these stacks separate — shared chrome only where noted.
   session-demo + validation).
 - Does not own OpenSpec Spec-mode state.
 - Does not own Task Diff rendering (reuses `WorkspaceReviewLayout` /
-  `TaskDiffView` from chat); only supplies the run-task `taskId` context.
+  `TaskDiffView` from chat); the run review surface is scoped to its Workspace
+  and does not infer ownership through a Task.
 - Does not implement session-scoped Diff for Theater stage mode yet.
 - Does not reuse settings `WorkflowCanvas` (no catalog / reconnect / delete).
 - Does not implement HITL timeout (always waits for submit; `HitlTimeoutPolicy`
@@ -113,15 +114,15 @@ Keep these stacks separate — shared chrome only where noted.
   workspace UI later (`create` / path policy already accept `kickoffInput`).
 - Selection: `useWorkspaceSelectionStore.selectWorkflowRun`.
 - **Changes / Diff**: the run workspace wraps Theater and Overview in the same
-  `WorkspaceReviewLayout` used by chat. Scope is the run-task worktree
-  (`GetWorkflowRunResponse.taskId` → `TaskDiffView`), i.e. all file changes for
-  the run — not a single node session. Stage-scoped Diff is deferred until a
-  session-level Git Diff API (or turn-level filter) exists; `nodeStates.sessionId`
-  is projected for that follow-up.
+  `WorkspaceReviewLayout` used by chat. The run owns no implicit Task or
+  worktree, so the current generic Workspace review surface does not infer a
+  task diff. Stage-scoped Diff is deferred until a session-level Git Diff API
+  (or turn-level filter) exists; `nodeStates.sessionId` is projected for that
+  follow-up.
 - **Open location**: the run header reuses `LocationActionsButton`
-  (File Manager / Terminal / VS Code / Copy Path). Prefer
-  `GetWorkflowRunResponse.taskId` so opens target the run worktree; fall back to
-  the project root until that id is available.
+  (File Manager / Terminal / VS Code / Copy Path). It resolves the run's
+  Workspace location directly; non-local Workspace adapters remain responsible
+  for providing a future remote surface.
 - Lists: react-query via `queryKeys.workflowMounts` /
   `workflowMountsByDefinition` / `workflowRuns`.
 - Runtime: `WorkflowRuntimeProvider` in `AppShell` injects

@@ -3,7 +3,7 @@
 /**
  * Carries the app-facing payload for project creation requests.
  */
-export type CreateProjectRequest = { name: string; rootPath: string };
+export type CreateProjectRequest = { name: string; mainWorkspacePath: string };
 
 /**
  * Returns the created project after a successful create request.
@@ -53,7 +53,7 @@ export type ListProjectsResponse = { projects: Array<Project> };
 /**
  * Describes the public project payload shared across adapter responses.
  */
-export type Project = { id: string; name: string; rootPath: string };
+export type Project = { id: string; name: string };
 
 /**
  * Separates the logical branch name, resolvable ref, and label shown to users.
@@ -65,7 +65,7 @@ export type ProjectBranch = {
 };
 
 /**
- * Carries the mutable project name while the repository root remains immutable.
+ * Carries the mutable project name without changing the main workspace location.
  */
 export type UpdateProjectRequest = { projectId: string; name: string };
 

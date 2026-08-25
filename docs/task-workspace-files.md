@@ -22,7 +22,10 @@ The layers remain narrow:
   resolution, and the command/channel boundary.
 - `packages/app-shell/src/features/files` owns the file tree, viewer, search UI,
   cache invalidation, and gutter `+` line quotes into the composer (with eager
-  snippet text). The same
+  snippet text). A quote stays a compact chip on both sides of send: the prompt
+  carries the snippet as a fenced payload for the agent, and chat history reads
+  that payload back into the same chip instead of replaying the source. The
+  same
   Files panel hosts the Specs sub-view; see [Specification management](spec-management.md).
   Chat inline artifact links open this panel through `openWorkspaceFile` and a
   `WorkspaceFileRequest` (`path` + `requestId` + optional line/column) so a

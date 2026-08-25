@@ -1,6 +1,8 @@
 # ora-db
 
-`ora-db` is Ora's SQLite infrastructure crate. It owns database location, connection setup, schema reconciliation, and concrete implementations of the repository ports defined by `ora-application`.
+`ora-db` is Ora's SQLite infrastructure crate. It owns database location, connection setup, schema
+reconciliation, and concrete implementations of the repository ports defined by `ora-application`
+and `ora-effect`.
 
 ## Module map
 

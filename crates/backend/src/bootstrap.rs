@@ -7,6 +7,7 @@ use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::plugin::PluginApi;
+use crate::plugin_gateway::PluginGateway;
 use crate::project::ProjectApi;
 use crate::session::SessionApi;
 use crate::skill::SkillApi;
@@ -42,9 +43,9 @@ pub struct BackendPaths {
     pub deno_path: PathBuf,
     pub worktree_root: PathBuf,
     pub home_directory: PathBuf,
-    /// Directory against which persisted relative project roots are resolved.
+    /// Directory against which persisted relative local Workspace locations are resolved.
     ///
-    /// Relative roots are stored against the directory from which `ORA_DATA_DIR`
+    /// Relative locations are stored against the directory from which `ORA_DATA_DIR`
     /// was created. Live process cwd is not used: Desktop `tauri dev` starts in
     /// `src-tauri`, which is not that directory.
     pub relative_path_base: PathBuf,
@@ -167,7 +168,6 @@ impl Backend {
         let workflow_run_assembly = build_workflow_run_engine(
             agent_runtime.clone(),
             pool.clone(),
-            paths.skills_root.clone(),
             baselines_root.clone(),
             clock,
         );
@@ -194,8 +194,9 @@ impl Backend {
             task: Arc::new(TaskApi::new(
                 pool.clone(),
                 worktree_root.clone(),
+                relative_path_base.clone(),
                 sessions_root.clone(),
-                repository_gates.clone(),
+                repository_gates,
                 clock,
             )),
             task_diff: Arc::new(TaskDiffApi::new(
@@ -220,13 +221,7 @@ impl Backend {
                 relative_path_base.clone(),
             )),
             workflow: Arc::new(WorkflowApi::new(pool.clone(), clock)),
-            workflow_run: Arc::new(WorkflowRunApi::new(
-                pool.clone(),
-                worktree_root.clone(),
-                paths.skills_root,
-                repository_gates,
-                clock,
-            )),
+            workflow_run: Arc::new(WorkflowRunApi::new(pool.clone(), paths.skills_root, clock)),
             workflow_run_engine,
             run_locks,
             completing_node_runs: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
@@ -238,6 +233,11 @@ impl Backend {
             worktree_root,
             relative_path_base,
         })
+    }
+
+    /// Returns the plugin data-plane gateway the desktop surface layer drives.
+    pub fn plugin_gateway(&self) -> Arc<PluginGateway> {
+        Arc::new(PluginGateway::new(Arc::clone(&self.plugin)))
     }
 
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
@@ -320,7 +320,7 @@ impl Backend {
             .enable(request)
             .await
             .map_err(BackendError::from)?;
-        if let Ok(agent_ref) = AgentRef::parse(&response.plugin.package_name) {
+        if let Ok(agent_ref) = AgentRef::parse(&response.plugin.name) {
             self.agent_runtime.wake_agent(&agent_ref);
         }
         Ok(response)
@@ -380,6 +380,19 @@ impl Backend {
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
         let response = self.plugin.install(request).await?;
+        self.agent_runtime.sync_plugin_agents();
+        Ok(response)
+    }
+
+    /// Imports one local release archive and reconciles the agent set afterwards.
+    ///
+    /// The agent set is reconciled so the imported package supplies a reachable agent in this
+    /// process rather than only after the next restart.
+    pub async fn import_plugin(
+        &self,
+        request: ImportPluginRequest,
+    ) -> Result<ImportPluginResponse, BackendError> {
+        let response = self.plugin.import(request).await?;
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -683,7 +696,16 @@ impl Backend {
 
     /// Resolves the project checkout root used before a task exists (draft / warm chat).
     ///
-    /// Matches `resolve_project_cwd` for project-root mode tasks created on first send.
+    /// Resolves the local directory backing one Workspace for host integrations.
+    pub fn resolve_workspace_cwd(&self, workspace_id: &str) -> Result<PathBuf, BackendError> {
+        crate::task::resolve_workspace_cwd(
+            &self.pool,
+            &ora_domain::WorkspaceId::new(workspace_id),
+            &self.relative_path_base,
+        )
+    }
+
+    /// Resolves the main Workspace directory for an ordinary project chat.
     pub fn resolve_project_cwd(&self, project_id: &str) -> Result<PathBuf, BackendError> {
         crate::task::resolve_project_cwd(
             &self.pool,
@@ -717,6 +739,40 @@ impl Backend {
     ) -> Result<ListProjectsResponse, BackendError> {
         self.project.list(request).map_err(BackendError::from)
     }
+
+    /// Lists visible workspaces directly from their Workspace-owned persistence boundary.
+    pub fn list_workspaces(
+        &self,
+        _request: ListWorkspacesRequest,
+    ) -> Result<ListWorkspacesResponse, BackendError> {
+        let workspaces = ora_db::SqliteWorkspaceRepository::new(self.pool.clone())
+            .list_all_workspaces()
+            .map_err(|error| BackendError::internal("failed to list workspaces", error))?;
+        Ok(ListWorkspacesResponse {
+            workspaces: workspaces
+                .into_iter()
+                .map(|workspace| Workspace {
+                    id: workspace.id.to_string(),
+                    project_id: workspace.project_id.to_string(),
+                    kind: match workspace.kind {
+                        ora_domain::WorkspaceKind::Main => WorkspaceKind::Main,
+                        ora_domain::WorkspaceKind::Isolated => WorkspaceKind::Isolated,
+                    },
+                    lifecycle: match workspace.lifecycle {
+                        ora_domain::WorkspaceLifecycle::Provisioning => {
+                            WorkspaceLifecycle::Provisioning
+                        }
+                        ora_domain::WorkspaceLifecycle::Active => WorkspaceLifecycle::Active,
+                        ora_domain::WorkspaceLifecycle::Unavailable => {
+                            WorkspaceLifecycle::Unavailable
+                        }
+                        ora_domain::WorkspaceLifecycle::Retiring => WorkspaceLifecycle::Retiring,
+                        ora_domain::WorkspaceLifecycle::Deleted => WorkspaceLifecycle::Deleted,
+                    },
+                })
+                .collect(),
+        })
+    }
     /// Lists selectable branches for one project repository.
     pub fn list_project_branches(
         &self,
@@ -735,8 +791,8 @@ impl Backend {
     }
     /// Deletes one project through the shared application composition.
     ///
-    /// The delete cascades to the project's Tasks, so every chat surface beneath
-    /// it dies along with the project root's and their warm sessions are
+    /// The delete cascades to the project's Workspaces and Tasks, so every chat
+    /// surface beneath it dies along with their warm sessions and histories are
     /// discarded together. The Task identifiers are collected first because the
     /// delete is what makes those rows invisible; both queries share one blocking
     /// hop so that ordering cannot be broken by a scheduling decision.
@@ -747,21 +803,20 @@ impl Backend {
         let project = self.project.clone();
         let pool = self.pool.clone();
         let project_id = ora_domain::ProjectId::new(request.project_id.as_str());
-        let (response, task_ids) = spawn_repository_work(move || {
-            let task_ids = crate::task::task_ids_in_project(&pool, &project_id);
-            project.delete(request).map(|response| (response, task_ids))
+        let (response, workspace_ids) = spawn_repository_work(move || {
+            let workspace_ids = crate::task::workspace_ids_in_project(&pool, &project_id);
+            project
+                .delete(request)
+                .map(|response| (response, workspace_ids))
         })
         .await?;
 
-        let mut targets: Vec<WarmSessionTarget> = task_ids
+        let targets: Vec<WarmSessionTarget> = workspace_ids
             .into_iter()
-            .map(|task_id| WarmSessionTarget::Task {
-                task_id: task_id.to_string(),
+            .map(|workspace_id| WarmSessionTarget::Workspace {
+                workspace_id: workspace_id.to_string(),
             })
             .collect();
-        targets.push(WarmSessionTarget::ProjectRoot {
-            project_id: response.project_id.clone(),
-        });
         self.agent_runtime.discard_warm_sessions(&targets).await;
         // The cascade registered the cleanup jobs; this only trims their latency.
         self.git_cleanup.notify();
@@ -806,8 +861,8 @@ impl Backend {
         let task = self.task.clone();
         let response = spawn_repository_work(move || task.delete(request)).await?;
         self.agent_runtime
-            .discard_warm_sessions(&[WarmSessionTarget::Task {
-                task_id: response.task_id.clone(),
+            .discard_warm_sessions(&[WarmSessionTarget::Workspace {
+                workspace_id: response.workspace_id.clone(),
             }])
             .await;
         // The cascade registered the cleanup job; this only trims its latency.
@@ -1378,6 +1433,16 @@ impl Backend {
             .delete(request)
             .map_err(BackendError::from)
     }
+
+    /// Renames one workflow run through its Workspace-owned display field.
+    pub fn rename_workflow_run(
+        &self,
+        request: RenameWorkflowRunRequest,
+    ) -> Result<RenameWorkflowRunResponse, BackendError> {
+        self.workflow_run
+            .rename(request)
+            .map_err(BackendError::from)
+    }
 }
 
 /// Runs one blocking repository operation off the async runtime's worker threads.
@@ -1537,7 +1602,7 @@ mod tests {
         let project = backend
             .create_project(CreateProjectRequest {
                 name: "Ora".to_string(),
-                root_path: temporary
+                main_workspace_path: temporary
                     .path()
                     .join("repository")
                     .to_string_lossy()
@@ -1711,7 +1776,7 @@ mod tests {
         let project = backend
             .create_project(CreateProjectRequest {
                 name: "Ora".to_string(),
-                root_path: repository_root.to_string_lossy().into_owned(),
+                main_workspace_path: repository_root.to_string_lossy().into_owned(),
             })
             .expect("create project")
             .project;
@@ -1719,12 +1784,11 @@ mod tests {
             .create_task(CreateTaskRequest {
                 project_id: project.id,
                 title: "Move configuration".to_string(),
-                workspace_mode: None,
                 base_branch: Some("main".to_string()),
             })
             .expect("create task")
             .task;
-        let original_worktree_path = original_worktree_root.join(&task.id);
+        let original_worktree_path = original_worktree_root.join(&task.workspace_id);
         assert!(original_worktree_path.is_dir());
 
         let replacement_root = temporary.path().join("replacement-worktrees");

@@ -11,7 +11,7 @@ import { MessageBubble } from "./message-bubble";
 import { ResponseTurn } from "./response-turn";
 import type { ChatModelChange, ChatTurn } from "@ora/chat";
 import { useTaskWorkspace } from "../../state/hooks/use-task-workspace";
-import { useProjects } from "../../state/hooks/use-projects";
+import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
 import {
   collectCumulativeArtifactIndices,
   type TurnArtifactCacheEntry,
@@ -26,6 +26,7 @@ interface MessageListProps {
   isResponding: boolean;
   taskId?: string;
   projectId?: string;
+  workspaceId?: string;
   /** Optional presentation override for chats embedded inside another surface. */
   conversationNavigation?: ConversationNavigationPresentation;
 }
@@ -38,18 +39,16 @@ export function MessageList({
   isResponding,
   taskId,
   projectId,
+  workspaceId,
   conversationNavigation,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const workspaceQuery = useTaskWorkspace(taskId);
-  const projectsQuery = useProjects({
-    enabled: taskId === undefined && projectId !== undefined,
-  });
-  const cwd =
-    workspaceQuery.data?.rootPath ??
-    projectsQuery.data?.find((project) => project.id === projectId)?.rootPath ??
-    null;
+  const workspaceCwdQuery = useWorkspaceCwd(
+    taskId === undefined ? workspaceId : undefined,
+  );
+  const cwd = workspaceQuery.data?.rootPath ?? workspaceCwdQuery.data ?? null;
   const [artifactCache] = useState(
     () => new Map<string, TurnArtifactCacheEntry>(),
   );

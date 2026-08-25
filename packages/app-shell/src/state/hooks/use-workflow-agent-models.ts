@@ -12,6 +12,8 @@ import {
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { queryKeys } from "./query-keys";
 import { useProjects } from "./use-projects";
+import { useTasks } from "./use-tasks";
+import { useWorkspaces } from "./use-workspaces";
 
 /** Per-CLI discovery state so the inspector can show a spinner or retry per row. */
 export interface WorkflowAgentCliStatus {
@@ -43,9 +45,13 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
   const client = useContractsClient();
   const selection = useWorkspaceSelectionStore((state) => state.selection);
   const projectsQuery = useProjects();
+  const tasksQuery = useTasks();
+  const workspacesQuery = useWorkspaces();
   const target = discoveryTarget(
     selection,
     projectsQuery.data?.[0]?.id ?? null,
+    tasksQuery.data ?? [],
+    workspacesQuery.data ?? [],
   );
   const projectsPending =
     projectsQuery.isPending &&
@@ -124,6 +130,10 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
 
   const isLoading =
     projectsPending ||
+    (selection.taskId !== null && tasksQuery.isPending) ||
+    (selection.taskId === null &&
+      selection.projectId !== null &&
+      workspacesQuery.isPending) ||
     (target !== null &&
       warmQueries.some((query) => query.isPending || query.isFetching));
   const isError =
@@ -140,6 +150,8 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
     isError,
     refetch: () => {
       void projectsQuery.refetch();
+      void tasksQuery.refetch();
+      void workspacesQuery.refetch();
       for (const query of warmQueries) {
         void query.refetch();
       }
@@ -151,15 +163,37 @@ export function useWorkflowAgentModels(): WorkflowAgentModelsCatalog {
 function discoveryTarget(
   selection: { projectId: string | null; taskId: string | null },
   fallbackProjectId: string | null,
+  tasks: readonly { id: string; workspaceId: string }[],
+  workspaces: readonly {
+    id: string;
+    projectId: string;
+    kind: "main" | "isolated";
+  }[],
 ): WarmSessionTarget | null {
   if (selection.taskId !== null) {
-    return { type: "task", taskId: selection.taskId };
+    const task = tasks.find((candidate) => candidate.id === selection.taskId);
+    return task === undefined
+      ? null
+      : { type: "workspace", workspaceId: task.workspaceId };
   }
   if (selection.projectId !== null) {
-    return { type: "projectRoot", projectId: selection.projectId };
+    const workspace = workspaces.find(
+      (candidate) =>
+        candidate.projectId === selection.projectId &&
+        candidate.kind === "main",
+    );
+    return workspace === undefined
+      ? null
+      : { type: "workspace", workspaceId: workspace.id };
   }
   if (fallbackProjectId !== null) {
-    return { type: "projectRoot", projectId: fallbackProjectId };
+    const workspace = workspaces.find(
+      (candidate) =>
+        candidate.projectId === fallbackProjectId && candidate.kind === "main",
+    );
+    return workspace === undefined
+      ? null
+      : { type: "workspace", workspaceId: workspace.id };
   }
   return null;
 }

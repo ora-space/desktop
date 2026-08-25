@@ -409,8 +409,10 @@ describe("RunNodeSessionChat", () => {
         return {
           run: {
             id: runId,
+            workspaceId: "workspace-1",
             workflowId: "workflow-1",
             snapshotId: "snapshot-1",
+            name: "Run 1",
             status: "running",
             state: null,
             input: null,

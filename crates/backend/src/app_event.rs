@@ -181,12 +181,12 @@ mod tests {
         assert_eq!(stream.recv().await.unwrap().unwrap(), AppEvent::Ready);
 
         hub.publisher()
-            .publish_status_changed(&PluginId::new("ora.example"));
+            .publish_status_changed(&PluginId::new("official", "ora.example").expect("plugin id"));
 
         assert_eq!(
             stream.recv().await.unwrap().unwrap(),
             AppEvent::PluginStatusChanged {
-                plugin_id: "ora.example".to_string(),
+                plugin_id: "official/ora.example".to_string(),
             },
         );
     }

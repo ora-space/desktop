@@ -689,8 +689,8 @@ mod tests {
     fn reserved_pool() -> (StdMutex<WarmPool>, SessionId) {
         let mut pool = WarmPool::default();
         let key = WarmKey {
-            target: WarmSessionTarget::Task {
-                task_id: "task-1".to_string(),
+            target: WarmSessionTarget::Workspace {
+                workspace_id: "workspace-1".to_string(),
             },
             agent_ref: AgentCli::Nga.agent_ref(),
             owner: WarmOwner::Interactive,

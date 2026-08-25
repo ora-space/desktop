@@ -111,6 +111,11 @@ pub enum SkillStorageError {
 /// onto a transaction root and startup reconciliation would delete its package as a leftover, so
 /// a new reserved directory must keep the leading dot rather than needing a validation change.
 pub trait SkillStorage {
+    /// Returns the formal package root used by source-state readers after a successful promote.
+    fn formal_package_path(&self, _name: &str) -> Option<PathBuf> {
+        None
+    }
+
     /// Reserves a unique staging directory for one transaction.
     fn create_staging(&self) -> Result<PathBuf, SkillStorageError>;
 

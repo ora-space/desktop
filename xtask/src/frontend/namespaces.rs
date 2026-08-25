@@ -17,6 +17,7 @@ mod spec;
 mod task;
 mod workflow;
 mod workflow_run;
+mod workspace;
 
 use super::FrontendEndpoint;
 
@@ -43,6 +44,7 @@ pub(super) fn frontend_endpoints() -> Vec<FrontendEndpoint> {
         spec::ENDPOINTS,
         workflow::ENDPOINTS,
         workflow_run::ENDPOINTS,
+        workspace::ENDPOINTS,
     ]
     .into_iter()
     .flat_map(|endpoints| endpoints.iter().copied())

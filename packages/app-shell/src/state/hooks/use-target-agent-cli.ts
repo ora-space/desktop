@@ -3,7 +3,6 @@ import { useSettingsStore } from "../stores/settings-store";
 import { usePendingAgentStore } from "../stores/pending-agent-store";
 import { warmTargetKey } from "./use-warm-session";
 import { useSessions } from "./use-sessions";
-import { useAvailableAgentClis } from "./use-available-agent-clis";
 
 /** The selection legs that decide which agent a chat surface is pointing at. */
 interface AgentSelection {
@@ -34,15 +33,15 @@ interface AgentSelection {
  * shared default directly would let picking an agent for one not-yet-started chat
  * repaint every other one the moment it is visited.
  *
- * A binding is reported as written even when that agent can no longer be reached:
- * the conversation genuinely runs on it, and naming a different one would claim a
- * move that never happened. A preference is not a binding — both the shared
- * default and a per-target pick outlive whatever supplied the agent they name — so
- * one the runtime no longer reports reaching yields to the first agent this
- * installation can actually open a session on, rather than sending every
- * not-yet-started chat at an agent that is not there.
+ * A binding or preference is reported as written even when that agent can no
+ * longer be reached. Agent availability is allowed to change while a surface is
+ * open, and using the first available agent as a fallback would silently change
+ * the user's selection when a plugin is enabled or disabled. A surface that has
+ * never chosen an agent therefore resolves to `null` instead of inventing one.
  */
-export function useTargetAgentCli(selection: AgentSelection): KnownAgentCli {
+export function useTargetAgentCli(
+  selection: AgentSelection,
+): KnownAgentCli | null {
   const defaultAgentCli = useSettingsStore((state) => state.settings.agentCli);
   const { data: sessions = [] } = useSessions();
   const targetKey = warmTargetKey(selection);
@@ -54,7 +53,6 @@ export function useTargetAgentCli(selection: AgentSelection): KnownAgentCli {
   const pickedForTarget = usePendingAgentStore((state) =>
     targetKey === null ? undefined : state.selections[targetKey],
   );
-  const availableAgentClis = useAvailableAgentClis();
   // The wire carries any installed agent's identity as a plain string, but the picker this
   // hook drives only labels the closed set it knows, so a bound session is assumed to name one
   // of them. A binding onto an agent outside that set is still reported here — it is what the
@@ -64,11 +62,5 @@ export function useTargetAgentCli(selection: AgentSelection): KnownAgentCli {
   )?.agentRef as KnownAgentCli | undefined;
   if (pendingSwitch !== undefined) return pendingSwitch;
   if (boundAgentCli !== undefined) return boundAgentCli;
-  const preferred = pickedForTarget ?? defaultAgentCli;
-  // An installation can genuinely reach no agent at all — nothing detected yet, or
-  // nothing installed. There is no better answer to fall back to then, so the
-  // preference is kept rather than invented away.
-  return availableAgentClis.includes(preferred)
-    ? preferred
-    : (availableAgentClis[0] ?? preferred);
+  return pickedForTarget ?? defaultAgentCli;
 }

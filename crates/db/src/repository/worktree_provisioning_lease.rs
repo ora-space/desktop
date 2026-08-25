@@ -1,6 +1,6 @@
 use ora_application::{RepositoryError, WorktreeProvisioningLeaseStore};
 use ora_domain::{
-    GitCleanupJob, GitCleanupJobId, ProjectId, TaskId, WorktreeProvisioningLease,
+    GitCleanupJob, GitCleanupJobId, ProjectId, WorkspaceId, WorktreeProvisioningLease,
     WorktreeProvisioningLeaseId,
 };
 use rusqlite::{Row, Transaction, params};
@@ -34,13 +34,13 @@ impl SqliteWorktreeProvisioningLeaseRepository {
         self.pool.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO worktree_provisioning_leases (
-                     id, project_id, task_id, repository_root, checkout_root, branch_name,
+                     id, project_id, workspace_id, repository_root, checkout_root, branch_name,
                      lease_expires_at, created_at, updated_at
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     lease.id.as_ref(),
                     lease.project_id.as_ref(),
-                    lease.task_id.as_ref(),
+                    lease.workspace_id.as_ref(),
                     lease.repository_root,
                     lease.checkout_root,
                     lease.branch_name,
@@ -89,7 +89,7 @@ impl SqliteWorktreeProvisioningLeaseRepository {
     pub fn list_leases(&self) -> Result<Vec<WorktreeProvisioningLease>, crate::DatabaseError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT id, project_id, task_id, repository_root, checkout_root, branch_name,
+                "SELECT id, project_id, workspace_id, repository_root, checkout_root, branch_name,
                         lease_expires_at, created_at, updated_at
                  FROM worktree_provisioning_leases
                  ORDER BY created_at, id",
@@ -117,7 +117,7 @@ impl SqliteWorktreeProvisioningLeaseRepository {
                 Transaction::new(connection, rusqlite::TransactionBehavior::Immediate)?;
             let expired = {
                 let mut statement = transaction.prepare(
-                    "SELECT id, project_id, task_id, repository_root, checkout_root, branch_name,
+                    "SELECT id, project_id, workspace_id, repository_root, checkout_root, branch_name,
                             lease_expires_at, created_at, updated_at
                      FROM worktree_provisioning_leases
                      WHERE lease_expires_at < ?1
@@ -187,7 +187,7 @@ impl WorktreeProvisioningLeaseStore for SqliteWorktreeProvisioningLeaseRepositor
                 )?;
                 let lease = {
                     let mut statement = transaction.prepare(
-                        "SELECT id, project_id, task_id, repository_root, checkout_root, branch_name,
+                        "SELECT id, project_id, workspace_id, repository_root, checkout_root, branch_name,
                                 lease_expires_at, created_at, updated_at
                          FROM worktree_provisioning_leases
                          WHERE id = ?1",
@@ -219,7 +219,7 @@ fn map_lease_row(row: &Row<'_>) -> Result<WorktreeProvisioningLease, crate::Data
     Ok(WorktreeProvisioningLease {
         id: WorktreeProvisioningLeaseId::new(row.get::<_, String>("id")?),
         project_id: ProjectId::new(row.get::<_, String>("project_id")?),
-        task_id: TaskId::new(row.get::<_, String>("task_id")?),
+        workspace_id: WorkspaceId::new(row.get::<_, String>("workspace_id")?),
         repository_root: row.get("repository_root")?,
         checkout_root: row.get("checkout_root")?,
         branch_name: row.get("branch_name")?,

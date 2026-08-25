@@ -8,7 +8,6 @@ use ts_rs::TS;
 pub struct Project {
     pub id: String,
     pub name: String,
-    pub root_path: String,
 }
 
 /// Carries the app-facing payload for project creation requests.
@@ -17,7 +16,7 @@ pub struct Project {
 #[ts(export_to = "project.ts")]
 pub struct CreateProjectRequest {
     pub name: String,
-    pub root_path: String,
+    pub main_workspace_path: String,
 }
 
 /// Returns the created project after a successful create request.
@@ -84,7 +83,7 @@ pub struct ProjectBranch {
     pub display_name: String,
 }
 
-/// Carries the mutable project name while the repository root remains immutable.
+/// Carries the mutable project name without changing the main workspace location.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "project.ts")]
@@ -154,11 +153,10 @@ mod tests {
         let project = Project {
             id: "project-1".to_string(),
             name: "Ora".to_string(),
-            root_path: "/workspace/ora".to_string(),
         };
         let create_request = CreateProjectRequest {
             name: "Ora".to_string(),
-            root_path: "/workspace/ora".to_string(),
+            main_workspace_path: "/workspace/ora".to_string(),
         };
         let get_request = GetProjectRequest {
             project_id: "project-1".to_string(),
@@ -180,14 +178,13 @@ mod tests {
             json!({
                 "id": "project-1",
                 "name": "Ora",
-                "rootPath": "/workspace/ora",
             }),
         );
         assert_serialized_json(
             &create_request,
             json!({
                 "name": "Ora",
-                "rootPath": "/workspace/ora",
+                "mainWorkspacePath": "/workspace/ora",
             }),
         );
         assert_serialized_json(
@@ -198,7 +195,6 @@ mod tests {
                 "project": {
                     "id": "project-1",
                     "name": "Ora",
-                    "rootPath": "/workspace/ora",
                 },
             }),
         );
@@ -211,7 +207,6 @@ mod tests {
                 "project": {
                     "id": "project-1",
                     "name": "Ora",
-                    "rootPath": "/workspace/ora",
                 },
             }),
         );
@@ -242,7 +237,6 @@ mod tests {
                     {
                         "id": "project-1",
                         "name": "Ora",
-                        "rootPath": "/workspace/ora",
                     },
                 ],
             }),
@@ -260,7 +254,6 @@ mod tests {
                 "project": {
                     "id": "project-1",
                     "name": "Ora",
-                    "rootPath": "/workspace/ora",
                 },
             }),
         );
@@ -279,7 +272,6 @@ mod tests {
         let project = Project {
             id: "project-1".to_string(),
             name: "Ora".to_string(),
-            root_path: "/workspace/ora".to_string(),
         };
 
         assert_eq!(

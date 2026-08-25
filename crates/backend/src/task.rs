@@ -6,7 +6,7 @@ use gitlancer::{CliGitRunner, Git, RepoRoot, Repository};
 use ora_application::{
     ApplicationError, Clock, CreateTaskHandler, GetTaskHandler, GitTaskWorktreeProvisioner,
     ListTasksHandler, ProjectRepository, RepositoryError, TaskRepository, UpdateTaskHandler,
-    UuidTaskIdGenerator, UuidWorktreeIdGenerator, WorktreeRepository,
+    UuidTaskIdGenerator, WorktreeRepository,
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
@@ -16,10 +16,10 @@ use ora_contracts::{
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{
     CascadeDeleteOutcome, RepositoryPool, SqliteCascadeRepository, SqliteProjectRepository,
-    SqliteTaskRepository, SqliteTaskWorkspaceRepository, SqliteWorktreeProvisioningLeaseRepository,
-    SqliteWorktreeRepository,
+    SqliteTaskRepository, SqliteTaskWorkspaceRepository, SqliteWorkspaceRepository,
+    SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,
 };
-use ora_domain::{Project, ProjectId, TaskId, WorktreeActivity};
+use ora_domain::{Project, ProjectId, TaskId, WorkspaceId, WorkspaceLocation, WorktreeActivity};
 use ora_logging::ora_warn;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -28,6 +28,8 @@ use std::sync::{Arc, RwLock};
 pub(crate) struct TaskApi {
     pool: RepositoryPool,
     worktree_root: Arc<RwLock<PathBuf>>,
+    /// Base directory used to resolve relative main Workspace locations.
+    relative_path_base: PathBuf,
     /// Where cascaded sessions' recorded conversations are removed from.
     sessions_root: PathBuf,
     /// Serializes Git mutations per repository between provisioning and cleanup.
@@ -43,6 +45,7 @@ impl TaskApi {
     pub(crate) fn new(
         pool: RepositoryPool,
         worktree_root: Arc<RwLock<PathBuf>>,
+        relative_path_base: PathBuf,
         sessions_root: PathBuf,
         repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
         clock: SystemClock,
@@ -52,6 +55,7 @@ impl TaskApi {
         Self {
             pool,
             worktree_root,
+            relative_path_base,
             sessions_root,
             repository_gates,
             get: GetTaskHandler::new(repository.clone()),
@@ -66,13 +70,13 @@ impl TaskApi {
         &self,
         request: CreateTaskRequest,
     ) -> Result<CreateTaskResponse, ApplicationError> {
-        let project = self.find_project(&ProjectId::new(&request.project_id))?;
-        let repository_root = PathBuf::from(project.root_path);
+        let project_id = ProjectId::new(&request.project_id);
+        self.find_project(&project_id)?;
+        let repository_root = self.find_main_workspace_root(&project_id)?;
         let handler = CreateTaskHandler::new(
             SqliteTaskWorkspaceRepository::new(self.pool.clone()),
             SqliteWorktreeProvisioningLeaseRepository::new(self.pool.clone()),
             UuidTaskIdGenerator::new(),
-            UuidWorktreeIdGenerator::new(),
             GatedWorktreeProvisioner::new(
                 GitTaskWorktreeProvisioner::new(repository_root.clone()),
                 Arc::clone(&self.repository_gates),
@@ -115,7 +119,19 @@ impl TaskApi {
         let task_id = TaskId::new(request.task_id);
         // Collected before the cascade: once the rows are soft-deleted nothing
         // links their history files back to the task that owned them.
-        let session_ids = crate::session_history::session_ids_for_task(&self.pool, &task_id);
+        let workspace_id = SqliteTaskRepository::new(self.pool.clone())
+            .find_task(&task_id)
+            .map_err(|source| BackendError::internal("task repository operation failed", source))?
+            .map(|task| task.workspace_id)
+            .ok_or_else(|| {
+                BackendError::new(
+                    ErrorClassification::NotFound,
+                    PublicError::TaskNotFound(EmptyErrorParams {}),
+                    format!("task not found: {task_id}"),
+                )
+            })?;
+        let session_ids =
+            crate::session_history::session_ids_for_workspace(&self.pool, &workspace_id);
         let outcome = SqliteCascadeRepository::new(self.pool.clone())
             .delete_task(&task_id, self.clock.now_timestamp_millis())
             .map_err(|source| BackendError::internal("task repository operation failed", source))?;
@@ -125,6 +141,7 @@ impl TaskApi {
                 crate::session_history::remove_session_histories(&self.sessions_root, session_ids);
                 Ok(DeleteTaskResponse {
                     task_id: task_id.to_string(),
+                    workspace_id: workspace_id.to_string(),
                 })
             }
             CascadeDeleteOutcome::NotFound => Err(BackendError::new(
@@ -152,6 +169,24 @@ impl TaskApi {
         })
     }
 
+    /// Resolves the Git repository from the project's main workspace location.
+    fn find_main_workspace_root(
+        &self,
+        project_id: &ProjectId,
+    ) -> Result<PathBuf, ApplicationError> {
+        let workspace = SqliteWorkspaceRepository::new(self.pool.clone())
+            .find_main_workspace(project_id)
+            .map_err(|error| project_repository_error(RepositoryError::new(error)))?
+            .ok_or_else(|| ApplicationError::ProjectNotFound {
+                project_id: project_id.to_string(),
+            })?;
+        let WorkspaceLocation::LocalFilesystem { path } = workspace.location else {
+            return Err(ApplicationError::TaskWorktreeRootUnavailable);
+        };
+        absolute_project_root(PathBuf::from(path), &self.relative_path_base)
+            .map_err(|_| ApplicationError::TaskWorktreeRootUnavailable)
+    }
+
     /// Captures the configured creation root once so an in-flight operation remains coherent.
     fn worktree_root_snapshot(&self) -> Result<PathBuf, ApplicationError> {
         self.worktree_root
@@ -173,24 +208,26 @@ fn project_repository_error(error: RepositoryError) -> ApplicationError {
 /// empty list rather than an error: the caller uses it to clean up warm sessions
 /// the deleted project owned, and failing the user's delete over a cleanup query
 /// would be the larger harm.
-pub(crate) fn task_ids_in_project(pool: &RepositoryPool, project_id: &ProjectId) -> Vec<TaskId> {
-    match SqliteTaskRepository::new(pool.clone()).list_tasks() {
-        Ok(tasks) => tasks
+pub(crate) fn workspace_ids_in_project(
+    pool: &RepositoryPool,
+    project_id: &ProjectId,
+) -> Vec<WorkspaceId> {
+    match SqliteWorkspaceRepository::new(pool.clone()).list_workspaces(project_id) {
+        Ok(workspaces) => workspaces
             .into_iter()
-            .filter(|task| &task.project_id == project_id)
-            .map(|task| task.id)
+            .map(|workspace| workspace.id)
             .collect(),
         Err(_) => {
             ora_warn!(
                 project_id = %project_id,
-                "listing project tasks for warm session cleanup failed",
+                "listing project workspaces for warm session cleanup failed",
             );
             Vec::new()
         }
     }
 }
 
-/// Resolves the task's authoritative execution directory from its selected workspace mode.
+/// Resolves the task's authoritative execution directory from its linked worktree.
 pub(crate) fn resolve_task_cwd(
     pool: &RepositoryPool,
     task_id: &TaskId,
@@ -200,28 +237,23 @@ pub(crate) fn resolve_task_cwd(
         .find_task(task_id)
         .map_err(task_worktree_unavailable_with)?
         .ok_or_else(task_worktree_unavailable)?;
-    if task.worktree_id.is_none() {
-        let project = SqliteProjectRepository::new(pool.clone())
-            .find_project(&task.project_id)
-            .map_err(task_project_root_unavailable_with)?
-            .ok_or_else(task_project_root_unavailable)?;
-        return absolute_project_root(PathBuf::from(project.root_path), relative_path_base);
-    }
-
-    let worktree_id = task.worktree_id.ok_or_else(task_worktree_unavailable)?;
     let worktree = SqliteWorktreeRepository::new(pool.clone())
-        .find_worktree(&worktree_id)
+        .find_worktree(&task.workspace_id)
         .map_err(task_worktree_unavailable_with)?
         .ok_or_else(task_worktree_unavailable)?;
-    if worktree.task_id != task.id || worktree.activity != WorktreeActivity::Active {
+    if worktree.activity != WorktreeActivity::Active {
         return Err(task_worktree_unavailable());
     }
     let branch_name = worktree.branch_name.ok_or_else(task_worktree_unavailable)?;
-    let project = SqliteProjectRepository::new(pool.clone())
-        .find_project(&task.project_id)
+    let workspace = SqliteWorkspaceRepository::new(pool.clone())
+        .find_main_workspace(&task.project_id)
         .map_err(task_worktree_unavailable_with)?
         .ok_or_else(task_worktree_unavailable)?;
-    let repository = Repository::new(RepoRoot::new(project.root_path));
+    let WorkspaceLocation::LocalFilesystem { path } = workspace.location else {
+        return Err(task_worktree_unavailable());
+    };
+    let repository_root = absolute_project_root(PathBuf::from(path), relative_path_base)?;
+    let repository = Repository::new(RepoRoot::new(repository_root));
     let resolved = Git::new(CliGitRunner)
         .resolve_worktree_by_branch(ResolveWorktreeByBranchRequest {
             repository: &repository,
@@ -235,7 +267,26 @@ pub(crate) fn resolve_task_cwd(
     Ok(cwd)
 }
 
-/// Resolves the same task root used by agent sessions and reports a branch only for linked worktrees.
+/// Resolves an active workspace location to the directory used by its provider session.
+pub(crate) fn resolve_workspace_cwd(
+    pool: &RepositoryPool,
+    workspace_id: &WorkspaceId,
+    relative_path_base: &Path,
+) -> Result<PathBuf, BackendError> {
+    let workspace = SqliteWorkspaceRepository::new(pool.clone())
+        .find_workspace(workspace_id)
+        .map_err(workspace_unavailable_with)?
+        .ok_or_else(workspace_unavailable)?;
+    if !workspace.is_admissible() {
+        return Err(workspace_unavailable());
+    }
+    let WorkspaceLocation::LocalFilesystem { path } = workspace.location else {
+        return Err(workspace_unavailable());
+    };
+    absolute_project_root(PathBuf::from(path), relative_path_base)
+}
+
+/// Resolves the task-owned worktree root and its branch for the task workspace endpoint.
 pub(crate) fn get_task_workspace(
     pool: &RepositoryPool,
     task_id: &str,
@@ -252,42 +303,38 @@ pub(crate) fn get_task_workspace(
                 format!("task not found: {task_id}"),
             )
         })?;
-    let branch_name = match task.worktree_id {
-        Some(worktree_id) => SqliteWorktreeRepository::new(pool.clone())
-            .find_worktree(&worktree_id)
-            .map_err(task_worktree_unavailable_with)?
-            .filter(|worktree| worktree.activity == WorktreeActivity::Active)
-            .and_then(|worktree| worktree.branch_name),
-        None => None,
-    };
+    let branch_name = SqliteWorktreeRepository::new(pool.clone())
+        .find_worktree(&task.workspace_id)
+        .map_err(task_worktree_unavailable_with)?
+        .filter(|worktree| worktree.activity == WorktreeActivity::Active)
+        .and_then(|worktree| worktree.branch_name)
+        .ok_or_else(task_worktree_unavailable)?;
     let root = resolve_task_cwd(pool, &task_id, relative_path_base)?;
     Ok(GetTaskWorkspaceResponse {
         workspace: TaskWorkspace {
             root_path: root.to_string_lossy().into_owned(),
-            branch_name,
+            branch_name: Some(branch_name),
         },
     })
 }
 
-/// Resolves the execution directory for a chat whose Task does not exist yet.
-///
-/// Direct chats create their Task only when the first message is sent, but the
-/// model selector needs a session before that. Those Tasks are always created in
-/// project-root mode, so the project root resolved here matches the directory
-/// the eventual Task resolves to.
+/// Resolves the main workspace directory for an ordinary project chat.
 pub(crate) fn resolve_project_cwd(
     pool: &RepositoryPool,
     project_id: &ProjectId,
     relative_path_base: &Path,
 ) -> Result<PathBuf, BackendError> {
-    let project = SqliteProjectRepository::new(pool.clone())
-        .find_project(project_id)
-        .map_err(|_| task_project_root_unavailable())?
-        .ok_or_else(task_project_root_unavailable)?;
-    absolute_project_root(PathBuf::from(project.root_path), relative_path_base)
+    let workspace = SqliteWorkspaceRepository::new(pool.clone())
+        .find_main_workspace(project_id)
+        .map_err(|_| workspace_unavailable())?
+        .ok_or_else(workspace_unavailable)?;
+    let WorkspaceLocation::LocalFilesystem { path } = workspace.location else {
+        return Err(workspace_unavailable());
+    };
+    absolute_project_root(PathBuf::from(path), relative_path_base)
 }
 
-/// Resolves a persisted project root against the runtime's stable path base.
+/// Resolves a persisted main Workspace location against the runtime's stable path base.
 ///
 /// Relative roots are stored against the directory from which `ORA_DATA_DIR` was
 /// created. Joining them to a live process cwd would miss those directories
@@ -305,7 +352,7 @@ pub(crate) fn absolute_project_root(
     if cwd.is_dir() {
         Ok(cwd)
     } else {
-        Err(task_project_root_unavailable())
+        Err(workspace_unavailable())
     }
 }
 
@@ -329,44 +376,43 @@ fn task_worktree_unavailable_with(
     )
 }
 
-/// Builds the conflict used when a project-root task no longer has a usable directory.
-fn task_project_root_unavailable() -> BackendError {
+/// Builds the conflict used when a workspace has no usable local directory.
+pub(crate) fn workspace_unavailable() -> BackendError {
     BackendError::new(
         ErrorClassification::Conflict,
-        PublicError::TaskProjectRootUnavailable(EmptyErrorParams {}),
-        "task project root is unavailable",
+        PublicError::WorkspaceUnavailable(EmptyErrorParams {}),
+        "workspace is unavailable",
     )
 }
 
-fn task_project_root_unavailable_with(
+/// Preserves the repository cause while reporting a workspace-scoped admission failure.
+fn workspace_unavailable_with(
     source: impl std::error::Error + Send + Sync + 'static,
 ) -> BackendError {
     BackendError::with_source(
         ErrorClassification::Conflict,
-        PublicError::TaskProjectRootUnavailable(EmptyErrorParams {}),
-        "task project root is unavailable",
+        PublicError::WorkspaceUnavailable(EmptyErrorParams {}),
+        "workspace is unavailable",
         source,
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{absolute_project_root, get_task_workspace, resolve_task_cwd};
-    use ora_application::{ProjectRepository, TaskRepository};
-    use ora_contracts::{GetTaskWorkspaceResponse, TaskWorkspace};
+    use super::{absolute_project_root, resolve_project_cwd};
+    use ora_application::ProjectRepository;
     use ora_db::{
-        DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteTaskRepository,
-        default_migration_catalog,
+        DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, default_migration_catalog,
     };
-    use ora_domain::{AuditFields, Project, ProjectId, Task, TaskId};
+    use ora_domain::{AuditFields, Project, ProjectId, WorkspaceLocation};
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// Verifies direct-chat tasks start providers in the project root without a worktree link.
+    /// Verifies ordinary project chats resolve the project's main workspace directly.
     #[test]
-    fn resolves_project_root_for_tasks_without_worktrees() {
+    fn resolves_main_workspace_for_project_chats() {
         let temp_dir = TempDir::new().expect("create temporary directory");
         let project_root = temp_dir.path().join("project-root");
         fs::create_dir_all(&project_root).expect("create project root");
@@ -378,37 +424,19 @@ mod tests {
             )
             .expect("bootstrap repository pool");
         SqliteProjectRepository::new(pool.clone())
-            .create_project(Project::new(
-                ProjectId::new("project-1"),
-                "Project",
-                project_root.to_string_lossy(),
-                AuditFields::new(1, 1, false),
-            ))
+            .create_project(
+                Project::new(
+                    ProjectId::new("project-1"),
+                    "Project",
+                    AuditFields::new(1, 1, false),
+                ),
+                WorkspaceLocation::local_filesystem(project_root.to_string_lossy()),
+            )
             .expect("persist project");
-        SqliteTaskRepository::new(pool.clone())
-            .create_task(Task::new(
-                TaskId::new("task-1"),
-                ProjectId::new("project-1"),
-                "Project chat",
-                None,
-                AuditFields::new(1, 1, false),
-            ))
-            .expect("persist task");
-
         assert_eq!(
-            resolve_task_cwd(&pool, &TaskId::new("task-1"), temp_dir.path())
-                .expect("resolve project root cwd"),
+            resolve_project_cwd(&pool, &ProjectId::new("project-1"), temp_dir.path())
+                .expect("resolve main workspace cwd"),
             project_root.clone(),
-        );
-        assert_eq!(
-            get_task_workspace(&pool, "task-1", temp_dir.path())
-                .expect("load project-root workspace"),
-            GetTaskWorkspaceResponse {
-                workspace: TaskWorkspace {
-                    root_path: project_root.to_string_lossy().into_owned(),
-                    branch_name: None,
-                },
-            },
         );
     }
 
@@ -432,6 +460,6 @@ mod tests {
         let base = TempDir::new().expect("create path base");
         let error = absolute_project_root(PathBuf::from("missing-project"), base.path())
             .expect_err("missing relative root");
-        assert_eq!(error.to_string(), "task project root is unavailable");
+        assert_eq!(error.to_string(), "workspace is unavailable");
     }
 }

@@ -522,7 +522,7 @@ impl WarmPool {
     /// their provider sessions for release.
     ///
     /// A warm session is only ever reached again through its target, so an entry
-    /// whose Task or project was deleted is unreachable: no lookup can reuse it,
+    /// whose workspace or project was deleted is unreachable: no lookup can reuse it,
     /// and because reuse is what triggers a rebuild, nothing retires it either.
     /// The count bounds would push it out eventually, but only once enough new
     /// surfaces are opened to do so — which for a user who deletes a Task and
@@ -654,8 +654,8 @@ mod tests {
 
     const GENERATION: u64 = 1;
 
-    /// Builds a key for one task-scoped warm-session owner.
-    fn key(task_id: &str, owner_name: &str) -> WarmKey {
+    /// Builds a key for one workspace-scoped warm-session owner.
+    fn key(workspace_id: &str, owner_name: &str) -> WarmKey {
         let owner = match owner_name {
             "interactive" | "client-1" => WarmOwner::Interactive,
             "workflow-node" | "client-2" => WarmOwner::WorkflowNode {
@@ -665,8 +665,8 @@ mod tests {
             other => panic!("unknown warm owner {other}"),
         };
         WarmKey {
-            target: WarmSessionTarget::Task {
-                task_id: task_id.to_string(),
+            target: WarmSessionTarget::Workspace {
+                workspace_id: workspace_id.to_string(),
             },
             agent_ref: AgentCli::Nga.agent_ref(),
             owner,
@@ -734,14 +734,14 @@ mod tests {
         let mut pool = WarmPool::default();
         let first = warm(
             &mut pool,
-            &key("task-1", "client-1"),
+            &key("workspace-1", "client-1"),
             Path::new("/repo"),
             0,
             "session-1",
         );
 
         let (decision, released) = pool.lookup(
-            &key("task-1", "client-2"),
+            &key("workspace-1", "client-2"),
             Path::new("/repo"),
             GENERATION,
             0,
@@ -1020,28 +1020,28 @@ mod tests {
         let mut pool = WarmPool::default();
         let doomed_first = warm(
             &mut pool,
-            &key("task-1", "client-1"),
+            &key("workspace-1", "client-1"),
             Path::new("/repo"),
             0,
             "session-1",
         );
         let doomed_second = warm(
             &mut pool,
-            &key("task-1", "client-2"),
+            &key("workspace-1", "client-2"),
             Path::new("/repo"),
             1,
             "session-2",
         );
         let survivor = warm(
             &mut pool,
-            &key("task-2", "client-1"),
+            &key("workspace-2", "client-1"),
             Path::new("/repo"),
             2,
             "session-3",
         );
 
-        let released = pool.discard_targets(&[WarmSessionTarget::Task {
-            task_id: "task-1".to_string(),
+        let released = pool.discard_targets(&[WarmSessionTarget::Workspace {
+            workspace_id: "workspace-1".to_string(),
         }]);
 
         assert_eq!(
@@ -1080,8 +1080,8 @@ mod tests {
         let session_id = warm(&mut pool, &key, Path::new("/repo"), 0, "session-1");
         pool.reserve_for_attach(&session_id, Path::new("/repo"));
 
-        let released = pool.discard_targets(&[WarmSessionTarget::Task {
-            task_id: "task-1".to_string(),
+        let released = pool.discard_targets(&[WarmSessionTarget::Workspace {
+            workspace_id: "workspace-1".to_string(),
         }]);
 
         assert_eq!(

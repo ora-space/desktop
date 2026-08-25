@@ -25,28 +25,21 @@ export type CompleteWorkflowNodeRequest = {
 export type CompleteWorkflowNodeResponse = { run: WorkflowRun };
 
 /**
- * Carries the fields required to create a workflow run against a published snapshot.
- *
- * The project is required because the run-task owns a `tasks.project_id`; workflows themselves
- * are not project-scoped.
+ * Carries the fields required to create a workflow run against a published snapshot and workspace.
  */
 export type CreateWorkflowRunRequest = {
-  projectId: string;
+  workspaceId: string;
   workflowId: string;
   locale: WorkflowRunLocale;
   snapshotId?: string;
   kickoffInput?: string;
   name?: string;
-  /**
-   * Git reference the run-task's worktree is created from; defaults to the main branch.
-   */
-  baseBranch?: string;
 };
 
 /**
- * Returns the created run and its associated run-task identifier.
+ * Returns the created workspace-owned run.
  */
-export type CreateWorkflowRunResponse = { run: WorkflowRun; taskId: string };
+export type CreateWorkflowRunResponse = { run: WorkflowRun };
 
 /**
  * Identifies the workflow run to soft-delete.
@@ -69,8 +62,8 @@ export type GetWorkflowRunRequest = { runId: string };
 export type GetWorkflowRunResponse = {
   run: WorkflowRun;
   name: string;
+  workspaceId: string;
   projectId: string;
-  taskId: string;
   nodes: Array<WorkflowNodeRun>;
 };
 
@@ -112,6 +105,16 @@ export type ListWorkflowRunsResponse = { runs: Array<WorkflowRunSummary> };
  * Phase 1 carries only the human path; the agent/CLI path reuses the same command later.
  */
 export type NodeCompletionRequester = "human";
+
+/**
+ * Identifies the workflow run whose Workspace-owned display name should change.
+ */
+export type RenameWorkflowRunRequest = { runId: string; name: string };
+
+/**
+ * Returns the workflow run after its display name was replaced.
+ */
+export type RenameWorkflowRunResponse = { run: WorkflowRun };
 
 /**
  * Identifies the non-running run to reset and re-run from its start node.
@@ -181,8 +184,10 @@ export type WorkflowNodeStatus =
  */
 export type WorkflowRun = {
   id: string;
+  workspaceId: string;
   workflowId: string;
   snapshotId: string;
+  name: string;
   status: WorkflowRunStatus;
   state: string | null;
   input: string | null;
@@ -212,11 +217,12 @@ export type WorkflowRunStatus =
   | "awaitingInput";
 
 /**
- * Lightweight run summary for list views — name is the associated task title.
+ * Lightweight run summary for list views with direct workspace ownership.
  */
 export type WorkflowRunSummary = {
   id: string;
   name: string;
+  workspaceId: string;
   projectId: string;
   workflowId: string;
   status: WorkflowRunStatus;

@@ -155,20 +155,12 @@ where
     WorktreeRepositoryPort: WorktreeRepository,
 {
     let task = ensure_task_exists(task_repository, task_id)?;
-    let worktree_id = task.worktree_id.as_ref().ok_or_else(|| {
-        ApplicationError::task_diff_failure(std::io::Error::other("task does not own a worktree"))
-    })?;
     let worktree = worktree_repository
-        .find_worktree(worktree_id)
+        .find_worktree(&task.workspace_id)
         .map_err(ApplicationError::from_worktree_repository_error)?
         .ok_or_else(|| ApplicationError::WorktreeNotFound {
-            worktree_id: worktree_id.to_string(),
+            workspace_id: task.workspace_id.to_string(),
         })?;
-    if worktree.task_id != *task_id {
-        return Err(ApplicationError::task_diff_failure(std::io::Error::other(
-            "task worktree ownership does not match persisted task",
-        )));
-    }
 
     Ok((task, worktree))
 }

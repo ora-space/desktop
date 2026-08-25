@@ -1,4 +1,5 @@
 mod agent_definition;
+mod effect;
 mod error;
 mod plugin;
 mod project;
@@ -18,6 +19,7 @@ pub use agent_definition::{
     CreateAgentDefinitionHandler, DeleteAgentDefinitionHandler, GetAgentDefinitionHandler,
     ListAgentDefinitionsHandler, UpdateAgentDefinitionHandler, UuidAgentDefinitionIdGenerator,
 };
+pub use effect::{EffectApplicationError, WorkspaceEffectService};
 pub use error::ApplicationError;
 pub use plugin::PluginStateRepository;
 pub use project::{
@@ -33,8 +35,9 @@ pub use session::{
 pub use skill::{
     BACKUP_DIR_NAME, CreateHandle, CreateSkillHandler, DeleteHandle, DeleteSkillHandler,
     FilesystemSkillStorage, GetSkillHandler, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
-    ListSkillsHandler, STAGING_DIR_NAME, SkillIdGenerator, SkillRepository, SkillStorage,
-    SkillStorageError, SwapHandle, TransactionJournal, UpdateSkillHandler, UuidSkillIdGenerator,
+    ListSkillsHandler, LocalSkillSourceRevision, STAGING_DIR_NAME, SkillDeleteOutcome,
+    SkillIdGenerator, SkillRepository, SkillSourceInUseError, SkillStorage, SkillStorageError,
+    SkillUpdateOutcome, SwapHandle, TransactionJournal, UpdateSkillHandler, UuidSkillIdGenerator,
     has_usable_package,
 };
 pub use skill_import::{
@@ -49,8 +52,9 @@ pub use task::{
     RemoveTaskWorktreeRequest, ResourceRemoval, TaskGitResourceCleaner, TaskIdGenerator,
     TaskRepository, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
     TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator, WorkspaceCommitOutcome,
-    WorktreeProvisioningLeaseStore, WorktreeRemoval, branch_name_for_task, legacy_checkout_probe,
-    reduce_cleanup_outcomes, validate_cleanup_identity,
+    WorktreeProvisioningLeaseStore, WorktreeRemoval, branch_name_for_workspace,
+    legacy_checkout_probe, reduce_cleanup_outcomes, validate_cleanup_identity,
+    workspace_branch_prefix,
 };
 pub use task::{PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, TaskWorkspaceCommit};
 pub use task_diff::{
@@ -69,16 +73,18 @@ pub use workflow::{
     UpdateWorkflowResult, UuidWorkflowIdGenerator, WorkflowIdGenerator, WorkflowRepository,
 };
 pub use workflow_run::{
-    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentSkill, CancelWorkflowRunResult,
-    CreateWorkflowRunHandler, DeleteWorkflowRunHandler, DeleteWorkflowRunResult, EngineError,
-    ExecutionContext, FileChange, GetWorkflowRunHandler, GraphError, ListWorkflowNodeRunsHandler,
-    ListWorkflowRunsByWorkflowHandler, ListWorkflowRunsHandler, NodeExecutor, NodeRunToStart,
-    NodeType, OutputPolicy, RestartWorkflowRunResult, StartPrerequisitesError,
-    StartWorkflowRunResult, UnknownNodeType, UpdateWorkflowRunInputResult,
-    UuidWorkflowNodeRunIdGenerator, UuidWorkflowRunIdGenerator, WorkflowGraph, WorkflowGraphNode,
-    WorkflowNodeRunIdGenerator, WorkflowRunCallback, WorkflowRunControlHandler,
-    WorkflowRunCreateOutcome, WorkflowRunEngine, WorkflowRunEngineRepository,
-    WorkflowRunIdGenerator, WorkflowRunRepository, WorkflowRunWorktreeInitializer,
-    WorkflowValidationError,
+    AdvanceWorkflowRunResult, AgentConfig, AgentExecutor, AgentSkill, AgentSkillDelivery,
+    AgentSkillDeliveryError, AgentSkillDeliveryProvider, BindWorkflowNodeSessionResult,
+    CancelWorkflowRunResult, CreateWorkflowRunHandler, DeleteWorkflowRunHandler,
+    DeleteWorkflowRunResult, EngineError, ExecutionContext, FileChange, GetWorkflowRunHandler,
+    GraphError, ListWorkflowNodeRunsHandler, ListWorkflowRunsByWorkflowHandler,
+    ListWorkflowRunsHandler, MaterializedSkillBinding, NodeExecutor, NodeRunToStart, NodeType,
+    OutputPolicy, RenameWorkflowRunHandler, RestartWorkflowRunResult, SkillDiscoveryRoots,
+    SkillMaterializationReceipt, StartPrerequisitesError, StartWorkflowRunResult, UnknownNodeType,
+    UpdateWorkflowRunInputResult, UuidWorkflowNodeRunIdGenerator, UuidWorkflowRunIdGenerator,
+    WorkflowGraph, WorkflowGraphNode, WorkflowNodeRunIdGenerator, WorkflowRunCallback,
+    WorkflowRunControlHandler, WorkflowRunCreateOutcome, WorkflowRunEngine,
+    WorkflowRunEngineRepository, WorkflowRunIdGenerator, WorkflowRunPayload, WorkflowRunRepository,
+    WorkflowRunWorkspaceInitializer, WorkflowValidationError, WorkspaceRepository,
 };
-pub use worktree::{UuidWorktreeIdGenerator, WorktreeIdGenerator, WorktreeRepository};
+pub use worktree::WorktreeRepository;

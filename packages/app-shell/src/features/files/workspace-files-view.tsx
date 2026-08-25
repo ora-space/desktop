@@ -33,7 +33,8 @@ import {
   stripTaskCwdPrefix,
 } from "../../lib/workspace-path";
 import { useTaskWorkspace } from "../../state/hooks/use-task-workspace";
-import { useProjects } from "../../state/hooks/use-projects";
+import { useWorkspaces } from "../../state/hooks/use-workspaces";
+import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
 import {
   WorkspaceFileViewer,
   type WorkspaceFileMatchTarget,
@@ -110,12 +111,21 @@ export function WorkspaceFilesView({
   const workspaceQuery = useTaskWorkspace(
     scope.kind === "task" ? scope.taskId : undefined,
   );
-  const projectsQuery = useProjects({ enabled: scope.kind === "project" });
+  const { data: workspaces = [], isPending: workspacesPending } =
+    useWorkspaces();
+  const projectWorkspace =
+    scope.kind === "project"
+      ? workspaces.find(
+          (workspace) =>
+            workspace.projectId === scope.projectId &&
+            workspace.kind === "main",
+        )
+      : undefined;
+  const workspaceCwdQuery = useWorkspaceCwd(projectWorkspace?.id);
   const cwd =
     scope.kind === "task"
       ? workspaceQuery.data?.rootPath
-      : projectsQuery.data?.find((project) => project.id === projectId)
-          ?.rootPath;
+      : workspaceCwdQuery.data;
   // Absolute ACP paths need the checkout root before we consume requestId; otherwise
   // a later cwd load cannot re-strip and readWorkspaceFile/readProjectFile reject roots.
   // A failed checkout query never yields a root, so treat pending and error alike:
@@ -123,7 +133,9 @@ export function WorkspaceFilesView({
   const checkoutPending =
     scope.kind === "task"
       ? workspaceQuery.isPending || workspaceQuery.isError
-      : projectsQuery.isPending || projectsQuery.isError;
+      : workspacesPending ||
+        workspaceCwdQuery.isPending ||
+        workspaceCwdQuery.isError;
   const [internalSurface, setInternalSurface] = useState<"explorer" | "search">(
     "explorer",
   );

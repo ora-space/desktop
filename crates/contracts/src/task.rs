@@ -1,30 +1,6 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Selects the task kind so the frontend can distinguish workflow-run tasks from ordinary tasks.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "task.ts")]
-pub enum TaskType {
-    /// An ordinary task created through the generic task path.
-    #[default]
-    Default,
-    /// A task that backs one workflow run.
-    Workflow,
-}
-
-/// Selects the filesystem context used when a task starts an agent session.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "task.ts")]
-pub enum TaskWorkspaceMode {
-    /// Creates an isolated linked Git worktree owned by the task.
-    #[default]
-    Worktree,
-    /// Uses the owning project's root directory directly without creating a worktree.
-    ProjectRoot,
-}
-
 /// Describes the public task payload shared across adapter responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -32,11 +8,8 @@ pub enum TaskWorkspaceMode {
 pub struct Task {
     pub id: String,
     pub project_id: String,
+    pub workspace_id: String,
     pub title: String,
-    pub workspace_mode: TaskWorkspaceMode,
-    #[serde(rename = "type")]
-    pub task_type: TaskType,
-    pub workflow_run_id: Option<String>,
 }
 
 /// Carries the app-facing payload for task creation requests.
@@ -46,9 +19,6 @@ pub struct Task {
 pub struct CreateTaskRequest {
     pub project_id: String,
     pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub workspace_mode: Option<TaskWorkspaceMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub base_branch: Option<String>,
@@ -150,12 +120,11 @@ pub struct DeleteTaskRequest {
 #[ts(export_to = "task.ts")]
 pub struct DeleteTaskResponse {
     pub task_id: String,
+    pub workspace_id: String,
 }
 
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
-    TaskType::export(config)?;
-    TaskWorkspaceMode::export(config)?;
     Task::export(config)?;
     CreateTaskRequest::export(config)?;
     CreateTaskResponse::export(config)?;
@@ -178,8 +147,7 @@ mod tests {
     use super::{
         CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse,
         GetTaskRequest, GetTaskResponse, GetTaskWorkspaceResponse, ListTasksRequest,
-        ListTasksResponse, Task, TaskType, TaskWorkspace, TaskWorkspaceMode, UpdateTaskRequest,
-        UpdateTaskResponse,
+        ListTasksResponse, Task, TaskWorkspace, UpdateTaskRequest, UpdateTaskResponse,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -191,15 +159,12 @@ mod tests {
         let task = Task {
             id: "task-1".to_string(),
             project_id: "project-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
             title: "Ship handlers".to_string(),
-            workspace_mode: TaskWorkspaceMode::Worktree,
-            task_type: TaskType::Default,
-            workflow_run_id: None,
         };
         let create_request = CreateTaskRequest {
             project_id: "project-1".to_string(),
             title: "Ship handlers".to_string(),
-            workspace_mode: None,
             base_branch: Some("main".to_string()),
         };
         let get_request = GetTaskRequest {
@@ -219,10 +184,8 @@ mod tests {
             json!({
                 "id": "task-1",
                 "projectId": "project-1",
+                "workspaceId": "workspace-1",
                 "title": "Ship handlers",
-                "workspaceMode": "worktree",
-                "type": "default",
-                "workflowRunId": null,
             }),
         );
         assert_serialized_json(
@@ -239,10 +202,8 @@ mod tests {
                 "task": {
                     "id": "task-1",
                     "projectId": "project-1",
-                "title": "Ship handlers",
-                "workspaceMode": "worktree",
-                "type": "default",
-                "workflowRunId": null,
+                    "workspaceId": "workspace-1",
+                    "title": "Ship handlers",
                 },
             }),
         );
@@ -253,10 +214,8 @@ mod tests {
                 "task": {
                     "id": "task-1",
                     "projectId": "project-1",
-                "title": "Ship handlers",
-                "workspaceMode": "worktree",
-                "type": "default",
-                "workflowRunId": null,
+                    "workspaceId": "workspace-1",
+                    "title": "Ship handlers",
                 },
             }),
         );
@@ -270,10 +229,8 @@ mod tests {
                     {
                         "id": "task-1",
                         "projectId": "project-1",
+                        "workspaceId": "workspace-1",
                         "title": "Ship handlers",
-                        "workspaceMode": "worktree",
-                        "type": "default",
-                        "workflowRunId": null,
                     },
                 ],
             }),
@@ -291,10 +248,8 @@ mod tests {
                 "task": {
                     "id": "task-1",
                     "projectId": "project-1",
+                    "workspaceId": "workspace-1",
                     "title": "Ship handlers",
-                    "workspaceMode": "worktree",
-                    "type": "default",
-                    "workflowRunId": null,
                 },
             }),
         );
@@ -302,16 +257,10 @@ mod tests {
         assert_serialized_json(
             &DeleteTaskResponse {
                 task_id: "task-1".to_string(),
+                workspace_id: "workspace-1".to_string(),
             },
-            json!({ "taskId": "task-1" }),
+            json!({ "taskId": "task-1", "workspaceId": "workspace-1" }),
         );
-    }
-
-    /// Verifies the task `type` values are stable and frontend-friendly.
-    #[test]
-    fn serializes_task_type_values() {
-        assert_serialized_json(&TaskType::Default, json!("default"));
-        assert_serialized_json(&TaskType::Workflow, json!("workflow"));
     }
 
     /// Confirms the shared task view remains the single reusable payload across responses.
@@ -320,10 +269,8 @@ mod tests {
         let task = Task {
             id: "task-1".to_string(),
             project_id: "project-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
             title: "Ship handlers".to_string(),
-            workspace_mode: TaskWorkspaceMode::Worktree,
-            task_type: TaskType::Default,
-            workflow_run_id: None,
         };
 
         assert_eq!(
@@ -348,7 +295,7 @@ mod tests {
         );
     }
 
-    /// Verifies project-root and detached contexts omit the optional branch without changing the root shape.
+    /// Verifies main-checkout and detached contexts omit the optional branch without changing the root shape.
     #[test]
     fn serializes_task_workspace_without_a_branch() {
         assert_serialized_json(

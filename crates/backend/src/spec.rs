@@ -1,10 +1,10 @@
 use crate::{BackendError, ErrorClassification};
-use ora_application::{ProjectRepository, TaskRepository};
+use ora_application::TaskRepository;
 use ora_contracts::{
     EmptyErrorParams, GetSpecCatalogRequest, PublicError, ReadSpecRequest, ReadSpecResponse,
     SpecCatalogResponse, SpecDocument, SpecTarget, SpecWorkflow as ContractWorkflow,
 };
-use ora_db::{RepositoryPool, SqliteProjectRepository, SqliteTaskRepository};
+use ora_db::{RepositoryPool, SqliteTaskRepository, SqliteWorkspaceRepository};
 use ora_domain::{ProjectId, TaskId};
 use ora_fs::WorkspaceFileSystem;
 use std::collections::BTreeMap;
@@ -131,19 +131,26 @@ impl SpecApi {
         self.resolve_target(target).map(|context| context.root)
     }
 
-    /// Resolves target ownership once so worktree and project-root semantics cannot diverge by operation.
+    /// Resolves target ownership once so worktree and main-Workspace semantics cannot diverge by operation.
     fn resolve_target(&self, target: &SpecTarget) -> Result<SpecContext, BackendError> {
         match target {
             SpecTarget::Project { project_id } => {
                 let project_id = ProjectId::new(project_id);
-                let project = SqliteProjectRepository::new(self.pool.clone())
-                    .find_project(&project_id)
+                let workspace = SqliteWorkspaceRepository::new(self.pool.clone())
+                    .find_main_workspace(&project_id)
                     .map_err(|source| {
-                        BackendError::internal("project repository operation failed", source)
+                        BackendError::internal("workspace repository operation failed", source)
                     })?
                     .ok_or_else(|| project_not_found(&project_id))?;
+                if !workspace.is_admissible() {
+                    return Err(crate::task::workspace_unavailable());
+                }
+                let ora_domain::WorkspaceLocation::LocalFilesystem { path } = workspace.location
+                else {
+                    return Err(crate::task::workspace_unavailable());
+                };
                 let root = crate::task::absolute_project_root(
-                    PathBuf::from(project.root_path),
+                    PathBuf::from(path),
                     &self.relative_path_base,
                 )?;
                 Ok(SpecContext {
@@ -152,16 +159,18 @@ impl SpecApi {
                 })
             }
             SpecTarget::Task { task_id } => {
-                // Shared use lease: keeps the checkout on disk while spec files
-                // resolved from it are being read; dropped with the context.
-                let worktree_use = self.git_cleanup.shared_worktree_use(task_id);
                 let task_id = TaskId::new(task_id);
-                SqliteTaskRepository::new(self.pool.clone())
+                let task = SqliteTaskRepository::new(self.pool.clone())
                     .find_task(&task_id)
                     .map_err(|source| {
                         BackendError::internal("task repository operation failed", source)
                     })?
                     .ok_or_else(|| task_not_found(&task_id))?;
+                // Shared use lease: keeps the Workspace checkout on disk while
+                // spec files resolved from it are being read; dropped with the context.
+                let worktree_use = self
+                    .git_cleanup
+                    .shared_worktree_use(task.workspace_id.as_ref());
                 let root =
                     crate::task::resolve_task_cwd(&self.pool, &task_id, &self.relative_path_base)?;
                 Ok(SpecContext {

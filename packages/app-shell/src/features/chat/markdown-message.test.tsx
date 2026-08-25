@@ -2,6 +2,9 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
+import { composerFilePlainText } from "@ora/editor/composer";
+import { PlatformProvider } from "../../platform";
+import { createStubPlatform } from "../../test/stub-platform";
 import { MarkdownDocument, MarkdownMessage } from "./markdown-message";
 
 /** Renders Markdown with the production translation provider used by code controls. */
@@ -32,6 +35,139 @@ describe("MarkdownDocument", () => {
     expect(screen.queryByText(/\*\*bold\*\*/)).toBeNull();
   });
 
+  it("opens a user-message link through the platform, not native new-window handling", async () => {
+    const user = userEvent.setup();
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PlatformProvider adapter={{ ...createStubPlatform(), openExternalUrl }}>
+        <AppI18nProvider>
+          <MarkdownDocument
+            density="compact"
+            content={"[Docs](https://example.com)"}
+          />
+        </AppI18nProvider>
+      </PlatformProvider>,
+    );
+
+    // Desktop's main window registers no `on_new_window` hook, so a bare
+    // target="_blank" anchor is silently dropped there even though jsdom is
+    // happy with the attribute alone. User messages must route through the
+    // same openExternalUrl command assistant messages and the prompt box use.
+    await user.click(screen.getByRole("link", { name: "Docs" }));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://example.com");
+  });
+
+  it("renders a sent file quote as the chip the composer showed", () => {
+    // The exact text the composer sends: chips flatten through
+    // composerFilePlainText, so history has to read that payload back.
+    const content = composerFilePlainText({
+      path: "src/main.py",
+      startLine: 9,
+      endLine: 14,
+      snippet: "import os\nimport sys",
+    });
+    render(
+      <AppI18nProvider>
+        <MarkdownDocument density="compact" content={content} />
+      </AppI18nProvider>,
+    );
+
+    const chip = document.querySelector("[data-composer-file='src/main.py']");
+    expect(chip).not.toBeNull();
+    expect(chip).toHaveAttribute("data-start-line", "9");
+    expect(chip).toHaveAttribute("data-end-line", "14");
+    expect(chip).toHaveClass("composer-file-ref");
+    expect(chip?.textContent).toBe("main.pyL9-14");
+    // The fence must not also render as a code block beside the chip.
+    expect(document.querySelector("pre")).toBeNull();
+    expect(screen.queryByText(/import os/)).toBeNull();
+  });
+
+  it("renders a sent diff quote as a chip carrying the dragged line span", () => {
+    const content = composerFilePlainText({
+      path: "src/example.ts",
+      startLine: 2,
+      endLine: 40,
+      snippet: " keep\n+added",
+      origin: "diff",
+      diffSide: "new",
+    });
+    render(
+      <AppI18nProvider>
+        <MarkdownDocument density="compact" content={content} />
+      </AppI18nProvider>,
+    );
+
+    const chip = document.querySelector(
+      "[data-composer-file='src/example.ts']",
+    );
+    expect(chip?.textContent).toBe("example.tsL2-40");
+    expect(document.querySelector("pre")).toBeNull();
+  });
+
+  it("keeps quotes that were adjacent in the composer on one line", () => {
+    const content = [
+      composerFilePlainText({
+        path: "src/main.py",
+        startLine: 9,
+        endLine: 14,
+        snippet: "import os",
+      }),
+      composerFilePlainText({
+        path: "src/agents.py",
+        startLine: 1,
+        endLine: 2,
+        snippet: "import sys",
+      }),
+    ].join("");
+    render(
+      <AppI18nProvider>
+        <MarkdownDocument density="compact" content={content} />
+      </AppI18nProvider>,
+    );
+
+    const chips = [...document.querySelectorAll("[data-composer-file]")];
+    expect(chips.map((chip) => chip.textContent)).toEqual([
+      "main.pyL9-14",
+      "agents.pyL1-2",
+    ]);
+    expect(chips[0]?.parentElement).toBe(chips[1]?.parentElement);
+  });
+
+  it("renders a quote whose snippet contains a fence line", () => {
+    // codeFenceMarker widens the payload's own fence past the snippet's
+    // backticks; the chip has to survive that longer marker.
+    const content = composerFilePlainText({
+      path: "docs/guide.md",
+      startLine: 3,
+      endLine: 5,
+      snippet: "```\nconst a = 1;\n```",
+    });
+    render(
+      <AppI18nProvider>
+        <MarkdownDocument density="compact" content={content} />
+      </AppI18nProvider>,
+    );
+
+    const chip = document.querySelector("[data-composer-file='docs/guide.md']");
+    expect(chip?.textContent).toBe("guide.mdL3-5");
+    expect(document.querySelector("pre")).toBeNull();
+  });
+
+  it("still renders ordinary fenced code in a user message as a code block", () => {
+    render(
+      <AppI18nProvider>
+        <MarkdownDocument
+          density="compact"
+          content={"```ts\nconst a = 1;\n```"}
+        />
+      </AppI18nProvider>,
+    );
+
+    expect(document.querySelector("[data-composer-file]")).toBeNull();
+    expect(screen.getByText(/const a = 1;/)).toBeInTheDocument();
+  });
+
   it("renders compact headings 1-6, strike, highlight, and lists", () => {
     render(
       <AppI18nProvider>
@@ -51,9 +187,10 @@ describe("MarkdownDocument", () => {
       </AppI18nProvider>,
     );
 
-    expect(
-      screen.getByRole("heading", { level: 1, name: "H1" }),
-    ).not.toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "H1" })).toHaveClass(
+      "text-xl",
+      "leading-7",
+    );
     expect(
       screen.getByRole("heading", { level: 6, name: "H6" }),
     ).not.toBeNull();
@@ -73,6 +210,18 @@ describe("MarkdownDocument", () => {
     expect(paragraphs).toHaveLength(2);
     expect(paragraphs[0]?.tagName).toBe("P");
     expect(paragraphs[1]?.tagName).toBe("P");
+  });
+
+  it("keeps consecutive empty composer blocks visible", () => {
+    const view = render(
+      <AppI18nProvider>
+        <MarkdownDocument density="compact" content={"first\n\n\nlast"} />
+      </AppI18nProvider>,
+    );
+
+    expect(
+      [...view.container.querySelectorAll("p")].map((node) => node.textContent),
+    ).toEqual(["first", "\u00a0", "\u00a0", "last"]);
   });
 
   it("does not expand newlines inside fenced code", async () => {
@@ -109,6 +258,20 @@ describe("MarkdownDocument", () => {
 });
 
 describe("MarkdownMessage", () => {
+  it("renders ordinary assistant newlines as visible line breaks", () => {
+    const view = renderMarkdown("first\nsecond\nthird");
+
+    expect(view.container.querySelectorAll("br")).toHaveLength(2);
+  });
+
+  it("keeps additional blank lines in assistant replies visible", () => {
+    const view = renderMarkdown("first\n\n\nsecond\n\n\n\nthird");
+
+    expect(
+      [...view.container.querySelectorAll("p")].map((node) => node.textContent),
+    ).toEqual(["first", "\u00a0", "second", "\u00a0", "\u00a0", "third"]);
+  });
+
   it("renders GitHub-flavored Markdown with semantic elements", () => {
     render(
       <MarkdownMessage

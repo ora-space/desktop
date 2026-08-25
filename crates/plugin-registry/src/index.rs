@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ora_domain::PluginId;
 use ora_logging::ora_warn;
 use ora_plugin_manifest::PluginManifest;
 
@@ -66,7 +67,7 @@ impl RegistryIndex {
     /// here exactly as they are during the index build, so one bad file never blocks a lookup.
     pub fn resolve_manifest(
         registry_dir: &Path,
-        id: &str,
+        id: &PluginId,
     ) -> Result<Option<PluginManifest>, RegistryError> {
         for path in orax_manifest_paths(registry_dir) {
             let manifest = match parse_manifest(&path) {
@@ -76,7 +77,7 @@ impl RegistryIndex {
                     continue;
                 }
             };
-            if entry_id(&manifest) == id {
+            if entry_id(&manifest) == *id {
                 return Ok(Some(manifest));
             }
         }
@@ -257,13 +258,19 @@ mod tests {
         )?;
 
         let registry_dir = root.path().join("registry");
-        let manifest = RegistryIndex::resolve_manifest(&registry_dir, "official/weather")?
-            .ok_or_else(|| std::io::Error::other("expected a resolved manifest"))?;
+        let manifest = RegistryIndex::resolve_manifest(
+            &registry_dir,
+            &PluginId::new("official", "weather").expect("plugin id"),
+        )?
+        .ok_or_else(|| std::io::Error::other("expected a resolved manifest"))?;
 
         assert_eq!(manifest.name().as_str(), "weather");
         assert_eq!(manifest.namespace().as_str(), "official");
 
-        let missing = RegistryIndex::resolve_manifest(&registry_dir, "official/absent")?;
+        let missing = RegistryIndex::resolve_manifest(
+            &registry_dir,
+            &PluginId::new("official", "absent").expect("plugin id"),
+        )?;
         assert!(missing.is_none());
         Ok(())
     }
@@ -332,7 +339,7 @@ mod tests {
             ora_logging::with_trace_logging(|| RegistryIndex::build(root.path(), UPDATED_AT));
 
         assert_eq!(build.index().plugins().len(), 1);
-        assert_eq!(build.index().plugins()[0].id(), "official/good");
+        assert_eq!(build.index().plugins()[0].id().canonical(), "official/good");
         assert_eq!(build.skipped().len(), 1);
         assert_eq!(build.skipped()[0].path(), bad_path);
         assert!(!build.skipped()[0].reason().is_empty());

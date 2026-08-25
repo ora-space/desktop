@@ -34,8 +34,10 @@ pub enum WorkflowNodeStatus {
 #[ts(export_to = "workflowRun.ts")]
 pub struct WorkflowRun {
     pub id: String,
+    pub workspace_id: String,
     pub workflow_id: String,
     pub snapshot_id: String,
+    pub name: String,
     pub status: WorkflowRunStatus,
     pub state: Option<String>,
     pub input: Option<String>,
@@ -69,13 +71,14 @@ pub struct WorkflowNodeRun {
     pub updated_at: i64,
 }
 
-/// Lightweight run summary for list views — name is the associated task title.
+/// Lightweight run summary for list views with direct workspace ownership.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflowRun.ts")]
 pub struct WorkflowRunSummary {
     pub id: String,
     pub name: String,
+    pub workspace_id: String,
     pub project_id: String,
     pub workflow_id: String,
     pub status: WorkflowRunStatus,
@@ -98,15 +101,12 @@ pub enum WorkflowRunLocale {
 
 // ── Create ──
 
-/// Carries the fields required to create a workflow run against a published snapshot.
-///
-/// The project is required because the run-task owns a `tasks.project_id`; workflows themselves
-/// are not project-scoped.
+/// Carries the fields required to create a workflow run against a published snapshot and workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflowRun.ts")]
 pub struct CreateWorkflowRunRequest {
-    pub project_id: String,
+    pub workspace_id: String,
     pub workflow_id: String,
     pub locale: WorkflowRunLocale,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,19 +118,14 @@ pub struct CreateWorkflowRunRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub name: Option<String>,
-    /// Git reference the run-task's worktree is created from; defaults to the main branch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub base_branch: Option<String>,
 }
 
-/// Returns the created run and its associated run-task identifier.
+/// Returns the created workspace-owned run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflowRun.ts")]
 pub struct CreateWorkflowRunResponse {
     pub run: WorkflowRun,
-    pub task_id: String,
 }
 
 // ── Get by ID ──
@@ -150,8 +145,8 @@ pub struct GetWorkflowRunRequest {
 pub struct GetWorkflowRunResponse {
     pub run: WorkflowRun,
     pub name: String,
+    pub workspace_id: String,
     pub project_id: String,
-    pub task_id: String,
     pub nodes: Vec<WorkflowNodeRun>,
 }
 
@@ -225,6 +220,23 @@ pub struct DeleteWorkflowRunRequest {
 #[ts(export_to = "workflowRun.ts")]
 pub struct DeleteWorkflowRunResponse {
     pub run_id: String,
+}
+
+/// Identifies the workflow run whose Workspace-owned display name should change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflowRun.ts")]
+pub struct RenameWorkflowRunRequest {
+    pub run_id: String,
+    pub name: String,
+}
+
+/// Returns the workflow run after its display name was replaced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflowRun.ts")]
+pub struct RenameWorkflowRunResponse {
+    pub run: WorkflowRun,
 }
 
 // ── Start / Cancel / Restart (execution engine) ──
@@ -346,6 +358,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ListWorkflowNodeRunsResponse::export(config)?;
     DeleteWorkflowRunRequest::export(config)?;
     DeleteWorkflowRunResponse::export(config)?;
+    RenameWorkflowRunRequest::export(config)?;
+    RenameWorkflowRunResponse::export(config)?;
     StartWorkflowRunRequest::export(config)?;
     StartWorkflowRunResponse::export(config)?;
     CancelWorkflowRunRequest::export(config)?;
@@ -380,8 +394,10 @@ mod tests {
     fn serializes_workflow_run_contracts() {
         let run = WorkflowRun {
             id: "run-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
             workflow_id: "workflow-1".to_string(),
             snapshot_id: "snapshot-1".to_string(),
+            name: "Workflow workflow-1 30".to_string(),
             status: WorkflowRunStatus::Pending,
             state: Some("{\"current_nodes\":[]}".to_string()),
             input: Some("kickoff".to_string()),
@@ -414,8 +430,10 @@ mod tests {
             &run,
             json!({
                 "id": "run-1",
+                "workspaceId": "workspace-1",
                 "workflowId": "workflow-1",
                 "snapshotId": "snapshot-1",
+                "name": "Workflow workflow-1 30",
                 "status": "pending",
                 "state": "{\"current_nodes\":[]}",
                 "input": "kickoff",
@@ -430,30 +448,28 @@ mod tests {
         );
         assert_serialized_json(
             &CreateWorkflowRunRequest {
-                project_id: "project-1".to_string(),
+                workspace_id: "workspace-1".to_string(),
                 workflow_id: "workflow-1".to_string(),
                 locale: WorkflowRunLocale::ZhCn,
                 snapshot_id: None,
                 kickoff_input: None,
                 name: None,
-                base_branch: None,
             },
             json!({
-                "projectId": "project-1",
+                "workspaceId": "workspace-1",
                 "workflowId": "workflow-1",
                 "locale": "zh-CN"
             }),
         );
         assert_serialized_json(
-            &CreateWorkflowRunResponse {
-                run: run.clone(),
-                task_id: "task-1".to_string(),
-            },
+            &CreateWorkflowRunResponse { run: run.clone() },
             json!({
                 "run": {
                     "id": "run-1",
+                    "workspaceId": "workspace-1",
                     "workflowId": "workflow-1",
                     "snapshotId": "snapshot-1",
+                    "name": "Workflow workflow-1 30",
                     "status": "pending",
                     "state": "{\"current_nodes\":[]}",
                     "input": "kickoff",
@@ -465,7 +481,6 @@ mod tests {
                     "createdAt": 30,
                     "updatedAt": 30,
                 },
-                "taskId": "task-1",
             }),
         );
         assert_serialized_json(
@@ -478,15 +493,17 @@ mod tests {
             &GetWorkflowRunResponse {
                 run: run.clone(),
                 name: "Workflow workflow-1 30".to_string(),
+                workspace_id: "workspace-1".to_string(),
                 project_id: "project-1".to_string(),
-                task_id: "task-1".to_string(),
                 nodes: vec![node.clone()],
             },
             json!({
                 "run": {
                     "id": "run-1",
+                    "workspaceId": "workspace-1",
                     "workflowId": "workflow-1",
                     "snapshotId": "snapshot-1",
+                    "name": "Workflow workflow-1 30",
                     "status": "pending",
                     "state": "{\"current_nodes\":[]}",
                     "input": "kickoff",
@@ -499,8 +516,8 @@ mod tests {
                     "updatedAt": 30,
                 },
                 "name": "Workflow workflow-1 30",
+                "workspaceId": "workspace-1",
                 "projectId": "project-1",
-                "taskId": "task-1",
                 "nodes": [{
                     "id": "node-1",
                     "runId": "run-1",
@@ -530,6 +547,7 @@ mod tests {
                 runs: vec![WorkflowRunSummary {
                     id: "run-1".to_string(),
                     name: "Workflow workflow-1 30".to_string(),
+                    workspace_id: "workspace-1".to_string(),
                     project_id: "project-1".to_string(),
                     workflow_id: "workflow-1".to_string(),
                     status: WorkflowRunStatus::Pending,
@@ -542,6 +560,7 @@ mod tests {
                 "runs": [{
                     "id": "run-1",
                     "name": "Workflow workflow-1 30",
+                    "workspaceId": "workspace-1",
                     "projectId": "project-1",
                     "workflowId": "workflow-1",
                     "status": "pending",
@@ -562,6 +581,7 @@ mod tests {
                 runs: vec![WorkflowRunSummary {
                     id: "run-1".to_string(),
                     name: "Workflow workflow-1 30".to_string(),
+                    workspace_id: "workspace-1".to_string(),
                     project_id: "project-1".to_string(),
                     workflow_id: "workflow-1".to_string(),
                     status: WorkflowRunStatus::Pending,
@@ -574,6 +594,7 @@ mod tests {
                 "runs": [{
                     "id": "run-1",
                     "name": "Workflow workflow-1 30",
+                    "workspaceId": "workspace-1",
                     "projectId": "project-1",
                     "workflowId": "workflow-1",
                     "status": "pending",
@@ -643,8 +664,10 @@ mod tests {
             json!({
                 "run": {
                     "id": "run-1",
+                    "workspaceId": "workspace-1",
                     "workflowId": "workflow-1",
                     "snapshotId": "snapshot-1",
+                    "name": "Workflow workflow-1 30",
                     "status": "pending",
                     "state": "{\"current_nodes\":[]}",
                     "input": "kickoff",

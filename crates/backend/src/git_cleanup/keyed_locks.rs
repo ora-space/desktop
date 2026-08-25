@@ -3,7 +3,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 /// Per-key shared/exclusive coordination for physical resource use.
 ///
-/// One instance keys worktree-use leases by task id (consumers acquire shared,
+/// One instance keys worktree-use leases by Workspace id (consumers acquire shared,
 /// cleanup acquires exclusive) and another keys repository mutation gates by
 /// normalized repository root (exclusive only). Entries are removed as soon as
 /// no holder or waiter references the key, so the map does not grow with

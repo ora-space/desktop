@@ -23,6 +23,11 @@ impl RepositoryError {
         Self { source }
     }
 
+    /// Tests a concrete semantic adapter error without flattening its source chain into text.
+    pub fn is<T: Error + 'static>(&self) -> bool {
+        self.source.is::<T>()
+    }
+
     #[doc(hidden)]
     pub fn from_message(message: impl Into<String>) -> Self {
         Self::new(std::io::Error::other(message.into()))

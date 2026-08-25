@@ -4,54 +4,90 @@ use ora_contracts::WorkflowRunLocale;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus};
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::path::Path;
+use std::path::PathBuf;
+
+/// One required skill already resolved from the run's frozen materialization receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequiredWorkflowSkill {
+    pub(crate) invocation_name: String,
+    pub(crate) package_paths: Vec<PathBuf>,
+}
 
 /// Inputs required to turn one workflow node into a self-contained Agent prompt.
 pub(crate) struct WorkflowPromptRequest<'a> {
     pub(crate) node: &'a WorkflowGraphNode,
+    pub(crate) worktree_root: &'a Path,
     pub(crate) role_content: Option<&'a str>,
     pub(crate) graph_json: &'a str,
     pub(crate) run_input: Option<&'a str>,
     pub(crate) node_runs: &'a [WorkflowNodeRun],
-    pub(crate) skill_names: &'a [String],
+    pub(crate) required_skills: &'a [RequiredWorkflowSkill],
     pub(crate) locale: WorkflowRunLocale,
 }
 
 /// Builds a structured prompt that identifies the current step and its workflow context.
 pub(crate) fn assemble_workflow_prompt(request: WorkflowPromptRequest<'_>) -> Vec<ContentBlock> {
-    let invocation = skill_invocation_prefix(request.skill_names);
-    let current_step = render_current_step(request.node, request.locale);
+    let required_skills = render_required_skills(request.required_skills, request.locale);
     let mut blocks = Vec::new();
 
-    if invocation.is_empty() {
-        if let Some(role) =
-            render_role_definition(request.node, request.role_content, request.locale)
-        {
-            blocks.push(text_block(role));
-        }
-        blocks.push(text_block(current_step));
-    } else {
-        // Agent CLIs recognize skills only when the slash invocation begins the first text block.
-        blocks.push(text_block(format!("{invocation}\n\n{current_step}")));
-        if let Some(role) =
-            render_role_definition(request.node, request.role_content, request.locale)
-        {
-            blocks.push(text_block(role));
-        }
+    if !required_skills.is_empty() {
+        // The leading slash commands perform the actual CLI invocation; keeping their mandatory
+        // contract isolated prevents the current task from being parsed as command arguments.
+        push_text_block(&mut blocks, required_skills);
     }
+    push_text_block(
+        &mut blocks,
+        render_workspace_boundary(request.worktree_root, request.locale),
+    );
+    if let Some(role) = render_role_definition(request.node, request.role_content, request.locale) {
+        push_text_block(&mut blocks, role);
+    }
+    push_text_block(
+        &mut blocks,
+        render_current_step(request.node, request.locale),
+    );
 
     if let Ok(graph) = WorkflowGraph::parse(request.graph_json) {
-        blocks.push(text_block(render_workflow_context(
-            &graph,
-            request.node,
-            request.run_input,
-            request.node_runs,
-            request.locale,
-        )));
+        push_text_block(
+            &mut blocks,
+            render_workflow_context(
+                &graph,
+                request.node,
+                request.run_input,
+                request.node_runs,
+                request.locale,
+            ),
+        );
     } else if let Some(input) = request.run_input.filter(|input| !input.trim().is_empty()) {
-        blocks.push(text_block(render_original_request(input, request.locale)));
+        push_text_block(&mut blocks, render_original_request(input, request.locale));
     }
 
     blocks
+}
+
+/// Appends a text block while preserving an explicit blank line after the previous text block.
+fn push_text_block(blocks: &mut Vec<ContentBlock>, text: String) {
+    if let Some(ContentBlock::Text(previous)) = blocks.last_mut()
+        && !previous.text.ends_with("\n\n")
+    {
+        // ACP keeps content blocks distinct, but providers may concatenate their text verbatim.
+        previous.text.push_str("\n\n");
+    }
+    blocks.push(text_block(text));
+}
+
+/// Renders the authoritative filesystem boundary so adjacent worktrees cannot be mistaken for input.
+fn render_workspace_boundary(worktree_root: &Path, locale: WorkflowRunLocale) -> String {
+    let worktree_root = render_prompt_path(worktree_root);
+    match locale {
+        WorkflowRunLocale::ZhCn => format!(
+            "<workspace_boundary>\n你必须只在以下工作区根目录内工作：\n{worktree_root}\n\n该目录是本次工作流运行完整且权威的工作空间。\n\n规则：\n1. 只能在该工作区根目录内读取、搜索、创建、修改和删除文件。\n2. 不要检查、枚举或访问其父目录以及相邻的其他 worktree。\n3. 不要使用 `..` 或绝对路径离开该工作区。\n4. 不要跟随解析目标位于该工作区之外的符号链接或目录联接（junction）。\n5. 运行项目命令时，必须将该工作区根目录作为工作目录。\n6. 不要使用其他 worktree 中的文件、Git 状态或 Agent 输出。\n7. 如果任务似乎需要访问该工作区之外的内容，请停止并报告该需求，不要自行访问。\n8. 修改文件前，确认目标路径解析后仍位于该工作区根目录内。\n</workspace_boundary>"
+        ),
+        WorkflowRunLocale::EnUs => format!(
+            "<workspace_boundary>\nYou MUST work exclusively within the following workspace root:\n{worktree_root}\n\nThis directory is the complete and authoritative workspace for this workflow run.\n\nRules:\n1. Read, search, create, modify, and delete files only within this workspace root.\n2. Do not inspect, enumerate, or access the parent directory or sibling worktrees.\n3. Do not use `..` or absolute paths to leave this workspace.\n4. Do not follow symbolic links or junctions whose resolved target is outside this workspace.\n5. Run project commands with this workspace root as the working directory.\n6. Do not use files, Git state, or Agent output from another worktree.\n7. If the task appears to require access outside this workspace, stop and report the requirement instead of accessing it.\n8. Before making changes, verify that the target path resolves inside this workspace root.\n</workspace_boundary>"
+        ),
+    }
 }
 
 /// Renders the task boundary so the Agent knows which workflow step it owns.
@@ -121,7 +157,6 @@ fn render_workflow_context(
         "<workflow_context>\n## {}\n{}\n",
         copy.workflow_overview, copy.workflow_overview_intro
     );
-    let _ = writeln!(text, "{}: {}", copy.current_step, node_label(current_node));
     let predecessors = sort_nodes_by_topology(graph.predecessors(&current_node.id), &order_by_id);
     let successors = sort_nodes_by_topology(graph.successors(&current_node.id), &order_by_id);
     let _ = writeln!(
@@ -273,7 +308,6 @@ struct PromptCopy {
     default_role: &'static str,
     workflow_overview: &'static str,
     workflow_overview_intro: &'static str,
-    current_step: &'static str,
     direct_predecessors: &'static str,
     direct_successors: &'static str,
     topology_and_status: &'static str,
@@ -299,7 +333,6 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
             default_role: "工作流角色",
             workflow_overview: "工作流全景",
             workflow_overview_intro: "以下是当前步骤开始时的完整工作流快照。请据此理解自己所处的位置及后续交付方向；除非当前任务明确要求，否则不要代替其他节点执行任务。",
-            current_step: "当前步骤",
             direct_predecessors: "直接前置节点",
             direct_successors: "直接后续节点",
             topology_and_status: "执行拓扑与当前状态",
@@ -321,7 +354,6 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
             default_role: "workflow role",
             workflow_overview: "Workflow overview",
             workflow_overview_intro: "This is the complete workflow snapshot at the moment this step starts. Use it to understand your position and the downstream handoff; do not perform other nodes' tasks unless your current instructions explicitly require it.",
-            current_step: "Current step",
             direct_predecessors: "Direct predecessors",
             direct_successors: "Direct successors",
             topology_and_status: "Execution topology and current status",
@@ -336,13 +368,75 @@ fn prompt_copy(locale: WorkflowRunLocale) -> PromptCopy {
     }
 }
 
-/// Renders enabled skill names as the required leading slash invocation.
-fn skill_invocation_prefix(skill_names: &[String]) -> String {
-    skill_names
+/// Renders executable slash commands followed by a localized mandatory-skill contract.
+fn render_required_skills(skills: &[RequiredWorkflowSkill], locale: WorkflowRunLocale) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+    let invocation = skills
         .iter()
-        .map(|name| format!("/{name}"))
+        .map(|skill| format!("/{}", skill.invocation_name))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    let required = skills
+        .iter()
+        .map(|skill| format!("- /{}", skill.invocation_name))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let locations = skills
+        .iter()
+        .map(|skill| {
+            let paths = skill
+                .package_paths
+                .iter()
+                .map(|path| format!("  - {}", render_prompt_path(path)))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("- /{}\n{paths}", skill.invocation_name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let contract = match locale {
+        WorkflowRunLocale::ZhCn => format!(
+            "<required_skills>\n\n\
+你必须在执行工作流步骤前调用以下技能。\n\n\
+必需技能：\n{required}\n\n\
+以下技能包已物化到本次工作流的权威工作区：\n{locations}\n\n\
+调用技能时，必须使用上述本次运行中的物化副本。\n\n\
+技能调用是强制性的前置条件。\n\n\
+规则：\n\
+1. 在分析任务之前，调用上方列出的每个必需技能。\n\
+2. 不要以你自己对技能的理解代替技能调用。\n\
+3. 在调用所有必需技能之前，不要开始项目探索、代码阅读、推理或任务执行。\n\
+4. 调用后，遵循每项技能返回的说明。\n\
+5. 如列出多个技能，必须全部调用后再继续。\n\
+6. 如果有任何必需技能尚未调用，不要声称任务已完成。\n\n\
+</required_skills>"
+        ),
+        WorkflowRunLocale::EnUs => format!(
+            "<required_skills>\n\n\
+You MUST invoke the following skills before performing the workflow step.\n\n\
+Required skills:\n{required}\n\n\
+The skill packages have been materialized in this workflow run's authoritative workspace:\n{locations}\n\n\
+When invoking a skill, you MUST use the materialized copy for this run shown above.\n\n\
+Skill invocation is a mandatory prerequisite.\n\n\
+Rules:\n\
+1. Invoke every required skill listed above before analyzing the task.\n\
+2. Do not replace skill invocation with your own interpretation of the skill.\n\
+3. Do not begin project exploration, code reading, reasoning, or task execution before the required skills have been invoked.\n\
+4. After invocation, follow the instructions returned by each skill.\n\
+5. If multiple skills are listed, invoke all of them before proceeding.\n\
+6. Do not claim completion if any required skill has not been invoked.\n\n\
+</required_skills>"
+        ),
+    };
+    format!("{invocation}\n\n{contract}")
+}
+
+/// Renders a filesystem path with portable separators for Agent-facing prompt text.
+fn render_prompt_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 /// Wraps owned prompt text as one ACP content block.
@@ -406,7 +500,8 @@ mod tests {
     }
 
     #[test]
-    fn assembly_keeps_skill_invocation_first_and_labels_role_and_task() {
+    fn assembly_keeps_skill_invocations_first_and_requires_every_skill() {
+        let worktree_root = Path::new("worktrees").join("run-1");
         let node = WorkflowGraphNode {
             id: "review".to_string(),
             node_type: NodeType::Agent,
@@ -425,23 +520,130 @@ mod tests {
                 output_policy: OutputPolicy::default(),
             }),
         };
-        let texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
+        let raw_texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
             node: &node,
+            worktree_root: &worktree_root,
             role_content: Some("Be rigorous."),
             graph_json: "invalid",
             run_input: Some("Audit the change."),
             node_runs: &[],
-            skill_names: &["review".to_string()],
+            required_skills: &[
+                RequiredWorkflowSkill {
+                    invocation_name: "review".to_string(),
+                    package_paths: vec![
+                        worktree_root.join(".agents").join("skills").join("review"),
+                    ],
+                },
+                RequiredWorkflowSkill {
+                    invocation_name: "verify".to_string(),
+                    package_paths: vec![
+                        worktree_root.join(".agents").join("skills").join("verify"),
+                    ],
+                },
+            ],
             locale: WorkflowRunLocale::EnUs,
         }));
+        assert!(
+            raw_texts[..raw_texts.len() - 1]
+                .iter()
+                .all(|text| text.ends_with("\n\n"))
+        );
+        assert!(!raw_texts.last().unwrap().ends_with("\n\n"));
+        assert!(
+            raw_texts
+                .join("")
+                .contains("</required_skills>\n\n<workspace_boundary>")
+        );
+        let texts = raw_texts
+            .into_iter()
+            .map(|text| text.strip_suffix("\n\n").unwrap_or(&text).to_string())
+            .collect::<Vec<_>>();
 
         assert_eq!(
             texts,
             vec![
-                "/review\n\n<current_workflow_step>\nYou are responsible for the workflow step identified below. Focus on this step and make your final response a clear handoff for downstream steps.\nStep: \"Review\" (`review`)\nDescription:\nCheck the evidence.\nTask instructions:\nproduce the decision\n</current_workflow_step>".to_string(),
+                format!(
+                    "/review /verify\n\n<required_skills>\n\nYou MUST invoke the following skills before performing the workflow step.\n\nRequired skills:\n- /review\n- /verify\n\nThe skill packages have been materialized in this workflow run's authoritative workspace:\n- /review\n  - {}\n- /verify\n  - {}\n\nWhen invoking a skill, you MUST use the materialized copy for this run shown above.\n\nSkill invocation is a mandatory prerequisite.\n\nRules:\n1. Invoke every required skill listed above before analyzing the task.\n2. Do not replace skill invocation with your own interpretation of the skill.\n3. Do not begin project exploration, code reading, reasoning, or task execution before the required skills have been invoked.\n4. After invocation, follow the instructions returned by each skill.\n5. If multiple skills are listed, invoke all of them before proceeding.\n6. Do not claim completion if any required skill has not been invoked.\n\n</required_skills>",
+                    render_prompt_path(
+                        &worktree_root
+                            .join(".agents")
+                            .join("skills")
+                            .join("review")
+                    ),
+                    render_prompt_path(
+                        &worktree_root
+                            .join(".agents")
+                            .join("skills")
+                            .join("verify")
+                    )
+                ),
+                format!(
+                    "<workspace_boundary>\nYou MUST work exclusively within the following workspace root:\n{}\n\nThis directory is the complete and authoritative workspace for this workflow run.\n\nRules:\n1. Read, search, create, modify, and delete files only within this workspace root.\n2. Do not inspect, enumerate, or access the parent directory or sibling worktrees.\n3. Do not use `..` or absolute paths to leave this workspace.\n4. Do not follow symbolic links or junctions whose resolved target is outside this workspace.\n5. Run project commands with this workspace root as the working directory.\n6. Do not use files, Git state, or Agent output from another worktree.\n7. If the task appears to require access outside this workspace, stop and report the requirement instead of accessing it.\n8. Before making changes, verify that the target path resolves inside this workspace root.\n</workspace_boundary>",
+                    render_prompt_path(&worktree_root)
+                ),
                 "<system_instructions>\nFollow the role definition below throughout this workflow step. Treat it as constraints on how you reason, act, and present the handoff.\nRole: Reviewer\n\nBe rigorous.\n</system_instructions>".to_string(),
+                "<current_workflow_step>\nYou are responsible for the workflow step identified below. Focus on this step and make your final response a clear handoff for downstream steps.\nStep: \"Review\" (`review`)\nDescription:\nCheck the evidence.\nTask instructions:\nproduce the decision\n</current_workflow_step>".to_string(),
                 "## Original workflow request\nThe workflow was started with the following request. Use it as global intent while obeying the narrower current-step instructions.\nAudit the change.".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn workspace_boundary_uses_chinese_copy_for_a_chinese_run() {
+        let worktree_root = Path::new("worktrees").join("run-1");
+
+        assert_eq!(
+            render_workspace_boundary(&worktree_root, WorkflowRunLocale::ZhCn),
+            format!(
+                "<workspace_boundary>\n你必须只在以下工作区根目录内工作：\n{}\n\n该目录是本次工作流运行完整且权威的工作空间。\n\n规则：\n1. 只能在该工作区根目录内读取、搜索、创建、修改和删除文件。\n2. 不要检查、枚举或访问其父目录以及相邻的其他 worktree。\n3. 不要使用 `..` 或绝对路径离开该工作区。\n4. 不要跟随解析目标位于该工作区之外的符号链接或目录联接（junction）。\n5. 运行项目命令时，必须将该工作区根目录作为工作目录。\n6. 不要使用其他 worktree 中的文件、Git 状态或 Agent 输出。\n7. 如果任务似乎需要访问该工作区之外的内容，请停止并报告该需求，不要自行访问。\n8. 修改文件前，确认目标路径解析后仍位于该工作区根目录内。\n</workspace_boundary>",
+                render_prompt_path(&worktree_root)
+            )
+        );
+    }
+
+    #[test]
+    fn required_skills_use_chinese_copy_for_a_chinese_run() {
+        assert_eq!(
+            render_required_skills(
+                &[RequiredWorkflowSkill {
+                    invocation_name: "openspec-explore".to_string(),
+                    package_paths: vec![
+                        PathBuf::from("worktrees")
+                            .join("run-1")
+                            .join(".agents")
+                            .join("skills")
+                            .join("openspec-explore")
+                    ],
+                }],
+                WorkflowRunLocale::ZhCn,
+            ),
+            format!(
+                "/openspec-explore\n\n<required_skills>\n\n你必须在执行工作流步骤前调用以下技能。\n\n必需技能：\n- /openspec-explore\n\n以下技能包已物化到本次工作流的权威工作区：\n- /openspec-explore\n  - {}\n\n调用技能时，必须使用上述本次运行中的物化副本。\n\n技能调用是强制性的前置条件。\n\n规则：\n1. 在分析任务之前，调用上方列出的每个必需技能。\n2. 不要以你自己对技能的理解代替技能调用。\n3. 在调用所有必需技能之前，不要开始项目探索、代码阅读、推理或任务执行。\n4. 调用后，遵循每项技能返回的说明。\n5. 如列出多个技能，必须全部调用后再继续。\n6. 如果有任何必需技能尚未调用，不要声称任务已完成。\n\n</required_skills>",
+                render_prompt_path(
+                    &PathBuf::from("worktrees")
+                        .join("run-1")
+                        .join(".agents")
+                        .join("skills")
+                        .join("openspec-explore")
+                )
+            )
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn agent_facing_paths_use_forward_slashes_on_windows() {
+        let path = Path::new(r"D:\Projects\desktop")
+            .join(".data")
+            .join("worktrees")
+            .join("run-1")
+            .join(".agents")
+            .join("skills")
+            .join("openspec-explore");
+
+        assert_eq!(
+            render_prompt_path(&path),
+            "D:/Projects/desktop/.data/worktrees/run-1/.agents/skills/openspec-explore"
         );
     }
 
@@ -501,6 +703,10 @@ mod tests {
         assert_eq!(
             context.contains("Direct predecessors: \"Research\" (`research`)"),
             true
+        );
+        assert_eq!(
+            context.contains("Current step: \"Review\" (`review`)"),
+            false
         );
         assert_eq!(
             context.contains("Direct successors: \"Deliver\" (`output`)"),

@@ -1,4 +1,5 @@
 use super::portable::PortableRelativePath;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -60,6 +61,28 @@ pub enum StrictRelativePathError {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StrictRelativePath {
     path: String,
+}
+
+impl Serialize for StrictRelativePath {
+    /// Serializes the already-normalized portable spelling used as stable receipt data.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for StrictRelativePath {
+    /// Revalidates persisted or wire-provided paths so deserialization cannot bypass containment
+    /// invariants.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(&raw).map_err(|_| de::Error::custom("invalid strict relative path"))
+    }
 }
 
 impl StrictRelativePath {

@@ -62,12 +62,6 @@ pub trait TaskWorkspaceCommit {
         worktree: &Worktree,
         lease_id: &WorktreeProvisioningLeaseId,
     ) -> Result<WorkspaceCommitOutcome, RepositoryError>;
-
-    /// Atomically persists a project-root task after re-validating its project.
-    fn commit_project_root_task(
-        &self,
-        task: &Task,
-    ) -> Result<WorkspaceCommitOutcome, RepositoryError>;
 }
 
 /// Keeps one provisioning lease alive from a helper thread until dropped.

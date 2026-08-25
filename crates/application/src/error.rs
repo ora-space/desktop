@@ -26,6 +26,8 @@ pub enum ApplicationError {
     SkillNameConflict { namespace: String, name: String },
     #[error("skill not found: {skill_id}")]
     SkillNotFound { skill_id: String },
+    #[error("skill is referenced by Workspace desired state")]
+    SkillInUse,
     #[error("skill repository operation failed")]
     SkillRepository {
         #[source]
@@ -95,8 +97,8 @@ pub enum ApplicationError {
     TaskBaseBranchRequired,
     #[error("base branch not found: {branch_name}")]
     TaskBaseBranchNotFound { branch_name: String },
-    #[error("failed to generate a unique task worktree id after {attempts} attempts")]
-    TaskWorktreeIdExhausted { attempts: usize },
+    #[error("failed to generate a unique task workspace id after {attempts} attempts")]
+    TaskWorkspaceIdExhausted { attempts: usize },
     #[error("worktree root configuration is unavailable")]
     TaskWorktreeRootUnavailable,
     #[error("{context}")]
@@ -117,8 +119,8 @@ pub enum ApplicationError {
     },
     #[error("task diff commit message must not be blank")]
     TaskDiffCommitMessageBlank,
-    #[error("worktree not found: {worktree_id}")]
-    WorktreeNotFound { worktree_id: String },
+    #[error("worktree not found for workspace: {workspace_id}")]
+    WorktreeNotFound { workspace_id: String },
     #[error("worktree repository operation failed")]
     WorktreeRepository {
         #[source]
@@ -374,6 +376,16 @@ impl ApplicationError {
             StartPrerequisitesError::SkillMaterializationError { message } => {
                 Self::WorkflowRunStartFailed { message }
             }
+            StartPrerequisitesError::AgentSkillDeliveryUnsupported { agent_ref } => {
+                Self::WorkflowRunStartFailed {
+                    message: format!("agent {agent_ref} does not support workflow-managed skills"),
+                }
+            }
+            StartPrerequisitesError::AgentSkillDeliveryError { agent_ref, message } => {
+                Self::WorkflowRunStartFailed {
+                    message: format!("failed to resolve skill delivery for {agent_ref}: {message}"),
+                }
+            }
             StartPrerequisitesError::Repository(source) => Self::WorkflowRunRepository { source },
         }
     }
@@ -479,12 +491,15 @@ impl PartialEq for ApplicationError {
             ) => left == right,
             (TaskDiff { .. }, TaskDiff { .. }) => true,
             (
-                TaskWorktreeIdExhausted { attempts: left },
-                TaskWorktreeIdExhausted { attempts: right },
+                TaskWorkspaceIdExhausted { attempts: left },
+                TaskWorkspaceIdExhausted { attempts: right },
             ) => left == right,
-            (WorktreeNotFound { worktree_id: left }, WorktreeNotFound { worktree_id: right }) => {
-                left == right
-            }
+            (
+                WorktreeNotFound { workspace_id: left },
+                WorktreeNotFound {
+                    workspace_id: right,
+                },
+            ) => left == right,
             (SessionNotFound { session_id: left }, SessionNotFound { session_id: right }) => {
                 left == right
             }

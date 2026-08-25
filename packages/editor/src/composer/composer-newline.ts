@@ -46,7 +46,11 @@ function splitComposerBlock(editor: Editor): boolean {
   if (editor.isActive("blockquote") && $from.parent.content.size === 0) {
     return editor.commands.liftEmptyBlock();
   }
-  if ($from.parentOffset === 0 && $from.parent.type.isTextblock) {
+  if (
+    $from.parentOffset === 0 &&
+    $from.parent.content.size > 0 &&
+    $from.parent.type.isTextblock
+  ) {
     return insertEmptyBlockBefore(editor);
   }
   return editor.commands.splitBlock();

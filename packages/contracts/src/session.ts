@@ -27,9 +27,9 @@ export type AgentRuntimeStatus = { agentRef: string; status: AgentStatus };
 export type AgentStatus = "ready" | "starting" | "unavailable" | "failing";
 
 /**
- * Binds one warm session to its owning Task and persists the Ora record.
+ * Binds one warm session to its owning Workspace and persists the Ora record.
  */
-export type AttachSessionRequest = { sessionId: string; taskId: string };
+export type AttachSessionRequest = { sessionId: string; workspaceId: string };
 
 /**
  * Returns the newly persisted session payload.
@@ -190,7 +190,7 @@ export type ResumeSessionHistoryResponse = { session: Session };
  */
 export type Session = {
   id: string;
-  taskId: string;
+  workspaceId: string;
   /**
    * The persisted display title, or `null` until the first acquisition succeeds.
    */
@@ -271,7 +271,7 @@ export type StopSessionResponse = { session: Session };
 /**
  * Moves one existing conversation onto a different agent.
  *
- * Only the binding changes: the session keeps its identifier, its task, and the
+ * Only the binding changes: the session keeps its identifier, its workspace, and the
  * history it has accumulated. The new agent starts with no context, so Ora's
  * recorded transcript is prepended to the next prompt sent into it.
  */
@@ -312,18 +312,17 @@ export type WarmSessionResponse = {
    * succeeds, so `getSession` and `listSessions` do not report it yet.
    */
   sessionId: string;
+  /**
+   * The Workspace the backend resolved for this warm provider session.
+   */
+  workspaceId: string;
   configOptions: Array<import("@agentclientprotocol/sdk").SessionConfigOption>;
 };
 
 /**
- * Selects the working directory one warm session is created against.
+ * Selects the Workspace one warm session is created against.
  *
- * The two variants mirror how Ora resolves a cwd: an existing Task owns either
- * a linked worktree or the project root, while a chat whose Task does not exist
- * yet can only target the project root. Modelling this as an enum keeps callers
- * from having to pass two optional identifiers and guess which one wins.
+ * Direct chats use the project's persisted main Workspace, so a warm request never
+ * carries a project-only fallback that would need to be converted into an implicit owner.
  */
-export type WarmSessionTarget = { "type": "task"; taskId: string } | {
-  "type": "projectRoot";
-  projectId: string;
-};
+export type WarmSessionTarget = { "type": "workspace"; workspaceId: string };

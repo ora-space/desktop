@@ -106,20 +106,18 @@ impl PluginApi {
             }
             ResetPluginConfigurationMode::RecoverCorrupt => {
                 let now = ora_logging::clock::now_local();
-                let timestamp = format!(
-                    "{:04}{:02}{:02}T{:02}{:02}{:02}",
-                    now.year(),
-                    u8::from(now.month()),
-                    now.day(),
-                    now.hour(),
-                    now.minute(),
-                    now.second(),
-                );
                 self.configuration.recover_corrupt(
                     &request.plugin_id,
                     &package_root,
                     &request.declaration_fingerprint,
-                    &timestamp,
+                    &ora_plugin_config::recovery_backup_label(
+                        now.year(),
+                        u8::from(now.month()),
+                        now.day(),
+                        now.hour(),
+                        now.minute(),
+                        now.second(),
+                    ),
                 )
             }
         }
@@ -271,8 +269,14 @@ fn configuration_error(error: ConfigurationError) -> BackendError {
             PublicError::PluginConfigurationRecoveryNotRequired(EmptyErrorParams {}),
             "plugin configuration recovery is not required",
         ),
+        ConfigurationError::InvalidPluginId { .. } => (
+            ErrorClassification::InvalidRequest,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            "plugin identifier is invalid",
+        ),
         ConfigurationError::Io { .. }
         | ConfigurationError::LoadFailed { .. }
+        | ConfigurationError::PersistFailed { .. }
         | ConfigurationError::RecoveryRestoreFailed { .. }
         | ConfigurationError::RevisionExhausted
         | ConfigurationError::LockUnavailable => (

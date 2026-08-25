@@ -1,37 +1,33 @@
 # Database Migration Module
 
-This module owns Ora's linear, reversible SQLite schema history and reconciles a database to an explicit target prefix.
+This module owns Ora's linear, reversible SQLite schema history and reconciles a database to an explicit target prefix. Its public interface is the validated catalog plus `reconcile_database`; SQL snapshot comparison and suffix rebuilding remain internal.
 
 ## Catalog invariants
 
 - `MigrationCatalog` requires unique, strictly increasing versions.
 - The active target must be a prefix of the complete catalog. This makes controlled rollback deterministic and rejects branch-shaped histories.
-- Every migration contains ordered up and down statements. The default catalog includes every shipped schema migration.
+- Every migration contains ordered up and down statements. Their trimmed, joined SQL is the stable executable snapshot used for comparison and rollback.
+- The default catalog contains six dependency-ordered modules: workspace core, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, application configuration, and Workspace Effect state.
 - Skills, configurable agents, and workflows use `(namespace, name)` as their case-insensitive
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
-- Applied versions are recorded in the `migrations` table with an injected execution timestamp.
+- Applied rows record `version`, `up_sql`, `down_sql`, and an injected `executed_at` timestamp.
+- Migration `0006` adds normalized Workspace Effect desired selections, source revisions, surface
+  descriptors, ownership ledgers, status, operation journals, and durable reconcile/propagation
+  requests.
 
 ## Reconciliation
 
-`reconcile_database` first verifies that the applied history matches the target over their shared prefix. A mismatch is a hard divergence error; migrations are never guessed, skipped, or reordered.
+`reconcile_database` first verifies that every applied version belongs to the catalog and occupies the expected position. Unknown, skipped, or reordered versions are hard errors.
 
-Trailing applied migrations are rolled back in reverse order. Pending migrations are applied in forward order. Each migration step and its bookkeeping update run in one SQLite transaction, so a failing statement cannot leave the schema and migration table out of sync.
+It then compares the persisted SQL snapshots with current migration definitions over the shared target prefix. At the first changed `up_sql` or `down_sql`, it rolls back the complete applied suffix in reverse order using each row's persisted `down_sql`, then applies the current target suffix in forward order and stores fresh snapshots. Timestamps do not participate in this comparison.
+
+Ordinary target shortening uses the same persisted rollback snapshots. Ordinary target growth applies only the missing tail. Each migration step and its bookkeeping update run in one SQLite transaction, so a failing statement cannot leave that step's schema and row out of sync. Earlier successful rollback steps remain committed if a later rewritten `up` fails.
 
 An applied version absent from the catalog is an error. Reconciliation is otherwise idempotent when the database already matches the target.
 
-Schema contents stay in version-specific modules; repository query behavior belongs to the repository module. The compressed catalog has nine boundaries:
+The prototype catalog describes only the current schema. It does not carry migrations for retired tables or columns, and the bookkeeping table is intentionally not compatible with databases created before SQL snapshots were introduced. Development databases may be recreated; no compatibility bridge is provided.
 
-- `0001` installs the core project, task, worktree, session, and bookkeeping schema.
-- `0002` installs skills and configurable agents.
-- `0003` installs constrained task-diff comments, indexes, and the root-only parent trigger.
-- `0004` installs workflow definitions, snapshots, execution records, and task associations.
-- `0005` installs durable Git cleanup jobs and worktree provisioning leases.
-- `0006` drops unused `tasks.status`.
-- `0007` installs durable plugin eligibility keyed only by filesystem-derived plugin id.
-- `0008` installs typed user preferences keyed by configuration name.
-- `0009` drops unused task-diff comment persistence.
-
-The catalog intentionally replaces the retired development history rather than providing a compatibility bridge. Databases created from the old history must be recreated. Rollback of `0005` discards cleanup bookkeeping even though each step remains transactional. Rollback of `0009` recreates the empty `0003` comment table shape.
+Rolling back `0006` removes only Workspace Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, Git lifecycle, and plugin schemas intact.
 
 See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/database-migrations.md).

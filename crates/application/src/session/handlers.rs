@@ -305,7 +305,7 @@ mod tests {
             RenameSessionResponse {
                 session: ContractSession {
                     id: "s1".to_owned(),
-                    task_id: "t1".to_owned(),
+                    workspace_id: "workspace-1".to_owned(),
                     title: Some("Review auth".to_owned()),
                     agent_ref: "ora-space.nga".to_string(),
                     status: ContractSessionStatus::Running,
@@ -340,7 +340,7 @@ mod tests {
     fn sample_session() -> Session {
         Session::new(
             SessionId::new("s1"),
-            ora_domain::TaskId::new("t1"),
+            ora_domain::WorkspaceId::new("workspace-1"),
             AgentCli::Nga.agent_ref(),
             "provider-1",
             SessionStatus::Running,

@@ -51,13 +51,14 @@ const OPENER_LABEL_KEYS: Record<DefaultLocationTarget, string> = {
 };
 
 interface LocationActionsButtonProps {
+  /** The Workspace whose local location the actions target. */
+  workspaceId?: string | null;
   /**
    * The task whose git worktree the actions target. When present it wins over
-   * `projectPath`, so an open acts on the worktree the user is actually looking at.
+   * any inferred project selection, so an open acts on the worktree the user is
+   * actually looking at.
    */
   taskId?: string | null;
-  /** The project root used when no task is in context (worktree resolution is skipped). */
-  projectPath?: string | null;
 }
 
 /**
@@ -70,8 +71,8 @@ interface LocationActionsButtonProps {
  *
  */
 export function LocationActionsButton({
+  workspaceId,
   taskId,
-  projectPath,
 }: LocationActionsButtonProps) {
   const { t } = useTranslation();
   const { locationActions } = usePlatform();
@@ -80,15 +81,21 @@ export function LocationActionsButton({
     (state) => state.setDefaultTarget,
   );
 
-  const hasTarget = Boolean(taskId) || Boolean(projectPath);
+  const hasTarget = Boolean(workspaceId) || Boolean(taskId);
   const DefaultIcon = OPENER_ICONS[defaultTarget];
 
   /**
-   * Resolves the absolute path to act on. A task resolves its worktree directory live
-   * through the backend (the only source of truth for where the session runs); otherwise
-   * the known project root is used. Returns null when nothing can be resolved.
+   * Resolves the absolute path to act on through the owning Workspace or task.
+   * Returns null when no execution context is selected or its location is unavailable.
    */
   const resolvePath = async (): Promise<string | null> => {
+    if (workspaceId) {
+      try {
+        return await locationActions.resolveWorkspaceCwd(workspaceId);
+      } catch {
+        return null;
+      }
+    }
     if (taskId) {
       try {
         return await locationActions.resolveTaskCwd(taskId);
@@ -96,7 +103,7 @@ export function LocationActionsButton({
         return null;
       }
     }
-    return projectPath ?? null;
+    return null;
   };
 
   const openWith = async (target: LocationTarget) => {

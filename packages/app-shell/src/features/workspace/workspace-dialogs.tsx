@@ -134,9 +134,7 @@ function DeleteEntityDialog({
     } catch (error) {
       setDeleteError(
         error instanceof RemoteContractError && error.code === "resource_in_use"
-          ? target.kind === "task" && target.workspaceMode === "project_root"
-            ? t("delete.runningSession")
-            : t("delete.failed")
+          ? t("delete.failed")
           : localizeContractError(error, t),
       );
     } finally {
@@ -155,12 +153,7 @@ function DeleteEntityDialog({
             {t("delete.title", { name: target?.name ?? "" })}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {target
-              ? target.kind === "task" &&
-                target.workspaceMode === "project_root"
-                ? t("delete.directTaskDescription")
-                : t(`delete.${target.kind}Description`)
-              : ""}
+            {target ? t(`delete.${target.kind}Description`) : ""}
           </AlertDialogDescription>
           {deleteError && (
             <p
@@ -233,7 +226,7 @@ function WorkspaceEntityDialog({
     submit = async (values) => {
       await createProject.mutateAsync({
         name: projectNameFromPath(values.rootPath!),
-        rootPath: values.rootPath!,
+        mainWorkspacePath: values.rootPath!,
       });
     };
   } else if (dialog.kind === "task") {
@@ -263,7 +256,6 @@ function WorkspaceEntityDialog({
       await createTask.mutateAsync({
         projectId: dialog.projectId,
         title: values.title!,
-        workspaceMode: "worktree",
         baseBranch: values.baseBranch!,
       });
     };
@@ -276,8 +268,9 @@ function WorkspaceEntityDialog({
     fields = [];
     submit = async () => {
       if (!dialog.entity) {
+        if (settingsAgentCli === null) throw new Error(t("chat.pickAgent"));
         await createSession.mutateAsync({
-          taskId: dialog.taskId,
+          workspaceId: dialog.workspaceId,
           agentCli: settingsAgentCli,
         });
       }

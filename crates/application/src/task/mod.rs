@@ -11,7 +11,7 @@ mod worktree_provisioner;
 #[cfg(test)]
 mod tests;
 
-pub use branch::branch_name_for_task;
+pub use branch::{branch_name_for_workspace, workspace_branch_prefix};
 pub use git_cleanup::{
     CleanupJobDisposition, CleanupStage, GitCleanupError, RemoveTaskBranchRequest,
     RemoveTaskWorktreeRequest, ResourceRemoval, TaskGitResourceCleaner, WorktreeRemoval,

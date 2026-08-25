@@ -58,6 +58,21 @@ export type GetPluginConfigurationResponse = {
 };
 
 /**
+ * Requests importing one local `.orax` release archive into the installed plugins tree.
+ */
+export type ImportPluginRequest = {
+  /**
+   * Absolute path to the local `.orax` archive.
+   */
+  path: string;
+};
+
+/**
+ * Confirms the identifier imported after the archive is verified, extracted, and enabled.
+ */
+export type ImportPluginResponse = { pluginId: string };
+
+/**
  * Requests installation of one marketplace plugin by its registry identifier.
  */
 export type InstallPluginRequest = { pluginId: string };
@@ -68,42 +83,61 @@ export type InstallPluginRequest = { pluginId: string };
 export type InstallPluginResponse = { pluginId: string };
 
 /**
- * Describes one installed plugin discovered from its package manifest.
+ * Describes one installed plugin discovered from its `orax.toml` manifest.
+ *
+ * `id` is the canonical `<namespace>/<name>` spelling and is what every plugin request carries
+ * back; `namespace` and `name` repeat the two segments so the frontend never has to split it.
  */
-export type InstalledPlugin =
-  & {
-    id: string;
-    packageName: string;
-    displayName: string;
-    version: string;
-    kind: string;
-    main: string;
-    agent: InstalledPluginAgent;
-    enabled: boolean;
-    /**
-     * Security-validated SVG source for the package icon, absent when the package ships none.
-     *
-     * The icon travels as inline source instead of a filesystem path because the webview cannot
-     * read the plugin directory; surfaces render it from a `data:` URL and fall back to a
-     * generic mark when it is absent.
-     */
-    logo: string | null;
-    installationValidity: PluginInstallationValidity;
-    configuration: PluginConfigurationSummary;
-  }
-  & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
-    "runtime": "running";
-  } | { "runtime": "failed"; failureReason: string });
+export type InstalledPlugin = {
+  id: string;
+  namespace: string;
+  name: string;
+  displayName: string;
+  version: string;
+  description: string;
+  homepage: string | null;
+  license: string | null;
+  enabled: boolean;
+  /**
+   * Security-validated SVG source for the package icon, absent when the package ships none.
+   *
+   * The icon travels as inline source instead of a filesystem path because the webview cannot
+   * read the plugin directory; surfaces render it from a `data:` URL and fall back to a
+   * generic mark when it is absent.
+   */
+  logo: string | null;
+  installationValidity: PluginInstallationValidity;
+  configuration: PluginConfigurationSummary;
+} & (
+  | { kind: "agent"; agentDisplayName: string }
+  | {
+      kind: "workbench";
+      title: string;
+    }
+  | { kind: "webview"; title: string; startUrl: string }
+) &
+  (
+    | { runtime: "stopped" }
+    | { runtime: "starting" }
+    | {
+        runtime: "running";
+      }
+    | { runtime: "failed"; failureReason: string }
+  );
 
 /**
- * Describes the single agent contributed by an installed agent plugin package.
+ * Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
  *
- * The agent carries no id: one package provides exactly one agent, identified by the package.
+ * The agent variant names its display name `agentDisplayName` because the contribution is
+ * flattened into [`InstalledPlugin`], which already owns the top-level `displayName`. The two
+ * surface kinds expose only what the launcher needs to render an entry: the frontend never
+ * learns asset paths, origin allow lists, or download rules, which is what keeps those host
+ * policies non-negotiable from the page side.
  */
-export type InstalledPluginAgent = {
-  displayName: string;
-  contractVersion: number;
-};
+export type InstalledPluginContribution =
+  | { kind: "agent"; agentDisplayName: string }
+  | { kind: "workbench"; title: string }
+  | { kind: "webview"; title: string; startUrl: string };
 
 /**
  * Requests the cached marketplace registry index used to populate the plugin catalog.
@@ -148,10 +182,13 @@ export type PluginConfigurationDetails = {
 /**
  * Represents the exclusive list-facing Plugin Configuration state.
  */
-export type PluginConfigurationSummary = { "state": "not_declared" } | {
-  "state": "available";
-  completeness: PluginConfigurationCompleteness;
-} | { "state": "unavailable"; errorCode: string };
+export type PluginConfigurationSummary =
+  | { state: "not_declared" }
+  | {
+      state: "available";
+      completeness: PluginConfigurationCompleteness;
+    }
+  | { state: "unavailable"; errorCode: string };
 
 /**
  * Selects whether uninstall retains or deletes host-owned plugin data.
@@ -161,19 +198,21 @@ export type PluginDataDisposition = "delete" | "retain";
 /**
  * Represents whether the installed package and its immutable declaration are usable.
  */
-export type PluginInstallationValidity = { "validity": "valid" } | {
-  "validity": "invalid_declaration";
-  errorCode: string;
-};
+export type PluginInstallationValidity =
+  | { validity: "valid" }
+  | {
+      validity: "invalid_declaration";
+      errorCode: string;
+    };
 
 /**
  * Represents the process-scoped lifecycle of one installed plugin.
  */
 export type PluginRuntimeStatus =
-  | { "runtime": "stopped" }
-  | { "runtime": "starting" }
-  | { "runtime": "running" }
-  | { "runtime": "failed"; failureReason: string };
+  | { runtime: "stopped" }
+  | { runtime: "starting" }
+  | { runtime: "running" }
+  | { runtime: "failed"; failureReason: string };
 
 /**
  * Describes one immutable plugin-authored Setting.
@@ -217,19 +256,25 @@ export type PluginSettingValueSource = "stored" | "default" | "absent";
 /**
  * Selects the explicit reset operation authorized by the user.
  */
-export type ResetPluginConfigurationMode = {
-  "mode": "reset_all";
-  expectedRevision: bigint;
-} | { "mode": "recover_corrupt" };
+export type ResetPluginConfigurationMode =
+  | {
+      mode: "reset_all";
+      expectedRevision: bigint;
+    }
+  | { mode: "recover_corrupt" };
 
 /**
  * Requests Reset All or confirmed damaged-data recovery for one plugin.
  */
-export type ResetPluginConfigurationRequest =
-  & { pluginId: string; declarationFingerprint: string }
-  & ({ "mode": "reset_all"; expectedRevision: bigint } | {
-    "mode": "recover_corrupt";
-  });
+export type ResetPluginConfigurationRequest = {
+  pluginId: string;
+  declarationFingerprint: string;
+} & (
+  | { mode: "reset_all"; expectedRevision: bigint }
+  | {
+      mode: "recover_corrupt";
+    }
+);
 
 /**
  * Returns the authoritative editor snapshot after a reset operation.

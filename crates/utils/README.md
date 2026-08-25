@@ -14,6 +14,9 @@ that any other crate can consume without introducing dependency cycles.
 - `atomic`: atomically replacing a file by writing a same-directory temporary file, optionally
   preparing its metadata, and renaming it over the destination, so readers never observe partial
   content or a destination change after preparation fails.
+- `directory`: rejects links and special entries while copying or fingerprinting directory trees;
+  fingerprints cover portable paths, file bytes, entry kinds, and executable permissions while
+  allowing callers to exclude their own metadata files.
 - `hash` (Cargo feature `validation`): streaming SHA-256 digests over a reader or file without
   buffering the whole input.
 - `http` (Cargo feature `http`): the transport-agnostic `HttpDownload` contract plus an offline
@@ -28,6 +31,8 @@ that any other crate can consume without introducing dependency cycles.
   XML only, forbidding `<script>`/`<foreignObject>`, event-handler attributes, external `href`
   references, and files over the 50 KiB cap. `read_validated` reads one SVG file through that
   policy with a bounded read and returns its source text, so callers never hold untrusted markup.
+- `fs`: portable file naming for untrusted names (`sanitize_file_name`) and collision-free name
+  selection inside a directory (`next_available_file_name`).
 - `Slug`: an owned lowercase ASCII slug segment with stable syntax and byte-length guarantees.
 - `GitBranchName`: an owned short Git branch name validated without starting a Git process.
 

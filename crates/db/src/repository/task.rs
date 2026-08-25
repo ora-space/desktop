@@ -1,5 +1,5 @@
 use ora_application::{RepositoryError, TaskRepository};
-use ora_domain::{AuditFields, ProjectId, Task, TaskId, TaskType, WorkflowRunId, WorktreeId};
+use ora_domain::{AuditFields, ProjectId, Task, TaskId, WorkspaceId};
 use rusqlite::{Row, params};
 
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
@@ -23,15 +23,12 @@ impl TaskRepository for SqliteTaskRepository {
         self.pool
             .with_connection(|connection| {
                 connection.execute(
-                    "INSERT INTO tasks (id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    "INSERT INTO tasks (id, workspace_id, title, created_at, updated_at, is_deleted)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         task.id.as_ref(),
-                        task.project_id.as_ref(),
+                        task.workspace_id.as_ref(),
                         &task.title,
-                        task.task_type.database_value(),
-                        task.workflow_run_id.as_ref().map(AsRef::as_ref),
-                        task.worktree_id.as_ref().map(AsRef::as_ref),
                         task.audit_fields.created_at,
                         task.audit_fields.updated_at,
                         bool_to_sqlite(task.audit_fields.is_deleted),
@@ -48,9 +45,11 @@ impl TaskRepository for SqliteTaskRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
-                     FROM tasks
-                     WHERE id = ?1 AND is_deleted = 0",
+                    "SELECT t.id, w.project_id, t.workspace_id, t.title,
+                            t.created_at, t.updated_at, t.is_deleted
+                     FROM tasks t
+                     JOIN workspaces w ON w.id = t.workspace_id
+                     WHERE t.id = ?1 AND t.is_deleted = 0",
                 )?;
                 let mut rows = statement.query(params![task_id.as_ref()])?;
 
@@ -67,10 +66,12 @@ impl TaskRepository for SqliteTaskRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
-                     FROM tasks
-                     WHERE is_deleted = 0
-                     ORDER BY created_at, id",
+                    "SELECT t.id, w.project_id, t.workspace_id, t.title,
+                            t.created_at, t.updated_at, t.is_deleted
+                     FROM tasks t
+                     JOIN workspaces w ON w.id = t.workspace_id
+                     WHERE t.is_deleted = 0
+                     ORDER BY t.created_at, t.id",
                 )?;
                 let mut rows = statement.query([])?;
                 let mut tasks = Vec::new();
@@ -90,15 +91,12 @@ impl TaskRepository for SqliteTaskRepository {
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
                     "UPDATE tasks
-                     SET project_id = ?2, title = ?3, type = ?4, workflow_run_id = ?5, worktree_id = ?6, created_at = ?7, updated_at = ?8, is_deleted = ?9
+                     SET workspace_id = ?2, title = ?3, created_at = ?4, updated_at = ?5, is_deleted = ?6
                      WHERE id = ?1 AND is_deleted = 0",
                     params![
                         task.id.as_ref(),
-                        task.project_id.as_ref(),
+                        task.workspace_id.as_ref(),
                         &task.title,
-                        task.task_type.database_value(),
-                        task.workflow_run_id.as_ref().map(AsRef::as_ref),
-                        task.worktree_id.as_ref().map(AsRef::as_ref),
                         task.audit_fields.created_at,
                         task.audit_fields.updated_at,
                         bool_to_sqlite(task.audit_fields.is_deleted),
@@ -133,22 +131,13 @@ impl TaskRepository for SqliteTaskRepository {
 
 /// Reconstructs a domain task from the selected task columns.
 pub(super) fn map_task_row(row: &Row<'_>) -> Result<Task, crate::DatabaseError> {
-    let worktree_id = row
-        .get::<_, Option<String>>("worktree_id")?
-        .map(WorktreeId::new);
-    let task_type = TaskType::from_database_value(row.get("type")?)?;
-    let workflow_run_id = row
-        .get::<_, Option<String>>("workflow_run_id")?
-        .map(WorkflowRunId::new);
     let is_deleted = row.get::<_, i64>("is_deleted")? != 0;
 
     Ok(Task {
         id: TaskId::new(row.get::<_, String>("id")?),
         project_id: ProjectId::new(row.get::<_, String>("project_id")?),
+        workspace_id: WorkspaceId::new(row.get::<_, String>("workspace_id")?),
         title: row.get::<_, String>("title")?,
-        task_type,
-        workflow_run_id,
-        worktree_id,
         audit_fields: AuditFields::new(row.get("created_at")?, row.get("updated_at")?, is_deleted),
     })
 }

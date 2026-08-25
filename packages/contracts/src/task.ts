@@ -6,7 +6,6 @@
 export type CreateTaskRequest = {
   projectId: string;
   title: string;
-  workspaceMode?: TaskWorkspaceMode;
   baseBranch?: string;
 };
 
@@ -23,7 +22,7 @@ export type DeleteTaskRequest = { taskId: string };
 /**
  * Returns the deleted task identifier after a successful delete request.
  */
-export type DeleteTaskResponse = { taskId: string };
+export type DeleteTaskResponse = { taskId: string; workspaceId: string };
 
 /**
  * Identifies which task to fetch.
@@ -61,26 +60,14 @@ export type ListTasksResponse = { tasks: Array<Task> };
 export type Task = {
   id: string;
   projectId: string;
+  workspaceId: string;
   title: string;
-  workspaceMode: TaskWorkspaceMode;
-  type: TaskType;
-  workflowRunId: string | null;
 };
-
-/**
- * Selects the task kind so the frontend can distinguish workflow-run tasks from ordinary tasks.
- */
-export type TaskType = "default" | "workflow";
 
 /**
  * Describes the absolute checkout root and branch the backend resolved for one task.
  */
 export type TaskWorkspace = { rootPath: string; branchName?: string };
-
-/**
- * Selects the filesystem context used when a task starts an agent session.
- */
-export type TaskWorkspaceMode = "worktree" | "project_root";
 
 /**
  * Carries the full replacement payload for task updates in the first slice.

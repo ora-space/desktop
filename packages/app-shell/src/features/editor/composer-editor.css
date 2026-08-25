@@ -344,61 +344,14 @@
 }
 
 /*
- * Cursor-style @ file mention: type icon keeps its own hue; basename uses a
- * bright teal ink — higher L / soft chroma for a clear, airy feel.
+ * Editing behaviour only. The chip's colours and layout live in the shared
+ * features/file-ref-chip.css so chat history renders the identical visual.
  */
 .composer-editor-shell .composer-file-ref {
-  --composer-file-ink: oklch(0.55 0.09 195);
-  display: inline-flex;
-  max-width: 14rem;
-  align-items: center;
-  gap: 0.28em;
-  /* Gap without a selectable text space (those paint as thin selection bars). */
-  margin: 0 0.2em;
-  vertical-align: baseline;
-  color: var(--composer-file-ink);
-  font-size: inherit;
-  font-weight: 500;
-  line-height: inherit;
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
   -webkit-user-drag: none;
-}
-
-.dark .composer-editor-shell .composer-file-ref {
-  /* Bright aqua on dark chrome; stays readable without neon glow. */
-  --composer-file-ink: oklch(0.82 0.1 195);
-}
-
-.composer-editor-shell .composer-file-ref-icon {
-  width: 0.95em;
-  height: 0.95em;
-  flex-shrink: 0;
-}
-
-.composer-editor-shell .composer-file-ref-label {
-  display: inline-flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 0.35em;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.composer-editor-shell .composer-file-ref-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.composer-editor-shell .composer-file-ref-range {
-  flex-shrink: 0;
-  color: color-mix(
-    in oklch,
-    var(--composer-file-ink) 55%,
-    var(--muted-foreground)
-  );
-  font-weight: 400;
 }
 
 .composer-editor-shell .composer-file-ref::selection,

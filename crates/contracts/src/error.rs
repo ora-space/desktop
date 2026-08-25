@@ -138,8 +138,8 @@ pub enum PublicError {
     PermissionOptionInvalid(EmptyErrorParams),
     PromptEmpty(EmptyErrorParams),
     PromptTooLarge(EmptyErrorParams),
+    WorkspaceUnavailable(EmptyErrorParams),
     TaskWorktreeUnavailable(EmptyErrorParams),
-    TaskProjectRootUnavailable(EmptyErrorParams),
     FileSystemPathNotFound(EmptyErrorParams),
     SpecDocumentNotFound(EmptyErrorParams),
     WorktreeRootNotAbsolute(EmptyErrorParams),
@@ -252,8 +252,8 @@ impl PublicError {
             Self::PermissionOptionInvalid(_) => "permission_option_invalid",
             Self::PromptEmpty(_) => "prompt_empty",
             Self::PromptTooLarge(_) => "prompt_too_large",
+            Self::WorkspaceUnavailable(_) => "workspace_unavailable",
             Self::TaskWorktreeUnavailable(_) => "task_worktree_unavailable",
-            Self::TaskProjectRootUnavailable(_) => "task_project_root_unavailable",
             Self::FileSystemPathNotFound(_) => "file_system_path_not_found",
             Self::SpecDocumentNotFound(_) => "spec_document_not_found",
             Self::WorktreeRootNotAbsolute(_) => "worktree_root_not_absolute",
@@ -423,8 +423,8 @@ mod tests {
             PublicError::PermissionOptionInvalid(empty),
             PublicError::PromptEmpty(empty),
             PublicError::PromptTooLarge(empty),
+            PublicError::WorkspaceUnavailable(empty),
             PublicError::TaskWorktreeUnavailable(empty),
-            PublicError::TaskProjectRootUnavailable(empty),
             PublicError::FileSystemPathNotFound(empty),
             PublicError::SpecDocumentNotFound(empty),
             PublicError::WorktreeRootNotAbsolute(empty),
@@ -526,8 +526,8 @@ mod tests {
                 | PublicError::PermissionOptionInvalid(_)
                 | PublicError::PromptEmpty(_)
                 | PublicError::PromptTooLarge(_)
+                | PublicError::WorkspaceUnavailable(_)
                 | PublicError::TaskWorktreeUnavailable(_)
-                | PublicError::TaskProjectRootUnavailable(_)
                 | PublicError::FileSystemPathNotFound(_)
                 | PublicError::SpecDocumentNotFound(_)
                 | PublicError::WorktreeRootNotAbsolute(_)

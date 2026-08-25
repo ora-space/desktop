@@ -1,395 +1,440 @@
-use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
-use ora_logging::{with_recorded_trace_logging, with_trace_logging};
+use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
-use rusqlite::{Connection, ErrorCode, params};
+use rusqlite::{Connection, params};
 use tempfile::TempDir;
-use tracing_subscriber::layer::{Context, Layer};
-use tracing_subscriber::registry::LookupSpan;
 
 use crate::{
     AppliedMigration, DatabaseBootstrapper, DatabaseError, DatabaseLocation, Migration,
     MigrationCatalog, MigrationDirection, TimestampSource, default_migration_catalog,
 };
 
-/// Produces deterministic timestamps so migration bookkeeping tests can assert full records.
+/// Supplies a deterministic migration timestamp without mutating process-wide clock state.
 #[derive(Clone, Copy, Debug)]
 struct FixedTimestampSource {
     now: i64,
 }
 
 impl TimestampSource for FixedTimestampSource {
-    /// Returns the preconfigured timestamp for every migration applied in a test step.
+    /// Returns the fixed timestamp selected by the schema test fixture.
     fn current_timestamp_millis(&self) -> i64 {
         self.now
     }
 }
 
-/// Verifies a fresh database bootstrap applies the shipped schema migration and records its timestamp.
+/// Verifies the current schema includes the linear Effect persistence migration.
 #[test]
-fn bootstraps_empty_database_with_default_catalog() {
-    let catalog = default_migration_catalog().unwrap();
+fn bootstraps_the_current_workspace_schema() {
+    let catalog = default_migration_catalog().expect("build migration catalog");
+    assert_eq!(
+        catalog.target_versions(),
+        ["0001", "0002", "0003", "0004", "0005", "0006"]
+    );
+
     let database = with_trace_logging(|| {
         DatabaseBootstrapper::new(FixedTimestampSource {
             now: 1_700_000_000_000,
         })
         .bootstrap(&DatabaseLocation::in_memory(), &catalog)
-        .unwrap()
+        .expect("bootstrap database")
     });
 
     assert_eq!(
         load_table_names(database.connection()),
         vec![
-            "agents".to_string(),
-            "git_cleanup_jobs".to_string(),
-            "migrations".to_string(),
-            "plugin_state".to_string(),
-            "projects".to_string(),
-            "sessions".to_string(),
-            "skills".to_string(),
-            "tasks".to_string(),
-            "user_config".to_string(),
-            "workflow_node_runs".to_string(),
-            "workflow_runs".to_string(),
-            "workflow_snapshots".to_string(),
-            "workflows".to_string(),
-            "worktree_provisioning_leases".to_string(),
-            "worktrees".to_string(),
-        ]
+            "agents",
+            "effect_audit_events",
+            "effect_consumer_status",
+            "effect_managed_skills",
+            "effect_operations",
+            "effect_reconcile_requests",
+            "effect_source_propagation_requests",
+            "effect_source_states",
+            "effect_surface_status",
+            "effect_surfaces",
+            "git_cleanup_jobs",
+            "migrations",
+            "plugin_state",
+            "projects",
+            "sessions",
+            "skills",
+            "tasks",
+            "user_config",
+            "workflow_node_runs",
+            "workflow_runs",
+            "workflow_snapshots",
+            "workflows",
+            "workspace_effect_desired_skills",
+            "workspace_effects",
+            "workspace_locations",
+            "workspace_provisioning",
+            "workspaces",
+            "worktree_provisioning_leases",
+            "worktrees",
+        ],
     );
     assert_eq!(
         load_applied_migrations(database.connection()),
-        vec![
-            AppliedMigration::new("0001", 1_700_000_000_000),
-            AppliedMigration::new("0002", 1_700_000_000_000),
-            AppliedMigration::new("0003", 1_700_000_000_000),
-            AppliedMigration::new("0004", 1_700_000_000_000),
-            AppliedMigration::new("0005", 1_700_000_000_000),
-            AppliedMigration::new("0006", 1_700_000_000_000),
-            AppliedMigration::new("0007", 1_700_000_000_000),
-            AppliedMigration::new("0008", 1_700_000_000_000),
-            AppliedMigration::new("0009", 1_700_000_000_000),
-        ]
+        expected_applied_migrations(&catalog, 1_700_000_000_000),
     );
 }
 
-/// Verifies user configuration has the Issue-specified schema and rolls back independently.
+/// Verifies runtime ownership columns point directly at workspaces and no longer encode task-run variants.
 #[test]
-fn manages_user_config_schema_lifecycle() {
-    let temp_dir = TempDir::new().unwrap();
-    let database_path = temp_dir.path().join("user-config.sqlite3");
-    let catalog = default_migration_catalog().unwrap();
-    let migrations = catalog
-        .target_versions()
-        .iter()
-        .map(|version| catalog.migration(version).cloned().unwrap())
-        .collect::<Vec<_>>();
-
-    bootstrap_file_database(&database_path, catalog, 100);
-    let connection = Connection::open(&database_path).unwrap();
-    let columns = connection
-        .prepare("PRAGMA table_info(user_config)")
-        .unwrap()
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>("name")?,
-                row.get::<_, String>("type")?,
-                row.get::<_, i64>("notnull")? != 0,
-                row.get::<_, i64>("pk")? != 0,
-            ))
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(
-        columns,
-        vec![
-            ("key".to_string(), "TEXT".to_string(), false, true),
-            ("value".to_string(), "TEXT".to_string(), true, false),
-        ]
-    );
-    assert_eq!(table_exists(&connection, "projects"), true);
-    drop(connection);
-
-    let rolled_back = MigrationCatalog::with_target_versions(
-        migrations,
-        vec!["0001", "0002", "0003", "0004", "0005"],
-    )
-    .unwrap();
-    bootstrap_file_database(&database_path, rolled_back, 200);
-    let connection = Connection::open(&database_path).unwrap();
-
-    assert_eq!(table_exists(&connection, "user_config"), false);
-    assert_eq!(table_exists(&connection, "projects"), true);
-}
-
-/// Verifies every namespaced catalog table assigns local ownership when callers omit it.
-#[test]
-fn catalog_namespaces_default_to_local() {
-    let catalog = default_migration_catalog().unwrap();
+fn runtime_tables_use_direct_workspace_ownership() {
     let database = with_trace_logging(|| {
         DatabaseBootstrapper::new(FixedTimestampSource { now: 1 })
-            .bootstrap(&DatabaseLocation::in_memory(), &catalog)
-            .unwrap()
-    });
-    let connection = database.connection();
-
-    for table_name in ["skills", "agents", "workflows"] {
-        let description_column = if table_name == "workflows" {
-            String::new()
-        } else {
-            ", description".to_string()
-        };
-        let description_value = if table_name == "workflows" {
-            String::new()
-        } else {
-            ", 'description'".to_string()
-        };
-        connection
-            .execute(
-                &format!(
-                    "INSERT INTO {table_name} (id, name{description_column}, created_at, updated_at, is_deleted) VALUES ('id', 'name'{description_value}, 1, 1, 0)"
-                ),
-                [],
+            .bootstrap(
+                &DatabaseLocation::in_memory(),
+                &default_migration_catalog().expect("build migration catalog"),
             )
-            .unwrap();
-        assert_eq!(
-            connection
-                .query_row(
-                    &format!("SELECT namespace FROM {table_name} WHERE id = 'id'"),
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            "local"
-        );
-    }
-}
-
-/// Verifies session lifecycle and display-title columns are part of the compressed base schema.
-#[test]
-fn includes_session_columns_in_base_schema() {
-    let catalog = default_migration_catalog().unwrap();
-    let database = with_trace_logging(|| {
-        DatabaseBootstrapper::new(FixedTimestampSource { now: 1 })
-            .bootstrap(&DatabaseLocation::in_memory(), &catalog)
-            .unwrap()
+            .expect("bootstrap database")
     });
 
     assert_eq!(
         load_table_column_names(database.connection(), "sessions"),
         vec![
-            "id".to_string(),
-            "task_id".to_string(),
-            "title".to_string(),
-            "agent_cli".to_string(),
-            "agent_session_id".to_string(),
-            "history_degraded_reason".to_string(),
-            "status".to_string(),
-            "created_at".to_string(),
-            "updated_at".to_string(),
-            "is_deleted".to_string(),
+            "id",
+            "workspace_id",
+            "title",
+            "agent_cli",
+            "agent_session_id",
+            "history_degraded_reason",
+            "status",
+            "created_at",
+            "updated_at",
+            "is_deleted",
+        ],
+    );
+    assert_eq!(
+        load_table_column_names(database.connection(), "workflow_runs"),
+        vec![
+            "id",
+            "workspace_id",
+            "workflow_id",
+            "snapshot_id",
+            "name",
+            "run_status",
+            "state",
+            "input",
+            "output",
+            "error",
+            "payload",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "updated_at",
+            "is_deleted",
+        ],
+    );
+    assert_eq!(
+        load_table_column_names(database.connection(), "tasks"),
+        vec![
+            "id",
+            "workspace_id",
+            "title",
+            "created_at",
+            "updated_at",
+            "is_deleted",
+        ],
+    );
+    assert_eq!(
+        load_table_column_names(database.connection(), "worktrees"),
+        vec![
+            "workspace_id",
+            "branch_name",
+            "base_commit_id",
+            "created_at",
+            "updated_at",
+            "is_deleted",
+        ],
+    );
+    assert_eq!(
+        database
+            .connection()
+            .query_row(
+                "SELECT pk FROM pragma_table_info('worktrees') WHERE name = 'workspace_id'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("load worktree workspace primary-key position"),
+        1,
+    );
+}
+
+/// Verifies a database with a shorter valid prefix receives and snapshots only the missing tail.
+#[test]
+fn applies_missing_migrations_in_order() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("missing-tail.sqlite3");
+    let migrations = test_migrations();
+    let prefix = MigrationCatalog::with_target_versions(migrations.clone(), vec!["0001"])
+        .expect("build prefix catalog");
+    let full = MigrationCatalog::new(migrations).expect("build full catalog");
+
+    bootstrap_file_database(&database_path, &prefix, 100).expect("apply prefix");
+    bootstrap_file_database(&database_path, &full, 200).expect("apply missing tail");
+
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(
+        load_applied_migrations(&connection),
+        vec![
+            applied_from(&full, "0001", 100),
+            applied_from(&full, "0002", 200),
+            applied_from(&full, "0003", 200),
         ]
     );
 }
 
-/// Verifies the catalog creates ID-keyed skill and agent schema and removes it during rollback.
+/// Verifies matching SQL snapshots make reconciliation a no-op regardless of the new clock value.
 #[test]
-fn manages_skill_and_agent_definition_schema_lifecycle() {
-    let temp_dir = TempDir::new().unwrap();
-    let database_path = temp_dir.path().join("skill-agent.sqlite3");
-    let catalog = default_migration_catalog().unwrap();
-    let migrations = [
-        "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009",
-    ]
-    .map(|version| {
-        catalog
-            .migration(version)
-            .cloned()
-            .unwrap_or_else(|| panic!("missing migration {version}"))
-    });
+fn unchanged_migration_content_is_a_no_op() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("no-op.sqlite3");
+    let catalog =
+        MigrationCatalog::new(vec![table_migration("0001", "alpha")]).expect("build catalog");
 
-    bootstrap_file_database(&database_path, catalog, 1_700_000_000_000);
+    bootstrap_file_database(&database_path, &catalog, 100).expect("apply catalog");
+    bootstrap_file_database(&database_path, &catalog, 200).expect("reconcile unchanged catalog");
 
-    let connection = Connection::open(&database_path).unwrap();
-    for table_name in ["skills", "agents"] {
-        let expected_columns = vec![
-            "id".to_string(),
-            "namespace".to_string(),
-            "name".to_string(),
-            "description".to_string(),
-        ];
-        let expected_columns = if table_name == "agents" {
-            [expected_columns, vec!["content".to_string()]].concat()
-        } else {
-            expected_columns
-        };
-        let expected_columns = [
-            expected_columns,
-            vec![
-                "created_at".to_string(),
-                "updated_at".to_string(),
-                "is_deleted".to_string(),
-            ],
-        ]
-        .concat();
-        assert_eq!(
-            load_table_column_names(&connection, table_name),
-            expected_columns
-        );
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(
+        load_applied_migrations(&connection),
+        vec![applied_from(&catalog, "0001", 100)]
+    );
+}
 
-        connection
-            .execute(
-                &format!(
-                    "INSERT INTO {table_name} (id, name, description, created_at, updated_at, is_deleted)\n                     VALUES (?1, ?2, ?3, ?4, ?5, 0)"
-                ),
-                params!["first", "opencode", "OpenCode", 1_i64, 1_i64],
-            )
-            .unwrap();
-        connection
-            .execute(
-                &format!(
-                    "INSERT INTO {table_name} (id, namespace, name, description, created_at, updated_at, is_deleted)\n                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)"
-                ),
-                params![
-                    "second",
-                    "ora.plugin",
-                    "opencode",
-                    "OpenCode duplicate",
-                    2_i64,
-                    2_i64
-                ],
-            )
-            .unwrap();
-        let duplicate_name = connection.execute(
-            &format!(
-                "INSERT INTO {table_name} (id, name, description, created_at, updated_at, is_deleted)\n                 VALUES (?1, ?2, ?3, ?4, ?5, 0)"
-            ),
-            params!["duplicate-name", "OPENCODE", "Duplicate name", 3_i64, 3_i64],
-        );
-        assert_eq!(
-            matches!(
-                duplicate_name,
-                Err(rusqlite::Error::SqliteFailure(error, _))
-                    if error.code == ErrorCode::ConstraintViolation
-            ),
-            true
-        );
-        let duplicate_id = connection.execute(
-            &format!(
-                "INSERT INTO {table_name} (id, name, description, created_at, updated_at, is_deleted)\n                 VALUES (?1, ?2, ?3, ?4, ?5, 0)"
-            ),
-            params!["first", "different-name", "Duplicate ID", 4_i64, 4_i64],
-        );
+/// Verifies execution timestamps are metadata and do not participate in SQL drift detection.
+#[test]
+fn differing_execution_time_does_not_rebuild_schema() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("timestamp.sqlite3");
+    let catalog =
+        MigrationCatalog::new(vec![table_migration("0001", "alpha")]).expect("build catalog");
 
-        assert_eq!(
-            matches!(
-                duplicate_id,
-                Err(rusqlite::Error::SqliteFailure(error, _))
-                    if error.code == ErrorCode::ConstraintViolation
-            ),
-            true
-        );
-
-        let deleted_rows = connection
-            .execute(
-                &format!("UPDATE {table_name} SET is_deleted = 1 WHERE id = ?1"),
-                params!["first"],
-            )
-            .unwrap();
-        assert_eq!(deleted_rows, 1);
-        connection
-            .execute(
-                &format!(
-                    "INSERT INTO {table_name} (id, name, description, created_at, updated_at, is_deleted)\n                 VALUES (?1, ?2, ?3, ?4, ?5, 0)"
-                ),
-                params!["third", "opencode", "OpenCode replacement", 4_i64, 4_i64],
-            )
-            .unwrap();
-    }
-
+    bootstrap_file_database(&database_path, &catalog, 100).expect("apply catalog");
+    let connection = Connection::open(&database_path).expect("open database");
+    connection
+        .execute(
+            "UPDATE migrations SET executed_at = 777 WHERE version = '0001'",
+            [],
+        )
+        .expect("change timestamp metadata");
     drop(connection);
-    let rollback_catalog =
-        MigrationCatalog::with_target_versions(migrations.to_vec(), vec!["0001"]).unwrap();
-    bootstrap_file_database(&database_path, rollback_catalog, 1_700_000_000_100);
+    bootstrap_file_database(&database_path, &catalog, 200).expect("reconcile catalog");
 
-    let connection = Connection::open(&database_path).unwrap();
-    assert_eq!(table_exists(&connection, "skills"), false);
-    assert_eq!(table_exists(&connection, "agents"), false);
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(
+        load_applied_migrations(&connection),
+        vec![applied_from(&catalog, "0001", 777)]
+    );
 }
 
-/// Verifies the runner applies only the missing tail of a linear migration history in ascending order.
+/// Verifies changing only rollback SQL still rebuilds and refreshes both snapshots.
 #[test]
-fn applies_missing_migrations_in_ascending_order() {
-    let temp_dir = TempDir::new().unwrap();
-    let database_path = temp_dir.path().join("upgrade.sqlite3");
+fn changed_down_sql_rebuilds_the_migration() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("down-rewrite.sqlite3");
+    let old_catalog = MigrationCatalog::new(vec![sql_migration(
+        "0001",
+        "CREATE TABLE alpha (id INTEGER PRIMARY KEY);",
+        "DROP TABLE alpha;",
+    )])
+    .expect("build old catalog");
+    let rewritten_catalog = MigrationCatalog::new(vec![sql_migration(
+        "0001",
+        "CREATE TABLE alpha (id INTEGER PRIMARY KEY);",
+        "DROP TABLE IF EXISTS alpha;",
+    )])
+    .expect("build rewritten catalog");
 
-    bootstrap_file_database(
-        &database_path,
-        test_catalog_with_target_prefix(1).unwrap(),
-        100,
+    bootstrap_file_database(&database_path, &old_catalog, 100).expect("apply old catalog");
+    bootstrap_file_database(&database_path, &rewritten_catalog, 200)
+        .expect("rebuild changed rollback");
+
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(table_exists(&connection, "alpha"), true);
+    assert_eq!(
+        load_applied_migrations(&connection),
+        vec![applied_from(&rewritten_catalog, "0001", 200)]
     );
-    bootstrap_file_database(&database_path, test_catalog().unwrap(), 200);
+}
 
-    let connection = Connection::open(&database_path).unwrap();
+/// Verifies rewriting the latest migration uses its persisted rollback before applying new SQL.
+#[test]
+fn rebuilds_changed_latest_migration_with_persisted_down_sql() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("latest-rewrite.sqlite3");
+    let old_catalog = MigrationCatalog::new(vec![
+        table_migration("0001", "alpha"),
+        sql_migration(
+            "0002",
+            "CREATE TABLE old_beta (id INTEGER PRIMARY KEY);",
+            "DROP TABLE old_beta;",
+        ),
+    ])
+    .expect("build old catalog");
+    let rewritten_catalog = MigrationCatalog::new(vec![
+        table_migration("0001", "alpha"),
+        sql_migration(
+            "0002",
+            "CREATE TABLE new_beta (id INTEGER PRIMARY KEY);",
+            "THIS CURRENT DOWN SQL MUST NOT RUN;",
+        ),
+    ])
+    .expect("build rewritten catalog");
 
+    bootstrap_file_database(&database_path, &old_catalog, 100).expect("apply old catalog");
+    bootstrap_file_database(&database_path, &rewritten_catalog, 200)
+        .expect("rebuild latest migration");
+
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(table_exists(&connection, "old_beta"), false);
+    assert_eq!(table_exists(&connection, "new_beta"), true);
     assert_eq!(
         load_applied_migrations(&connection),
         vec![
-            AppliedMigration::new("0001", 100),
-            AppliedMigration::new("0002", 200),
-            AppliedMigration::new("0003", 200),
+            applied_from(&rewritten_catalog, "0001", 100),
+            applied_from(&rewritten_catalog, "0002", 200),
         ]
     );
-    assert_eq!(table_exists(&connection, "beta"), true);
+}
+
+/// Verifies drift in an earlier migration rebuilds every applied migration after that position.
+#[test]
+fn rebuilds_the_entire_suffix_after_earlier_sql_changes() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("suffix-rewrite.sqlite3");
+    let old_catalog = MigrationCatalog::new(vec![
+        table_migration("0001", "alpha"),
+        table_migration("0002", "old_beta"),
+        table_migration("0003", "gamma"),
+    ])
+    .expect("build old catalog");
+    let rewritten_catalog = MigrationCatalog::new(vec![
+        table_migration("0001", "alpha"),
+        table_migration("0002", "new_beta"),
+        table_migration("0003", "gamma"),
+    ])
+    .expect("build rewritten catalog");
+
+    bootstrap_file_database(&database_path, &old_catalog, 100).expect("apply old catalog");
+    bootstrap_file_database(&database_path, &rewritten_catalog, 200).expect("rebuild suffix");
+
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(table_exists(&connection, "old_beta"), false);
+    assert_eq!(table_exists(&connection, "new_beta"), true);
     assert_eq!(table_exists(&connection, "gamma"), true);
-}
-
-/// Verifies the runner rolls back extra targeted versions in descending order while preserving older records.
-#[test]
-fn rolls_back_extra_versions_in_descending_order() {
-    let temp_dir = TempDir::new().unwrap();
-    let database_path = temp_dir.path().join("rollback.sqlite3");
-
-    bootstrap_file_database(&database_path, test_catalog().unwrap(), 300);
-    bootstrap_file_database(
-        &database_path,
-        test_catalog_with_target_prefix(2).unwrap(),
-        400,
-    );
-
-    let connection = Connection::open(&database_path).unwrap();
-
     assert_eq!(
         load_applied_migrations(&connection),
         vec![
-            AppliedMigration::new("0001", 300),
-            AppliedMigration::new("0002", 300),
+            applied_from(&rewritten_catalog, "0001", 100),
+            applied_from(&rewritten_catalog, "0002", 200),
+            applied_from(&rewritten_catalog, "0003", 200),
         ]
     );
-    assert_eq!(table_exists(&connection, "beta"), true);
-    assert_eq!(table_exists(&connection, "gamma"), false);
 }
 
-/// Verifies a mismatch inside the shared prefix fails fast instead of guessing at repair steps.
+/// Verifies a failing persisted rollback keeps both its schema changes and bookkeeping row.
 #[test]
-fn rejects_diverged_history_in_shared_prefix() {
-    let temp_dir = TempDir::new().unwrap();
-    let database_path = temp_dir.path().join("diverged.sqlite3");
+fn failed_down_transaction_preserves_the_applied_migration() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("failed-down.sqlite3");
+    let migrations = vec![
+        table_migration("0001", "alpha"),
+        sql_migration(
+            "0002",
+            "CREATE TABLE beta (id INTEGER PRIMARY KEY);",
+            "DROP TABLE beta; THIS IS NOT SQL;",
+        ),
+    ];
+    let full = MigrationCatalog::new(migrations.clone()).expect("build full catalog");
+    let prefix = MigrationCatalog::with_target_versions(migrations, vec!["0001"])
+        .expect("build prefix catalog");
 
-    bootstrap_file_database(&database_path, diverged_catalog().unwrap(), 500);
+    bootstrap_file_database(&database_path, &full, 100).expect("apply full catalog");
+    let error =
+        bootstrap_file_database(&database_path, &prefix, 200).expect_err("rollback must fail");
 
-    let error = with_trace_logging(|| {
-        DatabaseBootstrapper::new(FixedTimestampSource { now: 600 })
-            .bootstrap(
-                &DatabaseLocation::path(&database_path),
-                &test_catalog().unwrap(),
-            )
-            .unwrap_err()
-    });
+    assert_migration_step_failed(&error, "0002", MigrationDirection::Down);
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(table_exists(&connection, "beta"), true);
+    assert_eq!(load_applied_migrations(&connection).len(), 2);
+}
 
+/// Verifies a failed rewritten up leaves the database at the successfully rolled-back prefix.
+#[test]
+fn failed_rebuild_up_stays_at_the_rolled_back_state() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("failed-rebuild-up.sqlite3");
+    let old_catalog = MigrationCatalog::new(vec![
+        table_migration("0001", "alpha"),
+        table_migration("0002", "old_beta"),
+    ])
+    .expect("build old catalog");
+    let rewritten_catalog = MigrationCatalog::new(vec![
+        table_migration("0001", "alpha"),
+        sql_migration(
+            "0002",
+            "CREATE TABLE new_beta (id INTEGER PRIMARY KEY); THIS IS NOT SQL;",
+            "DROP TABLE new_beta;",
+        ),
+    ])
+    .expect("build rewritten catalog");
+
+    bootstrap_file_database(&database_path, &old_catalog, 100).expect("apply old catalog");
+    let error = bootstrap_file_database(&database_path, &rewritten_catalog, 200)
+        .expect_err("rewritten up must fail");
+
+    assert_migration_step_failed(&error, "0002", MigrationDirection::Up);
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(table_exists(&connection, "old_beta"), false);
+    assert_eq!(table_exists(&connection, "new_beta"), false);
+    assert_eq!(
+        load_applied_migrations(&connection),
+        vec![applied_from(&rewritten_catalog, "0001", 100)]
+    );
+}
+
+/// Verifies shortening the target performs the ordinary reverse-order tail rollback.
+#[test]
+fn shorter_target_rolls_back_the_applied_tail() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("short-target.sqlite3");
+    let migrations = test_migrations();
+    let full = MigrationCatalog::new(migrations.clone()).expect("build full catalog");
+    let prefix = MigrationCatalog::with_target_versions(migrations, vec!["0001"])
+        .expect("build prefix catalog");
+
+    bootstrap_file_database(&database_path, &full, 100).expect("apply full catalog");
+    bootstrap_file_database(&database_path, &prefix, 200).expect("roll back tail");
+
+    let connection = Connection::open(&database_path).expect("open database");
+    assert_eq!(table_exists(&connection, "alpha"), true);
+    assert_eq!(table_exists(&connection, "beta"), false);
+    assert_eq!(table_exists(&connection, "gamma"), false);
+    assert_eq!(
+        load_applied_migrations(&connection),
+        vec![applied_from(&full, "0001", 100)]
+    );
+}
+
+/// Verifies known versions in an illegal position and versions absent from the catalog stay errors.
+#[test]
+fn rejects_reordered_and_unknown_applied_versions() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let diverged_path = temp_dir.path().join("diverged.sqlite3");
+    let diverged = MigrationCatalog::new(vec![
+        table_migration("0001", "alpha"),
+        table_migration("0003", "gamma"),
+    ])
+    .expect("build diverged catalog");
+    let expected = MigrationCatalog::new(test_migrations()).expect("build expected catalog");
+    bootstrap_file_database(&diverged_path, &diverged, 100).expect("apply diverged catalog");
+
+    let error = bootstrap_file_database(&diverged_path, &expected, 200)
+        .expect_err("reordered history must fail");
     assert_eq!(
         match error {
             DatabaseError::DivergedMigrationHistory {
@@ -401,403 +446,217 @@ fn rejects_diverged_history_in_shared_prefix() {
         },
         Some((1, "0002".to_string(), "0003".to_string()))
     );
+
+    let unknown_path = temp_dir.path().join("unknown.sqlite3");
+    bootstrap_file_database(&unknown_path, &expected, 100).expect("apply expected catalog");
+    let connection = Connection::open(&unknown_path).expect("open database");
+    connection
+        .execute(
+            "INSERT INTO migrations (version, up_sql, down_sql, executed_at) VALUES ('9999', '', '', 100)",
+            [],
+        )
+        .expect("insert unknown migration");
+    drop(connection);
+
+    let error = bootstrap_file_database(&unknown_path, &expected, 200)
+        .expect_err("unknown history must fail");
+    assert_eq!(
+        match error {
+            DatabaseError::UnknownAppliedMigrationVersion { version } => Some(version),
+            _ => None,
+        },
+        Some("9999".to_string())
+    );
 }
 
-/// Verifies a failing up step does not record the version whose SQL could not be installed.
+/// Verifies multiple changed migrations roll back in reverse and reapply in forward order.
 #[test]
-fn leaves_failed_up_migration_unrecorded() {
-    let temp_dir = TempDir::new().unwrap();
-    let database_path = temp_dir.path().join("failed-up.sqlite3");
-
-    bootstrap_file_database(
-        &database_path,
-        MigrationCatalog::new(vec![create_table_migration("0001", "alpha")]).unwrap(),
-        700,
+fn rebuilds_multiple_changed_migrations_in_directional_order() {
+    let temp_dir = TempDir::new().expect("create temporary directory");
+    let database_path = temp_dir.path().join("ordered-rebuild.sqlite3");
+    let foundation = sql_migration(
+        "0001",
+        "CREATE TABLE events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);",
+        "DROP TABLE events;",
     );
+    let old_catalog = MigrationCatalog::new(vec![
+        foundation.clone(),
+        sql_migration(
+            "0002",
+            "INSERT INTO events (name) VALUES ('old-2');",
+            "DELETE FROM events WHERE name = 'old-2'; INSERT INTO events (name) VALUES ('down-2');",
+        ),
+        sql_migration(
+            "0003",
+            "INSERT INTO events (name) VALUES ('old-3');",
+            "DELETE FROM events WHERE name = 'old-3'; INSERT INTO events (name) VALUES ('down-3');",
+        ),
+    ])
+    .expect("build old catalog");
+    let rewritten_catalog = MigrationCatalog::new(vec![
+        foundation,
+        sql_migration(
+            "0002",
+            "INSERT INTO events (name) VALUES ('up-2-new');",
+            "DELETE FROM events WHERE name = 'up-2-new';",
+        ),
+        sql_migration(
+            "0003",
+            "INSERT INTO events (name) VALUES ('up-3-new');",
+            "DELETE FROM events WHERE name = 'up-3-new';",
+        ),
+    ])
+    .expect("build rewritten catalog");
 
-    let error = with_trace_logging(|| {
-        DatabaseBootstrapper::new(FixedTimestampSource { now: 800 })
-            .bootstrap(
-                &DatabaseLocation::path(&database_path),
-                &MigrationCatalog::new(vec![
-                    create_table_migration("0001", "alpha"),
-                    broken_up_migration("0002"),
-                ])
-                .unwrap(),
-            )
-            .unwrap_err()
-    });
+    bootstrap_file_database(&database_path, &old_catalog, 100).expect("apply old catalog");
+    bootstrap_file_database(&database_path, &rewritten_catalog, 200)
+        .expect("rebuild changed suffix");
 
-    assert_migration_step_failed(&error, "0002", MigrationDirection::Up);
-
-    let connection = Connection::open(&database_path).unwrap();
-
+    let connection = Connection::open(&database_path).expect("open database");
     assert_eq!(
-        load_applied_migrations(&connection),
-        vec![AppliedMigration::new("0001", 700)]
+        load_text_column(&connection, "SELECT name FROM events ORDER BY sequence"),
+        vec!["down-3", "down-2", "up-2-new", "up-3-new"]
     );
 }
 
-/// Verifies a failing down step keeps the extra version recorded because the rollback never commits.
-#[test]
-fn leaves_failed_down_migration_recorded() {
-    let temp_dir = TempDir::new().unwrap();
-    let database_path = temp_dir.path().join("failed-down.sqlite3");
-
-    bootstrap_file_database(
-        &database_path,
-        MigrationCatalog::new(vec![
-            create_table_migration("0001", "alpha"),
-            broken_down_migration("0002"),
-        ])
-        .unwrap(),
-        800,
-    );
-
-    let error = with_trace_logging(|| {
-        DatabaseBootstrapper::new(FixedTimestampSource { now: 900 })
-            .bootstrap(
-                &DatabaseLocation::path(&database_path),
-                &MigrationCatalog::with_target_versions(
-                    vec![
-                        create_table_migration("0001", "alpha"),
-                        broken_down_migration("0002"),
-                    ],
-                    vec!["0001"],
-                )
-                .unwrap(),
-            )
-            .unwrap_err()
-    });
-
-    assert_migration_step_failed(&error, "0002", MigrationDirection::Down);
-
-    let connection = Connection::open(&database_path).unwrap();
-
-    assert_eq!(
-        load_applied_migrations(&connection),
-        vec![
-            AppliedMigration::new("0001", 800),
-            AppliedMigration::new("0002", 800),
-        ]
-    );
-}
-
-/// Verifies bootstrap and migration reconciliation emit structured success and failure events.
-#[test]
-fn emits_structured_bootstrap_and_migration_events() {
-    let success_recorder = EventRecorder::default();
-    with_recorded_trace_logging(success_recorder.layer(), || {
-        DatabaseBootstrapper::new(FixedTimestampSource { now: 42 })
-            .bootstrap(
-                &DatabaseLocation::in_memory(),
-                &default_migration_catalog().unwrap(),
-            )
-            .unwrap();
-    });
-
-    assert_eq!(
-        success_recorder.events().into_iter().any(|event| {
-            event_has_fields(
-                &event,
-                &[
-                    ("method", "bootstrap"),
-                    ("message", "database bootstrap complete"),
-                    ("operation", "database_bootstrap"),
-                ],
-            )
-        }),
-        true
-    );
-
-    let failure_recorder = EventRecorder::default();
-    let temp_dir = TempDir::new().unwrap();
-    let database_path = temp_dir.path().join("failed-up.sqlite3");
-
-    with_recorded_trace_logging(failure_recorder.layer(), || {
-        bootstrap_file_database(
-            &database_path,
-            MigrationCatalog::new(vec![create_table_migration("0001", "alpha")]).unwrap(),
-            700,
-        );
-        let error = DatabaseBootstrapper::new(FixedTimestampSource { now: 800 }).bootstrap(
-            &DatabaseLocation::path(&database_path),
-            &MigrationCatalog::new(vec![
-                create_table_migration("0001", "alpha"),
-                broken_up_migration("0002"),
-            ])
-            .unwrap(),
-        );
-
-        assert_eq!(
-            matches!(
-                error,
-                Err(DatabaseError::MigrationStepFailed {
-                    version,
-                    direction: MigrationDirection::Up,
-                    ..
-                }) if version == "0002"
-            ),
-            true
-        );
-    });
-
-    assert_eq!(
-        failure_recorder.events().into_iter().any(|event| {
-            event_has_fields(
-                &event,
-                &[
-                    ("direction", "up"),
-                    ("error.kind", "migration_step_failed"),
-                    ("message", "migration step failed"),
-                    ("method", "execute_migration_step"),
-                    ("migration_version", "0002"),
-                    ("operation", "migration_execute"),
-                ],
-            )
-        }),
-        true
-    );
-}
-
-/// Opens a file-backed database through the bootstrapper and drops the handle once reconciliation finishes.
-fn bootstrap_file_database(path: &Path, catalog: MigrationCatalog, now: i64) {
-    with_trace_logging(|| {
-        DatabaseBootstrapper::new(FixedTimestampSource { now })
-            .bootstrap(&DatabaseLocation::path(path), &catalog)
-            .unwrap();
-    });
-}
-
-/// Loads visible user tables in alphabetical order so schema assertions remain stable across SQLite versions.
+/// Reads table names in the same deterministic order used by the schema assertion.
 fn load_table_names(connection: &Connection) -> Vec<String> {
     let mut statement = connection
-        .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name ASC",
-        )
-        .unwrap();
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .unwrap();
-
-    rows.collect::<Result<Vec<_>, _>>().unwrap()
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+        .expect("prepare table query");
+    statement
+        .query_map([], |row| row.get(0))
+        .expect("query table names")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read table names")
 }
 
-/// Loads persisted migration rows in the same order used by the reconciliation algorithm.
+/// Reads a table's declared columns without coupling the test to SQLite's SQL text formatting.
+fn load_table_column_names(connection: &Connection, table_name: &str) -> Vec<String> {
+    let statement = format!("PRAGMA table_info({table_name})");
+    connection
+        .prepare(&statement)
+        .expect("prepare column query")
+        .query_map([], |row| row.get(1))
+        .expect("query column names")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read column names")
+}
+
+/// Loads migration bookkeeping rows for exact bootstrap assertions.
 fn load_applied_migrations(connection: &Connection) -> Vec<AppliedMigration> {
     let mut statement = connection
-        .prepare("SELECT version, executed_at FROM migrations ORDER BY version ASC")
-        .unwrap();
-    let rows = statement
+        .prepare("SELECT version, up_sql, down_sql, executed_at FROM migrations ORDER BY version")
+        .expect("prepare migration query");
+    statement
         .query_map([], |row| {
             Ok(AppliedMigration::new(
                 row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
             ))
         })
-        .unwrap();
-
-    rows.collect::<Result<Vec<_>, _>>().unwrap()
+        .expect("query migrations")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read migrations")
 }
 
-/// Reports whether a table currently exists so upgrade and rollback tests can assert schema effects directly.
+/// Builds the exact rows expected when every target migration is applied at one timestamp.
+fn expected_applied_migrations(
+    catalog: &MigrationCatalog,
+    executed_at: i64,
+) -> Vec<AppliedMigration> {
+    catalog
+        .target_versions()
+        .iter()
+        .map(|version| applied_from(catalog, version, executed_at))
+        .collect()
+}
+
+/// Builds an expected applied row from the current catalog SQL snapshot.
+fn applied_from(catalog: &MigrationCatalog, version: &str, executed_at: i64) -> AppliedMigration {
+    let migration = catalog.migration(version).expect("find migration");
+    AppliedMigration::new(
+        migration.version(),
+        migration.up_sql(),
+        migration.down_sql(),
+        executed_at,
+    )
+}
+
+/// Reconciles a file database while keeping logging scoped to this test operation.
+fn bootstrap_file_database(
+    path: &Path,
+    catalog: &MigrationCatalog,
+    now: i64,
+) -> Result<(), DatabaseError> {
+    with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource { now })
+            .bootstrap(&DatabaseLocation::path(path), catalog)
+            .map(|_| ())
+    })
+}
+
+/// Builds a reusable three-migration table catalog for prefix and ordering tests.
+fn test_migrations() -> Vec<Migration> {
+    vec![
+        table_migration("0001", "alpha"),
+        table_migration("0002", "beta"),
+        table_migration("0003", "gamma"),
+    ]
+}
+
+/// Builds a migration from explicit SQL used to exercise rewrite and failure semantics.
+fn sql_migration(version: &'static str, up_sql: &'static str, down_sql: &'static str) -> Migration {
+    let up_statements = Box::leak(vec![up_sql].into_boxed_slice());
+    let down_statements = Box::leak(vec![down_sql].into_boxed_slice());
+    Migration::new(version, up_statements, down_statements)
+}
+
+/// Builds a reversible single-table migration with leaked test-only SQL storage.
+fn table_migration(version: &'static str, table_name: &'static str) -> Migration {
+    let up_sql =
+        Box::leak(format!("CREATE TABLE {table_name} (id INTEGER PRIMARY KEY);").into_boxed_str());
+    let down_sql = Box::leak(format!("DROP TABLE {table_name};").into_boxed_str());
+    sql_migration(version, up_sql, down_sql)
+}
+
+/// Reports whether a named table exists in the current SQLite schema.
 fn table_exists(connection: &Connection, table_name: &str) -> bool {
     connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
             params![table_name],
-            |row| row.get::<_, i64>(0),
+            |row| row.get::<_, bool>(0),
         )
-        .unwrap()
-        == 1
+        .expect("query table existence")
 }
 
-/// Loads a table's column names in declaration order so migration tests can assert its shape.
-fn load_table_column_names(connection: &Connection, table_name: &str) -> Vec<String> {
-    let mut statement = connection
-        .prepare(&format!("PRAGMA table_info({table_name})"))
-        .unwrap();
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap();
-
-    rows.collect::<Result<Vec<_>, _>>().unwrap()
+/// Loads a single text column for exact ordering assertions.
+fn load_text_column(connection: &Connection, sql: &str) -> Vec<String> {
+    connection
+        .prepare(sql)
+        .expect("prepare text query")
+        .query_map([], |row| row.get(0))
+        .expect("query text values")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read text values")
 }
 
-/// Verifies a migration-step error identifies the version and direction while preserving the SQL parser context.
+/// Verifies a migration failure reports the expected version and direction.
 fn assert_migration_step_failed(
     error: &DatabaseError,
     expected_version: &str,
     expected_direction: MigrationDirection,
 ) {
-    match error {
-        DatabaseError::MigrationStepFailed {
-            version,
-            direction,
-            source,
-        } => {
-            assert_eq!(version, expected_version);
-            assert_eq!(direction, &expected_direction);
-            assert_eq!(
-                source.to_string().contains("near \"THIS\": syntax error"),
-                true
-            );
-        }
-        _ => panic!("expected migration step failure, got {error:?}"),
-    }
-}
-
-/// Builds the reusable three-step catalog used by upgrade and rollback behavior tests.
-fn test_catalog() -> Result<MigrationCatalog, DatabaseError> {
-    MigrationCatalog::new(vec![
-        create_table_migration("0001", "alpha"),
-        create_table_migration("0002", "beta"),
-        create_table_migration("0003", "gamma"),
-    ])
-}
-
-/// Builds the same test catalog with a shorter active prefix to simulate a controlled rollback target.
-fn test_catalog_with_target_prefix(
-    prefix_length: usize,
-) -> Result<MigrationCatalog, DatabaseError> {
-    let migrations = vec![
-        create_table_migration("0001", "alpha"),
-        create_table_migration("0002", "beta"),
-        create_table_migration("0003", "gamma"),
-    ];
-    let target_versions = migrations
-        .iter()
-        .take(prefix_length)
-        .map(Migration::version)
-        .collect();
-
-    MigrationCatalog::with_target_versions(migrations, target_versions)
-}
-
-/// Builds an alternate catalog whose second version intentionally diverges from the main test sequence.
-fn diverged_catalog() -> Result<MigrationCatalog, DatabaseError> {
-    MigrationCatalog::new(vec![
-        create_table_migration("0001", "alpha"),
-        create_table_migration("0003", "gamma"),
-    ])
-}
-
-/// Builds a simple migration that creates and drops one named table.
-fn create_table_migration(version: &'static str, table_name: &'static str) -> Migration {
-    let up_sql =
-        Box::leak(format!("CREATE TABLE {table_name} (id INTEGER PRIMARY KEY);").into_boxed_str());
-    let down_sql = Box::leak(format!("DROP TABLE IF EXISTS {table_name};").into_boxed_str());
-    let up_statements = Box::leak(vec![up_sql as &'static str].into_boxed_slice());
-    let down_statements = Box::leak(vec![down_sql as &'static str].into_boxed_slice());
-
-    Migration::new(version, up_statements, down_statements)
-}
-
-/// Reports whether one recorded event includes all expected field/value pairs.
-fn event_has_fields(event: &LoggedEvent, expected_fields: &[(&str, &str)]) -> bool {
-    expected_fields.iter().all(|(field_name, expected_value)| {
-        event.fields.get(*field_name).map(String::as_str) == Some(*expected_value)
-    })
-}
-
-/// Captures one emitted event in a comparison-friendly structure for database logging assertions.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LoggedEvent {
-    level: String,
-    target: String,
-    fields: BTreeMap<String, String>,
-}
-
-/// Records tracing events into shared memory so database tests can assert structured outcomes.
-#[derive(Clone, Debug, Default)]
-struct EventRecorder {
-    events: Arc<Mutex<Vec<LoggedEvent>>>,
-}
-
-impl EventRecorder {
-    /// Builds the recording layer attached to one scoped test subscriber.
-    fn layer(&self) -> RecordingLayer {
-        RecordingLayer {
-            events: self.events.clone(),
-        }
-    }
-
-    /// Returns every captured event in emission order.
-    fn events(&self) -> Vec<LoggedEvent> {
-        self.events.lock().unwrap().clone()
-    }
-}
-
-/// Pushes each tracing event into the shared recorder without relying on global subscriber state.
-#[derive(Clone, Debug)]
-struct RecordingLayer {
-    events: Arc<Mutex<Vec<LoggedEvent>>>,
-}
-
-impl<S> Layer<S> for RecordingLayer
-where
-    S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
-{
-    /// Converts each event into a stable, fully comparable structure for test assertions.
-    fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
-        let mut visitor = EventFieldVisitor::default();
-        event.record(&mut visitor);
-        self.events.lock().unwrap().push(LoggedEvent {
-            level: event.metadata().level().to_string(),
-            target: event.metadata().target().to_string(),
-            fields: visitor.fields,
-        });
-    }
-}
-
-/// Records tracing fields as strings because these tests care about semantic content, not JSON formatting.
-#[derive(Debug, Default)]
-struct EventFieldVisitor {
-    fields: BTreeMap<String, String>,
-}
-
-impl tracing::field::Visit for EventFieldVisitor {
-    /// Preserves string fields exactly as database logs emitted them.
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
-    }
-
-    /// Preserves signed integers in decimal form for stable assertions.
-    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
-    }
-
-    /// Preserves unsigned integers in decimal form for stable assertions.
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
-    }
-
-    /// Falls back to debug formatting for field types without a more specific visitor hook.
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        self.fields.insert(
-            field.name().to_string(),
-            format!("{value:?}").trim_matches('"').to_string(),
-        );
-    }
-}
-
-/// Builds a migration whose `up` SQL fails immediately so transaction rollback behavior can be asserted.
-fn broken_up_migration(version: &'static str) -> Migration {
-    Migration::new(
-        version,
-        &["THIS IS NOT VALID SQL"],
-        &["DROP TABLE IF EXISTS broken_up;"],
-    )
-}
-
-/// Builds a migration whose `down` SQL fails immediately so rollback bookkeeping can be asserted.
-fn broken_down_migration(version: &'static str) -> Migration {
-    Migration::new(
-        version,
-        &["CREATE TABLE broken_down (id INTEGER PRIMARY KEY);"],
-        &["THIS IS NOT VALID SQL"],
-    )
+    assert_eq!(
+        match error {
+            DatabaseError::MigrationStepFailed {
+                version, direction, ..
+            } => Some((version.as_str(), *direction)),
+            _ => None,
+        },
+        Some((expected_version, expected_direction))
+    );
 }

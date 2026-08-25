@@ -237,7 +237,7 @@ describe("useUiStore", () => {
   it("stores the active dialog and delete target verbatim", () => {
     const session: Session = {
       id: "s1",
-      taskId: "t1",
+      workspaceId: "workspace-t1",
       agentRef: "ora-space.opencode",
       status: "running",
       title: null,
@@ -268,12 +268,14 @@ describe("useUiStore", () => {
       kind: "task",
       projectId: "p1",
     });
-    useUiStore
-      .getState()
-      .setDialog({ kind: "session", taskId: "t1", entity: session });
+    useUiStore.getState().setDialog({
+      kind: "session",
+      workspaceId: "workspace-t1",
+      entity: session,
+    });
     expect(useUiStore.getState().dialog).toEqual({
       kind: "session",
-      taskId: "t1",
+      workspaceId: "workspace-t1",
       entity: session,
     });
 

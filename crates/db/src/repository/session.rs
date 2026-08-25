@@ -1,7 +1,7 @@
 use ora_application::{RepositoryError, SessionRepository};
 use ora_domain::{
     AgentRef, AuditFields, DomainModelError, HistoryState, Session, SessionId, SessionStatus,
-    SessionTitle, TaskId,
+    SessionTitle, WorkspaceId,
 };
 use rusqlite::{Row, params};
 
@@ -26,14 +26,16 @@ impl SessionRepository for SqliteSessionRepository {
         self.pool
             .with_connection(|connection| {
                 let inserted_rows = connection.execute(
-                    "INSERT INTO sessions (id, task_id, agent_cli, agent_session_id, title, status, history_degraded_reason, created_at, updated_at, is_deleted)
+                    "INSERT INTO sessions (id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, created_at, updated_at, is_deleted)
                      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
                      WHERE EXISTS (
-                         SELECT 1 FROM tasks WHERE id = ?2 AND is_deleted = 0
+                         SELECT 1 FROM workspaces w
+                         JOIN projects p ON p.id = w.project_id AND p.is_deleted = 0
+                         WHERE w.id = ?2 AND w.is_deleted = 0 AND w.lifecycle = 'active'
                      )",
                     params![
                         session.id.as_ref(),
-                        session.task_id.as_ref(),
+                        session.workspace_id.as_ref(),
                         session.agent_ref.as_str(),
                         session.agent_session_id,
                         session.title.as_ref().map(SessionTitle::as_str),
@@ -60,7 +62,7 @@ impl SessionRepository for SqliteSessionRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, task_id, agent_cli, agent_session_id, title, status, history_degraded_reason, created_at, updated_at, is_deleted
+                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, created_at, updated_at, is_deleted
                      FROM sessions
                      WHERE id = ?1 AND is_deleted = 0",
                 )?;
@@ -79,7 +81,7 @@ impl SessionRepository for SqliteSessionRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, task_id, agent_cli, agent_session_id, title, status, history_degraded_reason, created_at, updated_at, is_deleted
+                    "SELECT id, workspace_id, agent_cli, agent_session_id, title, status, history_degraded_reason, created_at, updated_at, is_deleted
                      FROM sessions
                      WHERE is_deleted = 0
                      ORDER BY created_at, id",
@@ -108,7 +110,7 @@ impl SessionRepository for SqliteSessionRepository {
                 let mut statement = connection.prepare(
                     "UPDATE sessions SET title = ?2, updated_at = ?3
                      WHERE id = ?1 AND is_deleted = 0
-                     RETURNING id, task_id, agent_cli, agent_session_id, title, status,
+                    RETURNING id, workspace_id, agent_cli, agent_session_id, title, status,
                          history_degraded_reason, created_at, updated_at, is_deleted",
                 )?;
                 let mut rows =
@@ -139,11 +141,12 @@ impl SessionRepository for SqliteSessionRepository {
                     "UPDATE sessions SET status = ?2, updated_at = ?3
                      WHERE id = ?1 AND is_deleted = 0
                        AND EXISTS (
-                           SELECT 1 FROM tasks t
-                           JOIN projects p ON p.id = t.project_id AND p.is_deleted = 0
-                           WHERE t.id = sessions.task_id AND t.is_deleted = 0
+                           SELECT 1 FROM workspaces w
+                           JOIN projects p ON p.id = w.project_id AND p.is_deleted = 0
+                           WHERE w.id = sessions.workspace_id
+                             AND w.is_deleted = 0 AND w.lifecycle = 'active'
                        )
-                     RETURNING id, task_id, agent_cli, agent_session_id, title, status,
+                     RETURNING id, workspace_id, agent_cli, agent_session_id, title, status,
                          history_degraded_reason, created_at, updated_at, is_deleted",
                 )?;
                 let mut rows =
@@ -171,7 +174,7 @@ impl SessionRepository for SqliteSessionRepository {
                 let mut statement = connection.prepare(
                     "UPDATE sessions SET agent_cli = ?2, agent_session_id = ?3, updated_at = ?4
                      WHERE id = ?1 AND is_deleted = 0
-                     RETURNING id, task_id, agent_cli, agent_session_id, title, status,
+                    RETURNING id, workspace_id, agent_cli, agent_session_id, title, status,
                          history_degraded_reason, created_at, updated_at, is_deleted",
                 )?;
                 let mut rows = statement.query(params![
@@ -202,7 +205,7 @@ impl SessionRepository for SqliteSessionRepository {
                 let mut statement = connection.prepare(
                     "UPDATE sessions SET history_degraded_reason = ?2, updated_at = ?3
                      WHERE id = ?1 AND is_deleted = 0
-                     RETURNING id, task_id, agent_cli, agent_session_id, title, status,
+                    RETURNING id, workspace_id, agent_cli, agent_session_id, title, status,
                          history_degraded_reason, created_at, updated_at, is_deleted",
                 )?;
                 let mut rows = statement.query(params![
@@ -257,7 +260,7 @@ fn map_session_row(row: &Row<'_>) -> Result<Session, crate::DatabaseError> {
 
     Ok(Session::new(
         SessionId::new(row.get::<_, String>("id")?),
-        TaskId::new(row.get::<_, String>("task_id")?),
+        WorkspaceId::new(row.get::<_, String>("workspace_id")?),
         agent_ref,
         row.get::<_, String>("agent_session_id")?,
         status,

@@ -31,9 +31,6 @@ import {
   useRestartWorkflowRun,
   useStartWorkflowRun,
 } from "../../state/hooks/use-workflow-runs";
-import { useProjects } from "../../state/hooks/use-projects";
-import { useTaskDiff } from "../../state/hooks/use-task-diff";
-import { parseTaskDiffPatch } from "../diff/task-diff-data";
 import {
   resolveCompletionAdvanceNodeId,
   resolveStageFocusNodeId,
@@ -73,22 +70,12 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     (s) => s.selectWorkflowRun,
   );
   const projectId = useWorkspaceSelectionStore((s) => s.selection.projectId);
-  const projectsQuery = useProjects();
-  const project = projectsQuery.data?.find((item) => item.id === projectId);
   const runQuery = useRealWorkflowRun(runId);
   const run = runQuery.data?.run ?? null;
-  const runTaskId = runQuery.data?.taskId ?? null;
-  // Total files the run-task worktree changed, shown on the terminal result act.
-  // Shares the task-diff cache with the Changes panel once it has been opened.
-  const taskDiffQuery = useTaskDiff(
-    runTaskId ?? "",
-    "branch",
-    runTaskId != null,
-  );
-  const changedFileCount =
-    taskDiffQuery.data !== undefined
-      ? parseTaskDiffPatch(taskDiffQuery.data.patch).length
-      : 0;
+  const workspaceId = runQuery.data?.workspaceId ?? null;
+  // WorkflowRun is Workspace-owned and no longer creates an implicit Task
+  // projection, so its generic project review surface has no task diff count.
+  const changedFileCount = 0;
   const startRun = useStartWorkflowRun();
   const cancelRun = useCancelWorkflowRun();
   const rerun = useRestartWorkflowRun();
@@ -367,20 +354,14 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const actionBusy =
     startRun.isPending || cancelRun.isPending || rerun.isPending;
 
-  // Run-task worktree Diff / Files — same surface as chat Task Changes.
-  // Memoized for the same reason as in workspace-view: the review layout keys
-  // its one-shot restore off this object's identity.
-  const reviewContext = useMemo<WorkspaceReviewContext>(
-    () =>
-      runTaskId !== null && projectId !== null && project !== undefined
-        ? {
-            kind: "task",
-            taskId: runTaskId,
-            projectId,
-          }
-        : { kind: "none" },
-    [project, projectId, runTaskId],
-  );
+  // WorkflowRun has no implicit worktree Task. Its detail already carries the
+  // project projection needed to scope the generic review surface.
+  const reviewContext = useMemo<WorkspaceReviewContext>(() => {
+    const runProjectId = runQuery.data?.projectId ?? projectId;
+    return runProjectId !== null
+      ? { kind: "project", projectId: runProjectId }
+      : { kind: "none" };
+  }, [projectId, runQuery.data?.projectId]);
 
   // If the run finishes while the stop dialog is open, dismiss it so Confirm
   // (which preventDefault + early-returns when !canStop) cannot leave a stuck modal.
@@ -605,11 +586,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             </Button>
           )}
         </div>
-        {/* Prefer the run-task worktree; project root is the fallback before taskId loads. */}
-        <LocationActionsButton
-          taskId={runTaskId}
-          projectPath={project?.rootPath}
-        />
+        <LocationActionsButton workspaceId={workspaceId} />
         <WindowControls />
       </header>
 

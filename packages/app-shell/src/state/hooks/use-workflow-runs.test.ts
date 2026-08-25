@@ -30,7 +30,7 @@ function seededState(): MockClientState {
       snapshotId: "snap-1",
       name: "审查流程 1",
       status: "pending",
-      taskId: "t1",
+      workspaceId: "workspace-t1",
       createdAt: 1n,
       updatedAt: 1n,
     },
@@ -39,10 +39,8 @@ function seededState(): MockClientState {
     {
       id: "t1",
       projectId: "p1",
+      workspaceId: "workspace-t1",
       title: "审查流程 1",
-      workspaceMode: "worktree",
-      type: "workflow",
-      workflowRunId: "run-1",
     },
   ];
   return state;
@@ -72,7 +70,10 @@ describe("buildDisplayRun", () => {
   const detail = {
     run: {
       id: "run-1",
+      workspaceId: "workspace-t1",
       workflowId: "workflow-a",
+      snapshotId: "snap-1",
+      name: "审查流程 1",
       status: "pending",
       state: '{"current_nodes":["prompt-1"]}',
       input: null,
@@ -241,9 +242,9 @@ describe("buildDisplayRun", () => {
 });
 
 describe("useRealWorkflowRun", () => {
-  it("returns the display run together with the run-task id", async () => {
+  it("returns the display run together with its workspace id", async () => {
     const state = seededState();
-    state.projects = [{ id: "p1", name: "Demo", rootPath: "/demo" }];
+    state.projects = [{ id: "p1", name: "Demo" }];
     state.workflows = [
       {
         workflow: {
@@ -280,7 +281,7 @@ describe("useRealWorkflowRun", () => {
       client,
     );
     await waitFor(() => expect(result.current.data).toBeDefined());
-    expect(result.current.data?.taskId).toBe("t1");
+    expect(result.current.data?.workspaceId).toBe("workspace-t1");
     expect(result.current.data?.run.id).toBe("run-1");
     expect(result.current.data?.run.name).toBe("审查流程 1");
   });
@@ -299,6 +300,7 @@ describe("persisted run hooks", () => {
       {
         id: "run-1",
         name: "审查流程 1",
+        workspaceId: "workspace-t1",
         projectId: "p1",
         workflowId: "workflow-a",
         status: "pending",
@@ -309,7 +311,7 @@ describe("persisted run hooks", () => {
     ]);
   });
 
-  it("renames a run through its run-task title", async () => {
+  it("renames a run through its workspace-owned name", async () => {
     const state = seededState();
     const client = createMockClient(state);
     const { result } = renderHookWithClient(
@@ -317,9 +319,6 @@ describe("persisted run hooks", () => {
       client,
     );
     await result.current.mutateAsync({ runId: "run-1", name: "审查流程 v2" });
-    expect(state.tasks.find((task) => task.id === "t1")?.title).toBe(
-      "审查流程 v2",
-    );
     expect(state.workflowRuns[0]?.name).toBe("审查流程 v2");
   });
 

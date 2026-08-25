@@ -5,6 +5,7 @@ import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store"
 import { resolveRestoredWorkspaceSelection } from "../resolve-restored-workspace-selection";
 import { usePersistHydrated } from "./use-persist-hydrated";
 import { useWorkflowRunsByProject } from "./use-workflow-runs";
+import { useWorkspaces } from "./use-workspaces";
 
 /**
  * Applies a validated disk selection once the workspace tree has settled.
@@ -33,6 +34,7 @@ export function useRestoreWorkspaceSelection(input: {
   treePending: boolean;
 }): void {
   const { projects, tasks, sessions, treePending } = input;
+  const { data: workspaces = [] } = useWorkspaces();
   const pendingRestore = useWorkspaceSelectionStore((s) => s.pendingRestore);
   const draftsHydrated = usePersistHydrated(useDraftSessionsStore.persist);
   const selectionHydrated = usePersistHydrated(
@@ -82,6 +84,7 @@ export function useRestoreWorkspaceSelection(input: {
       projects,
       tasks,
       sessions,
+      workspaces,
       drafts,
       workflowRuns,
     });
@@ -102,6 +105,7 @@ export function useRestoreWorkspaceSelection(input: {
     sessions,
     tasks,
     treePending,
+    workspaces,
     workflowRuns,
   ]);
 }

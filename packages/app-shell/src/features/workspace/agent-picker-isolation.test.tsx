@@ -26,28 +26,26 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
 import { WorkspaceView } from "./workspace-view";
 
 const USER = { name: "Eric", email: "eric@example.com" };
-const PROJECT: Project = { id: "p1", name: "Ora Desktop", rootPath: "/ora" };
+const PROJECT: Project = { id: "p1", name: "Ora Desktop" };
 const TASK1: Task = {
   id: "t1",
   projectId: "p1",
+  workspaceId: "workspace-t1",
   title: "Task One",
-  workspaceMode: "worktree",
-  type: "default",
-  workflowRunId: null,
 };
 const TASK2: Task = {
   id: "t2",
   projectId: "p1",
+  workspaceId: "workspace-t2",
   title: "Task Two",
-  workspaceMode: "worktree",
-  type: "default",
-  workflowRunId: null,
 };
 
 beforeEach(() => {
   useWorkspaceSelectionStore.getState().clearSelection();
   useDraftSessionsStore.getState().clear();
-  useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  useSettingsStore.setState({
+    settings: { ...DEFAULT_SETTINGS, agentCli: "ora-space.opencode" },
+  });
   usePendingAgentStore.setState({ selections: {} });
 });
 

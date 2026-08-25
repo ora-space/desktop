@@ -11,8 +11,10 @@ use ora_domain::{
 pub(crate) fn map_run(run: WorkflowRun) -> ContractRun {
     ContractRun {
         id: run.id.to_string(),
+        workspace_id: run.workspace_id.to_string(),
         workflow_id: run.workflow_id.to_string(),
         snapshot_id: run.snapshot_id.to_string(),
+        name: run.name,
         status: map_run_status(run.status),
         state: run.state,
         input: run.input,
@@ -62,6 +64,7 @@ pub(crate) fn map_run_summary(summary: WorkflowRunSummary) -> ContractRunSummary
     ContractRunSummary {
         id: summary.id.to_string(),
         name: summary.name,
+        workspace_id: summary.workspace_id.to_string(),
         project_id: summary.project_id.to_string(),
         workflow_id: summary.workflow_id.to_string(),
         status: map_summary_status(summary.status, summary.has_awaiting_node),
@@ -109,15 +112,17 @@ mod tests {
     use ora_contracts::WorkflowRunStatus as ContractRunStatus;
     use ora_domain::{
         AuditFields, ProjectId, WorkflowId, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
-        WorkflowRunSummary, WorkflowSnapshotId,
+        WorkflowRunSummary, WorkflowSnapshotId, WorkspaceId,
     };
     use pretty_assertions::assert_eq;
 
     fn running_run() -> WorkflowRun {
         WorkflowRun::new(
             WorkflowRunId::new("run-1"),
+            WorkspaceId::new("workspace-1"),
             WorkflowId::new("wf-1"),
             WorkflowSnapshotId::new("snap-1"),
+            "run",
             WorkflowRunStatus::Running,
             None,
             None,
@@ -150,6 +155,7 @@ mod tests {
         let summary = WorkflowRunSummary {
             id: WorkflowRunId::new("run-1"),
             name: "run".to_string(),
+            workspace_id: WorkspaceId::new("workspace-1"),
             project_id: ProjectId::new("project-1"),
             workflow_id: WorkflowId::new("wf-1"),
             status: WorkflowRunStatus::Running,

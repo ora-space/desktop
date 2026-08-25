@@ -36,6 +36,7 @@ function desktopPlatform(open = vi.fn()): PlatformAdapter {
     ...createStubPlatform(),
     locationActions: {
       resolveTaskCwd: async () => "C:/repo",
+      resolveWorkspaceCwd: async () => "C:/repo",
       open,
     },
   };

@@ -3,6 +3,7 @@ import type {
   Session,
   Task,
   WorkflowRunSummary,
+  Workspace,
 } from "@ora/contracts";
 import type { SessionDraft } from "./stores/draft-sessions-store";
 import type { WorkspaceSelection } from "./stores/sanitize-workspace-selection";
@@ -13,6 +14,8 @@ export interface ResolveRestoredWorkspaceSelectionInput {
   projects: readonly Project[];
   tasks: readonly Task[];
   sessions: readonly Session[];
+  /** Loaded Workspace rows let direct sessions derive their project without a Task. */
+  workspaces?: readonly Workspace[];
   drafts: readonly SessionDraft[];
   /**
    * Runs for `candidate.projectId` when restoring a workflow run. Pass `null`
@@ -39,22 +42,41 @@ export type ResolvedWorkspaceSelection =
 export function resolveRestoredWorkspaceSelection(
   input: ResolveRestoredWorkspaceSelectionInput,
 ): ResolvedWorkspaceSelection {
-  const { candidate, projects, tasks, sessions, drafts, workflowRuns } = input;
+  const {
+    candidate,
+    projects,
+    tasks,
+    sessions,
+    workspaces = [],
+    drafts,
+    workflowRuns,
+  } = input;
   if (isWorkspaceSelectionEmpty(candidate)) return { kind: "miss" };
 
   if (candidate.sessionId !== null) {
     const session = sessions.find((item) => item.id === candidate.sessionId);
     if (session === undefined) return { kind: "miss" };
-    const task = tasks.find((item) => item.id === session.taskId);
-    if (task === undefined) return { kind: "miss" };
-    if (!projects.some((item) => item.id === task.projectId)) {
+    const workspace = workspaces.find(
+      (item) => item.id === session.workspaceId,
+    );
+    const workspaceTask = tasks.find(
+      (item) => item.workspaceId === session.workspaceId,
+    );
+    if (workspace === undefined && workspaceTask === undefined) {
+      return { kind: "miss" };
+    }
+    const projectId = workspace?.projectId ?? workspaceTask?.projectId;
+    if (
+      projectId === undefined ||
+      !projects.some((item) => item.id === projectId)
+    ) {
       return { kind: "miss" };
     }
     return {
       kind: "ready",
       selection: {
-        projectId: task.projectId,
-        taskId: task.id,
+        projectId,
+        taskId: workspaceTask?.id ?? null,
         sessionId: session.id,
         workflowRunId: null,
         draftId: null,

@@ -134,7 +134,7 @@ export function draftHasContent(draft: SessionDraft): boolean {
   );
 }
 
-/** True when two drafts belong to the same project-root or worktree surface. */
+/** True when two drafts belong to the same main or isolated Workspace surface. */
 export function sameDraftScope(
   draft: SessionDraft,
   scope: DraftScope,

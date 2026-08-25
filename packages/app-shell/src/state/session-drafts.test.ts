@@ -87,7 +87,7 @@ describe("resolveNewChatScope", () => {
     ).toEqual({ projectId: "p-first", taskId: null });
   });
 
-  it("demotes createFocus to project-root when its task is missing", () => {
+  it("demotes createFocus to a project-level draft when its task is missing", () => {
     expect(
       resolveNewChatScope(
         { projectId: "p1", taskId: "gone" },
@@ -95,7 +95,7 @@ describe("resolveNewChatScope", () => {
         "p-first",
         {
           projects: [{ id: "p1" }],
-          tasks: [{ id: "t1", projectId: "p1", workspaceMode: "worktree" }],
+          tasks: [{ id: "t1", projectId: "p1" }],
         },
       ),
     ).toEqual({ projectId: "p1", taskId: null });
@@ -109,32 +109,10 @@ describe("resolveNewChatScope", () => {
         "p-first",
         {
           projects: [{ id: "p1" }],
-          tasks: [{ id: "t1", projectId: "p1", workspaceMode: "worktree" }],
+          tasks: [{ id: "t1", projectId: "p1" }],
         },
       ),
     ).toEqual({ projectId: "p1", taskId: "t1" });
-  });
-
-  it("demotes a project-root task createFocus to a direct draft", () => {
-    // A project-root task id would create a draft the sidebar only renders
-    // under worktree branches, orphaning it. New chat must fall to project-root.
-    expect(
-      resolveNewChatScope(
-        { projectId: "p1", taskId: "t-direct" },
-        emptySelection,
-        "p-first",
-        {
-          projects: [{ id: "p1" }],
-          tasks: [
-            {
-              id: "t-direct",
-              projectId: "p1",
-              workspaceMode: "project_root",
-            },
-          ],
-        },
-      ),
-    ).toEqual({ projectId: "p1", taskId: null });
   });
 
   it("keeps the selection's worktree task when createFocus is absent and the task is in the tree", () => {
@@ -145,35 +123,10 @@ describe("resolveNewChatScope", () => {
         "p-first",
         {
           projects: [{ id: "p1" }],
-          tasks: [{ id: "t1", projectId: "p1", workspaceMode: "worktree" }],
+          tasks: [{ id: "t1", projectId: "p1" }],
         },
       ),
     ).toEqual({ projectId: "p1", taskId: "t1" });
-  });
-
-  it("demotes a project-root task in the selection fallback to a direct draft", () => {
-    expect(
-      resolveNewChatScope(
-        null,
-        {
-          ...emptySelection,
-          projectId: "p1",
-          taskId: "t-direct",
-          sessionId: "s-direct",
-        },
-        "p-first",
-        {
-          projects: [{ id: "p1" }],
-          tasks: [
-            {
-              id: "t-direct",
-              projectId: "p1",
-              workspaceMode: "project_root",
-            },
-          ],
-        },
-      ),
-    ).toEqual({ projectId: "p1", taskId: null });
   });
 
   it("falls back to the first project when the selection's project is gone from the tree", () => {
@@ -189,7 +142,7 @@ describe("resolveNewChatScope", () => {
         "p-first",
         {
           projects: [{ id: "p1" }],
-          tasks: [{ id: "t1", projectId: "p1", workspaceMode: "worktree" }],
+          tasks: [{ id: "t1", projectId: "p1" }],
         },
       ),
     ).toEqual({ projectId: "p-first", taskId: null });

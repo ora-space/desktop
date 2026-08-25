@@ -1,5 +1,5 @@
 use crate::BoxRepositorySource;
-use crate::task::branch::branch_name_for_task;
+use crate::task::branch::branch_name_for_workspace;
 use ora_domain::GitCleanupJob;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -136,16 +136,16 @@ pub enum CleanupJobDisposition {
 /// identity was written by Ora itself, so a mismatch means the row cannot be
 /// trusted as a deletion target.
 pub fn validate_cleanup_identity(job: &GitCleanupJob) -> Result<(), String> {
-    if Uuid::parse_str(job.task_id.as_ref()).is_err() {
+    if Uuid::parse_str(job.workspace_id.as_ref()).is_err() {
         return Err(format!(
-            "task id is not a full UUID: {}",
-            job.task_id.as_ref()
+            "workspace id is not a full UUID: {}",
+            job.workspace_id.as_ref()
         ));
     }
-    let expected_branch = branch_name_for_task(&job.task_id);
+    let expected_branch = branch_name_for_workspace(&job.workspace_id);
     if job.branch_name != expected_branch {
         return Err(format!(
-            "branch name {} does not match the branch derived from the task id ({expected_branch})",
+            "branch name {} does not match the branch derived from the workspace id ({expected_branch})",
             job.branch_name
         ));
     }
@@ -192,10 +192,10 @@ pub fn reduce_cleanup_outcomes(
 
 /// Derives the exact legacy probe path for jobs without a persisted checkout root.
 ///
-/// The probe is only trusted as a full-task-id directory under the currently
+/// The probe is only trusted as a full-workspace-id directory under the currently
 /// configured worktree root; anything else would be ownership guessing.
 pub fn legacy_checkout_probe(configured_worktree_root: &Path, job: &GitCleanupJob) -> PathBuf {
-    configured_worktree_root.join(job.task_id.as_ref())
+    configured_worktree_root.join(job.workspace_id.as_ref())
 }
 
 #[cfg(test)]
@@ -204,14 +204,14 @@ mod tests {
         CleanupJobDisposition, CleanupStage, GitCleanupError, ResourceRemoval, WorktreeRemoval,
         reduce_cleanup_outcomes, validate_cleanup_identity,
     };
-    use ora_domain::{GitCleanupJob, GitCleanupJobId, ProjectId, TaskId};
+    use ora_domain::{GitCleanupJob, GitCleanupJobId, ProjectId, WorkspaceId};
     use pretty_assertions::assert_eq;
 
     fn job(task_id: &str, branch: &str) -> GitCleanupJob {
         GitCleanupJob::pending(
             GitCleanupJobId::new("job-1"),
             ProjectId::new("project-1"),
-            TaskId::new(task_id),
+            WorkspaceId::new(task_id),
             "/repo",
             None,
             branch,
@@ -223,7 +223,7 @@ mod tests {
         GitCleanupError::new(stage, "failed to run git", std::io::Error::other("boom"))
     }
 
-    /// Verifies a well-formed UUID task id with its derived branch passes validation.
+    /// Verifies a well-formed UUID workspace id with its derived branch passes validation.
     #[test]
     fn accepts_matching_identity() {
         let job = job("1c56dee5-4d3f-4f83-bb47-6d9d0dbf5b1a", "ora/1c56dee5");

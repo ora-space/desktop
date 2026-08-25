@@ -133,9 +133,14 @@ impl From<PluginLifecycleError> for BackendError {
                 PublicError::PluginConfigurationDeclarationInvalid(EmptyErrorParams {}),
                 "plugin configuration declaration is invalid",
             ),
+            PluginLifecycleError::NoProcess { .. } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "plugin kind has no process to activate",
+            ),
             PluginLifecycleError::Repository(_)
-            | PluginLifecycleError::RuntimeLaunch { .. }
             | PluginLifecycleError::RuntimeStop { .. }
+            | PluginLifecycleError::PackageRemoval { .. }
             | PluginLifecycleError::UninstallStaging { .. } => (
                 ErrorClassification::Internal,
                 PublicError::InternalError(EmptyErrorParams {}),
@@ -179,6 +184,11 @@ impl From<ApplicationError> for BackendError {
                 ErrorClassification::Conflict,
                 PublicError::SkillNameConflict(EmptyErrorParams {}),
                 "skill name already exists",
+            ),
+            ApplicationError::SkillInUse => (
+                ErrorClassification::Conflict,
+                PublicError::ResourceInUse(EmptyErrorParams {}),
+                "skill is referenced by Workspace desired state",
             ),
             ApplicationError::SkillStorageInconsistent { .. } => (
                 ErrorClassification::Internal,
@@ -435,7 +445,7 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::AgentDefinitionRepository { .. }
             | ApplicationError::ProjectRepository { .. }
             | ApplicationError::TaskRepository { .. }
-            | ApplicationError::TaskWorktreeIdExhausted { .. }
+            | ApplicationError::TaskWorkspaceIdExhausted { .. }
             | ApplicationError::TaskWorktreeRootUnavailable
             | ApplicationError::TaskFilesystem { .. }
             | ApplicationError::TaskWorktreeProvisioner { .. }

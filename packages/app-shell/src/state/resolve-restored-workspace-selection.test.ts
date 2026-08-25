@@ -9,18 +9,16 @@ import type { SessionDraft } from "./stores/draft-sessions-store";
 import { resolveRestoredWorkspaceSelection } from "./resolve-restored-workspace-selection";
 import type { WorkspaceSelection } from "./stores/sanitize-workspace-selection";
 
-const PROJECT: Project = { id: "p1", name: "Ora", rootPath: "/ora" };
+const PROJECT: Project = { id: "p1", name: "Ora" };
 const TASK: Task = {
   id: "t1",
   projectId: "p1",
+  workspaceId: "workspace-t1",
   title: "Refactor",
-  workspaceMode: "worktree",
-  type: "default",
-  workflowRunId: null,
 };
 const SESSION: Session = {
   id: "s1",
-  taskId: "t1",
+  workspaceId: "workspace-t1",
   agentRef: "ora-space.opencode",
   status: "running",
   title: null,
@@ -29,6 +27,7 @@ const SESSION: Session = {
 const WORKFLOW_RUN: WorkflowRunSummary = {
   id: "run-1",
   name: "Deploy",
+  workspaceId: "workspace-p1",
   projectId: "p1",
   workflowId: "wf-1",
   status: "succeeded",

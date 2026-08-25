@@ -58,6 +58,6 @@ The app shell uses one `localizeContractError` path and matching English and Chi
 
 ## Excluded operations
 
-The generated SDK exposes only supported public operations. Because task worktrees are backend-owned internal state, there are no `/api/worktrees` endpoints in the manifest and no standalone worktree client methods — a task's filesystem context is selected by `workspaceMode` at creation instead. See [Task Worktrees](task-worktrees.md).
+The generated SDK exposes only supported public operations. Because task worktrees are backend-owned internal state, there are no `/api/worktrees` endpoints in the manifest and no standalone worktree client methods. A task exposes its Workspace identity while the worktree remains an internal one-to-one extension. See [Task Worktrees](task-worktrees.md).
 
 See [Application and Contracts Boundary](application-contracts-boundary.md) and [Desktop Runtime](desktop-runtime.md).

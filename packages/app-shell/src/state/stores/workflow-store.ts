@@ -29,7 +29,7 @@ export const OPTIONAL_WORKFLOW_NODES: ReadonlySet<WorkflowNodeId> = new Set([
 
 /**
  * Light reminders prepended to the outgoing prompt (as hidden `agentText`) so the
- * agent runs the matching OpenSpec skill from this project's `.opencode/skills`.
+ * agent runs the matching OpenSpec skill from the active Workspace's `.opencode/skills`.
  * Intentionally minimal — the skill itself owns change naming, file paths, and the
  * detailed per-artifact instructions, so the frontend only points at which skill.
  */
@@ -54,14 +54,14 @@ const REMINDER_BODY: Record<WorkflowNodeId, string> = {
 /**
  * Builds the Chinese reminder that points the agent at the OpenSpec skill by its
  * absolute path. `skillsDir` is the project's `.opencode/skills` — passed in
- * because the agent's worktree cwd may not contain it, so an absolute project-root
- * path keeps the skill findable.
+ * because the agent's isolated Workspace cwd may not contain it, so a resolved
+ * Workspace path keeps the skill findable.
  *
- * That absolute path is the one project-root anchor we hand the agent, so we must
+ * That absolute path is the one Workspace anchor we hand the agent, so we must
  * fence it explicitly: it is for *reading* the skill only. All OpenSpec artifacts
  * (proposal / specs / design / tasks / changes) and the code implementation stay
  * in the agent's current working directory (its worktree) — otherwise the agent
- * follows the absolute path and writes them into the project root's `openspec/`.
+ * follows the absolute path and writes them into the main Workspace.
  */
 export function buildWorkflowReminder(
   nodeId: WorkflowNodeId,

@@ -7,7 +7,7 @@ use ora_contracts::{
     ListProjectsRequest, ListProjectsResponse, Project as ContractProject, UpdateProjectRequest,
     UpdateProjectResponse,
 };
-use ora_domain::{AuditFields, Project, ProjectId};
+use ora_domain::{AuditFields, Project, ProjectId, WorkspaceLocation};
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use std::cell::RefCell;
@@ -26,7 +26,7 @@ fn creates_projects_with_generated_identity_and_clock_values() {
 
         let response = match handler.handle(CreateProjectRequest {
             name: "Ora".to_string(),
-            root_path: "/workspace/ora".to_string(),
+            main_workspace_path: "/workspace/ora".to_string(),
         }) {
             Ok(response) => response,
             Err(error) => panic!("create handler failed: {error}"),
@@ -38,7 +38,6 @@ fn creates_projects_with_generated_identity_and_clock_values() {
                 project: ContractProject {
                     id: "project-1".to_string(),
                     name: "Ora".to_string(),
-                    root_path: "/workspace/ora".to_string(),
                 },
             }
         );
@@ -47,7 +46,6 @@ fn creates_projects_with_generated_identity_and_clock_values() {
             vec![Project::new(
                 ProjectId::new("project-1"),
                 "Ora",
-                "/workspace/ora",
                 AuditFields::new(1_700_000_000_000, 1_700_000_000_000, false),
             )]
         );
@@ -61,7 +59,6 @@ fn gets_projects_by_identifier() {
         let repository = Rc::new(FakeProjectRepository::with_projects(vec![Project::new(
             ProjectId::new("project-1"),
             "Ora",
-            "/workspace/ora",
             AuditFields::new(1, 2, false),
         )]));
         let handler = GetProjectHandler::new(repository);
@@ -79,7 +76,6 @@ fn gets_projects_by_identifier() {
                 project: ContractProject {
                     id: "project-1".to_string(),
                     name: "Ora".to_string(),
-                    root_path: "/workspace/ora".to_string(),
                 },
             }
         );
@@ -94,13 +90,11 @@ fn lists_visible_projects() {
             Project::new(
                 ProjectId::new("project-1"),
                 "Ora",
-                "/workspace/ora",
                 AuditFields::new(1, 2, false),
             ),
             Project::new(
                 ProjectId::new("project-2"),
                 "Ora Docs",
-                "/workspace/ora-docs",
                 AuditFields::new(3, 4, false),
             ),
         ]));
@@ -118,12 +112,10 @@ fn lists_visible_projects() {
                     ContractProject {
                         id: "project-1".to_string(),
                         name: "Ora".to_string(),
-                        root_path: "/workspace/ora".to_string(),
                     },
                     ContractProject {
                         id: "project-2".to_string(),
                         name: "Ora Docs".to_string(),
-                        root_path: "/workspace/ora-docs".to_string(),
                     },
                 ],
             }
@@ -138,7 +130,6 @@ fn updates_projects_with_refreshed_timestamps() {
         let repository = Rc::new(FakeProjectRepository::with_projects(vec![Project::new(
             ProjectId::new("project-1"),
             "Ora",
-            "/workspace/ora",
             AuditFields::new(10, 20, false),
         )]));
         let handler = UpdateProjectHandler::new(repository.clone(), FixedClock::new(30));
@@ -157,7 +148,6 @@ fn updates_projects_with_refreshed_timestamps() {
                 project: ContractProject {
                     id: "project-1".to_string(),
                     name: "Ora Updated".to_string(),
-                    root_path: "/workspace/ora".to_string(),
                 },
             }
         );
@@ -166,7 +156,6 @@ fn updates_projects_with_refreshed_timestamps() {
             vec![Project::new(
                 ProjectId::new("project-1"),
                 "Ora Updated",
-                "/workspace/ora",
                 AuditFields::new(10, 30, false),
             )]
         );
@@ -250,7 +239,11 @@ impl FakeProjectRepository {
 }
 
 impl ProjectRepository for Rc<FakeProjectRepository> {
-    fn create_project(&self, project: Project) -> Result<Project, RepositoryError> {
+    fn create_project(
+        &self,
+        project: Project,
+        _main_workspace_location: WorkspaceLocation,
+    ) -> Result<Project, RepositoryError> {
         self.take_error()?;
 
         self.projects.borrow_mut().push(project.clone());

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,10 +46,10 @@ const GRAPH = JSON.stringify({
   description: "",
 });
 
-/** Seeds project + workflow + run-task so the workspace can load Changes and location actions. */
-function seedRunWithTask() {
+/** Seeds project + workflow + Workspace-owned run so the workspace can load its actions. */
+function seedRun() {
   const state = createMockClientState();
-  state.projects = [{ id: "p1", name: "Demo", rootPath: "/demo" }];
+  state.projects = [{ id: "p1", name: "Demo" }];
   state.workflows = [
     {
       workflow: {
@@ -88,19 +88,9 @@ function seedRunWithTask() {
       snapshotId: "snap-1",
       name: "审查流程 1",
       status: "pending",
-      taskId: "task-run-1",
+      workspaceId: "workspace-run-1",
       createdAt: 1n,
       updatedAt: 1n,
-    },
-  ];
-  state.tasks = [
-    {
-      id: "task-run-1",
-      projectId: "p1",
-      title: "审查流程 1",
-      workspaceMode: "worktree",
-      type: "workflow",
-      workflowRunId: "run-1",
     },
   ];
   return state;
@@ -120,8 +110,8 @@ describe("WorkflowRunWorkspace", () => {
     useLocationActionsStore.setState({ defaultTarget: "explorer" });
   });
 
-  it("exposes the run-task Changes panel once the worktree task id is loaded", async () => {
-    const state = seedRunWithTask();
+  it("exposes the run Files panel for the Workspace-owned review surface", async () => {
+    const state = seedRun();
     const client = createMockClient(state);
     const runtime = createMemoryWorkflowRuntime();
     const Wrapper = createHookWrapper(
@@ -143,20 +133,24 @@ describe("WorkflowRunWorkspace", () => {
     await waitFor(() => {
       expect(screen.getByText("审查流程 1")).toBeInTheDocument();
     });
-    expect(
-      screen.getByRole("button", { name: /变更|Changes/ }),
-    ).toBeInTheDocument();
+    const reviewControls = screen.getByRole("group", {
+      name: /工作区审查面板|Workspace review panel/,
+    });
+    const filesButton = within(reviewControls).getByRole("button", {
+      name: /^文件$|^Files$/,
+    });
+    expect(filesButton).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /变更|Changes/ }));
+    await user.click(filesButton);
     expect(
-      screen.getByRole("region", { name: "Task diff" }),
+      screen.getByRole("region", { name: "Files panel" }),
     ).toBeInTheDocument();
 
     runtime.dispose();
   });
 
   it("exposes Desktop open-location actions against the run-task worktree", async () => {
-    const state = seedRunWithTask();
+    const state = seedRun();
     const client = createMockClient(state);
     const runtime = createMemoryWorkflowRuntime();
     const Wrapper = createHookWrapper(
@@ -166,12 +160,13 @@ describe("WorkflowRunWorkspace", () => {
       runtime,
     );
     const user = userEvent.setup();
-    const resolveTaskCwd = vi.fn(async () => "/demo/.ora/task-run-1");
+    const resolveWorkspaceCwd = vi.fn(async () => "/demo");
     const open = vi.fn(async () => undefined);
     const platform = {
       ...createStubPlatform(),
       locationActions: {
-        resolveTaskCwd,
+        resolveTaskCwd: async () => "",
+        resolveWorkspaceCwd,
         open,
       },
     };
@@ -199,15 +194,15 @@ describe("WorkflowRunWorkspace", () => {
     );
 
     await waitFor(() => {
-      expect(resolveTaskCwd).toHaveBeenCalledWith("task-run-1");
+      expect(resolveWorkspaceCwd).toHaveBeenCalledWith("workspace-run-1");
     });
-    expect(open).toHaveBeenCalledWith("explorer", "/demo/.ora/task-run-1");
+    expect(open).toHaveBeenCalledWith("explorer", "/demo");
 
     runtime.dispose();
   });
 
   it("keeps the workspace project selected when restarting a run", async () => {
-    const state = seedRunWithTask();
+    const state = seedRun();
     // "Run again" is only offered on terminal runs.
     state.workflowRuns[0].status = "cancelled";
     const client = createMockClient(state);

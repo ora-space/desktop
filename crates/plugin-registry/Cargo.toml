@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 gitlancer = { workspace = true }
+ora-domain = { workspace = true }
 ora-logging = { workspace = true }
 ora-plugin-manifest = { workspace = true }
 ora-utils = { workspace = true }

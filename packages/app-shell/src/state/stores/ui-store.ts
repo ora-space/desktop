@@ -1,13 +1,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Session, Task } from "@ora/contracts";
+import type { Session } from "@ora/contracts";
 import { createDebouncedJSONStorage } from "./debounced-json-storage";
 
 /** Shape of the create dialog currently driven from the workspace tree. */
 export type DialogState =
   | { kind: "project" }
   | { kind: "task"; projectId: string }
-  | { kind: "session"; taskId: string; entity?: Session }
+  | { kind: "session"; workspaceId: string; entity?: Session }
   | {
       kind: "deployWorkflow";
       projectId: string | null;
@@ -22,7 +22,6 @@ export type DeleteTarget =
       kind: "task";
       id: string;
       name: string;
-      workspaceMode: Task["workspaceMode"];
       sessionIds: string[];
     }
   | { kind: "session"; id: string; name: string }

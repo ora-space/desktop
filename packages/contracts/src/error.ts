@@ -67,8 +67,8 @@ export type ContractError =
     | { "code": "permission_option_invalid"; "params": EmptyErrorParams }
     | { "code": "prompt_empty"; "params": EmptyErrorParams }
     | { "code": "prompt_too_large"; "params": EmptyErrorParams }
+    | { "code": "workspace_unavailable"; "params": EmptyErrorParams }
     | { "code": "task_worktree_unavailable"; "params": EmptyErrorParams }
-    | { "code": "task_project_root_unavailable"; "params": EmptyErrorParams }
     | { "code": "file_system_path_not_found"; "params": EmptyErrorParams }
     | { "code": "spec_document_not_found"; "params": EmptyErrorParams }
     | { "code": "worktree_root_not_absolute"; "params": EmptyErrorParams }
@@ -235,8 +235,8 @@ export type PublicError =
   | { "code": "permission_option_invalid"; "params": EmptyErrorParams }
   | { "code": "prompt_empty"; "params": EmptyErrorParams }
   | { "code": "prompt_too_large"; "params": EmptyErrorParams }
+  | { "code": "workspace_unavailable"; "params": EmptyErrorParams }
   | { "code": "task_worktree_unavailable"; "params": EmptyErrorParams }
-  | { "code": "task_project_root_unavailable"; "params": EmptyErrorParams }
   | { "code": "file_system_path_not_found"; "params": EmptyErrorParams }
   | { "code": "spec_document_not_found"; "params": EmptyErrorParams }
   | { "code": "worktree_root_not_absolute"; "params": EmptyErrorParams }

@@ -126,7 +126,7 @@ pub(crate) fn parse_strict_json(source: &[u8]) -> Result<Value, CompileDeclarati
     let value = NoDuplicateValue
         .deserialize(&mut deserializer)
         .map_err(|error| {
-            if error.to_string().contains(DUPLICATE_KEY_MARKER) {
+            if error.to_string().starts_with(DUPLICATE_KEY_MARKER) {
                 CompileDeclarationError::DuplicateKey
             } else {
                 CompileDeclarationError::InvalidJson(error.to_string())

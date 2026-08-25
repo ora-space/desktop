@@ -270,15 +270,13 @@ function BranchTab() {
   const setDialog = useUiStore((s) => s.setDialog);
 
   const projectId = selection.projectId;
-  const projectTasks = tasks.filter(
-    (task) => task.projectId === projectId && task.workspaceMode === "worktree",
-  );
+  const projectTasks = tasks.filter((task) => task.projectId === projectId);
   const selectedTask = tasks.find((task) => task.id === selection.taskId);
 
   // Direct chat is the default project context, so repeating it between the
   // project and environment adds no information. Worktrees still show their
   // branch control because that context is meaningful and switchable.
-  if (selectedTask?.workspaceMode !== "worktree") {
+  if (selectedTask === undefined) {
     return null;
   }
 

@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 interface ChatViewProps {
   taskId?: string;
   projectId?: string;
+  workspaceId?: string;
   turns: ChatTurn[];
   /** Model switches to draw between the turns they happened after. */
   modelChanges?: ChatModelChange[];
@@ -31,7 +32,7 @@ interface ChatViewProps {
   error: string | null;
   pendingPermissions?: SessionPermissionRequest[];
   disabled?: boolean;
-  /** Keeps the current model visible while preventing model changes on this surface. */
+  /** Overrides composer disablement for the agent/model picker. */
   modelSelectorDisabled?: boolean;
   /** Session whose model configuration the selector should display. */
   modelSelectorSessionId?: string;
@@ -85,6 +86,7 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 export function ChatView({
   taskId,
   projectId,
+  workspaceId,
   turns,
   modelChanges,
   userName,
@@ -94,7 +96,7 @@ export function ChatView({
   error,
   pendingPermissions = [],
   disabled = false,
-  modelSelectorDisabled = false,
+  modelSelectorDisabled = disabled,
   modelSelectorSessionId,
   composerVisible = true,
   onSend,
@@ -177,13 +179,14 @@ export function ChatView({
         <HistoryEmpty />
       ) : (
         <MessageList
-          key={taskId ?? projectId ?? "draft"}
+          key={workspaceId ?? taskId ?? projectId ?? "draft"}
           turns={turns}
           modelChanges={modelChanges}
           userName={userName}
           isResponding={isResponding}
           taskId={taskId}
           projectId={projectId}
+          workspaceId={workspaceId}
           conversationNavigation={conversationNavigation}
         />
       )}

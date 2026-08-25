@@ -13,6 +13,8 @@ pub enum PluginDiscoveryIssueKind {
     ManifestUnreadable,
     InvalidToml,
     InvalidManifest,
+    /// Two package directories declare the same `<namespace>/<name>`; only the first in path
+    /// order is kept.
     DuplicatePluginId,
     UnusableLogo,
 }

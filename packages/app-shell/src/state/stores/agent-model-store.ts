@@ -10,6 +10,8 @@ interface AgentModelState {
     agentCli: KnownAgentCli,
     configOptions: acp.SessionConfigOption[],
   ) => void;
+  /** Drops a CLI's display cache before its plugin lifecycle is restarted. */
+  forget: (agentCli: string) => void;
 }
 
 /**
@@ -44,4 +46,11 @@ export const useAgentModelStore = create<AgentModelState>((set) => ({
         ? state
         : { known: { ...state.known, [agentCli]: configOptions } },
     ),
+  forget: (agentCli) =>
+    set((state) => {
+      if (!(agentCli in state.known)) return state;
+      const known = { ...state.known };
+      delete known[agentCli as KnownAgentCli];
+      return { known };
+    }),
 }));

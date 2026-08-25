@@ -48,7 +48,13 @@ App-shell wrapper around `@ora/editor` for prompt boxes.
   no neon glow).
 - Sent user messages stay `documentPlainText` in the store and render read-only
   via chat `MarkdownDocument` (`density="compact"`). Compact mode expands
-  TipTap single newlines outside fences and maps `==highlight==` to `<mark>`.
+  TipTap single newlines outside fences, maps `==highlight==` to `<mark>`, and
+  reads quote fences back into chips through `parseComposerFileQuote` so a sent
+  quote keeps the composer's compact look instead of unfolding into its source.
+  Both surfaces render the chip from `FileRefChipContent` against one unscoped
+  stylesheet (`features/file-ref-chip.css`), so the prompt box and the message
+  bubble cannot drift apart; the editor scope only adds editing behaviour
+  (drag, node selection, `user-select`).
   Future edit remounts `ComposerEditor` on that same string; history rows do
   not keep a TipTap instance.
 

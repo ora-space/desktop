@@ -1,8 +1,8 @@
 use crate::{
     AgentCli, AgentDefinition, AgentDefinitionId, AgentRef, AuditFields, BACKUP_DIR_NAME,
     DomainModelError, HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId,
-    STAGING_DIR_NAME, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId, TaskType,
-    Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId,
+    STAGING_DIR_NAME, Session, SessionId, SessionStatus, Skill, SkillId, Task, TaskId, WorkspaceId,
+    Worktree, WorktreeActivity, WorktreeBaseline,
 };
 use pretty_assertions::assert_eq;
 
@@ -10,17 +10,10 @@ use pretty_assertions::assert_eq;
 #[test]
 fn constructs_schema_backed_entities() {
     let audit_fields = AuditFields::new(1_700_000_000_000, 1_700_000_000_500, false);
-    let project = Project::new(
-        ProjectId::new("project-1"),
-        "Ora",
-        "/workspace/ora",
-        audit_fields.clone(),
-    );
+    let project = Project::new(ProjectId::new("project-1"), "Ora", audit_fields.clone());
     let worktree = Worktree::new(
-        WorktreeId::new("worktree-1"),
-        TaskId::new("task-1"),
+        WorkspaceId::new("workspace-1"),
         Some("feature/domain-models".to_string()),
-        Some("/worktrees/task-1".to_string()),
         WorktreeBaseline::recorded("base-commit").unwrap(),
         WorktreeActivity::Active,
         audit_fields.clone(),
@@ -28,13 +21,13 @@ fn constructs_schema_backed_entities() {
     let task = Task::new(
         TaskId::new("task-1"),
         project.id.clone(),
+        WorkspaceId::new("workspace-1"),
         "Implement domain models",
-        Some(worktree.id.clone()),
         audit_fields.clone(),
     );
     let session = Session::new(
         SessionId::new("session-1"),
-        task.id.clone(),
+        WorkspaceId::new("workspace-1"),
         AgentCli::Nga.agent_ref(),
         "agent-session-1",
         SessionStatus::Running,
@@ -63,17 +56,17 @@ fn constructs_schema_backed_entities() {
         Project {
             id: ProjectId::new("project-1"),
             name: "Ora".to_string(),
-            root_path: "/workspace/ora".to_string(),
+            repository_kind: "git".to_string(),
+            repository_url: None,
+            default_branch: None,
             audit_fields: audit_fields.clone(),
         }
     );
     assert_eq!(
         worktree,
         Worktree {
-            id: WorktreeId::new("worktree-1"),
-            task_id: TaskId::new("task-1"),
+            workspace_id: WorkspaceId::new("workspace-1"),
             branch_name: Some("feature/domain-models".to_string()),
-            checkout_root: Some("/worktrees/task-1".to_string()),
             baseline: WorktreeBaseline::recorded("base-commit").unwrap(),
             activity: WorktreeActivity::Active,
             audit_fields: audit_fields.clone(),
@@ -84,10 +77,8 @@ fn constructs_schema_backed_entities() {
         Task {
             id: TaskId::new("task-1"),
             project_id: ProjectId::new("project-1"),
+            workspace_id: WorkspaceId::new("workspace-1"),
             title: "Implement domain models".to_string(),
-            task_type: TaskType::Default,
-            workflow_run_id: None,
-            worktree_id: Some(WorktreeId::new("worktree-1")),
             audit_fields: audit_fields.clone(),
         }
     );
@@ -95,7 +86,7 @@ fn constructs_schema_backed_entities() {
         session,
         Session {
             id: SessionId::new("session-1"),
-            task_id: TaskId::new("task-1"),
+            workspace_id: WorkspaceId::new("workspace-1"),
             agent_ref: AgentCli::Nga.agent_ref(),
             agent_session_id: "agent-session-1".to_string(),
             title: None,

@@ -1,5 +1,7 @@
 use super::PluginLifecycleError;
+use crate::PluginDataDirectories;
 use ora_contracts::PluginDataDisposition;
+use ora_domain::PluginId;
 use ora_logging::ora_warn;
 use ora_plugin_manager::InstalledPlugin as DiscoveredPlugin;
 use std::path::{Path, PathBuf};
@@ -185,7 +187,14 @@ where
     };
     let staged_installation = staging_root.join("installation");
     if let Err(source) = file_system.rename(package_name_root, &staged_installation) {
-        let _ = file_system.remove_dir_all(&staging_root);
+        if let Err(cleanup_error) = file_system.remove_dir_all(&staging_root) {
+            ora_warn!(
+                staging_root = %staging_root.display(),
+                %source,
+                %cleanup_error,
+                "could not stage plugin installation and staging directory cleanup also failed"
+            );
+        }
         return Err(PluginLifecycleError::UninstallStaging {
             path: package_name_root.to_path_buf(),
             source,
@@ -196,7 +205,7 @@ where
         .push((package_name_root.to_path_buf(), staged_installation));
 
     if matches!(data_disposition, PluginDataDisposition::Delete) {
-        let data_root = plugin_data_root(data_directory, &plugin.id)?;
+        let data_root = plugin_data_root(data_directory, &plugin.id);
         if file_system.exists(&data_root) {
             let staged_data = staging_root.join("data");
             if let Err(source) = file_system.rename(&data_root, &staged_data) {
@@ -220,21 +229,9 @@ where
     Ok(staged)
 }
 
-/// Resolves the host-owned data directory for a namespaced discovered plugin identifier.
-pub(crate) fn plugin_data_root(
-    data_directory: &Path,
-    plugin_id: &str,
-) -> Result<PathBuf, PluginLifecycleError> {
-    let Some((namespace, name)) = plugin_id.split_once('/') else {
-        return Err(PluginLifecycleError::UninstallStaging {
-            path: data_directory.to_path_buf(),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "plugin identifier is not namespaced",
-            ),
-        });
-    };
-    Ok(data_directory.join("data").join(namespace).join(name))
+/// Resolves the host-owned data directory for one plugin identity.
+pub(crate) fn plugin_data_root(data_directory: &Path, plugin_id: &PluginId) -> PathBuf {
+    PluginDataDirectories::new(data_directory).path_for(plugin_id)
 }
 
 #[cfg(test)]
@@ -303,6 +300,7 @@ mod tests {
         .expect("write manifest");
         let data_root = temporary
             .path()
+            .join("plugins")
             .join("data")
             .join("official")
             .join("example");

@@ -18,7 +18,7 @@ export function isAbsoluteWorkspacePath(path: string): boolean {
 
 /**
  * Bidirectional suffix match used by Changes requests and chat-link classification.
- * Comparison is case-insensitive so Windows worktrees and project-root checkouts agree.
+ * Comparison is case-insensitive so Windows worktrees and main Workspace checkouts agree.
  */
 export function pathsMatchForWorkspace(left: string, right: string): boolean {
   const a = normalizeDiffPath(left).toLowerCase();

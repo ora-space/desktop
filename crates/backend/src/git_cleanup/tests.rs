@@ -9,7 +9,7 @@ use ora_db::{
     SqliteWorktreeProvisioningLeaseRepository, default_migration_catalog,
 };
 use ora_domain::{
-    GitCleanupJob, GitCleanupJobId, GitCleanupJobState, ProjectId, TaskId,
+    GitCleanupJob, GitCleanupJobId, GitCleanupJobState, ProjectId, WorkspaceId,
     WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
 };
 use ora_logging::{with_recorded_trace_logging, with_trace_logging};
@@ -137,20 +137,20 @@ fn worker(pool: &RepositoryPool, cleaner: ScriptedCleaner) -> GitCleanupWorker<S
     )
 }
 
-/// Derives the branch matching one full task-id constant.
-fn branch_for(task_id: &str) -> String {
-    format!("ora/{}", &task_id[..8])
+/// Derives the branch matching one full workspace-id constant.
+fn branch_for(workspace_id: &str) -> String {
+    format!("ora/{}", &workspace_id[..8])
 }
 
 /// Seeds one immediately-due pending job with a valid identity.
-fn seed_job(pool: &RepositoryPool, task_id: &str, attempts: i64) -> GitCleanupJob {
+fn seed_job(pool: &RepositoryPool, workspace_id: &str, attempts: i64) -> GitCleanupJob {
     let mut job = GitCleanupJob::pending(
-        GitCleanupJobId::new(format!("job-{task_id}")),
+        GitCleanupJobId::new(format!("job-{workspace_id}")),
         ProjectId::new("project-1"),
-        TaskId::new(task_id),
+        WorkspaceId::new(workspace_id),
         "/repos/project-1",
         None,
-        branch_for(task_id),
+        branch_for(workspace_id),
         /*now*/ 0,
     );
     job.attempts = attempts;
@@ -160,13 +160,13 @@ fn seed_job(pool: &RepositoryPool, task_id: &str, attempts: i64) -> GitCleanupJo
     job
 }
 
-/// Returns every job keyed by task id for whole-state assertions.
-fn jobs_by_task(pool: &RepositoryPool) -> HashMap<String, GitCleanupJob> {
+/// Returns every job keyed by workspace id for whole-state assertions.
+fn jobs_by_workspace(pool: &RepositoryPool) -> HashMap<String, GitCleanupJob> {
     SqliteGitCleanupJobRepository::new(pool.clone())
         .list_jobs()
         .expect("list jobs")
         .into_iter()
-        .map(|job| (job.task_id.to_string(), job))
+        .map(|job| (job.workspace_id.to_string(), job))
         .collect()
 }
 
@@ -190,7 +190,7 @@ fn completes_jobs_for_removed_and_already_absent_resources() {
 
     with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
-    let jobs = jobs_by_task(&pool);
+    let jobs = jobs_by_workspace(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::Completed);
     assert_eq!(jobs[TASK_B].state, GitCleanupJobState::Completed);
     let mut branches = cleaner.invoked_branches();
@@ -214,7 +214,7 @@ fn sibling_jobs_continue_after_a_cleaner_panic() {
 
     with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
-    let jobs = jobs_by_task(&pool);
+    let jobs = jobs_by_workspace(&pool);
     // Both siblings of the panicking job completed.
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::Completed);
     assert_eq!(jobs[TASK_C].state, GitCleanupJobState::Completed);
@@ -249,7 +249,7 @@ fn branch_stage_runs_after_worktree_failure() {
     with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     assert_eq!(cleaner.invoked_branches(), vec![branch_for(TASK_A)]);
-    let jobs = jobs_by_task(&pool);
+    let jobs = jobs_by_workspace(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::Pending);
     assert_eq!(jobs[TASK_A].attempts, 1);
 }
@@ -264,7 +264,7 @@ fn exhausted_retries_park_as_manual_attention() {
 
     with_trace_logging(|| worker(&pool, cleaner).run_pass());
 
-    let jobs = jobs_by_task(&pool);
+    let jobs = jobs_by_workspace(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::ManualAttention);
 }
 
@@ -282,7 +282,7 @@ fn ownership_loss_parks_without_removal() {
 
     with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
-    let jobs = jobs_by_task(&pool);
+    let jobs = jobs_by_workspace(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::ManualAttention);
     // The independent branch stage still executed.
     assert_eq!(cleaner.invoked_branches(), vec![branch_for(TASK_A)]);
@@ -295,7 +295,7 @@ fn identity_violation_parks_without_touching_git() {
     let job = GitCleanupJob::pending(
         GitCleanupJobId::new("job-bad"),
         ProjectId::new("project-1"),
-        TaskId::new(TASK_A),
+        WorkspaceId::new(TASK_A),
         "/repos/project-1",
         None,
         // Mismatched branch: does not equal ora/<task prefix>.
@@ -309,7 +309,7 @@ fn identity_violation_parks_without_touching_git() {
 
     with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
-    let jobs = jobs_by_task(&pool);
+    let jobs = jobs_by_workspace(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::ManualAttention);
     assert!(cleaner.invoked_worktrees().is_empty());
     assert!(cleaner.invoked_branches().is_empty());
@@ -324,7 +324,7 @@ fn expired_lease_is_reclaimed_and_cleaned() {
         .create_lease(&WorktreeProvisioningLease::new(
             WorktreeProvisioningLeaseId::new("lease-1"),
             ProjectId::new("project-1"),
-            TaskId::new(TASK_A),
+            WorkspaceId::new(TASK_A),
             "/repos/project-1",
             "/tmp/ora-worktrees/task-a",
             branch_for(TASK_A),
@@ -337,7 +337,7 @@ fn expired_lease_is_reclaimed_and_cleaned() {
     with_trace_logging(|| worker(&pool, cleaner.clone()).run_pass());
 
     assert_eq!(lease_repository.list_leases().expect("list leases"), vec![]);
-    let jobs = jobs_by_task(&pool);
+    let jobs = jobs_by_workspace(&pool);
     assert_eq!(jobs[TASK_A].state, GitCleanupJobState::Completed);
     assert_eq!(
         jobs[TASK_A].checkout_root.as_deref(),
@@ -356,7 +356,7 @@ fn live_lease_is_not_reclaimed() {
         .create_lease(&WorktreeProvisioningLease::new(
             WorktreeProvisioningLeaseId::new("lease-1"),
             ProjectId::new("project-1"),
-            TaskId::new(TASK_A),
+            WorkspaceId::new(TASK_A),
             "/repos/project-1",
             "/tmp/ora-worktrees/task-a",
             branch_for(TASK_A),
@@ -456,7 +456,7 @@ fn error_and_panic_paths_log_identical_fields() {
         "cleanup_stage",
         "job_id",
         "project_id",
-        "task_id",
+        "workspace_id",
         "branch_name",
         "attempts",
         "error",

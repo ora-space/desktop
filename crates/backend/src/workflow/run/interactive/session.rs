@@ -142,17 +142,19 @@ fn repository_error(source: RepositoryError) -> BackendError {
 mod tests {
     use super::*;
     use ora_application::{
-        Clock, ExecutionContext, NodeExecutor, ProjectRepository, WorkflowGraphNode,
-        WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine, WorkflowRunRepository,
+        Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository,
+        WorkflowGraphNode, WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine,
+        WorkflowRunRepository,
     };
     use ora_db::{
-        DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteWorkflowRepository,
-        SqliteWorkflowRunRepository, default_migration_catalog,
+        DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteSessionRepository,
+        SqliteWorkflowRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
+        default_migration_catalog,
     };
     use ora_domain::{
-        AuditFields, Namespace, Project, ProjectId, Task, TaskId, Workflow, WorkflowId,
-        WorkflowNodeRun, WorkflowRun, WorkflowRunId, WorkflowSnapshot, WorkflowSnapshotId,
-        Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId, WorktreeProvisioningLeaseId,
+        AgentRef, AuditFields, Namespace, Project, ProjectId, Session, SessionId, SessionStatus,
+        Workflow, WorkflowId, WorkflowNodeRun, WorkflowRun, WorkflowRunId, WorkflowRunStatus,
+        WorkflowSnapshot, WorkflowSnapshotId, WorkspaceLocation,
     };
     use pretty_assertions::assert_eq;
     use std::cell::Cell;
@@ -217,15 +219,23 @@ mod tests {
 
     /// Seeds a project, workflow, snapshot, and pending run, then starts it so the agent nodes are
     /// `Running`. Returns the run id and the started run's node runs.
-    fn started_run(pool: &RepositoryPool, graph: &str) -> (WorkflowRunId, Vec<WorkflowNodeRun>) {
+    fn started_run(
+        temp: &TempDir,
+        pool: &RepositoryPool,
+        graph: &str,
+    ) -> (WorkflowRunId, Vec<WorkflowNodeRun>) {
+        let workspace_path = temp.path().join("fixture-project");
+        std::fs::create_dir_all(&workspace_path).unwrap();
         let project = SqliteProjectRepository::new(pool.clone());
         project
-            .create_project(Project::new(
-                ProjectId::new("project-1"),
-                "Fixture project",
-                "/tmp/fixture-project",
-                AuditFields::new(1, 1, false),
-            ))
+            .create_project(
+                Project::new(
+                    ProjectId::new("project-1"),
+                    "Fixture project",
+                    AuditFields::new(1, 1, false),
+                ),
+                WorkspaceLocation::local_filesystem(workspace_path.to_string_lossy()),
+            )
             .unwrap();
         let workflow_repo = SqliteWorkflowRepository::new(pool.clone());
         let workflow = Workflow::new(
@@ -266,13 +276,27 @@ mod tests {
             )
             .unwrap();
 
+        let workspace = SqliteWorkspaceRepository::new(pool.clone())
+            .find_main_workspace(&ProjectId::new("project-1"))
+            .unwrap()
+            .unwrap();
+        SqliteSessionRepository::new(pool.clone())
+            .create_session(Session::new(
+                SessionId::new("session-1"),
+                workspace.id.clone(),
+                AgentRef::parse("ora-space.opencode").unwrap(),
+                "provider-session-1",
+                SessionStatus::Stopped,
+                AuditFields::new(25, 25, false),
+            ))
+            .unwrap();
         let run_id = WorkflowRunId::new("run-1");
-        let task_id = TaskId::new("task-1");
-        let worktree_id = WorktreeId::new("worktree-1");
         let run = WorkflowRun::new(
             run_id.clone(),
+            workspace.id,
             workflow.id,
             snapshot.id,
+            "Workflow run",
             WorkflowRunStatus::Pending,
             Some("{\"current_nodes\":[]}".to_string()),
             Some("kickoff".to_string()),
@@ -283,30 +307,8 @@ mod tests {
             None,
             AuditFields::new(30, 30, false),
         );
-        let task = Task::workflow_run(
-            task_id.clone(),
-            ProjectId::new("project-1"),
-            "Workflow run".to_string(),
-            run_id.clone(),
-            worktree_id.clone(),
-            AuditFields::new(30, 30, false),
-        );
-        let worktree = Worktree::new(
-            worktree_id,
-            task_id,
-            Some("ora/task-1".to_string()),
-            None,
-            WorktreeBaseline::recorded("base-commit").unwrap(),
-            WorktreeActivity::Active,
-            AuditFields::new(30, 30, false),
-        );
         SqliteWorkflowRunRepository::new(pool.clone())
-            .create_run(
-                run,
-                task,
-                worktree,
-                &WorktreeProvisioningLeaseId::new("lease-absent"),
-            )
+            .create_run(run)
             .unwrap();
 
         let engine = WorkflowRunEngine::new(
@@ -338,7 +340,7 @@ mod tests {
         let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
         let session_id = SessionId::new("session-1");
         repository
-            .set_node_run_session_id(&node_run.id, &session_id, 50)
+            .bind_node_run_session(&node_run.id, &session_id, 50)
             .unwrap();
         repository
             .transition_node_run_status(
@@ -365,13 +367,13 @@ mod tests {
     /// A session bound to a terminal node rejects the prompt instead of proceeding as ordinary.
     #[tokio::test]
     async fn terminal_node_rejects_prompt() {
-        let (_temp, pool) = bootstrap();
-        let (_run_id, node_runs) = started_run(&pool, AGENT_GRAPH);
+        let (temp, pool) = bootstrap();
+        let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
         let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
         let repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
         let session_id = SessionId::new("session-1");
         repository
-            .set_node_run_session_id(&agent.id, &session_id, 50)
+            .bind_node_run_session(&agent.id, &session_id, 50)
             .unwrap();
         repository
             .transition_node_run_status(
@@ -394,8 +396,8 @@ mod tests {
     /// A node being manually completed rejects a concurrent prompt.
     #[tokio::test]
     async fn completing_node_rejects_prompt() {
-        let (_temp, pool) = bootstrap();
-        let (_run_id, node_runs) = started_run(&pool, AGENT_GRAPH);
+        let (temp, pool) = bootstrap();
+        let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
         let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
         let (session_id, node_run_id) = bind_and_park(&pool, agent);
 
@@ -413,8 +415,8 @@ mod tests {
     /// An awaiting node flips to `Running` and admits the prompt.
     #[tokio::test]
     async fn awaiting_node_flips_to_running() {
-        let (_temp, pool) = bootstrap();
-        let (_run_id, node_runs) = started_run(&pool, AGENT_GRAPH);
+        let (temp, pool) = bootstrap();
+        let (_run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
         let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
         let (session_id, _node_run_id) = bind_and_park(&pool, agent);
 
@@ -434,8 +436,8 @@ mod tests {
     /// A `Pending` node in a failed run rejects the prompt (the run is no longer executing).
     #[tokio::test]
     async fn non_running_run_rejects_prompt() {
-        let (_temp, pool) = bootstrap();
-        let (run_id, node_runs) = started_run(&pool, TWO_AGENT_GRAPH);
+        let (temp, pool) = bootstrap();
+        let (run_id, node_runs) = started_run(&temp, &pool, TWO_AGENT_GRAPH);
         let left = node_runs.iter().find(|n| n.node_id == "l").unwrap();
         let right = node_runs.iter().find(|n| n.node_id == "r").unwrap();
         let (session_id, _node_run_id) = bind_and_park(&pool, left);
@@ -465,8 +467,8 @@ mod tests {
     /// completes cannot both prepare against one node.
     #[test]
     fn second_completion_claim_is_rejected() {
-        let (_temp, pool) = bootstrap();
-        let (run_id, node_runs) = started_run(&pool, AGENT_GRAPH);
+        let (temp, pool) = bootstrap();
+        let (run_id, node_runs) = started_run(&temp, &pool, AGENT_GRAPH);
         let agent = node_runs.iter().find(|n| n.node_id == "agent").unwrap();
         let (_session_id, _node_run_id) = bind_and_park(&pool, agent);
 

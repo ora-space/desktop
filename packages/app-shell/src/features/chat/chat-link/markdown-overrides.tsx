@@ -5,6 +5,7 @@ import {
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from "react";
+import { ChatExternalLink } from "../chat-external-link";
 import { ChatFileLink } from "./chat-file-link";
 import { isPathLikeToken, parseChatHref } from "./parse";
 import { isPlainPathList, stripListMarker } from "./tool-output-paths";
@@ -78,14 +79,9 @@ export function ChatMarkdownAnchor({
   }
   if (parsed.kind === "web") {
     return (
-      <a
-        className={WEB_LINK_CLASS}
-        href={parsed.href}
-        rel="noopener noreferrer"
-        target="_blank"
-      >
+      <ChatExternalLink className={WEB_LINK_CLASS} href={parsed.href}>
         {children}
-      </a>
+      </ChatExternalLink>
     );
   }
   return (

@@ -37,7 +37,7 @@ fn meta(agent_ref: AgentRef) -> HistoryRecord {
     HistoryRecord::Meta(SessionMeta {
         schema_version: SCHEMA_VERSION,
         session_id: "session-1".to_string(),
-        task_id: "task-1".to_string(),
+        workspace_id: "workspace-1".to_string(),
         agent_ref,
         agent_session_id: "provider-1".to_string(),
         cwd: PathBuf::from("/repo"),

@@ -111,7 +111,7 @@ pub enum SessionHistoryState {
 #[ts(export_to = "session.ts")]
 pub struct Session {
     pub id: String,
-    pub task_id: String,
+    pub workspace_id: String,
     /// The persisted display title, or `null` until the first acquisition succeeds.
     pub title: Option<String>,
     /// The agent this conversation currently runs on, which switching replaces.
@@ -120,23 +120,17 @@ pub struct Session {
     pub history_state: SessionHistoryState,
 }
 
-/// Selects the working directory one warm session is created against.
+/// Selects the Workspace one warm session is created against.
 ///
-/// The two variants mirror how Ora resolves a cwd: an existing Task owns either
-/// a linked worktree or the project root, while a chat whose Task does not exist
-/// yet can only target the project root. Modelling this as an enum keeps callers
-/// from having to pass two optional identifiers and guess which one wins.
+/// Direct chats use the project's persisted main Workspace, so a warm request never
+/// carries a project-only fallback that would need to be converted into an implicit owner.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub enum WarmSessionTarget {
-    Task {
-        #[serde(rename = "taskId")]
-        task_id: String,
-    },
-    ProjectRoot {
-        #[serde(rename = "projectId")]
-        project_id: String,
+    Workspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
     },
 }
 
@@ -161,6 +155,8 @@ pub struct WarmSessionResponse {
     /// The final Ora session id. It is not persisted until `attachSession`
     /// succeeds, so `getSession` and `listSessions` do not report it yet.
     pub session_id: String,
+    /// The Workspace the backend resolved for this warm provider session.
+    pub workspace_id: String,
     #[ts(type = "Array<import(\"@agentclientprotocol/sdk\").SessionConfigOption>")]
     pub config_options: Vec<SessionConfigOption>,
 }
@@ -188,13 +184,13 @@ pub struct SetSessionConfigResponse {
     pub config_options: Vec<SessionConfigOption>,
 }
 
-/// Binds one warm session to its owning Task and persists the Ora record.
+/// Binds one warm session to its owning Workspace and persists the Ora record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "session.ts")]
 pub struct AttachSessionRequest {
     pub session_id: String,
-    pub task_id: String,
+    pub workspace_id: String,
 }
 
 /// Returns the newly persisted session payload.
@@ -369,7 +365,7 @@ pub struct StopSessionResponse {
 
 /// Moves one existing conversation onto a different agent.
 ///
-/// Only the binding changes: the session keeps its identifier, its task, and the
+/// Only the binding changes: the session keeps its identifier, its workspace, and the
 /// history it has accumulated. The new agent starts with no context, so Ora's
 /// recorded transcript is prepended to the next prompt sent into it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

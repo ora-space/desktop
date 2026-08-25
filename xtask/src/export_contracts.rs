@@ -385,7 +385,9 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "UninstallPluginRequest"
         | "UninstallPluginResponse"
         | "InstallPluginRequest"
-        | "InstallPluginResponse" => "plugin",
+        | "InstallPluginResponse"
+        | "ImportPluginRequest"
+        | "ImportPluginResponse" => "plugin",
         // workflow
         "CreateWorkflowRequest"
         | "CreateWorkflowResponse"
@@ -433,6 +435,8 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "ListWorkflowRunsByWorkflowResponse"
         | "DeleteWorkflowRunRequest"
         | "DeleteWorkflowRunResponse"
+        | "RenameWorkflowRunRequest"
+        | "RenameWorkflowRunResponse"
         | "StartWorkflowRunRequest"
         | "StartWorkflowRunResponse"
         | "CancelWorkflowRunRequest"
@@ -444,6 +448,12 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "NodeCompletionRequester"
         | "CompleteWorkflowNodeRequest"
         | "CompleteWorkflowNodeResponse" => "workflowRun",
+        // workspace
+        "WorkspaceKind"
+        | "WorkspaceLifecycle"
+        | "Workspace"
+        | "ListWorkspacesRequest"
+        | "ListWorkspacesResponse" => "workspace",
         // fileSystem
         "ListWorkspaceDirectoryRequest"
         | "ListWorkspaceDirectoryResponse"

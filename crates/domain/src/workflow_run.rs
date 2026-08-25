@@ -1,6 +1,6 @@
 use crate::{
-    AuditFields, DomainModelError, ProjectId, SessionId, TaskId, WorkflowId, WorkflowNodeRunId,
-    WorkflowRunId, WorkflowSnapshotId,
+    AuditFields, DomainModelError, ProjectId, SessionId, WorkflowId, WorkflowNodeRunId,
+    WorkflowRunId, WorkflowSnapshotId, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -98,13 +98,15 @@ impl TryFrom<i64> for WorkflowNodeStatus {
 
 /// Represents one execution of a published workflow snapshot inside a project.
 ///
-/// The run pins `snapshot_id` to the user-released version it was created against; the display
-/// name lives on the associated task (`tasks.title`) and is not duplicated here.
+/// The run pins `snapshot_id` to the user-released version and directly owns its workspace and
+/// display name; no task row is needed to resolve execution context.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowRun {
     pub id: WorkflowRunId,
+    pub workspace_id: WorkspaceId,
     pub workflow_id: WorkflowId,
     pub snapshot_id: WorkflowSnapshotId,
+    pub name: String,
     pub status: WorkflowRunStatus,
     pub state: Option<String>,
     pub input: Option<String>,
@@ -117,12 +119,14 @@ pub struct WorkflowRun {
 }
 
 impl WorkflowRun {
-    /// Creates a run snapshot together with its persistence-managed audit metadata.
+    /// Creates a workflow run with the workspace and display name that define its execution scope.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: WorkflowRunId,
+        workspace_id: WorkspaceId,
         workflow_id: WorkflowId,
         snapshot_id: WorkflowSnapshotId,
+        name: impl Into<String>,
         status: WorkflowRunStatus,
         state: Option<String>,
         input: Option<String>,
@@ -135,8 +139,10 @@ impl WorkflowRun {
     ) -> Self {
         Self {
             id,
+            workspace_id,
             workflow_id,
             snapshot_id,
+            name: name.into(),
             status,
             state,
             input,
@@ -208,11 +214,12 @@ impl WorkflowNodeRun {
     }
 }
 
-/// Lightweight run summary for list views — display name is the associated task's title.
+/// Lightweight run summary for list views with direct workspace identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowRunSummary {
     pub id: WorkflowRunId,
     pub name: String,
+    pub workspace_id: WorkspaceId,
     pub project_id: ProjectId,
     pub workflow_id: WorkflowId,
     pub status: WorkflowRunStatus,
@@ -224,13 +231,13 @@ pub struct WorkflowRunSummary {
     pub created_at: i64,
 }
 
-/// Full run detail including the run record, its display name, its run-task id, and node runs.
+/// Full run detail including the run record, its workspace context, and node runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowRunDetail {
     pub run: WorkflowRun,
     pub name: String,
-    /// The project owning the run-task, mirroring the summary's `project_id`.
+    pub workspace_id: WorkspaceId,
+    /// The project owning the workspace, mirroring the summary's `project_id`.
     pub project_id: ProjectId,
-    pub task_id: TaskId,
     pub nodes: Vec<WorkflowNodeRun>,
 }

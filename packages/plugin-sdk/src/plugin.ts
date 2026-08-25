@@ -19,11 +19,55 @@ export type NotificationHandler = (
 
 type PluginState = "registering" | "running" | "stopped";
 
+/** How long a host request may stay unanswered before it fails with `timeout`. */
+export const DEFAULT_HOST_REQUEST_TIMEOUT_MS = 30_000;
+
+/** Options of one plugin-to-host request. */
+export interface HostRequestOptions {
+  timeoutMs?: number;
+}
+
+/**
+ * A host method failed, or could not be completed.
+ *
+ * `kind` is the stable classification to branch on: it is the host's `data.kind` when the host
+ * answered with one (storage reports `invalid_path`, `not_found`, `too_large`, `io`,
+ * `invalid_params`), `method_not_found` for a method this host does not serve, `timeout` when no
+ * answer arrived in time, and `transport` when the connection ended first. `code` is the raw
+ * JSON-RPC code for the first two.
+ */
+export class HostRequestError extends Error {
+  readonly kind: string;
+  readonly code: number | undefined;
+  readonly data: JsonValue;
+
+  constructor(
+    kind: string,
+    message: string,
+    code?: number,
+    data: JsonValue = null,
+  ) {
+    super(message);
+    this.name = "HostRequestError";
+    this.kind = kind;
+    this.code = code;
+    this.data = data;
+  }
+}
+
+interface PendingHostRequest {
+  resolve(result: JsonValue): void;
+  reject(error: HostRequestError): void;
+  timer: number;
+}
+
 /** Stores a plugin's immutable capability registry and serves host traffic. */
 export class Plugin {
   readonly #methods = new Map<string, MethodHandler>();
   readonly #emits = new Set<string>();
   readonly #notificationHandlers = new Map<string, NotificationHandler>();
+  readonly #pendingHostRequests = new Map<number, PendingHostRequest>();
+  #nextHostRequestId = 1;
   #state: PluginState = "registering";
   #writer: FrameWriter | undefined;
 
@@ -79,6 +123,61 @@ export class Plugin {
     await this.#writer.write({ jsonrpc: "2.0", method, params });
   }
 
+  /**
+   * Sends one request to the host and resolves with its `result`.
+   *
+   * Host methods (such as `ora/storage/*`) need no declaration: the host decides what it
+   * serves and answers `method_not_found` otherwise. Requests are correlated by a plugin-local
+   * numeric id and bounded by `timeoutMs`; a process shutdown rejects everything still pending,
+   * so a caller never waits on a connection that is gone.
+   */
+  request(
+    method: string,
+    params: JsonValue,
+    options: HostRequestOptions = {},
+  ): Promise<JsonValue> {
+    const writer = this.#writer;
+    if (writer === undefined) {
+      return Promise.reject(
+        new HostRequestError(
+          "transport",
+          "A plugin can only call the host while running",
+        ),
+      );
+    }
+    const id = this.#nextHostRequestId;
+    this.#nextHostRequestId += 1;
+    const timeoutMs = options.timeoutMs ?? DEFAULT_HOST_REQUEST_TIMEOUT_MS;
+    return new Promise<JsonValue>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#pendingHostRequests.delete(id);
+        reject(
+          new HostRequestError(
+            "timeout",
+            `Host request ${method} timed out after ${timeoutMs} ms`,
+          ),
+        );
+      }, timeoutMs);
+      this.#pendingHostRequests.set(id, { resolve, reject, timer });
+      writer.write({ jsonrpc: "2.0", id, method, params }).catch((error) => {
+        const pending = this.#pendingHostRequests.get(id);
+        if (pending === undefined) {
+          return;
+        }
+        this.#pendingHostRequests.delete(id);
+        clearTimeout(pending.timer);
+        reject(
+          new HostRequestError(
+            "transport",
+            error instanceof Error
+              ? error.message
+              : "Host request write failed",
+          ),
+        );
+      });
+    });
+  }
+
   /** Announces the capability registry and serves host traffic until shutdown or EOF. */
   async run(transport: PluginTransport = createDenoTransport()): Promise<void> {
     if (this.#state !== "registering") {
@@ -115,6 +214,9 @@ export class Plugin {
         if (isShutdownNotification(message)) {
           break;
         }
+        if (this.#settleHostResponse(message)) {
+          continue;
+        }
         const notification = this.#matchNotification(message);
         if (notification !== undefined) {
           track(notification);
@@ -126,7 +228,62 @@ export class Plugin {
     } finally {
       this.#state = "stopped";
       this.#writer = undefined;
+      this.#rejectPendingHostRequests();
       await writer.close();
+    }
+  }
+
+  /** Routes a host response to its pending request; reports whether the message was one. */
+  #settleHostResponse(message: unknown): boolean {
+    if (
+      !isRecord(message) || message.jsonrpc !== "2.0" || "method" in message ||
+      typeof message.id !== "number"
+    ) {
+      return false;
+    }
+    const pending = this.#pendingHostRequests.get(message.id);
+    if (pending === undefined) {
+      // A response to a timed-out request is late, not hostile; the host already answered the
+      // id it was given, so there is nothing left to correlate.
+      return true;
+    }
+    this.#pendingHostRequests.delete(message.id);
+    clearTimeout(pending.timer);
+    if ("error" in message) {
+      const error = isRecord(message.error) ? message.error : {};
+      const data = (error.data ?? null) as JsonValue;
+      const kind = isRecord(data) && typeof data.kind === "string"
+        ? data.kind
+        : error.code === -32601
+        ? "method_not_found"
+        : "host";
+      pending.reject(
+        new HostRequestError(
+          kind,
+          typeof error.message === "string"
+            ? error.message
+            : "Host request failed",
+          typeof error.code === "number" ? error.code : undefined,
+          data,
+        ),
+      );
+    } else {
+      pending.resolve((message.result ?? null) as JsonValue);
+    }
+    return true;
+  }
+
+  /** Fails every in-flight host request once the connection can no longer answer. */
+  #rejectPendingHostRequests(): void {
+    for (const [id, pending] of this.#pendingHostRequests) {
+      this.#pendingHostRequests.delete(id);
+      clearTimeout(pending.timer);
+      pending.reject(
+        new HostRequestError(
+          "transport",
+          "Plugin stopped before the host answered",
+        ),
+      );
     }
   }
 

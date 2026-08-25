@@ -15,4 +15,5 @@ pub use filesystem::{ConfigurationFileSystem, StandardConfigurationFileSystem};
 pub use service::{
     ConfigurationCompleteness, ConfigurationDetails, ConfigurationError, ConfigurationFieldError,
     ConfigurationService, ConfigurationSummary, EffectiveValueSource, SettingDetails,
+    recovery_backup_label,
 };

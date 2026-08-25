@@ -12,8 +12,9 @@ filesystem-facing crate.
 - `StrictRelativePath` is the strict counterpart for untrusted archive and package entries: any
   irregular spelling (empty, `.`, or `..` segments, trailing separators, control characters) is
   rejected instead of normalized, and segment-length, total-length, and depth limits from
-  `RelativePathLimits` apply. It reuses the portable parser for platform-specific filename safety
-  and provides an NFC case-folded key for portable conflict detection.
+  `RelativePathLimits` apply. It reuses the portable parser for platform-specific filename safety,
+  provides an NFC case-folded key for portable conflict detection, serializes as its normalized
+  slash-separated spelling, and revalidates the same invariants when deserialized.
 - `CanonicalPathRoot` centralizes canonical root identity, existing-target resolution, absolute
   selection containment, and conversion back to portable relative paths. Roots and existing
   requested paths are canonicalized before containment checks, including static symlink escape

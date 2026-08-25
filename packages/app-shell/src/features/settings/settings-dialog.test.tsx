@@ -136,12 +136,15 @@ describe("SettingsDialog developer options", () => {
     const state = createMockClientState();
     state.installedPlugins.push({
       id: "official/weather",
-      packageName: "weather",
+      namespace: "official",
+      name: "weather",
       displayName: "weather",
       version: "1.2.0",
+      description: "Weather plugin",
+      homepage: null,
+      license: null,
       kind: "agent",
-      main: "main.js",
-      agent: { displayName: "weather", contractVersion: 1 },
+      agentDisplayName: "weather",
       enabled: false,
       logo: null,
       installationValidity: { validity: "valid" },

@@ -128,6 +128,7 @@ const tauriCommands = {
   stopPlugin: "stop_plugin",
   uninstallPlugin: "uninstall_plugin",
   installPlugin: "install_plugin",
+  importPlugin: "import_plugin",
 
   // =============================================================================
   // gitIdentity

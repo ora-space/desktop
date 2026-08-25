@@ -88,12 +88,12 @@ impl GitCleanupHandle {
         self.wake.notify();
     }
 
-    /// Acquires the shared worktree-use lease for one task.
+    /// Acquires the shared worktree-use lease for one Workspace.
     ///
-    /// Every operation that resolves and then reads or mutates a task checkout
+    /// Every operation that resolves and then reads or mutates a Workspace checkout
     /// must hold this for the duration of the filesystem access.
-    pub(crate) fn shared_worktree_use(&self, task_id: &str) -> SharedLeaseGuard {
-        self.worktree_use.acquire_shared(task_id)
+    pub(crate) fn shared_worktree_use(&self, workspace_id: &str) -> SharedLeaseGuard {
+        self.worktree_use.acquire_shared(workspace_id)
     }
 }
 
@@ -228,7 +228,7 @@ where
                     ora_warn!(
                         operation = "git_cleanup",
                         project_id = %job.project_id,
-                        task_id = %job.task_id,
+                        workspace_id = %job.workspace_id,
                         branch_name = %job.branch_name,
                         "expired provisioning lease reclaimed into a cleanup job",
                     );
@@ -308,7 +308,7 @@ where
                 cleanup_stage = "identity",
                 job_id = %job.id,
                 project_id = %job.project_id,
-                task_id = %job.task_id,
+                workspace_id = %job.workspace_id,
                 branch_name = %job.branch_name,
                 attempts = job.attempts,
                 error = %reason,
@@ -320,7 +320,9 @@ where
 
         // Exclusive use lease: waits for in-flight consumers of this task's
         // checkout; new consumers are already rejected by the soft-deleted rows.
-        let _use_lease = self.worktree_use.acquire_exclusive(job.task_id.as_ref());
+        let _use_lease = self
+            .worktree_use
+            .acquire_exclusive(job.workspace_id.as_ref());
         // Repository gate: serializes Git mutations per repository so cleanup
         // does not race provisioning on Git's own lock files.
         let _repo_gate = self
@@ -362,7 +364,7 @@ where
                     operation = "git_cleanup",
                     job_id = %job.id,
                     project_id = %job.project_id,
-                    task_id = %job.task_id,
+                    workspace_id = %job.workspace_id,
                     branch_name = %job.branch_name,
                     attempts = job.attempts,
                     "git cleanup job completed",
@@ -377,7 +379,7 @@ where
                         cleanup_stage = "task_resources",
                         job_id = %job.id,
                         project_id = %job.project_id,
-                        task_id = %job.task_id,
+                        workspace_id = %job.workspace_id,
                         branch_name = %job.branch_name,
                         attempts = job.attempts,
                         error = %error,
@@ -393,7 +395,7 @@ where
                         cleanup_stage = "task_resources",
                         job_id = %job.id,
                         project_id = %job.project_id,
-                        task_id = %job.task_id,
+                        workspace_id = %job.workspace_id,
                         branch_name = %job.branch_name,
                         attempts = job.attempts,
                         error = %error,
@@ -410,7 +412,7 @@ where
                     cleanup_stage = "task_resources",
                     job_id = %job.id,
                     project_id = %job.project_id,
-                    task_id = %job.task_id,
+                    workspace_id = %job.workspace_id,
                     branch_name = %job.branch_name,
                     attempts = job.attempts,
                     error = %reason,

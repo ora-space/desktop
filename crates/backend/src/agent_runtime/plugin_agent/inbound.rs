@@ -1,6 +1,6 @@
 use ora_acp::AcpMessages;
 use ora_logging::ora_warn;
-use ora_plugin_runtime::PluginNotification;
+use ora_plugin_lifecycle::InboundNotification;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -13,7 +13,7 @@ use super::control::AGENT_ACP_METHOD;
 /// exist when they were produced — keeps the stream that reaches the ACP peer aligned with one
 /// live agent generation.
 pub(super) fn discard_frames_before_start(
-    notifications: &mut mpsc::UnboundedReceiver<PluginNotification>,
+    notifications: &mut mpsc::UnboundedReceiver<InboundNotification>,
     plugin_id: &str,
 ) {
     let mut discarded = 0_usize;
@@ -35,7 +35,7 @@ pub(super) fn discard_frames_before_start(
 /// the connection: the host is a pipe for these payloads, and letting one bad frame tear down
 /// every session on the agent would trade a recoverable defect for an outage.
 pub(super) fn spawn_frame_forwarding(
-    mut notifications: mpsc::UnboundedReceiver<PluginNotification>,
+    mut notifications: mpsc::UnboundedReceiver<InboundNotification>,
     plugin_id: String,
 ) -> AcpMessages {
     let (sender, messages) = mpsc::unbounded_channel();

@@ -33,13 +33,16 @@ function agentPlugin(
   runtime: PluginRuntime = { runtime: "running" },
 ): InstalledPlugin {
   return {
-    id: "ora-space.reviewer",
-    packageName: "ora-space.reviewer",
+    id: "official/ora-space.reviewer",
+    namespace: "official",
+    name: "ora-space.reviewer",
+    description: "ora-space.reviewer plugin",
+    homepage: null,
+    license: null,
     displayName: "Code Reviewer",
     version: "0.1.0",
     kind: "agent",
-    main: "dist/index.js",
-    agent: { displayName: "Review Agent", contractVersion: 1 },
+    agentDisplayName: "Review Agent",
     enabled,
     logo: null,
     installationValidity: { validity: "valid" },
@@ -52,7 +55,7 @@ function agentPlugin(
 function session(agentRef: string): Session {
   return {
     id: "session-1",
-    taskId: "task-1",
+    workspaceId: "workspace-task-1",
     title: "Review",
     agentRef,
     status: "running",

@@ -71,7 +71,8 @@ pub enum HistoryRecord {
 pub struct SessionMeta {
     pub schema_version: u32,
     pub session_id: String,
-    pub task_id: String,
+    /// The execution scope of the conversation; sessions are owned by workspaces rather than Tasks.
+    pub workspace_id: String,
     pub agent_ref: AgentRef,
     pub agent_session_id: String,
     pub cwd: PathBuf,

@@ -1,5 +1,5 @@
 use crate::{BoxRepositorySource, RepositoryError};
-use ora_domain::{Project, ProjectId};
+use ora_domain::{Project, ProjectId, WorkspaceLocation};
 use std::path::Path;
 use thiserror::Error;
 
@@ -28,7 +28,11 @@ pub trait BranchLister {
 /// while preserving the transport-agnostic behavior required by the handlers.
 pub trait ProjectRepository {
     /// Persists a newly created project and returns the stored snapshot.
-    fn create_project(&self, project: Project) -> Result<Project, RepositoryError>;
+    fn create_project(
+        &self,
+        project: Project,
+        main_workspace_location: WorkspaceLocation,
+    ) -> Result<Project, RepositoryError>;
 
     /// Loads one visible project by identifier.
     fn find_project(&self, project_id: &ProjectId) -> Result<Option<Project>, RepositoryError>;

@@ -4,7 +4,10 @@ use crate::skill::package_health::{
     commit_unclaimed_package, has_usable_package, manifest_is_usable, package_availability,
     persist_promoted_package,
 };
-use crate::skill::ports::{SkillIdGenerator, SkillRepository};
+use crate::skill::ports::{
+    LocalSkillSourceRevision, SkillDeleteOutcome, SkillIdGenerator, SkillRepository,
+    SkillSourceInUseError, SkillUpdateOutcome,
+};
 use crate::skill::storage::{SkillStorage, SkillStorageError};
 use crate::{ApplicationError, Clock};
 use gray_matter::{Matter, engine::YAML};
@@ -14,6 +17,7 @@ use ora_contracts::{
     UpdateSkillRequest, UpdateSkillResponse,
 };
 use ora_domain::{AuditFields, Namespace, Skill, SkillId};
+use ora_effect::Digest;
 use ora_skill_package::manifest::{render_manifest, rewrite_manifest, rewrite_manifest_body};
 
 /// Handles atomic creation of a reusable skill definition (database plus formal directory).
@@ -105,10 +109,19 @@ where
             .write_manifest(&staging, manifest.as_bytes())
             .map_err(ApplicationError::from_skill_storage_error)?;
         let promoted = commit_unclaimed_package(&self.storage, &skill.id, &skill.name, &staging)?;
-        let created = persist_promoted_package(&self.storage, &promoted, || {
-            self.repository.create_skill(skill)
-        })
-        .map_err(ApplicationError::from_skill_repository_error)?;
+        let source_revision = self
+            .storage
+            .formal_package_path(&skill.name)
+            .map(|package_root| LocalSkillSourceRevision {
+                skill_md_digest: Digest::sha256(manifest.as_bytes()),
+                package_root,
+            });
+        let created =
+            persist_promoted_package(&self.storage, &promoted, || match source_revision {
+                Some(source) => self.repository.create_skill_with_source(skill, source),
+                None => self.repository.create_skill(skill),
+            })
+            .map_err(ApplicationError::from_skill_repository_error)?;
 
         Ok(CreateSkillResponse {
             skill: map_skill(created, SkillAvailability::Available),
@@ -316,10 +329,35 @@ where
             &existing.name,
             &staging,
         )?;
+        let source_revision = self
+            .storage
+            .formal_package_path(&skill.name)
+            .map(|package_root| LocalSkillSourceRevision {
+                skill_md_digest: Digest::sha256(rewritten.as_bytes()),
+                package_root,
+            });
         let updated = persist_promoted_package(&self.storage, &promoted, || {
-            self.repository.update_skill(skill)
-        })
-        .map_err(ApplicationError::from_skill_repository_error)?;
+            match source_revision {
+                Some(source) => self.repository.update_skill_with_source(skill, source),
+                None => self
+                    .repository
+                    .update_skill(skill)
+                    .map(SkillUpdateOutcome::Updated),
+            }
+            .and_then(|outcome| match outcome {
+                SkillUpdateOutcome::Updated(skill) => Ok(skill),
+                SkillUpdateOutcome::InUse => {
+                    Err(crate::RepositoryError::new(SkillSourceInUseError))
+                }
+            })
+        });
+        let updated = match updated {
+            Ok(updated) => updated,
+            Err(error) if error.is::<SkillSourceInUseError>() => {
+                return Err(ApplicationError::SkillInUse);
+            }
+            Err(error) => return Err(ApplicationError::from_skill_repository_error(error)),
+        };
 
         Ok(UpdateSkillResponse {
             skill: map_skill(updated, SkillAvailability::Available),
@@ -376,16 +414,19 @@ where
         };
         let deleted = self
             .repository
-            .soft_delete_skill(&skill_id, self.clock.now_timestamp_millis())
+            .soft_delete_skill_with_source_protection(&skill_id, self.clock.now_timestamp_millis())
             .map_err(|error| {
                 if let Some(handle) = &handle {
                     let _ = self.storage.rollback_delete(handle);
                 }
                 ApplicationError::from_skill_repository_error(error)
             })?;
-        if !deleted {
+        if deleted != SkillDeleteOutcome::Deleted {
             if let Some(handle) = &handle {
                 let _ = self.storage.rollback_delete(handle);
+            }
+            if deleted == SkillDeleteOutcome::InUse {
+                return Err(ApplicationError::SkillInUse);
             }
             return Err(ApplicationError::SkillNotFound {
                 skill_id: skill_id.to_string(),
@@ -485,7 +526,27 @@ where
         &existing.name,
         &staging,
     )?;
-    let updated = persist_promoted_package(storage, &promoted, || repository.update_skill(skill))
-        .map_err(ApplicationError::from_skill_repository_error)?;
-    Ok(updated)
+    let source_revision = storage
+        .formal_package_path(&skill.name)
+        .map(|package_root| LocalSkillSourceRevision {
+            skill_md_digest: Digest::sha256(manifest.as_bytes()),
+            package_root,
+        });
+    let updated = persist_promoted_package(storage, &promoted, || {
+        match source_revision {
+            Some(source) => repository.update_skill_with_source(skill, source),
+            None => repository
+                .update_skill(skill)
+                .map(SkillUpdateOutcome::Updated),
+        }
+        .and_then(|outcome| match outcome {
+            SkillUpdateOutcome::Updated(skill) => Ok(skill),
+            SkillUpdateOutcome::InUse => Err(crate::RepositoryError::new(SkillSourceInUseError)),
+        })
+    });
+    match updated {
+        Ok(skill) => Ok(skill),
+        Err(error) if error.is::<SkillSourceInUseError>() => Err(ApplicationError::SkillInUse),
+        Err(error) => Err(ApplicationError::from_skill_repository_error(error)),
+    }
 }

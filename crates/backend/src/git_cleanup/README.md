@@ -10,8 +10,8 @@ Durable Git cleanup execution for aggregate deletion.
   records per-job state transitions (`pending` → `completed` /
   `manual_attention`).
 - Provide the process-wide coordination primitives around physical checkouts:
-  - the **worktree-use lease** (`KeyedResourceLocks`, keyed by task id):
-    consumers of a task checkout acquire shared use, physical cleanup acquires
+  - the **worktree-use lease** (`KeyedResourceLocks`, keyed by Workspace id):
+    consumers of a Workspace checkout acquire shared use, physical cleanup acquires
     exclusive use;
   - the **repository mutation gate** (keyed by normalized repository root):
     serializes `git worktree add/remove` and branch mutations per repository
@@ -21,7 +21,7 @@ Durable Git cleanup execution for aggregate deletion.
 
 ## Non-responsibilities
 
-- Deciding *what* to clean: cleanup identity is captured by the database
+- Deciding _what_ to clean: cleanup identity is captured by the database
   cascade (`ora-db`) in the same transaction as the soft deletes.
 - Interpreting Git outcomes: identity validation, outcome reduction, and the
   cleaner implementation live in `ora-application`; this module only drives

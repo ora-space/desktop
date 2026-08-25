@@ -22,6 +22,7 @@ afterEach(() => {
 describe("useSettingsStore", () => {
   it("starts with default settings", () => {
     expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);
+    expect(useSettingsStore.getState().settings.agentCli).toBeNull();
   });
 
   it("merges a partial patch into settings", () => {
@@ -65,6 +66,34 @@ describe("useSettingsStore", () => {
       ...DEFAULT_SETTINGS,
       theme: "light",
     });
+  });
+
+  it("migrates the former implicit OpenCode default to no selection", () => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: { settings: { theme: "light", agentCli: "ora-space.opencode" } },
+        version: 1,
+      }),
+    );
+    useSettingsStore.persist.rehydrate();
+    expect(useSettingsStore.getState().settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      theme: "light",
+      agentCli: null,
+    });
+  });
+
+  it("retains a legacy agent value that required an explicit selection", () => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: { settings: { agentCli: "ora-space.nga" } },
+        version: 1,
+      }),
+    );
+    useSettingsStore.persist.rehydrate();
+    expect(useSettingsStore.getState().settings.agentCli).toBe("ora-space.nga");
   });
 
   it("drops a persisted agent this build cannot offer", () => {

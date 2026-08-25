@@ -5,11 +5,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { ContractsClientContext } from "../../contracts-client-context";
+import { PlatformProvider } from "../../platform";
 import { queryKeys } from "../../state/hooks/query-keys";
 import {
   createMockClient,
   createMockClientState,
 } from "../../test/mock-client";
+import { createStubPlatform } from "../../test/stub-platform";
 import { WorkspaceFilesView } from "./workspace-files-view";
 
 /** Renders Files with a chat-driven path that the workspace cannot resolve. */
@@ -202,7 +204,7 @@ describe("WorkspaceFilesView project scope", () => {
     }));
     client.fileSystem.readProjectFile = readProjectFile;
     client.project.list = async () => ({
-      projects: [{ id: "project-1", name: "Ora", rootPath: "C:/repo" }],
+      projects: [{ id: "project-1", name: "Ora" }],
     });
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
@@ -243,7 +245,7 @@ describe("WorkspaceFilesView project scope", () => {
     );
     client.fileSystem.watchProject = watchProject;
     client.project.list = async () => ({
-      projects: [{ id: "project-1", name: "Ora", rootPath: "C:/repo" }],
+      projects: [{ id: "project-1", name: "Ora" }],
     });
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
@@ -273,13 +275,23 @@ describe("WorkspaceFilesView project scope", () => {
 
   it("waits for the project root before stripping an absolute file request", async () => {
     const client = createMockClient(createMockClientState());
-    let resolveProjects!: (value: {
-      projects: Array<{ id: string; name: string; rootPath: string }>;
+    let resolveWorkspaces!: (value: {
+      workspaces: Array<{
+        id: string;
+        projectId: string;
+        kind: "main";
+        lifecycle: "active";
+      }>;
     }) => void;
-    const projectsPromise = new Promise<{
-      projects: Array<{ id: string; name: string; rootPath: string }>;
+    const workspacesPromise = new Promise<{
+      workspaces: Array<{
+        id: string;
+        projectId: string;
+        kind: "main";
+        lifecycle: "active";
+      }>;
     }>((resolve) => {
-      resolveProjects = resolve;
+      resolveWorkspaces = resolve;
     });
     const readProjectFile = vi.fn(async (request: { path: string }) => ({
       path: request.path,
@@ -288,7 +300,14 @@ describe("WorkspaceFilesView project scope", () => {
       sizeBytes: 12,
     }));
     client.fileSystem.readProjectFile = readProjectFile;
-    client.project.list = () => projectsPromise;
+    client.workspace.list = () => workspacesPromise;
+    const platform = {
+      ...createStubPlatform(),
+      locationActions: {
+        ...createStubPlatform().locationActions,
+        resolveWorkspaceCwd: async () => "C:/repo",
+      },
+    };
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
     });
@@ -299,7 +318,11 @@ describe("WorkspaceFilesView project scope", () => {
         createElement(
           ContractsClientContext.Provider,
           { value: client },
-          createElement(AppI18nProvider, null, children),
+          createElement(
+            AppI18nProvider,
+            null,
+            createElement(PlatformProvider, { adapter: platform, children }),
+          ),
         ),
       );
 
@@ -313,8 +336,15 @@ describe("WorkspaceFilesView project scope", () => {
     );
 
     expect(readProjectFile).not.toHaveBeenCalled();
-    resolveProjects({
-      projects: [{ id: "project-1", name: "Ora", rootPath: "C:/repo" }],
+    resolveWorkspaces({
+      workspaces: [
+        {
+          id: "workspace-1",
+          projectId: "project-1",
+          kind: "main",
+          lifecycle: "active",
+        },
+      ],
     });
     expect(await screen.findByText("src/main.rs")).toBeInTheDocument();
     expect(readProjectFile).toHaveBeenCalledWith(
@@ -332,7 +362,7 @@ describe("WorkspaceFilesView project scope", () => {
       sizeBytes: 12,
     }));
     client.fileSystem.readProjectFile = readProjectFile;
-    client.project.list = async () => {
+    client.workspace.list = async () => {
       throw new RemoteContractError(
         {
           code: "internal_error",
@@ -368,7 +398,7 @@ describe("WorkspaceFilesView project scope", () => {
     // A failed project list never yields a checkout root, so the absolute path
     // must stay deferred rather than flow unstripped to readProjectFile.
     await waitFor(() => {
-      expect(queryClient.getQueryState(queryKeys.projects)?.status).toBe(
+      expect(queryClient.getQueryState(queryKeys.workspaces)?.status).toBe(
         "error",
       );
     });

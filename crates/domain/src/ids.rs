@@ -28,18 +28,14 @@ macro_rules! define_id {
 }
 
 define_id!(ProjectId, "Identifies a persisted project.");
+define_id!(WorkspaceId, "Identifies a persisted workspace.");
 define_id!(TaskId, "Identifies a persisted task.");
-define_id!(WorktreeId, "Identifies a persisted worktree.");
 define_id!(GitCleanupJobId, "Identifies a persisted Git cleanup job.");
 define_id!(
     WorktreeProvisioningLeaseId,
     "Identifies a persisted worktree provisioning lease."
 );
 define_id!(SessionId, "Identifies a persisted session.");
-define_id!(
-    PluginId,
-    "Identifies one installed plugin package across lifecycle layers."
-);
 define_id!(SkillId, "Identifies a persisted skill.");
 define_id!(
     AgentDefinitionId,

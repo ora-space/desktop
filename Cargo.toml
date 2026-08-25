@@ -7,6 +7,7 @@ members = [
     "crates/contracts",
     "crates/db",
     "crates/domain",
+    "crates/effect",
     "crates/fs",
     "crates/gitlancer",
     "crates/history",
@@ -22,6 +23,7 @@ members = [
     "crates/runtime-settings",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/surface",
     "crates/test-support",
     "crates/utils",
     "xtask",
@@ -33,6 +35,7 @@ default-members = [
     "crates/contracts",
     "crates/db",
     "crates/domain",
+    "crates/effect",
     "crates/fs",
     "crates/gitlancer",
     "crates/history",
@@ -47,6 +50,7 @@ default-members = [
     "crates/pty",
     "crates/scheduler",
     "crates/skill-package",
+    "crates/surface",
     "crates/test-support",
     "crates/utils",
     "xtask",
@@ -69,6 +73,7 @@ ora-backend = { path = "crates/backend" }
 ora-contracts = { path = "crates/contracts" }
 ora-db = { path = "crates/db" }
 ora-domain = { path = "crates/domain" }
+ora-effect = { path = "crates/effect" }
 ora-fs = { path = "crates/fs" }
 gitlancer = { path = "crates/gitlancer" }
 ora-history = { path = "crates/history" }
@@ -84,6 +89,7 @@ ora-pty = { path = "crates/pty" }
 ora-runtime-settings = { path = "crates/runtime-settings" }
 ora-scheduler = { path = "crates/scheduler" }
 ora-skill-package = { path = "crates/skill-package" }
+ora-surface = { path = "crates/surface" }
 ora-test-support = { path = "crates/test-support" }
 ora-utils = { path = "crates/utils" }
 
@@ -118,6 +124,7 @@ serde_with = { version = "3" }
 serde_yaml = "0.9"
 tar = "0.4"
 tempfile = "3"
+base64 = "0.22"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = "1"

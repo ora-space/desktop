@@ -30,6 +30,18 @@ pub enum ConfigurationSummary {
     },
 }
 
+/// Formats the local-time suffix used when preserving a damaged `store.json`.
+pub fn recovery_backup_label(
+    year: i32,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+) -> String {
+    format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}")
+}
+
 /// Identifies where the currently effective value originates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectiveValueSource {
@@ -87,6 +99,10 @@ pub enum ConfigurationError {
     },
     #[error("Plugin Configuration value file could not be loaded: {reason}")]
     LoadFailed { reason: String },
+    #[error("Plugin Configuration could not be serialized: {reason}")]
+    PersistFailed { reason: String },
+    #[error("plugin identifier `{plugin_id}` is not a valid namespaced slug")]
+    InvalidPluginId { plugin_id: String },
     #[error("Plugin Configuration revision has reached its maximum value")]
     RevisionExhausted,
     #[error("Plugin Configuration write lock is unavailable")]
@@ -120,6 +136,21 @@ impl ConfigurationService<StandardConfigurationFileSystem> {
             file_system: StandardConfigurationFileSystem,
             locks: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    /// Loads one package declaration without constructing a data-root-backed service.
+    ///
+    /// Installation validation only needs the immutable declaration; using the package directory
+    /// as a fake data root would make later store reads write beside plugin source.
+    pub fn declaration_from_package(
+        package_root: &Path,
+    ) -> Result<Option<CompiledDeclaration>, ConfigurationError> {
+        Self {
+            data_root: PathBuf::new(),
+            file_system: StandardConfigurationFileSystem,
+            locks: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+        .load_declaration(package_root)
     }
 }
 
@@ -378,7 +409,7 @@ where
         let path = self.store_path(plugin_id)?;
         let parent = path
             .parent()
-            .ok_or_else(|| ConfigurationError::LoadFailed {
+            .ok_or_else(|| ConfigurationError::PersistFailed {
                 reason: "value file has no parent directory".to_string(),
             })?;
         self.file_system
@@ -387,20 +418,14 @@ where
                 path: path.clone(),
                 source,
             })?;
-        let source = serde_json::to_vec(store).map_err(|error| ConfigurationError::LoadFailed {
-            reason: error.to_string(),
-        })?;
+        let source =
+            serde_json::to_vec(store).map_err(|error| ConfigurationError::PersistFailed {
+                reason: error.to_string(),
+            })?;
         if source.len() > MAX_STORE_BYTES {
-            let setting_id = store
-                .values
-                .iter()
-                .max_by_key(|(_, value)| {
-                    serde_json::to_string(value).map_or(0, |value| value.len())
-                })
-                .map_or_else(String::new, |(setting_id, _)| setting_id.clone());
             return Err(ConfigurationError::InvalidValues {
                 field_errors: vec![ConfigurationFieldError {
-                    setting_id,
+                    setting_id: String::new(),
                     error_code: "configuration_too_large".to_string(),
                 }],
             });
@@ -413,18 +438,20 @@ where
     /// Resolves a plugin-global value path from a validated namespaced identifier.
     fn store_path(&self, plugin_id: &str) -> Result<PathBuf, ConfigurationError> {
         let Some((namespace, name)) = plugin_id.split_once('/') else {
-            return Err(ConfigurationError::LoadFailed {
-                reason: "plugin identifier must contain namespace and name".to_string(),
+            return Err(ConfigurationError::InvalidPluginId {
+                plugin_id: plugin_id.to_string(),
             });
         };
-        let namespace = Slug::parse(namespace).map_err(|error| ConfigurationError::LoadFailed {
-            reason: format!("plugin namespace is invalid: {error}"),
-        })?;
-        let name = Slug::parse(name).map_err(|error| ConfigurationError::LoadFailed {
-            reason: format!("plugin name is invalid: {error}"),
+        let namespace =
+            Slug::parse(namespace).map_err(|_| ConfigurationError::InvalidPluginId {
+                plugin_id: plugin_id.to_string(),
+            })?;
+        let name = Slug::parse(name).map_err(|_| ConfigurationError::InvalidPluginId {
+            plugin_id: plugin_id.to_string(),
         })?;
         Ok(self
             .data_root
+            .join("plugins")
             .join("data")
             .join(namespace.as_str())
             .join(name.as_str())
@@ -534,7 +561,7 @@ mod tests {
                 },
             }
         );
-        assert!(!temporary.path().join("data").exists());
+        assert!(!temporary.path().join("plugins").join("data").exists());
     }
 
     /// Save persists a complete explicit replacement and rejects a stale editor revision.
@@ -604,6 +631,7 @@ mod tests {
         assert!(
             temporary
                 .path()
+                .join("plugins")
                 .join("data")
                 .join("official")
                 .join("weather")
@@ -638,6 +666,7 @@ mod tests {
         .expect("write upgraded declaration");
         let store_root = temporary
             .path()
+            .join("plugins")
             .join("data")
             .join("official")
             .join("weather");
@@ -741,6 +770,7 @@ mod tests {
         assert!(
             !temporary
                 .path()
+                .join("plugins")
                 .join("data")
                 .join("official")
                 .join("weather")
@@ -762,6 +792,7 @@ mod tests {
         .expect("write declaration");
         let store_root = temporary
             .path()
+            .join("plugins")
             .join("data")
             .join("official")
             .join("weather");

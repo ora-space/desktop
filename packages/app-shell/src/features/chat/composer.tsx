@@ -96,7 +96,7 @@ interface ComposerProps {
    */
   isStreaming?: boolean;
   disabled?: boolean;
-  /** Keeps the current model visible while preventing model changes on this surface. */
+  /** Allows the agent/model picker to remain actionable while message composition is blocked. */
   modelSelectorDisabled?: boolean;
   /** Session whose model configuration the selector should display. */
   modelSelectorSessionId?: string;
@@ -138,7 +138,7 @@ export function Composer({
   isResponding,
   isStreaming = false,
   disabled = false,
-  modelSelectorDisabled = false,
+  modelSelectorDisabled = disabled,
   modelSelectorSessionId,
   placeholder,
   autoFocus = false,
@@ -1012,7 +1012,7 @@ export function Composer({
           >
             {showModelSelector && (
               <ModelSelector
-                disabled={disabled || modelSelectorDisabled}
+                disabled={modelSelectorDisabled}
                 sessionId={modelSelectorSessionId}
               />
             )}

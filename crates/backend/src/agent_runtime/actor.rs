@@ -966,7 +966,7 @@ mod tests {
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog,
     };
-    use ora_domain::{AgentCli, AuditFields, SessionId, SessionStatus, SessionTitle, TaskId};
+    use ora_domain::{AgentCli, AuditFields, SessionId, SessionStatus, SessionTitle, WorkspaceId};
     use ora_scheduler::Scheduler;
     use std::path::Path;
     use std::time::Duration;
@@ -1022,7 +1022,7 @@ mod tests {
         .expect("open actor recorder");
         let session = ora_domain::Session::new(
             SessionId::new("session-1"),
-            TaskId::new("task-1"),
+            WorkspaceId::new("workspace-1"),
             AgentCli::Codex.agent_ref(),
             "provider-session-1",
             SessionStatus::Stopped,
@@ -1083,7 +1083,7 @@ mod tests {
         .expect("open actor recorder");
         let session = ora_domain::Session::new(
             SessionId::new("session-1"),
-            TaskId::new("task-1"),
+            WorkspaceId::new("workspace-1"),
             AgentCli::Codex.agent_ref(),
             "provider-session-1",
             SessionStatus::Stopped,

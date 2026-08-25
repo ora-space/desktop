@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ChatStore, ChatToolCall, SessionConversation } from "@ora/chat";
-import type { Session } from "@ora/contracts";
+import type { Session, Task } from "@ora/contracts";
 import { queryKeys } from "./query-keys";
 
 const DIFF_REFRESH_DEBOUNCE_MS = 400;
@@ -18,12 +18,19 @@ interface ConversationDiffSnapshot {
 export function useTaskDiffLiveSync(
   chatStore: ChatStore,
   sessions: Session[],
+  tasks: readonly Task[] = [],
 ): void {
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    const taskByWorkspace = new Map(
+      tasks.map((task) => [task.workspaceId, task.id]),
+    );
     const taskBySession = new Map(
-      sessions.map((session) => [session.id, session.taskId]),
+      sessions.map((session) => [
+        session.id,
+        taskByWorkspace.get(session.workspaceId),
+      ]),
     );
     const snapshots = new Map<string, ConversationDiffSnapshot>();
     const pendingTaskIds = new Set<string>();
@@ -54,6 +61,7 @@ export function useTaskDiffLiveSync(
 
     const unsubscribe = chatStore.subscribe((state) => {
       for (const [sessionId, taskId] of taskBySession) {
+        if (taskId === undefined) continue;
         const conversation = state.conversations[sessionId];
         if (conversation === undefined) continue;
 
@@ -83,7 +91,7 @@ export function useTaskDiffLiveSync(
       unsubscribe();
       if (refreshTimer !== null) clearTimeout(refreshTimer);
     };
-  }, [chatStore, queryClient, sessions]);
+  }, [chatStore, queryClient, sessions, tasks]);
 }
 
 /** Captures only the lifecycle facts that can advance the aggregate task diff. */

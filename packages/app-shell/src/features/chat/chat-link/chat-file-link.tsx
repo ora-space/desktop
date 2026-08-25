@@ -10,6 +10,7 @@ import {
 import { usePlatform } from "../../../platform";
 import { useTranslation } from "react-i18next";
 import { joinOsAbsolutePath } from "../../../lib/workspace-path";
+import { ChatExternalLink } from "../chat-external-link";
 import { useTaskChangesNavigation } from "../../diff/task-changes-navigation-context";
 import { classifyChatCandidate, type ChatLinkClassification } from "./classify";
 import { useChatLinkContext } from "./context";
@@ -88,17 +89,15 @@ export function ChatFileLink({
 
   if (classified.kind === "web") {
     return (
-      <a
+      <ChatExternalLink
         className={
           className ??
           "font-medium text-primary underline decoration-primary/45 underline-offset-4 transition-colors hover:decoration-primary focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         }
         href={classified.href}
-        rel="noopener noreferrer"
-        target="_blank"
       >
         {children}
-      </a>
+      </ChatExternalLink>
     );
   }
 
@@ -136,8 +135,8 @@ function LinkedChatFile({
 
   useEffect(() => {
     // Desktop is the only host: locationActions is always the cwd + OS-open
-    // pair, not a supported/unsupported discriminant. Project-only drafts rely
-    // on MessageList's project rootPath instead of resolveTaskCwd.
+    // pair, not a supported/unsupported discriminant. Main-Workspace drafts rely
+    // on MessageList's Workspace cwd instead of resolveTaskCwd.
     const taskId = chatLink.taskId;
     if (taskId === undefined) return;
     let cancelled = false;

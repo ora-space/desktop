@@ -1,80 +1,89 @@
 use super::Migration;
 
 const UP_STATEMENTS: &[&str] = &[r#"
-CREATE TABLE task_diff_comments (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    parent_comment_id TEXT,
-    diff_id TEXT,
-    path TEXT,
-    side INTEGER,
-    start_line INTEGER,
-    end_line INTEGER,
-    hunk_header TEXT,
-    line_content TEXT,
-    body TEXT NOT NULL,
-    status INTEGER,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
-    UNIQUE (id, task_id),
-    FOREIGN KEY (task_id) REFERENCES tasks(id),
-    FOREIGN KEY (parent_comment_id, task_id)
-        REFERENCES task_diff_comments(id, task_id),
-    CHECK (
-        (
-            parent_comment_id IS NULL
-            AND diff_id IS NOT NULL
-            AND path IS NOT NULL
-            AND side IN (0, 1)
-            AND start_line > 0
-            AND end_line >= start_line
-            AND hunk_header IS NOT NULL
-            AND line_content IS NOT NULL
-            AND status IN (0, 1)
-        )
-        OR
-        (
-            parent_comment_id IS NOT NULL
-            AND diff_id IS NULL
-            AND path IS NULL
-            AND side IS NULL
-            AND start_line IS NULL
-            AND end_line IS NULL
-            AND hunk_header IS NULL
-            AND line_content IS NULL
-            AND status IS NULL
-        )
-    )
+CREATE TABLE workflows (
+    id                    TEXT PRIMARY KEY,
+    namespace             TEXT NOT NULL DEFAULT 'local',
+    name                  TEXT NOT NULL,
+    published_snapshot_id TEXT,
+    created_at            INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL,
+    is_deleted            INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1))
 );
 
-CREATE INDEX idx_task_diff_comments_task
-    ON task_diff_comments (task_id, created_at, id);
+CREATE UNIQUE INDEX workflows_active_namespace_name_unique
+    ON workflows(namespace COLLATE NOCASE, name COLLATE NOCASE)
+    WHERE is_deleted = 0;
 
-CREATE INDEX idx_task_diff_comments_parent
-    ON task_diff_comments (parent_comment_id, created_at, id);
+CREATE TABLE workflow_snapshots (
+    id          TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL REFERENCES workflows(id),
+    version     TEXT NOT NULL,
+    graph       TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER,
+    is_deleted  INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1))
+);
 
-CREATE TRIGGER task_diff_comments_parent_must_be_thread
-BEFORE INSERT ON task_diff_comments
-WHEN NEW.parent_comment_id IS NOT NULL
-BEGIN
-    SELECT CASE WHEN EXISTS (
-        SELECT 1
-        FROM task_diff_comments AS parent
-        WHERE parent.id = NEW.parent_comment_id
-          AND parent.parent_comment_id IS NOT NULL
-    ) THEN RAISE(ABORT, 'task diff reply parent must be a root thread') END;
-END;
+CREATE UNIQUE INDEX workflow_snapshots_active_version_unique
+    ON workflow_snapshots(workflow_id, version)
+    WHERE is_deleted = 0;
+
+CREATE TABLE workflow_runs (
+    id           TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    workflow_id  TEXT NOT NULL REFERENCES workflows(id),
+    snapshot_id  TEXT NOT NULL REFERENCES workflow_snapshots(id),
+    name         TEXT NOT NULL,
+    run_status   INTEGER NOT NULL,
+    state        TEXT,
+    input        TEXT,
+    output       TEXT,
+    error        TEXT,
+    payload      TEXT,
+    started_at   INTEGER,
+    finished_at  INTEGER,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    is_deleted   INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1))
+);
+
+CREATE INDEX idx_workflow_runs_workspace
+    ON workflow_runs(workspace_id, created_at, id);
+
+CREATE INDEX idx_workflow_runs_workflow
+    ON workflow_runs(workflow_id, created_at, id);
+
+CREATE TABLE workflow_node_runs (
+    id          TEXT PRIMARY KEY,
+    run_id      TEXT NOT NULL REFERENCES workflow_runs(id),
+    node_id     TEXT NOT NULL,
+    node_type   TEXT NOT NULL,
+    session_id  TEXT,
+    status      INTEGER NOT NULL,
+    input       TEXT,
+    output      TEXT,
+    error       TEXT,
+    payload     TEXT,
+    started_at  INTEGER,
+    finished_at INTEGER,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    is_deleted  INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1))
+);
+
+CREATE INDEX idx_workflow_node_runs_run
+    ON workflow_node_runs(run_id, created_at, id);
 "#];
 
 const DOWN_STATEMENTS: &[&str] = &[r#"
-DROP TRIGGER IF EXISTS task_diff_comments_parent_must_be_thread;
-DROP INDEX IF EXISTS idx_task_diff_comments_parent;
-DROP INDEX IF EXISTS idx_task_diff_comments_task;
-DROP TABLE IF EXISTS task_diff_comments;
+DROP TABLE IF EXISTS workflow_node_runs;
+DROP TABLE IF EXISTS workflow_runs;
+DROP TABLE IF EXISTS workflow_snapshots;
+DROP TABLE IF EXISTS workflows;
 "#];
 
-/// Builds the constrained task diff comment persistence migration.
+/// Builds workflow definitions, snapshots, and execution state after workspace ownership exists.
 pub fn migration() -> Migration {
     Migration::new("0003", UP_STATEMENTS, DOWN_STATEMENTS)
 }

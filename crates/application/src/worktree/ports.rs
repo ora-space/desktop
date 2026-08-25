@@ -1,5 +1,5 @@
 use crate::RepositoryError;
-use ora_domain::{Worktree, WorktreeId};
+use ora_domain::{WorkspaceId, Worktree};
 
 /// Supplies application-owned persistence operations for worktree CRUD use cases.
 ///
@@ -10,7 +10,10 @@ pub trait WorktreeRepository {
     fn create_worktree(&self, worktree: Worktree) -> Result<Worktree, RepositoryError>;
 
     /// Loads one visible worktree by identifier.
-    fn find_worktree(&self, worktree_id: &WorktreeId) -> Result<Option<Worktree>, RepositoryError>;
+    fn find_worktree(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Option<Worktree>, RepositoryError>;
 
     /// Lists every visible worktree in storage order.
     fn list_worktrees(&self) -> Result<Vec<Worktree>, RepositoryError>;
@@ -21,13 +24,7 @@ pub trait WorktreeRepository {
     /// Marks a worktree deleted and returns whether a visible worktree was affected.
     fn soft_delete_worktree(
         &self,
-        worktree_id: &WorktreeId,
+        workspace_id: &WorkspaceId,
         deleted_at: i64,
     ) -> Result<bool, RepositoryError>;
-}
-
-/// Supplies new worktree identifiers for create use cases.
-pub trait WorktreeIdGenerator {
-    /// Produces the identifier for a newly created worktree.
-    fn generate_worktree_id(&self) -> WorktreeId;
 }

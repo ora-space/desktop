@@ -25,6 +25,7 @@ function desktopPlatform(open = vi.fn()): PlatformAdapter {
     ...createStubPlatform(),
     locationActions: {
       resolveTaskCwd: async () => "C:/repo",
+      resolveWorkspaceCwd: async () => "C:/repo",
       open,
     },
   };
@@ -157,6 +158,7 @@ describe("ChatFileLink", () => {
       ...createStubPlatform(),
       locationActions: {
         resolveTaskCwd: () => new Promise(() => undefined),
+        resolveWorkspaceCwd: () => new Promise(() => undefined),
         open: vi.fn(),
       },
     };

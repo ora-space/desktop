@@ -97,7 +97,7 @@ fn round_trips_appended_records_in_conversation_order() {
     let meta = HistoryRecord::Meta(SessionMeta {
         schema_version: SCHEMA_VERSION,
         session_id: SESSION_ID.to_string(),
-        task_id: "task-1".to_string(),
+        workspace_id: "workspace-1".to_string(),
         agent_ref: AgentCli::Nga.agent_ref(),
         agent_session_id: "provider-1".to_string(),
         cwd: PathBuf::from("/repo"),

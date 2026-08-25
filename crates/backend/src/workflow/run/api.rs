@@ -1,33 +1,29 @@
-use super::prerequisites::SkillRoleWorktreeInitializer;
+use super::prerequisites::SkillRoleWorkspaceInitializer;
 use crate::clock::SystemClock;
 use ora_application::{
     ApplicationError, CreateWorkflowRunHandler, DeleteWorkflowRunHandler, GetWorkflowRunHandler,
-    GitTaskWorktreeProvisioner, ListWorkflowNodeRunsHandler, ListWorkflowRunsByWorkflowHandler,
-    ListWorkflowRunsHandler, ProjectRepository, RepositoryError, UuidTaskIdGenerator,
-    UuidWorkflowRunIdGenerator, UuidWorktreeIdGenerator,
+    ListWorkflowNodeRunsHandler, ListWorkflowRunsByWorkflowHandler, ListWorkflowRunsHandler,
+    RenameWorkflowRunHandler, UuidWorkflowRunIdGenerator,
 };
 use ora_contracts::{
     CreateWorkflowRunRequest, CreateWorkflowRunResponse, DeleteWorkflowRunRequest,
     DeleteWorkflowRunResponse, GetWorkflowRunRequest, GetWorkflowRunResponse,
     ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse, ListWorkflowRunsByWorkflowRequest,
     ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
+    RenameWorkflowRunRequest, RenameWorkflowRunResponse,
 };
 use ora_db::{
-    RepositoryPool, SqliteProjectRepository, SqliteWorkflowRepository, SqliteWorkflowRunRepository,
-    SqliteWorktreeProvisioningLeaseRepository,
+    RepositoryPool, SqliteWorkflowRepository, SqliteWorkflowRunRepository,
+    SqliteWorkspaceRepository,
 };
-use ora_domain::{Project, ProjectId};
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-/// Groups workflow-run handlers while resolving the owning project's Git repository for worktrees.
+/// Groups workflow-run handlers while resolving the selected workspace.
 pub(crate) struct WorkflowRunApi {
     pool: RepositoryPool,
-    worktree_root: Arc<RwLock<PathBuf>>,
-    /// Skill catalog root used to materialize a run worktree's initial `.agents/skills/`.
+    /// Skill catalog root used to materialize a run workspace's initial `.agents/skills/`.
     skills_root: PathBuf,
-    /// Serializes Git mutations per repository between provisioning and cleanup.
-    repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
     get: GetWorkflowRunHandler<SqliteWorkflowRunRepository>,
     list: ListWorkflowRunsHandler<SqliteWorkflowRunRepository>,
     list_by_workflow: ListWorkflowRunsByWorkflowHandler<SqliteWorkflowRunRepository>,
@@ -36,22 +32,14 @@ pub(crate) struct WorkflowRunApi {
 }
 
 impl WorkflowRunApi {
-    /// Builds run handlers from shared persistence, the mutable worktree-root configuration, and
-    /// the skill catalog root used to set up each run worktree's initial state.
-    pub(crate) fn new(
-        pool: RepositoryPool,
-        worktree_root: Arc<RwLock<PathBuf>>,
-        skills_root: PathBuf,
-        repository_gates: Arc<crate::git_cleanup::KeyedResourceLocks>,
-        clock: SystemClock,
-    ) -> Self {
+    /// Builds run handlers from shared persistence and the skill catalog root used to set up each
+    /// run workspace's initial state.
+    pub(crate) fn new(pool: RepositoryPool, skills_root: PathBuf, clock: SystemClock) -> Self {
         let repository = Arc::new(SqliteWorkflowRunRepository::new(pool.clone()));
 
         Self {
             pool,
-            worktree_root,
             skills_root,
-            repository_gates,
             get: GetWorkflowRunHandler::new(repository.clone()),
             list: ListWorkflowRunsHandler::new(repository.clone()),
             list_by_workflow: ListWorkflowRunsByWorkflowHandler::new(repository.clone()),
@@ -60,29 +48,22 @@ impl WorkflowRunApi {
         }
     }
 
-    /// Resolves the run's project repository, provisions a dedicated worktree, and sets up its
-    /// initial `.agents/skills/` state before persisting.
+    /// Validates the selected workspace, prepares its initial state, and persists the run.
     pub(crate) fn create(
         &self,
         request: CreateWorkflowRunRequest,
     ) -> Result<CreateWorkflowRunResponse, ApplicationError> {
-        let project = self.find_project(&ProjectId::new(&request.project_id))?;
-        let repository_root = PathBuf::from(project.root_path);
+        let initializer =
+            SkillRoleWorkspaceInitializer::new(self.skills_root.clone(), self.pool.clone())
+                .map_err(|error| ApplicationError::WorkflowRunStartFailed {
+                    message: error.to_string(),
+                })?;
         let handler = CreateWorkflowRunHandler::new(
             Arc::new(SqliteWorkflowRepository::new(self.pool.clone())),
+            Arc::new(SqliteWorkspaceRepository::new(self.pool.clone())),
             Arc::new(SqliteWorkflowRunRepository::new(self.pool.clone())),
             UuidWorkflowRunIdGenerator::new(),
-            UuidTaskIdGenerator::new(),
-            UuidWorktreeIdGenerator::new(),
-            crate::git_cleanup::GatedWorktreeProvisioner::new(
-                GitTaskWorktreeProvisioner::new(repository_root.clone()),
-                Arc::clone(&self.repository_gates),
-                crate::git_cleanup::normalize_repository_key(&repository_root),
-            ),
-            SkillRoleWorktreeInitializer::new(self.skills_root.clone(), self.pool.clone()),
-            SqliteWorktreeProvisioningLeaseRepository::new(self.pool.clone()),
-            repository_root,
-            self.worktree_root_snapshot()?,
+            initializer,
             self.clock,
         );
 
@@ -134,28 +115,16 @@ impl WorkflowRunApi {
         handler.handle(request)
     }
 
-    /// Loads a visible project or returns the same stable not-found error as project handlers.
-    fn find_project(&self, project_id: &ProjectId) -> Result<Project, ApplicationError> {
-        let repository = SqliteProjectRepository::new(self.pool.clone());
-        let project = repository
-            .find_project(project_id)
-            .map_err(project_repository_error)?;
+    /// Renames one workspace-owned workflow run through the application boundary.
+    pub(crate) fn rename(
+        &self,
+        request: RenameWorkflowRunRequest,
+    ) -> Result<RenameWorkflowRunResponse, ApplicationError> {
+        let handler = RenameWorkflowRunHandler::new(
+            Arc::new(SqliteWorkflowRunRepository::new(self.pool.clone())),
+            self.clock,
+        );
 
-        project.ok_or_else(|| ApplicationError::ProjectNotFound {
-            project_id: project_id.to_string(),
-        })
+        handler.handle(request)
     }
-
-    /// Captures the configured creation root once so an in-flight operation remains coherent.
-    fn worktree_root_snapshot(&self) -> Result<PathBuf, ApplicationError> {
-        self.worktree_root
-            .read()
-            .map(|root| root.clone())
-            .map_err(|_poisoned| ApplicationError::TaskWorktreeRootUnavailable)
-    }
-}
-
-/// Converts project repository failures encountered during dynamic run routing.
-fn project_repository_error(error: RepositoryError) -> ApplicationError {
-    ApplicationError::ProjectRepository { source: error }
 }

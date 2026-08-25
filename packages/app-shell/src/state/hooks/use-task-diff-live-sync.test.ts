@@ -6,7 +6,7 @@ import {
   type ChatStore,
   type SessionConversation,
 } from "@ora/chat";
-import type { Session } from "@ora/contracts";
+import type { Session, Task } from "@ora/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createMockClient,
@@ -17,11 +17,17 @@ import { useTaskDiffLiveSync } from "./use-task-diff-live-sync";
 
 const SESSION: Session = {
   id: "session-1",
-  taskId: "task-1",
+  workspaceId: "workspace-1",
   agentRef: "ora-space.codeagentcli",
   status: "running",
   title: null,
   historyState: { type: "writable" },
+};
+const TASK: Task = {
+  id: "task-1",
+  projectId: "project-1",
+  workspaceId: "workspace-1",
+  title: "Task",
 };
 
 /** Builds one conversation state with just enough lifecycle data for diff syncing. */
@@ -103,7 +109,7 @@ describe("useTaskDiffLiveSync", () => {
     });
     const queryClient = new QueryClient();
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    renderHook(() => useTaskDiffLiveSync(chatStore, [SESSION]), {
+    renderHook(() => useTaskDiffLiveSync(chatStore, [SESSION], [TASK]), {
       wrapper: wrapper(queryClient),
     });
 
@@ -116,7 +122,7 @@ describe("useTaskDiffLiveSync", () => {
 
     expect(invalidate).toHaveBeenCalledOnce();
     expect(invalidate).toHaveBeenCalledWith({
-      queryKey: queryKeys.taskDiffs(SESSION.taskId),
+      queryKey: queryKeys.taskDiffs(TASK.id),
     });
   });
 
@@ -127,7 +133,7 @@ describe("useTaskDiffLiveSync", () => {
     });
     const queryClient = new QueryClient();
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    renderHook(() => useTaskDiffLiveSync(chatStore, [SESSION]), {
+    renderHook(() => useTaskDiffLiveSync(chatStore, [SESSION], [TASK]), {
       wrapper: wrapper(queryClient),
     });
 
@@ -148,7 +154,7 @@ describe("useTaskDiffLiveSync", () => {
     const chatStore = makeChatStore();
     const queryClient = new QueryClient();
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    renderHook(() => useTaskDiffLiveSync(chatStore, [SESSION]), {
+    renderHook(() => useTaskDiffLiveSync(chatStore, [SESSION], [TASK]), {
       wrapper: wrapper(queryClient),
     });
 

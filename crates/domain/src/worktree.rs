@@ -1,4 +1,4 @@
-use crate::{AuditFields, DomainModelError, TaskId};
+use crate::{AuditFields, DomainModelError, WorkspaceId};
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Represents an optional immutable baseline without exposing an empty recorded state.
@@ -39,7 +39,7 @@ impl<'de> Deserialize<'de> for WorktreeBaseline {
     }
 }
 
-/// Models whether a worktree is the active working copy for its task.
+/// Models whether a worktree is the active working copy for its workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorktreeActivity {
     Inactive,
@@ -73,16 +73,11 @@ impl TryFrom<i64> for WorktreeActivity {
     }
 }
 
-/// Represents the physical git worktree that backs a task.
+/// Represents the Git metadata for a local worktree-backed Workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Worktree {
-    pub id: crate::WorktreeId,
-    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
     pub branch_name: Option<String>,
-    /// Exact filesystem path of the provisioned checkout, persisted at creation
-    /// time as ownership evidence for physical cleanup. `None` for historical
-    /// rows created before checkout paths were recorded.
-    pub checkout_root: Option<String>,
     pub baseline: WorktreeBaseline,
     pub activity: WorktreeActivity,
     pub audit_fields: AuditFields,
@@ -91,19 +86,15 @@ pub struct Worktree {
 impl Worktree {
     /// Creates a worktree snapshot together with its persistence-managed audit metadata.
     pub fn new(
-        id: crate::WorktreeId,
-        task_id: TaskId,
+        workspace_id: WorkspaceId,
         branch_name: Option<String>,
-        checkout_root: Option<String>,
         baseline: WorktreeBaseline,
         activity: WorktreeActivity,
         audit_fields: AuditFields,
     ) -> Self {
         Self {
-            id,
-            task_id,
+            workspace_id,
             branch_name,
-            checkout_root,
             baseline,
             activity,
             audit_fields,

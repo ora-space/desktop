@@ -1,7 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@ora/ui";
-import type { AttachSessionResponse, Session, Task } from "@ora/contracts";
+import type { AttachSessionResponse, Session } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -18,6 +18,8 @@ import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useSkills } from "../../state/hooks/use-skills";
+import { useWorkspaces } from "../../state/hooks/use-workspaces";
+import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
 import {
   useWarmSession,
   warmTargetKey,
@@ -56,8 +58,8 @@ import { WorkflowStepper } from "../workflow/workflow-stepper";
 import { useWorkflowDetection } from "../workflow/use-workflow-detection";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
+import { SurfaceLauncher } from "../surface/surface-launcher";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
-import { directChatTitle } from "./workspace-view-utils";
 import {
   WorkspaceReviewLayout,
   type WorkspaceReviewContext,
@@ -87,8 +89,8 @@ function errorMessage(error: unknown): string {
 /**
  * Names the chat surface a selection is looking at.
  *
- * Neither half is enough alone: `conversationKeyFor` collapses every project-root
- * chat onto one key, and the warm target does not change when a send adopts its
+ * Neither half is enough alone: `conversationKeyFor` identifies the direct project
+ * Workspace while the warm target does not change when a send adopts its
  * session. Together they move on exactly the two transitions that must retire a
  * pending send — navigating elsewhere, and its own conversation taking over.
  */
@@ -151,6 +153,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
   const { data: projects = [] } = useProjects();
   const { data: tasks = [] } = useTasks();
+  const { data: workspaces = [] } = useWorkspaces();
   const sessionsQuery = useSessions();
   const skillsQuery = useSkills();
   const sessions = sessionsQuery.data ?? [];
@@ -164,12 +167,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const openDashboardPanel = useUiStore((s) => s.openDashboardPanel);
 
   const chatStore = useChatStore();
-  useTaskDiffLiveSync(chatStore, sessions);
+  useTaskDiffLiveSync(chatStore, sessions, tasks);
   const client = useContractsClient();
   const queryClient = useQueryClient();
   // Opens the provider session for this surface before anything is sent, so the
   // model picker has real options and the send path skips the agent handshake.
-  const { sessionId: warmSessionId, ensureSessionId } = useWarmSession(
+  const { sessionId: warmSessionId, ensureSession } = useWarmSession(
     selection,
     targetAgentCli,
   );
@@ -186,6 +189,23 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
 
   const project = projects.find((item) => item.id === selection.projectId);
   const task = tasks.find((item) => item.id === selection.taskId);
+  const overviewProject = projects.find(
+    (item) => item.id === selection.projectId,
+  );
+  const selectedWorkspace =
+    selection.workflowRunId !== null
+      ? undefined
+      : task !== undefined
+        ? workspaces.find((item) => item.id === task.workspaceId)
+        : workspaces.find(
+            (item) =>
+              item.projectId === selection.projectId && item.kind === "main",
+          );
+  const selectedWorkspaceId =
+    selection.workflowRunId !== null
+      ? undefined
+      : (task?.workspaceId ?? selectedWorkspace?.id);
+  const workspaceCwdQuery = useWorkspaceCwd(selectedWorkspaceId);
   const session = sessions.find((item) => item.id === selection.sessionId);
   // Until the first message binds this surface to a persisted session, its
   // conversation lives under the warm one — the same id the composer and the
@@ -218,12 +238,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     pendingSend?.surfaceKey === chatSurfaceKeyFor(selection)
       ? pendingSend.turn
       : null;
-  // Absolute path to the OpenSpec skills, so the agent finds them from its worktree
-  // cwd even when `.opencode/skills` lives only at the project root.
+  // Absolute path to the OpenSpec skills, so the agent finds them from its Workspace
+  // cwd even when `.opencode/skills` lives only at the main Workspace.
   const skillsDir =
-    project === undefined
+    workspaceCwdQuery.data === undefined || workspaceCwdQuery.data === ""
       ? ".opencode/skills"
-      : `${project.rootPath.replace(/[\\/]+$/, "")}/.opencode/skills`;
+      : `${workspaceCwdQuery.data.replace(/[\\/]+$/, "")}/.opencode/skills`;
   // The highlighted (blue) stage, if any, so pressing Enter on an empty composer
   // launches it directly.
   const workflowRun = useWorkflowStore((state) => getRun(state, workflowKey));
@@ -270,6 +290,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     agentText: string | undefined,
     images: acp.ImageContent[] = [],
   ) => {
+    if (targetAgentCli === null) return;
     const currentKey = conversationKeyFor(
       useWorkspaceSelectionStore.getState().selection,
     );
@@ -298,7 +319,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               // fresh one rather than keep an id the backend no longer knows.
               queryClient.removeQueries({
                 queryKey: queryKeys.warmSession(
-                  { type: "task", taskId: session.taskId },
+                  { type: "workspace", workspaceId: session.workspaceId },
                   pendingSwitch,
                 ),
               });
@@ -326,9 +347,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         // lifecycle snapshot after every finite prompt without polling idle sessions.
         await Promise.all([
           sessionsQuery.refetch(),
-          queryClient.invalidateQueries({
-            queryKey: queryKeys.taskDiffs(session.taskId),
-          }),
+          task === undefined
+            ? Promise.resolve()
+            : queryClient.invalidateQueries({
+                queryKey: queryKeys.taskDiffs(task.id),
+              }),
         ]);
       }
       return;
@@ -341,7 +364,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     const token = (pendingSendToken.current += 1);
     const surfaceKey = chatSurfaceKeyFor(selection);
     setPendingSend({ surfaceKey, turn: draftTurn(displayText, images) });
-    let warmed: string | null;
+    let warmed: Awaited<ReturnType<typeof ensureSession>>;
     const draftIdAtSend =
       useWorkspaceSelectionStore.getState().selection.draftId;
     // Hide × for the whole handshake — bind only happens after warm returns.
@@ -366,7 +389,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       throw new DraftSendAbandonedError();
     };
     try {
-      warmed = await ensureSessionId();
+      warmed = await ensureSession();
     } catch (error) {
       // The message never reached an agent, so it stays on screen carrying the
       // failure rather than disappearing with the composer's optimistic clear.
@@ -419,10 +442,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       return;
     }
     // Rebound as a const so the narrowing survives into `prepare` below.
-    const sessionId = warmed;
+    const sessionId = warmed.sessionId;
+    const workspaceId = warmed.workspaceId;
     const draftId = draftIdAtSend;
     const projectId = project.id;
-    let taskId = task?.id ?? null;
+    const taskId = task?.id ?? null;
     // True once attach has written a persisted session. Failures after that
     // belong to the live chat — rolling the draft back would yank the user onto
     // a row removeCommitted may already have deleted.
@@ -454,43 +478,17 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         agentText,
         images,
         prepare: async () => {
-          if (taskId === null) {
-            const response = await client.task.create({
-              projectId,
-              title: directChatTitle(displayText),
-              workspaceMode: "project_root",
-            });
-            const createdTask = response.task;
-            taskId = createdTask.id;
-            queryClient.setQueryData<Task[]>(queryKeys.tasks, (current) =>
-              upsertById(current, createdTask),
-            );
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks });
-            // Record the owning task straight away. If the attach below fails,
-            // the task is retained and the next send reuses it.
-            useWorkspaceSelectionStore
-              .getState()
-              .selectSession(sessionId, taskId, projectId);
-          }
-
-          const attachedTaskId = taskId;
           let response: AttachSessionResponse;
           try {
             response = await client.session.attach({
               sessionId,
-              taskId: attachedTaskId,
+              workspaceId,
             });
           } finally {
             // Attach consumes the warm entry on success and failure.
             queryClient.removeQueries({
               queryKey: queryKeys.warmSession(
-                { type: "task", taskId: attachedTaskId },
-                targetAgentCli,
-              ),
-            });
-            queryClient.removeQueries({
-              queryKey: queryKeys.warmSession(
-                { type: "projectRoot", projectId },
+                { type: "workspace", workspaceId },
                 targetAgentCli,
               ),
             });
@@ -510,7 +508,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             }
           }
           useUiStore.getState().expandProject(projectId);
-          useUiStore.getState().expandTask(attachedTaskId);
+          if (taskId !== null) {
+            useUiStore.getState().expandTask(taskId);
+          }
           return { availableCommands: response.availableCommands };
         },
       });
@@ -585,13 +585,14 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   }
 
   // Anything short of a persisted selected session is a new or optimistic chat.
-  const chatIsOpen =
-    session === undefined || (task !== undefined && project !== undefined);
+  const chatIsOpen = session === undefined || project !== undefined;
 
   if (chatIsOpen) {
-    const canChat = session
-      ? session.status === "running" || conversation?.isLoaded === true
-      : project !== undefined;
+    const canChat =
+      targetAgentCli !== null &&
+      (session
+        ? session.status === "running" || conversation?.isLoaded === true
+        : project !== undefined);
     // A failed background session-create settles onto the draft conversation, so
     // the conversation error already covers the start-up failure path. A pending
     // send has no conversation to settle onto and carries its own.
@@ -652,10 +653,8 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               </div>
             )}
           </DragRegion>
-          <LocationActionsButton
-            taskId={task?.id}
-            projectPath={project?.rootPath}
-          />
+          <LocationActionsButton workspaceId={selectedWorkspaceId} />
+          <SurfaceLauncher />
           <Button
             variant="ghost"
             size="icon"
@@ -685,6 +684,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           <ChatView
             taskId={task?.id}
             projectId={project?.id}
+            workspaceId={selectedWorkspaceId}
             turns={turns}
             modelChanges={conversation?.modelChanges}
             userName={userName}
@@ -696,7 +696,16 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             skills={skillsQuery.data ?? []}
             availableCommands={conversation?.availableCommands ?? []}
             disabled={!canChat}
-            disabledHint={canChat ? undefined : t("chat.pickProject")}
+            // An untouched chat cannot send yet, but disabling this picker as
+            // part of the composer would make choosing its first agent impossible.
+            modelSelectorDisabled={targetAgentCli !== null && !canChat}
+            disabledHint={
+              canChat
+                ? undefined
+                : project === undefined
+                  ? t("chat.pickProject")
+                  : t("chat.pickAgent")
+            }
             // A persisted or optimistic session already fixes its project and
             // execution context, so the pickers only belong to a blank composer.
             contextBar={
@@ -770,10 +779,8 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
             {t("workspace.overview")}
           </span>
         </DragRegion>
-        <LocationActionsButton
-          taskId={task?.id}
-          projectPath={project?.rootPath}
-        />
+        <LocationActionsButton workspaceId={selectedWorkspaceId} />
+        <SurfaceLauncher />
         <WindowControls />
       </header>
       <WorkspaceReviewLayout context={reviewContext}>
@@ -787,16 +794,18 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               )}
             </div>
             <h1 className="text-xl font-semibold">
-              {task?.title ?? project?.name ?? t("workspace.defaultTitle")}
+              {task?.title ??
+                overviewProject?.name ??
+                t("workspace.defaultTitle")}
             </h1>
             <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
               {task
                 ? t("workspace.taskHint")
-                : project
+                : overviewProject
                   ? t("workspace.projectHint")
                   : t("workspace.emptyHint")}
             </p>
-            {(project || task) && (
+            {(overviewProject || task) && (
               <div className="mt-6 grid gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-2">
                 <div className="bg-background p-4">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -804,7 +813,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
                     {t("workspace.repository")}
                   </div>
                   <p className="mt-2 truncate text-sm font-medium">
-                    {project?.rootPath}
+                    {workspaceCwdQuery.data ?? overviewProject?.name}
                   </p>
                 </div>
                 <div className="bg-background p-4">
@@ -816,12 +825,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
                     {task
                       ? t("workspace.sessionCount", {
                           count: sessions.filter(
-                            (item) => item.taskId === task.id,
+                            (item) => item.workspaceId === task.workspaceId,
                           ).length,
                         })
                       : t("workspace.worktreeCount", {
                           count: tasks.filter(
-                            (item) => item.projectId === project?.id,
+                            (item) => item.projectId === overviewProject?.id,
                           ).length,
                         })}
                   </p>

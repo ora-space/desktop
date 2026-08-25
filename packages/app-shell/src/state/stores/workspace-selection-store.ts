@@ -43,7 +43,7 @@ interface WorkspaceSelectionState {
   clearCreateFocusForProject: (projectId: string) => void;
   /**
    * Drops or demotes create focus when its task is deleted. A worktree focus
-   * becomes project-root so New chat still has a valid home.
+   * becomes the project's main Workspace so New chat still has a valid home.
    */
   clearCreateFocusForTask: (taskId: string) => void;
   /** Selects a project and clears any task/session/run underneath. */

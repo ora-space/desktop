@@ -13,7 +13,7 @@ export type HistoryRetention = "30-days" | "90-days" | "forever";
 export interface SettingsPreferences {
   theme: ThemeMode;
   density: InterfaceDensity;
-  agentCli: KnownAgentCli;
+  agentCli: KnownAgentCli | null;
   approvalPolicy: ApprovalPolicy;
   terminalAccess: boolean;
   fileWriteAccess: boolean;
@@ -28,7 +28,7 @@ const SETTINGS_STORAGE_KEY = "ora.settings.v1";
 export const DEFAULT_SETTINGS: SettingsPreferences = {
   theme: "system",
   density: "comfortable",
-  agentCli: "ora-space.opencode",
+  agentCli: null,
   approvalPolicy: "trusted",
   terminalAccess: true,
   fileWriteAccess: true,
@@ -55,7 +55,23 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: SETTINGS_STORAGE_KEY,
+      version: 2,
       storage: createJSONStorage(() => window.localStorage),
+      // Version 1 persisted the implicit OpenCode default together with unrelated
+      // preference changes, so that value cannot prove the user selected it. A
+      // different CLI could only have been written by an explicit picker action
+      // and is retained; the former default becomes the new unselected state.
+      migrate: (persisted, version) => {
+        if (version >= 2) return persisted as SettingsState;
+        const previous = persisted as Partial<SettingsState> | undefined;
+        const previousSettings = previous?.settings;
+        if (previousSettings?.agentCli !== "ora-space.opencode")
+          return persisted as SettingsState;
+        return {
+          ...previous,
+          settings: { ...previousSettings, agentCli: null },
+        } as SettingsState;
+      },
       // Tolerate partial/corrupt persisted state by merging over defaults.
       merge: (persisted, current) => {
         const persistedSettings = (
@@ -66,7 +82,10 @@ export const useSettingsStore = create<SettingsState>()(
         // identities are open strings now, so a stored one can name an agent written before
         // identities were namespaced, or a plugin that has since been uninstalled. Either way
         // the picker has no entry for it and every warm request against it would fail.
-        if (!(settings.agentCli in AGENT_CLI_LABELS)) {
+        if (
+          settings.agentCli !== null &&
+          !(settings.agentCli in AGENT_CLI_LABELS)
+        ) {
           settings.agentCli = DEFAULT_SETTINGS.agentCli;
         }
         return { ...current, settings };

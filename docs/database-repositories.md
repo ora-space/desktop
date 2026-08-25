@@ -48,7 +48,7 @@ File-backed parent directories are not created here. The Desktop composition roo
 
 Repositories map SQLite columns onto the current `ora-domain` shapes, including audit fields and enum-backed columns:
 
-- `tasks.worktree_id` becomes `Option<WorktreeId>`.
+- `worktrees.workspace_id` is both the primary key and the owning Workspace foreign key, so the row cannot acquire an identity independent from its Workspace.
 - `sessions.status` becomes `SessionStatus`; `sessions.agent_cli` text becomes `AgentCli` through the namespaced persisted value; nullable `sessions.title` becomes `Option<SessionTitle>` after domain validation; the nullable `sessions.history_degraded_reason` becomes `HistoryState`, where absence means writable.
 - `worktrees.is_active` becomes `WorktreeActivity`; `worktrees.branch_name` stays optional.
 

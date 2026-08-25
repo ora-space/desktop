@@ -15,6 +15,7 @@ gitlancer = { workspace = true }
 gray_matter = { workspace = true }
 ora-contracts = { workspace = true }
 ora-domain = { workspace = true }
+ora-effect = { workspace = true }
 ora-logging = { workspace = true }
 ora-skill-package = { workspace = true }
 ora-utils = { workspace = true }

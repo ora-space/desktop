@@ -28,6 +28,7 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
 import { useSessions } from "../../state/hooks/use-sessions";
+import { useWorkspaces } from "../../state/hooks/use-workspaces";
 import { useRestoreWorkspaceSelection } from "../../state/hooks/use-restore-workspace-selection";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { usePersistHydrated } from "../../state/hooks/use-persist-hydrated";
@@ -64,8 +65,8 @@ const EMPTY_DRAFT_SEARCH_ENTRIES: DraftSearchEntry[] = [];
 function projectIdOfTask(task: Task): string {
   return task.projectId;
 }
-function taskIdOfSession(session: Session): string {
-  return session.taskId;
+function workspaceIdOfSession(session: Session): string {
+  return session.workspaceId;
 }
 function projectIdOfDraft(draft: DraftPlacement): string {
   return draft.projectId;
@@ -107,6 +108,7 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   const projectsQuery = useProjects();
   const tasksQuery = useTasks();
   const sessionsQuery = useSessions();
+  const workspacesQuery = useWorkspaces();
   // Stabilise the array references so useMemo dependencies don't change every render.
   const projects = useMemo(
     () => projectsQuery.data ?? [],
@@ -116,6 +118,10 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
   const sessions = useMemo(
     () => sessionsQuery.data ?? [],
     [sessionsQuery.data],
+  );
+  const workspaces = useMemo(
+    () => workspacesQuery.data ?? [],
+    [workspacesQuery.data],
   );
   // Placement only — text changes must not rebuild the tree.
   // Zustand 5 dropped equality as the hook's 2nd arg; React 19 also requires
@@ -162,13 +168,23 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     draftStore.removeCommitted(persistedSessionIds);
   }, [persistedSessionIds]);
   const loading =
-    projectsQuery.isPending || tasksQuery.isPending || sessionsQuery.isPending;
+    projectsQuery.isPending ||
+    tasksQuery.isPending ||
+    sessionsQuery.isPending ||
+    workspacesQuery.isPending;
   // Bootstrap and restore both need a successful tree. `!isPending` alone would
   // let a failed/empty fetch miss-clear `pendingRestore` and persist that wipe
   // so the next launch has nothing to restore (flaky "sometimes works").
   const treeReady =
-    projectsQuery.isSuccess && tasksQuery.isSuccess && sessionsQuery.isSuccess;
-  const error = projectsQuery.error ?? tasksQuery.error ?? sessionsQuery.error;
+    projectsQuery.isSuccess &&
+    tasksQuery.isSuccess &&
+    sessionsQuery.isSuccess &&
+    workspacesQuery.isSuccess;
+  const error =
+    projectsQuery.error ??
+    tasksQuery.error ??
+    sessionsQuery.error ??
+    workspacesQuery.error;
 
   const expandTreeKey = useMemo(
     () =>
@@ -186,12 +202,33 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     treePending: !treeReady,
   });
 
-  const nonWorkflowTasks = useMemo(
-    () => tasks.filter((task) => task.type !== "workflow"),
-    [tasks],
+  const tasksByProjectId = useStableGroupBy(tasks, projectIdOfTask);
+  const sessionsByWorkspaceId = useStableGroupBy(
+    sessions,
+    workspaceIdOfSession,
   );
-  const tasksByProjectId = useStableGroupBy(nonWorkflowTasks, projectIdOfTask);
-  const sessionsByTaskId = useStableGroupBy(sessions, taskIdOfSession);
+  const workspaceProjectById = useMemo(
+    () =>
+      new Map(
+        workspaces.map((workspace) => [workspace.id, workspace.projectId]),
+      ),
+    [workspaces],
+  );
+  const directSessionsByProjectId = useStableGroupBy(
+    useMemo(
+      () =>
+        sessions.filter(
+          (session) =>
+            workspaces.find(
+              (workspace) =>
+                workspace.id === session.workspaceId &&
+                workspace.kind === "main",
+            ) !== undefined,
+        ),
+      [sessions, workspaces],
+    ),
+    (session) => workspaceProjectById.get(session.workspaceId) ?? "",
+  );
 
   const directDraftSource = useMemo(
     () => visiblePlacements.filter((draft) => draft.taskId === null),
@@ -246,6 +283,15 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
       ) {
         return true;
       }
+      const directSessions =
+        directSessionsByProjectId.get(project.id) ?? EMPTY_SESSIONS;
+      if (
+        directSessions.some((session) =>
+          session.title?.toLowerCase().includes(needle),
+        )
+      ) {
+        return true;
+      }
       const projectTasks = tasksByProjectId.get(project.id) ?? EMPTY_TASKS;
       return projectTasks.some((task) => {
         if (task.title.toLowerCase().includes(needle)) return true;
@@ -260,7 +306,8 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
         ) {
           return true;
         }
-        const taskSessions = sessionsByTaskId.get(task.id) ?? EMPTY_SESSIONS;
+        const taskSessions =
+          sessionsByWorkspaceId.get(task.workspaceId) ?? EMPTY_SESSIONS;
         return taskSessions.some((session) =>
           session.title?.toLowerCase().includes(needle),
         );
@@ -271,7 +318,8 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
     newSessionLabel,
     projects,
     searchableDrafts,
-    sessionsByTaskId,
+    directSessionsByProjectId,
+    sessionsByWorkspaceId,
     tasksByProjectId,
   ]);
 
@@ -424,7 +472,10 @@ export function WorkspaceSidebar({ user, onSignOut }: WorkspaceSidebarProps) {
               key={project.id}
               project={project}
               tasks={tasksByProjectId.get(project.id) ?? EMPTY_TASKS}
-              sessionsByTaskId={sessionsByTaskId}
+              sessionsByWorkspaceId={sessionsByWorkspaceId}
+              directSessions={
+                directSessionsByProjectId.get(project.id) ?? EMPTY_SESSIONS
+              }
               directDrafts={
                 directDraftsByProjectId.get(project.id) ?? EMPTY_DRAFTS
               }

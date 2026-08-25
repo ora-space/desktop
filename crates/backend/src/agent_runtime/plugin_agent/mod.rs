@@ -11,8 +11,9 @@ pub(crate) use transport::{AgentTransport, PluginAcpTransport};
 use std::path::Path;
 
 use ora_acp::AcpMessages;
-use ora_plugin_lifecycle::{DenoPluginRuntime, PluginAttachment};
 use ora_plugin_runtime::PluginRuntime;
+
+use crate::plugin::AgentPluginAttachment;
 
 /// Holds one running agent plugin together with the ACP stream it feeds.
 pub(crate) struct LaunchedPluginAgent {
@@ -24,21 +25,22 @@ pub(crate) struct LaunchedPluginAgent {
 ///
 /// The process is owned by the plugin lifecycle, so this only speaks the agent contract over it:
 /// enabling, stopping, and uninstalling keep deciding how long the plugin lives, while a
-/// connection owns nothing beyond the notification stream of the launch it attached to.
+/// connection owns nothing beyond the notification tap of the generation it attached to.
 ///
 /// On return the plugin has published a complete agent registration and confirmed its agent is
-/// ready to receive ACP frames, so the caller can immediately begin the ACP handshake.
+/// ready to receive ACP frames, so the caller can immediately begin the ACP handshake. A failure
+/// leaves the process to the caller, which asks the lifecycle to stop it.
 pub(crate) async fn attach(
-    attachment: PluginAttachment<DenoPluginRuntime>,
+    attachment: AgentPluginAttachment,
     plugin_id: &str,
     home_directory: &Path,
     host_version: &str,
 ) -> Result<LaunchedPluginAgent, PluginAgentError> {
-    let PluginAttachment {
-        runtime,
+    let AgentPluginAttachment {
+        connection,
         mut notifications,
     } = attachment;
-    let runtime = runtime.process().clone();
+    let runtime = connection.runtime().process().clone();
     control::verify_agent_contract(&runtime.registration().await)?;
     control::start_agent(&runtime, home_directory, host_version).await?;
     inbound::discard_frames_before_start(&mut notifications, plugin_id);

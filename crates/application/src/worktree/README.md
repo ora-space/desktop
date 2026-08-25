@@ -1,8 +1,8 @@
 # Worktree Application Module
 
-This module defines the application-facing persistence and identity boundary for backend-owned task worktrees.
+This module defines the application-facing persistence seam for backend-owned task worktrees.
 
-`WorktreeRepository` provides visible-record CRUD and soft deletion for domain `Worktree` values. `WorktreeIdGenerator` supplies injectable identifiers, with `UuidWorktreeIdGenerator` as the production implementation.
+`WorktreeRepository` provides visible-record CRUD and soft deletion for domain `Worktree` values. A worktree is identified by its owning `WorkspaceId`; it has no second identity independent from the workspace.
 
 The module intentionally has no standalone handlers or transport contracts. Worktree records are internal metadata coordinated by the task application module and backend session path; they are not an independent public CRUD resource.
 

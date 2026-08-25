@@ -1,7 +1,9 @@
 use crate::{
-    HomepageUrl, InvalidFieldReason, ManifestError, ManifestField, PluginDependencies, PluginHead,
-    PluginKind, PluginManifest, PluginName, PluginNamespace, ReleaseUrl, RepositoryUrl,
-    Sha256Digest,
+    DownloadAction, DownloadDisposition, DownloadPolicy, DownloadRule, HomepageUrl,
+    InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError, Origin,
+    PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
+    PluginName, PluginNamespace, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl,
+    RuleField, Sha256Digest, StartUrl,
 };
 use ora_utils::{GitBranchName, GitBranchNameError};
 use pretty_assertions::assert_eq;
@@ -79,6 +81,8 @@ fn parses_complete_manifest_into_full_domain_object() {
         dependencies: Some(PluginDependencies {
             ora: success(VersionReq::parse(">= 0.8.0"), "Ora requirement"),
         }),
+        workbench: None,
+        webview: None,
     };
 
     assert_eq!(actual, expected);
@@ -448,9 +452,379 @@ fn parses_only_the_ora_dependency() {
 /// Verifies field paths have stable dotted representations for programmatic diagnostics.
 #[test]
 fn formats_structured_manifest_fields() {
-    assert_eq!(ManifestField::HeadRepository.as_str(), "head.repository");
+    assert_eq!(ManifestField::HeadRepository.to_string(), "head.repository");
+    assert_eq!(
+        ManifestField::WebviewDownloadRule {
+            index: 2,
+            field: RuleField::PagePathPrefix,
+        }
+        .to_string(),
+        "webview.downloads.rules[2].page.path_prefix"
+    );
     assert_eq!(
         ManifestField::DependenciesOra.to_string(),
         "dependencies.ora"
     );
+}
+
+const WORKBENCH_MANIFEST: &str = r#"resolver = 1
+name = "user.ora-weather"
+namespace = "official"
+kind = "workbench"
+version = "1.2.0"
+description = "Weather panel"
+
+[workbench]
+methods = ["weather/get_current", "weather/search_city"]
+"#;
+
+const WEBVIEW_MANIFEST: &str = r#"resolver = 1
+name = "acme.hub"
+namespace = "official"
+kind = "webview"
+version = "1.0.0"
+description = "An example marketplace surface"
+
+[webview]
+start_url = "https://www.example.com"
+allowed_origins = ["https://www.example.com", "https://example.com"]
+
+[webview.downloads]
+fallback = { prompt = ["save_as"] }
+
+[[webview.downloads.rules]]
+page = { origin = "https://www.example.com", path_prefix = "/skills/" }
+action = { auto = "import_skill" }
+
+[[webview.downloads.rules]]
+page = { origin = "https://www.example.com", path_prefix = "/downloads/" }
+action = { prompt = ["import_skill", "save_as"] }
+"#;
+
+/// Verifies a workbench manifest keeps its page-visible methods in declaration order.
+#[test]
+fn parses_workbench_section_into_method_list() {
+    let manifest = success(
+        PluginManifest::parse_installed(WORKBENCH_MANIFEST),
+        "workbench manifest",
+    );
+
+    assert_eq!(manifest.kind(), PluginKind::Workbench);
+    assert_eq!(
+        (manifest.workbench(), manifest.webview()),
+        (
+            Some(&PluginWorkbench {
+                methods: vec![
+                    success(MethodName::parse("weather/get_current"), "method"),
+                    success(MethodName::parse("weather/search_city"), "method"),
+                ],
+            }),
+            None,
+        )
+    );
+}
+
+/// Verifies a workbench plugin may omit `[workbench]` (a static page) while other kinds may
+/// not declare it.
+#[test]
+fn workbench_section_is_optional_and_kind_exclusive() {
+    let static_page = success(
+        PluginManifest::parse_installed(MINIMAL_MANIFEST),
+        "static workbench",
+    );
+    assert_eq!(static_page.workbench(), None);
+
+    let agent = WORKBENCH_MANIFEST.replacen("kind = \"workbench\"", "kind = \"agent\"", 1);
+    assert!(matches!(
+        PluginManifest::parse_installed(&agent),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Workbench,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Agent
+            },
+        })
+    ));
+}
+
+/// Verifies method names are validated per entry and duplicates are refused.
+#[test]
+fn rejects_invalid_and_duplicate_workbench_methods() {
+    let cases = [
+        (
+            "methods = [\"ora/storage/read\"]",
+            ManifestField::WorkbenchMethod { index: 0 },
+        ),
+        (
+            "methods = [\"weather/get_current\", \"Weather/Get\"]",
+            ManifestField::WorkbenchMethod { index: 1 },
+        ),
+        (
+            "methods = [\"weather/get_current\", \"weather/get_current\"]",
+            ManifestField::WorkbenchMethod { index: 1 },
+        ),
+        ("methods = []", ManifestField::WorkbenchMethods),
+    ];
+    for (broken, expected_field) in cases {
+        let source = WORKBENCH_MANIFEST.replacen(
+            "methods = [\"weather/get_current\", \"weather/search_city\"]",
+            broken,
+            1,
+        );
+        let Err(ManifestError::InvalidField { field, .. }) =
+            PluginManifest::parse_installed(&source)
+        else {
+            panic!("expected {broken} to produce a semantic field error");
+        };
+        assert_eq!(field, expected_field, "{broken}");
+    }
+
+    assert!(matches!(
+        MethodName::parse("ora/anything"),
+        Err(MethodNameError::ReservedPrefix)
+    ));
+    assert!(matches!(
+        MethodName::parse("weather//get"),
+        Err(MethodNameError::EmptySegment)
+    ));
+}
+
+/// Verifies a webview manifest maps to normalized origins, ordered rules, and its fallback.
+#[test]
+fn parses_webview_section_into_download_policy() {
+    let manifest = success(
+        PluginManifest::parse_installed(WEBVIEW_MANIFEST),
+        "webview manifest",
+    );
+    let origin = |value: &str| success(Origin::parse(value), "origin");
+    let rule = |prefix: &str, disposition: DownloadDisposition| DownloadRule {
+        page: PageMatcher {
+            origin: origin("https://www.example.com"),
+            path_prefix: success(PathPrefix::parse(prefix), "prefix"),
+        },
+        disposition,
+    };
+
+    assert_eq!(manifest.kind(), PluginKind::Webview);
+    assert_eq!(
+        manifest.webview(),
+        Some(&PluginWebview {
+            start_url: success(StartUrl::parse("https://www.example.com"), "start url"),
+            allowed_origins: vec![
+                origin("https://www.example.com"),
+                origin("https://example.com"),
+            ],
+            downloads: DownloadPolicy {
+                rules: vec![
+                    rule(
+                        "/skills/",
+                        DownloadDisposition::Auto {
+                            action: DownloadAction::ImportSkill,
+                        },
+                    ),
+                    rule(
+                        "/downloads/",
+                        DownloadDisposition::Prompt {
+                            actions: vec![DownloadAction::ImportSkill, DownloadAction::SaveAs],
+                        },
+                    ),
+                ],
+                fallback: DownloadDisposition::Prompt {
+                    actions: vec![DownloadAction::SaveAs],
+                },
+            },
+        })
+    );
+}
+
+/// Verifies omitting `[webview.downloads]` rejects every download rather than allowing any.
+#[test]
+fn webview_downloads_default_to_reject() {
+    let source = WEBVIEW_MANIFEST
+        .split("\n[webview.downloads]")
+        .next()
+        .unwrap_or_default();
+    let manifest = success(PluginManifest::parse_installed(source), "webview manifest");
+
+    assert_eq!(
+        manifest.webview().map(PluginWebview::downloads),
+        Some(&DownloadPolicy::default())
+    );
+}
+
+/// Verifies `[webview]` is required for webview plugins and refused for every other kind.
+#[test]
+fn pairs_webview_section_with_kind() {
+    let missing = WEBVIEW_MANIFEST
+        .split("\n[webview]")
+        .next()
+        .unwrap_or_default();
+    assert!(matches!(
+        PluginManifest::parse_installed(missing),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Webview,
+            reason: InvalidFieldReason::MissingForKind {
+                kind: PluginKind::Webview
+            },
+        })
+    ));
+
+    let workbench = WEBVIEW_MANIFEST.replacen("kind = \"webview\"", "kind = \"workbench\"", 1);
+    assert!(matches!(
+        PluginManifest::parse_installed(&workbench),
+        Err(ManifestError::InvalidField {
+            field: ManifestField::Webview,
+            reason: InvalidFieldReason::NotAllowedForKind {
+                kind: PluginKind::Workbench
+            },
+        })
+    ));
+}
+
+/// Verifies each webview value rule is attributed to its indexed field.
+#[test]
+fn rejects_invalid_webview_fields_with_index() {
+    let cases = [
+        (
+            (
+                "start_url = \"https://www.example.com\"",
+                "start_url = \"http://www.example.com\"",
+            ),
+            ManifestField::WebviewStartUrl,
+        ),
+        (
+            (
+                "start_url = \"https://www.example.com\"",
+                "start_url = \"https://www.example.com/#top\"",
+            ),
+            ManifestField::WebviewStartUrl,
+        ),
+        (
+            (
+                "\"https://example.com\"]",
+                "\"https://example.com/skills\"]",
+            ),
+            ManifestField::WebviewAllowedOrigin { index: 1 },
+        ),
+        (
+            (
+                "allowed_origins = [\"https://www.example.com\", \"https://example.com\"]",
+                "allowed_origins = []",
+            ),
+            ManifestField::WebviewAllowedOrigins,
+        ),
+        (
+            (
+                "fallback = { prompt = [\"save_as\"] }",
+                "fallback = { prompt = [] }",
+            ),
+            ManifestField::WebviewDownloadsFallback,
+        ),
+        (
+            (
+                "fallback = { prompt = [\"save_as\"] }",
+                "fallback = { auto = \"import_skill\", prompt = [\"save_as\"] }",
+            ),
+            ManifestField::WebviewDownloadsFallback,
+        ),
+        (
+            (
+                "action = { auto = \"import_skill\" }",
+                "action = { auto = \"run_binary\" }",
+            ),
+            ManifestField::WebviewDownloadRule {
+                index: 0,
+                field: RuleField::Action,
+            },
+        ),
+        // `save_as` needs a user-chosen destination, so it can never run automatically.
+        (
+            (
+                "action = { auto = \"import_skill\" }",
+                "action = { auto = \"save_as\" }",
+            ),
+            ManifestField::WebviewDownloadRule {
+                index: 0,
+                field: RuleField::Action,
+            },
+        ),
+        (
+            (
+                "action = { prompt = [\"import_skill\", \"save_as\"] }",
+                "action = { prompt = [\"save_as\", \"save_as\"] }",
+            ),
+            ManifestField::WebviewDownloadRule {
+                index: 1,
+                field: RuleField::Action,
+            },
+        ),
+        (
+            (
+                "path_prefix = \"/downloads/\"",
+                "path_prefix = \"downloads/\"",
+            ),
+            ManifestField::WebviewDownloadRule {
+                index: 1,
+                field: RuleField::PagePathPrefix,
+            },
+        ),
+        (
+            (
+                "page = { origin = \"https://www.example.com\", path_prefix = \"/downloads/\" }",
+                "page = { origin = \"https://www.example.com/x\", path_prefix = \"/downloads/\" }",
+            ),
+            ManifestField::WebviewDownloadRule {
+                index: 1,
+                field: RuleField::PageOrigin,
+            },
+        ),
+    ];
+    for ((valid, broken), expected_field) in cases {
+        let source = WEBVIEW_MANIFEST.replacen(valid, broken, 1);
+        assert_ne!(source, WEBVIEW_MANIFEST, "{broken} did not apply");
+        let Err(ManifestError::InvalidField { field, .. }) =
+            PluginManifest::parse_installed(&source)
+        else {
+            panic!("expected {broken} to produce a semantic field error");
+        };
+        assert_eq!(field, expected_field, "{broken}");
+    }
+}
+
+/// Verifies an unknown section field, a mistyped rule, and an unknown action key stay
+/// structural errors that name the offending TOML path.
+#[test]
+fn reports_structural_webview_errors_with_paths() {
+    let cases = [
+        (
+            WEBVIEW_MANIFEST.replacen(
+                "allowed_origins = [",
+                "user_agent = \"x\"\nallowed_origins = [",
+                1,
+            ),
+            "webview.user_agent",
+        ),
+        (
+            WEBVIEW_MANIFEST.replacen(
+                "action = { auto = \"import_skill\" }",
+                "action = { run = \"x\" }",
+                1,
+            ),
+            "webview.downloads.rules[0].action.run",
+        ),
+        (
+            WEBVIEW_MANIFEST.replacen(
+                "path_prefix = \"/skills/\" }",
+                "path_prefix = \"/skills/\", query = \"a\" }",
+                1,
+            ),
+            "webview.downloads.rules[0].page.query",
+        ),
+    ];
+    for (source, expected_path) in cases {
+        let Err(ManifestError::InvalidToml { path, .. }) = PluginManifest::parse_installed(&source)
+        else {
+            panic!("expected {expected_path} to fail structurally");
+        };
+        assert_eq!(path.as_deref(), Some(expected_path));
+    }
 }

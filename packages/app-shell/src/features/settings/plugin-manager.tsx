@@ -147,7 +147,10 @@ function InstalledPluginRow({
   onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
 }) {
   const { t } = useTranslation();
-  const mutations = usePluginMutations(plugin.id);
+  const mutations = usePluginMutations(
+    plugin.id,
+    plugin.kind === "agent" ? plugin.name : undefined,
+  );
   const enabling = mutations.enable.isPending;
   const disabling = mutations.disable.isPending;
   const uninstalling = mutations.uninstall.isPending;
@@ -169,7 +172,7 @@ function InstalledPluginRow({
             {plugin.displayName}
           </span>
           <span className="block truncate text-xs text-muted-foreground">
-            {plugin.packageName}
+            {plugin.id}
           </span>
           <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
             {plugin.version} · {plugin.kind} ·{" "}

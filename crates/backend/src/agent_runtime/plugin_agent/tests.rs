@@ -1,12 +1,24 @@
 use std::collections::HashSet;
 
-use ora_plugin_runtime::{PluginNotification, PluginRegistration};
+use ora_domain::PluginId;
+use ora_plugin_lifecycle::{InboundNotification, PluginGenerationKey};
+use ora_plugin_runtime::PluginRegistration;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::control::{PluginAgentError, verify_agent_contract};
 use super::inbound::{discard_frames_before_start, spawn_frame_forwarding};
+
+/// Builds one notification as the lifecycle pump delivers it for the example agent plugin.
+fn notification(method: &str, params: serde_json::Value) -> InboundNotification {
+    InboundNotification {
+        plugin_id: PluginId::new("official", "example.agent").expect("plugin id"),
+        generation: PluginGenerationKey(1),
+        method: method.to_string(),
+        params,
+    }
+}
 
 /// Builds a registration that satisfies the whole agent contract.
 fn complete_registration() -> PluginRegistration {
@@ -68,19 +80,13 @@ async fn discards_frames_that_arrived_before_the_agent_started() {
     let (sender, mut notifications) = mpsc::unbounded_channel();
     for index in 0..3 {
         sender
-            .send(PluginNotification {
-                method: "agent/acp".to_string(),
-                params: json!({ "id": index }),
-            })
+            .send(notification("agent/acp", json!({ "id": index })))
             .expect("queue early frame");
     }
 
     discard_frames_before_start(&mut notifications, "example.agent");
     sender
-        .send(PluginNotification {
-            method: "agent/acp".to_string(),
-            params: json!({ "id": 99 }),
-        })
+        .send(notification("agent/acp", json!({ "id": 99 })))
         .expect("queue live frame");
     let mut messages = spawn_frame_forwarding(notifications, "example.agent".to_string());
 
@@ -99,18 +105,12 @@ async fn discards_frames_that_arrived_before_the_agent_started() {
 async fn drops_unusable_frames_without_failing_the_connection() {
     let (sender, notifications) = mpsc::unbounded_channel();
     for notification in [
-        PluginNotification {
-            method: "agent/modelsChanged".to_string(),
-            params: json!({}),
-        },
-        PluginNotification {
-            method: "agent/acp".to_string(),
-            params: json!("not an object"),
-        },
-        PluginNotification {
-            method: "agent/acp".to_string(),
-            params: json!({ "jsonrpc": "2.0", "method": "session/update" }),
-        },
+        notification("agent/modelsChanged", json!({})),
+        notification("agent/acp", json!("not an object")),
+        notification(
+            "agent/acp",
+            json!({ "jsonrpc": "2.0", "method": "session/update" }),
+        ),
     ] {
         sender.send(notification).expect("queue notification");
     }

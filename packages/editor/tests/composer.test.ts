@@ -15,6 +15,7 @@ import {
   composerFileLabel,
   composerFilePlainText,
 } from "../src/composer/composer-file.ts";
+import { parseComposerFileQuote } from "../src/composer/composer-file-quote.ts";
 import { parseFenceOpener } from "../src/composer/composer-code-fence.ts";
 import { highlightInputMatch } from "../src/composer/composer-highlight.ts";
 import { isComposerOpenableUrl } from "../src/composer/composer-link.ts";
@@ -172,7 +173,7 @@ test("diff-gutter quotes serialize as a git patch so the agent sees an existing 
       "diff --git a/src/example.ts b/src/example.ts",
       "--- a/src/example.ts",
       "+++ b/src/example.ts",
-      "@@ -1,1 +1,2 @@ quoted from git diff (new side)",
+      "@@ -1,1 +1,2 @@ quoted from git diff (new side), lines 1-2",
       " keep",
       "+new line",
       "```",
@@ -194,7 +195,7 @@ test("diff-gutter quotes serialize as a git patch so the agent sees an existing 
       "diff --git a/src/example.ts b/src/example.ts",
       "--- a/src/example.ts",
       "+++ b/src/example.ts",
-      "@@ -2,1 +2,0 @@ quoted from git diff (old side)",
+      "@@ -2,1 +2,0 @@ quoted from git diff (old side), lines 2-2",
       "-old line",
       "```",
       "",
@@ -214,13 +215,95 @@ test("diff-gutter quotes serialize as a git patch so the agent sees an existing 
       "diff --git a/src/example.ts b/src/example.ts",
       "--- a/src/example.ts",
       "+++ b/src/example.ts",
-      "@@ -1,2 +1,2 @@ quoted from git diff",
+      "@@ -1,2 +1,2 @@ quoted from git diff, lines 1-3",
       " keep",
       "-old line",
       "+new line",
       "```",
       "",
     ].join("\n"),
+  );
+});
+
+/** Splits a serialized quote back into the fence info string and its body. */
+function fencedQuoteParts(payload: string): { info: string; body: string } {
+  const lines = payload.replace(/^\n/, "").replace(/\n$/, "").split("\n");
+  const opener = lines[0] ?? "";
+  return {
+    info: opener.replace(/^`+/, ""),
+    body: lines.slice(1, -1).join("\n"),
+  };
+}
+
+test("parseComposerFileQuote round-trips every payload composerFilePlainText writes", () => {
+  const quotes = [
+    {
+      path: "src/app.ts",
+      startLine: 4,
+      endLine: 5,
+      snippet: "const a = 1;\nconst b = 2;",
+      kind: "file" as const,
+      origin: undefined,
+      diffSide: undefined,
+    },
+    {
+      path: "src/example.ts",
+      startLine: 1,
+      endLine: 2,
+      snippet: " keep\n+new line",
+      kind: "file" as const,
+      origin: "diff" as const,
+      diffSide: "new" as const,
+    },
+    {
+      path: "src/example.ts",
+      startLine: 2,
+      endLine: 2,
+      snippet: "-old line",
+      kind: "file" as const,
+      origin: "diff" as const,
+      diffSide: "old" as const,
+    },
+    {
+      // A drag across a collapsed hunk quotes a wider span than the body has
+      // lines, so only the range note can carry the label history rebuilds.
+      path: "src/example.ts",
+      startLine: 2,
+      endLine: 40,
+      snippet: " keep\n-old line\n+new line",
+      kind: "file" as const,
+      origin: "diff" as const,
+      diffSide: undefined,
+    },
+  ];
+
+  for (const quote of quotes) {
+    const { info, body } = fencedQuoteParts(composerFilePlainText(quote));
+    assert.deepEqual(parseComposerFileQuote(info, body), quote);
+  }
+});
+
+test("parseComposerFileQuote leaves ordinary fenced code alone", () => {
+  assert.equal(parseComposerFileQuote("ts", "const a = 1;"), null);
+  assert.equal(parseComposerFileQuote("", "plain text"), null);
+  // Renamed file: a quote always patches one path against itself.
+  assert.equal(
+    parseComposerFileQuote("diff", "diff --git a/a.ts b/b.ts\n+added"),
+    null,
+  );
+  // A hand-written patch without the quote note stays a diff code block.
+  assert.equal(
+    parseComposerFileQuote(
+      "diff",
+      [
+        "diff --git a/a.ts b/a.ts",
+        "--- a/a.ts",
+        "+++ b/a.ts",
+        "@@ -1,1 +1,1 @@",
+        "+added",
+      ].join("\n"),
+    ),
+    null,
   );
 });
 

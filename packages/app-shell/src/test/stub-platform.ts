@@ -16,13 +16,35 @@ export function createStubPlatform(): PlatformAdapter {
     windowControls: { kind: "none" },
     locationActions: {
       resolveTaskCwd: async () => "",
+      resolveWorkspaceCwd: async () => "",
       open: async () => undefined,
     },
-    skillMarketplace: {
-      open: async () => undefined,
-      onStatus: async () => () => undefined,
+    surfaces: {
+      capabilities: async () => ({ embedded: false }),
+      list: async () => [],
+      open: async (target, mount) => ({
+        instance: 0,
+        pluginId: target.pluginId,
+        kind: "webview" as const,
+        title: target.pluginId,
+        target: mount,
+        state: "open" as const,
+      }),
+      close: async () => undefined,
+      resolveDownload: async () => ({
+        action: "save_as",
+        importSessionId: null,
+      }),
+      discardDownload: async () => undefined,
+      setBounds: async () => undefined,
+      setVisible: async () => undefined,
+      popout: async () => undefined,
+      dock: async () => undefined,
+      reload: async () => undefined,
+      onEvent: async () => () => undefined,
     },
     selectPath: async () => null,
+    selectSavePath: async () => null,
     saveTextFile: async () => false,
     openExternalUrl: async () => undefined,
   };

@@ -25,6 +25,7 @@ use ora_contracts::{EmptyErrorParams, PublicError};
 
 type ProjectBranchListHandler = ListProjectBranchesHandler<
     SqliteProjectRepository,
+    ora_db::SqliteWorkspaceRepository,
     SqliteTaskRepository,
     SqliteWorktreeRepository,
     GitBranchLister,
@@ -60,6 +61,7 @@ impl ProjectApi {
             list: ListProjectsHandler::new(repository.clone()),
             list_branches: ListProjectBranchesHandler::new(
                 repository.clone(),
+                ora_db::SqliteWorkspaceRepository::new(pool.clone()),
                 SqliteTaskRepository::new(pool.clone()),
                 SqliteWorktreeRepository::new(pool),
                 GitBranchLister,

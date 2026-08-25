@@ -48,6 +48,13 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "DeleteWorkflowRunResponse",
     },
     FrontendEndpoint {
+        operation_name: "renameWorkflowRun",
+        namespace: NAMESPACE,
+        member_name: "rename",
+        request_type: "RenameWorkflowRunRequest",
+        response_type: "RenameWorkflowRunResponse",
+    },
+    FrontendEndpoint {
         operation_name: "startWorkflowRun",
         namespace: NAMESPACE,
         member_name: "start",

@@ -1,6 +1,6 @@
-use ora_application::{SessionRepository, TaskRepository};
-use ora_db::{RepositoryPool, SqliteSessionRepository, SqliteTaskRepository};
-use ora_domain::{ProjectId, Session, SessionId, TaskId};
+use ora_application::SessionRepository;
+use ora_db::{RepositoryPool, SqliteSessionRepository, SqliteWorkspaceRepository};
+use ora_domain::{ProjectId, Session, SessionId, WorkspaceId};
 use ora_history::remove_session_history;
 use ora_logging::ora_warn;
 use std::path::Path;
@@ -26,37 +26,40 @@ pub(crate) fn remove_session_histories(
     }
 }
 
-/// Collects the sessions a task cascade will remove, before it removes them.
+/// Collects the sessions a workspace cascade will remove, before it removes them.
 ///
 /// The lookup has to happen first: once the rows are soft-deleted, nothing links
 /// the files back to the task that owned them.
-pub(crate) fn session_ids_for_task(pool: &RepositoryPool, task_id: &TaskId) -> Vec<SessionId> {
+pub(crate) fn session_ids_for_workspace(
+    pool: &RepositoryPool,
+    workspace_id: &WorkspaceId,
+) -> Vec<SessionId> {
     visible_sessions(pool)
         .into_iter()
-        .filter(|session| session.task_id == *task_id)
+        .filter(|session| session.workspace_id == *workspace_id)
         .map(|session| session.id)
         .collect()
 }
 
-/// Collects the sessions a project cascade will remove, across all of its tasks.
+/// Collects the sessions a project cascade will remove, across all of its workspaces.
 pub(crate) fn session_ids_for_project(
     pool: &RepositoryPool,
     project_id: &ProjectId,
 ) -> Vec<SessionId> {
-    let task_ids: Vec<TaskId> = match SqliteTaskRepository::new(pool.clone()).list_tasks() {
-        Ok(tasks) => tasks
-            .into_iter()
-            .filter(|task| task.project_id == *project_id)
-            .map(|task| task.id)
-            .collect(),
-        Err(error) => {
-            ora_warn!(error = %error, "failed to list tasks for session history cleanup");
-            return Vec::new();
-        }
-    };
+    let workspace_ids: Vec<WorkspaceId> =
+        match SqliteWorkspaceRepository::new(pool.clone()).list_workspaces(project_id) {
+            Ok(workspaces) => workspaces
+                .into_iter()
+                .map(|workspace| workspace.id)
+                .collect(),
+            Err(error) => {
+                ora_warn!(error = %error, "failed to list workspaces for session history cleanup");
+                return Vec::new();
+            }
+        };
     visible_sessions(pool)
         .into_iter()
-        .filter(|session| task_ids.contains(&session.task_id))
+        .filter(|session| workspace_ids.contains(&session.workspace_id))
         .map(|session| session.id)
         .collect()
 }

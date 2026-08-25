@@ -71,3 +71,4 @@ export {
   composerFilePlainText,
 } from "./composer-file";
 export type { ComposerFileAttrs } from "./composer-file";
+export { parseComposerFileQuote } from "./composer-file-quote";

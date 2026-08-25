@@ -6,6 +6,5 @@ pub(crate) fn map_project(project: DomainProject) -> ContractProject {
     ContractProject {
         id: project.id.to_string(),
         name: project.name,
-        root_path: project.root_path,
     }
 }

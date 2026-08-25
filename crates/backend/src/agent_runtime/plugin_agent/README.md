@@ -10,7 +10,7 @@ sees a `RuntimeConnection` and cannot tell which kind of provider produced it.
 
 ## Responsibilities
 
-- Attach to one lifecycle-owned plugin process and claim the notification stream of that launch.
+- Attach to one lifecycle-owned plugin process and read the notifications of that one generation.
 - Reject, at handshake time, any plugin whose registration does not cover `agent/start`,
   `agent/stop`, `agent/listModels`, and the emitted `agent/acp`.
 - Call `agent/start` and confirm the plugin will speak a protocol version this host understands.
@@ -31,11 +31,14 @@ sees a `RuntimeConnection` and cannot tell which kind of provider produced it.
 
 ## Process ownership
 
-One plugin process emits exactly one notification stream, so the lifecycle hands that stream to a
-single consumer. This module is that consumer. A connection generation therefore owns the stream
-but not the process: ending a generation asks the lifecycle to stop the plugin, which keeps the
-runtime state the settings surface reports identical to what the agent runtime is actually talking
-to, and leaves the next attach to start a fresh process rather than resuming a half-used one.
+An attachment (`PluginApi::attach_agent`) is a `PluginGenerationLease` pinned to one process generation
+plus a lossless tap of that generation's notifications, opened through the backend's notification
+sink rather than by taking the process stream: the lifecycle's pump stays the only reader of the
+process, and a restarted plugin can never leak frames into a connection that belonged to its
+predecessor. A connection generation therefore owns its tap but not the process: ending a
+generation asks the lifecycle to stop the plugin, which keeps the runtime state the settings
+surface reports identical to what the agent runtime is actually talking to, and leaves the next
+attach to start a fresh process rather than resuming a half-used one.
 
 ## Boundaries and failure semantics
 
@@ -80,8 +83,8 @@ connection supervisor schedules another attempt.
 ## Sandboxing
 
 Agent plugins currently receive `--allow-run` plus read, env, and network access, because they spawn
-and own the agent CLI. An agent plugin is therefore roughly as privileged as the host itself. This
-is a deliberate, documented gap rather than an oversight: capability narrowing is deferred until the
-agent contract is proven, and closing it later changes only how the plugin is started, never the
-`agent/acp` pipe. The permission set now lives with the launcher in `ora-plugin-lifecycle`, which is
-the only place a plugin process is created.
+and own the agent CLI. The set itself is `ora_plugin_lifecycle::agent_permissions`, applied by the
+lifecycle's launcher, which is the only place a plugin process is created. An agent plugin is
+therefore roughly as privileged as the host itself. This is a deliberate, documented gap rather
+than an oversight: capability narrowing is deferred until the agent contract is proven, and
+closing it later changes only how the plugin is started, never the `agent/acp` pipe.

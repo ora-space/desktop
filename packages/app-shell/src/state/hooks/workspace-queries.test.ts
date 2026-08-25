@@ -12,13 +12,11 @@ import { renderHookWithClient } from "../../test/hook-harness";
 describe("useProjects", () => {
   it("returns the project list from the client", async () => {
     const state = createMockClientState();
-    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.projects = [{ id: "p1", name: "Ora" }];
     const client = createMockClient(state);
     const { result } = renderHookWithClient(() => useProjects(), client);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual([
-      { id: "p1", name: "Ora", rootPath: "/ora" },
-    ]);
+    expect(result.current.data).toEqual([{ id: "p1", name: "Ora" }]);
   });
 
   it("starts pending with no data", () => {
@@ -49,10 +47,8 @@ describe("useTasks", () => {
       {
         id: "t1",
         projectId: "p1",
+        workspaceId: "workspace-t1",
         title: "Refactor",
-        workspaceMode: "worktree",
-        type: "default",
-        workflowRunId: null,
       },
     ];
     const client = createMockClient(state);
@@ -63,9 +59,7 @@ describe("useTasks", () => {
         id: "t1",
         projectId: "p1",
         title: "Refactor",
-        workspaceMode: "worktree",
-        type: "default",
-        workflowRunId: null,
+        workspaceId: "workspace-t1",
       },
     ]);
   });
@@ -77,7 +71,7 @@ describe("useSessions", () => {
     state.sessions = [
       {
         id: "s1",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: null,
@@ -90,7 +84,7 @@ describe("useSessions", () => {
     expect(result.current.data).toEqual([
       {
         id: "s1",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: null,

@@ -11,8 +11,11 @@ describe("prepareUserMessageMarkdown", () => {
     expect(prepareUserMessageMarkdown("# Title\nbody")).toBe("# Title\n\nbody");
   });
 
-  it("leaves blank lines and fence interiors alone", () => {
-    expect(prepareUserMessageMarkdown("a\n\nb")).toBe("a\n\nb");
+  it("materializes empty composer blocks and leaves fence interiors alone", () => {
+    expect(prepareUserMessageMarkdown("a\n\nb")).toBe("a\n\n\u00a0\n\nb");
+    expect(prepareUserMessageMarkdown("a\n\n\nb")).toBe(
+      "a\n\n\u00a0\n\n\u00a0\n\nb",
+    );
     expect(prepareUserMessageMarkdown("```ts\nline1\nline2\n```")).toBe(
       "```ts\nline1\nline2\n```",
     );

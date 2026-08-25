@@ -5,7 +5,7 @@ use ora_contracts::{
     CreateProjectRequest, CreateProjectResponse, GetProjectRequest, GetProjectResponse,
     ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse,
 };
-use ora_domain::{AuditFields, Project as DomainProject, ProjectId};
+use ora_domain::{AuditFields, Project as DomainProject, ProjectId, WorkspaceLocation};
 
 /// Handles project creation without depending on transport-specific concerns.
 pub struct CreateProjectHandler<Repository, IdGenerator, ClockSource> {
@@ -42,12 +42,14 @@ where
         let project = DomainProject::new(
             self.id_generator.generate_project_id(),
             request.name,
-            request.root_path,
             AuditFields::new(now, now, false),
         );
         let project = self
             .repository
-            .create_project(project)
+            .create_project(
+                project,
+                WorkspaceLocation::local_filesystem(request.main_workspace_path),
+            )
             .map_err(ApplicationError::from_project_repository_error)?;
 
         Ok(CreateProjectResponse {
@@ -144,7 +146,7 @@ where
     Repository: ProjectRepository,
     ClockSource: Clock,
 {
-    /// Renames a project while preserving its immutable repository root and audit identity.
+    /// Renames a project while preserving its main workspace location and audit identity.
     pub fn handle(
         &self,
         request: UpdateProjectRequest,
@@ -168,7 +170,6 @@ where
         let project = DomainProject::new(
             project_id,
             request.name,
-            existing_project.root_path,
             AuditFields::new(
                 existing_project.audit_fields.created_at,
                 self.clock.now_timestamp_millis(),

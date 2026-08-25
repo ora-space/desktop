@@ -55,8 +55,8 @@ export const translationResources = {
     "errors.permission_option_invalid": "所选权限选项无效。",
     "errors.prompt_empty": "消息不能为空。",
     "errors.prompt_too_large": "消息内容过大。",
+    "errors.workspace_unavailable": "工作区当前不可用。",
     "errors.task_worktree_unavailable": "任务工作树当前不可用。",
-    "errors.task_project_root_unavailable": "任务项目目录当前不可用。",
     "errors.file_system_path_not_found": "所选路径不存在。",
     "errors.spec_document_not_found":
       "该 Spec 文档已不存在或不再属于自动发现目录。",
@@ -740,36 +740,23 @@ export const translationResources = {
     "settings.skills.importReason.stale_conflict":
       "目标技能已变化，请重新导入。",
     "settings.skills.importReason.unknown": "导入失败。",
-    "settings.skills.marketplacesTitle": "Skill 市场",
-    "settings.skills.marketplacesDescription":
-      "从公开市场发现 Skill，或在企业内网接入组织专属能力。",
-    "settings.skills.marketplaceTitle": "SkillHub 技能市场",
-    "settings.skills.marketplaceDescription":
-      "浏览真实 SkillHub 市场；下载 ZIP 后，Ora 会自动校验并安装 Skill。",
-    "settings.skills.marketplacePublicBadge": "公开市场",
-    "settings.skills.marketplaceOpen": "打开技能市场",
-    "settings.skills.marketplaceOpening": "正在打开…",
-    "settings.skills.marketplaceConnectionFailed":
-      "无法打开技能市场或读取下载状态，请重试。",
-    "settings.skills.marketplaceDownloading": "正在下载 {{fileName}}…",
-    "settings.skills.marketplaceSavedTo": "保存位置",
-    "settings.skills.marketplaceOpenFolderFailed": "无法打开 Skill 下载目录。",
-    "settings.skills.marketplaceDownloadFailed":
-      "下载失败，请在技能市场中重试。",
-    "settings.skills.marketplaceInstalling":
-      "已下载 {{fileName}}，正在自动安装…",
-    "settings.skills.marketplaceInstallReview":
-      "{{fileName}} 需要确认冲突或无效候选项。",
-    "settings.skills.marketplaceInstalled": "已自动安装 {{count}} 个 Skill。",
-    "settings.skills.marketplaceInstallIncomplete":
-      "{{fileName}} 未能完整安装，请查看处理结果。",
-    "settings.skills.marketplaceInstallFailed": "无法安装 {{fileName}}。",
-    "settings.skills.marketplaceInstallReviewed": "Skill 安装处理已完成。",
-    "settings.skills.huaweiTitle": "华为 Skill Market",
-    "settings.skills.huaweiDescription":
-      "浏览华为内部 Skill 市场，发现并接入企业专属 Skill；连接华为内网后即可打开。",
-    "settings.skills.huaweiBadge": "企业内网",
-    "settings.skills.huaweiOpen": "打开内网 Skill Market",
+    "surface.launcher": "扩展面板",
+    "surface.reload": "重新加载",
+    "surface.popout": "在新窗口打开",
+    "surface.close": "关闭",
+    "surface.failed": "无法加载：{{reason}}",
+    "surface.retry": "重试",
+    "surface.downloaded": "已下载 {{fileName}}",
+    "surface.downloadFailed": "下载失败：{{fileName}}",
+    "surface.downloadChoiceTitle": "插件下载",
+    "surface.downloadChoiceDescription":
+      "{{origin}} 提供了文件 {{fileName}}（{{size}}），请选择处理方式。",
+    "surface.downloadImportSkill": "导入为技能",
+    "surface.downloadSaveAs": "另存为…",
+    "surface.downloadDismiss": "忽略",
+    "surface.downloadActionFailed": "下载处理失败",
+    "surface.openDirectory": "打开目录",
+    "surface.openFailed": "无法打开扩展面板",
     "settings.plugins.title": "插件",
     "settings.plugins.description":
       "在你常用的工具中与 Ora Agent 协作。插件目录为原型数据，安装状态不会持久化。",
@@ -814,6 +801,7 @@ export const translationResources = {
       "已保存的值与当前声明不兼容。保存新值或重置此项以修复。",
     "settings.plugins.scanInstalled": "扫描已安装插件",
     "settings.plugins.syncMarketplace": "同步插件市场",
+    "settings.plugins.syncFailed": "同步插件市场失败。",
     "settings.plugins.neverSynced": "尚未同步",
     "settings.plugins.lastSynced": "上次同步：{{time}}",
     "settings.plugins.syncing": "同步中…",
@@ -839,6 +827,10 @@ export const translationResources = {
     "settings.plugins.cancel": "取消",
     "settings.plugins.installFailed": "安装失败",
     "settings.plugins.uninstallFailed": "卸载失败",
+    "settings.plugins.import": "导入插件",
+    "settings.plugins.importSuccess": "插件已导入。",
+    "settings.plugins.importFailed": "导入失败",
+    "settings.plugins.pathSelectionError": "无法选择插件文件。",
     "settings.plugins.uninstalling": "卸载中",
     "settings.plugins.runtimeFailing": "运行失败",
     "settings.plugins.viewDetails": "查看详情",
@@ -1064,9 +1056,6 @@ export const translationResources = {
     "dialog.createWorktree": "创建工作树任务",
     "dialog.worktreeDescription": "Agent 在独立工作树中专注处理一项任务",
     "dialog.editTask": "编辑任务",
-    "dialog.workspaceMode": "工作区模式",
-    "dialog.workspaceModeWorktree": "工作树（Git 分支）",
-    "dialog.workspaceModeProjectRoot": "直接对话（项目根目录）",
     "dialog.worktreeRequiresGitRepository":
       "该目录不是 Git 仓库。请在 Git 仓库下创建 worktree 模式任务。",
     "dialog.saveTask": "保存任务",
@@ -1094,7 +1083,7 @@ export const translationResources = {
       "仅删除该会话记录；项目目录本身不受影响，此操作无法撤销。",
     "delete.sessionDescription": "该 Agent 会话将被永久删除，此操作无法撤销。",
     "delete.workflowRunDescription":
-      "将删除此次工作流运行及其任务的 Git 工作树和 ora/* 分支；未提交的修改将永久丢失。若仍在进行中，会先取消再删除；同项目下其他运行不受影响。",
+      "将删除此次工作流运行、节点记录及其节点创建的会话；共享工作区以及项目中的其他会话和运行不受影响。",
     "delete.deleting": "删除中…",
     "delete.failed": "无法删除，请先停止正在运行的会话。",
     "delete.runningSession": "直聊会话仍在停止，请稍后再试。",
@@ -1421,6 +1410,7 @@ export const translationResources = {
     "chat.pickProjectAndBranch": "请先选择项目和分支，然后开始对话",
     "chat.pickTask": "请先选择或创建一个任务，然后开始对话",
     "chat.pickProject": "请先选择或创建一个项目，然后开始对话",
+    "chat.pickAgent": "请先选择一个 Agent，然后开始对话",
     "chat.copy": "复制",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
@@ -1533,9 +1523,8 @@ export const translationResources = {
       "The selected permission option is invalid.",
     "errors.prompt_empty": "The message cannot be empty.",
     "errors.prompt_too_large": "The message is too large.",
+    "errors.workspace_unavailable": "The workspace is unavailable.",
     "errors.task_worktree_unavailable": "The task worktree is unavailable.",
-    "errors.task_project_root_unavailable":
-      "The task project directory is unavailable.",
     "errors.file_system_path_not_found": "The selected path was not found.",
     "errors.spec_document_not_found":
       "The Spec document no longer exists or is outside the automatically detected sources.",
@@ -2281,40 +2270,23 @@ export const translationResources = {
     "settings.skills.importReason.stale_conflict":
       "The target skill changed. Import it again.",
     "settings.skills.importReason.unknown": "Import failed.",
-    "settings.skills.marketplacesTitle": "Skill marketplaces",
-    "settings.skills.marketplacesDescription":
-      "Discover public skills or connect organization-specific capabilities on an enterprise network.",
-    "settings.skills.marketplaceTitle": "SkillHub marketplace",
-    "settings.skills.marketplaceDescription":
-      "Browse the live SkillHub marketplace. Ora validates and installs downloaded ZIP archives automatically.",
-    "settings.skills.marketplacePublicBadge": "Public",
-    "settings.skills.marketplaceOpen": "Open marketplace",
-    "settings.skills.marketplaceOpening": "Opening...",
-    "settings.skills.marketplaceConnectionFailed":
-      "Unable to open the skill marketplace or read download status. Try again.",
-    "settings.skills.marketplaceDownloading": "Downloading {{fileName}}...",
-    "settings.skills.marketplaceSavedTo": "Saved to",
-    "settings.skills.marketplaceOpenFolderFailed":
-      "Could not open the Skill download folder.",
-    "settings.skills.marketplaceDownloadFailed":
-      "Download failed. Try again in the marketplace.",
-    "settings.skills.marketplaceInstalling":
-      "Downloaded {{fileName}}. Installing automatically...",
-    "settings.skills.marketplaceInstallReview":
-      "{{fileName}} needs conflict or invalid-candidate review.",
-    "settings.skills.marketplaceInstalled":
-      "Automatically installed {{count}} skills.",
-    "settings.skills.marketplaceInstallIncomplete":
-      "{{fileName}} was not fully installed. Review the results.",
-    "settings.skills.marketplaceInstallFailed":
-      "Could not install {{fileName}}.",
-    "settings.skills.marketplaceInstallReviewed":
-      "Skill installation processing completed.",
-    "settings.skills.huaweiTitle": "Huawei Skill Market",
-    "settings.skills.huaweiDescription":
-      "Browse Huawei's internal Skill Market to discover and connect enterprise skills. Huawei internal network access is required.",
-    "settings.skills.huaweiBadge": "Enterprise",
-    "settings.skills.huaweiOpen": "Open internal Skill Market",
+    "surface.launcher": "Surfaces",
+    "surface.reload": "Reload",
+    "surface.popout": "Open in new window",
+    "surface.close": "Close",
+    "surface.failed": "Failed to load: {{reason}}",
+    "surface.retry": "Retry",
+    "surface.downloaded": "Downloaded {{fileName}}",
+    "surface.downloadFailed": "Download failed: {{fileName}}",
+    "surface.downloadChoiceTitle": "Plugin download",
+    "surface.downloadChoiceDescription":
+      "{{origin}} provided {{fileName}} ({{size}}). Choose what to do with it.",
+    "surface.downloadImportSkill": "Import as skill",
+    "surface.downloadSaveAs": "Save as…",
+    "surface.downloadDismiss": "Dismiss",
+    "surface.downloadActionFailed": "The download action failed",
+    "surface.openDirectory": "Open folder",
+    "surface.openFailed": "Could not open the surface",
     "settings.plugins.title": "Plugins",
     "settings.plugins.description":
       "Work with Ora agents inside the tools you already use. The catalog is prototype data and install state is not persisted.",
@@ -2328,7 +2300,7 @@ export const translationResources = {
     "settings.plugins.configuration.configure": "Configure",
     "settings.plugins.configuration.back": "Back to plugin manager",
     "settings.plugins.configuration.description":
-      "This host-rendered configuration is shared across workspaces.",
+      "This host-rendered configuration is shared across workspaces after saving.",
     "settings.plugins.configuration.needsConfiguration": "Needs Configuration",
     "settings.plugins.configuration.unavailableBadge":
       "Configuration unavailable",
@@ -2363,6 +2335,7 @@ export const translationResources = {
       "The saved value is incompatible with the current declaration. Save a replacement or reset this field.",
     "settings.plugins.scanInstalled": "Scan installed plugins",
     "settings.plugins.syncMarketplace": "Sync plugin marketplace",
+    "settings.plugins.syncFailed": "Failed to sync the plugin marketplace.",
     "settings.plugins.neverSynced": "Never synced",
     "settings.plugins.lastSynced": "Last synced: {{time}}",
     "settings.plugins.syncing": "Syncing?",
@@ -2389,6 +2362,10 @@ export const translationResources = {
     "settings.plugins.cancel": "Cancel",
     "settings.plugins.installFailed": "Install failed",
     "settings.plugins.uninstallFailed": "Uninstall failed",
+    "settings.plugins.import": "Import plugin",
+    "settings.plugins.importSuccess": "Plugin imported.",
+    "settings.plugins.importFailed": "Import failed",
+    "settings.plugins.pathSelectionError": "Unable to select a plugin file.",
     "settings.plugins.uninstalling": "Uninstalling",
     "settings.plugins.runtimeFailing": "Runtime failed",
     "settings.plugins.viewDetails": "View details",
@@ -2660,9 +2637,6 @@ export const translationResources = {
     "dialog.worktreeDescription":
       "Make agent focus on one task in an isolated worktree.",
     "dialog.editTask": "Edit task",
-    "dialog.workspaceMode": "Workspace mode",
-    "dialog.workspaceModeWorktree": "Worktree (Git branch)",
-    "dialog.workspaceModeProjectRoot": "Direct chat (project root)",
     "dialog.worktreeRequiresGitRepository":
       "This directory is not a Git repository. Choose a Git repository to create a worktree task.",
     "dialog.saveTask": "Save task",
@@ -2693,7 +2667,7 @@ export const translationResources = {
     "delete.sessionDescription":
       "This agent session will be permanently deleted. This cannot be undone.",
     "delete.workflowRunDescription":
-      "This workflow run and its task's Git worktree and ora/* branch will be deleted; uncommitted changes will be permanently lost. If it is still active it is cancelled first; other runs in the same project are unaffected.",
+      "This workflow run, its node records, and sessions created for its nodes will be deleted. The shared workspace and other sessions or runs in the project are unaffected.",
     "delete.deleting": "Deleting...",
     "delete.failed": "Unable to delete. Stop any running session first.",
     "delete.runningSession":
@@ -3059,6 +3033,7 @@ export const translationResources = {
     "chat.pickProjectAndBranch": "Pick a project and branch to start chatting",
     "chat.pickTask": "Pick or create a task before starting a chat",
     "chat.pickProject": "Pick or create a project before starting a chat",
+    "chat.pickAgent": "Pick an agent before starting a chat",
     "chat.copy": "Copy",
     "chat.copyCode": "Copy code",
     "chat.codeCopied": "Code copied",

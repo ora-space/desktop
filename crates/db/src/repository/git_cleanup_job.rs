@@ -1,5 +1,6 @@
 use ora_domain::{
-    GitCleanupJob, GitCleanupJobId, GitCleanupJobState, ProjectId, TaskId, truncate_cleanup_error,
+    GitCleanupJob, GitCleanupJobId, GitCleanupJobState, ProjectId, WorkspaceId,
+    truncate_cleanup_error,
 };
 use rusqlite::{Row, Transaction, params};
 
@@ -41,7 +42,7 @@ impl SqliteGitCleanupJobRepository {
     ) -> Result<Vec<GitCleanupJob>, crate::DatabaseError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT id, project_id, task_id, repository_root, checkout_root, branch_name,
+                "SELECT id, project_id, workspace_id, repository_root, checkout_root, branch_name,
                         state, attempts, next_attempt_at, last_attempt_at, last_error,
                         created_at, updated_at
                  FROM git_cleanup_jobs
@@ -62,7 +63,7 @@ impl SqliteGitCleanupJobRepository {
     pub fn list_jobs(&self) -> Result<Vec<GitCleanupJob>, crate::DatabaseError> {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT id, project_id, task_id, repository_root, checkout_root, branch_name,
+                "SELECT id, project_id, workspace_id, repository_root, checkout_root, branch_name,
                         state, attempts, next_attempt_at, last_attempt_at, last_error,
                         created_at, updated_at
                  FROM git_cleanup_jobs
@@ -158,14 +159,14 @@ pub(super) fn insert_jobs(
     for job in jobs {
         transaction.execute(
             "INSERT INTO git_cleanup_jobs (
-                 id, project_id, task_id, repository_root, checkout_root, branch_name,
+                 id, project_id, workspace_id, repository_root, checkout_root, branch_name,
                  state, attempts, next_attempt_at, last_attempt_at, last_error,
                  created_at, updated_at
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 job.id.as_ref(),
                 job.project_id.as_ref(),
-                job.task_id.as_ref(),
+                job.workspace_id.as_ref(),
                 job.repository_root,
                 job.checkout_root,
                 job.branch_name,
@@ -188,7 +189,7 @@ fn map_job_row(row: &Row<'_>) -> Result<GitCleanupJob, crate::DatabaseError> {
     Ok(GitCleanupJob {
         id: GitCleanupJobId::new(row.get::<_, String>("id")?),
         project_id: ProjectId::new(row.get::<_, String>("project_id")?),
-        task_id: TaskId::new(row.get::<_, String>("task_id")?),
+        workspace_id: WorkspaceId::new(row.get::<_, String>("workspace_id")?),
         repository_root: row.get("repository_root")?,
         checkout_root: row.get("checkout_root")?,
         branch_name: row.get("branch_name")?,

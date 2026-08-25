@@ -1,15 +1,13 @@
 import {
   composerFileAttrsFromUnknown,
   composerFileChipTitle,
-  composerFileLabel,
-  composerFileLineRangeLabel,
 } from "@ora/editor/composer";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import type {
   DragEvent as ReactDragEvent,
   MouseEvent as ReactMouseEvent,
 } from "react";
-import { WorkspaceFileIcon } from "../files/workspace-file-visuals";
+import { FileRefChipContent } from "../file-ref-chip";
 
 /**
  * Inline path mention chip: type/folder icon + basename, Cursor-style (no pill).
@@ -18,7 +16,6 @@ import { WorkspaceFileIcon } from "../files/workspace-file-visuals";
 export function ComposerFileChipView({ node, editor, getPos }: NodeViewProps) {
   const attrs = composerFileAttrsFromUnknown(node.attrs);
   const kind = attrs.kind === "directory" ? "directory" : "file";
-  const rangeLabel = composerFileLineRangeLabel(attrs);
   const title = composerFileChipTitle(attrs);
 
   const selectOnlyThisChip = (event: ReactMouseEvent<HTMLElement>): void => {
@@ -55,19 +52,7 @@ export function ComposerFileChipView({ node, editor, getPos }: NodeViewProps) {
       }}
       onDoubleClick={selectOnlyThisChip}
     >
-      <WorkspaceFileIcon
-        path={attrs.path}
-        kind={kind}
-        className="composer-file-ref-icon"
-      />
-      <span className="composer-file-ref-label">
-        <span className="composer-file-ref-name">
-          {composerFileLabel(attrs)}
-        </span>
-        {rangeLabel !== null && (
-          <span className="composer-file-ref-range">{rangeLabel}</span>
-        )}
-      </span>
+      <FileRefChipContent attrs={attrs} />
     </NodeViewWrapper>
   );
 }

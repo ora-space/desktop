@@ -2,7 +2,8 @@
 
 `ora-plugin-config` owns the host rules for immutable plugin Setting Declarations and mutable,
 plugin-global Stored Setting Values. Its public API compiles `assets/config.json`, resolves
-effective values and Configuration Completeness, and persists revisioned `store.json` files.
+effective values and Configuration Completeness, and persists revisioned `store.json` files under
+`<data-dir>/plugins/data/<namespace>/<name>/`.
 
 The crate does not render UI, expose filesystem paths to frontend callers, start plugins, or pass
 configuration to Agent processes. Callers supply package identity and roots; lifecycle and backend

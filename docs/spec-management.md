@@ -8,8 +8,8 @@ documents already present on disk.
 ## Targets and automatic discovery
 
 Every operation carries a tagged `SpecTarget`: either a project id or a task id. Task resolution uses
-the same cwd as agent sessions, including linked worktrees and project-root tasks. Source discovery
-is automatic and is never persisted as project configuration.
+the same isolated-worktree cwd as agent sessions. Source discovery is automatic and is never
+persisted as project configuration.
 
 Ora recognizes these built-in source directories:
 

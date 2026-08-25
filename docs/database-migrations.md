@@ -6,22 +6,20 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 
 - Every migration has a unique, strictly increasing version such as `0001`.
 - Every migration provides both `up` and `down` statements.
-- The `migrations` bookkeeping table stores `version` and `executed_at`, and is created by the first migration alongside the base schema.
+- The runner creates the `migrations` bookkeeping table with `version`, `up_sql`, `down_sql`, and `executed_at` before loading history.
+- Ordered statement lists are trimmed and joined into executable SQL snapshots. Both directions are persisted so either direction changing triggers reconciliation.
 - `MigrationCatalog` validates these invariants when it is built, so a duplicate or out-of-order version fails before any statement runs.
 
 ## Shipped catalog
 
-| Version | Adds                                                                                                                                                                                       |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0001`  | Core `projects`, `tasks`, `worktrees`, and `sessions` tables plus migration bookkeeping. Worktree baseline/checkout identity and session title/history state are part of this base schema. |
-| `0002`  | `skills` and configurable `agents`, including persisted agent content.                                                                                                                     |
-| `0003`  | Constrained `task_diff_comments`, its lookup indexes, and the root-parent trigger.                                                                                                         |
-| `0004`  | Workflow definitions, snapshots, runs, node runs, and the task type/workflow-run association.                                                                                              |
-| `0005`  | Durable Git cleanup jobs, their dispatch index, and worktree provisioning leases.                                                                                                          |
-| `0006`  | Drops unused `tasks.status`.                                                                                                                                                               |
-| `0007`  | Durable plugin eligibility keyed by filesystem-derived plugin id.                                                                                                                          |
-| `0008`  | Typed user preferences in `user_config`, keyed by configuration name.                                                                                                                      |
-| `0009`  | Drops unused `task_diff_comments` together with its indexes and root-parent trigger.                                                                                                       |
+| Version | Adds                                                                                                                                                                               |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0001`  | User configuration, projects, workspace locations and provisioning, workspaces, worktrees, task labels, and workspace-owned sessions.                                              |
+| `0002`  | Namespaced skills and configurable agents.                                                                                                                                         |
+| `0003`  | Workflow definitions, snapshots, workspace-owned runs, and node runs.                                                                                                              |
+| `0004`  | Durable Git cleanup jobs and worktree provisioning leases.                                                                                                                         |
+| `0005`  | Plugin eligibility.                                                                                                                                                                |
+| `0006`  | Workspace Effect source state, normalized Desired selections, surface descriptors, ownership ledgers, status, file-operation journals, and durable reconcile/propagation requests. |
 
 `default_migration_catalog()` returns all migrations with every version as the active target.
 
@@ -29,21 +27,18 @@ Ora keeps SQLite migration definitions in Rust code inside `ora-db` rather than 
 
 A catalog carries the full migration list plus an **active target prefix**, which must be a prefix of that list. Requiring a prefix keeps history linear and makes controlled rollback deterministic instead of branch-shaped. `DatabaseBootstrapper::bootstrap` reconciles a database against that target:
 
-- The applied rows in `migrations` are first compared with the target over their shared prefix. Any mismatch is a hard divergence error — migrations are never guessed at, skipped, or reordered.
-- If the database is missing trailing target versions, their `up` statements run in ascending order.
-- If the database has trailing versions beyond the target prefix, their `down` statements run in reverse order and each rolled-back version is removed from `migrations`.
-- An applied version absent from the catalog is an error.
-- When the database already matches the target, reconciliation is a no-op.
+- Applied versions are validated against the complete catalog before any mutation. Unknown versions and versions in the wrong position remain hard errors; the runner never guesses, skips, or reorders history.
+- Persisted and current `up_sql` and `down_sql` are compared from the beginning of the shared target prefix. `executed_at` is metadata and does not affect equality.
+- At the first SQL mismatch, the runner rolls back that migration and the complete applied suffix in reverse order. Rollback always executes the old `down_sql` stored in the database, never the possibly rewritten current definition.
+- The runner then applies the current target suffix in ascending order and records fresh SQL snapshots and timestamps.
+- If content matches and the database is missing target versions, only the missing tail is applied. If the target is shorter, only the trailing applied versions are rolled back using their stored snapshots.
+- When versions and SQL snapshots already match the target, reconciliation is a no-op.
 
-Each migration's statements and its bookkeeping update run inside **one SQLite transaction**, so a failing statement can never leave the schema and the `migrations` table out of sync, and a failed version is never recorded as applied. Statements execute one at a time so the failing version and direction can be reported precisely.
+Each migration direction and its bookkeeping update run inside **one SQLite transaction**, so a failing `down` preserves that migration's schema and row, while a failing `up` never records the version. Rebuilding a suffix consists of multiple such steps: if a new `up` fails, already completed rollback steps remain committed and the database stays at that rolled-back prefix.
 
-The catalog is a clean replacement for the earlier development history. Databases created from that retired history are not supported and must be recreated; the runner compares version identifiers and does not attempt to reinterpret rewritten versions.
+The catalog is a clean prototype schema organized by logical dependency rather than a compatibility history. It omits retired intermediate tables and columns. Databases whose `migrations` table predates SQL snapshots are unsupported and should be recreated.
 
-Migration `0003` installs constrained task-diff comments. Migration `0009` drops that table for existing databases while keeping `0003` in history. Migration `0004` rollback removes workflow execution state before definitions and removes the task association columns in dependency order.
-
-Migration `0005` rollback drops all pending cleanup and provisioning bookkeeping, deliberately re-accepting the pre-migration behavior of leaking physical Git resources on aggregate deletion. The nullable `worktrees.checkout_root` remains part of the base schema because it is worktree identity used by cleanup rather than cleanup-job bookkeeping.
-
-Migration `0006` rollback restores `tasks.status` as an unused integer defaulting to 0.
+Rolling back `0006` removes only Workspace Effect state and durable Effect work; the earlier application schema remains intact.
 
 ## Operational logging
 

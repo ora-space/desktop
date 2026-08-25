@@ -200,7 +200,7 @@ pub(crate) fn prepare_completion(
 
     let file_changes = match load_worktree_baseline(baselines_root, &node_run.id) {
         Some(baseline) => {
-            let worktree_root = agent_runtime.task_cwd(&context.task.id)?;
+            let worktree_root = agent_runtime.workspace_cwd(&context.workspace.id)?;
             compute_file_changes(
                 Some(&baseline),
                 capture_worktree_snapshot(&worktree_root).as_ref(),
@@ -344,7 +344,7 @@ mod tests {
             HistoryRecord::Meta(SessionMeta {
                 schema_version: 1,
                 session_id: "session-1".to_string(),
-                task_id: "task-1".to_string(),
+                workspace_id: "workspace-1".to_string(),
                 agent_ref: AgentCli::Nga.agent_ref(),
                 agent_session_id: "provider-1".to_string(),
                 cwd: std::path::PathBuf::from("."),

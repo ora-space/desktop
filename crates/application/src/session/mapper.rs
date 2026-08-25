@@ -11,7 +11,7 @@ use ora_domain::{
 pub(crate) fn map_session(session: DomainSession) -> ContractSession {
     ContractSession {
         id: session.id.to_string(),
-        task_id: session.task_id.to_string(),
+        workspace_id: session.workspace_id.to_string(),
         title: session.title.map(|title| title.as_str().to_owned()),
         agent_ref: session.agent_ref.into(),
         status: map_session_status(session.status),

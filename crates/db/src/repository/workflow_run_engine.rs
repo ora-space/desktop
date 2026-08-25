@@ -1,7 +1,7 @@
 use ora_application::{
-    AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
-    NodeRunToStart, RepositoryError, RestartWorkflowRunResult, StartWorkflowRunResult,
-    UpdateWorkflowRunInputResult, WorkflowRunEngineRepository,
+    AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
+    ExecutionContext, FileChange, NodeRunToStart, RepositoryError, RestartWorkflowRunResult,
+    StartWorkflowRunResult, UpdateWorkflowRunInputResult, WorkflowRunEngineRepository,
 };
 use ora_domain::{
     SessionId, SessionStatus, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
@@ -9,9 +9,8 @@ use ora_domain::{
 };
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
-use super::task::map_task_row;
 use super::workflow_run::{map_node_run_row, map_run_row};
-use super::worktree::map_worktree_row;
+use super::workspace::{map_workspace_row, workspace_select_sql};
 use crate::repository::RepositoryPool;
 
 /// Error written to node runs and runs interrupted by a backend restart.
@@ -42,8 +41,8 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .with_connection(|connection| {
                 let run = {
                     let mut statement = connection.prepare(
-                        "SELECT id, workflow_id, snapshot_id, run_status, state, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted
-                         FROM workflow_runs WHERE id = ?1 AND is_deleted = 0",
+                        "SELECT wr.id, wr.workspace_id, wr.workflow_id, wr.snapshot_id, wr.name, wr.run_status, wr.state, wr.input, wr.output, wr.error, wr.payload, wr.started_at, wr.finished_at, wr.created_at, wr.updated_at, wr.is_deleted
+                         FROM workflow_runs wr WHERE wr.id = ?1 AND wr.is_deleted = 0",
                     )?;
                     let mut rows = statement.query(params![run_id.as_ref()])?;
                     match rows.next()?.map(map_run_row).transpose()? {
@@ -51,21 +50,16 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                         None => return Ok(None),
                     }
                 };
-                // A run created through create_run always carries its task, worktree, and frozen
-                // snapshot; any of them missing is corruption, not a legitimate absence.
-                let task = {
-                    let mut statement = connection.prepare(
-                        "SELECT id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted
-                         FROM tasks WHERE workflow_run_id = ?1 AND is_deleted = 0",
-                    )?;
-                    require_row(&mut statement.query(params![run_id.as_ref()])?, map_task_row)?
-                };
-                let worktree = {
-                    let mut statement = connection.prepare(
-                        "SELECT id, task_id, branch_name, checkout_root, base_commit_id, is_active, created_at, updated_at, is_deleted
-                         FROM worktrees WHERE task_id = ?1 AND is_deleted = 0",
-                    )?;
-                    require_row(&mut statement.query(params![task.id.as_ref()])?, map_worktree_row)?
+                let workspace = {
+                    let mut statement = connection.prepare(&format!(
+                        "{} WHERE w.id = ?1 AND w.is_deleted = 0",
+                        workspace_select_sql()
+                    ))?;
+                    let mut rows = statement.query(params![run.workspace_id.as_ref()])?;
+                    match rows.next()? {
+                        Some(row) => map_workspace_row(row)?,
+                        None => return Ok(None),
+                    }
                 };
                 let graph_json = {
                     let mut statement = connection.prepare(
@@ -78,8 +72,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 };
                 Ok(Some(ExecutionContext {
                     run,
-                    task,
-                    worktree,
+                    workspace,
                     graph_json,
                 }))
             })
@@ -95,20 +88,57 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .map_err(engine_repository_error_from_database)
     }
 
-    fn set_node_run_session_id(
+    fn bind_node_run_session(
         &self,
         node_run_id: &WorkflowNodeRunId,
         session_id: &SessionId,
         now: i64,
-    ) -> Result<(), RepositoryError> {
+    ) -> Result<BindWorkflowNodeSessionResult, RepositoryError> {
         self.pool
-            .with_connection(|connection| {
-                connection.execute(
+            .with_connection_mut(|connection| {
+                let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
+                let state = transaction
+                    .query_row(
+                        "SELECT nr.status, wr.run_status,
+                                EXISTS(
+                                    SELECT 1 FROM sessions s
+                                    WHERE s.id = ?2
+                                      AND s.workspace_id = wr.workspace_id
+                                      AND s.is_deleted = 0
+                                )
+                         FROM workflow_node_runs nr
+                         JOIN workflow_runs wr ON wr.id = nr.run_id
+                         WHERE nr.id = ?1 AND nr.is_deleted = 0 AND wr.is_deleted = 0",
+                        params![node_run_id.as_ref(), session_id.as_ref()],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, i64>(1)?,
+                                row.get::<_, i64>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((node_status, run_status, session_matches_workspace)) = state else {
+                    return Ok(BindWorkflowNodeSessionResult::NotFound);
+                };
+                if session_matches_workspace == 0 {
+                    return Ok(BindWorkflowNodeSessionResult::NotFound);
+                }
+                if WorkflowNodeStatus::from_database_value(node_status)?
+                    != WorkflowNodeStatus::Running
+                    || WorkflowRunStatus::from_database_value(run_status)?
+                        != WorkflowRunStatus::Running
+                {
+                    return Ok(BindWorkflowNodeSessionResult::NotRunning);
+                }
+                transaction.execute(
                     "UPDATE workflow_node_runs SET session_id = ?2, updated_at = ?3
                      WHERE id = ?1 AND is_deleted = 0",
                     params![node_run_id.as_ref(), session_id.as_ref(), now],
                 )?;
-                Ok(())
+                transaction.commit()?;
+                Ok(BindWorkflowNodeSessionResult::Bound)
             })
             .map_err(engine_repository_error_from_database)
     }
@@ -614,7 +644,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     )?;
                     transaction.execute(
                         "UPDATE sessions SET status = ?2, updated_at = ?3
-                         WHERE task_id = (SELECT id FROM tasks WHERE workflow_run_id = ?1 AND is_deleted = 0)
+                         WHERE workspace_id = (SELECT workspace_id FROM workflow_runs WHERE id = ?1 AND is_deleted = 0)
                            AND status = ?4 AND is_deleted = 0",
                         params![
                             run_id.as_ref(),

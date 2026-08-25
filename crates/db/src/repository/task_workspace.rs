@@ -1,5 +1,8 @@
 use ora_application::{RepositoryError, TaskWorkspaceCommit, WorkspaceCommitOutcome};
-use ora_domain::{Task, Worktree, WorktreeProvisioningLeaseId};
+use ora_domain::{
+    Task, Workspace, WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
+    WorkspaceProvisionerKind, WorkspaceProvisioningState, Worktree, WorktreeProvisioningLeaseId,
+};
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
 use crate::repository::RepositoryPool;
@@ -38,30 +41,27 @@ impl TaskWorkspaceCommit for SqliteTaskWorkspaceRepository {
                 if !project_visible(&transaction, task.project_id.as_ref())? {
                     return Ok(WorkspaceCommitOutcome::ProjectNotVisible);
                 }
+                let checkout_root = transaction.query_row(
+                    "SELECT checkout_root FROM worktree_provisioning_leases WHERE id = ?1",
+                    params![lease_id.as_ref()],
+                    |row| row.get::<_, String>(0),
+                )?;
+                let workspace = Workspace::new(
+                    task.workspace_id.clone(),
+                    task.project_id.clone(),
+                    WorkspaceKind::Isolated,
+                    WorkspaceLocation::local_filesystem(checkout_root),
+                    WorkspaceLifecycle::Active,
+                    task.audit_fields.clone(),
+                );
+                insert_workspace(&transaction, &workspace)?;
+                insert_provisioning(&transaction, &workspace)?;
                 insert_worktree(&transaction, worktree)?;
                 insert_task(&transaction, task)?;
                 transaction.execute(
                     "DELETE FROM worktree_provisioning_leases WHERE id = ?1",
                     params![lease_id.as_ref()],
                 )?;
-                transaction.commit()?;
-                Ok(WorkspaceCommitOutcome::Committed)
-            })
-            .map_err(RepositoryError::new)
-    }
-
-    /// Atomically persists a project-root task after re-validating its project.
-    fn commit_project_root_task(
-        &self,
-        task: &Task,
-    ) -> Result<WorkspaceCommitOutcome, RepositoryError> {
-        self.pool
-            .with_connection_mut(|connection| {
-                let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
-                if !project_visible(&transaction, task.project_id.as_ref())? {
-                    return Ok(WorkspaceCommitOutcome::ProjectNotVisible);
-                }
-                insert_task(&transaction, task)?;
                 transaction.commit()?;
                 Ok(WorkspaceCommitOutcome::Committed)
             })
@@ -87,15 +87,12 @@ fn project_visible(
 /// Inserts one task row inside the open commit transaction.
 fn insert_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), rusqlite::Error> {
     transaction.execute(
-        "INSERT INTO tasks (id, project_id, title, type, workflow_run_id, worktree_id, created_at, updated_at, is_deleted)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO tasks (id, workspace_id, title, created_at, updated_at, is_deleted)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             task.id.as_ref(),
-            task.project_id.as_ref(),
+            task.workspace_id.as_ref(),
             &task.title,
-            task.task_type.database_value(),
-            task.workflow_run_id.as_ref().map(AsRef::as_ref),
-            task.worktree_id.as_ref().map(AsRef::as_ref),
             task.audit_fields.created_at,
             task.audit_fields.updated_at,
             bool_to_sqlite(task.audit_fields.is_deleted),
@@ -110,18 +107,87 @@ fn insert_worktree(
     worktree: &Worktree,
 ) -> Result<(), rusqlite::Error> {
     transaction.execute(
-        "INSERT INTO worktrees (id, task_id, branch_name, checkout_root, base_commit_id, is_active, created_at, updated_at, is_deleted)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO worktrees (workspace_id, branch_name, base_commit_id, created_at, updated_at, is_deleted)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
-            worktree.id.as_ref(),
-            worktree.task_id.as_ref(),
+            worktree.workspace_id.as_ref(),
             worktree.branch_name.as_deref(),
-            worktree.checkout_root.as_deref(),
             worktree.baseline.commit_id(),
-            worktree.activity.database_value(),
             worktree.audit_fields.created_at,
             worktree.audit_fields.updated_at,
             bool_to_sqlite(worktree.audit_fields.is_deleted),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Inserts the workspace identity before its worktree and task projection so all runtime records
+/// can reference the workspace directly after this transaction commits.
+fn insert_workspace(
+    transaction: &Transaction<'_>,
+    workspace: &Workspace,
+) -> Result<(), rusqlite::Error> {
+    let location_id = format!("{}-location", workspace.id);
+    let locator = match &workspace.location {
+        WorkspaceLocation::LocalFilesystem { path } => {
+            serde_json::json!({ "path": path }).to_string()
+        }
+        WorkspaceLocation::Ssh {
+            connection_ref,
+            path,
+        } => serde_json::json!({ "connection_ref": connection_ref, "path": path }).to_string(),
+        WorkspaceLocation::RemoteTarget {
+            target_ref,
+            locator,
+            ..
+        } => serde_json::json!({ "target_ref": target_ref, "locator": locator }).to_string(),
+    };
+    transaction.execute(
+        "INSERT INTO workspace_locations (id, location_kind, plugin_id, locator_version, locator_json, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6)",
+        params![
+            location_id,
+            workspace.location.database_kind(),
+            match &workspace.location {
+                WorkspaceLocation::RemoteTarget { plugin_id, .. } => Some(plugin_id),
+                WorkspaceLocation::LocalFilesystem { .. } | WorkspaceLocation::Ssh { .. } => None,
+            },
+            locator,
+            workspace.audit_fields.created_at,
+            workspace.audit_fields.updated_at,
+        ],
+    )?;
+    transaction.execute(
+        "INSERT INTO workspaces (id, project_id, workspace_kind, location_id, lifecycle, created_at, updated_at, is_deleted)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            workspace.id.as_ref(),
+            workspace.project_id.as_ref(),
+            workspace.kind.database_value(),
+            format!("{}-location", workspace.id),
+            workspace.lifecycle.database_value(),
+            workspace.audit_fields.created_at,
+            workspace.audit_fields.updated_at,
+            bool_to_sqlite(workspace.audit_fields.is_deleted),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Records a ready local Git provisioning result for an already-created isolated workspace.
+fn insert_provisioning(
+    transaction: &Transaction<'_>,
+    workspace: &Workspace,
+) -> Result<(), rusqlite::Error> {
+    transaction.execute(
+        "INSERT INTO workspace_provisioning (workspace_id, provisioner_kind, state, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            workspace.id.as_ref(),
+            WorkspaceProvisionerKind::LocalGit.database_value(),
+            WorkspaceProvisioningState::Ready.database_value(),
+            workspace.audit_fields.created_at,
+            workspace.audit_fields.updated_at,
         ],
     )?;
     Ok(())

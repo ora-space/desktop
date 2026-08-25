@@ -1,0 +1,58 @@
+/*
+ * Shared visual for a workspace file reference chip: type icon keeps its own
+ * hue, the basename uses a bright teal ink (higher L / soft chroma for a clear,
+ * airy feel), and the line range trails in a muted mix of the two.
+ *
+ * Unscoped on purpose. The composer renders these as TipTap atoms and chat
+ * history renders the same chip from the sent quote payload, so one definition
+ * keeps the prompt box and the message bubble visually identical.
+ */
+.composer-file-ref {
+  --composer-file-ink: oklch(0.55 0.09 195);
+  display: inline-flex;
+  max-width: 14rem;
+  align-items: center;
+  gap: 0.28em;
+  /* Gap without a selectable text space (those paint as thin selection bars). */
+  margin: 0 0.2em;
+  vertical-align: baseline;
+  color: var(--composer-file-ink);
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+}
+
+.dark .composer-file-ref {
+  /* Bright aqua on dark chrome; stays readable without neon glow. */
+  --composer-file-ink: oklch(0.82 0.1 195);
+}
+
+.composer-file-ref-icon {
+  width: 0.95em;
+  height: 0.95em;
+  flex-shrink: 0;
+}
+
+.composer-file-ref-label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.35em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.composer-file-ref-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-file-ref-range {
+  flex-shrink: 0;
+  color: color-mix(
+    in oklch,
+    var(--composer-file-ink) 55%,
+    var(--muted-foreground)
+  );
+  font-weight: 400;
+}

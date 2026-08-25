@@ -11,18 +11,16 @@ import { useWorkspaceSelectionStore } from "./stores/workspace-selection-store";
 import { useDraftSessionsStore } from "./stores/draft-sessions-store";
 import { EMPTY_WORKSPACE_SELECTION } from "./stores/sanitize-workspace-selection";
 
-const PROJECT: Project = { id: "p1", name: "Ora", rootPath: "/ora" };
+const PROJECT: Project = { id: "p1", name: "Ora" };
 const TASK: Task = {
   id: "t1",
   projectId: "p1",
+  workspaceId: "workspace-t1",
   title: "Refactor",
-  workspaceMode: "worktree",
-  type: "default",
-  workflowRunId: null,
 };
 const SESSION: Session = {
   id: "s1",
-  taskId: "t1",
+  workspaceId: "workspace-t1",
   agentRef: "ora-space.opencode",
   status: "running",
   title: null,
@@ -444,7 +442,7 @@ describe("useRestoreWorkspaceSelection", () => {
         snapshotId: "snap-1",
         name: "Deploy",
         status: "succeeded",
-        taskId: "t-run",
+        workspaceId: "workspace-t-run",
         createdAt: 0n,
         updatedAt: 0n,
       },
@@ -537,7 +535,7 @@ describe("useRestoreWorkspaceSelection", () => {
       createFocus: { projectId: "p2", taskId: null },
     });
     const state = createMockClientState();
-    state.projects = [PROJECT, { id: "p2", name: "Other", rootPath: "/other" }];
+    state.projects = [PROJECT, { id: "p2", name: "Other" }];
     state.tasks = [TASK];
     state.sessions = [SESSION];
     const client = createMockClient(state);

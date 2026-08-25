@@ -33,8 +33,11 @@ Task Changes panel: parsed worktree patches, file tree, and git commit/push acti
   On send the chip stays basename + `L12-14`, but the agent payload is a mini
   `diff --git` patch (`--- a/` / `+++ b/` / `@@` / unified `+/-/ ` body, with
   a hunk header `quoted from git diff`, plus `(old|new side)` when the chip
-  is a single side) so a follow-up comment is clearly about the existing git
-  change, not current file contents.
+  is a single side, and the quoted file lines as `lines 12-14`) so a follow-up
+  comment is clearly about the existing git change, not current file contents.
+  The line note is what chat history reads back to redraw the same chip label:
+  the hunk counts only cover the body, which is shorter than the span whenever
+  the drag crossed a collapsed hunk.
 - Own commit/push UI for the same task worktree.
 
 ## Non-responsibilities

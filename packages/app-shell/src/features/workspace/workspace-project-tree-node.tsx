@@ -4,7 +4,6 @@ import {
   IconFolder,
   IconFolderOpen,
   IconGitBranch,
-  IconMessageCircle,
   IconTrash,
 } from "@tabler/icons-react";
 import type { Project, Session, Task } from "@ora/contracts";
@@ -32,7 +31,8 @@ const EMPTY_DRAFTS: DraftPlacement[] = [];
 interface ProjectTreeNodeProps {
   project: Project;
   tasks: readonly Task[];
-  sessionsByTaskId: ReadonlyMap<string, readonly Session[]>;
+  sessionsByWorkspaceId: ReadonlyMap<string, readonly Session[]>;
+  directSessions: readonly Session[];
   directDrafts: readonly DraftPlacement[];
   worktreeDraftsByTaskId: ReadonlyMap<string, readonly DraftPlacement[]>;
   /** Search forces branches open without mutating persisted expand sets. */
@@ -53,9 +53,11 @@ function projectTreeNodePropsEqual(
   if (prev.tasks !== next.tasks) return false;
   if (prev.forceExpanded !== next.forceExpanded) return false;
   if (prev.directDrafts !== next.directDrafts) return false;
+  if (prev.directSessions !== next.directSessions) return false;
   for (const task of next.tasks) {
     if (
-      prev.sessionsByTaskId.get(task.id) !== next.sessionsByTaskId.get(task.id)
+      prev.sessionsByWorkspaceId.get(task.workspaceId) !==
+      next.sessionsByWorkspaceId.get(task.workspaceId)
     ) {
       return false;
     }
@@ -76,7 +78,8 @@ function projectTreeNodePropsEqual(
 export const ProjectTreeNode = memo(function ProjectTreeNode({
   project,
   tasks,
-  sessionsByTaskId,
+  sessionsByWorkspaceId,
+  directSessions,
   directDrafts,
   worktreeDraftsByTaskId,
   forceExpanded,
@@ -120,11 +123,14 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
     s.selection.projectId === project.id ? s.selection.workflowRunId : null,
   );
 
-  const projectSessionIds = tasks.flatMap((task) =>
-    (sessionsByTaskId.get(task.id) ?? EMPTY_SESSIONS).map(
-      (session) => session.id,
+  const projectSessionIds = [
+    ...directSessions.map((session) => session.id),
+    ...tasks.flatMap((task) =>
+      (sessionsByWorkspaceId.get(task.workspaceId) ?? EMPTY_SESSIONS).map(
+        (session) => session.id,
+      ),
     ),
-  );
+  ];
 
   return (
     <div>
@@ -194,18 +200,20 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
         {directDrafts.map((draft) => (
           <DraftSessionTreeRow key={draft.id} draftId={draft.id} depth={1} />
         ))}
+        {directSessions.map((session) => (
+          <SessionTreeRow
+            key={session.id}
+            sessionId={session.id}
+            taskId={null}
+            projectId={project.id}
+            depth={1}
+            title={session.title ?? t("sidebar.newSession")}
+            deleteAs="session"
+          />
+        ))}
         {tasks.map((task) => {
-          const taskSessions = sessionsByTaskId.get(task.id) ?? EMPTY_SESSIONS;
-          if (task.workspaceMode === "project_root") {
-            return (
-              <ProjectRootTaskRow
-                key={task.id}
-                task={task}
-                projectId={project.id}
-                sessions={taskSessions}
-              />
-            );
-          }
+          const taskSessions =
+            sessionsByWorkspaceId.get(task.workspaceId) ?? EMPTY_SESSIONS;
           return (
             <WorktreeTaskNode
               key={task.id}
@@ -221,71 +229,6 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
     </div>
   );
 }, projectTreeNodePropsEqual);
-
-/** Direct-chat task: one session leaf, or an empty task row before the first send. */
-const ProjectRootTaskRow = memo(function ProjectRootTaskRow({
-  task,
-  projectId,
-  sessions,
-}: {
-  task: Task;
-  projectId: string;
-  sessions: readonly Session[];
-}) {
-  const { t } = useTranslation();
-  const updateTask = useUpdateTask();
-  const directSession = sessions[0];
-  const taskActive = useWorkspaceSelectionStore(
-    (s) => s.selection.taskId === task.id,
-  );
-
-  if (directSession) {
-    return (
-      <SessionTreeRow
-        sessionId={directSession.id}
-        taskId={task.id}
-        projectId={projectId}
-        depth={1}
-        title={directSession.title ?? t("sidebar.newSession")}
-        deleteAs="task"
-        workspaceMode={task.workspaceMode}
-      />
-    );
-  }
-
-  return (
-    <TreeRow
-      depth={1}
-      active={taskActive}
-      icon={
-        <IconMessageCircle
-          className="size-4 text-muted-foreground"
-          aria-label={t("sidebar.directChatTask")}
-        />
-      }
-      label={task.title}
-      onClick={() =>
-        useWorkspaceSelectionStore.getState().selectTask(task.id, projectId)
-      }
-      onRename={(name) => updateTask.mutateAsync({ task, title: name })}
-      commands={[
-        {
-          label: t("common.delete"),
-          icon: <IconTrash />,
-          variant: "destructive",
-          onSelect: () =>
-            useUiStore.getState().setDeleteTarget({
-              kind: "task",
-              id: task.id,
-              name: task.title,
-              workspaceMode: task.workspaceMode,
-              sessionIds: [],
-            }),
-        },
-      ]}
-    />
-  );
-});
 
 interface WorktreeTaskNodeProps {
   task: Task;
@@ -375,7 +318,6 @@ const WorktreeTaskNode = memo(function WorktreeTaskNode({
                 kind: "task",
                 id: task.id,
                 name: task.title,
-                workspaceMode: task.workspaceMode,
                 sessionIds: sessions.map((session) => session.id),
               }),
           },

@@ -1,5 +1,5 @@
 use ora_application::{RepositoryError, WorktreeRepository};
-use ora_domain::{AuditFields, TaskId, Worktree, WorktreeActivity, WorktreeBaseline, WorktreeId};
+use ora_domain::{AuditFields, WorkspaceId, Worktree, WorktreeActivity, WorktreeBaseline};
 use rusqlite::{Row, params};
 
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
@@ -23,15 +23,12 @@ impl WorktreeRepository for SqliteWorktreeRepository {
         self.pool
             .with_connection(|connection| {
                 connection.execute(
-                    "INSERT INTO worktrees (id, task_id, branch_name, checkout_root, base_commit_id, is_active, created_at, updated_at, is_deleted)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    "INSERT INTO worktrees (workspace_id, branch_name, base_commit_id, created_at, updated_at, is_deleted)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
-                        worktree.id.as_ref(),
-                        worktree.task_id.as_ref(),
+                        worktree.workspace_id.as_ref(),
                         worktree.branch_name.as_deref(),
-                        worktree.checkout_root.as_deref(),
                         baseline_value(&worktree.baseline),
-                        worktree.activity.database_value(),
                         worktree.audit_fields.created_at,
                         worktree.audit_fields.updated_at,
                         bool_to_sqlite(worktree.audit_fields.is_deleted),
@@ -44,15 +41,18 @@ impl WorktreeRepository for SqliteWorktreeRepository {
     }
 
     /// Loads one visible worktree row by identifier.
-    fn find_worktree(&self, worktree_id: &WorktreeId) -> Result<Option<Worktree>, RepositoryError> {
+    fn find_worktree(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Option<Worktree>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, task_id, branch_name, checkout_root, base_commit_id, is_active, created_at, updated_at, is_deleted
+                    "SELECT workspace_id, branch_name, base_commit_id, created_at, updated_at, is_deleted
                      FROM worktrees
-                     WHERE id = ?1 AND is_deleted = 0",
+                     WHERE workspace_id = ?1 AND is_deleted = 0",
                 )?;
-                let mut rows = statement.query(params![worktree_id.as_ref()])?;
+                let mut rows = statement.query(params![workspace_id.as_ref()])?;
 
                 match rows.next()? {
                     Some(row) => Ok(Some(map_worktree_row(row)?)),
@@ -67,10 +67,10 @@ impl WorktreeRepository for SqliteWorktreeRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, task_id, branch_name, checkout_root, base_commit_id, is_active, created_at, updated_at, is_deleted
+                    "SELECT workspace_id, branch_name, base_commit_id, created_at, updated_at, is_deleted
                      FROM worktrees
                      WHERE is_deleted = 0
-                     ORDER BY created_at, id",
+                     ORDER BY created_at, workspace_id",
                 )?;
                 let mut rows = statement.query([])?;
                 let mut worktrees = Vec::new();
@@ -90,15 +90,12 @@ impl WorktreeRepository for SqliteWorktreeRepository {
             .with_connection(|connection| {
                 let updated_rows = connection.execute(
                     "UPDATE worktrees
-                     SET task_id = ?2, branch_name = ?3, checkout_root = ?4, base_commit_id = ?5, is_active = ?6, created_at = ?7, updated_at = ?8, is_deleted = ?9
-                     WHERE id = ?1 AND is_deleted = 0",
+                     SET branch_name = ?2, base_commit_id = ?3, created_at = ?4, updated_at = ?5, is_deleted = ?6
+                     WHERE workspace_id = ?1 AND is_deleted = 0",
                     params![
-                        worktree.id.as_ref(),
-                        worktree.task_id.as_ref(),
+                        worktree.workspace_id.as_ref(),
                         worktree.branch_name.as_deref(),
-                        worktree.checkout_root.as_deref(),
                         baseline_value(&worktree.baseline),
-                        worktree.activity.database_value(),
                         worktree.audit_fields.created_at,
                         worktree.audit_fields.updated_at,
                         bool_to_sqlite(worktree.audit_fields.is_deleted),
@@ -117,7 +114,7 @@ impl WorktreeRepository for SqliteWorktreeRepository {
     /// Soft-deletes one visible worktree row and reports whether it existed.
     fn soft_delete_worktree(
         &self,
-        worktree_id: &WorktreeId,
+        workspace_id: &WorkspaceId,
         deleted_at: i64,
     ) -> Result<bool, RepositoryError> {
         self.pool
@@ -125,8 +122,8 @@ impl WorktreeRepository for SqliteWorktreeRepository {
                 let updated_rows = connection.execute(
                     "UPDATE worktrees
                      SET updated_at = ?2, is_deleted = 1
-                     WHERE id = ?1 AND is_deleted = 0",
-                    params![worktree_id.as_ref(), deleted_at],
+                     WHERE workspace_id = ?1 AND is_deleted = 0",
+                    params![workspace_id.as_ref(), deleted_at],
                 )?;
 
                 Ok(updated_rows > 0)
@@ -137,19 +134,16 @@ impl WorktreeRepository for SqliteWorktreeRepository {
 
 /// Reconstructs a domain worktree from the selected worktree columns.
 pub(super) fn map_worktree_row(row: &Row<'_>) -> Result<Worktree, crate::DatabaseError> {
-    let activity = WorktreeActivity::from_database_value(row.get("is_active")?)?;
     let is_deleted = row.get::<_, i64>("is_deleted")? != 0;
 
     Ok(Worktree::new(
-        WorktreeId::new(row.get::<_, String>("id")?),
-        TaskId::new(row.get::<_, String>("task_id")?),
+        WorkspaceId::new(row.get::<_, String>("workspace_id")?),
         row.get::<_, Option<String>>("branch_name")?,
-        row.get::<_, Option<String>>("checkout_root")?,
         match row.get::<_, Option<String>>("base_commit_id")? {
             Some(commit_id) => WorktreeBaseline::recorded(commit_id)?,
             None => WorktreeBaseline::unavailable(),
         },
-        activity,
+        WorktreeActivity::Active,
         AuditFields::new(row.get("created_at")?, row.get("updated_at")?, is_deleted),
     ))
 }

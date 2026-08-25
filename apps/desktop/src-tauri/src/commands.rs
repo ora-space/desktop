@@ -193,6 +193,13 @@ backend_command!(
     "Lists projects through the shared Backend."
 );
 backend_command!(
+    list_workspaces,
+    ListWorkspacesRequest,
+    ListWorkspacesResponse,
+    list_workspaces,
+    "Lists workspaces through the shared Backend."
+);
+backend_command!(
     list_project_branches,
     ListProjectBranchesRequest,
     ListProjectBranchesResponse,
@@ -429,7 +436,7 @@ pub async fn search_project(
             tauri::async_runtime::spawn_blocking(move || backend.resolve_project_cwd(&project_id))
                 .await
                 .map_err(|source| {
-                    BackendError::internal("Desktop project root resolution failed", source)
+                    BackendError::internal("Desktop workspace location resolution failed", source)
                 })??;
         workspace_files
             .search(&root, &query, kind)
@@ -727,7 +734,7 @@ pub async fn stream_contract(
             .await
             .map_err(|source| {
                 CommandError::from_backend_with_lifecycle(
-                    BackendError::internal("Desktop project root resolution failed", source),
+                    BackendError::internal("Desktop workspace location resolution failed", source),
                     &lifecycle,
                 )
             })?
@@ -1103,6 +1110,13 @@ async_backend_command!(
     install_plugin,
     "Installs one marketplace plugin by downloading, verifying, and extracting it."
 );
+async_backend_command!(
+    import_plugin,
+    ImportPluginRequest,
+    ImportPluginResponse,
+    import_plugin,
+    "Imports one local .orax release archive, then enables the imported plugin."
+);
 
 // =============================================================================
 // gitIdentity
@@ -1266,6 +1280,13 @@ backend_command!(
     "Deletes one workflow run through the shared Backend."
 );
 backend_command!(
+    rename_workflow_run,
+    RenameWorkflowRunRequest,
+    RenameWorkflowRunResponse,
+    rename_workflow_run,
+    "Renames one workflow run through the shared Backend."
+);
+backend_command!(
     start_workflow_run,
     StartWorkflowRunRequest,
     StartWorkflowRunResponse,
@@ -1361,6 +1382,20 @@ pub struct ResolveTaskCwdResponse {
     pub path: String,
 }
 
+/// Identifies the Workspace whose local directory should be resolved.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveWorkspaceCwdRequest {
+    pub workspace_id: String,
+}
+
+/// Returns the absolute local directory backing a Workspace.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveWorkspaceCwdResponse {
+    pub path: String,
+}
+
 /// Renders an absolute path with the host OS's native separators.
 ///
 /// Git reports worktree paths with forward slashes on every platform, so this keeps
@@ -1395,6 +1430,33 @@ fn resolve_task_cwd_backend(
     backend
         .resolve_task_cwd(&request.task_id)
         .map(|path| ResolveTaskCwdResponse {
+            path: to_native_path_string(&path),
+        })
+}
+
+/// Resolves a Workspace's local directory off the API surface.
+#[tauri::command]
+pub async fn resolve_workspace_cwd(
+    state: State<'_, DesktopState>,
+    request: ResolveWorkspaceCwdRequest,
+) -> Result<ResolveWorkspaceCwdResponse, CommandError> {
+    run_backend(
+        "resolve_workspace_cwd",
+        state.backend.clone(),
+        request,
+        resolve_workspace_cwd_backend,
+    )
+    .await
+}
+
+/// Resolves a Workspace's local directory through the composed backend.
+fn resolve_workspace_cwd_backend(
+    backend: &Backend,
+    request: ResolveWorkspaceCwdRequest,
+) -> Result<ResolveWorkspaceCwdResponse, BackendError> {
+    backend
+        .resolve_workspace_cwd(&request.workspace_id)
+        .map(|path| ResolveWorkspaceCwdResponse {
             path: to_native_path_string(&path),
         })
 }

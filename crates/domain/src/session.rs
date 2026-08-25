@@ -1,4 +1,4 @@
-use crate::{AgentRef, AuditFields, DomainModelError, TaskId};
+use crate::{AgentRef, AuditFields, DomainModelError, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 /// Captures whether a conversation is registered on its shared CLI connection.
@@ -74,7 +74,7 @@ impl HistoryState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
     pub id: crate::SessionId,
-    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
     pub agent_ref: AgentRef,
     pub agent_session_id: String,
     pub title: Option<crate::SessionTitle>,
@@ -90,7 +90,7 @@ impl Session {
     /// by a failed write or restored from storage.
     pub fn new(
         id: crate::SessionId,
-        task_id: TaskId,
+        workspace_id: WorkspaceId,
         agent_ref: AgentRef,
         agent_session_id: impl Into<String>,
         status: SessionStatus,
@@ -98,7 +98,7 @@ impl Session {
     ) -> Self {
         Self {
             id,
-            task_id,
+            workspace_id,
             agent_ref,
             agent_session_id: agent_session_id.into(),
             title: None,
@@ -123,7 +123,7 @@ impl Session {
 
     /// Points this conversation at a different provider session, possibly on another agent.
     ///
-    /// The identifier and task stay fixed, so the history file the conversation
+    /// The identifier and workspace stay fixed, so the history file the conversation
     /// owns is unaffected by the move.
     pub fn with_binding(
         mut self,

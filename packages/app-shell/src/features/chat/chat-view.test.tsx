@@ -51,6 +51,15 @@ function composerText(element: HTMLElement): string {
   return element.dataset.composerText ?? "";
 }
 
+/**
+ * A quote that fails to insert is reported as an alert banner, never thrown, so
+ * "the chip is in the document" is not proof the insert succeeded — a partially
+ * applied insert produces both. Every quote test asserts the banner is absent.
+ */
+function expectNoComposerInjectError(): void {
+  expect(screen.queryByRole("alert")).toBeNull();
+}
+
 /** Flushes conversation hydrate / chip-inject microtasks scheduled from effects. */
 async function flushComposerEffects(): Promise<void> {
   await act(async () => {
@@ -1123,6 +1132,7 @@ describe("Composer", () => {
     expect(
       useComposerFileContextStore.getState().pendingByConversation["session-a"],
     ).toBeUndefined();
+    expectNoComposerInjectError();
 
     act(() => {
       useWorkspaceSelectionStore
@@ -1189,6 +1199,7 @@ describe("Composer", () => {
     expect(
       useComposerFileContextStore.getState().pendingByConversation["session-a"],
     ).toBeUndefined();
+    expectNoComposerInjectError();
   });
 
   it("does not replay a prior quote when a second range is queued", async () => {
@@ -1239,6 +1250,7 @@ describe("Composer", () => {
     expect(
       textarea.querySelectorAll("[data-composer-file='src/second.ts']"),
     ).toHaveLength(1);
+    expectNoComposerInjectError();
   });
 
   it("does not restore an abandoned send over a newer submit on the same surface", async () => {

@@ -63,7 +63,7 @@ pub(super) fn pick_auto_allow_option(options: &[PermissionOption]) -> Option<&Pe
 pub(super) fn contract_session(session: Session) -> ContractSession {
     ContractSession {
         id: session.id.to_string(),
-        task_id: session.task_id.to_string(),
+        workspace_id: session.workspace_id.to_string(),
         title: session.title.map(|title| title.as_str().to_owned()),
         agent_ref: session.agent_ref.into(),
         status: match session.status {

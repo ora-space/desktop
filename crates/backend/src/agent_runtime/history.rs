@@ -99,7 +99,7 @@ impl<C: HistoryClock> SessionRecorder<C> {
         self.append_standalone(HistoryRecord::Meta(SessionMeta {
             schema_version: SCHEMA_VERSION,
             session_id: session.id.to_string(),
-            task_id: session.task_id.to_string(),
+            workspace_id: session.workspace_id.to_string(),
             agent_ref: session.agent_ref.clone(),
             agent_session_id: session.agent_session_id.clone(),
             cwd: cwd.to_path_buf(),

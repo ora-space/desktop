@@ -112,7 +112,7 @@ function renderSettings(
 ): RenderResult {
   seedDemoWorkflows(state);
   // Model discovery needs a project cwd so warmSession can report real model catalogs.
-  state.projects = [{ id: "p1", name: "Demo", rootPath: "/demo" }];
+  state.projects = [{ id: "p1", name: "Demo" }];
   // Live Agent/Skill catalogs consumed by the workflow inspector's selectors.
   state.agents = [
     {

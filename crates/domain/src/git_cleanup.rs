@@ -1,4 +1,6 @@
-use crate::{DomainModelError, GitCleanupJobId, ProjectId, TaskId, WorktreeProvisioningLeaseId};
+use crate::{
+    DomainModelError, GitCleanupJobId, ProjectId, WorkspaceId, WorktreeProvisioningLeaseId,
+};
 use serde::{Deserialize, Serialize};
 
 /// Maximum stored length of a cleanup job's `last_error`, so repeated failures
@@ -47,12 +49,12 @@ impl GitCleanupJobState {
 /// the aggregate deletion that produced it.
 ///
 /// One job owns the Git resource pair (linked worktree + local branch) of one
-/// worktree-backed task, so sibling tasks fail and retry independently.
+/// worktree-backed workspace, so sibling workspaces fail and retry independently.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitCleanupJob {
     pub id: GitCleanupJobId,
     pub project_id: ProjectId,
-    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
     /// Root path of the project's Git repository as persisted at creation time.
     pub repository_root: String,
     /// Exact checkout path persisted when the worktree was provisioned; `None`
@@ -74,7 +76,7 @@ impl GitCleanupJob {
     pub fn pending(
         id: GitCleanupJobId,
         project_id: ProjectId,
-        task_id: TaskId,
+        workspace_id: WorkspaceId,
         repository_root: impl Into<String>,
         checkout_root: Option<String>,
         branch_name: impl Into<String>,
@@ -83,7 +85,7 @@ impl GitCleanupJob {
         Self {
             id,
             project_id,
-            task_id,
+            workspace_id,
             repository_root: repository_root.into(),
             checkout_root,
             branch_name: branch_name.into(),
@@ -110,7 +112,7 @@ pub fn truncate_cleanup_error(error: impl Into<String>) -> String {
 /// Represents a write-ahead lease covering one in-flight worktree provisioning.
 ///
 /// The lease is written before `git worktree add` runs and deleted in the same
-/// transaction that persists the task and worktree rows. The provisioning flow
+/// transaction that persists the workspace and worktree rows. The provisioning flow
 /// renews `lease_expires_at` while slow Git work is running, so an expired
 /// lease proves its owner died (or gave up) and the provisioned Git resources
 /// can be reclaimed through a regular cleanup job.
@@ -118,7 +120,7 @@ pub fn truncate_cleanup_error(error: impl Into<String>) -> String {
 pub struct WorktreeProvisioningLease {
     pub id: WorktreeProvisioningLeaseId,
     pub project_id: ProjectId,
-    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
     pub repository_root: String,
     pub checkout_root: String,
     pub branch_name: String,
@@ -133,7 +135,7 @@ impl WorktreeProvisioningLease {
     pub fn new(
         id: WorktreeProvisioningLeaseId,
         project_id: ProjectId,
-        task_id: TaskId,
+        workspace_id: WorkspaceId,
         repository_root: impl Into<String>,
         checkout_root: impl Into<String>,
         branch_name: impl Into<String>,
@@ -143,7 +145,7 @@ impl WorktreeProvisioningLease {
         Self {
             id,
             project_id,
-            task_id,
+            workspace_id,
             repository_root: repository_root.into(),
             checkout_root: checkout_root.into(),
             branch_name: branch_name.into(),
@@ -158,7 +160,7 @@ impl WorktreeProvisioningLease {
         GitCleanupJob::pending(
             job_id,
             self.project_id,
-            self.task_id,
+            self.workspace_id,
             self.repository_root,
             Some(self.checkout_root),
             self.branch_name,

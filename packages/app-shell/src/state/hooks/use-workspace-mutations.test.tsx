@@ -32,7 +32,7 @@ describe("useRenameSession", () => {
     state.sessions = [
       {
         id: "s1",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: "Old",
@@ -67,7 +67,7 @@ describe("delete mutations clear parked composer state", () => {
     state.sessions = [
       {
         id: "s1",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: null,
@@ -75,7 +75,7 @@ describe("delete mutations clear parked composer state", () => {
       },
       {
         id: "s2",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: null,
@@ -104,7 +104,7 @@ describe("delete mutations clear parked composer state", () => {
     state.sessions = [
       {
         id: "s1",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: null,
@@ -142,7 +142,7 @@ describe("delete mutations clear parked composer state", () => {
     state.sessions = [
       {
         id: "s1",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: null,
@@ -183,16 +183,14 @@ describe("delete mutations clear parked composer state", () => {
       {
         id: "t1",
         projectId: "p1",
+        workspaceId: "workspace-t1",
         title: "Task",
-        workspaceMode: "worktree",
-        type: "default",
-        workflowRunId: null,
       },
     ];
     state.sessions = [
       {
         id: "s1",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: null,
@@ -232,21 +230,19 @@ describe("delete mutations clear parked composer state", () => {
 
   it("clears project drafts and related session parks when a project is deleted", async () => {
     const state = createMockClientState();
-    state.projects = [{ id: "p1", name: "Ora", rootPath: "/ora" }];
+    state.projects = [{ id: "p1", name: "Ora" }];
     state.tasks = [
       {
         id: "t1",
         projectId: "p1",
+        workspaceId: "workspace-t1",
         title: "Task",
-        workspaceMode: "worktree",
-        type: "default",
-        workflowRunId: null,
       },
     ];
     state.sessions = [
       {
         id: "s1",
-        taskId: "t1",
+        workspaceId: "workspace-t1",
         agentRef: "ora-space.opencode",
         status: "running",
         title: null,
@@ -287,48 +283,31 @@ describe("delete mutations clear parked composer state", () => {
 });
 
 describe("useCreateTask", () => {
-  it.each([
-    ["worktree", "worktree"],
-    ["project_root", "project_root"],
-  ] as const)(
-    "forwards the %s workspace mode",
-    async (_label, workspaceMode) => {
-      const state = createMockClientState();
-      const client = createMockClient(state);
-      const { result } = renderHookWithClient(
-        () => useCreateTask(),
-        client,
-        createTestQueryClient(),
-      );
+  it("creates a worktree task and selects its workspace draft", async () => {
+    const state = createMockClientState();
+    const client = createMockClient(state);
+    const { result } = renderHookWithClient(
+      () => useCreateTask(),
+      client,
+      createTestQueryClient(),
+    );
 
-      await act(async () => {
-        await result.current.mutateAsync({
-          projectId: "p1",
-          title: "Task",
-          workspaceMode,
-        });
+    await act(async () => {
+      await result.current.mutateAsync({
+        projectId: "p1",
+        title: "Task",
       });
+    });
 
-      expect(state.tasks[0]?.workspaceMode).toBe(workspaceMode);
-      expect(useWorkspaceSelectionStore.getState().selection).toEqual(
-        workspaceMode === "worktree"
-          ? {
-              projectId: "p1",
-              taskId: "t1",
-              sessionId: null,
-              workflowRunId: null,
-              draftId: expect.any(String),
-            }
-          : {
-              projectId: "p1",
-              taskId: null,
-              sessionId: null,
-              workflowRunId: null,
-              draftId: null,
-            },
-      );
-    },
-  );
+    expect(state.tasks[0]?.workspaceId).toBe("workspace-t1");
+    expect(useWorkspaceSelectionStore.getState().selection).toEqual({
+      projectId: "p1",
+      taskId: "t1",
+      sessionId: null,
+      workflowRunId: null,
+      draftId: expect.any(String),
+    });
+  });
 
   it("invalidates project branches after creating a worktree", async () => {
     const state = createMockClientState();
@@ -346,7 +325,6 @@ describe("useCreateTask", () => {
       await result.current.mutateAsync({
         projectId: "p1",
         title: "Task",
-        workspaceMode: "worktree",
         baseBranch: "main",
       });
     });
