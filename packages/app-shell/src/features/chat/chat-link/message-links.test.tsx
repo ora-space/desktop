@@ -243,6 +243,13 @@ describe("assistant markdown artifact links", () => {
   });
 
   it("keeps dangerous assistant hrefs out of the DOM", async () => {
+    // React drops an empty `src` but warns about it first, and that warning is
+    // deduplicated per worker: whichever test file renders one first fails the
+    // clean-stderr gate. Asserting the missing attribute alone cannot see the
+    // difference, so watch the warning itself.
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     await renderLinkedMarkdown(
       "[js](javascript:alert(1)) [data](data:text/html,boom) ![local](file:///C:/secret.png)",
     );
@@ -250,6 +257,8 @@ describe("assistant markdown artifact links", () => {
     expect(screen.queryByRole("link", { name: "js" })).toBeNull();
     expect(screen.queryByRole("link", { name: "data" })).toBeNull();
     expect(screen.getByAltText("local")).not.toHaveAttribute("src");
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("links prose paths with CJK punctuation and natural line locations", async () => {

@@ -334,9 +334,16 @@ const compactRemarkPlugins = [
   remarkComposerFileQuote,
 ];
 
-/** Preserves assistant link destinations for chat-link while keeping media URLs sanitized. */
-const assistantUrlTransform: UrlTransform = (url, key, node) =>
-  node.tagName === "a" && key === "href" ? url : defaultUrlTransform(url);
+/**
+ * Preserves assistant link destinations for chat-link while keeping media URLs
+ * sanitized. A rejected media URL is dropped rather than emptied: `src=""` makes
+ * React warn and the browser refetch the page.
+ */
+const assistantUrlTransform: UrlTransform = (url, key, node) => {
+  if (node.tagName === "a" && key === "href") return url;
+  const transformed = defaultUrlTransform(url);
+  return transformed === "" ? undefined : transformed;
+};
 
 /** Stable `pre` override so index updates do not remount CodeBlock state. */
 function ChatMarkdownPreOverride({
@@ -468,9 +475,7 @@ export function MarkdownMessage({
         remarkPlugins={messageRemarkPlugins}
         rehypePlugins={rehypePlugins}
         components={streaming ? streamingMarkdownComponents : markdownWithLinks}
-        urlTransform={
-          chatLink === null ? undefined : assistantUrlTransform
-        }
+        urlTransform={chatLink === null ? undefined : assistantUrlTransform}
       >
         {parseableMarkdown}
       </ReactMarkdown>
