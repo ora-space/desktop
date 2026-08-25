@@ -79,7 +79,11 @@ export function matchIndexPath(
   if (!normalized.includes("/")) {
     const target = normalized.toLowerCase();
     const hits = pathCollectionLookup(entries).basenames.get(target) ?? [];
-    return hits.length === 1 ? hits[0]! : null;
+    if (hits.length <= 1) return hits[0] ?? null;
+    // One listing reaches the index twice: qualified with its listing root from
+    // the visible output, and bare from `rawOutput`. Both name the same entry,
+    // so the workspace-root form wins instead of the pair cancelling out.
+    return uniqueShallowestHit(hits);
   }
 
   const exact = pathCollectionLookup(entries).exact.get(

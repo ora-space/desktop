@@ -898,6 +898,67 @@ describe("session-wide chat links", () => {
     ]);
   });
 
+  it("links a PowerShell listing delivered with locations and rawOutput", async () => {
+    const user = userEvent.setup();
+    const openWorkspaceFile = vi.fn();
+    const openWorkspaceArtifact = vi.fn();
+    const esc = String.fromCharCode(27);
+    const output = [
+      "",
+      `${esc}[32;1mName           ${esc}[0m${esc}[32;1m PSIsContainer${esc}[0m`,
+      `${esc}[32;1m----           ${esc}[0m ${esc}[32;1m-------------${esc}[0m`,
+      "docs                     True",
+      "main.py                 False",
+      "",
+    ].join(String.fromCharCode(13, 10));
+    // A real ACP execute call carries the same text twice (visible content and
+    // `rawOutput`) plus the cwd location, so each entry reaches the index both
+    // qualified with its listing root and bare.
+    const listing: ChatToolCall = {
+      kind: "toolCall",
+      id: "ps-list",
+      title: "Get-ChildItem -Force | Select-Object Name, PSIsContainer",
+      toolKind: "execute",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: output } }],
+      locations: [{ path: "C:/repo" }],
+      rawInput: {
+        command: "Get-ChildItem -Force | Select-Object Name, PSIsContainer",
+        cwd: "C:/repo",
+      },
+      rawOutput: { output },
+      createdAt: 10,
+      updatedAt: 20,
+    };
+    await renderMessageList(
+      [
+        turn(
+          "turn-1",
+          [listing],
+          ["**目录**：`docs`", "", "**文件**：`main.py`"].join(
+            String.fromCharCode(10),
+          ),
+        ),
+      ],
+      { workspaceRoot: "C:/repo", openWorkspaceFile, openWorkspaceArtifact },
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /打开路径 docs|Open path docs/ }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /打开文件 main.py|Open file main.py/,
+      }),
+    );
+    // The directory branch resolves its kind from the parent listing, so it
+    // hands over the path alone; files carry their line/column slots.
+    expect(openWorkspaceArtifact.mock.calls).toEqual([["docs"]]);
+    expect(openWorkspaceFile.mock.calls).toEqual([
+      ["main.py", undefined, undefined],
+    ]);
+  });
+
   it("links indexed bare names in plain lists and tree fences", async () => {
     const user = userEvent.setup();
     const openWorkspaceDirectory = vi.fn();

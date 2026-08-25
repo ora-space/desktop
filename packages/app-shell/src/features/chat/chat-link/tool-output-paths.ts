@@ -9,8 +9,8 @@ import {
 } from "./parse";
 import { isAbsoluteWorkspacePath } from "../../../lib/workspace-path";
 import {
+  powerShellEntryReader,
   powerShellModeEntry,
-  powerShellTableLayout,
   stripAnsi,
 } from "./tool-output-table";
 
@@ -55,9 +55,9 @@ export function extractArtifactPathsFromText(text: string): string[] {
     extractArtifactDirectoriesFromText(text).map(normalizedPathKey),
   );
   const lines = text.split(/\r?\n/).map(stripAnsi);
-  const tableLayout = powerShellTableLayout(lines);
+  const typedEntry = powerShellEntryReader(lines);
   for (const rawLine of lines) {
-    const modeEntry = powerShellModeEntry(rawLine, tableLayout);
+    const modeEntry = typedEntry(rawLine);
     if (modeEntry !== null) {
       if (modeEntry.kind === "file") paths.push(modeEntry.path);
       continue;
@@ -75,9 +75,9 @@ export function extractArtifactPathsFromText(text: string): string[] {
 export function extractArtifactDirectoriesFromText(text: string): string[] {
   const directories: string[] = [];
   const lines = text.split(/\r?\n/).map(stripAnsi);
-  const tableLayout = powerShellTableLayout(lines);
+  const typedEntry = powerShellEntryReader(lines);
   for (const rawLine of lines) {
-    const modeEntry = powerShellModeEntry(rawLine, tableLayout);
+    const modeEntry = typedEntry(rawLine);
     if (modeEntry?.kind === "directory") {
       directories.push(modeEntry.path);
       continue;
@@ -123,6 +123,21 @@ function isBareArtifactName(value: string): boolean {
 }
 
 /**
+ * True for a relative listing entry such as `.claude/commands`. A recursive
+ * listing prints one child per line with no kind column, and those lines are
+ * otherwise dropped: a directory has no extension, so the file heuristics
+ * reject it and only the top level (bare names) survives. Ripgrep-style
+ * `path:line:column:text` output is excluded, since it is a search hit rather
+ * than a listing entry.
+ */
+function isRelativeListingPath(value: string): boolean {
+  if (value === "" || /\s/.test(value) || value.includes(":")) return false;
+  if (looksLikeGlobPattern(value)) return false;
+  const segments = value.split(/[\\/]/).filter((segment) => segment !== "");
+  return segments.length > 1 && segments.every(isBareArtifactName);
+}
+
+/**
  * Collects file paths from search/read tool dumps. Glob results often arrive as
  * text or a filename array instead of per-file ACP locations.
  */
@@ -161,20 +176,28 @@ export function collectToolOutputArtifacts(
   const typedDirectories: string[] = [];
   const listing = isDirectoryListingTool(tool);
   const listingRoot = listing ? directoryListingRoot(tool) : null;
+  /** Kind the visible listing established for one entry, by both of its forms. */
+  const listedKind = new Map<string, "file" | "directory" | "unknown">();
+  const listed = (
+    path: string,
+    kind: "file" | "directory" | "unknown",
+  ): string => {
+    const qualified = qualifyListingPath(path, listingRoot);
+    // The verdict is recorded under both forms so a bare `rawOutput` guess for
+    // the same entry can be recognized, even though only the qualified form is
+    // indexed.
+    listedKind.set(normalizedPathKey(path), kind);
+    listedKind.set(normalizedPathKey(qualified), kind);
+    return qualified;
+  };
   for (const content of tool.content) {
     if (content.type !== "content" || content.content.type !== "text") continue;
     const parsed = parseToolOutputText(content.content.text, listing);
-    files.push(
-      ...parsed.files.map((path) => qualifyListingPath(path, listingRoot)),
-    );
+    files.push(...parsed.files.map((path) => listed(path, "file")));
     directories.push(
-      ...parsed.directories.map((path) =>
-        qualifyListingPath(path, listingRoot),
-      ),
+      ...parsed.directories.map((path) => listed(path, "directory")),
     );
-    unknown.push(
-      ...parsed.unknown.map((path) => qualifyListingPath(path, listingRoot)),
-    );
+    unknown.push(...parsed.unknown.map((path) => listed(path, "unknown")));
   }
   if (tool.rawOutput !== undefined) {
     collectRawOutputArtifacts(
@@ -194,12 +217,32 @@ export function collectToolOutputArtifacts(
   const uniqueUnknown = uniquePaths(unknown).filter(
     (path) => !explicitKeys.has(normalizedPathKey(path)),
   );
+  /**
+   * `rawOutput` repeats the same listing text, and its file heuristics guess:
+   * `.claude` reads as a dotfile there. The visible listing is the better
+   * witness, so its verdict (including "unresolved") wins over that guess.
+   */
+  const contradictsListing = (
+    path: string,
+    kind: "file" | "directory",
+  ): boolean => {
+    const key = normalizedPathKey(path);
+    // Structured provider kinds are evidence, not a guess, and outrank the
+    // visible listing.
+    if (explicitKeys.has(key)) return false;
+    const verdict = listedKind.get(key);
+    return verdict !== undefined && verdict !== kind;
+  };
   return {
     files: uniquePaths(files).filter(
-      (path) => !typedDirectoryKeys.has(normalizedPathKey(path)),
+      (path) =>
+        !typedDirectoryKeys.has(normalizedPathKey(path)) &&
+        !contradictsListing(path, "file"),
     ),
     directories: uniquePaths(directories).filter(
-      (path) => !typedFileKeys.has(normalizedPathKey(path)),
+      (path) =>
+        !typedFileKeys.has(normalizedPathKey(path)) &&
+        !contradictsListing(path, "directory"),
     ),
     unknown: uniqueUnknown,
   };
@@ -352,12 +395,11 @@ function parseToolOutputText(
   const directories: string[] = [];
   const unknown: string[] = [];
   const lines = text.split(/\r?\n/).map(stripAnsi);
-  const tableLayout = powerShellTableLayout(lines);
-  const hasModeEntries = lines.some(
-    (line) => powerShellModeEntry(line, tableLayout) !== null,
-  );
+  // Either table shape carries explicit kind evidence for the rows below it.
+  const typedEntry = powerShellEntryReader(lines);
+  const hasModeEntries = lines.some((line) => typedEntry(line) !== null);
   for (const rawLine of lines) {
-    const modeEntry = powerShellModeEntry(rawLine, tableLayout);
+    const modeEntry = typedEntry(rawLine);
     if (modeEntry !== null) {
       (modeEntry.kind === "file" ? files : directories).push(modeEntry.path);
       continue;
@@ -371,7 +413,9 @@ function parseToolOutputText(
     if (
       listing &&
       !hasModeEntries &&
-      (isBareArtifactName(line) || isAbsoluteWorkspacePath(line))
+      (isBareArtifactName(line) ||
+        isAbsoluteWorkspacePath(line) ||
+        isRelativeListingPath(line))
     ) {
       unknown.push(parsePathCandidate(line).path);
       continue;

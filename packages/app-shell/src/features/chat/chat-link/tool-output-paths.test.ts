@@ -153,6 +153,90 @@ describe("extractArtifactDirectoriesFromText", () => {
     ]);
   });
 
+  it("reads a Name PSIsContainer listing as explicit directories and files", () => {
+    const esc = String.fromCharCode(27);
+    const output = [
+      "",
+      `${esc}[32;1mName           ${esc}[0m${esc}[32;1m PSIsContainer${esc}[0m`,
+      `${esc}[32;1m----           ${esc}[0m ${esc}[32;1m-------------${esc}[0m`,
+      ".git                     True",
+      "docs                     True",
+      "main.py                 False",
+      "README.md               False",
+      "",
+    ].join(String.fromCharCode(13, 10));
+    const tool: ChatToolCall = {
+      kind: "toolCall",
+      id: "ps-container",
+      title: "Get-ChildItem -Force | Select-Object Name, PSIsContainer",
+      toolKind: "execute",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: output } }],
+      locations: [],
+      rawInput: {
+        command: "Get-ChildItem -Force | Select-Object Name, PSIsContainer",
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    // The header rule (`---- -------------`) must not become a file, and it must
+    // not count as typed evidence that suppresses the rest of the parse.
+    expect(collectToolOutputArtifacts(tool)).toEqual({
+      files: ["main.py", "README.md"],
+      directories: [".git", "docs"],
+      unknown: [],
+    });
+  });
+
+  it("indexes nested relative entries from a recursive listing", () => {
+    const output = [
+      ".claude",
+      String.raw`.claude\commands`,
+      String.raw`.claude\commands\opsx`,
+      "docs",
+      String.raw`docs\superpowers`,
+      "main.py",
+    ].join(String.fromCharCode(10));
+    const tool: ChatToolCall = {
+      kind: "toolCall",
+      id: "recursive-list",
+      title: "Get-ChildItem -Depth 2 | ForEach-Object { $rel }",
+      toolKind: "execute",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: output } }],
+      locations: [{ path: "C:/repo" }],
+      rawInput: { command: "Get-ChildItem -Depth 2", cwd: "C:/repo" },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    // A nested directory has no extension, so the file heuristics reject it;
+    // without the listing rule only the bare top level would be indexed, and
+    // `.claude` would additionally be guessed as a dotfile.
+    expect(collectToolOutputArtifacts(tool)).toEqual({
+      files: [],
+      directories: [],
+      unknown: [
+        "C:/repo/.claude",
+        "C:/repo/.claude/commands",
+        "C:/repo/.claude/commands/opsx",
+        "C:/repo/docs",
+        "C:/repo/docs/superpowers",
+        "C:/repo/main.py",
+      ],
+    });
+  });
+
+  it("reads a PSIsContainer Name listing in either column order", () => {
+    const output = [
+      "PSIsContainer Name",
+      "------------- ----",
+      "         True docs",
+      "        False README.md",
+    ].join(String.fromCharCode(10));
+    expect(extractArtifactDirectoriesFromText(output)).toEqual(["docs"]);
+    expect(extractArtifactPathsFromText(output)).toEqual(["README.md"]);
+  });
+
   it("splits aligned multi-column name listings into unresolved entries", () => {
     const tool: ChatToolCall = {
       kind: "toolCall",

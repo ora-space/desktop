@@ -67,6 +67,24 @@ describe("classifyChatCandidate", () => {
     ).toMatchObject({ kind: "files", path: "scripts/install" });
   });
 
+  it("links a directory the index holds both qualified and bare", () => {
+    // One listing reaches the index twice: qualified with its listing root from
+    // the visible output, and bare from `rawOutput`. Both name the same entry.
+    expect(
+      classifyChatCandidate({
+        source: "inline-code",
+        raw: "docs",
+        index: {
+          edited: [],
+          referenced: ["C:/repo/main.py", "main.py"],
+          directories: ["C:/repo/docs", "docs"],
+        },
+        hasNavigation: true,
+        cwd: "C:/repo",
+      }),
+    ).toMatchObject({ kind: "directory", path: "docs" });
+  });
+
   it("keeps only explicit trailing-slash href misses as directories", () => {
     expect(
       classifyChatCandidate({
