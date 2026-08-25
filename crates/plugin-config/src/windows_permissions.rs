@@ -109,7 +109,7 @@ pub(super) fn restrict_to_current_user(
         SetEntriesInAclW(/*cCountOfExplicitEntries*/ 1, &entry, null(), &mut acl)
     };
     if status != ERROR_SUCCESS {
-        return Err(std::io::Error::from_raw_os_error(status as i32));
+        return Err(windows_status_error("SetEntriesInAclW", status));
     }
     let acl = OwnedAcl(acl);
     let mut wide_path = path
@@ -131,7 +131,7 @@ pub(super) fn restrict_to_current_user(
         )
     };
     if status != ERROR_SUCCESS {
-        return Err(std::io::Error::from_raw_os_error(status as i32));
+        return Err(windows_status_error("SetNamedSecurityInfoW", status));
     }
     Ok(())
 }
@@ -142,4 +142,10 @@ fn windows_step_error(step: &str) -> std::io::Error {
         std::io::Error::last_os_error().kind(),
         format!("{step}: {}", std::io::Error::last_os_error()),
     )
+}
+
+/// Names a Win32 call that reports its failure as a status code instead of `GetLastError`.
+fn windows_status_error(step: &str, status: u32) -> std::io::Error {
+    let source = std::io::Error::from_raw_os_error(status as i32);
+    std::io::Error::new(source.kind(), format!("{step}: {source}"))
 }
