@@ -31,24 +31,37 @@ impl RegistryIndex {
     /// Malformed or unreadable manifests are skipped, logged as warnings, and reported through
     /// the returned [`RegistryBuild`] so a single bad file never blocks the whole build.
     pub fn build(dir: &Path, updated_at: i64) -> RegistryBuild {
+        Self::build_all(&[dir], updated_at)
+    }
+
+    /// Scans every injected registry directory for `orax.toml`, parses each valid manifest, and
+    /// merges the results into one deterministically ordered index built at `updated_at`.
+    ///
+    /// Sources covering the same `namespace/name` id are merged: the id is listed once, and the
+    /// first occurrence in source-then-scan order wins, so the combined listing has no duplicate
+    /// ids regardless of how heavily the sources overlap.
+    pub fn build_all(registry_dirs: &[&Path], updated_at: i64) -> RegistryBuild {
         let mut entries = Vec::new();
         let mut skipped = Vec::new();
-        for path in orax_manifest_paths(dir) {
-            match parse_manifest(&path) {
-                Ok(manifest) => {
-                    let logo = logo::read_beside_manifest(&path);
-                    entries.push(RegistryEntry::from_manifest(&manifest, logo));
-                }
-                Err(error) => {
-                    ora_warn!(path = %path.display(), %error, "skipping invalid registry plugin manifest");
-                    skipped.push(SkippedManifest {
-                        path,
-                        reason: error.to_string(),
-                    });
+        for dir in registry_dirs {
+            for path in orax_manifest_paths(dir) {
+                match parse_manifest(&path) {
+                    Ok(manifest) => {
+                        let logo = logo::read_beside_manifest(&path);
+                        entries.push(RegistryEntry::from_manifest(&manifest, logo));
+                    }
+                    Err(error) => {
+                        ora_warn!(path = %path.display(), %error, "skipping invalid registry plugin manifest");
+                        skipped.push(SkippedManifest {
+                            path,
+                            reason: error.to_string(),
+                        });
+                    }
                 }
             }
         }
         entries.sort_by(|left, right| left.id().cmp(right.id()));
+        entries.dedup_by(|left, right| left.id() == right.id());
 
         let index = Self {
             updated_at,
@@ -83,6 +96,24 @@ impl RegistryIndex {
         }
         Ok(None)
     }
+
+    /// Resolves the full release manifest for a marketplace identifier across every source
+    /// `registry` directory, returning the first source that declares it.
+    ///
+    /// This is the install-time companion of [`Self::build_all`] for multiple sources: search
+    /// follows source order so duplicate ids resolve to the same entry the merged index lists.
+    pub fn resolve_manifest_all(
+        registry_dirs: &[&Path],
+        id: &PluginId,
+    ) -> Result<Option<PluginManifest>, RegistryError> {
+        for dir in registry_dirs {
+            if let Some(manifest) = Self::resolve_manifest(dir, id)? {
+                return Ok(Some(manifest));
+            }
+        }
+        Ok(None)
+    }
+
     /// Loads an index from a previously written JSON file so consumers can read it without rescanning.
     pub fn load(path: &Path) -> Result<Self, RegistryError> {
         let bytes = fs::read(path)?;
@@ -196,7 +227,7 @@ mod tests {
     fn valid_manifest(name: &str, description: &str) -> String {
         format!(
             "resolver = 1\n\
-             name = \"{name}\"\n\
+             identifier = \"{name}\"\n\
              namespace = \"official\"\n\
              kind = \"workbench\"\n\
              version = \"1.2.0\"\n\
@@ -404,6 +435,86 @@ mod tests {
         let root = TempDir::new()?;
 
         assert!(RegistryIndex::load(&root.path().join("missing.json")).is_err());
+        Ok(())
+    }
+
+    /// Verifies multiple sources merge into one index and a shared id is listed exactly once,
+    /// keeping the first source's entry.
+    #[test]
+    fn merges_multiple_sources_and_dedups_by_id() -> Result<(), Box<dyn std::error::Error>> {
+        let first = TempDir::new()?;
+        let second = TempDir::new()?;
+        write_manifest(first.path(), "a", &valid_manifest("a", "A from first"))?;
+        write_manifest(
+            first.path(),
+            "shared",
+            &valid_manifest("shared", "Shared from first"),
+        )?;
+        write_manifest(
+            second.path(),
+            "shared",
+            &valid_manifest("shared", "Shared from second"),
+        )?;
+        write_manifest(second.path(), "b", &valid_manifest("b", "B from second"))?;
+
+        let dirs = vec![
+            first.path().join("registry"),
+            second.path().join("registry"),
+        ];
+        let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+        let build = RegistryIndex::build_all(&dir_refs, UPDATED_AT);
+
+        let ids = build
+            .index()
+            .plugins()
+            .iter()
+            .map(|entry| entry.id().canonical())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["official/a", "official/b", "official/shared"]);
+        let shared = build
+            .index()
+            .plugins()
+            .iter()
+            .find(|entry| entry.id().canonical() == "official/shared")
+            .ok_or_else(|| std::io::Error::other("expected the shared plugin"))?;
+        assert_eq!(shared.description(), "Shared from first");
+        assert_eq!(build.skipped().len(), 0);
+        Ok(())
+    }
+
+    /// Verifies install-time resolution searches sources in order and honors the first match.
+    #[test]
+    fn resolves_manifest_across_sources_in_source_order() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let first = TempDir::new()?;
+        let second = TempDir::new()?;
+        write_manifest(
+            first.path(),
+            "weather",
+            &valid_manifest("weather", "Weather first"),
+        )?;
+        write_manifest(
+            second.path(),
+            "weather",
+            &valid_manifest("weather", "Weather second"),
+        )?;
+
+        let dirs = vec![
+            first.path().join("registry"),
+            second.path().join("registry"),
+        ];
+        let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+        let weather = PluginId::new("official", "weather").expect("plugin id");
+
+        let found = RegistryIndex::resolve_manifest_all(&dir_refs, &weather)?
+            .ok_or_else(|| std::io::Error::other("expected a resolved manifest"))?;
+        assert_eq!(found.description(), "Weather first");
+
+        let missing = RegistryIndex::resolve_manifest_all(
+            &dir_refs,
+            &PluginId::new("official", "absent").expect("plugin id"),
+        )?;
+        assert!(missing.is_none());
         Ok(())
     }
 }

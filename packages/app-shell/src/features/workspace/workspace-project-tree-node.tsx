@@ -19,7 +19,6 @@ import { DraftSessionTreeRow } from "./draft-session-tree-row";
 import { SessionTreeRow } from "./session-tree-row";
 import { SidebarCreateMenu } from "./sidebar-create-menu";
 import {
-  NewSessionButton,
   ProjectWorkflowRunRows,
   TreeBranch,
   TreeRow,
@@ -30,6 +29,7 @@ const EMPTY_DRAFTS: DraftPlacement[] = [];
 
 interface ProjectTreeNodeProps {
   project: Project;
+  mainWorkspaceId: string | null;
   tasks: readonly Task[];
   sessionsByWorkspaceId: ReadonlyMap<string, readonly Session[]>;
   directSessions: readonly Session[];
@@ -50,6 +50,7 @@ function projectTreeNodePropsEqual(
   next: ProjectTreeNodeProps,
 ): boolean {
   if (prev.project !== next.project) return false;
+  if (prev.mainWorkspaceId !== next.mainWorkspaceId) return false;
   if (prev.tasks !== next.tasks) return false;
   if (prev.forceExpanded !== next.forceExpanded) return false;
   if (prev.directDrafts !== next.directDrafts) return false;
@@ -77,6 +78,7 @@ function projectTreeNodePropsEqual(
  */
 export const ProjectTreeNode = memo(function ProjectTreeNode({
   project,
+  mainWorkspaceId,
   tasks,
   sessionsByWorkspaceId,
   directSessions,
@@ -157,8 +159,10 @@ export const ProjectTreeNode = memo(function ProjectTreeNode({
         action={
           <SidebarCreateMenu
             projectId={project.id}
-            onNewTask={(projectId) => {
-              startSessionDraft({ projectId, taskId: null });
+            workspaceId={mainWorkspaceId}
+            scope="project"
+            onNewTask={() => {
+              startSessionDraft({ projectId: project.id, taskId: null });
             }}
           />
         }
@@ -298,8 +302,11 @@ const WorktreeTaskNode = memo(function WorktreeTaskNode({
           useUiStore.getState().toggleTaskExpand(task.id);
         }}
         action={
-          <NewSessionButton
-            onClick={() =>
+          <SidebarCreateMenu
+            projectId={projectId}
+            workspaceId={task.workspaceId}
+            scope="task"
+            onNewTask={() =>
               startSessionDraft({
                 projectId: task.projectId,
                 taskId: task.id,

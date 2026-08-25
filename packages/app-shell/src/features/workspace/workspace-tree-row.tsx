@@ -22,7 +22,6 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconPencil,
-  IconPlus,
   IconRoute,
   IconTrash,
 } from "@tabler/icons-react";
@@ -289,28 +288,6 @@ function ArchiveButton() {
       }}
     >
       <IconArchive />
-    </Button>
-  );
-}
-
-/**
- * Hover plus on a worktree: mint/focus a draft under that branch without
- * toggling the row's expand state.
- */
-export function NewSessionButton({ onClick }: { onClick: () => void }) {
-  const { t } = useTranslation();
-  return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      aria-label={t("sidebar.newSession")}
-      onClick={(event) => {
-        // The row underneath toggles expansion; opening the composer should not.
-        event.stopPropagation();
-        onClick();
-      }}
-    >
-      <IconPlus />
     </Button>
   );
 }

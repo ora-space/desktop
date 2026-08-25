@@ -295,7 +295,7 @@ mod tests {
         fs::write(package_root.join("main.js"), "export {};\n").expect("write entrypoint");
         fs::write(
             package_root.join("orax.toml"),
-            "resolver = 1\nname = \"example\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Example\"\n",
+            "resolver = 1\nidentifier = \"example\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Example\"\n",
         )
         .expect("write manifest");
         let data_root = temporary

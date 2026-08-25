@@ -56,7 +56,7 @@ use ora_history::{HistoryIntegrity, binding_needs_handoff, read_session_history}
 use ora_logging::{ora_debug, ora_warn};
 use ora_scheduler::Scheduler;
 use routing::{SessionChannel, SessionEvent};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -92,6 +92,8 @@ pub(crate) struct AgentRuntimeManager {
 struct ManagerInner {
     pool: RepositoryPool,
     actors: RwLock<HashMap<SessionId, RuntimeActorHandle>>,
+    /// Workflow sessions stay unpublished here until their durable node-run binding exists.
+    unpublished_workflow_sessions: RwLock<HashSet<SessionId>>,
     lifecycle: tokio::sync::Mutex<()>,
     next_operation_id: AtomicU64,
     connections: ConnectionSupervisors,
@@ -235,6 +237,7 @@ impl AgentRuntimeManager {
             inner: Arc::new(ManagerInner {
                 pool,
                 actors: RwLock::new(HashMap::new()),
+                unpublished_workflow_sessions: RwLock::new(HashSet::new()),
                 lifecycle: tokio::sync::Mutex::new(()),
                 next_operation_id: AtomicU64::new(1),
                 warm: WarmSessions::new(connections.clone(), clock),
@@ -499,6 +502,62 @@ impl AgentRuntimeManager {
 
         reservation.commit();
         Ok(response)
+    }
+
+    /// Attaches a workflow node Session while keeping it out of ordinary list snapshots.
+    pub(crate) async fn attach_workflow_node_session(
+        &self,
+        request: AttachSessionRequest,
+    ) -> Result<AttachSessionResponse, BackendError> {
+        let session_id = SessionId::new(request.session_id.as_str());
+        self.unpublished_workflow_sessions_write()?
+            .insert(session_id.clone());
+        let result = self.attach_session(request).await;
+        if result.is_err() {
+            self.unpublished_workflow_sessions_write()?
+                .remove(&session_id);
+        }
+        result
+    }
+
+    /// Captures workflow Sessions whose durable node-run binding is not visible yet.
+    pub(crate) fn unpublished_workflow_session_ids(&self) -> Result<HashSet<String>, BackendError> {
+        self.inner
+            .unpublished_workflow_sessions
+            .read()
+            .map(|sessions| sessions.iter().map(ToString::to_string).collect())
+            .map_err(|_poisoned| runtime_unavailable())
+    }
+
+    /// Publishes a workflow Session only after its node-run binding has committed.
+    pub(crate) fn publish_workflow_node_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), BackendError> {
+        self.unpublished_workflow_sessions_write()?
+            .remove(session_id);
+        Ok(())
+    }
+
+    /// Removes a workflow Session whose setup failed before any node-run binding was published.
+    pub(crate) async fn discard_unpublished_workflow_node_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(), BackendError> {
+        let is_unpublished = self
+            .inner
+            .unpublished_workflow_sessions
+            .read()
+            .map(|sessions| sessions.contains(session_id))
+            .map_err(|_poisoned| runtime_unavailable())?;
+        if !is_unpublished {
+            return Ok(());
+        }
+
+        self.delete_session(session_id.as_ref()).await?;
+        self.unpublished_workflow_sessions_write()?
+            .remove(session_id);
+        Ok(())
     }
 
     /// Moves one existing conversation onto a different agent CLI.
@@ -1082,6 +1141,16 @@ impl AgentRuntimeManager {
     {
         self.inner
             .actors
+            .write()
+            .map_err(|_poisoned| runtime_unavailable())
+    }
+
+    /// Locks the unpublished workflow Session set for one ownership transition.
+    fn unpublished_workflow_sessions_write(
+        &self,
+    ) -> Result<std::sync::RwLockWriteGuard<'_, HashSet<SessionId>>, BackendError> {
+        self.inner
+            .unpublished_workflow_sessions
             .write()
             .map_err(|_poisoned| runtime_unavailable())
     }

@@ -27,6 +27,37 @@ impl RegistrySource {
         }
     }
 
+    /// Creates a source from a git URL and tracked branch, deriving its local checkout directory
+    /// from the URL beneath `sources_root`.
+    ///
+    /// Deriving the directory from the URL keeps additional marketplace sources distinct without
+    /// a manual URL-to-directory mapping, and reproduces the layout that predates multiple
+    /// sources: the scheme is stripped and the remainder is joined as path segments, so
+    /// `https://github.com/ora-space/marketplace` checks out at
+    /// `<sources_root>/github.com/ora-space/marketplace`.
+    pub fn from_git(
+        url: impl Into<String>,
+        branch: BranchName,
+        sources_root: impl AsRef<Path>,
+    ) -> Self {
+        let url = url.into();
+        // Strip the scheme so the checkout mirrors the remote repository path; each remainder
+        // segment is appended on its own so two sources never share a directory.
+        let rest = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .unwrap_or(&url);
+        let mut checkout_dir = sources_root.as_ref().to_path_buf();
+        for segment in rest.split('/').filter(|segment| !segment.is_empty()) {
+            checkout_dir = checkout_dir.join(segment);
+        }
+        Self {
+            url,
+            branch,
+            checkout_dir,
+        }
+    }
+
     /// Returns the git URL that hosts this registry source.
     pub fn url(&self) -> &str {
         &self.url
@@ -179,6 +210,29 @@ mod tests {
             vec!["pull", "--ff-only", "origin", "main"]
         );
         assert_eq!(commands[2].intent, GitIntent::Network);
+        Ok(())
+    }
+
+    /// Verifies `from_git` derives a stable checkout directory from the URL beneath sources root.
+    #[test]
+    fn derives_checkout_dir_from_git_url() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let sources_root = temp.path().join("sources");
+        let source = RegistrySource::from_git(
+            "https://github.com/ora-space/marketplace",
+            BranchName::new("main"),
+            &sources_root,
+        );
+
+        assert_eq!(
+            source.checkout_dir(),
+            sources_root
+                .join("github.com")
+                .join("ora-space")
+                .join("marketplace")
+        );
+        assert_eq!(source.url(), "https://github.com/ora-space/marketplace");
+        assert_eq!(source.branch().as_str(), "main");
         Ok(())
     }
 }

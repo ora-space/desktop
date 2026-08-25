@@ -298,6 +298,60 @@ describe("WorkspaceDialogs task creation", () => {
   });
 });
 
+describe("WorkspaceDialogs workflow run creation", () => {
+  it("creates the run in the Workspace selected by the sidebar row", async () => {
+    const user = userEvent.setup();
+    const state = createMockClientState();
+    const baseClient = createMockClient(state);
+    let submittedWorkspaceId: string | undefined;
+    const client: ContractsClient = {
+      ...baseClient,
+      workflowRun: {
+        ...baseClient.workflowRun,
+        create: async (request, options) => {
+          submittedWorkspaceId = request.workspaceId;
+          return baseClient.workflowRun.create(request, options);
+        },
+      },
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useUiStore.getState().setDialog({
+      kind: "runWorkflow",
+      projectId: "p1",
+      workspaceId: "workspace-t1",
+      workflowId: "wf1",
+      workflowName: "Review",
+    });
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceDialogs />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /创建运行|Create run/ }),
+    );
+
+    await waitFor(() => {
+      expect(submittedWorkspaceId).toBe("workspace-t1");
+      expect(state.workflowRuns).toHaveLength(1);
+      expect(useUiStore.getState().dialog).toBeNull();
+    });
+    expect(state.workflowRuns[0]?.workspaceId).toBe("workspace-t1");
+  });
+});
+
 describe("WorkspaceDialogs project deletion", () => {
   it("deletes every descendant session before deleting the project", async () => {
     const user = userEvent.setup();

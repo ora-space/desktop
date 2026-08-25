@@ -12,7 +12,7 @@ use semver::{Version, VersionReq};
 const DIGEST: &str = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a";
 
 const MINIMAL_MANIFEST: &str = r#"resolver = 1
-name = "user.ora-weather"
+identifier = "user.ora-weather"
 namespace = "official"
 kind = "workbench"
 version = "1.2.0"
@@ -21,8 +21,19 @@ url = "https://example.com/ora-weather.orax"
 sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
 "#;
 
+/// The installed-package spelling of the minimal manifest: it drops the download fields and
+/// spells the name segment `identifier`, matching what a shipped `orax.toml` contains.
+const INSTALLED_MINIMAL_MANIFEST: &str = r#"resolver = 1
+identifier = "user.ora-weather"
+namespace = "official"
+kind = "workbench"
+version = "1.2.0"
+description = "????????? Ora ??"
+"#;
+
 const FULL_MANIFEST: &str = r#"resolver = 1
-name = "user.ora-weather"
+identifier = "user.ora-weather"
+title = "Ora Weather"
 namespace = "official"
 kind = "workbench"
 version = "1.2.0"
@@ -55,6 +66,7 @@ fn parses_complete_manifest_into_full_domain_object() {
     let expected = PluginManifest {
         resolver: 1,
         name: success(PluginName::parse("user.ora-weather"), "plugin name"),
+        title: "Ora Weather".to_owned(),
         namespace: PluginNamespace::Official,
         kind: PluginKind::Workbench,
         version: success(Version::parse("1.2.0"), "version"),
@@ -95,6 +107,7 @@ fn parses_manifest_without_optional_fields() {
 
     assert_eq!(manifest.resolver(), 1);
     assert_eq!(manifest.name().as_str(), "user.ora-weather");
+    assert_eq!(manifest.title(), "user.ora-weather");
     assert_eq!(manifest.namespace(), PluginNamespace::Official);
     assert_eq!(manifest.kind(), PluginKind::Workbench);
     assert_eq!(
@@ -143,7 +156,7 @@ fn parses_skill_kind_marketplace_manifest() {
 /// Verifies a local Skill plugin needs only the installed-manifest core fields.
 #[test]
 fn parses_installed_skill_manifest_without_resolver_or_download_fields() {
-    let installed = "name = \"user.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.2.0\"\ndescription = \"A Skill package\"\n";
+    let installed = "identifier = \"user.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.2.0\"\ndescription = \"A Skill package\"\n";
     let manifest = success(
         PluginManifest::parse_installed(installed),
         "installed Skill manifest",
@@ -182,7 +195,7 @@ fn skill_kind_rejects_workbench_and_webview_sections() {
 /// Verifies an installed package manifest omits download-only fields and still parses.
 #[test]
 fn parses_installed_manifest_without_download_fields() {
-    let installed = "name = \"user.ora-weather\"\nnamespace = \"official\"\nkind = \"workbench\"\nversion = \"1.2.0\"\ndescription = \"A test plugin\"\n";
+    let installed = "identifier = \"user.ora-weather\"\nnamespace = \"official\"\nkind = \"workbench\"\nversion = \"1.2.0\"\ndescription = \"A test plugin\"\n";
     let manifest = success(
         PluginManifest::parse_installed(installed),
         "installed manifest",
@@ -190,10 +203,106 @@ fn parses_installed_manifest_without_download_fields() {
 
     assert_eq!(manifest.resolver(), 1);
     assert_eq!(manifest.name().as_str(), "user.ora-weather");
+    assert_eq!(manifest.title(), "user.ora-weather");
     assert_eq!(manifest.kind(), PluginKind::Workbench);
     assert_eq!(manifest.url(), None);
     assert_eq!(manifest.sha256(), None);
     assert_eq!(manifest.release(), None);
+}
+
+/// Verifies the current installed-package schema, which spells the name segment `identifier` and
+/// adds a human-readable `title`, parses into a manifest that exposes both.
+#[test]
+fn parses_new_installed_schema_with_title() {
+    let source = r#"resolver = 1
+title = "OpenCode"
+identifier = "ora-space.opencode"
+namespace = "official"
+kind = "agent"
+version = "0.1.2"
+description = "Ora Space OpenCode Agent"
+homepage = "https://github.com/ora-space/opencode-agent"
+license = "Apache-2.0"
+"#;
+    let manifest = success(
+        PluginManifest::parse_installed(source),
+        "new installed schema",
+    );
+    assert_eq!(manifest.title(), "OpenCode");
+    assert_eq!(manifest.name().as_str(), "ora-space.opencode");
+    assert_eq!(manifest.namespace(), PluginNamespace::Official);
+    assert_eq!(manifest.kind(), PluginKind::Agent);
+    assert_eq!(
+        manifest.homepage().map(HomepageUrl::as_str),
+        Some("https://github.com/ora-space/opencode-agent")
+    );
+    assert_eq!(manifest.license(), Some("Apache-2.0"));
+    assert_eq!(manifest.url(), None);
+    assert_eq!(manifest.sha256(), None);
+}
+
+/// Verifies the marketplace release form accepts the same new schema: `identifier`/`title` with
+/// no `.orax` download fields, so a synced registry entry is no longer skipped for display.
+#[test]
+fn parses_new_marketplace_schema_without_download_fields() {
+    let source = r#"resolver = 1
+title = "OpenCode"
+identifier = "ora-space.opencode"
+namespace = "official"
+kind = "agent"
+version = "0.1.2"
+description = "Ora Space OpenCode Agent"
+"#;
+    let manifest = success(PluginManifest::parse(source), "new marketplace schema");
+    assert_eq!(manifest.title(), "OpenCode");
+    assert_eq!(manifest.name().as_str(), "ora-space.opencode");
+    assert_eq!(manifest.namespace(), PluginNamespace::Official);
+    assert_eq!(manifest.kind(), PluginKind::Agent);
+    assert_eq!(manifest.url(), None);
+    assert_eq!(manifest.sha256(), None);
+    assert_eq!(manifest.release(), None);
+}
+
+/// Verifies the full marketplace release schema, including Markdown-linked `homepage`/`url`, parses
+/// and exposes the download metadata the installer needs.
+#[test]
+fn parses_full_new_marketplace_manifest_with_markdown_urls() {
+    let source = r#"resolver = 1
+title = "OpenCode"
+identifier = "ora-space.opencode"
+namespace = "official"
+kind = "agent"
+version = "0.1.2"
+description = "Ora Space OpenCode Agent"
+homepage = "[https://github.com/ora-space/opencode-agent](https://github.com/ora-space/opencode-agent)"
+license = "Apache-2.0"
+url = "[https://github.com/ora-space/opencode-agent/releases/download/v0.1.2/ora-space.opencode-v0.1.2.orax](https://github.com/ora-space/opencode-agent/releases/download/v0.1.2/ora-space.opencode-v0.1.2.orax)"
+sha256 = "18263de8e26fab1ea64d6c24913f0815d2151e0ae49cea9ef8aa46f453798558"
+"#;
+    let manifest = success(
+        PluginManifest::parse(source),
+        "full new marketplace manifest",
+    );
+
+    assert_eq!(manifest.title(), "OpenCode");
+    assert_eq!(manifest.name().as_str(), "ora-space.opencode");
+    assert_eq!(manifest.namespace(), PluginNamespace::Official);
+    assert_eq!(manifest.kind(), PluginKind::Agent);
+    assert_eq!(
+        manifest.homepage().map(HomepageUrl::as_str),
+        Some("https://github.com/ora-space/opencode-agent")
+    );
+    assert_eq!(
+        manifest.url().map(ReleaseUrl::as_str),
+        Some(
+            "https://github.com/ora-space/opencode-agent/releases/download/v0.1.2/ora-space.opencode-v0.1.2.orax"
+        )
+    );
+    assert_eq!(
+        manifest.sha256().map(ToString::to_string),
+        Some("18263de8e26fab1ea64d6c24913f0815d2151e0ae49cea9ef8aa46f453798558".to_owned())
+    );
+    assert!(manifest.release().is_some());
 }
 
 /// Verifies unsupported resolver versions take priority over semantic field validation.
@@ -201,7 +310,11 @@ fn parses_installed_manifest_without_download_fields() {
 fn rejects_unsupported_resolver_before_fields() {
     let source = MINIMAL_MANIFEST
         .replacen("resolver = 1", "resolver = 2", 1)
-        .replacen("name = \"user.ora-weather\"", "name = \"INVALID\"", 1);
+        .replacen(
+            "identifier = \"user.ora-weather\"",
+            "identifier = \"INVALID\"",
+            1,
+        );
 
     assert!(matches!(
         PluginManifest::parse(&source),
@@ -231,21 +344,13 @@ fn reports_structural_toml_errors_with_spans() {
 fn rejects_missing_and_mistyped_required_fields() {
     let fields = [
         ("resolver = 1\n", "resolver = \"one\"\n"),
-        ("name = \"user.ora-weather\"\n", "name = true\n"),
+        ("identifier = \"user.ora-weather\"\n", "identifier = true\n"),
         ("namespace = \"official\"\n", "namespace = true\n"),
         ("kind = \"workbench\"\n", "kind = true\n"),
         ("version = \"1.2.0\"\n", "version = true\n"),
         (
             "description = \"获取实时天气信息的 Ora 插件\"\n",
             "description = true\n",
-        ),
-        (
-            "url = \"https://example.com/ora-weather.orax\"\n",
-            "url = true\n",
-        ),
-        (
-            "sha256 = \"feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a\"\n",
-            "sha256 = true\n",
         ),
     ];
 
@@ -266,9 +371,9 @@ fn rejects_missing_and_mistyped_required_fields() {
 fn rejects_empty_required_strings() {
     let fields = [
         (
-            "name = \"user.ora-weather\"",
-            "name = \"\"",
-            ManifestField::Name,
+            "identifier = \"user.ora-weather\"",
+            "identifier = \"\"",
+            ManifestField::Identifier,
         ),
         (
             "namespace = \"official\"",
@@ -311,13 +416,17 @@ fn rejects_empty_required_strings() {
 #[test]
 fn returns_first_root_field_error_deterministically() {
     let source = MINIMAL_MANIFEST
-        .replacen("name = \"user.ora-weather\"", "name = \"INVALID\"", 1)
+        .replacen(
+            "identifier = \"user.ora-weather\"",
+            "identifier = \"INVALID\"",
+            1,
+        )
         .replacen("namespace = \"official\"", "namespace = \"community\"", 1);
 
     assert!(matches!(
         PluginManifest::parse(&source),
         Err(ManifestError::InvalidField {
-            field: ManifestField::Name,
+            field: ManifestField::Identifier,
             reason: InvalidFieldReason::InvalidPluginName(_),
         })
     ));
@@ -519,7 +628,7 @@ fn formats_structured_manifest_fields() {
 }
 
 const WORKBENCH_MANIFEST: &str = r#"resolver = 1
-name = "user.ora-weather"
+identifier = "user.ora-weather"
 namespace = "official"
 kind = "workbench"
 version = "1.2.0"
@@ -530,7 +639,7 @@ methods = ["weather/get_current", "weather/search_city"]
 "#;
 
 const WEBVIEW_MANIFEST: &str = r#"resolver = 1
-name = "acme.hub"
+identifier = "acme.hub"
 namespace = "official"
 kind = "webview"
 version = "1.0.0"
@@ -580,7 +689,7 @@ fn parses_workbench_section_into_method_list() {
 #[test]
 fn workbench_section_is_optional_and_kind_exclusive() {
     let static_page = success(
-        PluginManifest::parse_installed(MINIMAL_MANIFEST),
+        PluginManifest::parse_installed(INSTALLED_MINIMAL_MANIFEST),
         "static workbench",
     );
     assert_eq!(static_page.workbench(), None);

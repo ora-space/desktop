@@ -11,6 +11,13 @@ use serde::{Deserialize, Serialize};
 pub struct RegistryEntry {
     id: PluginId,
     name: String,
+    /// Human-readable display title from the manifest. Old cached indexes predate this field, so
+    /// it defaults to empty and consumers fall back to `name` until the next resync.
+    #[serde(default)]
+    title: String,
+    /// The plugin kind (`agent`, `workbench`, or `webview`) surfaced for the marketplace card.
+    #[serde(default)]
+    kind: String,
     namespace: String,
     version: Version,
     description: String,
@@ -29,6 +36,8 @@ impl RegistryEntry {
         Self {
             id: entry_id(manifest),
             name: manifest.name().as_str().to_owned(),
+            title: manifest.title().to_owned(),
+            kind: manifest.kind().as_str().to_owned(),
             namespace: manifest.namespace().as_str().to_owned(),
             version: manifest.version().clone(),
             description: manifest.description().to_owned(),
@@ -41,9 +50,19 @@ impl RegistryEntry {
         &self.id
     }
 
-    /// Returns the plugin name.
+    /// Returns the plugin name (the identifier segment).
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the human-readable display title, empty when an older cache indexed it without one.
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Returns the plugin kind, empty when an older cache indexed it without one.
+    pub fn kind(&self) -> &str {
+        &self.kind
     }
 
     /// Returns the plugin source namespace.

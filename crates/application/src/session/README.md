@@ -4,10 +4,10 @@ This module provides the persistence-facing portion of Ora session lifecycle.
 
 ## Responsibilities
 
-- `GetSessionHandler` and `ListSessionsHandler` map visible domain sessions to shared contract responses.
+- `GetSessionHandler` maps any visible domain session, including a workflow-owned node session, so Theater can load its transcript directly. `ListSessionsHandler` projects only standalone sessions; sessions bound to visible workflow node runs are intentionally absent from ordinary chat lists.
 - `RenameSessionHandler` validates a user-supplied title, updates only the title column, and returns the latest session snapshot. A missing or soft-deleted row maps to `SessionNotFound` rather than a generic repository failure.
 - `DeleteSessionHandler` soft-deletes a persisted session record using the injected clock and returns a stable not-found error when necessary.
-- `SessionRepository` defines create, read, list, soft-delete, and single-intent session mutations used by application and backend composition. Title, status, binding, and history-state updates each own only their columns and return the latest complete session snapshot.
+- `SessionRepository` defines create, read, complete-list, standalone-list, soft-delete, and single-intent session mutations used by application and backend composition. The complete list remains available for lifecycle and history cleanup, while the standalone list owns the ordinary-chat projection boundary. Title, status, binding, and history-state updates each own only their columns and return the latest complete session snapshot.
 - `SessionIdGenerator` provides injectable session identity generation for runtime-owned creation flows.
 
 Session creation, provider handshake, load, prompt, permission response, cancellation, stop, agent switching, and lifecycle serialization do not belong here. The backend agent runtime performs those operations and uses the repository port to persist state transitions.

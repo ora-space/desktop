@@ -63,7 +63,7 @@ pub(crate) fn discover(data_dir: &Path) -> PluginDiscovery {
                     issues.push(PluginDiscoveryIssue::new(
                         manifest_path,
                         PluginDiscoveryIssueKind::DuplicatePluginId,
-                        Some("name".to_string()),
+                        Some("identifier".to_string()),
                         format!(
                             "plugin `{}` was already discovered at {}",
                             plugin.id,

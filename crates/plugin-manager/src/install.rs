@@ -343,7 +343,7 @@ mod tests {
         digest: [u8; 32],
     ) -> String {
         format!(
-            "resolver = 1\nname = \"{name}\"\nnamespace = \"official\"\nkind = \"{kind}\"\nversion = \"{version}\"\ndescription = \"A test plugin\"\nurl = \"https://example.com/{name}.orax\"\nsha256 = \"{}\"\n",
+            "resolver = 1\nidentifier = \"{name}\"\nnamespace = \"official\"\nkind = \"{kind}\"\nversion = \"{version}\"\ndescription = \"A test plugin\"\nurl = \"https://example.com/{name}.orax\"\nsha256 = \"{}\"\n",
             hex(digest)
         )
     }
@@ -358,7 +358,7 @@ mod tests {
             &[
                 (
                     "orax.toml",
-                    b"resolver = 1\nname = \"weather\"\n".as_slice(),
+                    b"resolver = 1\nidentifier = \"weather\"\n".as_slice(),
                 ),
                 ("main.js", b"export {};\n".as_slice()),
                 ("logo.svg", b"<svg/>".as_slice()),
@@ -410,7 +410,7 @@ mod tests {
             &[
                 (
                     "orax.toml",
-                    b"name = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Skill plugin test\"\n".as_slice(),
+                    b"identifier = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Skill plugin test\"\n".as_slice(),
                 ),
                 (
                     "assets/skills/review/SKILL.md",
@@ -482,7 +482,7 @@ mod tests {
             &[
                 (
                     "orax.toml",
-                    &b"name = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"0.1.1\"\ndescription = \"Skill plugin test\"\n"[..],
+                    &b"identifier = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"0.1.1\"\ndescription = \"Skill plugin test\"\n"[..],
                 ),
                 (
                     "assets/skills/review/SKILL.md",
@@ -540,7 +540,7 @@ mod tests {
             &release_path,
             &[(
                 "orax.toml",
-                &b"name = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"0.1.1\"\ndescription = \"Skill plugin test\"\n"[..],
+                &b"identifier = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"0.1.1\"\ndescription = \"Skill plugin test\"\n"[..],
             )],
         );
 
@@ -570,7 +570,7 @@ mod tests {
             &[
                 (
                     "orax.toml",
-                    &b"resolver = 1\nname = \"ora-space.opencode\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"0.1.2\"\ndescription = \"Ora Space OpenCode Agent\"\n"[..],
+                    &b"resolver = 1\nidentifier = \"ora-space.opencode\"\nnamespace = \"official\"\nkind = \"agent\"\nversion = \"0.1.2\"\ndescription = \"Ora Space OpenCode Agent\"\n"[..],
                 ),
                 ("main.js", b"export {};\n".as_slice()),
                 ("logo.svg", b"<svg/>".as_slice()),

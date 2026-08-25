@@ -14,6 +14,8 @@ describe("useAvailablePlugins", () => {
     state.availablePlugins.push({
       id: "official/weather",
       name: "weather",
+      title: "Weather",
+      kind: "workbench",
       namespace: "official",
       version: "1.2.0",
       description: "Weather plugin",

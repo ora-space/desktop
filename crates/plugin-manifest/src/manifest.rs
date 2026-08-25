@@ -16,6 +16,7 @@ const SUPPORTED_RESOLVER: u64 = 1;
 pub struct PluginManifest {
     pub(crate) resolver: u64,
     pub(crate) name: PluginName,
+    pub(crate) title: String,
     pub(crate) namespace: PluginNamespace,
     pub(crate) kind: PluginKind,
     pub(crate) version: Version,
@@ -33,12 +34,12 @@ pub struct PluginManifest {
 impl PluginManifest {
     /// Parses and validates one plugin release manifest from TOML text.
     ///
-    /// A release manifest is the marketplace form and must declare the download metadata
-    /// (`resolver`, `url`, `sha256`) needed to fetch and verify the package.
+    /// A release manifest is the marketplace form. It spells the name segment `identifier` like
+    /// an installed package and may carry the optional `url`/`sha256` download metadata.
     pub fn parse(source: &str) -> Result<Self, ManifestError> {
         let raw: RawPluginManifest = deserialize(source)?;
         let (metadata, resolver, url, sha256) = raw.into_parts();
-        Self::from_raw_parts(metadata, resolver, Some(url), Some(sha256))
+        Self::from_raw_parts(metadata, resolver, url, sha256)
     }
 
     /// Parses and validates an installed plugin's manifest (the `orax.toml` shipped inside a
@@ -53,6 +54,9 @@ impl PluginManifest {
 
     /// Applies every semantic validation rule to the values shared by both manifest forms,
     /// keeping the release and installed schemas on one validated domain model.
+    ///
+    /// Both forms spell the name segment `identifier`, so a rejected name always reports that
+    /// field.
     fn from_raw_parts(
         metadata: RawMetadata,
         resolver: u64,
@@ -65,7 +69,17 @@ impl PluginManifest {
 
         // Keep semantic conversion explicit so the first error follows schema declaration order.
         let name = PluginName::parse(&metadata.name)
-            .map_err(|reason| invalid_field(ManifestField::Name, reason.into()))?;
+            .map_err(|reason| invalid_field(ManifestField::Identifier, reason.into()))?;
+        // The display title is descriptive metadata; a manifest that omits it falls back to the
+        // identifier so a plugin never lacks a name to show.
+        let title = match metadata.title.as_deref() {
+            Some(value) => {
+                validate_text(value, TextPolicy::Title)
+                    .map_err(|reason| invalid_field(ManifestField::Title, reason))?;
+                value.to_owned()
+            }
+            None => name.as_str().to_owned(),
+        };
         let namespace = PluginNamespace::from_str(&metadata.namespace)
             .map_err(|reason| invalid_field(ManifestField::Namespace, reason.into()))?;
         let kind = PluginKind::from_str(&metadata.kind)
@@ -118,6 +132,7 @@ impl PluginManifest {
         Ok(Self {
             resolver,
             name,
+            title,
             namespace,
             kind,
             version,
@@ -141,6 +156,11 @@ impl PluginManifest {
     /// Returns the complete plugin identifier.
     pub fn name(&self) -> &PluginName {
         &self.name
+    }
+
+    /// Returns the human-readable display title, falling back to the identifier when unset.
+    pub fn title(&self) -> &str {
+        &self.title
     }
 
     /// Returns the plugin source namespace.
@@ -332,15 +352,16 @@ impl PluginDependencies {
 #[serde(deny_unknown_fields)]
 struct RawPluginManifest {
     resolver: u64,
-    name: String,
+    identifier: String,
+    title: Option<String>,
     namespace: String,
     kind: String,
     version: String,
     description: String,
     homepage: Option<String>,
     license: Option<String>,
-    url: String,
-    sha256: String,
+    url: Option<String>,
+    sha256: Option<String>,
     head: Option<RawHead>,
     dependencies: Option<RawDependencies>,
     workbench: Option<RawWorkbench>,
@@ -351,7 +372,11 @@ struct RawPluginManifest {
 #[serde(deny_unknown_fields)]
 struct RawInstalledManifest {
     resolver: Option<u64>,
-    name: String,
+    /// Identifier segment of the installed package, spelled `identifier` (not `name`) because an
+    /// installed manifest is only ever addressed by the full id the host resolves from its name
+    /// and namespace.
+    identifier: String,
+    title: Option<String>,
     namespace: String,
     kind: String,
     version: String,
@@ -385,6 +410,7 @@ struct RawDependencies {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RawMetadata {
     name: String,
+    title: Option<String>,
     namespace: String,
     kind: String,
     version: String,
@@ -398,10 +424,14 @@ struct RawMetadata {
 }
 
 impl RawPluginManifest {
-    /// Splits the release form into shared metadata and required download fields.
-    fn into_parts(self) -> (RawMetadata, u64, String, String) {
+    /// Splits the release form into shared metadata and optional download fields.
+    fn into_parts(self) -> (RawMetadata, u64, Option<String>, Option<String>) {
         let metadata = RawMetadata {
-            name: self.name,
+            // The marketplace release form spells the name segment `identifier` like the
+            // installed form, and the download fields are optional now that the marketplace no
+            // longer publishes `.orax` release URLs.
+            name: self.identifier,
+            title: self.title,
             namespace: self.namespace,
             kind: self.kind,
             version: self.version,
@@ -421,7 +451,10 @@ impl RawInstalledManifest {
     /// Splits the installed form into shared metadata and optional download fields.
     fn into_parts(self) -> (RawMetadata, Option<u64>, Option<String>, Option<String>) {
         let metadata = RawMetadata {
-            name: self.name,
+            // The installed manifest spells the name segment `identifier`, mapping it onto the
+            // shared metadata name so both forms converge on one validated domain model.
+            name: self.identifier,
+            title: self.title,
             namespace: self.namespace,
             kind: self.kind,
             version: self.version,
@@ -439,6 +472,7 @@ impl RawInstalledManifest {
 
 #[derive(Clone, Copy)]
 enum TextPolicy {
+    Title,
     Description,
     License,
 }
@@ -447,6 +481,7 @@ impl TextPolicy {
     /// Returns the maximum byte length for this field category.
     fn max_bytes(self) -> usize {
         match self {
+            Self::Title => 128,
             Self::Description => 1000,
             Self::License => 256,
         }

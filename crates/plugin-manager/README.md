@@ -21,10 +21,10 @@ orchestrates checksum-verified installs of new plugin releases.
 - Compile an optional `assets/config.json` through `ora-plugin-config` without treating the
   package directory as a data root, and record whether the immutable declaration is absent, valid,
   or invalid so lifecycle can refuse to enable a broken package.
-- Apply the host's surface policy to `[[ui.surfaces]]`: entry URL scheme and host allow lists
-  for remote sites, the on-disk asset directory and entry document for panels, surface count and
-  title limits, and id uniqueness, producing typed values (`SurfaceId`, `HostName`, `Url`,
-  `PanelSource`) that downstream surface hosts reuse directly.
+- Apply host-side workbench and webview policy that the manifest crate cannot check: a workbench
+  package must ship `assets/index.html` beside `main.js`; a webview package must not ship
+  `main.js`, must cover `start_url` with `allowed_origins`, and must not declare shadowed
+  download rules.
 - Read the package's optional `logo.svg` icon and retain its source text once
   `ora-utils::svg` accepts it. A package without an icon is ordinary; an icon that is present but
   unreadable or unsafe becomes a discovery issue and leaves the plugin itself discovered without one.
@@ -58,38 +58,28 @@ returns the package directory it extracted into.
 
 ## Validation split
 
-`ora-plugin-manifest` guarantees the shape of a manifest: field types, unknown fields, the id
-grammar, enum spellings, that `[ui]` is present exactly for `kind = "ui"`, that every surface has
-a slug `id` and a non-empty `title`, and that each `source.kind` carries its own fields. This
-crate adds what depends on the host or on the package on disk:
+`ora-plugin-manifest` guarantees the shape of a manifest: field types, unknown fields, the
+`identifier` grammar, enum spellings, that `[webview]` is present exactly for `kind = "webview"`,
+and that `[workbench]` is refused for every other kind. This crate adds what depends on the host
+or on the package on disk:
 
-- Agent and workbench packages must contain `main.js`; webview and skill packages do not.
+- Agent and workbench packages must contain `main.js`; webview packages must not. Skill packages
+  have no process entrypoint.
+- A workbench package must ship `assets/index.html`; the canonical `assets/` directory is the
+  only tree ever served to the page.
+- A webview package is configuration-only: `start_url` must belong to `allowed_origins`, origins
+  cannot repeat, and a download rule whose page set is covered by an earlier rule is rejected.
 - A skill package must contain `assets/skills/` with at least one immediate Skill directory, and
   every such directory must contain a regular root `SKILL.md`. Optional `scripts/`, `references/`,
   and nested `assets/` contents are preserved but not interpreted in this release.
-- `display_name` is the plugin `name` for every kind; a ui plugin's user-visible entries are its
-  surface titles. One agent-kind package contributes exactly one agent with no identifier of its
-  own: the package's plugin id is that agent's identity everywhere in the host.
-- A ui plugin declares at most eight surfaces, each with a package-unique `SurfaceId` (a slug of
-  at most 32 bytes), a title of at most 64 characters without control characters, and
-  `instances = "singleton"` (`"multiple"` is refused until the host supports it).
-- A `remote_site` source is an `https` entry URL without credentials or port whose host must be
-  covered by the union of `hosts` and `host_suffixes` (lowercase DNS names; suffixes match on
-  label boundaries); at least one allow-list entry is required. `web_data.mode` defaults to
-  `persistent`.
-- A `panel` source names a `root` subdirectory of the package and an `.html` `entry` below it;
-  both must exist at discovery time and resolve canonically inside the package, and the validated
-  `PanelSource` carries the canonical asset directory so hosts can serve files under it as a
-  containment root without ever exposing `orax.toml` or the plugin source. Panels always get an
-  isolated persistent web profile, so declaring `web_data` on a panel is an error.
-- Surfaces are returned sorted by id.
+- `display_name` is the plugin identifier for every kind. One agent-kind package contributes
+  exactly one agent with no identifier of its own: the package's plugin id is that agent's
+  identity everywhere in the host.
 
-Validation failures report a stable `field_path` such as `ui.surfaces[0].source.entry`.
-Structural failures (TOML syntax, unknown fields, wrong types, unknown `source.kind`) are
-reported as `invalid_toml` with the TOML path of the offending value; semantic failures, from
-either crate, as `invalid_manifest`. The `surface` module (`SurfaceId`, `HostName`,
-`InstancePolicy`, `WebDataPolicy`) is the single definition of these value types; surface hosts in
-other crates reuse it rather than redefining validation.
+Validation failures report a stable `field_path` such as `webview.allowed_origins[0]`.
+Structural failures (TOML syntax, unknown fields, wrong types) are reported as `invalid_toml`
+with the TOML path of the offending value; semantic failures, from either crate, as
+`invalid_manifest`.
 
 ## Layout rules
 

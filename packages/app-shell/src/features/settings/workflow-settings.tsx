@@ -76,7 +76,6 @@ import {
   animatePanelWidth as animateWorkflowPanel,
   cancelPanelWidthAnimation as cancelWorkflowPanelAnimation,
 } from "../../lib/panel-motion";
-import { DeployWorkflowButton } from "../workflow-run/deploy-to-project-dialog";
 
 const DEFAULT_WORKFLOW_LIBRARY_WIDTH = 220;
 const MIN_WORKFLOW_LIBRARY_WIDTH = 180;
@@ -775,46 +774,6 @@ function WorkflowSettingsContent({
     }
   }
 
-  /**
-   * Prepares deploy by flushing the draft and auto-publishing when the workflow has no
-   * active published snapshot yet, so the user never fills the form only to hit that error.
-   */
-  async function prepareDeploy(): Promise<boolean> {
-    if (workflow === null) {
-      return false;
-    }
-    // Deploy targets the published snapshot; leave read-only preview before flushing.
-    if (previewedVersion !== null) {
-      setPreviewedVersion(null);
-    }
-    setManagerError(null);
-    const saved = await saveWorkflow();
-    if (!saved) {
-      return false;
-    }
-    const hasPublished =
-      draftQuery.data?.published != null ||
-      draftQuery.data?.workflow.publishedSnapshotId != null;
-    if (hasPublished) {
-      return true;
-    }
-    try {
-      const published = await publishWorkflowMutation.mutateAsync({
-        workflowId: workflow.id,
-        version: null,
-      });
-      toast.success(
-        t("workflowRun.deployAutoPublished", {
-          version: published.snapshot.version,
-        }),
-      );
-      return true;
-    } catch (cause) {
-      setManagerError(localizeContractError(cause, t));
-      return false;
-    }
-  }
-
   /** Parses and validates an exported workflow before persisting it as a new workflow. */
   async function importWorkflow(file: File): Promise<void> {
     setManagerError(null);
@@ -856,7 +815,7 @@ function WorkflowSettingsContent({
       autosave.cancel();
       setPreviewedVersion(null);
       setSelectedWorkflowId(result.workflow.id);
-      // Import should leave a deployable published snapshot, not only an editable draft.
+      // Import should leave a runnable published snapshot, not only an editable draft.
       const published = await publishWorkflowMutation.mutateAsync({
         workflowId: result.workflow.id,
         version: importPublishVersion(file.name, name),
@@ -1153,10 +1112,6 @@ function WorkflowSettingsContent({
             <IconVersions />
             {t("settings.workflow.publish")}
           </Button>
-          <DeployWorkflowButton
-            workflow={workflow}
-            onPrepareDeploy={() => prepareDeploy()}
-          />
         </div>
       </header>
       <div ref={editorLayoutRef} className="min-h-0 flex-1">

@@ -32,7 +32,11 @@ pub enum ManifestError {
 /// Identifies one semantic manifest field without requiring callers to parse dotted strings.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ManifestField {
-    Name,
+    /// The human-readable display title, distinct from the identifier it falls back to.
+    Title,
+    /// The installed package's name segment, spelled `identifier` in the `orax.toml` shipped
+    /// inside a package (distinct from the marketplace release form's `name` field).
+    Identifier,
     Namespace,
     Kind,
     Version,
@@ -73,7 +77,8 @@ impl fmt::Display for ManifestField {
     /// Writes the stable dotted manifest path, with array indices in brackets.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Name => formatter.write_str("name"),
+            Self::Title => formatter.write_str("title"),
+            Self::Identifier => formatter.write_str("identifier"),
             Self::Namespace => formatter.write_str("namespace"),
             Self::Kind => formatter.write_str("kind"),
             Self::Version => formatter.write_str("version"),

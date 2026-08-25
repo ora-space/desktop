@@ -63,7 +63,7 @@ fn discovers_workbench_package_with_and_without_methods() {
     write_page(&package_root);
     let static_root = write_manifest(temp_dir.path(), "ora.static", {
         let mut manifest = workbench_manifest(None);
-        manifest["name"] = Value::from("ora.static");
+        manifest["identifier"] = Value::from("ora.static");
         manifest
     });
     write_page(&static_root);

@@ -358,7 +358,7 @@ async fn drive_agent_node(
     // admission before workflow UI loads can discover the session; failures in the preparation
     // block below stop this attached session so cancellation cannot leave an unbound actor behind.
     let attach = agent_runtime
-        .attach_session(AttachSessionRequest {
+        .attach_workflow_node_session(AttachSessionRequest {
             session_id: warm.session_id.clone(),
             workspace_id: context.run.workspace_id.to_string(),
         })
@@ -434,7 +434,9 @@ async fn drive_agent_node(
         // instead of unloading the new provider session and racing the prompt with session_busy.
         let now = clock.now_timestamp_millis();
         match repository.bind_node_run_session(node_run_id, &session_id, now)? {
-            BindWorkflowNodeSessionResult::Bound => {}
+            BindWorkflowNodeSessionResult::Bound => {
+                agent_runtime.publish_workflow_node_session(&session_id)?;
+            }
             BindWorkflowNodeSessionResult::NotRunning
             | BindWorkflowNodeSessionResult::NotFound => {
                 return Err(NodeExecutionError::SessionBindingRejected);
@@ -517,6 +519,15 @@ async fn drive_agent_node(
         // The original node error remains the actionable failure. Cleanup is best-effort, but the
         // warning keeps a leaked Running session diagnosable instead of silently masking it.
         ora_warn!(session_id = %session_id, error = %error, "failed to stop workflow session after node setup failed");
+    }
+    if outcome.is_err()
+        && let Err(error) = agent_runtime
+            .discard_unpublished_workflow_node_session(&session_id)
+            .await
+    {
+        // A failed pre-binding Session must remain hidden in memory if cleanup cannot remove its
+        // row. Keeping the original node error preserves the actionable failure for the engine.
+        ora_warn!(session_id = %session_id, error = %error, "failed to discard unpublished workflow session after node setup failed");
     }
     outcome
 }

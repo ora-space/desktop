@@ -974,7 +974,15 @@ impl Backend {
         &self,
         request: ListSessionsRequest,
     ) -> Result<ListSessionsResponse, BackendError> {
-        self.session.list(request).map_err(BackendError::from)
+        // Snapshot unpublished ownership before reading SQLite. If a node binding commits between
+        // these reads, this snapshot still excludes the row returned by the earlier database view;
+        // a later request instead sees the committed binding through the repository filter.
+        let unpublished = self.agent_runtime.unpublished_workflow_session_ids()?;
+        let mut response = self.session.list(request).map_err(BackendError::from)?;
+        response
+            .sessions
+            .retain(|session| !unpublished.contains(&session.id));
+        Ok(response)
     }
     /// Renames one session, locks agent title acquisition, then notifies subscribers.
     pub async fn rename_session(
@@ -1710,7 +1718,7 @@ mod tests {
         fs::create_dir_all(&skill_root).expect("create installed Skill tree");
         fs::write(
             package_root.join("orax.toml"),
-            "name = \"review-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Review skills\"\n",
+            "identifier = \"review-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Review skills\"\n",
         )
         .expect("write plugin manifest");
         fs::write(
