@@ -41,7 +41,10 @@ App-shell wrapper around `@ora/editor` for prompt boxes.
   `data-start-line` / `data-end-line` and a matching `title`. Drag-selecting
   across chips snaps the range onto the chip under the pointer (atoms skip
   native `::selection`) and paints `data-chip-selected` without a React
-  re-render. `==highlight==` is a Typora yellow (`rgb(255, 255, 0)`;
+  re-render. Hovering a file chip swaps its type icon for a remove control in
+  the same slot, so the chip keeps its width; the control drops that reference
+  from the prompt and is not a tab stop (keyboard removal stays select the chip
+  plus Backspace). `==highlight==` is a Typora yellow (`rgb(255, 255, 0)`;
   delimiters hidden). Compact user-message Markdown expands every single
   newline outside fences (including runs of one-character lines). `/` skills
   and `$` commands are mint-wash pills with forest green ink (Cursor-style;

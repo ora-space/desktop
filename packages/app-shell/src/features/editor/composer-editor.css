@@ -354,6 +354,44 @@
   -webkit-user-drag: none;
 }
 
+/*
+ * Hover swaps the type icon for a remove control in the same 0.95em slot, so
+ * the chip keeps its width and the label never shifts under the pointer. Only
+ * the composer gets it: history chips render the same markup read-only.
+ */
+.composer-editor-shell .composer-file-ref-remove {
+  display: none;
+  width: 0.95em;
+  height: 0.95em;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 0.2em;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.composer-editor-shell .composer-file-ref:hover .composer-file-ref-icon {
+  display: none;
+}
+
+.composer-editor-shell .composer-file-ref:hover .composer-file-ref-remove {
+  display: inline-flex;
+}
+
+.composer-editor-shell .composer-file-ref-remove:hover {
+  color: var(--destructive);
+}
+
+.composer-editor-shell .composer-file-ref-remove-glyph {
+  width: 100%;
+  height: 100%;
+  stroke-width: 2.5;
+}
+
 .composer-editor-shell .composer-file-ref::selection,
 .composer-editor-shell .composer-file-ref *::selection {
   background: transparent;

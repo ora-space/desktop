@@ -8,6 +8,7 @@ import {
   documentPlainText,
 } from "@ora/editor/composer";
 import { PlatformProvider } from "@ora/app-shell/platform";
+import { appI18n } from "../../i18n/i18n-instance";
 import { ComposerEditor, type ComposerEditorHandle } from "./composer-editor";
 import { createStubPlatform } from "../../test/stub-platform";
 
@@ -162,6 +163,66 @@ describe("ComposerEditor", () => {
     await waitFor(() =>
       expect(textbox.querySelector("[data-chip-selected]")).not.toBeNull(),
     );
+  });
+
+  it("steps the caret across a file chip instead of node-selecting it", async () => {
+    const user = userEvent.setup();
+    const editorRef = createRef<ComposerEditorHandle>();
+    render(
+      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    act(() => {
+      editorRef.current?.insertFileChips([{ path: "src/app.ts" }]);
+    });
+    await waitFor(() =>
+      expect(textbox.querySelector("[data-composer-file]")).not.toBeNull(),
+    );
+
+    await user.click(textbox);
+    act(() => {
+      editorRef.current?.focus({ at: "start" });
+    });
+    await user.keyboard("{ArrowRight}");
+    // A NodeSelection would have no caret, and the next keystroke would
+    // replace the chip instead of typing after it.
+    expect(textbox.querySelector(".ProseMirror-selectednode")).toBeNull();
+
+    await user.keyboard("after");
+    expect(textbox.querySelector("[data-composer-file]")).not.toBeNull();
+    expect(composerText(textbox)).toBe("`src/app.ts`after ");
+  });
+
+  it("removes a file chip through its hover remove control", async () => {
+    const user = userEvent.setup();
+    const editorRef = createRef<ComposerEditorHandle>();
+    render(
+      <ComposerEditor ref={editorRef} ariaLabel="Message" onSubmit={vi.fn()} />,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+
+    act(() => {
+      editorRef.current?.insertFileChips([
+        { path: "src/app.ts" },
+        { path: "src/other.ts" },
+      ]);
+    });
+    await waitFor(() =>
+      expect(textbox.querySelectorAll("[data-composer-file]")).toHaveLength(2),
+    );
+
+    const remove = screen.getByRole("button", {
+      name: appI18n.t("chat.removeFileReference", { name: "app.ts" }),
+    });
+    await user.click(remove);
+
+    await waitFor(() => expect(composerText(textbox)).toBe("`src/other.ts` "));
+    expect(
+      screen.queryByRole("button", {
+        name: appI18n.t("chat.removeFileReference", { name: "app.ts" }),
+      }),
+    ).toBeNull();
   });
 
   it("serializes quoted snippets as citation fences for the agent", async () => {

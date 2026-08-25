@@ -829,3 +829,64 @@ test("composerFileLabel uses the last path segment even when the path ends with 
     "bar",
   );
 });
+
+test("arrow keys step the caret over a chip instead of node-selecting it", async () => {
+  const { Editor } = await import("@tiptap/core");
+  const { chipCaretStep } =
+    await import("../src/composer/composer-chip-selection.ts");
+  const editor = new Editor({
+    extensions: createComposerExtensions({ placeholder: "Type" }),
+    content: {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "pre" },
+            {
+              type: "composerFile",
+              attrs: { path: "AGENTS.md", kind: "file" },
+            },
+            { type: "text", text: "post" },
+          ],
+        },
+      ],
+    },
+  });
+  let chipPos = -1;
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === "composerFile") {
+      chipPos = pos;
+      return false;
+    }
+    return true;
+  });
+  const chip = editor.state.doc.nodeAt(chipPos);
+  assert.ok(chip);
+  const chipEnd = chipPos + chip.nodeSize;
+
+  // Caret against the chip's left edge: one press lands past the whole atom.
+  editor.commands.setTextSelection(chipPos);
+  const forward = chipCaretStep(editor.state, 1);
+  assert.deepEqual(
+    { from: forward?.from, to: forward?.to },
+    { from: chipEnd, to: chipEnd },
+  );
+
+  editor.commands.setTextSelection(chipEnd);
+  const backward = chipCaretStep(editor.state, -1);
+  assert.deepEqual(
+    { from: backward?.from, to: backward?.to },
+    { from: chipPos, to: chipPos },
+  );
+
+  // Inside plain text, and moving away from the chip, stay with ProseMirror.
+  editor.commands.setTextSelection(2);
+  assert.equal(chipCaretStep(editor.state, 1), null);
+  editor.commands.setTextSelection(chipPos);
+  assert.equal(chipCaretStep(editor.state, -1), null);
+  // A range selection is a shift-extension; ProseMirror already keeps it text.
+  editor.commands.setTextSelection({ from: 1, to: chipEnd });
+  assert.equal(chipCaretStep(editor.state, 1), null);
+  editor.destroy();
+});
