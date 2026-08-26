@@ -35,10 +35,9 @@ pub use session::{
 pub use skill::{
     BACKUP_DIR_NAME, CreateHandle, CreateSkillHandler, DeleteHandle, DeleteSkillHandler,
     FilesystemSkillStorage, GetSkillHandler, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
-    ListSkillsHandler, LocalSkillSourceRevision, STAGING_DIR_NAME, SkillDeleteOutcome,
-    SkillIdGenerator, SkillRepository, SkillSourceInUseError, SkillStorage, SkillStorageError,
-    SkillUpdateOutcome, SwapHandle, TransactionJournal, UpdateSkillHandler, UuidSkillIdGenerator,
-    has_usable_package,
+    ListSkillsHandler, LocalSkillSourceRevision, STAGING_DIR_NAME, SkillIdGenerator,
+    SkillRepository, SkillStorage, SkillStorageError, SwapHandle, TransactionJournal,
+    UpdateSkillHandler, UuidSkillIdGenerator, has_usable_package,
 };
 pub use skill_import::{
     DuplicateSkillName, NoopSkillImportProgressPublisher, SkillImportConfig, SkillImportError,

@@ -49,6 +49,7 @@ function createTransportHarness(): {
 
 Deno.test("serves the whole agent contract over one run loop", async () => {
   const received: JsonValue[] = [];
+  const effectCalls: unknown[] = [];
   let send: AcpSender | undefined;
   const plugin = defineAgent({
     start: (_context, sender) => {
@@ -59,6 +60,20 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     onAcp: (frame) => {
       received.push(frame);
     },
+    effects: {
+      surfaces: [{
+        workspaceRelativePath: ".agents/skills",
+        materializationFormat: "skill_directory.v1",
+        coordination: "wait_for_idle_and_restart",
+      }],
+      waitForIdle: (context) => {
+        effectCalls.push(context);
+        return "ready";
+      },
+      restart: (context) => {
+        effectCalls.push(context);
+      },
+    },
   });
   const harness = createTransportHarness();
   const run = plugin.run(harness.transport);
@@ -67,8 +82,19 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     jsonrpc: "2.0",
     method: "ora/register",
     params: {
-      methods: ["agent/start", "agent/stop", "agent/listModels"],
+      methods: [
+        "agent/start",
+        "agent/stop",
+        "agent/listModels",
+        "effect/waitForIdle",
+        "effect/restart",
+      ],
       emits: ["agent/acp"],
+      effectSurfaces: [{
+        workspaceRelativePath: ".agents/skills",
+        materializationFormat: "skill_directory.v1",
+        coordination: "wait_for_idle_and_restart",
+      }],
     },
   });
 
@@ -101,6 +127,35 @@ Deno.test("serves the whole agent contract over one run loop", async () => {
     result: { models: [{ id: "opus", displayName: "Opus", default: false }] },
   });
   assertEquals(received, [{ jsonrpc: "2.0", id: 7, method: "initialize" }]);
+
+  const locator = {
+    surfaceKey: "surface-1",
+    workspaceRoot: "/workspace",
+    relativePath: ".agents/skills",
+  };
+  await harness.send({
+    jsonrpc: "2.0",
+    id: 4,
+    method: "effect/waitForIdle",
+    params: locator,
+  });
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 4,
+    result: { state: "ready" },
+  });
+  await harness.send({
+    jsonrpc: "2.0",
+    id: 5,
+    method: "effect/restart",
+    params: { ...locator, generation: 7 },
+  });
+  assertEquals((await harness.responses.next()).value, {
+    jsonrpc: "2.0",
+    id: 5,
+    result: {},
+  });
+  assertEquals(effectCalls, [locator, { ...locator, generation: 7 }]);
 
   await send?.({ jsonrpc: "2.0", id: 7, result: { protocolVersion: 1 } });
   assertEquals((await harness.responses.next()).value, {

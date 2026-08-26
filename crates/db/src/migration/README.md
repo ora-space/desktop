@@ -12,9 +12,16 @@ This module owns Ora's linear, reversible SQLite schema history and reconciles a
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
 - Applied rows record `version`, `up_sql`, `down_sql`, and an injected `executed_at` timestamp.
-- Migration `0006` adds normalized Workspace Effect desired selections, source revisions, surface
-  descriptors, ownership ledgers, status, operation journals, and durable reconcile/propagation
-  requests.
+- Migration `0006` is the Effect v2 model: stable Sources, immutable Revisions and explicit Heads;
+  normalized Workspace Desired items; Surface and Consumer declarations/status; Managed ownership;
+  current Conditions; durable reconcile/propagation requests; mutation Operations and recovery
+  Artifacts; and append-only Audit events.
+- Every Workspace has exactly one Effect aggregate. The first release installs every active Skill
+  Source by default: publishing a new local or plugin Skill adds it to all existing Workspaces, and
+  the Workspace insert trigger selects all active Skill Heads for a newly created Workspace.
+- Local Skill Sources use namespace `local`. Plugin Skill Sources use the owning plugin's canonical
+  `<plugin_namespace>/<plugin_identifier>` identity. Plugin enabled state is deliberately outside
+  the Effect selection policy.
 
 ## Reconciliation
 

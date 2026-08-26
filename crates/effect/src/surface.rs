@@ -64,7 +64,7 @@ pub struct MaterializationFormat(String);
 impl MaterializationFormat {
     /// Returns the first-version directory-tree format used for Skill packages.
     pub fn skill_directory_v1() -> Self {
-        Self("skill_directory_v1".to_string())
+        Self("skill_directory.v1".to_string())
     }
 
     /// Builds a named format for plugin adapters and compatibility tests.

@@ -894,7 +894,11 @@ async fn spawn_plugin_connection(
         .attach_agent(plugin_id)
         .await
         .map_err(plugin_attach_error)?;
-    let LaunchedPluginAgent { runtime, messages } = match plugin_agent::attach(
+    let LaunchedPluginAgent {
+        runtime,
+        messages,
+        effect_surfaces,
+    } = match plugin_agent::attach(
         attachment,
         &plugin_id.canonical(),
         home_directory,
@@ -908,6 +912,11 @@ async fn spawn_plugin_connection(
             return Err(plugin_start_error(error));
         }
     };
+    plugin_host
+        .replace_agent_effect_surfaces(plugin_id.clone(), effect_surfaces)
+        .map_err(|error| {
+            StartFailure::Terminal(runtime_internal("agent_start_failed", error.to_string()))
+        })?;
     let models = match plugin_agent::list_models(&runtime).await {
         Ok(models) => models,
         Err(error) => {

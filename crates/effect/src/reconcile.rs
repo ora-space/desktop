@@ -363,13 +363,18 @@ where
             planned_identity,
         ) = operation_parts(plan);
         let previous_state = adapter.operation_state(&target_name)?;
-        let planned_state = if let Some(desired) = &planned_desired {
+        let staged_source = if let Some(desired) = &planned_desired {
             let snapshot = self.sources.open_snapshot(desired)?;
             let identity = planned_identity
                 .as_ref()
                 .or(previous_identity.as_ref())
                 .ok_or(SourceError::IntegrityMismatch)?;
-            OperationState::Present(adapter.stage(&snapshot, identity, &paths)?)
+            Some((snapshot, identity.clone()))
+        } else {
+            None
+        };
+        let planned_state = if let Some((snapshot, _)) = &staged_source {
+            OperationState::Present(adapter.planned_fingerprint(snapshot)?)
         } else {
             OperationState::Missing
         };
@@ -392,14 +397,25 @@ where
             backup_path: paths.backup.clone(),
         };
         self.repository.prepare_operation(operation.clone())?;
+        if let Some((snapshot, identity)) = &staged_source {
+            let staged_fingerprint = adapter.stage(snapshot, identity, &paths)?;
+            if operation.planned_state != OperationState::Present(staged_fingerprint) {
+                return Err(SourceError::IntegrityMismatch.into());
+            }
+        }
         apply_prepared(adapter, &operation, &paths)?;
         operation.phase = EffectOperationPhase::Applied;
         self.repository.save_operation(operation.clone())?;
         let transition = ledger_transition(&operation)?;
         operation.phase = EffectOperationPhase::Finalized;
-        self.repository.finalize_operation(operation, transition)?;
+        self.repository
+            .finalize_operation(operation.clone(), transition)?;
         // Business state is already committed; cleanup remains safely retryable maintenance.
-        let _ = adapter.cleanup_operation(&paths);
+        if adapter.cleanup_operation(&paths).is_ok() {
+            let _ = self
+                .repository
+                .complete_operation_cleanup(&operation.operation_id);
+        }
         Ok(())
     }
 
@@ -428,21 +444,32 @@ where
             };
             match adapter.recovery_decision(&operation)? {
                 RecoveryDecision::RetryApply => {
+                    stage_recovery_source(adapter, self.sources, &operation, &paths)?;
                     apply_prepared(adapter, &operation, &paths)?;
                     operation.phase = EffectOperationPhase::Applied;
                     self.repository.save_operation(operation.clone())?;
                     let transition = ledger_transition(&operation)
                         .map_err(|_| FilesystemEffectError::InvalidSkillManifest)?;
                     operation.phase = EffectOperationPhase::Finalized;
-                    self.repository.finalize_operation(operation, transition)?;
-                    let _ = adapter.cleanup_operation(&paths);
+                    self.repository
+                        .finalize_operation(operation.clone(), transition)?;
+                    if adapter.cleanup_operation(&paths).is_ok() {
+                        let _ = self
+                            .repository
+                            .complete_operation_cleanup(&operation.operation_id);
+                    }
                 }
                 RecoveryDecision::Finalize => {
                     let transition = ledger_transition(&operation)
                         .map_err(|_| FilesystemEffectError::InvalidSkillManifest)?;
                     operation.phase = EffectOperationPhase::Finalized;
-                    self.repository.finalize_operation(operation, transition)?;
-                    let _ = adapter.cleanup_operation(&paths);
+                    self.repository
+                        .finalize_operation(operation.clone(), transition)?;
+                    if adapter.cleanup_operation(&paths).is_ok() {
+                        let _ = self
+                            .repository
+                            .complete_operation_cleanup(&operation.operation_id);
+                    }
                 }
                 RecoveryDecision::RecoveryRequired => conditions.push(Condition::new(
                     ConditionSubject::Surface {
@@ -563,6 +590,31 @@ fn operation_parts(
             None,
         ),
     }
+}
+
+/// Rebuilds or validates a reserved staging artifact before replaying Prepared intent.
+fn stage_recovery_source<Sources: SourceProvider>(
+    adapter: &FilesystemSurfaceAdapter,
+    sources: &Sources,
+    operation: &EffectOperation,
+    paths: &OperationPaths,
+) -> Result<(), FilesystemEffectError> {
+    let Some(desired) = &operation.planned_desired else {
+        return Ok(());
+    };
+    let snapshot = sources
+        .open_snapshot(desired)
+        .map_err(|_| FilesystemEffectError::InvalidSkillManifest)?;
+    let identity = operation
+        .planned_identity
+        .as_ref()
+        .or(operation.previous_identity.as_ref())
+        .ok_or(FilesystemEffectError::InvalidSkillManifest)?;
+    let staged_fingerprint = adapter.stage(&snapshot, identity, paths)?;
+    if operation.planned_state != OperationState::Present(staged_fingerprint) {
+        return Err(FilesystemEffectError::InvalidSkillManifest);
+    }
+    Ok(())
 }
 
 /// Applies only the exact mutation described by a durable Prepared operation.

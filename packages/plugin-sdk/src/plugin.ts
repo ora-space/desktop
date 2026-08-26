@@ -27,6 +27,13 @@ export interface HostRequestOptions {
   timeoutMs?: number;
 }
 
+/** One Workspace-relative Effect surface included in the immutable plugin registration. */
+export interface EffectSurfaceDeclaration {
+  workspaceRelativePath: string;
+  materializationFormat: string;
+  coordination: "uninterrupted" | "wait_for_idle_and_restart";
+}
+
 /**
  * A host method failed, or could not be completed.
  *
@@ -65,6 +72,7 @@ interface PendingHostRequest {
 export class Plugin {
   readonly #methods = new Map<string, MethodHandler>();
   readonly #emits = new Set<string>();
+  readonly #effectSurfaces: EffectSurfaceDeclaration[] = [];
   readonly #notificationHandlers = new Map<string, NotificationHandler>();
   readonly #pendingHostRequests = new Map<number, PendingHostRequest>();
   #nextHostRequestId = 1;
@@ -95,6 +103,18 @@ export class Plugin {
       throw new Error("Emitted method names cannot be empty");
     }
     this.#emits.add(name);
+  }
+
+  /** Declares one runtime-consumed Effect surface before registration is sent. */
+  declareEffectSurface(surface: EffectSurfaceDeclaration): void {
+    this.#assertRegistering();
+    if (
+      surface.workspaceRelativePath.length === 0 ||
+      surface.materializationFormat.length === 0
+    ) {
+      throw new Error("Effect surface locator and format cannot be empty");
+    }
+    this.#effectSurfaces.push({ ...surface });
   }
 
   /** Handles one host-sent notification, which never produces a response. */
@@ -190,13 +210,21 @@ export class Plugin {
 
     const writer = new FrameWriter(transport.writable);
     this.#writer = writer;
+    const registration: { [key: string]: JsonValue } = {
+      methods: [...this.#methods.keys()],
+      emits: [...this.#emits],
+    };
+    if (this.#effectSurfaces.length > 0) {
+      registration.effectSurfaces = this.#effectSurfaces.map((surface) => ({
+        workspaceRelativePath: surface.workspaceRelativePath,
+        materializationFormat: surface.materializationFormat,
+        coordination: surface.coordination,
+      }));
+    }
     await writer.write({
       jsonrpc: "2.0",
       method: "ora/register",
-      params: {
-        methods: [...this.#methods.keys()],
-        emits: [...this.#emits],
-      },
+      params: registration,
     });
 
     const inFlight = new Set<Promise<void>>();

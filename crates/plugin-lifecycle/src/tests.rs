@@ -1689,10 +1689,9 @@ pub(super) fn package_version_root(data_dir: &std::path::Path, name: &str) -> st
 /// Writes one static Skill package without a process entrypoint.
 fn write_skill_plugin_package(data_dir: &std::path::Path, name: &str) {
     let package_root = package_version_root(data_dir, name);
-    fs::create_dir_all(package_root.join("assets/skills/review"))
-        .expect("create Skill plugin assets");
+    fs::create_dir_all(package_root.join("assets/review")).expect("create Skill plugin assets");
     fs::write(
-        package_root.join("assets/skills/review/SKILL.md"),
+        package_root.join("assets/review/SKILL.md"),
         "---\nname: review\ndescription: Reviews code\n---\n",
     )
     .expect("write bundled Skill manifest");

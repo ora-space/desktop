@@ -4,10 +4,7 @@ use crate::skill::package_health::{
     commit_unclaimed_package, has_usable_package, manifest_is_usable, package_availability,
     persist_promoted_package, read_skill_manifest,
 };
-use crate::skill::ports::{
-    LocalSkillSourceRevision, SkillDeleteOutcome, SkillIdGenerator, SkillRepository,
-    SkillSourceInUseError, SkillUpdateOutcome,
-};
+use crate::skill::ports::{LocalSkillSourceRevision, SkillIdGenerator, SkillRepository};
 use crate::skill::storage::{SkillStorage, SkillStorageError};
 use crate::{ApplicationError, Clock};
 use gray_matter::{Matter, engine::YAML};
@@ -336,28 +333,12 @@ where
                 skill_md_digest: Digest::sha256(rewritten.as_bytes()),
                 package_root,
             });
-        let updated = persist_promoted_package(&self.storage, &promoted, || {
-            match source_revision {
+        let updated =
+            persist_promoted_package(&self.storage, &promoted, || match source_revision {
                 Some(source) => self.repository.update_skill_with_source(skill, source),
-                None => self
-                    .repository
-                    .update_skill(skill)
-                    .map(SkillUpdateOutcome::Updated),
-            }
-            .and_then(|outcome| match outcome {
-                SkillUpdateOutcome::Updated(skill) => Ok(skill),
-                SkillUpdateOutcome::InUse => {
-                    Err(crate::RepositoryError::new(SkillSourceInUseError))
-                }
-            })
-        });
-        let updated = match updated {
-            Ok(updated) => updated,
-            Err(error) if error.is::<SkillSourceInUseError>() => {
-                return Err(ApplicationError::SkillInUse);
-            }
-            Err(error) => return Err(ApplicationError::from_skill_repository_error(error)),
-        };
+                None => self.repository.update_skill(skill),
+            });
+        let updated = updated.map_err(ApplicationError::from_skill_repository_error)?;
 
         Ok(UpdateSkillResponse {
             skill: map_skill(updated, SkillAvailability::Available),
@@ -417,19 +398,16 @@ where
         };
         let deleted = self
             .repository
-            .soft_delete_skill_with_source_protection(&skill_id, self.clock.now_timestamp_millis())
+            .soft_delete_skill_with_source(&skill_id, self.clock.now_timestamp_millis())
             .map_err(|error| {
                 if let Some(handle) = &handle {
                     let _ = self.storage.rollback_delete(handle);
                 }
                 ApplicationError::from_skill_repository_error(error)
             })?;
-        if deleted != SkillDeleteOutcome::Deleted {
+        if !deleted {
             if let Some(handle) = &handle {
                 let _ = self.storage.rollback_delete(handle);
-            }
-            if deleted == SkillDeleteOutcome::InUse {
-                return Err(ApplicationError::SkillInUse);
             }
             return Err(ApplicationError::SkillNotFound {
                 skill_id: skill_id.to_string(),
@@ -535,21 +513,9 @@ where
             skill_md_digest: Digest::sha256(manifest.as_bytes()),
             package_root,
         });
-    let updated = persist_promoted_package(storage, &promoted, || {
-        match source_revision {
-            Some(source) => repository.update_skill_with_source(skill, source),
-            None => repository
-                .update_skill(skill)
-                .map(SkillUpdateOutcome::Updated),
-        }
-        .and_then(|outcome| match outcome {
-            SkillUpdateOutcome::Updated(skill) => Ok(skill),
-            SkillUpdateOutcome::InUse => Err(crate::RepositoryError::new(SkillSourceInUseError)),
-        })
+    let updated = persist_promoted_package(storage, &promoted, || match source_revision {
+        Some(source) => repository.update_skill_with_source(skill, source),
+        None => repository.update_skill(skill),
     });
-    match updated {
-        Ok(skill) => Ok(skill),
-        Err(error) if error.is::<SkillSourceInUseError>() => Err(ApplicationError::SkillInUse),
-        Err(error) => Err(ApplicationError::from_skill_repository_error(error)),
-    }
+    updated.map_err(ApplicationError::from_skill_repository_error)
 }

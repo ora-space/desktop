@@ -185,11 +185,6 @@ impl From<ApplicationError> for BackendError {
                 PublicError::SkillNameConflict(EmptyErrorParams {}),
                 "skill name already exists",
             ),
-            ApplicationError::SkillInUse => (
-                ErrorClassification::Conflict,
-                PublicError::ResourceInUse(EmptyErrorParams {}),
-                "skill is referenced by Workspace desired state",
-            ),
             ApplicationError::SkillReadOnly => (
                 ErrorClassification::InvalidRequest,
                 PublicError::InvalidRequest(EmptyErrorParams {}),

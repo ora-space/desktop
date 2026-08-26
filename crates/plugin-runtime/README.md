@@ -25,7 +25,17 @@ A plugin declares both traffic directions once, in its `ora/register` notificati
 {
   "jsonrpc": "2.0",
   "method": "ora/register",
-  "params": { "methods": ["agent/start"], "emits": ["agent/acp"] },
+  "params": {
+    "methods": ["agent/start", "effect/waitForIdle", "effect/restart"],
+    "emits": ["agent/acp"],
+    "effectSurfaces": [
+      {
+        "workspaceRelativePath": ".agents/skills",
+        "materializationFormat": "skill_directory.v1",
+        "coordination": "wait_for_idle_and_restart",
+      },
+    ],
+  },
 }
 ```
 
@@ -34,6 +44,10 @@ A plugin declares both traffic directions once, in its `ora/register` notificati
 - `emits` lists what the plugin may send on its own initiative. Notifications outside
   the whitelist invalidate the connection: a plugin whose behaviour exceeds its
   declaration cannot be trusted to correlate correctly.
+- `effectSurfaces` optionally declares Workspace-relative filesystem surfaces consumed by the
+  runtime. The runtime crate parses the locator, format, and coordination tokens strictly;
+  capability-specific code validates their meaning and derives the trusted consumer identity from
+  the launched plugin rather than from this payload.
 - Plugin requests to the host (`ora/storage/*` and the like) need no declaration: the
   launch-time handler decides what it serves and answers method-not-found otherwise.
 

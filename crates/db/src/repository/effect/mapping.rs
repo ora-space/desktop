@@ -1,13 +1,15 @@
 use crate::DatabaseError;
 use ora_domain::{Namespace, WorkspaceId};
 use ora_effect::{
-    AppliedFingerprint, Condition, DesiredSkillState, Digest, EffectOperation,
-    EffectOperationPhase, Generation, ManagedIdentity, ManagedSkill, RepositoryError, SkillName,
-    SkillSelectionKey, SkillSource, SkillState, SourceError, SourceKind, SourceVersion,
-    SurfacePhase, SurfaceStatus, WorkspaceEffect, WorkspaceEffectSpec,
+    AppliedFingerprint, Condition, ConditionReason, ConditionSubject, DesiredSkillState, Digest,
+    EffectOperation, EffectOperationPhase, Generation, ManagedIdentity, ManagedSkill,
+    OperationState, RepositoryError, SkillName, SkillSelectionKey, SkillSource, SkillState,
+    SourceError, SourceKind, SourceVersion, SurfacePhase, SurfaceStatus, WorkspaceEffect,
+    WorkspaceEffectSpec,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 /// Loads the complete normalized desired set while treating a missing row as generation zero.
 pub(super) fn load_workspace_effect(
@@ -16,10 +18,14 @@ pub(super) fn load_workspace_effect(
 ) -> Result<WorkspaceEffect, DatabaseError> {
     let generation = current_generation(connection, workspace_id)?;
     let mut statement = connection.prepare(
-        "SELECT source_kind, namespace, skill_name, display_name, source_version, skill_md_digest
-         FROM workspace_effect_desired_skills
-         WHERE workspace_id = ?1
-         ORDER BY source_kind, namespace, skill_name",
+        "SELECT sources.source_kind, sources.namespace, sources.identifier AS skill_name,
+                json_extract(revisions.payload_json, '$.display_name') AS display_name,
+                revisions.revision AS source_version, revisions.state_digest AS skill_md_digest
+         FROM workspace_effect_desired_items desired
+         JOIN effect_sources sources ON sources.id = desired.source_id
+         JOIN effect_source_revisions revisions ON revisions.id = desired.revision_id
+         WHERE desired.workspace_id = ?1
+         ORDER BY sources.source_kind, sources.namespace, sources.identifier",
     )?;
     let mut rows = statement.query(params![workspace_id.as_ref()])?;
     let mut skills = BTreeMap::new();
@@ -101,11 +107,15 @@ pub(super) fn load_active_source(
 ) -> Result<Option<DesiredSkillState>, DatabaseError> {
     connection
         .query_row(
-            "SELECT source_kind, namespace, skill_name, display_name, source_version,
-                    skill_md_digest
-             FROM effect_source_states
-             WHERE source_kind = ?1 AND namespace = ?2 AND skill_name = ?3
-               AND availability = 'available'",
+            "SELECT sources.source_kind, sources.namespace, sources.identifier AS skill_name,
+                    json_extract(revisions.payload_json, '$.display_name') AS display_name,
+                    revisions.revision AS source_version, revisions.state_digest AS skill_md_digest
+             FROM effect_sources sources
+             JOIN effect_source_heads heads ON heads.source_id = sources.id
+             JOIN effect_source_revisions revisions ON revisions.id = heads.revision_id
+             WHERE sources.effect_kind = 'skill' AND sources.source_kind = ?1
+               AND sources.namespace = ?2 AND sources.identifier = ?3
+               AND sources.lifecycle = 'active' AND revisions.availability = 'available'",
             params![
                 source_kind_value(selection_key.source_kind),
                 selection_key.namespace.as_ref(),
@@ -132,22 +142,25 @@ pub(super) fn insert_desired(
     transaction: &Transaction<'_>,
     workspace_id: &WorkspaceId,
     selection_key: &SkillSelectionKey,
-    desired: &DesiredSkillState,
+    _desired: &DesiredSkillState,
+    updated_at: i64,
 ) -> Result<(), DatabaseError> {
-    let version = source_version(desired)?;
     transaction.execute(
-        "INSERT INTO workspace_effect_desired_skills (
-             workspace_id, source_kind, namespace, skill_name, display_name,
-             source_version, skill_md_digest
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO workspace_effect_desired_items (
+             id, workspace_id, source_id, revision_id, created_at, updated_at
+         )
+         SELECT ?1, ?2, sources.id, heads.revision_id, ?6, ?6
+         FROM effect_sources sources
+         JOIN effect_source_heads heads ON heads.source_id = sources.id
+         WHERE sources.effect_kind = 'skill' AND sources.source_kind = ?3
+           AND sources.namespace = ?4 AND sources.identifier = ?5",
         params![
+            Uuid::new_v4().to_string(),
             workspace_id.as_ref(),
             source_kind_value(selection_key.source_kind),
             selection_key.namespace.as_ref(),
             selection_key.name.canonical(),
-            desired.state().name.as_str(),
-            version.as_str(),
-            desired.state().skill_md_digest.as_str(),
+            updated_at,
         ],
     )?;
     Ok(())
@@ -161,8 +174,8 @@ pub(super) fn enqueue_workspace_surfaces(
     requested_at: i64,
 ) -> Result<(), DatabaseError> {
     let mut statement = transaction.prepare(
-        "SELECT surface_key FROM effect_surfaces
-         WHERE workspace_id = ?1 AND lifecycle IN ('active', 'retiring')",
+        "SELECT id FROM effect_surfaces
+         WHERE workspace_id = ?1 AND lifecycle = 'active'",
     )?;
     let keys = statement
         .query_map(params![workspace_id.as_ref()], |row| {
@@ -171,7 +184,124 @@ pub(super) fn enqueue_workspace_surfaces(
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
     for key in keys {
+        transaction.execute(
+            "UPDATE effect_surface_status
+             SET desired_generation = MAX(desired_generation, ?2),
+                 status_version = status_version + 1, updated_at = ?3
+             WHERE surface_id = ?1",
+            params![&key, generation_to_sql(generation)?, requested_at],
+        )?;
         upsert_reconcile_request(transaction, workspace_id, &key, generation, requested_at)?;
+    }
+    Ok(())
+}
+
+/// Adds a newly published Skill source to every existing Workspace's complete Desired set.
+pub(super) fn install_source_in_all_workspaces(
+    transaction: &Transaction<'_>,
+    source_id: &str,
+    revision_id: &str,
+    updated_at: i64,
+) -> Result<(), DatabaseError> {
+    let mut statement = transaction.prepare(
+        "SELECT effects.workspace_id, effects.generation
+         FROM workspace_effects effects
+         WHERE NOT EXISTS (
+             SELECT 1 FROM workspace_effect_desired_items desired
+             WHERE desired.workspace_id = effects.workspace_id AND desired.source_id = ?1
+         )
+         ORDER BY effects.workspace_id",
+    )?;
+    let workspaces = statement
+        .query_map(params![source_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (workspace_id, current_generation) in workspaces {
+        let generation = generation_from_sql(current_generation)?
+            .next()
+            .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?;
+        transaction.execute(
+            "INSERT INTO workspace_effect_desired_items (
+                 id, workspace_id, source_id, revision_id, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![
+                Uuid::new_v4().to_string(),
+                &workspace_id,
+                source_id,
+                revision_id,
+                updated_at,
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE workspace_effects
+             SET generation = ?2, updated_at = ?3 WHERE workspace_id = ?1",
+            params![&workspace_id, generation_to_sql(generation)?, updated_at],
+        )?;
+        enqueue_workspace_surfaces(
+            transaction,
+            &WorkspaceId::new(workspace_id),
+            generation,
+            updated_at,
+        )?;
+    }
+    Ok(())
+}
+
+/// Removes one retired Skill source from every Workspace while preserving Managed ownership.
+pub(super) fn uninstall_source_from_all_workspaces(
+    transaction: &Transaction<'_>,
+    source_id: &str,
+    updated_at: i64,
+) -> Result<(), DatabaseError> {
+    let mut statement = transaction.prepare(
+        "SELECT effects.workspace_id, effects.generation, effects.updated_at
+         FROM workspace_effects effects
+         JOIN workspace_effect_desired_items desired
+           ON desired.workspace_id = effects.workspace_id
+         WHERE desired.source_id = ?1
+         ORDER BY effects.workspace_id",
+    )?;
+    let workspaces = statement
+        .query_map(params![source_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (workspace_id, current_generation, previous_updated_at) in workspaces {
+        let generation = generation_from_sql(current_generation)?
+            .next()
+            .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?;
+        let effective_updated_at = if updated_at == 0 {
+            previous_updated_at
+        } else {
+            updated_at
+        };
+        transaction.execute(
+            "DELETE FROM workspace_effect_desired_items
+             WHERE workspace_id = ?1 AND source_id = ?2",
+            params![&workspace_id, source_id],
+        )?;
+        transaction.execute(
+            "UPDATE workspace_effects
+             SET generation = ?2, updated_at = ?3 WHERE workspace_id = ?1",
+            params![
+                &workspace_id,
+                generation_to_sql(generation)?,
+                effective_updated_at,
+            ],
+        )?;
+        enqueue_workspace_surfaces(
+            transaction,
+            &WorkspaceId::new(workspace_id),
+            generation,
+            effective_updated_at,
+        )?;
     }
     Ok(())
 }
@@ -179,22 +309,25 @@ pub(super) fn enqueue_workspace_surfaces(
 /// Coalesces a surface wakeup without losing the latest requested generation.
 pub(super) fn upsert_reconcile_request(
     transaction: &Transaction<'_>,
-    workspace_id: &WorkspaceId,
+    _workspace_id: &WorkspaceId,
     surface_key: &str,
     generation: Generation,
     requested_at: i64,
 ) -> Result<(), DatabaseError> {
     transaction.execute(
         "INSERT INTO effect_reconcile_requests (
-             workspace_id, surface_key, requested_generation, requested_at
-         ) VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(workspace_id, surface_key) DO UPDATE SET
+             surface_id, requested_generation, request_token, attempt_count,
+             requested_at, not_before_at, updated_at
+         ) VALUES (?1, ?2, ?3, 0, ?4, ?4, ?4)
+         ON CONFLICT(surface_id) DO UPDATE SET
              requested_generation = MAX(requested_generation, excluded.requested_generation),
-             requested_at = excluded.requested_at",
+             request_token = excluded.request_token, attempt_count = 0,
+             requested_at = excluded.requested_at, not_before_at = excluded.not_before_at,
+             updated_at = excluded.updated_at",
         params![
-            workspace_id.as_ref(),
             surface_key,
             generation_to_sql(generation)?,
+            Uuid::new_v4().to_string(),
             requested_at,
         ],
     )?;
@@ -209,17 +342,25 @@ pub(super) fn upsert_propagation_request(
     requested_at: i64,
 ) -> Result<(), DatabaseError> {
     transaction.execute(
-        "INSERT INTO effect_source_propagation_requests (
-             source_kind, namespace, skill_name, requested_version, requested_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(source_kind, namespace, skill_name) DO UPDATE SET
-             requested_version = excluded.requested_version,
-             requested_at = excluded.requested_at",
+        "INSERT INTO effect_propagation_requests (
+             source_id, head_revision_id, request_token, attempt_count,
+             requested_at, not_before_at, updated_at
+         )
+         SELECT sources.id, revisions.id, ?5, 0, ?6, ?6, ?6
+         FROM effect_sources sources
+         JOIN effect_source_revisions revisions ON revisions.source_id = sources.id
+         WHERE sources.effect_kind = 'skill' AND sources.source_kind = ?1
+           AND sources.namespace = ?2 AND sources.identifier = ?3 AND revisions.revision = ?4
+         ON CONFLICT(source_id) DO UPDATE SET
+             head_revision_id = excluded.head_revision_id, request_token = excluded.request_token,
+             attempt_count = 0, requested_at = excluded.requested_at,
+             not_before_at = excluded.not_before_at, updated_at = excluded.updated_at",
         params![
             source_kind_value(selection_key.source_kind),
             selection_key.namespace.as_ref(),
             selection_key.name.canonical(),
             version.as_str(),
+            Uuid::new_v4().to_string(),
             requested_at,
         ],
     )?;
@@ -232,9 +373,12 @@ pub(super) fn referenced_workspaces(
     selection_key: &SkillSelectionKey,
 ) -> Result<Vec<WorkspaceId>, DatabaseError> {
     let mut statement = connection.prepare(
-        "SELECT workspace_id FROM workspace_effect_desired_skills
-         WHERE source_kind = ?1 AND namespace = ?2 AND skill_name = ?3
-         ORDER BY workspace_id",
+        "SELECT desired.workspace_id
+         FROM workspace_effect_desired_items desired
+         JOIN effect_sources sources ON sources.id = desired.source_id
+         WHERE sources.effect_kind = 'skill' AND sources.source_kind = ?1
+           AND sources.namespace = ?2 AND sources.identifier = ?3
+         ORDER BY desired.workspace_id",
     )?;
     statement
         .query_map(
@@ -255,34 +399,35 @@ pub(super) fn save_managed(
     managed: &ManagedSkill,
 ) -> Result<(), DatabaseError> {
     let version = source_version(&managed.state)?;
+    let target_json = serde_json::json!({ "target_name": managed.target_name.as_str() });
     connection.execute(
-        "INSERT INTO effect_managed_skills (
-             managed_identity, workspace_id, surface_key, source_kind, namespace, skill_name,
-             display_name, source_version, skill_md_digest, locator, target_name,
-             applied_fingerprint, applied_generation
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-         ON CONFLICT(managed_identity) DO UPDATE SET
-             display_name = excluded.display_name,
-             source_version = excluded.source_version,
-             skill_md_digest = excluded.skill_md_digest,
-             locator = excluded.locator,
-             target_name = excluded.target_name,
+        "INSERT INTO effect_managed_items (
+             id, surface_id, source_id, applied_revision_id, target_key, target_json,
+             applied_fingerprint, applied_generation, created_at, updated_at
+         )
+         SELECT ?1, ?2, sources.id, revisions.id, ?6, ?7, ?8, ?9,
+                CAST(unixepoch('subsec') * 1000 AS INTEGER),
+                CAST(unixepoch('subsec') * 1000 AS INTEGER)
+         FROM effect_sources sources
+         JOIN effect_source_revisions revisions ON revisions.source_id = sources.id
+         WHERE sources.effect_kind = 'skill' AND sources.source_kind = ?3
+           AND sources.namespace = ?4 AND sources.identifier = ?5 AND revisions.revision = ?10
+         ON CONFLICT(id) DO UPDATE SET
+             applied_revision_id = excluded.applied_revision_id,
              applied_fingerprint = excluded.applied_fingerprint,
-             applied_generation = excluded.applied_generation",
+             applied_generation = excluded.applied_generation,
+             updated_at = excluded.updated_at",
         params![
             managed.managed_identity.as_str(),
-            managed.workspace_id.as_ref(),
             managed.surface_key.as_str(),
             source_kind_value(managed.selection_key.source_kind),
             managed.selection_key.namespace.as_ref(),
             managed.selection_key.name.canonical(),
-            managed.state.state().name.as_str(),
-            version.as_str(),
-            managed.state.state().skill_md_digest.as_str(),
             &managed.locator,
-            managed.target_name.as_str(),
+            target_json.to_string(),
             managed.applied_fingerprint.as_str(),
             generation_to_sql(managed.applied_generation)?,
+            version.as_str(),
         ],
     )?;
     Ok(())
@@ -291,13 +436,21 @@ pub(super) fn save_managed(
 /// Reconstructs a managed ledger while validating all strong values.
 pub(super) fn map_managed(row: &Row<'_>) -> Result<ManagedSkill, DatabaseError> {
     let (selection_key, state) = map_desired(row)?;
+    let target_json: serde_json::Value =
+        serde_json::from_str(&row.get::<_, String>("target_json")?).map_err(effect_json_error)?;
+    let target_name = target_json
+        .get("target_name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            DatabaseError::CorruptEffectState("managed target name is missing".to_string())
+        })?;
     Ok(ManagedSkill {
-        managed_identity: ManagedIdentity::new(row.get::<_, String>("managed_identity")?),
+        managed_identity: ManagedIdentity::new(row.get::<_, String>("id")?),
         workspace_id: WorkspaceId::new(row.get::<_, String>("workspace_id")?),
-        surface_key: ora_effect::SurfaceKey::new(row.get::<_, String>("surface_key")?),
+        surface_key: ora_effect::SurfaceKey::new(row.get::<_, String>("surface_id")?),
         selection_key,
-        locator: row.get("locator")?,
-        target_name: SkillName::parse(row.get::<_, String>("target_name")?)
+        locator: row.get("target_key")?,
+        target_name: SkillName::parse(target_name)
             .map_err(|error| DatabaseError::CorruptEffectState(error.to_string()))?,
         state,
         applied_fingerprint: AppliedFingerprint::parse(
@@ -316,18 +469,66 @@ pub(super) fn insert_operation(
     let payload = serde_json::to_string(operation).map_err(effect_json_error)?;
     connection.execute(
         "INSERT INTO effect_operations (
-             operation_id, workspace_id, surface_key, generation, locator,
-             operation_kind, phase, payload_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             id, surface_id, generation, target_key, operation_kind, phase,
+             payload_version, payload_json, prepared_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7,
+                   CAST(unixepoch('subsec') * 1000 AS INTEGER),
+                   CAST(unixepoch('subsec') * 1000 AS INTEGER))",
         params![
             operation.operation_id.as_str(),
-            operation.workspace_id.as_ref(),
             operation.surface_key.as_str(),
             generation_to_sql(operation.generation)?,
             &operation.locator,
             operation_kind_value(operation.kind),
             operation_phase_value(operation.phase),
             payload,
+        ],
+    )?;
+    if let OperationState::Present(fingerprint) = &operation.planned_state {
+        insert_operation_artifact(
+            connection,
+            operation,
+            "staging",
+            &operation.staging_path,
+            fingerprint,
+        )?;
+    }
+    if let OperationState::Present(fingerprint) = &operation.previous_state {
+        insert_operation_artifact(
+            connection,
+            operation,
+            "backup",
+            &operation.backup_path,
+            fingerprint,
+        )?;
+    }
+    Ok(())
+}
+
+/// Reserves one exact recovery resource in the same transaction as Prepared intent.
+fn insert_operation_artifact(
+    connection: &Connection,
+    operation: &EffectOperation,
+    artifact_role: &str,
+    path: &std::path::Path,
+    expected_fingerprint: &AppliedFingerprint,
+) -> Result<(), DatabaseError> {
+    let locator_key = path.to_string_lossy();
+    let locator_json = serde_json::json!({ "path": locator_key }).to_string();
+    connection.execute(
+        "INSERT INTO effect_operation_artifacts (
+             id, operation_id, artifact_role, locator_kind, locator_key, locator_json,
+             expected_fingerprint, state, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, 'filesystem_path', ?4, ?5, ?6, 'reserved',
+                   CAST(unixepoch('subsec') * 1000 AS INTEGER),
+                   CAST(unixepoch('subsec') * 1000 AS INTEGER))",
+        params![
+            Uuid::new_v4().to_string(),
+            operation.operation_id.as_str(),
+            artifact_role,
+            locator_key,
+            locator_json,
+            expected_fingerprint.as_str(),
         ],
     )?;
     Ok(())
@@ -340,7 +541,16 @@ pub(super) fn update_operation(
 ) -> Result<(), DatabaseError> {
     let payload = serde_json::to_string(operation).map_err(effect_json_error)?;
     let updated = connection.execute(
-        "UPDATE effect_operations SET phase = ?2, payload_json = ?3 WHERE operation_id = ?1",
+        "UPDATE effect_operations
+         SET phase = ?2, payload_json = ?3,
+             applied_at = CASE WHEN ?2 IN ('applied', 'finalized')
+                               THEN COALESCE(applied_at, CAST(unixepoch('subsec') * 1000 AS INTEGER))
+                               ELSE applied_at END,
+             finalized_at = CASE WHEN ?2 = 'finalized'
+                                 THEN COALESCE(finalized_at, CAST(unixepoch('subsec') * 1000 AS INTEGER))
+                                 ELSE finalized_at END,
+             updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+         WHERE id = ?1",
         params![
             operation.operation_id.as_str(),
             operation_phase_value(operation.phase),
@@ -351,6 +561,30 @@ pub(super) fn update_operation(
         return Err(DatabaseError::CorruptEffectState(
             "durable operation is missing during phase update".to_string(),
         ));
+    }
+    match operation.phase {
+        EffectOperationPhase::Prepared => {}
+        EffectOperationPhase::Applied => {
+            connection.execute(
+                "UPDATE effect_operation_artifacts
+                 SET state = CASE artifact_role
+                         WHEN 'staging' THEN 'pending_cleanup'
+                         WHEN 'backup' THEN 'retained'
+                         ELSE state END,
+                     updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+                 WHERE operation_id = ?1",
+                params![operation.operation_id.as_str()],
+            )?;
+        }
+        EffectOperationPhase::Finalized => {
+            connection.execute(
+                "UPDATE effect_operation_artifacts
+                 SET state = 'pending_cleanup',
+                     updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+                 WHERE operation_id = ?1",
+                params![operation.operation_id.as_str()],
+            )?;
+        }
     }
     Ok(())
 }
@@ -384,6 +618,99 @@ pub(super) fn map_surface_status(row: &Row<'_>) -> Result<SurfaceStatus, rusqlit
         updated_at: row.get("updated_at")?,
         conditions,
     })
+}
+
+/// Loads normalized current conditions for one Surface or one of its Consumers.
+pub(super) fn load_conditions(
+    connection: &Connection,
+    surface_id: &str,
+    consumer_id: Option<&str>,
+) -> Result<Vec<Condition>, DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT subject_id, reason, message, first_observed_at, last_observed_at,
+                failed_generation
+         FROM effect_conditions
+         WHERE surface_id = ?1 AND consumer_id IS ?2
+         ORDER BY subject_kind, subject_id, reason",
+    )?;
+    let rows = statement.query_map(params![surface_id, consumer_id], |row| {
+        let subject_json: String = row.get(0)?;
+        let reason: String = row.get(1)?;
+        let subject = serde_json::from_str::<ConditionSubject>(&subject_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        let reason =
+            serde_json::from_str::<ConditionReason>(&format!("\"{reason}\"")).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+        Ok(Condition {
+            subject,
+            reason,
+            message: row.get(2)?,
+            first_occurred_at: row.get(3)?,
+            last_occurred_at: row.get(4)?,
+            failed_generation: generation_from_sql(row.get(5)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    5,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?,
+            retry_policy: reason.retry_policy(),
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Replaces one status scope's normalized conditions after its version is persisted.
+pub(super) fn replace_conditions(
+    transaction: &Transaction<'_>,
+    surface_id: &str,
+    consumer_id: Option<&str>,
+    conditions: &[Condition],
+) -> Result<(), DatabaseError> {
+    transaction.execute(
+        "DELETE FROM effect_conditions WHERE surface_id = ?1 AND consumer_id IS ?2",
+        params![surface_id, consumer_id],
+    )?;
+    for condition in conditions {
+        let subject_kind = match &condition.subject {
+            ConditionSubject::DesiredSkill { .. } => "desired_item",
+            ConditionSubject::ManagedSkill { .. } => "managed_item",
+            ConditionSubject::Surface { .. } => "surface",
+            ConditionSubject::Consumer { .. } => "consumer",
+        };
+        let subject_id = serde_json::to_string(&condition.subject).map_err(effect_json_error)?;
+        let reason_json = serde_json::to_string(&condition.reason).map_err(effect_json_error)?;
+        let reason = reason_json.trim_matches('"');
+        transaction.execute(
+            "INSERT INTO effect_conditions (
+                 id, surface_id, consumer_id, subject_kind, subject_id, reason,
+                 failed_generation, message, first_observed_at, last_observed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                Uuid::new_v4().to_string(),
+                surface_id,
+                consumer_id,
+                subject_kind,
+                subject_id,
+                reason,
+                generation_to_sql(condition.failed_generation)?,
+                &condition.message,
+                condition.first_occurred_at,
+                condition.last_occurred_at,
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 /// Converts a checked generation column inside a rusqlite row mapper.

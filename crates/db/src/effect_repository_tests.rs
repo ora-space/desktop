@@ -123,14 +123,6 @@ fn desired_replace_uses_cas_and_normalized_no_op_semantics() {
         skills: BTreeMap::from([(source.0, source.1)]),
     };
 
-    let replaced = repository
-        .replace_workspace_effect(&workspace_id, Generation::default(), spec.clone(), 20)
-        .unwrap_or_else(|error| panic!("replace desired: {error}"));
-    assert!(matches!(
-        replaced,
-        ReplaceEffectOutcome::Replaced(ref effect)
-            if effect.generation == Generation::new(1)
-    ));
     assert_eq!(
         repository
             .replace_workspace_effect(&workspace_id, Generation::new(1), spec, 30)
@@ -161,7 +153,9 @@ fn desired_replace_uses_cas_and_normalized_no_op_semantics() {
             connection
                 .query_row(
                     "SELECT requested_generation FROM effect_reconcile_requests
-                     WHERE workspace_id = ?1",
+                     WHERE surface_id IN (
+                         SELECT id FROM effect_surfaces WHERE workspace_id = ?1
+                     )",
                     params![workspace_id.as_ref()],
                     |row| row.get::<_, i64>(0),
                 )
@@ -172,7 +166,7 @@ fn desired_replace_uses_cas_and_normalized_no_op_semantics() {
 }
 
 #[test]
-fn source_delete_is_protected_and_updates_coalesce_to_latest_revision() {
+fn source_updates_coalesce_and_delete_uninstalls_from_every_workspace() {
     let (_directory, pool, workspace_id) = fixture();
     let repository = SqliteEffectRepository::new(pool);
     let version_one = local_source("1", b"manifest-v1");
@@ -184,25 +178,6 @@ fn source_delete_is_protected_and_updates_coalesce_to_latest_revision() {
             10,
         )
         .unwrap_or_else(|error| panic!("publish v1: {error}"));
-    repository
-        .replace_workspace_effect(
-            &workspace_id,
-            Generation::default(),
-            WorkspaceEffectSpec {
-                skills: BTreeMap::from([(version_one.0.clone(), version_one.1)]),
-            },
-            20,
-        )
-        .unwrap_or_else(|error| panic!("select v1: {error}"));
-    assert_eq!(
-        repository
-            .delete_source(&version_one.0)
-            .unwrap_or_else(|error| panic!("protect delete: {error}")),
-        SourceMutationOutcome::InUse {
-            workspace_ids: vec![workspace_id.clone()],
-        }
-    );
-
     let version_two = local_source("2", b"manifest-v2");
     let version_three = local_source("3", b"manifest-v3");
     repository
@@ -247,6 +222,17 @@ fn source_delete_is_protected_and_updates_coalesce_to_latest_revision() {
             .unwrap_or_else(|error| panic!("list completed propagation: {error}"))
             .is_empty()
     );
+    assert_eq!(
+        repository
+            .delete_source(&version_one.0)
+            .unwrap_or_else(|error| panic!("delete source: {error}")),
+        SourceMutationOutcome::Deleted
+    );
+    let effect = repository
+        .load_workspace_effect(&workspace_id)
+        .unwrap_or_else(|error| panic!("load uninstalled effect: {error}"));
+    assert_eq!(effect.generation, Generation::new(3));
+    assert_eq!(effect.spec, WorkspaceEffectSpec::default());
 }
 
 #[test]
@@ -265,12 +251,20 @@ fn unavailable_source_cannot_enter_desired_state() {
     repository
         .mark_source_unavailable(&source.0, "external drift", 20)
         .unwrap_or_else(|error| panic!("mark unavailable: {error}"));
+    repository
+        .replace_workspace_effect(
+            &workspace_id,
+            Generation::new(1),
+            WorkspaceEffectSpec::default(),
+            25,
+        )
+        .unwrap_or_else(|error| panic!("remove unavailable source: {error}"));
 
     assert_eq!(
         repository
             .replace_workspace_effect(
                 &workspace_id,
-                Generation::default(),
+                Generation::new(2),
                 WorkspaceEffectSpec {
                     skills: BTreeMap::from([(source.0.clone(), source.1)]),
                 },

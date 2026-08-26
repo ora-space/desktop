@@ -8,7 +8,7 @@ use crate::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, SettingDeclaration,
     SettingValue,
 };
-use ora_utils::Slug;
+use ora_domain::PluginId;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -485,31 +485,23 @@ where
 
     /// Resolves a plugin-global value path from a validated namespaced identifier.
     fn store_path(&self, plugin_id: &str) -> Result<PathBuf, ConfigurationError> {
-        let Some((namespace, name)) = plugin_id.split_once('/') else {
-            return Err(ConfigurationError::InvalidPluginId {
-                plugin_id: plugin_id.to_string(),
-            });
-        };
-        let namespace =
-            Slug::parse(namespace).map_err(|_| ConfigurationError::InvalidPluginId {
+        let plugin_id =
+            PluginId::parse(plugin_id).map_err(|_| ConfigurationError::InvalidPluginId {
                 plugin_id: plugin_id.to_string(),
             })?;
-        let name = Slug::parse(name).map_err(|_| ConfigurationError::InvalidPluginId {
-            plugin_id: plugin_id.to_string(),
-        })?;
         Ok(self
             .data_root
             .join("plugins")
             .join("data")
-            .join(namespace.as_str())
-            .join(name.as_str())
+            .join(plugin_id.namespace())
+            .join(plugin_id.name())
             .join("store.json"))
     }
 
     /// Returns the process-local serialization gate for one plugin identifier.
     fn plugin_lock(&self, plugin_id: &str) -> Result<Arc<Mutex<()>>, ConfigurationError> {
-        // The store path is constructed from canonical Slugs, so differently cased requests use
-        // the same lock on case-insensitive filesystems as well as the same value file.
+        // The store path is constructed from canonical plugin-id segments, so differently cased
+        // requests use the same lock on case-insensitive filesystems as well as the same value file.
         let lock_key = self.store_path(plugin_id)?;
         let mut locks = self
             .locks
@@ -699,6 +691,61 @@ mod tests {
                 actual: 1,
             })
         ));
+    }
+
+    /// Plugin ids whose name segment contains `.` use the same store layout as hyphenated names.
+    #[test]
+    fn persists_settings_for_dotted_plugin_name_segments() {
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package");
+        fs::create_dir_all(package_root.join("assets")).expect("create package assets");
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            r#"{
+              "schemaVersion": 1,
+              "settings": {
+                "apiKey": {
+                  "type": "string",
+                  "title": "API key",
+                  "description": "Credential",
+                  "required": true
+                }
+              }
+            }"#,
+        )
+        .expect("write declaration");
+        let service = ConfigurationService::new(temporary.path());
+        let loaded = service
+            .get("official/ora-space.tavily-search", &package_root)
+            .expect("load dotted plugin id")
+            .expect("declaration is present");
+        let saved = service
+            .save(
+                "official/ora-space.tavily-search",
+                &package_root,
+                loaded.revision,
+                &loaded.declaration.fingerprint,
+                BTreeMap::from([(
+                    "apiKey".to_string(),
+                    SettingValue::String("tvly-test".to_string()),
+                )]),
+            )
+            .expect("save dotted plugin id settings");
+        assert_eq!(
+            saved.summary,
+            ConfigurationSummary::Available {
+                completeness: ConfigurationCompleteness::Complete,
+            }
+        );
+        assert_eq!(
+            fs::read_to_string(
+                temporary
+                    .path()
+                    .join("plugins/data/official/ora-space.tavily-search/store.json")
+            )
+            .expect("read store.json"),
+            r#"{"schemaVersion":1,"revision":1,"values":{"apiKey":"tvly-test"}}"#
+        );
     }
 
     /// Upgrades hide removed values, surface incompatible values, and prune both on the next save.

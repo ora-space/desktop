@@ -1,4 +1,5 @@
 mod control;
+mod effect;
 mod inbound;
 mod transport;
 
@@ -11,6 +12,7 @@ pub(crate) use transport::{AgentTransport, PluginAcpTransport};
 use std::path::Path;
 
 use ora_acp::AcpMessages;
+use ora_effect::FilesystemSkillSurface;
 use ora_plugin_runtime::PluginRuntime;
 
 use crate::plugin::AgentPluginAttachment;
@@ -19,6 +21,7 @@ use crate::plugin::AgentPluginAttachment;
 pub(crate) struct LaunchedPluginAgent {
     pub runtime: PluginRuntime,
     pub messages: AcpMessages,
+    pub effect_surfaces: Vec<FilesystemSkillSurface>,
 }
 
 /// Brings up the agent behind one already-running plugin process.
@@ -41,12 +44,19 @@ pub(crate) async fn attach(
         mut notifications,
     } = attachment;
     let runtime = connection.runtime().process().clone();
-    control::verify_agent_contract(&runtime.registration().await)?;
+    let registration = runtime.registration().await;
+    control::verify_agent_contract(&registration)?;
+    let plugin_id = ora_domain::PluginId::parse(plugin_id).map_err(|error| {
+        PluginAgentError::ContractIncomplete(format!("invalid plugin identity: {error}"))
+    })?;
+    let effect_surfaces = effect::registered_skill_surfaces(&plugin_id, &registration)
+        .map_err(|error| PluginAgentError::ContractIncomplete(error.to_string()))?;
     control::start_agent(&runtime, home_directory, host_version).await?;
-    inbound::discard_frames_before_start(&mut notifications, plugin_id);
+    inbound::discard_frames_before_start(&mut notifications, &plugin_id.canonical());
 
     Ok(LaunchedPluginAgent {
         runtime,
         messages: inbound::spawn_frame_forwarding(notifications, plugin_id.to_string()),
+        effect_surfaces,
     })
 }

@@ -16,9 +16,9 @@ orchestrates checksum-verified installs of new plugin releases.
 - Keep `kind` and its contribution in one value (`PluginContribution::Agent`, `::Workbench`,
   `::Webview`, `::Skill`, or `::Mcp`), so a validated plugin always carries exactly what its kind
   promises. Skill contributions carry no additional contract fields, but the package must contain
-  one or more `assets/skills/<name>/SKILL.md` trees. Each Skill manifest is parsed and its
-  declared name must match the package directory before it can be cataloged. MCP contributions
-  carry the immutable Installed MCP Descriptor compiled from `assets/config.json`.
+  one or more `assets/<name>/SKILL.md` trees. Each Skill manifest is parsed and its declared name
+  must match the package directory before it can be cataloged. MCP contributions carry the
+  immutable Installed MCP Descriptor compiled from `assets/config.json`.
 - Compile an optional `assets/config.json` through `ora-plugin-config` without treating the
   package directory as a data root, and record whether the immutable declaration is absent, valid,
   or invalid so lifecycle can refuse to enable a broken package. A transport-bearing (MCP-shaped)
@@ -72,8 +72,11 @@ or on the package on disk:
   only tree ever served to the page.
 - A webview package is configuration-only: `start_url` must belong to `allowed_origins`, origins
   cannot repeat, and a download rule whose page set is covered by an earlier rule is rejected.
-- A skill package must contain `assets/skills/` with at least one immediate Skill directory, and
-  every such directory must contain a regular root `SKILL.md`. Optional `scripts/`, `references/`,
+- A skill package must contain `assets/` with at least one immediate Skill directory. Every
+  immediate directory is one Skill package rooted by `SKILL.md`; the plugin has no intermediate
+  `skills/` directory. The Skill catalog namespace is the owning plugin's canonical
+  `<namespace>/<identifier>` identity. Every such directory must contain a regular root
+  `SKILL.md`. Optional `scripts/`, `references/`,
   and nested `assets/` contents are preserved but not interpreted in this release.
 - An MCP package is configuration-only: it must not ship `main.js`, must provide an MCP-shaped
   `assets/config.json` (settings subset plus exactly one transport), and, for a stdio transport,

@@ -271,15 +271,14 @@ impl FilesystemSurfaceAdapter {
         managed_identity: &ManagedIdentity,
         paths: &OperationPaths,
     ) -> Result<AppliedFingerprint, FilesystemEffectError> {
-        if paths.root.exists() {
-            return Err(FilesystemEffectError::OperationPathOccupied {
-                path: paths.root.clone(),
-            });
-        }
         fs::create_dir_all(&paths.root).map_err(|source| FilesystemEffectError::Io {
             path: paths.root.clone(),
             source,
         })?;
+        if paths.staging.exists() {
+            validate_staged_state(&paths.staging, &snapshot.state)?;
+            return fingerprint(&paths.staging);
+        }
         copy_directory(
             &snapshot.package_root,
             &paths.staging,
@@ -300,6 +299,15 @@ impl FilesystemSurfaceAdapter {
             }
         })?;
         fingerprint(&paths.staging)
+    }
+
+    /// Computes the target fingerprint before reserving or creating recovery artifacts.
+    pub fn planned_fingerprint(
+        &self,
+        snapshot: &SourceSnapshot,
+    ) -> Result<AppliedFingerprint, FilesystemEffectError> {
+        validate_staged_state(&snapshot.package_root, &snapshot.state)?;
+        fingerprint(&snapshot.package_root)
     }
 
     /// Applies a staged create only when the target locator is still absent.

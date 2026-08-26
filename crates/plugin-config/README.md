@@ -5,6 +5,10 @@ plugin-global Stored Setting Values. Its public API compiles `assets/config.json
 effective values and Configuration Completeness, and persists revisioned `store.json` files under
 `<data-dir>/plugins/data/<namespace>/<name>/`.
 
+Store paths follow the same `<namespace>/<name>` segments as [`PluginId`](../../domain/src/plugin_id.rs),
+including dotted name segments such as `ora-space.tavily-search`; they are not restricted to hyphen-only
+[`Slug`](../../utils/src/slug.rs) spelling.
+
 `assets/config.json` has two shapes, distinguished by the presence of a top-level `transport`
 key. Without it, the file is a settings-only Setting Declaration. With it, the file is an MCP
 Configuration: the same settings subset plus exactly one MCP Transport (`stdio` with a

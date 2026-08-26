@@ -382,7 +382,10 @@ async fn concurrent_shutdown_callers_wait_for_shared_completion() {
 }
 
 /// Verifies cancelling one shutdown waiter cannot detach the shared completion owner.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+///
+/// A current-thread runtime keeps the first manual poll deterministic: it can initiate shutdown
+/// without letting the spawned supervisor publish completion before the waiter is dropped.
+#[tokio::test(flavor = "current_thread")]
 async fn cancelled_shutdown_wait_does_not_detach_completion_owner() {
     let scheduler = Scheduler::new(chrono_tz::UTC);
     let first_scheduler = scheduler.clone();

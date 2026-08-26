@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Package-relative directory containing every Skill contributed by a Skill plugin.
-pub const SKILL_ASSET_DIRECTORY: &str = "assets/skills";
+pub const SKILL_ASSET_DIRECTORY: &str = "assets";
 /// Fixed manifest filename required at the root of each contributed Skill.
 pub const SKILL_MANIFEST_FILE_NAME: &str = "SKILL.md";
 

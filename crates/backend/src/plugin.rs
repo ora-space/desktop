@@ -13,10 +13,11 @@ use ora_contracts::{
     UninstallPluginResponse,
 };
 use ora_db::{
-    PluginSkillProjection, RepositoryPool, SqlitePluginStateRepository, SqliteSkillRepository,
+    PluginSkillProjection, RepositoryPool, SqliteEffectRepository, SqlitePluginStateRepository,
+    SqliteSkillRepository, SqliteWorkspaceRepository,
 };
-use ora_domain::PluginId;
-use ora_effect::Digest;
+use ora_domain::{PluginId, WorkspaceLocation};
+use ora_effect::{Digest, FilesystemSkillSurface, SurfaceDescriptorSet};
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_lifecycle::{
@@ -29,6 +30,7 @@ use ora_plugin_registry::{
     RegistryEntry, RegistryError, RegistryIndex, RegistrySource, RegistrySync,
 };
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -168,6 +170,9 @@ pub(crate) struct PluginApi {
     notifications: BroadcastNotificationSink,
     pub(crate) configuration: ConfigurationService,
     skill_repository: SqliteSkillRepository,
+    effect_repository: SqliteEffectRepository,
+    workspace_repository: SqliteWorkspaceRepository,
+    agent_effect_surfaces: Mutex<BTreeMap<PluginId, Vec<FilesystemSkillSurface>>>,
     clock: SystemClock,
 }
 
@@ -212,7 +217,10 @@ impl PluginApi {
             installer,
             notifications,
             configuration,
-            skill_repository: SqliteSkillRepository::new(pool),
+            skill_repository: SqliteSkillRepository::new(pool.clone()),
+            effect_repository: SqliteEffectRepository::new(pool.clone()),
+            workspace_repository: SqliteWorkspaceRepository::new(pool),
+            agent_effect_surfaces: Mutex::new(BTreeMap::new()),
             clock,
         })
     }
@@ -352,6 +360,50 @@ impl PluginApi {
         })
     }
 
+    /// Replaces one Agent plugin's declarations and persists the merged consumer snapshot.
+    ///
+    /// Registration is process-scoped, while Effect surfaces are Workspace-scoped. Keeping the
+    /// latest declaration per canonical Plugin ID lets independent Agent generations converge on
+    /// one complete snapshot without one plugin accidentally retiring a sibling's surface.
+    pub(crate) fn replace_agent_effect_surfaces(
+        &self,
+        plugin_id: PluginId,
+        surfaces: Vec<FilesystemSkillSurface>,
+    ) -> Result<(), BackendError> {
+        let descriptors = {
+            let mut registered = self
+                .agent_effect_surfaces
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if surfaces.is_empty() {
+                registered.remove(&plugin_id);
+            } else {
+                registered.insert(plugin_id, surfaces);
+            }
+            registered.values().flatten().cloned().collect::<Vec<_>>()
+        };
+        let timestamp = self.clock.now_timestamp_millis();
+        let workspaces = self
+            .workspace_repository
+            .list_all_workspaces()
+            .map_err(|error| BackendError::internal("failed to list Effect Workspaces", error))?;
+        for workspace in workspaces {
+            let WorkspaceLocation::LocalFilesystem { path } = &workspace.location else {
+                // The first adapter is deliberately filesystem-only. Remote Workspaces need a
+                // provider-owned adapter instead of treating an opaque locator as a host path.
+                continue;
+            };
+            let merged = SurfaceDescriptorSet::merge(&workspace.id, descriptors.clone())
+                .map_err(|error| BackendError::internal("invalid Agent Effect surface", error))?;
+            self.effect_repository
+                .replace_surfaces(&workspace.id, Path::new(path), &merged, timestamp)
+                .map_err(|error| {
+                    BackendError::internal("failed to persist Agent Effect surfaces", error)
+                })?;
+        }
+        Ok(())
+    }
+
     /// Stops one plugin process without changing durable eligibility.
     pub(crate) async fn stop(
         &self,
@@ -372,6 +424,7 @@ impl PluginApi {
         self.skill_repository
             .remove_plugin_skills(&plugin_id, self.clock.now_timestamp_millis())
             .map_err(|error| BackendError::internal("failed to remove plugin Skills", error))?;
+        self.replace_agent_effect_surfaces(plugin_id, Vec::new())?;
         Ok(response)
     }
     /// Installs a marketplace plugin by resolving its release manifest from the synced sources and

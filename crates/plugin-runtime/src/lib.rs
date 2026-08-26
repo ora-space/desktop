@@ -12,7 +12,9 @@ mod tests;
 pub use host_requests::{
     HostRequestError, HostRequestHandler, METHOD_NOT_FOUND_CODE, NoHostRequests,
 };
-pub use protocol::{PluginNotification, PluginRegistration};
+pub use protocol::{
+    PluginEffectCoordination, PluginEffectSurface, PluginNotification, PluginRegistration,
+};
 
 use std::path::PathBuf;
 use std::sync::Arc;

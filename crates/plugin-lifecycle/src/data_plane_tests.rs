@@ -534,6 +534,7 @@ async fn workbench_plugin_declaring_emits_fails_after_launch() {
     let (launcher, log, _senders) = ScriptedLauncher::new(PluginRegistration {
         methods: HashSet::from(["counter/get".to_string()]),
         emits: HashSet::from(["counter/tick".to_string()]),
+        effect_surfaces: Vec::new(),
     });
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;
@@ -569,6 +570,7 @@ async fn workbench_plugin_runs_and_lease_reports_registered_methods() {
     let (launcher, _log, _senders) = ScriptedLauncher::new(PluginRegistration {
         methods: HashSet::from(["counter/get".to_string(), "internal/reset".to_string()]),
         emits: HashSet::new(),
+        effect_surfaces: Vec::new(),
     });
     let (lifecycle, mut events) = open_lifecycle(temp_dir.path(), launcher, NoopNotificationSink);
     enable_example(&lifecycle, &mut events).await;

@@ -1,10 +1,8 @@
-use ora_application::{
-    LocalSkillSourceRevision, RepositoryError, SkillDeleteOutcome, SkillRepository,
-    SkillUpdateOutcome,
-};
+use ora_application::{LocalSkillSourceRevision, RepositoryError, SkillRepository};
 use ora_domain::{AuditFields, Namespace, PluginId, Skill, SkillId};
 use rusqlite::{OptionalExtension, Row, TransactionBehavior, params};
 use std::path::PathBuf;
+use uuid::Uuid;
 
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
 
@@ -46,12 +44,11 @@ impl SqliteSkillRepository {
                  WHERE namespace = ?1 COLLATE NOCASE AND is_deleted = 0",
                 params![&plugin_id, updated_at],
             )?;
-            transaction.execute(
-                "UPDATE effect_source_states
-                 SET availability = 'unavailable', unavailable_reason = 'plugin no longer provides this Skill', updated_at = ?2
-                 WHERE source_kind = 'plugin' AND namespace = ?1",
-                params![&plugin_id, updated_at],
-            )?;
+            let provided_names = skills
+                .iter()
+                .map(|skill| skill.name.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            retire_missing_plugin_sources(&transaction, &plugin_id, &provided_names, updated_at)?;
 
             for skill in skills {
                 let canonical_name = skill.name.to_ascii_lowercase();
@@ -74,37 +71,16 @@ impl SqliteSkillRepository {
                         updated_at,
                     ],
                 )?;
-                transaction.execute(
-                    "INSERT INTO effect_source_states (
-                         source_kind, namespace, skill_name, display_name, source_version,
-                         skill_md_digest, package_root, availability, unavailable_reason, updated_at
-                     ) VALUES ('plugin', ?1, ?2, ?3, ?4, ?5, ?6, 'available', NULL, ?7)
-                     ON CONFLICT(source_kind, namespace, skill_name) DO UPDATE SET
-                         display_name = excluded.display_name,
-                         source_version = excluded.source_version,
-                         skill_md_digest = excluded.skill_md_digest,
-                         package_root = excluded.package_root,
-                         availability = 'available',
-                         unavailable_reason = NULL,
-                         updated_at = excluded.updated_at",
-                    params![
-                        &plugin_id,
-                        &canonical_name,
-                        &skill.name,
-                        plugin_version,
-                        &skill.skill_md_digest,
-                        skill.package_root.to_string_lossy(),
-                        updated_at,
-                    ],
-                )?;
-                transaction.execute(
-                    "INSERT INTO effect_source_propagation_requests (
-                         source_kind, namespace, skill_name, requested_version, requested_at
-                     ) VALUES ('plugin', ?1, ?2, ?3, ?4)
-                     ON CONFLICT(source_kind, namespace, skill_name) DO UPDATE SET
-                         requested_version = excluded.requested_version,
-                         requested_at = excluded.requested_at",
-                    params![&plugin_id, &canonical_name, plugin_version, updated_at],
+                publish_skill_source(
+                    &transaction,
+                    "plugin",
+                    &plugin_id,
+                    &canonical_name,
+                    &skill.name,
+                    plugin_version,
+                    &skill.skill_md_digest,
+                    &skill.package_root,
+                    updated_at,
                 )?;
             }
             transaction.commit()?;
@@ -127,12 +103,7 @@ impl SqliteSkillRepository {
                  WHERE namespace = ?1 COLLATE NOCASE AND is_deleted = 0",
                 params![&plugin_id, updated_at],
             )?;
-            transaction.execute(
-                "UPDATE effect_source_states
-                 SET availability = 'unavailable', unavailable_reason = 'source plugin is not installed', updated_at = ?2
-                 WHERE source_kind = 'plugin' AND namespace = ?1",
-                params![&plugin_id, updated_at],
-            )?;
+            retire_plugin_sources(&transaction, &plugin_id, updated_at)?;
             transaction.commit()?;
             Ok(())
         })
@@ -181,12 +152,16 @@ impl SkillRepository for SqliteSkillRepository {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT s.id, s.namespace, s.name, s.description, s.created_at, s.updated_at, s.is_deleted,
-                       e.source_kind, e.package_root AS source_package_root
+                       e.source_kind,
+                       json_extract(r.payload_json, '$.package_root') AS source_package_root
                 FROM skills s
-                LEFT JOIN effect_source_states e
+                LEFT JOIN effect_sources e
                   ON e.source_kind = 'plugin'
                  AND e.namespace = s.namespace COLLATE NOCASE
-                 AND e.skill_name = s.name COLLATE NOCASE WHERE s.id = ?1 AND s.is_deleted = 0",
+                 AND e.identifier = s.name COLLATE NOCASE
+                LEFT JOIN effect_source_heads h ON h.source_id = e.id
+                LEFT JOIN effect_source_revisions r ON r.id = h.revision_id
+                WHERE s.id = ?1 AND s.is_deleted = 0",
             )?;
             let mut rows = statement.query(params![skill_id.to_string()])?;
             rows.next()?.map(map_skill_row).transpose()
@@ -201,12 +176,17 @@ impl SkillRepository for SqliteSkillRepository {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT s.id, s.namespace, s.name, s.description, s.created_at, s.updated_at, s.is_deleted,
-                       e.source_kind, e.package_root AS source_package_root
+                       e.source_kind,
+                       json_extract(r.payload_json, '$.package_root') AS source_package_root
                 FROM skills s
-                LEFT JOIN effect_source_states e
+                LEFT JOIN effect_sources e
                   ON e.source_kind = 'plugin'
                  AND e.namespace = s.namespace COLLATE NOCASE
-                 AND e.skill_name = s.name COLLATE NOCASE WHERE s.namespace = ?1 COLLATE NOCASE AND s.name = ?2 COLLATE NOCASE AND s.is_deleted = 0",
+                 AND e.identifier = s.name COLLATE NOCASE
+                LEFT JOIN effect_source_heads h ON h.source_id = e.id
+                LEFT JOIN effect_source_revisions r ON r.id = h.revision_id
+                WHERE s.namespace = ?1 COLLATE NOCASE AND s.name = ?2 COLLATE NOCASE
+                  AND s.is_deleted = 0",
             )?;
             let mut rows = statement.query(params![namespace.as_ref(), name])?;
             rows.next()?.map(map_skill_row).transpose()
@@ -217,12 +197,16 @@ impl SkillRepository for SqliteSkillRepository {
         self.pool.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT s.id, s.namespace, s.name, s.description, s.created_at, s.updated_at, s.is_deleted,
-                       e.source_kind, e.package_root AS source_package_root
+                       e.source_kind,
+                       json_extract(r.payload_json, '$.package_root') AS source_package_root
                 FROM skills s
-                LEFT JOIN effect_source_states e
+                LEFT JOIN effect_sources e
                   ON e.source_kind = 'plugin'
                  AND e.namespace = s.namespace COLLATE NOCASE
-                 AND e.skill_name = s.name COLLATE NOCASE WHERE s.is_deleted = 0 ORDER BY s.created_at ASC, s.id ASC",
+                 AND e.identifier = s.name COLLATE NOCASE
+                LEFT JOIN effect_source_heads h ON h.source_id = e.id
+                LEFT JOIN effect_source_revisions r ON r.id = h.revision_id
+                WHERE s.is_deleted = 0 ORDER BY s.created_at ASC, s.id ASC",
             )?;
             let mut rows = statement.query([])?;
             let mut skills = Vec::new();
@@ -251,7 +235,7 @@ impl SkillRepository for SqliteSkillRepository {
         &self,
         skill: Skill,
         source: LocalSkillSourceRevision,
-    ) -> Result<SkillUpdateOutcome, RepositoryError> {
+    ) -> Result<Skill, RepositoryError> {
         self.pool
             .with_connection_mut(|connection| {
                 let transaction =
@@ -265,17 +249,13 @@ impl SkillRepository for SqliteSkillRepository {
                     .optional()?;
                 let Some((previous_namespace, previous_name)) = previous else {
                     transaction.commit()?;
-                    return Ok(SkillUpdateOutcome::InUse);
+                    return Err(crate::DatabaseError::CorruptEffectState(
+                        "Local Skill disappeared during update".to_string(),
+                    ));
                 };
                 let selection_changed = !previous_namespace
                     .eq_ignore_ascii_case(skill.namespace.as_ref())
                     || !previous_name.eq_ignore_ascii_case(&skill.name);
-                if selection_changed
-                    && source_reference_exists(&transaction, &previous_namespace, &previous_name)?
-                {
-                    transaction.commit()?;
-                    return Ok(SkillUpdateOutcome::InUse);
-                }
                 let updated = transaction.execute(
                     "UPDATE skills
                      SET namespace = ?2, name = ?3, description = ?4, updated_at = ?5
@@ -297,11 +277,8 @@ impl SkillRepository for SqliteSkillRepository {
                     delete_local_source(&transaction, &previous_namespace, &previous_name)?;
                 }
                 upsert_local_source(&transaction, &skill, &source)?;
-                if !selection_changed {
-                    upsert_local_propagation(&transaction, &skill)?;
-                }
                 transaction.commit()?;
-                Ok(SkillUpdateOutcome::Updated(skill))
+                Ok(skill)
             })
             .map_err(skill_repository_error_from_database)
     }
@@ -319,11 +296,11 @@ impl SkillRepository for SqliteSkillRepository {
         }).map_err(skill_repository_error_from_database)
     }
 
-    fn soft_delete_skill_with_source_protection(
+    fn soft_delete_skill_with_source(
         &self,
         skill_id: &SkillId,
         deleted_at: i64,
-    ) -> Result<SkillDeleteOutcome, RepositoryError> {
+    ) -> Result<bool, RepositoryError> {
         self.pool
             .with_connection_mut(|connection| {
                 let transaction =
@@ -337,12 +314,8 @@ impl SkillRepository for SqliteSkillRepository {
                     .optional()?;
                 let Some((namespace, name)) = selection else {
                     transaction.commit()?;
-                    return Ok(SkillDeleteOutcome::Missing);
+                    return Ok(false);
                 };
-                if source_reference_exists(&transaction, &namespace, &name)? {
-                    transaction.commit()?;
-                    return Ok(SkillDeleteOutcome::InUse);
-                }
                 transaction.execute(
                     "UPDATE skills SET updated_at = ?2, is_deleted = 1
                      WHERE id = ?1 AND is_deleted = 0",
@@ -350,7 +323,7 @@ impl SkillRepository for SqliteSkillRepository {
                 )?;
                 delete_local_source(&transaction, &namespace, &name)?;
                 transaction.commit()?;
-                Ok(SkillDeleteOutcome::Deleted)
+                Ok(true)
             })
             .map_err(skill_repository_error_from_database)
     }
@@ -384,70 +357,17 @@ fn upsert_local_source(
     skill: &Skill,
     source: &LocalSkillSourceRevision,
 ) -> Result<(), crate::DatabaseError> {
-    connection.execute(
-        "INSERT INTO effect_source_states (
-             source_kind, namespace, skill_name, display_name, source_version,
-             skill_md_digest, package_root, availability, unavailable_reason, updated_at
-         ) VALUES ('local', ?1, ?2, ?3, ?4, ?5, ?6, 'available', NULL, ?7)
-         ON CONFLICT(source_kind, namespace, skill_name) DO UPDATE SET
-             display_name = excluded.display_name,
-             source_version = excluded.source_version,
-             skill_md_digest = excluded.skill_md_digest,
-             package_root = excluded.package_root,
-             availability = 'available', unavailable_reason = NULL,
-             updated_at = excluded.updated_at",
-        params![
-            skill.namespace.as_ref(),
-            skill.name.to_ascii_lowercase(),
-            &skill.name,
-            skill.audit_fields.updated_at.to_string(),
-            source.skill_md_digest.as_str(),
-            source.package_root.to_string_lossy(),
-            skill.audit_fields.updated_at,
-        ],
-    )?;
-    Ok(())
-}
-
-/// Coalesces Local V1-to-Vn updates by their stable selection identity.
-fn upsert_local_propagation(
-    connection: &rusqlite::Connection,
-    skill: &Skill,
-) -> Result<(), crate::DatabaseError> {
-    connection.execute(
-        "INSERT INTO effect_source_propagation_requests (
-             source_kind, namespace, skill_name, requested_version, requested_at
-         ) VALUES ('local', ?1, ?2, ?3, ?4)
-         ON CONFLICT(source_kind, namespace, skill_name) DO UPDATE SET
-             requested_version = excluded.requested_version,
-             requested_at = excluded.requested_at",
-        params![
-            skill.namespace.as_ref(),
-            skill.name.to_ascii_lowercase(),
-            skill.audit_fields.updated_at.to_string(),
-            skill.audit_fields.updated_at,
-        ],
-    )?;
-    Ok(())
-}
-
-/// Checks Desired references under the caller's immediate write transaction.
-fn source_reference_exists(
-    connection: &rusqlite::Connection,
-    namespace: &str,
-    name: &str,
-) -> Result<bool, crate::DatabaseError> {
-    connection
-        .query_row(
-            "SELECT EXISTS(
-                 SELECT 1 FROM workspace_effect_desired_skills
-                 WHERE source_kind = 'local' AND namespace = ?1 AND skill_name = ?2
-             )",
-            params![namespace, name.to_ascii_lowercase()],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|exists| exists != 0)
-        .map_err(Into::into)
+    publish_skill_source(
+        connection,
+        "local",
+        Namespace::local().as_ref(),
+        &skill.name.to_ascii_lowercase(),
+        &skill.name,
+        &skill.audit_fields.updated_at.to_string(),
+        source.skill_md_digest.as_str(),
+        &source.package_root,
+        skill.audit_fields.updated_at,
+    )
 }
 
 /// Removes source state and a stale wakeup after a protected rename or deletion.
@@ -456,15 +376,345 @@ fn delete_local_source(
     namespace: &str,
     name: &str,
 ) -> Result<(), crate::DatabaseError> {
+    let source_id = effect_source_id(
+        connection,
+        "local",
+        Namespace::local().as_ref(),
+        &name.to_ascii_lowercase(),
+    )?;
+    if let Some(source_id) = source_id {
+        retire_source(connection, &source_id, 0)?;
+    }
+    let _ = namespace;
+    Ok(())
+}
+
+/// Publishes one immutable Skill revision and installs a newly discovered source everywhere.
+#[allow(clippy::too_many_arguments)]
+fn publish_skill_source(
+    connection: &rusqlite::Connection,
+    source_kind: &str,
+    namespace: &str,
+    identifier: &str,
+    display_name: &str,
+    revision: &str,
+    state_digest: &str,
+    package_root: &std::path::Path,
+    updated_at: i64,
+) -> Result<(), crate::DatabaseError> {
+    let existing_source_id = effect_source_id(connection, source_kind, namespace, identifier)?;
+    let source_id = existing_source_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     connection.execute(
-        "DELETE FROM effect_source_propagation_requests
-         WHERE source_kind = 'local' AND namespace = ?1 AND skill_name = ?2",
-        params![namespace, name.to_ascii_lowercase()],
+        "INSERT INTO effect_sources (
+             id, effect_kind, source_kind, namespace, identifier, lifecycle,
+             created_at, updated_at
+         ) VALUES (?1, 'skill', ?2, ?3, ?4, 'active', ?5, ?5)
+         ON CONFLICT(effect_kind, source_kind, namespace, identifier) DO UPDATE SET
+             lifecycle = 'active', updated_at = excluded.updated_at",
+        params![&source_id, source_kind, namespace, identifier, updated_at],
+    )?;
+    let payload = serde_json::json!({
+        "display_name": display_name,
+        "package_root": package_root.to_string_lossy(),
+    })
+    .to_string();
+    let existing_revision = connection
+        .query_row(
+            "SELECT id, state_digest, payload_json FROM effect_source_revisions
+             WHERE source_id = ?1 AND revision = ?2",
+            params![&source_id, revision],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let revision_id = match existing_revision {
+        Some((revision_id, stored_digest, stored_payload)) => {
+            if stored_digest != state_digest || stored_payload != payload {
+                return Err(crate::DatabaseError::CorruptEffectState(
+                    "an immutable Skill revision changed content".to_string(),
+                ));
+            }
+            connection.execute(
+                "UPDATE effect_source_revisions
+                 SET availability = 'available', unavailable_reason = NULL, updated_at = ?2
+                 WHERE id = ?1",
+                params![&revision_id, updated_at],
+            )?;
+            revision_id
+        }
+        None => {
+            let revision_id = Uuid::new_v4().to_string();
+            connection.execute(
+                "INSERT INTO effect_source_revisions (
+                     id, source_id, revision, state_digest, payload_json, availability,
+                     unavailable_reason, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'available', NULL, ?6, ?6)",
+                params![
+                    &revision_id,
+                    &source_id,
+                    revision,
+                    state_digest,
+                    payload,
+                    updated_at,
+                ],
+            )?;
+            revision_id
+        }
+    };
+    let previous_head = connection
+        .query_row(
+            "SELECT revision_id FROM effect_source_heads WHERE source_id = ?1",
+            params![&source_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    connection.execute(
+        "INSERT INTO effect_source_heads (source_id, revision_id, updated_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(source_id) DO UPDATE SET
+             revision_id = excluded.revision_id, updated_at = excluded.updated_at",
+        params![&source_id, &revision_id, updated_at],
+    )?;
+    if existing_source_id.is_none() {
+        install_source_in_all_workspaces(connection, &source_id, &revision_id, updated_at)?;
+    } else if previous_head.as_deref() != Some(revision_id.as_str()) {
+        enqueue_propagation(connection, &source_id, updated_at)?;
+    }
+    Ok(())
+}
+
+/// Finds the stable Effect Source identity for one catalog Skill.
+fn effect_source_id(
+    connection: &rusqlite::Connection,
+    source_kind: &str,
+    namespace: &str,
+    identifier: &str,
+) -> Result<Option<String>, crate::DatabaseError> {
+    connection
+        .query_row(
+            "SELECT id FROM effect_sources
+             WHERE effect_kind = 'skill' AND source_kind = ?1
+               AND namespace = ?2 AND identifier = ?3",
+            params![source_kind, namespace, identifier],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+/// Installs one new Source into every Workspace and wakes all active Surfaces atomically.
+fn install_source_in_all_workspaces(
+    connection: &rusqlite::Connection,
+    source_id: &str,
+    revision_id: &str,
+    updated_at: i64,
+) -> Result<(), crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT effects.workspace_id, effects.generation
+         FROM workspace_effects effects
+         WHERE NOT EXISTS (
+             SELECT 1 FROM workspace_effect_desired_items desired
+             WHERE desired.workspace_id = effects.workspace_id AND desired.source_id = ?1
+         ) ORDER BY effects.workspace_id",
+    )?;
+    let workspaces = statement
+        .query_map(params![source_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (workspace_id, generation) in workspaces {
+        let generation = generation.checked_add(1).ok_or_else(|| {
+            crate::DatabaseError::CorruptEffectState("Workspace generation overflow".to_string())
+        })?;
+        connection.execute(
+            "INSERT INTO workspace_effect_desired_items (
+                 id, workspace_id, source_id, revision_id, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![
+                Uuid::new_v4().to_string(),
+                &workspace_id,
+                source_id,
+                revision_id,
+                updated_at,
+            ],
+        )?;
+        advance_workspace_effect(connection, &workspace_id, generation, updated_at)?;
+    }
+    Ok(())
+}
+
+/// Coalesces propagation work for the current Head of one Source.
+fn enqueue_propagation(
+    connection: &rusqlite::Connection,
+    source_id: &str,
+    updated_at: i64,
+) -> Result<(), crate::DatabaseError> {
+    connection.execute(
+        "INSERT INTO effect_propagation_requests (
+             source_id, head_revision_id, request_token, attempt_count,
+             requested_at, not_before_at, updated_at
+         ) SELECT ?1, revision_id, ?2, 0, ?3, ?3, ?3
+           FROM effect_source_heads WHERE source_id = ?1
+         ON CONFLICT(source_id) DO UPDATE SET
+             head_revision_id = excluded.head_revision_id,
+             request_token = excluded.request_token, attempt_count = 0,
+             requested_at = excluded.requested_at, not_before_at = excluded.not_before_at,
+             updated_at = excluded.updated_at",
+        params![source_id, Uuid::new_v4().to_string(), updated_at],
+    )?;
+    Ok(())
+}
+
+/// Retires plugin Sources that disappeared from the package's current asset snapshot.
+fn retire_missing_plugin_sources(
+    connection: &rusqlite::Connection,
+    namespace: &str,
+    provided_names: &[String],
+    updated_at: i64,
+) -> Result<(), crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, identifier FROM effect_sources
+         WHERE effect_kind = 'skill' AND source_kind = 'plugin'
+           AND namespace = ?1 AND lifecycle = 'active'",
+    )?;
+    let sources = statement
+        .query_map(params![namespace], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (source_id, identifier) in sources {
+        if !provided_names
+            .iter()
+            .any(|provided| provided.eq_ignore_ascii_case(&identifier))
+        {
+            retire_source(connection, &source_id, updated_at)?;
+        }
+    }
+    Ok(())
+}
+
+/// Retires every Skill Source belonging to one removed plugin namespace.
+fn retire_plugin_sources(
+    connection: &rusqlite::Connection,
+    namespace: &str,
+    updated_at: i64,
+) -> Result<(), crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id FROM effect_sources
+         WHERE effect_kind = 'skill' AND source_kind = 'plugin'
+           AND namespace = ?1 AND lifecycle = 'active'",
+    )?;
+    let source_ids = statement
+        .query_map(params![namespace], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for source_id in source_ids {
+        retire_source(connection, &source_id, updated_at)?;
+    }
+    Ok(())
+}
+
+/// Removes all Desired references before making a Source unavailable for new selection.
+fn retire_source(
+    connection: &rusqlite::Connection,
+    source_id: &str,
+    updated_at: i64,
+) -> Result<(), crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT effects.workspace_id, effects.generation, effects.updated_at
+         FROM workspace_effects effects
+         JOIN workspace_effect_desired_items desired
+           ON desired.workspace_id = effects.workspace_id
+         WHERE desired.source_id = ?1 ORDER BY effects.workspace_id",
+    )?;
+    let workspaces = statement
+        .query_map(params![source_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (workspace_id, generation, previous_updated_at) in workspaces {
+        let generation = generation.checked_add(1).ok_or_else(|| {
+            crate::DatabaseError::CorruptEffectState("Workspace generation overflow".to_string())
+        })?;
+        let effective_updated_at = if updated_at == 0 {
+            previous_updated_at
+        } else {
+            updated_at
+        };
+        connection.execute(
+            "DELETE FROM workspace_effect_desired_items
+             WHERE workspace_id = ?1 AND source_id = ?2",
+            params![&workspace_id, source_id],
+        )?;
+        advance_workspace_effect(connection, &workspace_id, generation, effective_updated_at)?;
+    }
+    connection.execute(
+        "UPDATE effect_sources SET lifecycle = 'retired', updated_at = MAX(updated_at, ?2)
+         WHERE id = ?1",
+        params![source_id, updated_at],
     )?;
     connection.execute(
-        "DELETE FROM effect_source_states
-         WHERE source_kind = 'local' AND namespace = ?1 AND skill_name = ?2",
-        params![namespace, name.to_ascii_lowercase()],
+        "UPDATE effect_source_revisions
+         SET availability = 'unavailable', unavailable_reason = 'source was removed',
+             updated_at = MAX(updated_at, ?2)
+         WHERE source_id = ?1",
+        params![source_id, updated_at],
+    )?;
+    connection.execute(
+        "DELETE FROM effect_propagation_requests WHERE source_id = ?1",
+        params![source_id],
+    )?;
+    Ok(())
+}
+
+/// Advances a Workspace Desired generation and coalesces all active Surface wakeups.
+fn advance_workspace_effect(
+    connection: &rusqlite::Connection,
+    workspace_id: &str,
+    generation: i64,
+    updated_at: i64,
+) -> Result<(), crate::DatabaseError> {
+    connection.execute(
+        "UPDATE workspace_effects SET generation = ?2, updated_at = ?3 WHERE workspace_id = ?1",
+        params![workspace_id, generation, updated_at],
+    )?;
+    connection.execute(
+        "UPDATE effect_surface_status
+         SET desired_generation = MAX(desired_generation, ?2),
+             status_version = status_version + 1, updated_at = ?3
+         WHERE surface_id IN (
+             SELECT id FROM effect_surfaces
+             WHERE workspace_id = ?1 AND lifecycle = 'active'
+         )",
+        params![workspace_id, generation, updated_at],
+    )?;
+    connection.execute(
+        "INSERT INTO effect_reconcile_requests (
+             surface_id, requested_generation, request_token, attempt_count,
+             requested_at, not_before_at, updated_at
+         )
+         SELECT id, ?2, lower(hex(randomblob(16))), 0, ?3, ?3, ?3
+         FROM effect_surfaces WHERE workspace_id = ?1 AND lifecycle = 'active'
+         ON CONFLICT(surface_id) DO UPDATE SET
+             requested_generation = MAX(requested_generation, excluded.requested_generation),
+             request_token = excluded.request_token, attempt_count = 0,
+             requested_at = excluded.requested_at, not_before_at = excluded.not_before_at,
+             updated_at = excluded.updated_at",
+        params![workspace_id, generation, updated_at],
     )?;
     Ok(())
 }

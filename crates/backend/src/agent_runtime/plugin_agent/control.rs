@@ -2,6 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use ora_logging::ora_warn;
+use ora_plugin_runtime::PluginEffectCoordination;
 use ora_plugin_runtime::{PluginRegistration, PluginRuntime, PluginRuntimeError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -127,6 +128,25 @@ pub(super) fn verify_agent_contract(
         return Err(PluginAgentError::ContractIncomplete(format!(
             "missing emitted method {AGENT_ACP_METHOD}"
         )));
+    }
+    let requires_restart_coordination = registration
+        .effect_surfaces
+        .iter()
+        .any(|surface| surface.coordination == PluginEffectCoordination::WaitForIdleAndRestart);
+    if requires_restart_coordination {
+        let missing_effect_methods = [
+            super::effect::WAIT_FOR_IDLE_METHOD,
+            super::effect::RESTART_METHOD,
+        ]
+        .into_iter()
+        .filter(|method| !registration.methods.contains(*method))
+        .collect::<Vec<_>>();
+        if !missing_effect_methods.is_empty() {
+            return Err(PluginAgentError::ContractIncomplete(format!(
+                "missing Effect methods {}",
+                missing_effect_methods.join(", ")
+            )));
+        }
     }
     Ok(())
 }

@@ -1,10 +1,17 @@
-import { createPlugin, type Plugin, PluginMethodError } from "./plugin.ts";
+import {
+  createPlugin,
+  type EffectSurfaceDeclaration,
+  type Plugin,
+  PluginMethodError,
+} from "./plugin.ts";
 import type { JsonValue } from "./protocol.ts";
 
 const AGENT_START = "agent/start";
 const AGENT_STOP = "agent/stop";
 const AGENT_LIST_MODELS = "agent/listModels";
 const AGENT_ACP = "agent/acp";
+const EFFECT_WAIT_FOR_IDLE = "effect/waitForIdle";
+const EFFECT_RESTART = "effect/restart";
 
 /**
  * The error code that tells Ora the agent CLI is absent from this machine.
@@ -32,6 +39,30 @@ export interface AgentStartContext {
 /** Sends one ACP frame from the agent back to the host. */
 export type AcpSender = (frame: JsonValue) => Promise<void>;
 
+/** Stable locator Ora sends when coordinating a registered Agent Effect surface. */
+export interface AgentEffectContext {
+  surfaceKey: string;
+  workspaceRoot: string;
+  relativePath: string;
+}
+
+/** Adds the generation whose materialized bytes the restarted instances must observe. */
+export interface AgentEffectRestartContext extends AgentEffectContext {
+  generation: number;
+}
+
+/** Result of establishing the Agent plugin's idempotent surface mutation barrier. */
+export type AgentEffectIdleState = "ready" | "waiting_for_idle";
+
+/** Defines Agent-owned Skill surfaces and the runtime barrier around their mutation. */
+export interface AgentEffectDefinition {
+  surfaces: readonly EffectSurfaceDeclaration[];
+  waitForIdle(
+    context: AgentEffectContext,
+  ): AgentEffectIdleState | Promise<AgentEffectIdleState>;
+  restart(context: AgentEffectRestartContext): void | Promise<void>;
+}
+
 /** Implements the agent contract Ora requires of every `kind: "agent"` plugin. */
 export interface AgentDefinition {
   /**
@@ -46,6 +77,8 @@ export interface AgentDefinition {
   listModels(): AgentModel[] | Promise<AgentModel[]>;
   /** Receives one ACP frame the host is forwarding to the agent. */
   onAcp(frame: JsonValue): void | Promise<void>;
+  /** Declares Skill surfaces this Agent consumes and coordinates their safe replacement. */
+  effects?: AgentEffectDefinition;
 }
 
 /**
@@ -78,8 +111,57 @@ export function defineAgent(definition: AgentDefinition): Plugin {
     })),
   }));
   plugin.onNotification(AGENT_ACP, (params) => definition.onAcp(params));
+  const effects = definition.effects;
+  if (effects !== undefined) {
+    for (const surface of effects.surfaces) {
+      plugin.declareEffectSurface(surface);
+    }
+    plugin.registerMethod(EFFECT_WAIT_FOR_IDLE, async (input) => ({
+      state: await effects.waitForIdle(parseEffectContext(input)),
+    }));
+    plugin.registerMethod(EFFECT_RESTART, async (input) => {
+      await effects.restart(parseRestartContext(input));
+      return {};
+    });
+  }
 
   return plugin;
+}
+
+/** Validates the stable surface identity and host-resolved filesystem locator. */
+function parseEffectContext(input: JsonValue): AgentEffectContext {
+  if (
+    typeof input !== "object" || input === null || Array.isArray(input) ||
+    typeof input.surfaceKey !== "string" ||
+    typeof input.workspaceRoot !== "string" ||
+    typeof input.relativePath !== "string"
+  ) {
+    throw new PluginMethodError(
+      -32602,
+      "Effect coordination requires surfaceKey, workspaceRoot, and relativePath",
+    );
+  }
+  return {
+    surfaceKey: input.surfaceKey,
+    workspaceRoot: input.workspaceRoot,
+    relativePath: input.relativePath,
+  };
+}
+
+/** Rejects fractional or negative generations before plugin-owned restart logic runs. */
+function parseRestartContext(input: JsonValue): AgentEffectRestartContext {
+  const context = parseEffectContext(input);
+  if (
+    typeof input !== "object" || input === null || Array.isArray(input) ||
+    typeof input.generation !== "number" ||
+    !Number.isSafeInteger(input.generation) || input.generation < 0
+  ) {
+    throw new PluginMethodError(
+      -32602,
+      "effect/restart requires a non-negative integer generation",
+    );
+  }
+  return { ...context, generation: input.generation };
 }
 
 /** Validates the host's start parameters before the agent implementation sees them. */

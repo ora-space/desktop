@@ -21,10 +21,7 @@ pub(crate) use package_health::{
     commit_existing_package, commit_restored_package, commit_unclaimed_package,
     persist_promoted_package,
 };
-pub use ports::{
-    LocalSkillSourceRevision, SkillDeleteOutcome, SkillIdGenerator, SkillRepository,
-    SkillSourceInUseError, SkillUpdateOutcome,
-};
+pub use ports::{LocalSkillSourceRevision, SkillIdGenerator, SkillRepository};
 pub use storage::{
     BACKUP_DIR_NAME, CreateHandle, DeleteHandle, JOURNAL_DIR_NAME, JournalOp, JournalPhase,
     STAGING_DIR_NAME, SkillStorage, SkillStorageError, SwapHandle, TransactionJournal,

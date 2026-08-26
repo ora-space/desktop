@@ -111,6 +111,12 @@ pub trait EffectRepository {
         transition: LedgerTransition,
     ) -> Result<(), RepositoryError>;
 
+    /// Releases durable recovery authority after the adapter proves every artifact absent.
+    fn complete_operation_cleanup(
+        &self,
+        operation_id: &crate::EffectOperationId,
+    ) -> Result<(), RepositoryError>;
+
     /// Loads unfinished operations in deterministic preparation order for startup recovery.
     fn load_unfinished_operations(&self) -> Result<Vec<EffectOperation>, RepositoryError>;
 

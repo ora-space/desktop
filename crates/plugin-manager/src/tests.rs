@@ -54,7 +54,7 @@ fn discovers_skill_plugin_with_required_skill_assets() {
     let package_root = write_manifest(temp_dir.path(), "ora.skill-pack", manifest);
     fs::remove_file(package_root.join("main.js")).unwrap();
     for name in ["review", "testing"] {
-        let skill_root = package_root.join("assets/skills").join(name);
+        let skill_root = package_root.join("assets").join(name);
         fs::create_dir_all(&skill_root).unwrap();
         fs::write(
             skill_root.join("SKILL.md"),
@@ -80,7 +80,7 @@ fn discovers_skill_plugin_with_required_skill_assets() {
     );
 }
 
-/// Verifies missing, empty, or incomplete `assets/skills` trees are not discovered.
+/// Verifies missing, empty, or incomplete `assets` trees are not discovered.
 #[test]
 fn rejects_skill_plugins_without_complete_skill_assets() {
     let mut managers = Vec::new();
@@ -92,10 +92,10 @@ fn rejects_skill_plugins_without_complete_skill_assets() {
         let package_root = write_manifest(temp_dir.path(), case, manifest);
         fs::remove_file(package_root.join("main.js")).unwrap();
         if case != "missing" {
-            fs::create_dir_all(package_root.join("assets/skills")).unwrap();
+            fs::create_dir_all(package_root.join("assets")).unwrap();
         }
         if case == "incomplete" {
-            fs::create_dir_all(package_root.join("assets/skills/review")).unwrap();
+            fs::create_dir_all(package_root.join("assets/review")).unwrap();
         }
 
         let manager = PluginManager::discover(temp_dir.path());

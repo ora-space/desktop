@@ -35,8 +35,17 @@ impl TimestampSource for FixedTimestampSource {
 #[test]
 fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
     let (temp_dir, pool) = bootstrapped_pool();
-    let repository = SqliteSkillRepository::new(pool);
+    let repository = SqliteSkillRepository::new(pool.clone());
     let plugin_id = PluginId::new("official", "review-pack").unwrap();
+    pool.with_connection(|connection| {
+        connection.execute(
+            "INSERT INTO plugin_state (plugin_id, enabled, created_at, updated_at)
+             VALUES (?1, 0, 1, 1)",
+            [plugin_id.canonical()],
+        )?;
+        Ok(())
+    })
+    .unwrap();
     let package_root = temp_dir.path().join("plugins/review-pack/review");
     repository
         .replace_plugin_skills(
@@ -64,8 +73,65 @@ fn plugin_skill_projection_round_trips_and_is_removed_with_its_plugin() {
         }
     );
 
+    let workspace_path = existing_workspace_path(&temp_dir);
+    let project_repository = SqliteProjectRepository::new(pool.clone());
+    project_repository
+        .create_project(
+            Project::new(
+                ProjectId::new("project-with-plugin-skill"),
+                "Plugin Skill Project",
+                AuditFields::new(15, 15, false),
+            ),
+            WorkspaceLocation::local_filesystem(workspace_path.to_string_lossy()),
+        )
+        .unwrap();
+    let (workspace_id, generation, namespace, identifier) = pool
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT desired.workspace_id, effects.generation,
+                            sources.namespace, sources.identifier
+                     FROM workspace_effect_desired_items desired
+                     JOIN workspace_effects effects
+                       ON effects.workspace_id = desired.workspace_id
+                     JOIN effect_sources sources ON sources.id = desired.source_id",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )
+                .map_err(Into::into)
+        })
+        .unwrap();
+    assert_eq!(
+        (generation, namespace, identifier),
+        (1, "official/review-pack".to_string(), "review".to_string())
+    );
+
     repository.remove_plugin_skills(&plugin_id, 20).unwrap();
     assert!(repository.list_skills().unwrap().is_empty());
+    let (generation, desired_count) = pool
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT effects.generation, COUNT(desired.id)
+                     FROM workspace_effects effects
+                     LEFT JOIN workspace_effect_desired_items desired
+                       ON desired.workspace_id = effects.workspace_id
+                     WHERE effects.workspace_id = ?1
+                     GROUP BY effects.workspace_id",
+                    [workspace_id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .map_err(Into::into)
+        })
+        .unwrap();
+    assert_eq!((generation, desired_count), (2, 0));
 }
 /// Verifies project creation materializes the shared main workspace used by ordinary sessions.
 #[test]

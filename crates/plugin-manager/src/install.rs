@@ -413,7 +413,7 @@ mod tests {
                     b"identifier = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Skill plugin test\"\n".as_slice(),
                 ),
                 (
-                    "assets/skills/review/SKILL.md",
+                    "assets/review/SKILL.md",
                     b"---\nname: review\ndescription: Reviews code\n---\n".as_slice(),
                 ),
             ],
@@ -433,7 +433,7 @@ mod tests {
         ))
         .expect("install marketplace Skill release");
 
-        assert!(package_dir.join("assets/skills/review/SKILL.md").is_file());
+        assert!(package_dir.join("assets/review/SKILL.md").is_file());
         assert!(!package_dir.join("main.js").exists());
     }
 
@@ -485,15 +485,15 @@ mod tests {
                     &b"identifier = \"ora.skill-pack\"\nnamespace = \"official\"\nkind = \"skill\"\nversion = \"0.1.1\"\ndescription = \"Skill plugin test\"\n"[..],
                 ),
                 (
-                    "assets/skills/review/SKILL.md",
+                    "assets/review/SKILL.md",
                     b"---\nname: review\ndescription: Reviews code\n---\n".as_slice(),
                 ),
                 (
-                    "assets/skills/testing/SKILL.md",
+                    "assets/testing/SKILL.md",
                     b"---\nname: testing\ndescription: Tests code\n---\n".as_slice(),
                 ),
                 (
-                    "assets/skills/review/scripts/check.js",
+                    "assets/review/scripts/check.js",
                     b"export {};\n".as_slice(),
                 ),
             ],
@@ -516,22 +516,17 @@ mod tests {
                 .join("0.1.1")
         );
         assert!(package.package_dir.join("orax.toml").is_file());
+        assert!(package.package_dir.join("assets/review/SKILL.md").is_file());
         assert!(
             package
                 .package_dir
-                .join("assets/skills/review/SKILL.md")
-                .is_file()
-        );
-        assert!(
-            package
-                .package_dir
-                .join("assets/skills/testing/SKILL.md")
+                .join("assets/testing/SKILL.md")
                 .is_file()
         );
         assert!(!package.package_dir.join("main.js").exists());
     }
 
-    /// A Skill archive without `assets/skills/<name>/SKILL.md` is never committed.
+    /// A Skill archive without `assets/<name>/SKILL.md` is never committed.
     #[test]
     fn rejects_local_skill_archive_without_skill_assets() {
         let temp_dir = TempDir::new().unwrap();

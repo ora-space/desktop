@@ -2,10 +2,15 @@ export {
   type AcpSender,
   AGENT_NOT_INSTALLED,
   type AgentDefinition,
+  type AgentEffectContext,
+  type AgentEffectDefinition,
+  type AgentEffectIdleState,
+  type AgentEffectRestartContext,
   type AgentModel,
   type AgentStartContext,
   defineAgent,
 } from "./agent.ts";
+export type { EffectSurfaceDeclaration } from "./plugin.ts";
 export {
   createPlugin,
   DEFAULT_HOST_REQUEST_TIMEOUT_MS,

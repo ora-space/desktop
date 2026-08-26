@@ -124,6 +124,21 @@ const plugin = defineAgent({
   stop: () => {/* terminate the CLI this plugin spawned */},
   listModels: () => [{ id: "opus", displayName: "Opus", default: true }],
   onAcp: (frame) => {/* forward the frame to the CLI */},
+  effects: {
+    surfaces: [{
+      workspaceRelativePath: ".agents/skills",
+      materializationFormat: "skill_directory.v1",
+      coordination: "wait_for_idle_and_restart",
+    }],
+    waitForIdle: async ({ surfaceKey, workspaceRoot, relativePath }) => {
+      // Return waiting_for_idle while any affected instance is serving a turn. Once ready is
+      // returned, keep new turns behind the surfaceKey barrier until restart.
+      return "ready";
+    },
+    restart: async ({ surfaceKey, generation }) => {
+      // Restart every affected instance, then release the idempotent barrier for this generation.
+    },
+  },
 });
 await plugin.run();
 ```
@@ -133,3 +148,10 @@ stdio; it only sees `agent/acp` frames, whose payloads it passes through without
 parsing. Throw `new PluginMethodError(AGENT_NOT_INSTALLED, ...)` from `start`
 when the CLI is absent — Ora treats that as expected local configuration and
 retries quietly instead of reporting a fault.
+
+Effect locators are always Workspace-relative; Ora supplies and validates the
+absolute Workspace root when it coordinates a mutation. The canonical Plugin ID
+becomes the persisted consumer identity, so plugin code cannot claim another
+consumer's state. Both coordination callbacks must be idempotent because Ora may
+retry after either side has completed but before the corresponding durable
+status update is visible.

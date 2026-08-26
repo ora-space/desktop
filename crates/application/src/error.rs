@@ -26,8 +26,6 @@ pub enum ApplicationError {
     SkillNameConflict { namespace: String, name: String },
     #[error("skill not found: {skill_id}")]
     SkillNotFound { skill_id: String },
-    #[error("skill is referenced by Workspace desired state")]
-    SkillInUse,
     #[error("plugin-provided skills are read-only")]
     SkillReadOnly,
     #[error("skill repository operation failed")]

@@ -3158,6 +3158,7 @@ dependencies = [
 name = "ora-plugin-config"
 version = "0.0.0"
 dependencies = [
+ "ora-domain",
  "ora-utils",
  "pretty_assertions",
  "serde",

@@ -3,9 +3,8 @@ use super::ports::{
     ImportSessionState, SkillImportProgressEvent,
 };
 use crate::skill::{
-    LocalSkillSourceRevision, SkillSourceInUseError, SkillStorage, SkillUpdateOutcome,
-    commit_existing_package, commit_restored_package, commit_unclaimed_package, has_usable_package,
-    next_updated_at, persist_promoted_package,
+    LocalSkillSourceRevision, SkillStorage, commit_existing_package, commit_restored_package,
+    commit_unclaimed_package, has_usable_package, next_updated_at, persist_promoted_package,
 };
 use crate::{ApplicationError, Clock, SkillRepository};
 use ora_domain::{AuditFields, Namespace, Skill, SkillId};
@@ -263,19 +262,9 @@ where
     };
     let source_revision = imported_source_revision(storage, snapshot, candidate, &skill.name);
     let persisted = if existing.is_some() {
-        persist_promoted_package(storage, &promoted, || {
-            match source_revision {
-                Some(source) => repository.update_skill_with_source(skill, source),
-                None => repository
-                    .update_skill(skill)
-                    .map(SkillUpdateOutcome::Updated),
-            }
-            .and_then(|outcome| match outcome {
-                SkillUpdateOutcome::Updated(skill) => Ok(skill),
-                SkillUpdateOutcome::InUse => {
-                    Err(crate::RepositoryError::new(SkillSourceInUseError))
-                }
-            })
+        persist_promoted_package(storage, &promoted, || match source_revision {
+            Some(source) => repository.update_skill_with_source(skill, source),
+            None => repository.update_skill(skill),
         })
     } else {
         persist_promoted_package(storage, &promoted, || match source_revision {
@@ -283,13 +272,9 @@ where
             None => repository.create_skill(skill),
         })
     };
-    if let Err(error) = persisted {
-        return if error.is::<SkillSourceInUseError>() {
-            CandidateOutcome::StaleConflict
-        } else {
-            CandidateOutcome::Failed {
-                error_code: "skill_repository_error".to_string(),
-            }
+    if persisted.is_err() {
+        return CandidateOutcome::Failed {
+            error_code: "skill_repository_error".to_string(),
         };
     }
     CandidateOutcome::Imported
@@ -364,25 +349,13 @@ where
         Err(error) => return promote_failure(storage, &staging, error),
     };
     let source_revision = imported_source_revision(storage, snapshot, candidate, &skill.name);
-    let persisted = persist_promoted_package(storage, &promoted, || {
-        match source_revision {
-            Some(source) => repository.update_skill_with_source(skill, source),
-            None => repository
-                .update_skill(skill)
-                .map(SkillUpdateOutcome::Updated),
-        }
-        .and_then(|outcome| match outcome {
-            SkillUpdateOutcome::Updated(skill) => Ok(skill),
-            SkillUpdateOutcome::InUse => Err(crate::RepositoryError::new(SkillSourceInUseError)),
-        })
+    let persisted = persist_promoted_package(storage, &promoted, || match source_revision {
+        Some(source) => repository.update_skill_with_source(skill, source),
+        None => repository.update_skill(skill),
     });
-    if let Err(error) = persisted {
-        return if error.is::<SkillSourceInUseError>() {
-            CandidateOutcome::StaleConflict
-        } else {
-            CandidateOutcome::Failed {
-                error_code: "skill_repository_error".to_string(),
-            }
+    if persisted.is_err() {
+        return CandidateOutcome::Failed {
+            error_code: "skill_repository_error".to_string(),
         };
     }
     CandidateOutcome::Overwritten
