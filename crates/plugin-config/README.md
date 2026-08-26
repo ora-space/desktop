@@ -19,8 +19,8 @@ of an MCP Configuration feeds the same editor and `store.json` machinery as a se
 Phase 1 restricts MCP setting types to `string`, `number`, and `boolean`; `secret`, `file`, and
 `directory` are rejected with a dedicated error (see `docs/adr/0001`). HTTP headers must bind
 through Setting references — a literal header value would be a way to bake credentials into the
-package. HTTP URLs must be HTTPS, must not carry userinfo, and must not put credentials in the
-query string.
+package. HTTP URLs must be HTTPS, must not carry userinfo, must not contain a query string, and
+must not contain a fragment.
 
 The crate does not render UI, expose filesystem paths to frontend callers, start plugins, or pass
 configuration to Agent processes. Callers supply package identity and roots; lifecycle and backend

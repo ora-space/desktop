@@ -81,8 +81,21 @@ pub fn compile_declaration(source: &[u8]) -> Result<CompiledDeclaration, Compile
         return Err(CompileDeclarationError::TooLarge);
     }
     let value = parse_strict_json(source)?;
+    compile_declaration_from_value(value)
+}
+
+/// Compiles one declaration object that was already parsed as strict JSON elsewhere.
+///
+/// Callers must have rejected duplicate keys before invoking this entrypoint; it skips the byte
+/// parser so MCP settings subsets do not round-trip through JSON bytes twice.
+pub(crate) fn compile_declaration_from_value(
+    value: Value,
+) -> Result<CompiledDeclaration, CompileDeclarationError> {
     let canonical = serde_json::to_vec(&value)
         .map_err(|error| CompileDeclarationError::Fingerprint(error.to_string()))?;
+    if canonical.len() > MAX_DECLARATION_BYTES {
+        return Err(CompileDeclarationError::TooLarge);
+    }
     let raw: RawDeclaration = serde_json::from_value(value)
         .map_err(|error| CompileDeclarationError::InvalidStructure(error.to_string()))?;
     if raw.schema_version != 1 {

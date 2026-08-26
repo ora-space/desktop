@@ -1989,7 +1989,7 @@ mod tests {
     #[test]
     fn tavily_mcp_marketplace_manifest_resolves_from_staged_registry() {
         use ora_domain::PluginId;
-        use ora_plugin_registry::{RegistryIndex, RegistrySource};
+        use ora_plugin_registry::RegistryIndex;
         use pretty_assertions::assert_eq;
         use std::fs;
         use std::path::PathBuf;
@@ -2149,7 +2149,6 @@ mod tests {
             PluginConfigurationCompleteness, PluginConfigurationSummary, PluginSettingValue,
             SavePluginConfigurationRequest,
         };
-        use pretty_assertions::assert_eq;
         use std::collections::BTreeMap;
         use std::fs;
         use std::path::PathBuf;

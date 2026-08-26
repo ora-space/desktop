@@ -3326,6 +3326,7 @@ version = "0.0.0"
 dependencies = [
  "ora-domain",
  "ora-logging",
+ "ora-plugin-config",
  "ora-plugin-manager",
  "ora-plugin-manifest",
  "ora-utils",

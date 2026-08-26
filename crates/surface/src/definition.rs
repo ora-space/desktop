@@ -134,8 +134,9 @@ mod tests {
     };
     use crate::navigation::NavigationPolicy;
     use ora_domain::PluginId;
+    use ora_plugin_config::{CompiledConfigurationFile, compile_configuration_file};
     use ora_plugin_manager::{
-        InstalledPlugin, InstalledPluginAgent, InstalledWebviewDescriptor,
+        InstalledMcpDescriptor, InstalledPlugin, InstalledPluginAgent, InstalledWebviewDescriptor,
         InstalledWorkbenchDescriptor, PluginContribution,
     };
     use ora_plugin_manifest::{DownloadPolicy, MethodName, Origin, StartUrl};
@@ -163,7 +164,7 @@ mod tests {
     }
 
     /// A webview plugin becomes a singleton remote-site definition, a workbench plugin a
-    /// multi-instance page definition, and agents and skills none at all.
+    /// multi-instance page definition, and agents, skills, and MCP plugins none at all.
     #[test]
     fn maps_installed_contributions_to_definitions() {
         let webview = installed(
@@ -191,6 +192,21 @@ mod tests {
             }),
         );
         let skill = installed("acme.skill", PluginContribution::Skill(Default::default()));
+        let mcp_configuration = match compile_configuration_file(
+            br#"{
+            "schemaVersion": 1,
+            "transport": { "type": "http", "url": "https://mcp.example.com/mcp" }
+        }"#,
+        ) {
+            Ok(CompiledConfigurationFile::Mcp(configuration)) => configuration,
+            other => panic!("expected MCP configuration, got {other:?}"),
+        };
+        let mcp = installed(
+            "acme.mcp",
+            PluginContribution::Mcp(InstalledMcpDescriptor {
+                configuration: mcp_configuration,
+            }),
+        );
 
         let webview_definition = SurfaceDefinition::from_installed(&webview);
         let workbench_definition = SurfaceDefinition::from_installed(&workbench);
@@ -207,6 +223,7 @@ mod tests {
                     .map(SurfaceDefinition::instance_policy),
                 SurfaceDefinition::from_installed(&agent),
                 SurfaceDefinition::from_installed(&skill),
+                SurfaceDefinition::from_installed(&mcp),
             ),
             (
                 Some(SurfaceDefinition {
@@ -224,6 +241,7 @@ mod tests {
                 Some(InstancePolicy::Singleton),
                 Some(SurfaceKind::Workbench),
                 Some(InstancePolicy::Multiple),
+                None,
                 None,
                 None,
             )

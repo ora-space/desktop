@@ -8,7 +8,7 @@
 
 use crate::declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, compile_declaration,
-    parse_strict_json,
+    compile_declaration_from_value, parse_strict_json,
 };
 use ora_utils::path::PortableRelativePath;
 use serde::Deserialize;
@@ -235,12 +235,11 @@ fn compile_settings_subset(
             }
         }
     }
-    let subset = serde_json::to_vec(&serde_json::json!({
+    let wrapped = serde_json::json!({
         "schemaVersion": 1,
         "settings": settings,
-    }))
-    .map_err(|error| CompileMcpConfigurationError::InvalidStructure(error.to_string()))?;
-    Ok(compile_declaration(&subset)?)
+    });
+    Ok(compile_declaration_from_value(wrapped)?)
 }
 
 /// Dispatches the exclusive transport member on its required `type` discriminator.
@@ -323,15 +322,12 @@ fn compile_http_transport(
             "URL must not contain a fragment",
         ));
     }
-    // Issue 457 / spec: credentials must not be smuggled as query parameters even when the
-    // server would accept them. Tavily itself documents a query-key option; Ora still refuses it.
-    if url
-        .query_pairs()
-        .any(|(name, _)| is_credential_query_name(&name))
-    {
+    // Phase 1 forbids every query parameter so credentials cannot be smuggled outside header
+    // Setting references; Tavily documents a query-key option but Ora still refuses it.
+    if url.query().is_some() {
         return Err(invalid_transport(
             "transport.url",
-            "URL must not carry a credential in the query string",
+            "URL must not contain a query string",
         ));
     }
     let headers = raw
@@ -450,7 +446,7 @@ fn compile_setting_reference(
         ));
     }
     for (name, text) in [("prefix", &reference.prefix), ("suffix", &reference.suffix)] {
-        validate_header_text(text, &format!("{field}.{name}"))?;
+        validate_bound_text(text, &format!("{field}.{name}"))?;
     }
     Ok(McpValueExpression::Setting {
         id: reference.setting,
@@ -492,26 +488,9 @@ fn validate_header_name(name: &str, field: &str) -> Result<(), CompileMcpConfigu
     Ok(())
 }
 
-/// Reports whether a query parameter name is a conventional place to put a secret.
-fn is_credential_query_name(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "api_key"
-            | "apikey"
-            | "api-key"
-            | "key"
-            | "token"
-            | "access_token"
-            | "access-token"
-            | "secret"
-            | "password"
-            | "authorization"
-            | "auth"
-    )
-}
-
-/// Rejects control characters (including CR/LF) in header-bound text.
-fn validate_header_text(text: &str, field: &str) -> Result<(), CompileMcpConfigurationError> {
+/// Rejects control characters (including CR/LF) in prefix/suffix text bound to any transport
+/// position (stdio args, env values, and HTTP headers).
+fn validate_bound_text(text: &str, field: &str) -> Result<(), CompileMcpConfigurationError> {
     if text.chars().any(char::is_control) {
         return Err(invalid_transport(
             field,
@@ -827,6 +806,7 @@ mod tests {
             "https://user:secret@mcp.example.com/v1",
             "https://mcp.example.com/v1#fragment",
             "https://mcp.example.com/mcp?api_key=secret",
+            "https://mcp.example.com/mcp?version=1",
             "not a url",
         ];
 
