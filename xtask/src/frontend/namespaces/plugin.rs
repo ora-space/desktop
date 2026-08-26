@@ -20,6 +20,27 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "SyncAvailablePluginsResponse",
     },
     FrontendEndpoint {
+        operation_name: "listMarketplaceSources",
+        namespace: NAMESPACE,
+        member_name: "listSources",
+        request_type: "ListMarketplaceSourcesRequest",
+        response_type: "ListMarketplaceSourcesResponse",
+    },
+    FrontendEndpoint {
+        operation_name: "addMarketplaceSource",
+        namespace: NAMESPACE,
+        member_name: "addSource",
+        request_type: "AddMarketplaceSourceRequest",
+        response_type: "AddMarketplaceSourceResponse",
+    },
+    FrontendEndpoint {
+        operation_name: "deleteMarketplaceSource",
+        namespace: NAMESPACE,
+        member_name: "deleteSource",
+        request_type: "DeleteMarketplaceSourceRequest",
+        response_type: "DeleteMarketplaceSourceResponse",
+    },
+    FrontendEndpoint {
         operation_name: "listInstalledPlugins",
         namespace: NAMESPACE,
         member_name: "listInstalled",

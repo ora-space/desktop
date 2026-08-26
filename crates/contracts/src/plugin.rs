@@ -241,6 +241,64 @@ pub struct SyncAvailablePluginsResponse {
     pub plugins: Vec<AvailablePlugin>,
 }
 
+/// Lists one configured marketplace source repository and its tracked branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct MarketplaceSource {
+    /// HTTPS Git repository URL of the marketplace checkout.
+    pub url: String,
+    /// Short branch name tracked by the source.
+    pub branch: String,
+}
+
+/// Requests the configured marketplace source repositories.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ListMarketplaceSourcesRequest {}
+
+/// Returns every configured marketplace source in source-precedence order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct ListMarketplaceSourcesResponse {
+    pub sources: Vec<MarketplaceSource>,
+}
+
+/// Requests adding one marketplace Git source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct AddMarketplaceSourceRequest {
+    pub url: String,
+    pub branch: String,
+}
+
+/// Returns the source list immediately after one source is persisted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct AddMarketplaceSourceResponse {
+    pub sources: Vec<MarketplaceSource>,
+}
+
+/// Requests removal of one marketplace Git source by its URL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct DeleteMarketplaceSourceRequest {
+    pub url: String,
+}
+
+/// Returns the source list immediately after one source is removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct DeleteMarketplaceSourceResponse {
+    pub sources: Vec<MarketplaceSource>,
+}
+
 /// Requests the immutable startup snapshot of installed plugin packages.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -479,6 +537,13 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ListAvailablePluginsResponse::export(config)?;
     SyncAvailablePluginsRequest::export(config)?;
     SyncAvailablePluginsResponse::export(config)?;
+    MarketplaceSource::export(config)?;
+    ListMarketplaceSourcesRequest::export(config)?;
+    ListMarketplaceSourcesResponse::export(config)?;
+    AddMarketplaceSourceRequest::export(config)?;
+    AddMarketplaceSourceResponse::export(config)?;
+    DeleteMarketplaceSourceRequest::export(config)?;
+    DeleteMarketplaceSourceResponse::export(config)?;
     ListInstalledPluginsRequest::export(config)?;
     ListInstalledPluginsResponse::export(config)?;
     EnablePluginRequest::export(config)?;
@@ -511,11 +576,14 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AvailablePlugin, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest,
-        InstallPluginResponse, InstalledPlugin, InstalledPluginContribution,
-        ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest,
-        ListInstalledPluginsResponse, PluginConfigurationSummary, PluginInstallationValidity,
-        PluginRuntimeStatus, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
+        AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, AvailablePlugin,
+        DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, ImportPluginRequest,
+        ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, InstalledPlugin,
+        InstalledPluginContribution, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
+        ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
+        ListMarketplaceSourcesResponse, MarketplaceSource, PluginConfigurationSummary,
+        PluginInstallationValidity, PluginRuntimeStatus, SyncAvailablePluginsRequest,
+        SyncAvailablePluginsResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -734,6 +802,68 @@ mod tests {
                 "updatedAt": 1_776_244_428,
                 "plugins": []
             })
+        );
+    }
+
+    /// Verifies marketplace source request/response wire shapes.
+    #[test]
+    fn serializes_marketplace_source_contracts() {
+        let source = || MarketplaceSource {
+            url: "https://github.com/example/marketplace".to_string(),
+            branch: "main".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(ListMarketplaceSourcesRequest {}).unwrap(),
+            json!({})
+        );
+        assert_eq!(
+            serde_json::to_value(ListMarketplaceSourcesResponse {
+                sources: vec![source()],
+            })
+            .unwrap(),
+            json!({
+                "sources": [{
+                    "url": "https://github.com/example/marketplace",
+                    "branch": "main"
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(AddMarketplaceSourceRequest {
+                url: "https://github.com/example/marketplace".to_string(),
+                branch: "main".to_string(),
+            })
+            .unwrap(),
+            json!({
+                "url": "https://github.com/example/marketplace",
+                "branch": "main"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(AddMarketplaceSourceResponse {
+                sources: vec![source()],
+            })
+            .unwrap(),
+            json!({
+                "sources": [{
+                    "url": "https://github.com/example/marketplace",
+                    "branch": "main"
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(DeleteMarketplaceSourceRequest {
+                url: "https://github.com/example/marketplace".to_string(),
+            })
+            .unwrap(),
+            json!({ "url": "https://github.com/example/marketplace" })
+        );
+        assert_eq!(
+            serde_json::to_value(DeleteMarketplaceSourceResponse {
+                sources: Vec::new(),
+            })
+            .unwrap(),
+            json!({ "sources": [] })
         );
     }
 

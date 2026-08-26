@@ -71,6 +71,8 @@ pub enum BackendBootstrapError {
     Database(#[source] ora_db::DatabaseError),
     #[error("failed to initialize plugin lifecycle")]
     PluginLifecycle(#[source] ora_plugin_lifecycle::PluginLifecycleError),
+    #[error("failed to initialize plugin management")]
+    Plugin(#[source] BackendError),
     #[error("failed to synchronize installed plugin Skills")]
     PluginSkillCatalog(#[source] BackendError),
     #[error("failed to reconcile skill storage")]
@@ -145,7 +147,7 @@ impl Backend {
                 clock,
                 app_events.publisher(),
             )
-            .map_err(BackendBootstrapError::PluginLifecycle)?,
+            .map_err(BackendBootstrapError::Plugin)?,
         );
         plugin
             .sync_installed_skills()
@@ -285,6 +287,30 @@ impl Backend {
         self.plugin
             .list_available_plugins(request)
             .map_err(|error| BackendError::internal("failed to load plugin registry index", error))
+    }
+
+    /// Returns every configured marketplace source in precedence order.
+    pub fn list_marketplace_sources(
+        &self,
+        request: ListMarketplaceSourcesRequest,
+    ) -> Result<ListMarketplaceSourcesResponse, BackendError> {
+        self.plugin.list_marketplace_sources(request)
+    }
+
+    /// Adds one marketplace source after validating and persisting it.
+    pub fn add_marketplace_source(
+        &self,
+        request: AddMarketplaceSourceRequest,
+    ) -> Result<AddMarketplaceSourceResponse, BackendError> {
+        self.plugin.add_marketplace_source(request)
+    }
+
+    /// Removes one marketplace source by URL after persisting the new ordering.
+    pub fn delete_marketplace_source(
+        &self,
+        request: DeleteMarketplaceSourceRequest,
+    ) -> Result<DeleteMarketplaceSourceResponse, BackendError> {
+        self.plugin.delete_marketplace_source(request)
     }
 
     /// Pulls the marketplace source and rebuilds the cache used by plugin discovery.

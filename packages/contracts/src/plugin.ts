@@ -11,6 +11,18 @@ export type ActivatePluginRequest = { pluginId: string };
 export type ActivatePluginResponse = { plugin: InstalledPlugin };
 
 /**
+ * Requests adding one marketplace Git source.
+ */
+export type AddMarketplaceSourceRequest = { url: string; branch: string };
+
+/**
+ * Returns the source list immediately after one source is persisted.
+ */
+export type AddMarketplaceSourceResponse = {
+  sources: Array<MarketplaceSource>;
+};
+
+/**
  * Describes one marketplace plugin listed by the cached registry index.
  */
 export type AvailablePlugin = {
@@ -32,6 +44,18 @@ export type AvailablePlugin = {
    * Security-validated SVG source for the marketplace icon, absent when none is published.
    */
   logo: string | null;
+};
+
+/**
+ * Requests removal of one marketplace Git source by its URL.
+ */
+export type DeleteMarketplaceSourceRequest = { url: string };
+
+/**
+ * Returns the source list immediately after one source is removed.
+ */
+export type DeleteMarketplaceSourceResponse = {
+  sources: Array<MarketplaceSource>;
 };
 
 /**
@@ -166,6 +190,32 @@ export type ListInstalledPluginsRequest = Record<symbol, never>;
  * Returns every valid installed plugin in stable identifier order.
  */
 export type ListInstalledPluginsResponse = { plugins: Array<InstalledPlugin> };
+
+/**
+ * Requests the configured marketplace source repositories.
+ */
+export type ListMarketplaceSourcesRequest = Record<symbol, never>;
+
+/**
+ * Returns every configured marketplace source in source-precedence order.
+ */
+export type ListMarketplaceSourcesResponse = {
+  sources: Array<MarketplaceSource>;
+};
+
+/**
+ * Lists one configured marketplace source repository and its tracked branch.
+ */
+export type MarketplaceSource = {
+  /**
+   * HTTPS Git repository URL of the marketplace checkout.
+   */
+  url: string;
+  /**
+   * Short branch name tracked by the source.
+   */
+  branch: string;
+};
 
 /**
  * Reports whether every required Setting has an effective type-correct value.

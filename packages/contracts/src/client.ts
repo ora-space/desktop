@@ -175,14 +175,35 @@ export function createContractsClient(
         executeOperation("listAvailablePlugins", request, transport, options),
       syncAvailable: (request, options) =>
         executeOperation("syncAvailablePlugins", request, transport, options),
+      listSources: (request, options) =>
+        executeOperation("listMarketplaceSources", request, transport, options),
+      addSource: (request, options) =>
+        executeOperation("addMarketplaceSource", request, transport, options),
+      deleteSource: (request, options) =>
+        executeOperation(
+          "deleteMarketplaceSource",
+          request,
+          transport,
+          options,
+        ),
       listInstalled: (request, options) =>
         executeOperation("listInstalledPlugins", request, transport, options),
       getConfiguration: (request, options) =>
         executeOperation("getPluginConfiguration", request, transport, options),
       saveConfiguration: (request, options) =>
-        executeOperation("savePluginConfiguration", request, transport, options),
+        executeOperation(
+          "savePluginConfiguration",
+          request,
+          transport,
+          options,
+        ),
       resetConfiguration: (request, options) =>
-        executeOperation("resetPluginConfiguration", request, transport, options),
+        executeOperation(
+          "resetPluginConfiguration",
+          request,
+          transport,
+          options,
+        ),
       scan: (request, options) =>
         executeOperation("scanPlugins", request, transport, options),
       enable: (request, options) =>

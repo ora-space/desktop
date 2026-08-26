@@ -1,16 +1,19 @@
 use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
 use crate::error::{BackendError, ErrorClassification};
-use gitlancer::{BranchName, CliGitRunner, Git};
+use crate::marketplace_sources::{MarketplaceSourceStore, MarketplaceSourceStoreError};
+use gitlancer::{CliGitRunner, Git};
 use ora_application::Clock;
 use ora_contracts::{
-    ActivatePluginRequest, ActivatePluginResponse, DisablePluginRequest, DisablePluginResponse,
-    EmptyErrorParams, EnablePluginRequest, EnablePluginResponse, ImportPluginRequest,
-    ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest,
-    ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
-    PublicError, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse,
-    SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest,
-    UninstallPluginResponse,
+    ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest,
+    AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse,
+    DisablePluginRequest, DisablePluginResponse, EmptyErrorParams, EnablePluginRequest,
+    EnablePluginResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest,
+    InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
+    ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
+    ListMarketplaceSourcesResponse, PublicError, ScanPluginsRequest, ScanPluginsResponse,
+    StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
+    SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository, SqlitePluginStateRepository,
@@ -26,22 +29,13 @@ use ora_plugin_lifecycle::{
     PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
 use ora_plugin_manager::{Installer, PluginContribution, PluginManager};
-use ora_plugin_registry::{
-    RegistryEntry, RegistryError, RegistryIndex, RegistrySource, RegistrySync,
-};
+use ora_plugin_registry::{RegistryEntry, RegistryError, RegistryIndex, RegistrySync};
 use ora_utils::http::{DownloadSource, ProxyConfig, ReqwestDownloader};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
-
-/// The default marketplace sources this backend syncs, each tracked on its own branch.
-///
-/// Order matters only for overlapping plugin ids: when two sources publish the same plugin, the
-/// earlier source wins both the merged listing and the install-time lookup.
-const MARKETPLACE_SOURCES: &[(&str, &str)] =
-    &[("https://github.com/ora-space/marketplace", "main")];
 
 /// The concrete lifecycle composition the backend runs.
 pub(crate) type BackendPluginLifecycle = PluginLifecycle<
@@ -163,7 +157,7 @@ pub(crate) struct AgentPluginAttachment {
 /// Groups plugin discovery and lifecycle operations behind the backend's plugin interface.
 pub(crate) struct PluginApi {
     pub(crate) lifecycle: BackendPluginLifecycle,
-    registry_sources: Vec<RegistrySource>,
+    marketplace_sources: MarketplaceSourceStore,
     registry_index_path: PathBuf,
     data_directory: PathBuf,
     installer: Installer<ReqwestDownloader>,
@@ -184,15 +178,15 @@ impl PluginApi {
         deno_path: PathBuf,
         clock: SystemClock,
         publisher: AppEventPublisher,
-    ) -> Result<Self, PluginLifecycleError> {
+    ) -> Result<Self, BackendError> {
         let plugins_directory = data_directory.join("plugins");
-        let sources_root = plugins_directory.join("sources");
-        let registry_sources = MARKETPLACE_SOURCES
-            .iter()
-            .map(|(url, branch)| {
-                RegistrySource::from_git(*url, BranchName::new(*branch), &sources_root)
-            })
-            .collect();
+        let marketplace_sources =
+            MarketplaceSourceStore::open(&data_directory).map_err(|error| {
+                BackendError::internal(
+                    "failed to load configured plugin marketplace sources",
+                    error,
+                )
+            })?;
         let registry_index_path = plugins_directory.join("cache").join("registry_index.json");
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
         let notifications = BroadcastNotificationSink::new();
@@ -207,11 +201,12 @@ impl PluginApi {
             DenoPluginRuntimeLauncher::new(PluginRuntimeTimeouts::default()),
             publisher,
             notifications.clone(),
-        )?;
+        )
+        .map_err(BackendError::from)?;
 
         Ok(Self {
             lifecycle,
-            registry_sources,
+            marketplace_sources,
             registry_index_path,
             data_directory,
             installer,
@@ -255,6 +250,43 @@ impl PluginApi {
         }
     }
 
+    /// Returns the user-configured marketplace source repositories in precedence order.
+    pub(crate) fn list_marketplace_sources(
+        &self,
+        _request: ListMarketplaceSourcesRequest,
+    ) -> Result<ListMarketplaceSourcesResponse, BackendError> {
+        Ok(ListMarketplaceSourcesResponse {
+            sources: self.marketplace_sources.list(),
+        })
+    }
+
+    /// Adds and persists one marketplace source after validating its URL and branch.
+    pub(crate) fn add_marketplace_source(
+        &self,
+        request: AddMarketplaceSourceRequest,
+    ) -> Result<AddMarketplaceSourceResponse, BackendError> {
+        let sources = self
+            .marketplace_sources
+            .add(ora_contracts::MarketplaceSource {
+                url: request.url,
+                branch: request.branch,
+            })
+            .map_err(map_marketplace_source_error)?;
+        Ok(AddMarketplaceSourceResponse { sources })
+    }
+
+    /// Removes and persists one marketplace source by URL.
+    pub(crate) fn delete_marketplace_source(
+        &self,
+        request: DeleteMarketplaceSourceRequest,
+    ) -> Result<DeleteMarketplaceSourceResponse, BackendError> {
+        let sources = self
+            .marketplace_sources
+            .delete(&request.url)
+            .map_err(map_marketplace_source_error)?;
+        Ok(DeleteMarketplaceSourceResponse { sources })
+    }
+
     /// Pulls every marketplace source, merges their registry indexes, and atomically replaces the
     /// cache.
     pub(crate) fn sync_available_plugins(
@@ -262,8 +294,9 @@ impl PluginApi {
         _request: SyncAvailablePluginsRequest,
     ) -> Result<SyncAvailablePluginsResponse, RegistryError> {
         let git = Git::new(CliGitRunner);
-        let mut registry_dirs: Vec<PathBuf> = Vec::with_capacity(self.registry_sources.len());
-        for source in &self.registry_sources {
+        let registry_sources = self.marketplace_sources.snapshot();
+        let mut registry_dirs: Vec<PathBuf> = Vec::with_capacity(registry_sources.len());
+        for source in &registry_sources {
             let checkout_directory = RegistrySync::sync(&git, source)?;
             registry_dirs.push(checkout_directory.join("registry"));
         }
@@ -437,8 +470,8 @@ impl PluginApi {
         &self,
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
-        let registry_dirs: Vec<PathBuf> = self
-            .registry_sources
+        let registry_sources = self.marketplace_sources.snapshot();
+        let registry_dirs: Vec<PathBuf> = registry_sources
             .iter()
             .map(|source| source.checkout_dir().join("registry"))
             .collect();
@@ -594,6 +627,31 @@ impl PluginApi {
                 self.clock.now_timestamp_millis(),
             )
             .map_err(|error| BackendError::internal("failed to persist plugin Skills", error))
+    }
+}
+
+/** Maps marketplace source configuration failures onto their public classifications. */
+fn map_marketplace_source_error(error: MarketplaceSourceStoreError) -> BackendError {
+    match error {
+        MarketplaceSourceStoreError::Validation(error) => BackendError::new(
+            ErrorClassification::InvalidRequest,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            format!("invalid plugin marketplace source: {error}"),
+        ),
+        MarketplaceSourceStoreError::Duplicate(url) => BackendError::new(
+            ErrorClassification::InvalidRequest,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            format!("plugin marketplace source already exists: {url}"),
+        ),
+        MarketplaceSourceStoreError::NotFound(url) => BackendError::new(
+            ErrorClassification::NotFound,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            format!("plugin marketplace source was not found: {url}"),
+        ),
+        error => BackendError::internal(
+            "failed to persist configured plugin marketplace sources",
+            error,
+        ),
     }
 }
 

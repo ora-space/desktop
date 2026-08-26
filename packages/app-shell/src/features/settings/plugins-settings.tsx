@@ -28,6 +28,7 @@ import { usePluginImport } from "../../state/hooks/use-plugin-import";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
 import { usePluginRegistrySync } from "../../state/hooks/use-plugin-registry-sync";
 import { PluginLogo } from "./plugin-logo";
+import { PluginSourcesManager } from "./plugin-sources-manager";
 import { PluginManager } from "./plugin-manager";
 import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
@@ -47,6 +48,7 @@ export function PluginsSettings({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [managing, setManaging] = useState(false);
+  const [managingSources, setManagingSources] = useState(false);
   const [configurationPlugin, setConfigurationPlugin] = useState<{
     id: string;
     displayName: string;
@@ -116,6 +118,10 @@ export function PluginsSettings({
       setSelecting(false);
     }
   };
+
+  if (managingSources) {
+    return <PluginSourcesManager onBack={() => setManagingSources(false)} />;
+  }
 
   if (managing) {
     if (configurationPlugin !== null) {
@@ -189,6 +195,13 @@ export function PluginsSettings({
         </div>
         <Button variant="outline" size="sm" onClick={() => setManaging(true)}>
           {t("settings.plugins.manageInstalled")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setManagingSources(true)}
+        >
+          {t("settings.plugins.manageSources")}
         </Button>
         <Button
           variant="outline"

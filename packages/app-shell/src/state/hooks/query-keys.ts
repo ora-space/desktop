@@ -16,6 +16,7 @@ export const queryKeys = {
   agents: ["agents"] as const,
   skills: ["skills"] as const,
   availablePlugins: ["available-plugins"] as const,
+  marketplaceSources: ["marketplace-sources"] as const,
   installedPlugins: ["installed-plugins"] as const,
   pluginConfiguration: (pluginId: string) =>
     ["plugin-configuration", pluginId] as const,

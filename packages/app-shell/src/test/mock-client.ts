@@ -4,6 +4,7 @@ import {
   type Agent,
   type AgentRuntimeStatus,
   type AvailablePlugin,
+  type MarketplaceSource,
   type ContractsClient,
   type InstalledPlugin,
   type PluginConfigurationDetails,
@@ -80,6 +81,7 @@ export interface MockClientState {
   agentRuntimeStatuses: AgentRuntimeStatus[];
   availablePlugins: AvailablePlugin[];
   availablePluginsUpdatedAt: bigint;
+  marketplaceSources: MarketplaceSource[];
   /**
    * The package a local `.orax` import should materialize; `null` rejects that import.
    * Undefined means imports are not configured and always fail in tests. A concrete target is
@@ -134,6 +136,7 @@ export function createMockClientState(): MockClientState {
     })),
     availablePlugins: [],
     availablePluginsUpdatedAt: 0n,
+    marketplaceSources: [],
     developerMode: { enabled: false },
     runtimeLogLevel: {
       configuredLevel: "info",
@@ -439,6 +442,22 @@ export function createMockClient(state: MockClientState): ContractsClient {
         updatedAt: state.availablePluginsUpdatedAt,
         plugins: [...state.availablePlugins],
       }),
+      listSources: async () => ({ sources: [...state.marketplaceSources] }),
+      addSource: async (req) => {
+        if (state.marketplaceSources.some((source) => source.url === req.url))
+          throw new Error(`marketplace source ${req.url} already exists`);
+        const source = { url: req.url, branch: req.branch };
+        state.marketplaceSources.push(source);
+        return { sources: [...state.marketplaceSources] };
+      },
+      deleteSource: async (req) => {
+        const idx = state.marketplaceSources.findIndex(
+          (source) => source.url === req.url,
+        );
+        if (idx < 0) throw new Error(`marketplace source ${req.url} not found`);
+        state.marketplaceSources.splice(idx, 1);
+        return { sources: [...state.marketplaceSources] };
+      },
       syncAvailable: async () => ({
         updatedAt: state.availablePluginsUpdatedAt,
         plugins: [...state.availablePlugins],

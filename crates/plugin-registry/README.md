@@ -10,6 +10,9 @@
 - `RegistrySource::from_git` derives a source's checkout directory from its git URL beneath the
   sources root, so several marketplace sources can be synced side by side without a manual
   URL-to-directory mapping.
+- `RegistrySource::try_from_git` validates the same source shape as `from_git` but rejects
+  non-HTTPS URLs and malformed short branch names before any checkout directory or Git work begins;
+  configuration-backed callers use this checked entry point.
 - `RegistryIndex::build` recursively scans a directory for `orax.toml` files, parses each valid
   manifest into a `RegistryEntry`, and returns a deterministically ordered index built at an
   injected Unix timestamp.

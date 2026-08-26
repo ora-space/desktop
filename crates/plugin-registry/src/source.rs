@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use gitlancer::git::sync::{CheckoutRequest, CloneRequest, FetchRequest, PullRequest};
 use gitlancer::{BranchName, Git, GitRunner, RepoRoot, Repository};
+use ora_plugin_manifest::RepositoryUrl;
+use ora_utils::GitBranchName;
 
 use crate::error::RegistryError;
 
@@ -56,6 +58,24 @@ impl RegistrySource {
             branch,
             checkout_dir,
         }
+    }
+
+    /// Validates an HTTPS Git URL and short branch name before creating a source.
+    ///
+    /// Configuration entry points use this checked constructor while the default source keeps
+    /// the infallible [`Self::from_git`] path for the compile-time constant.
+    pub fn try_from_git(
+        url: impl Into<String>,
+        branch: impl AsRef<str>,
+        sources_root: impl AsRef<Path>,
+    ) -> Result<Self, RegistryError> {
+        let url = RepositoryUrl::parse(&url.into())?;
+        let branch = GitBranchName::parse(branch.as_ref())?;
+        Ok(Self::from_git(
+            url.as_str(),
+            BranchName::new(branch.as_str()),
+            sources_root,
+        ))
     }
 
     /// Returns the git URL that hosts this registry source.
@@ -233,6 +253,44 @@ mod tests {
         );
         assert_eq!(source.url(), "https://github.com/ora-space/marketplace");
         assert_eq!(source.branch().as_str(), "main");
+        Ok(())
+    }
+
+    /// Verifies checked source construction normalizes a valid HTTPS URL and branch.
+    #[test]
+    fn validates_checked_git_source() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let source = RegistrySource::try_from_git(
+            "https://github.com/ora-space/marketplace",
+            "main",
+            temp.path(),
+        )?;
+
+        assert_eq!(source.url(), "https://github.com/ora-space/marketplace");
+        assert_eq!(source.branch().as_str(), "main");
+        assert!(source.checkout_dir().starts_with(temp.path()));
+        Ok(())
+    }
+
+    /// Verifies checked source construction rejects HTTP and malformed Git branch names.
+    #[test]
+    fn rejects_invalid_checked_git_source() -> Result<(), Box<dyn std::error::Error>> {
+        assert!(
+            RegistrySource::try_from_git(
+                "http://github.com/example/marketplace",
+                "main",
+                tempfile::tempdir()?.path(),
+            )
+            .is_err()
+        );
+        assert!(
+            RegistrySource::try_from_git(
+                "https://github.com/example/marketplace",
+                "feature api",
+                tempfile::tempdir()?.path(),
+            )
+            .is_err()
+        );
         Ok(())
     }
 }

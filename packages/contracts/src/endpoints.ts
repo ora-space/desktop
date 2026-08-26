@@ -5,7 +5,7 @@ import type { AppEvent, WatchAppEventsRequest } from "./app_event.js";
 import type { DeveloperModeResponse, GetDeveloperModeRequest, SetDeveloperModeRequest } from "./developerMode.js";
 import type { ListProjectDirectoryRequest, ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse, ReadProjectFileRequest, ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchProjectRequest, SearchWorkspaceRequest, SearchWorkspaceResponse, WatchProjectRequest, WatchWorkspaceRequest, WorkspaceFileEventBatch } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
-import type { ActivatePluginRequest, ActivatePluginResponse, DisablePluginRequest, DisablePluginResponse, EnablePluginRequest, EnablePluginResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse } from "./plugin.js";
+import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, DisablePluginRequest, DisablePluginResponse, EnablePluginRequest, EnablePluginResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse } from "./plugin.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
 import type { GetRuntimeLogLevelRequest, RuntimeLogLevelStateResponse, SetRuntimeLogLevelRequest } from "./runtimeLogLevel.js";
 import type { AttachSessionRequest, AttachSessionResponse, CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RenameSessionRequest, RenameSessionResponse, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
@@ -80,6 +80,9 @@ export type RequestByOperation = {
   commitAgentImport: CommitAgentImportRequest;
   listAvailablePlugins: ListAvailablePluginsRequest;
   syncAvailablePlugins: SyncAvailablePluginsRequest;
+  listMarketplaceSources: ListMarketplaceSourcesRequest;
+  addMarketplaceSource: AddMarketplaceSourceRequest;
+  deleteMarketplaceSource: DeleteMarketplaceSourceRequest;
   listInstalledPlugins: ListInstalledPluginsRequest;
   getPluginConfiguration: GetPluginConfigurationRequest;
   savePluginConfiguration: SavePluginConfigurationRequest;
@@ -187,6 +190,9 @@ export type ResponseByOperation = {
   commitAgentImport: CommitAgentImportResponse;
   listAvailablePlugins: ListAvailablePluginsResponse;
   syncAvailablePlugins: SyncAvailablePluginsResponse;
+  listMarketplaceSources: ListMarketplaceSourcesResponse;
+  addMarketplaceSource: AddMarketplaceSourceResponse;
+  deleteMarketplaceSource: DeleteMarketplaceSourceResponse;
   listInstalledPlugins: ListInstalledPluginsResponse;
   getPluginConfiguration: GetPluginConfigurationResponse;
   savePluginConfiguration: SavePluginConfigurationResponse;
@@ -665,6 +671,30 @@ export const endpoints = {
     memberName: "syncAvailable",
     requestType: "SyncAvailablePluginsRequest",
     responseType: "SyncAvailablePluginsResponse",
+    responseMode: "unary",
+  },
+  listMarketplaceSources: {
+    operationName: "listMarketplaceSources",
+    namespace: "plugin",
+    memberName: "listSources",
+    requestType: "ListMarketplaceSourcesRequest",
+    responseType: "ListMarketplaceSourcesResponse",
+    responseMode: "unary",
+  },
+  addMarketplaceSource: {
+    operationName: "addMarketplaceSource",
+    namespace: "plugin",
+    memberName: "addSource",
+    requestType: "AddMarketplaceSourceRequest",
+    responseType: "AddMarketplaceSourceResponse",
+    responseMode: "unary",
+  },
+  deleteMarketplaceSource: {
+    operationName: "deleteMarketplaceSource",
+    namespace: "plugin",
+    memberName: "deleteSource",
+    requestType: "DeleteMarketplaceSourceRequest",
+    responseType: "DeleteMarketplaceSourceResponse",
     responseMode: "unary",
   },
   listInstalledPlugins: {

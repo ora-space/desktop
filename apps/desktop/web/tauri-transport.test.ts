@@ -62,6 +62,21 @@ describe("createTauriTransport", () => {
       request: {},
     });
   });
+  it("lists marketplace sources through the Desktop plugin command", async () => {
+    const response = { sources: [] };
+    const invoke = vi.fn().mockResolvedValue(response);
+    const transport = createTauriTransport(invoke);
+
+    await expect(
+      transport.send({
+        operationName: "listMarketplaceSources",
+        request: {},
+      }),
+    ).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith("list_marketplace_sources", {
+      request: {},
+    });
+  });
   it("maps marketplace install to the Desktop plugin command", async () => {
     const response = { pluginId: "official/weather" };
     const invoke = vi.fn().mockResolvedValue(response);

@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use gitlancer::GitlancerError;
+use ora_plugin_manifest::UrlError;
+use ora_utils::GitBranchNameError;
 use thiserror::Error;
 
 /// Reports failures produced while syncing a registry source or reading/writing an index.
@@ -13,6 +15,14 @@ pub enum RegistryError {
     /// Wraps a manifest parse failure so a single malformed file can be diagnosed.
     #[error("plugin manifest parse failed: {0}")]
     Manifest(#[from] ora_plugin_manifest::ManifestError),
+
+    /// Wraps an invalid marketplace source URL before a checkout directory is derived.
+    #[error("marketplace source URL invalid: {0}")]
+    SourceUrl(#[from] UrlError),
+
+    /// Wraps an invalid marketplace source branch before any Git operation runs.
+    #[error("marketplace source branch invalid: {0}")]
+    SourceBranch(#[from] GitBranchNameError),
 
     /// Wraps a filesystem failure while scanning the registry tree or reading/writing files.
     #[error("registry file operation failed: {0}")]

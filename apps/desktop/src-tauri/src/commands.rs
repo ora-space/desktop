@@ -1061,6 +1061,28 @@ backend_command!(
     sync_available_plugins,
     "Pulls the marketplace source and rebuilds the cached registry index."
 );
+
+backend_command!(
+    list_marketplace_sources,
+    ListMarketplaceSourcesRequest,
+    ListMarketplaceSourcesResponse,
+    list_marketplace_sources,
+    "Lists the configured marketplace source repositories."
+);
+backend_command!(
+    add_marketplace_source,
+    AddMarketplaceSourceRequest,
+    AddMarketplaceSourceResponse,
+    add_marketplace_source,
+    "Adds one marketplace source repository."
+);
+backend_command!(
+    delete_marketplace_source,
+    DeleteMarketplaceSourceRequest,
+    DeleteMarketplaceSourceResponse,
+    delete_marketplace_source,
+    "Removes one marketplace source repository."
+);
 async_backend_command!(
     scan_plugins,
     ScanPluginsRequest,

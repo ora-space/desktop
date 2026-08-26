@@ -387,7 +387,14 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "InstallPluginRequest"
         | "InstallPluginResponse"
         | "ImportPluginRequest"
-        | "ImportPluginResponse" => "plugin",
+        | "ImportPluginResponse"
+        | "AddMarketplaceSourceRequest"
+        | "AddMarketplaceSourceResponse"
+        | "DeleteMarketplaceSourceRequest"
+        | "DeleteMarketplaceSourceResponse"
+        | "ListMarketplaceSourcesRequest"
+        | "ListMarketplaceSourcesResponse"
+        | "MarketplaceSource" => "plugin",
         // workflow
         "CreateWorkflowRequest"
         | "CreateWorkflowResponse"
