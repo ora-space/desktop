@@ -5,6 +5,7 @@ import {
   type AgentRuntimeStatus,
   type AvailablePlugin,
   type MarketplaceSource,
+  type ProxySettings,
   type ContractsClient,
   type InstalledPlugin,
   type PluginConfigurationDetails,
@@ -76,12 +77,13 @@ export interface MockClientState {
   /**
    * What the agent runtime reports reaching, which is what decides the agents the pickers offer.
    *
-   * An agent missing from this list is one nothing supervises — an uninstalled plugin package.
+   * An agent missing from this list is one nothing supervises 鈥?an uninstalled plugin package.
    */
   agentRuntimeStatuses: AgentRuntimeStatus[];
   availablePlugins: AvailablePlugin[];
   availablePluginsUpdatedAt: bigint;
   marketplaceSources: MarketplaceSource[];
+  proxySettings: ProxySettings | null;
   /**
    * The package a local `.orax` import should materialize; `null` rejects that import.
    * Undefined means imports are not configured and always fail in tests. A concrete target is
@@ -136,6 +138,7 @@ export function createMockClientState(): MockClientState {
     availablePlugins: [],
     availablePluginsUpdatedAt: 0n,
     marketplaceSources: [],
+    proxySettings: null,
     developerMode: { enabled: false },
     runtimeLogLevel: {
       configuredLevel: "info",
@@ -445,7 +448,11 @@ export function createMockClient(state: MockClientState): ContractsClient {
       addSource: async (req) => {
         if (state.marketplaceSources.some((source) => source.url === req.url))
           throw new Error(`marketplace source ${req.url} already exists`);
-        const source = { url: req.url, branch: req.branch };
+        const source = {
+          url: req.url,
+          branch: req.branch,
+          useProxy: req.useProxy,
+        };
         state.marketplaceSources.push(source);
         return { sources: [...state.marketplaceSources] };
       },
@@ -455,6 +462,15 @@ export function createMockClient(state: MockClientState): ContractsClient {
         );
         if (idx < 0) throw new Error(`marketplace source ${req.url} not found`);
         state.marketplaceSources.splice(idx, 1);
+        return { sources: [...state.marketplaceSources] };
+      },
+      updateSource: async (req) => {
+        const source = state.marketplaceSources.find(
+          (candidate) => candidate.url === req.url,
+        );
+        if (source === undefined)
+          throw new Error(`marketplace source ${req.url} not found`);
+        source.useProxy = req.useProxy;
         return { sources: [...state.marketplaceSources] };
       },
       syncAvailable: async () => ({
@@ -623,6 +639,13 @@ export function createMockClient(state: MockClientState): ContractsClient {
         sessionId: request.sessionId,
         cancelled: true,
       }),
+    },
+    proxy: {
+      get: async () => ({ settings: state.proxySettings }),
+      set: async (req) => {
+        state.proxySettings = structuredClone(req.settings);
+        return { settings: state.proxySettings };
+      },
     },
     fileSystem: {
       listWorkspaceDirectory: async () => ({ path: "", entries: [] }),

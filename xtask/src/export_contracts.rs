@@ -390,7 +390,16 @@ fn contract_module_for_type(type_name: &str) -> &'static str {
         | "DeleteMarketplaceSourceResponse"
         | "ListMarketplaceSourcesRequest"
         | "ListMarketplaceSourcesResponse"
+        | "UpdateMarketplaceSourceResponse"
+        | "UpdateMarketplaceSourceRequest"
         | "MarketplaceSource" => "plugin",
+        // proxy
+        "GetProxySettingsRequest"
+        | "GetProxySettingsResponse"
+        | "ProxySettings"
+        | "SetProxySettingsRequest"
+        | "SetProxySettingsResponse" => "proxy",
+
         // workflow
         "CreateWorkflowRequest"
         | "CreateWorkflowResponse"

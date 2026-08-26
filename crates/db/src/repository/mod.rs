@@ -3,6 +3,7 @@ mod cascade;
 mod connection;
 mod effect;
 mod git_cleanup_job;
+mod marketplace_source;
 mod project;
 mod session;
 mod skill;
@@ -24,6 +25,9 @@ pub use effect::{
     SourcePublication, SqliteEffectRepository,
 };
 pub use git_cleanup_job::SqliteGitCleanupJobRepository;
+pub use marketplace_source::{
+    PluginMarketplaceSourceRecord, SqlitePluginMarketplaceSourceRepository,
+};
 pub use project::SqliteProjectRepository;
 pub use session::SqliteSessionRepository;
 pub use skill::{PluginSkillProjection, SqliteSkillRepository};

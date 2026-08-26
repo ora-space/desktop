@@ -1083,6 +1083,13 @@ backend_command!(
     delete_marketplace_source,
     "Removes one marketplace source repository."
 );
+backend_command!(
+    update_marketplace_source,
+    UpdateMarketplaceSourceRequest,
+    UpdateMarketplaceSourceResponse,
+    update_marketplace_source,
+    "Updates one marketplace source's proxy policy."
+);
 async_backend_command!(
     scan_plugins,
     ScanPluginsRequest,

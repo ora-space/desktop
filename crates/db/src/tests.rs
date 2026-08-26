@@ -29,7 +29,7 @@ fn bootstraps_the_current_workspace_schema() {
     let catalog = default_migration_catalog().expect("build migration catalog");
     assert_eq!(
         catalog.target_versions(),
-        ["0001", "0002", "0003", "0004", "0005"]
+        ["0001", "0002", "0003", "0004", "0005", "0006"]
     );
 
     let database = with_trace_logging(|| {
@@ -60,6 +60,7 @@ fn bootstraps_the_current_workspace_schema() {
             "effect_surfaces",
             "git_cleanup_jobs",
             "migrations",
+            "plugin_marketplace_source",
             "projects",
             "sessions",
             "skills",

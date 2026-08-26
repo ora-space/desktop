@@ -138,6 +138,7 @@ impl Backend {
             .map_err(BackendBootstrapError::SkillStorageReconciliation)?;
         let clock = SystemClock;
         let app_events = Arc::new(AppEventHub::new());
+        let user_config = Arc::new(UserConfigApi::new(pool.clone()));
         let plugin = Arc::new(
             PluginApi::open(
                 pool.clone(),
@@ -145,6 +146,7 @@ impl Backend {
                 paths.deno_path,
                 clock,
                 app_events.publisher(),
+                user_config.clone(),
             )
             .map_err(BackendBootstrapError::Plugin)?,
         );
@@ -217,7 +219,7 @@ impl Backend {
                 git_cleanup.clone(),
                 relative_path_base.clone(),
             )),
-            user_config: Arc::new(UserConfigApi::new(pool.clone())),
+            user_config,
             session: Arc::new(SessionApi::new(pool.clone())),
             agent_runtime,
             plugin,
@@ -319,14 +321,20 @@ impl Backend {
         self.plugin.delete_marketplace_source(request)
     }
 
+    /// Changes one marketplace source\u2019s proxy policy after persisting it.
+    pub fn update_marketplace_source(
+        &self,
+        request: UpdateMarketplaceSourceRequest,
+    ) -> Result<UpdateMarketplaceSourceResponse, BackendError> {
+        self.plugin.update_marketplace_source(request)
+    }
+
     /// Pulls the marketplace source and rebuilds the cache used by plugin discovery.
     pub fn sync_available_plugins(
         &self,
         request: SyncAvailablePluginsRequest,
     ) -> Result<SyncAvailablePluginsResponse, BackendError> {
-        self.plugin
-            .sync_available_plugins(request)
-            .map_err(|error| BackendError::internal("failed to sync plugin registry index", error))
+        self.plugin.sync_available_plugins(request)
     }
 
     /// Explicitly rescans packages and reconciles process-local runtime state.
@@ -663,6 +671,21 @@ impl Backend {
         level: ora_logging::LogLevel,
     ) -> Result<ora_logging::LogLevel, BackendError> {
         self.user_config.set_preferred_log_level(level).await
+    }
+
+    /// Returns the optional configured network proxy settings.
+    pub fn network_proxy_settings(
+        &self,
+    ) -> Result<Option<ora_application::NetworkProxySettings>, BackendError> {
+        self.user_config.network_proxy_settings()
+    }
+
+    /// Persists and returns the configured network proxy settings.
+    pub fn set_network_proxy_settings(
+        &self,
+        settings: ora_application::NetworkProxySettings,
+    ) -> Result<ora_application::NetworkProxySettings, BackendError> {
+        self.user_config.set_network_proxy_settings(settings)
     }
 
     /// Returns the restricted preferred-level persistence capability for runtime logging.

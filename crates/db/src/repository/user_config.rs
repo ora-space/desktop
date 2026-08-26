@@ -1,4 +1,4 @@
-use ora_application::{DeveloperMode, RepositoryError, UserConfigRepository};
+use ora_application::{DeveloperMode, NetworkProxySettings, RepositoryError, UserConfigRepository};
 use ora_logging::LogLevel;
 use rusqlite::{OptionalExtension, params};
 
@@ -6,6 +6,7 @@ use crate::repository::RepositoryPool;
 
 const DEVELOPER_MODE_KEY: &str = "developer_mode";
 const LOG_LEVEL_KEY: &str = "log_level";
+const NETWORK_PROXY_SETTINGS_KEY: &str = "network_proxy_settings";
 
 /// Persists the supported shared user preferences in SQLite's `user_config` table.
 #[derive(Clone, Debug)]
@@ -85,6 +86,26 @@ impl UserConfigRepository for SqliteUserConfigRepository {
     /// Stores the canonical lower-case log-level text.
     fn save_preferred_log_level(&self, level: LogLevel) -> Result<(), RepositoryError> {
         self.save_value(LOG_LEVEL_KEY, level.as_str())
+    }
+
+    /// Loads the optional network proxy settings as JSON, treating a missing row as unset.
+    fn load_network_proxy_settings(&self) -> Result<Option<NetworkProxySettings>, RepositoryError> {
+        match self.load_value(NETWORK_PROXY_SETTINGS_KEY)? {
+            None => Ok(None),
+            Some(value) => serde_json::from_str(&value)
+                .map(Some)
+                .map_err(|_| corrupt_value_error(NETWORK_PROXY_SETTINGS_KEY)),
+        }
+    }
+
+    /// Stores the network proxy settings as a single JSON value.
+    fn save_network_proxy_settings(
+        &self,
+        settings: &NetworkProxySettings,
+    ) -> Result<(), RepositoryError> {
+        let value = serde_json::to_string(settings)
+            .map_err(|_| corrupt_value_error(NETWORK_PROXY_SETTINGS_KEY))?;
+        self.save_value(NETWORK_PROXY_SETTINGS_KEY, &value)
     }
 }
 

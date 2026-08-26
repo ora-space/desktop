@@ -1,6 +1,18 @@
 use ora_logging::LogLevel;
+use serde::{Deserialize, Serialize};
 
 use crate::{ApplicationError, RepositoryError};
+
+/// Stores the optional host-level network proxy used by configured marketplace sources.
+///
+/// Username and password are optional and are persisted only when the user supplies them.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NetworkProxySettings {
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
 
 /// Represents whether developer-facing settings are discoverable in the shared UI.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -33,6 +45,15 @@ pub trait UserConfigRepository: Clone + Send + Sync + 'static {
 
     /// Atomically inserts or replaces the preferred runtime log level.
     fn save_preferred_log_level(&self, level: LogLevel) -> Result<(), RepositoryError>;
+
+    /// Loads the optional network proxy settings, absent when the user has not configured one.
+    fn load_network_proxy_settings(&self) -> Result<Option<NetworkProxySettings>, RepositoryError>;
+
+    /// Atomically inserts or replaces the network proxy settings.
+    fn save_network_proxy_settings(
+        &self,
+        settings: &NetworkProxySettings,
+    ) -> Result<(), RepositoryError>;
 }
 
 /// Coordinates transport-independent reads and writes for shared user preferences.
@@ -81,5 +102,23 @@ where
             .save_preferred_log_level(level)
             .map_err(ApplicationError::from_user_config_repository_error)?;
         Ok(level)
+    }
+
+    /// Returns the optional configured network proxy settings.
+    pub fn network_proxy_settings(&self) -> Result<Option<NetworkProxySettings>, ApplicationError> {
+        self.repository
+            .load_network_proxy_settings()
+            .map_err(ApplicationError::from_user_config_repository_error)
+    }
+
+    /// Persists and returns the authoritative network proxy settings.
+    pub fn set_network_proxy_settings(
+        &self,
+        settings: NetworkProxySettings,
+    ) -> Result<NetworkProxySettings, ApplicationError> {
+        self.repository
+            .save_network_proxy_settings(&settings)
+            .map_err(ApplicationError::from_user_config_repository_error)?;
+        Ok(settings)
     }
 }

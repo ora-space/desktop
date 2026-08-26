@@ -13,7 +13,11 @@ export type ActivatePluginResponse = { plugin: InstalledPlugin };
 /**
  * Requests adding one marketplace Git source.
  */
-export type AddMarketplaceSourceRequest = { url: string; branch: string };
+export type AddMarketplaceSourceRequest = {
+  url: string;
+  branch: string;
+  useProxy: boolean;
+};
 
 /**
  * Returns the source list immediately after one source is persisted.
@@ -196,6 +200,10 @@ export type MarketplaceSource = {
    * Short branch name tracked by the source.
    */
   branch: string;
+  /**
+   * Whether Git fetches and plugin downloads for this source use the configured proxy.
+   */
+  useProxy: boolean;
 };
 
 /**
@@ -370,3 +378,15 @@ export type UninstallPluginRequest = {
  * Confirms the identifier removed after process shutdown and package deletion complete.
  */
 export type UninstallPluginResponse = { pluginId: string };
+
+/**
+ * Requests changing only one marketplace source's proxy policy.
+ */
+export type UpdateMarketplaceSourceRequest = { url: string; useProxy: boolean };
+
+/**
+ * Returns the source list immediately after one source's proxy policy is persisted.
+ */
+export type UpdateMarketplaceSourceResponse = {
+  sources: Array<MarketplaceSource>;
+};

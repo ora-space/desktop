@@ -251,6 +251,8 @@ pub struct MarketplaceSource {
     pub url: String,
     /// Short branch name tracked by the source.
     pub branch: String,
+    /// Whether Git fetches and plugin downloads for this source use the configured proxy.
+    pub use_proxy: bool,
 }
 
 /// Requests the configured marketplace source repositories.
@@ -274,6 +276,7 @@ pub struct ListMarketplaceSourcesResponse {
 pub struct AddMarketplaceSourceRequest {
     pub url: String,
     pub branch: String,
+    pub use_proxy: bool,
 }
 
 /// Returns the source list immediately after one source is persisted.
@@ -281,6 +284,23 @@ pub struct AddMarketplaceSourceRequest {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "plugin.ts")]
 pub struct AddMarketplaceSourceResponse {
+    pub sources: Vec<MarketplaceSource>,
+}
+
+/// Requests changing only one marketplace source's proxy policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct UpdateMarketplaceSourceRequest {
+    pub url: String,
+    pub use_proxy: bool,
+}
+
+/// Returns the source list immediately after one source's proxy policy is persisted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct UpdateMarketplaceSourceResponse {
     pub sources: Vec<MarketplaceSource>,
 }
 
@@ -511,6 +531,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ListMarketplaceSourcesResponse::export(config)?;
     AddMarketplaceSourceRequest::export(config)?;
     AddMarketplaceSourceResponse::export(config)?;
+    UpdateMarketplaceSourceRequest::export(config)?;
+    UpdateMarketplaceSourceResponse::export(config)?;
     DeleteMarketplaceSourceRequest::export(config)?;
     DeleteMarketplaceSourceResponse::export(config)?;
     ListInstalledPluginsRequest::export(config)?;
@@ -548,7 +570,8 @@ mod tests {
         ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
         ListMarketplaceSourcesResponse, MarketplaceSource, PluginConfigurationSummary,
         PluginInstallationValidity, PluginRuntimeStatus, SyncAvailablePluginsRequest,
-        SyncAvailablePluginsResponse,
+        SyncAvailablePluginsResponse, UpdateMarketplaceSourceRequest,
+        UpdateMarketplaceSourceResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -801,6 +824,7 @@ mod tests {
         let source = || MarketplaceSource {
             url: "https://github.com/example/marketplace".to_string(),
             branch: "main".to_string(),
+            use_proxy: false,
         };
         assert_eq!(
             serde_json::to_value(ListMarketplaceSourcesRequest {}).unwrap(),
@@ -814,7 +838,8 @@ mod tests {
             json!({
                 "sources": [{
                     "url": "https://github.com/example/marketplace",
-                    "branch": "main"
+                    "branch": "main",
+                    "useProxy": false
                 }]
             })
         );
@@ -822,11 +847,13 @@ mod tests {
             serde_json::to_value(AddMarketplaceSourceRequest {
                 url: "https://github.com/example/marketplace".to_string(),
                 branch: "main".to_string(),
+                use_proxy: false,
             })
             .unwrap(),
             json!({
                 "url": "https://github.com/example/marketplace",
-                "branch": "main"
+                "branch": "main",
+                "useProxy": false
             })
         );
         assert_eq!(
@@ -837,9 +864,28 @@ mod tests {
             json!({
                 "sources": [{
                     "url": "https://github.com/example/marketplace",
-                    "branch": "main"
+                    "branch": "main",
+                    "useProxy": false
                 }]
             })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateMarketplaceSourceRequest {
+                url: "https://github.com/example/marketplace".to_string(),
+                use_proxy: true,
+            })
+            .unwrap(),
+            json!({
+                "url": "https://github.com/example/marketplace",
+                "useProxy": true
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateMarketplaceSourceResponse {
+                sources: Vec::new(),
+            })
+            .unwrap(),
+            json!({ "sources": [] })
         );
         assert_eq!(
             serde_json::to_value(DeleteMarketplaceSourceRequest {

@@ -17,6 +17,8 @@ pub struct CloneRequest<'a> {
     pub working_dir: std::path::PathBuf,
     /// Optional branch to check out after cloning via `--branch`.
     pub branch: Option<BranchName>,
+    /// Environment applied to the clone command, usually including proxy variables.
+    pub env: GitEnv,
 }
 
 /// Carries the information needed to fetch refs for an existing repository.
@@ -25,6 +27,8 @@ pub struct FetchRequest<'a> {
     pub repository: &'a Repository,
     /// Remote name to fetch from, normally `origin`.
     pub remote: &'a str,
+    /// Environment applied to the fetch command, usually including proxy variables.
+    pub env: GitEnv,
 }
 
 /// Carries the information needed to check out a branch in an existing repository.
@@ -39,6 +43,8 @@ pub struct CheckoutRequest<'a> {
 pub struct PullRequest<'a> {
     pub repository: &'a Repository,
     pub branch: &'a BranchName,
+    /// Environment applied to the pull command, usually including proxy variables.
+    pub env: GitEnv,
 }
 
 impl<R: GitRunner> Git<R> {
@@ -53,7 +59,7 @@ impl<R: GitRunner> Git<R> {
         self.runner().run(&GitCommand::new(
             request.repository.root().as_path().to_path_buf(),
             vec!["fetch".to_string(), request.remote.to_string()],
-            GitEnv::default(),
+            request.env,
             GitIntent::Network,
         ))?;
         Ok(())
@@ -80,7 +86,7 @@ impl<R: GitRunner> Git<R> {
                 "origin".to_string(),
                 request.branch.as_str().to_string(),
             ],
-            GitEnv::default(),
+            request.env,
             GitIntent::Network,
         ))?;
         Ok(())
@@ -100,7 +106,7 @@ pub fn build_clone_command(request: &CloneRequest<'_>) -> GitCommand {
     GitCommand::new(
         request.working_dir.clone(),
         args,
-        GitEnv::default(),
+        request.env.clone(),
         GitIntent::Network,
     )
 }
@@ -110,6 +116,7 @@ mod tests {
     use super::build_clone_command;
     use crate::domain::refs::BranchName;
     use crate::exec::command::GitIntent;
+    use crate::exec::env::GitEnv;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -121,6 +128,7 @@ mod tests {
             destination: PathBuf::from("sources/marketplace"),
             working_dir: PathBuf::from("sources"),
             branch: None,
+            env: GitEnv::default(),
         });
 
         assert_eq!(
@@ -143,6 +151,7 @@ mod tests {
             destination: PathBuf::from("sources/marketplace"),
             working_dir: PathBuf::from("sources"),
             branch: Some(BranchName::new("main")),
+            env: GitEnv::default(),
         });
 
         assert_eq!(

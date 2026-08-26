@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ora_application::{DeveloperMode, UserConfigService};
+use ora_application::{DeveloperMode, NetworkProxySettings, UserConfigService};
 use ora_db::{RepositoryPool, SqliteUserConfigRepository};
 use ora_logging::LogLevel;
 use ora_runtime_settings::PreferredLogLevelStore;
@@ -85,5 +85,24 @@ impl UserConfigApi {
                 .map_err(BackendError::from)
         })
         .await
+    }
+
+    /// Loads the optional network proxy settings directly through the synchronous service boundary.
+    pub(crate) fn network_proxy_settings(
+        &self,
+    ) -> Result<Option<NetworkProxySettings>, BackendError> {
+        self.service
+            .network_proxy_settings()
+            .map_err(BackendError::from)
+    }
+
+    /// Persists and returns the network proxy settings through the synchronous service boundary.
+    pub(crate) fn set_network_proxy_settings(
+        &self,
+        settings: NetworkProxySettings,
+    ) -> Result<NetworkProxySettings, BackendError> {
+        self.service
+            .set_network_proxy_settings(settings)
+            .map_err(BackendError::from)
     }
 }

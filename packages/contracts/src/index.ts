@@ -9,6 +9,7 @@ export * from "./error.js";
 export * from "./error.schema.js";
 export * from "./file-system.js";
 export * from "./plugin.js";
+export * from "./proxy.js";
 export * from "./project.js";
 export * from "./runtimeLogLevel.js";
 export * from "./session.js";

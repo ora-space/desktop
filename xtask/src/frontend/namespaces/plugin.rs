@@ -41,6 +41,13 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "DeleteMarketplaceSourceResponse",
     },
     FrontendEndpoint {
+        operation_name: "updateMarketplaceSource",
+        namespace: NAMESPACE,
+        member_name: "updateSource",
+        request_type: "UpdateMarketplaceSourceRequest",
+        response_type: "UpdateMarketplaceSourceResponse",
+    },
+    FrontendEndpoint {
         operation_name: "listInstalledPlugins",
         namespace: NAMESPACE,
         member_name: "listInstalled",

@@ -12,6 +12,7 @@ mod plugin;
 mod plugin_configuration;
 mod plugin_gateway;
 mod project;
+mod proxy;
 mod request_lifecycle;
 mod session;
 mod session_history;

@@ -60,7 +60,9 @@ pub use task_diff::{
     TaskDiffReader, TaskDiffReaderError, TaskDiffSnapshot, TaskGitCommit, TaskGitPush,
     TaskGitWriter, TaskGitWriterError,
 };
-pub use user_config::{DeveloperMode, UserConfigRepository, UserConfigService};
+pub use user_config::{
+    DeveloperMode, NetworkProxySettings, UserConfigRepository, UserConfigService,
+};
 pub use workflow::{
     ActivateVersionResult, ActivateWorkflowHandler, CreateWorkflowHandler, DeleteSnapshotHandler,
     DeleteSnapshotResult, DeleteWorkflowHandler, DeleteWorkflowResult, GetDraftHandler,

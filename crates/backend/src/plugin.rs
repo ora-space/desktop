@@ -3,6 +3,8 @@ use crate::clock::SystemClock;
 use crate::effect_worker::EffectWorkerHandle;
 use crate::error::{BackendError, ErrorClassification};
 use crate::marketplace_sources::{MarketplaceSourceStore, MarketplaceSourceStoreError};
+use crate::proxy;
+use crate::user_config::UserConfigApi;
 use gitlancer::{CliGitRunner, Git};
 use ora_application::Clock;
 use ora_contracts::{
@@ -14,10 +16,11 @@ use ora_contracts::{
     ListMarketplaceSourcesResponse, PublicError, ScanPluginsRequest, ScanPluginsResponse,
     StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest,
     SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse,
+    UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse,
 };
 use ora_db::{
-    PluginSkillProjection, RepositoryPool, SqliteEffectRepository, SqliteSkillRepository,
-    SqliteWorkspaceRepository,
+    PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
+    SqlitePluginMarketplaceSourceRepository, SqliteSkillRepository, SqliteWorkspaceRepository,
 };
 use ora_domain::{PluginId, WorkspaceLocation};
 use ora_effect::{Digest, FilesystemSkillSurface, SurfaceDescriptorSet};
@@ -153,6 +156,7 @@ pub(crate) struct AgentPluginAttachment {
 pub(crate) struct PluginApi {
     pub(crate) lifecycle: BackendPluginLifecycle,
     marketplace_sources: MarketplaceSourceStore,
+    user_config: Arc<UserConfigApi>,
     registry_index_path: PathBuf,
     data_directory: PathBuf,
     installer: Installer<ReqwestDownloader>,
@@ -178,15 +182,20 @@ impl PluginApi {
         deno_path: PathBuf,
         clock: SystemClock,
         publisher: AppEventPublisher,
+        user_config: Arc<UserConfigApi>,
     ) -> Result<Self, BackendError> {
         let plugins_directory = data_directory.join("plugins");
-        let marketplace_sources =
-            MarketplaceSourceStore::open(&data_directory).map_err(|error| {
-                BackendError::internal(
-                    "failed to load configured plugin marketplace sources",
-                    error,
-                )
-            })?;
+        let marketplace_sources = MarketplaceSourceStore::open(
+            SqlitePluginMarketplaceSourceRepository::new(pool.clone()),
+            &data_directory,
+            clock.now_timestamp_millis(),
+        )
+        .map_err(|error| {
+            BackendError::internal(
+                "failed to load configured plugin marketplace sources",
+                error,
+            )
+        })?;
         let registry_index_path = plugins_directory.join("cache").join("registry_index.json");
         let installer = Installer::new(ReqwestDownloader::new(ProxyConfig::default()));
         let notifications = BroadcastNotificationSink::new();
@@ -205,6 +214,7 @@ impl PluginApi {
         Ok(Self {
             lifecycle,
             marketplace_sources,
+            user_config,
             registry_index_path,
             data_directory,
             installer,
@@ -263,7 +273,10 @@ impl PluginApi {
         _request: ListMarketplaceSourcesRequest,
     ) -> Result<ListMarketplaceSourcesResponse, BackendError> {
         Ok(ListMarketplaceSourcesResponse {
-            sources: self.marketplace_sources.list(),
+            sources: self
+                .marketplace_sources
+                .list()
+                .map_err(map_marketplace_source_error)?,
         })
     }
 
@@ -274,10 +287,14 @@ impl PluginApi {
     ) -> Result<AddMarketplaceSourceResponse, BackendError> {
         let sources = self
             .marketplace_sources
-            .add(ora_contracts::MarketplaceSource {
-                url: request.url,
-                branch: request.branch,
-            })
+            .add(
+                ora_contracts::MarketplaceSource {
+                    url: request.url,
+                    branch: request.branch,
+                    use_proxy: request.use_proxy,
+                },
+                self.clock.now_timestamp_millis(),
+            )
             .map_err(map_marketplace_source_error)?;
         Ok(AddMarketplaceSourceResponse { sources })
     }
@@ -294,17 +311,34 @@ impl PluginApi {
         Ok(DeleteMarketplaceSourceResponse { sources })
     }
 
+    /// Changes only one marketplace source\u2019s proxy policy and returns the authoritative list.
+    pub(crate) fn update_marketplace_source(
+        &self,
+        request: UpdateMarketplaceSourceRequest,
+    ) -> Result<UpdateMarketplaceSourceResponse, BackendError> {
+        let sources = self
+            .marketplace_sources
+            .set_use_proxy(
+                &request.url,
+                request.use_proxy,
+                self.clock.now_timestamp_millis(),
+            )
+            .map_err(map_marketplace_source_error)?;
+        Ok(UpdateMarketplaceSourceResponse { sources })
+    }
+
     /// Pulls every marketplace source, merges their registry indexes, and atomically replaces the
     /// cache.
     pub(crate) fn sync_available_plugins(
         &self,
         _request: SyncAvailablePluginsRequest,
-    ) -> Result<SyncAvailablePluginsResponse, RegistryError> {
+    ) -> Result<SyncAvailablePluginsResponse, BackendError> {
         let git = Git::new(CliGitRunner);
-        let registry_sources = self.marketplace_sources.snapshot();
+        let registry_sources = self.prepared_registry_sources()?;
         let mut registry_dirs: Vec<PathBuf> = Vec::with_capacity(registry_sources.len());
-        for source in &registry_sources {
-            let checkout_directory = RegistrySync::sync(&git, source)?;
+        for (source, _) in &registry_sources {
+            let checkout_directory = RegistrySync::sync(&git, source)
+                .map_err(|error| BackendError::internal("failed to sync plugin registry", error))?;
             registry_dirs.push(checkout_directory.join("registry"));
         }
         let registry_dir_refs: Vec<&Path> = registry_dirs.iter().map(PathBuf::as_path).collect();
@@ -313,9 +347,16 @@ impl PluginApi {
             ora_logging::clock::now_local().unix_timestamp(),
         );
         if let Some(cache_directory) = self.registry_index_path.parent() {
-            std::fs::create_dir_all(cache_directory)?;
+            std::fs::create_dir_all(cache_directory).map_err(|error| {
+                BackendError::internal("failed to create registry cache directory", error)
+            })?;
         }
-        build.index().write(&self.registry_index_path)?;
+        build
+            .index()
+            .write(&self.registry_index_path)
+            .map_err(|error| {
+                BackendError::internal("failed to write plugin registry index", error)
+            })?;
         Ok(SyncAvailablePluginsResponse {
             updated_at: build.index().updated_at(),
             plugins: build
@@ -325,6 +366,36 @@ impl PluginApi {
                 .map(available_plugin)
                 .collect(),
         })
+    }
+
+    /// Binds every configured marketplace source to a registry checkout, applying proxy policy.
+    fn prepared_registry_sources(
+        &self,
+    ) -> Result<Vec<(ora_plugin_registry::RegistrySource, bool)>, BackendError> {
+        let configured = self
+            .marketplace_sources
+            .list()
+            .map_err(map_marketplace_source_error)?;
+        let proxy_settings = self.user_config.network_proxy_settings()?;
+        let mut registry_sources = Vec::with_capacity(configured.len());
+
+        for source in &configured {
+            let mut registry_source = self
+                .marketplace_sources
+                .registry_source(source)
+                .map_err(map_marketplace_source_error)?;
+            if source.use_proxy {
+                let git_env = proxy::git_proxy_env(proxy_settings.as_ref())?.ok_or_else(|| {
+                    BackendError::invalid_proxy_settings(
+                        "a marketplace source uses the proxy but no proxy is configured",
+                    )
+                })?;
+                registry_source = registry_source.with_git_env(git_env);
+            }
+            registry_sources.push((registry_source, source.use_proxy));
+        }
+
+        Ok(registry_sources)
     }
 
     /// Exposes the lifecycle to the gateway that serves desktop surfaces.
@@ -466,12 +537,7 @@ impl PluginApi {
         &self,
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
-        let registry_sources = self.marketplace_sources.snapshot();
-        let registry_dirs: Vec<PathBuf> = registry_sources
-            .iter()
-            .map(|source| source.checkout_dir().join("registry"))
-            .collect();
-        let registry_dir_refs: Vec<&Path> = registry_dirs.iter().map(PathBuf::as_path).collect();
+        let registry_sources = self.prepared_registry_sources()?;
         // A malformed identifier can never name a registry entry, so it is reported the same way
         // as an unknown one instead of leaking the id grammar as a separate error class.
         let plugin_id = PluginId::parse(&request.plugin_id).map_err(|_| {
@@ -481,17 +547,25 @@ impl PluginApi {
                 "marketplace plugin id is not a valid `<namespace>/<name>`",
             )
         })?;
-        let manifest = RegistryIndex::resolve_manifest_all(&registry_dir_refs, &plugin_id)
-            .map_err(|error| {
-                BackendError::internal("failed to resolve plugin release manifest", error)
-            })?
-            .ok_or_else(|| {
-                BackendError::new(
-                    ErrorClassification::NotFound,
-                    PublicError::PluginNotFound(EmptyErrorParams {}),
-                    "marketplace plugin was not found in the registry",
-                )
-            })?;
+        let mut resolved = None;
+        for (source, use_proxy) in &registry_sources {
+            let registry_dir = source.checkout_dir().join("registry");
+            if let Some(manifest) = RegistryIndex::resolve_manifest(&registry_dir, &plugin_id)
+                .map_err(|error| {
+                    BackendError::internal("failed to resolve plugin release manifest", error)
+                })?
+            {
+                resolved = Some((manifest, *use_proxy));
+                break;
+            }
+        }
+        let (manifest, use_proxy) = resolved.ok_or_else(|| {
+            BackendError::new(
+                ErrorClassification::NotFound,
+                PublicError::PluginNotFound(EmptyErrorParams {}),
+                "marketplace plugin was not found in the registry",
+            )
+        })?;
         let release_url = manifest
             .url()
             .ok_or_else(|| {
@@ -502,7 +576,17 @@ impl PluginApi {
             })?
             .as_url();
         ora_info!(plugin_id = %request.plugin_id, url = %release_url, "installing marketplace plugin");
-        self.installer
+        let proxy_settings = self.user_config.network_proxy_settings()?;
+        let download_proxy = if use_proxy {
+            proxy::download_proxy(proxy_settings.as_ref())?.ok_or_else(|| {
+                BackendError::invalid_proxy_settings(
+                    "a marketplace source uses the proxy but no proxy is configured",
+                )
+            })?
+        } else {
+            ProxyConfig::default()
+        };
+        Installer::new(ReqwestDownloader::new(download_proxy))
             .install(
                 &manifest,
                 DownloadSource::Url(release_url.clone()),

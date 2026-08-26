@@ -963,12 +963,14 @@ mod tests {
     use crate::app_event::AppEventHub;
     use crate::clock::SystemClock;
     use crate::plugin::PluginApi;
+    use crate::user_config::UserConfigApi;
     use ora_db::{
         DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog,
     };
     use ora_domain::{AgentCli, AuditFields, SessionId, SessionStatus, SessionTitle, WorkspaceId};
     use ora_scheduler::Scheduler;
     use std::path::Path;
+    use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::{mpsc, oneshot};
@@ -993,6 +995,7 @@ mod tests {
                 PathBuf::from("deno"),
                 SystemClock,
                 AppEventHub::new().publisher(),
+                Arc::new(UserConfigApi::new(pool.clone())),
             )
             .expect("open plugin host"),
         )

@@ -22,13 +22,14 @@ export const queryKeys = {
     ["plugin-configuration", pluginId] as const,
   developerMode: ["developer-mode"] as const,
   runtimeLogLevel: ["runtime-log-level"] as const,
+  proxySettings: ["proxy-settings"] as const,
   gitIdentity: ["gitIdentity"] as const,
-  /** Project → mounted graph workflow definitions (mock host). */
+  /** Project 鈫?mounted graph workflow definitions (mock host). */
   workflowMounts: (projectId: string) => ["workflowMounts", projectId] as const,
-  /** Definition → projects that already mount it. */
+  /** Definition 鈫?projects that already mount it. */
   workflowMountsByDefinition: (definitionId: string) =>
     ["workflowMountsByDefinition", definitionId] as const,
-  /** Project → GraphWorkflowRun list (mock run repo). */
+  /** Project 鈫?GraphWorkflowRun list (mock run repo). */
   workflowRuns: (projectId: string) => ["workflowRuns", projectId] as const,
   workflowRun: (runId: string) => ["workflowRun", runId] as const,
   /** Artifacts produced by one graph workflow run. */

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use gitlancer::git::sync::{CheckoutRequest, CloneRequest, FetchRequest, PullRequest};
-use gitlancer::{BranchName, Git, GitRunner, RepoRoot, Repository};
+use gitlancer::{BranchName, Git, GitEnv, GitRunner, RepoRoot, Repository};
 use ora_plugin_manifest::RepositoryUrl;
 use ora_utils::GitBranchName;
 
@@ -13,6 +13,7 @@ pub struct RegistrySource {
     url: String,
     branch: BranchName,
     checkout_dir: PathBuf,
+    git_env: GitEnv,
 }
 
 impl RegistrySource {
@@ -26,6 +27,7 @@ impl RegistrySource {
             url: url.into(),
             branch,
             checkout_dir: checkout_dir.into(),
+            git_env: GitEnv::default(),
         }
     }
 
@@ -57,6 +59,7 @@ impl RegistrySource {
             url,
             branch,
             checkout_dir,
+            git_env: GitEnv::default(),
         }
     }
 
@@ -92,6 +95,17 @@ impl RegistrySource {
     pub fn checkout_dir(&self) -> &Path {
         &self.checkout_dir
     }
+
+    /// Returns the command environment to apply to this source\u2019s Git network work.
+    pub fn git_env(&self) -> &GitEnv {
+        &self.git_env
+    }
+
+    /// Replaces the command environment used for this source\u2019s Git network work.
+    pub fn with_git_env(mut self, git_env: GitEnv) -> Self {
+        self.git_env = git_env;
+        self
+    }
 }
 
 /// Syncs marketplace sources through an injected [`gitlancer::Git`] runtime.
@@ -112,6 +126,7 @@ impl RegistrySync {
             git.fetch(FetchRequest {
                 repository: &repository,
                 remote: "origin",
+                env: source.git_env().clone(),
             })?;
             git.checkout(CheckoutRequest {
                 repository: &repository,
@@ -120,6 +135,7 @@ impl RegistrySync {
             git.pull(PullRequest {
                 repository: &repository,
                 branch: source.branch(),
+                env: source.git_env().clone(),
             })?;
         } else {
             let parent = checkout_dir
@@ -132,6 +148,7 @@ impl RegistrySync {
                 destination: checkout_dir.to_path_buf(),
                 working_dir: parent.to_path_buf(),
                 branch: Some(source.branch().clone()),
+                env: source.git_env().clone(),
             })?;
         }
         Ok(checkout_dir.to_path_buf())

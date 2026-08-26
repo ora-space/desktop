@@ -51,6 +51,7 @@ import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-
 import { SettingsHeading } from "./settings-heading";
 import { WorkflowSettings } from "./workflow-settings";
 import { RuntimeLogLevelSettings } from "./runtime-log-level-settings";
+import { ProxySettings } from "./proxy-settings";
 import { DeveloperModeSettings } from "./developer-mode-settings";
 import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
 import { useUiStore } from "../../state/stores/ui-store";
@@ -72,6 +73,7 @@ type SettingsCategory =
   | "roles"
   | "skills"
   | "plugins"
+  | "proxy"
   | "workflow"
   | "permissions"
   | "privacy"
@@ -133,6 +135,7 @@ export function SettingsDialog() {
     { id: "roles", icon: IconRobot, label: t("settings.nav.roles") },
     { id: "skills", icon: IconSparkles, label: t("settings.nav.skills") },
     { id: "plugins", icon: IconPuzzle, label: t("settings.nav.plugins") },
+    { id: "proxy", icon: IconRoute, label: t("settings.nav.proxy") },
     { id: "workflow", icon: IconRoute, label: t("settings.nav.workflow") },
     {
       id: "permissions",
@@ -258,6 +261,7 @@ export function SettingsDialog() {
                   )}
                   {category === "roles" && <RolesSettings />}
                   {category === "skills" && <SkillsSettings />}
+                  {category === "proxy" && <ProxySettings />}
                   {category === "plugins" && (
                     <PluginsSettings
                       onNavigationGuardChange={registerPluginConfigurationGuard}

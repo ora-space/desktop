@@ -1,14 +1,8 @@
 use ora_contracts::MarketplaceSource;
+use ora_db::{PluginMarketplaceSourceRecord, SqlitePluginMarketplaceSourceRepository};
 use ora_plugin_registry::{RegistryError, RegistrySource};
-use ora_utils::atomic;
-use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
-
-/// The filename for the persisted, user-editable marketplace source list.
-const MARKETPLACE_SOURCES_FILENAME: &str = "marketplace_sources.json";
 
 /// The seed source used the first time a backend opens before any user configuration exists.
 const DEFAULT_MARKETPLACE_URL: &str = "https://github.com/ora-space/marketplace";
@@ -23,236 +17,248 @@ pub(crate) enum MarketplaceSourceStoreError {
     Duplicate(String),
     #[error("marketplace source was not found: {0}")]
     NotFound(String),
-    #[error("marketplace source configuration file operation failed: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("marketplace source configuration JSON failed: {0}")]
-    Json(#[from] serde_json::Error),
+    #[error("marketplace source repository operation failed: {0}")]
+    Repository(#[from] ora_db::DatabaseError),
 }
 
-/// On-disk container for every marketplace source, kept under the plugin data root.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PersistedSources {
-    sources: Vec<MarketplaceSource>,
-}
-
-/// Owns the runtime marketplace source list and its small configuration file.
-///
-/// `PluginApi` only needs to query `RegistrySource` snapshots, while add/delete are serialized
-/// through the store so a source change is atomic with respect to the persisted configuration.
+/// Owns SQLite-backed marketplace source configuration and binds each row to a checkout path.
 pub(crate) struct MarketplaceSourceStore {
-    config_path: PathBuf,
+    repository: SqlitePluginMarketplaceSourceRepository,
     sources_root: PathBuf,
-    sources: RwLock<Vec<RegistrySource>>,
 }
 
 impl MarketplaceSourceStore {
-    /// Loads existing sources or writes the default source when no configuration file exists yet.
-    pub(crate) fn open(data_directory: &Path) -> Result<Self, MarketplaceSourceStoreError> {
-        let plugins_directory = data_directory.join("plugins");
-        let config_path = plugins_directory.join(MARKETPLACE_SOURCES_FILENAME);
-        let sources_root = plugins_directory.join("sources");
-
-        let sources = if config_path.exists() {
-            let bytes = fs::read(&config_path)?;
-            let persisted: PersistedSources = serde_json::from_slice(&bytes)?;
-            persisted
-                .sources
-                .into_iter()
-                .map(|source| checked_source(source, &sources_root))
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            let default_source = checked_source(
-                MarketplaceSource {
-                    url: DEFAULT_MARKETPLACE_URL.to_owned(),
-                    branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
-                },
-                &sources_root,
-            )?;
-            let store = Self {
-                config_path,
-                sources_root,
-                sources: RwLock::new(vec![default_source]),
-            };
-            store.save()?;
-            return Ok(store);
-        };
-
-        Ok(Self {
-            config_path,
+    /// Loads existing sources or seeds the default source when the table is empty.
+    pub(crate) fn open(
+        repository: SqlitePluginMarketplaceSourceRepository,
+        data_directory: &Path,
+        now_ms: i64,
+    ) -> Result<Self, MarketplaceSourceStoreError> {
+        let sources_root = data_directory.join("plugins").join("sources");
+        let store = Self {
+            repository,
             sources_root,
-            sources: RwLock::new(sources),
-        })
+        };
+        if store.repository.list_sources()?.is_empty() {
+            let default_source = MarketplaceSource {
+                url: DEFAULT_MARKETPLACE_URL.to_owned(),
+                branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
+                use_proxy: false,
+            };
+            store.insert(default_source, /*position*/ 0, now_ms)?;
+        }
+        Ok(store)
     }
 
     /// Returns the current source list in source-precedence order.
-    pub(crate) fn list(&self) -> Vec<MarketplaceSource> {
-        self.read_sources().iter().map(source_spec).collect()
-    }
-
-    /// Returns a cloned runtime source snapshot for sync and install operations.
-    pub(crate) fn snapshot(&self) -> Vec<RegistrySource> {
-        self.read_sources().clone()
-    }
-
-    /// Validates, stores, and persists one additional source, then returns the new ordering.
-    pub(crate) fn add(
-        &self,
-        source: MarketplaceSource,
-    ) -> Result<Vec<MarketplaceSource>, MarketplaceSourceStoreError> {
-        let source = checked_source(source, &self.sources_root)?;
-        let mut sources = self.write_sources();
-        if sources
-            .iter()
-            .any(|existing| existing.url() == source.url())
-        {
-            return Err(MarketplaceSourceStoreError::Duplicate(
-                source.url().to_owned(),
-            ));
-        }
-        sources.push(source);
-        self.save_lock(&sources)?;
+    pub(crate) fn list(&self) -> Result<Vec<MarketplaceSource>, MarketplaceSourceStoreError> {
+        let sources = self.repository.list_sources()?;
         Ok(sources.iter().map(source_spec).collect())
     }
 
-    /// Removes one source by URL, persists the new ordering, and returns the remaining sources.
+    /// Validates, persists, and returns one additional source appended to the current ordering.
+    pub(crate) fn add(
+        &self,
+        source: MarketplaceSource,
+        now_ms: i64,
+    ) -> Result<Vec<MarketplaceSource>, MarketplaceSourceStoreError> {
+        let current = self.repository.list_sources()?;
+        if current.iter().any(|existing| existing.url == source.url) {
+            return Err(MarketplaceSourceStoreError::Duplicate(source.url));
+        }
+        checked_source(&source, &self.sources_root)?;
+        let position = current
+            .iter()
+            .map(|existing| existing.position)
+            .max()
+            .map_or(0, |highest| highest + 1);
+        self.insert(source, position, now_ms)?;
+        self.list()
+    }
+
+    /// Removes one source by URL and returns the remaining sources.
     pub(crate) fn delete(
         &self,
         url: &str,
     ) -> Result<Vec<MarketplaceSource>, MarketplaceSourceStoreError> {
-        let mut sources = self.write_sources();
-        let previous_len = sources.len();
-        sources.retain(|source| source.url() != url);
-        if sources.len() == previous_len {
+        if !self.repository.delete_source(url)? {
             return Err(MarketplaceSourceStoreError::NotFound(url.to_owned()));
         }
-        self.save_lock(&sources)?;
-        Ok(sources.iter().map(source_spec).collect())
+        self.list()
     }
 
-    /// Persists the current in-memory list while holding the read lock.
-    fn save(&self) -> Result<(), MarketplaceSourceStoreError> {
-        let sources = self.read_sources();
-        self.save_lock(&sources)
-    }
-
-    /// Atomically writes one source slice, creating the parent directory when needed.
-    fn save_lock(&self, sources: &[RegistrySource]) -> Result<(), MarketplaceSourceStoreError> {
-        let persisted = PersistedSources {
-            sources: sources.iter().map(source_spec).collect(),
-        };
-        let bytes = serde_json::to_vec(&persisted)?;
-        if let Some(parent) = self.config_path.parent() {
-            fs::create_dir_all(parent)?;
+    /// Changes only the proxy policy of one source and returns the authoritative list.
+    pub(crate) fn set_use_proxy(
+        &self,
+        url: &str,
+        use_proxy: bool,
+        now_ms: i64,
+    ) -> Result<Vec<MarketplaceSource>, MarketplaceSourceStoreError> {
+        if !self.repository.set_use_proxy(url, use_proxy, now_ms)? {
+            return Err(MarketplaceSourceStoreError::NotFound(url.to_owned()));
         }
-        atomic::write(&self.config_path, &bytes)?;
+        self.list()
+    }
+
+    /// Binds one contract-shaped source to a validated [`RegistrySource`] in the source tree.
+    pub(crate) fn registry_source(
+        &self,
+        source: &MarketplaceSource,
+    ) -> Result<RegistrySource, MarketplaceSourceStoreError> {
+        checked_source(source, &self.sources_root).map_err(MarketplaceSourceStoreError::Validation)
+    }
+
+    /// Inserts one already-validated source at the supplied precedence position.
+    fn insert(
+        &self,
+        source: MarketplaceSource,
+        position: i64,
+        now_ms: i64,
+    ) -> Result<(), MarketplaceSourceStoreError> {
+        self.repository.insert_source(
+            &PluginMarketplaceSourceRecord {
+                url: source.url,
+                branch: source.branch,
+                use_proxy: source.use_proxy,
+                position,
+            },
+            now_ms,
+        )?;
         Ok(())
-    }
-
-    fn read_sources(&self) -> RwLockReadGuard<'_, Vec<RegistrySource>> {
-        self.sources.read().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn write_sources(&self) -> RwLockWriteGuard<'_, Vec<RegistrySource>> {
-        self.sources.write().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 /// Validates and binds one wire source to its derived checkout directory.
 fn checked_source(
-    source: MarketplaceSource,
+    source: &MarketplaceSource,
     sources_root: &Path,
-) -> Result<RegistrySource, MarketplaceSourceStoreError> {
-    RegistrySource::try_from_git(source.url, source.branch, sources_root)
-        .map_err(MarketplaceSourceStoreError::Validation)
+) -> Result<RegistrySource, RegistryError> {
+    RegistrySource::try_from_git(source.url.clone(), source.branch.clone(), sources_root)
 }
 
-/// Projects one runtime source back to the frontend-facing wire shape.
-fn source_spec(source: &RegistrySource) -> MarketplaceSource {
+/// Projects one durable row back to the frontend-facing wire shape.
+fn source_spec(source: &PluginMarketplaceSourceRecord) -> MarketplaceSource {
     MarketplaceSource {
-        url: source.url().to_owned(),
-        branch: source.branch().as_str().to_owned(),
+        url: source.url.clone(),
+        branch: source.branch.clone(),
+        use_proxy: source.use_proxy,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ora_db::{DatabaseBootstrapper, DatabaseLocation, default_migration_catalog};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
+    fn store_with_repository(temp: &TempDir) -> (RepositoryStoreGuard, MarketplaceSourceStore) {
+        let database_path = temp.path().join("ora.sqlite3");
+        let pool = DatabaseBootstrapper::system()
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&database_path),
+                &default_migration_catalog().expect("build migration catalog"),
+            )
+            .expect("open repository pool");
+        let store = MarketplaceSourceStore::open(
+            SqlitePluginMarketplaceSourceRepository::new(pool),
+            temp.path(),
+            1,
+        )
+        .expect("open store");
+        (RepositoryStoreGuard, store)
+    }
+
+    struct RepositoryStoreGuard;
+
     #[test]
-    fn missing_config_seeds_the_default_source() {
+    fn missing_sources_seed_the_default_source() {
         let temp = TempDir::new().expect("create temp directory");
-        let store = MarketplaceSourceStore::open(temp.path()).expect("open store");
+        let (_, store) = store_with_repository(&temp);
 
         assert_eq!(
-            store.list(),
+            store.list().expect("list sources"),
             vec![MarketplaceSource {
                 url: DEFAULT_MARKETPLACE_URL.to_owned(),
                 branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
+                use_proxy: false,
             }]
         );
     }
 
     #[test]
-    fn add_and_delete_persist_and_return_current_sources() {
+    fn add_update_and_delete_persist_sources() {
         let temp = TempDir::new().expect("create temp directory");
-        let store = MarketplaceSourceStore::open(temp.path()).expect("open store");
+        let (_, store) = store_with_repository(&temp);
         let added = MarketplaceSource {
             url: "https://github.com/example/marketplace".to_owned(),
             branch: "main".to_owned(),
+            use_proxy: true,
         };
 
-        let sources = store.add(added.clone()).expect("add source");
+        let sources = store.add(added.clone(), 2).expect("add source");
         assert_eq!(sources.len(), 2);
         assert!(sources.contains(&added));
-        assert!(store.config_path.parent().is_some_and(|path| path.exists()));
-        assert!(store.config_path.exists());
 
-        let reloaded = MarketplaceSourceStore::open(temp.path()).expect("reload store");
-        assert_eq!(reloaded.list(), sources);
+        let updated = store
+            .set_use_proxy(&added.url, false, 3)
+            .expect("update source");
+        assert_eq!(updated[1].use_proxy, false);
 
         let remaining = store.delete(&added.url).expect("delete source");
         assert_eq!(remaining.len(), 1);
-        assert!(
-            !store
-                .snapshot()
-                .iter()
-                .any(|source| source.url() == added.url)
-        );
+    }
+
+    #[test]
+    fn appends_after_deleting_an_interior_source() {
+        let temp = TempDir::new().expect("create temp directory");
+        let (_, store) = store_with_repository(&temp);
+        let first = MarketplaceSource {
+            url: "https://github.com/example/first".to_owned(),
+            branch: "main".to_owned(),
+            use_proxy: false,
+        };
+        let second = MarketplaceSource {
+            url: "https://github.com/example/second".to_owned(),
+            branch: "main".to_owned(),
+            use_proxy: false,
+        };
+        store.add(first.clone(), 2).expect("add first source");
+        store.add(second.clone(), 3).expect("add second source");
+        store.delete(&first.url).expect("delete interior source");
+
+        let third = MarketplaceSource {
+            url: "https://github.com/example/third".to_owned(),
+            branch: "main".to_owned(),
+            use_proxy: false,
+        };
+        let sources = store
+            .add(third.clone(), 4)
+            .expect("append after interior delete");
+
+        assert!(sources.contains(&third));
+        assert_eq!(sources.len(), 3);
     }
 
     #[test]
     fn duplicate_and_missing_sources_are_rejected() {
         let temp = TempDir::new().expect("create temp directory");
-        let store = MarketplaceSourceStore::open(temp.path()).expect("open store");
-        let duplicate = MarketplaceSource {
-            url: DEFAULT_MARKETPLACE_URL.to_owned(),
-            branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
-        };
+        let (_, store) = store_with_repository(&temp);
 
         assert!(matches!(
-            store.add(duplicate),
+            store.add(
+                MarketplaceSource {
+                    url: DEFAULT_MARKETPLACE_URL.to_owned(),
+                    branch: DEFAULT_MARKETPLACE_BRANCH.to_owned(),
+                    use_proxy: false,
+                },
+                2,
+            ),
             Err(MarketplaceSourceStoreError::Duplicate(_))
         ));
         assert!(matches!(
             store.delete("https://github.com/missing/marketplace"),
             Err(MarketplaceSourceStoreError::NotFound(_))
-        ));
-    }
-
-    #[test]
-    fn rejects_invalid_source_input_before_persisting() {
-        let temp = TempDir::new().expect("create temp directory");
-        let store = MarketplaceSourceStore::open(temp.path()).expect("open store");
-
-        assert!(matches!(
-            store.add(MarketplaceSource {
-                url: "http://github.com/example/marketplace".to_owned(),
-                branch: "main".to_owned(),
-            }),
-            Err(MarketplaceSourceStoreError::Validation(_))
         ));
     }
 }

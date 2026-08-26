@@ -186,6 +186,9 @@ export function createContractsClient(
           transport,
           options,
         ),
+      updateSource: (request, options) =>
+        executeOperation("updateMarketplaceSource", request, transport, options),
+
       listInstalled: (request, options) =>
         executeOperation("listInstalledPlugins", request, transport, options),
       getConfiguration: (request, options) =>
@@ -216,6 +219,12 @@ export function createContractsClient(
         executeOperation("installPlugin", request, transport, options),
       import: (request, options) =>
         executeOperation("importPlugin", request, transport, options),
+    },
+    proxy: {
+      get: (request, options) =>
+        executeOperation("getProxySettings", request, transport, options),
+      set: (request, options) =>
+        executeOperation("setProxySettings", request, transport, options),
     },
     fileSystem: {
       listWorkspaceDirectory: (request, options) =>

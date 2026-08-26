@@ -44,6 +44,15 @@ impl BackendError {
         }
     }
 
+    /// Creates an invalid-request failure for malformed network proxy settings.
+    pub fn invalid_proxy_settings(context: impl Into<String>) -> Self {
+        Self::new(
+            ErrorClassification::InvalidRequest,
+            PublicError::InvalidRequest(EmptyErrorParams {}),
+            context,
+        )
+    }
+
     /// Creates an internal failure while retaining its concrete source chain.
     pub fn internal(context: &'static str, source: impl Error + Send + Sync + 'static) -> Self {
         Self::with_source(

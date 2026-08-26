@@ -121,6 +121,7 @@ const tauriCommands = {
   listMarketplaceSources: "list_marketplace_sources",
   addMarketplaceSource: "add_marketplace_source",
   deleteMarketplaceSource: "delete_marketplace_source",
+  updateMarketplaceSource: "update_marketplace_source",
   listInstalledPlugins: "list_installed_plugins",
   getPluginConfiguration: "get_plugin_configuration",
   savePluginConfiguration: "save_plugin_configuration",
@@ -180,6 +181,12 @@ const tauriCommands = {
   // =============================================================================
   getRuntimeLogLevel: "get_runtime_log_level",
   setRuntimeLogLevel: "set_runtime_log_level",
+
+  // =============================================================================
+  // proxy
+  // =============================================================================
+  getProxySettings: "get_proxy_settings",
+  setProxySettings: "set_proxy_settings",
   completeWorkflowNode: "complete_workflow_node",
 } as const satisfies Record<SupportedTauriOperation, string>;
 

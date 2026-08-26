@@ -5,8 +5,9 @@ import type { AppEvent, WatchAppEventsRequest } from "./app_event.js";
 import type { DeveloperModeResponse, GetDeveloperModeRequest, SetDeveloperModeRequest } from "./developerMode.js";
 import type { ListProjectDirectoryRequest, ListWorkspaceDirectoryRequest, ListWorkspaceDirectoryResponse, ReadProjectFileRequest, ReadWorkspaceFileRequest, ReadWorkspaceFileResponse, SearchProjectRequest, SearchWorkspaceRequest, SearchWorkspaceResponse, WatchProjectRequest, WatchWorkspaceRequest, WorkspaceFileEventBatch } from "./file-system.js";
 import type { GetGitIdentityRequest, GitIdentityResponse } from "./git.js";
-import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse } from "./plugin.js";
+import type { ActivatePluginRequest, ActivatePluginResponse, AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, GetPluginConfigurationRequest, GetPluginConfigurationResponse, ImportPluginRequest, ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, ListAvailablePluginsRequest, ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, ResetPluginConfigurationRequest, ResetPluginConfigurationResponse, SavePluginConfigurationRequest, SavePluginConfigurationResponse, ScanPluginsRequest, ScanPluginsResponse, StopPluginRequest, StopPluginResponse, SyncAvailablePluginsRequest, SyncAvailablePluginsResponse, UninstallPluginRequest, UninstallPluginResponse, UpdateMarketplaceSourceRequest, UpdateMarketplaceSourceResponse } from "./plugin.js";
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse, GetProjectRequest, GetProjectResponse, ListProjectBranchesRequest, ListProjectBranchesResponse, ListProjectsRequest, ListProjectsResponse, UpdateProjectRequest, UpdateProjectResponse } from "./project.js";
+import type { GetProxySettingsRequest, GetProxySettingsResponse, SetProxySettingsRequest, SetProxySettingsResponse } from "./proxy.js";
 import type { GetRuntimeLogLevelRequest, RuntimeLogLevelStateResponse, SetRuntimeLogLevelRequest } from "./runtimeLogLevel.js";
 import type { AttachSessionRequest, AttachSessionResponse, CancelSessionPromptRequest, CancelSessionPromptResponse, DeleteSessionRequest, DeleteSessionResponse, GetAgentRuntimeStatusRequest, GetAgentRuntimeStatusResponse, GetSessionRequest, GetSessionResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionEvent, LoadSessionRequest, PromptSessionEvent, PromptSessionRequest, RenameSessionRequest, RenameSessionResponse, RespondToPermissionRequest, RespondToPermissionResponse, ResumeSessionHistoryRequest, ResumeSessionHistoryResponse, SetSessionConfigRequest, SetSessionConfigResponse, StopSessionRequest, StopSessionResponse, SwitchSessionAgentRequest, SwitchSessionAgentResponse, WarmSessionRequest, WarmSessionResponse } from "./session.js";
 import type { CreateSkillRequest, CreateSkillResponse, DeleteSkillRequest, DeleteSkillResponse, GetSkillRequest, GetSkillResponse, ListSkillsRequest, ListSkillsResponse, UpdateSkillRequest, UpdateSkillResponse } from "./skill.js";
@@ -83,6 +84,7 @@ export type RequestByOperation = {
   listMarketplaceSources: ListMarketplaceSourcesRequest;
   addMarketplaceSource: AddMarketplaceSourceRequest;
   deleteMarketplaceSource: DeleteMarketplaceSourceRequest;
+  updateMarketplaceSource: UpdateMarketplaceSourceRequest;
   listInstalledPlugins: ListInstalledPluginsRequest;
   getPluginConfiguration: GetPluginConfigurationRequest;
   savePluginConfiguration: SavePluginConfigurationRequest;
@@ -93,6 +95,8 @@ export type RequestByOperation = {
   uninstallPlugin: UninstallPluginRequest;
   installPlugin: InstallPluginRequest;
   importPlugin: ImportPluginRequest;
+  getProxySettings: GetProxySettingsRequest;
+  setProxySettings: SetProxySettingsRequest;
   listWorkspaceDirectory: ListWorkspaceDirectoryRequest;
   readWorkspaceFile: ReadWorkspaceFileRequest;
   searchWorkspace: SearchWorkspaceRequest;
@@ -191,6 +195,7 @@ export type ResponseByOperation = {
   listMarketplaceSources: ListMarketplaceSourcesResponse;
   addMarketplaceSource: AddMarketplaceSourceResponse;
   deleteMarketplaceSource: DeleteMarketplaceSourceResponse;
+  updateMarketplaceSource: UpdateMarketplaceSourceResponse;
   listInstalledPlugins: ListInstalledPluginsResponse;
   getPluginConfiguration: GetPluginConfigurationResponse;
   savePluginConfiguration: SavePluginConfigurationResponse;
@@ -201,6 +206,8 @@ export type ResponseByOperation = {
   uninstallPlugin: UninstallPluginResponse;
   installPlugin: InstallPluginResponse;
   importPlugin: ImportPluginResponse;
+  getProxySettings: GetProxySettingsResponse;
+  setProxySettings: SetProxySettingsResponse;
   listWorkspaceDirectory: ListWorkspaceDirectoryResponse;
   readWorkspaceFile: ReadWorkspaceFileResponse;
   searchWorkspace: SearchWorkspaceResponse;
@@ -693,6 +700,14 @@ export const endpoints = {
     responseType: "DeleteMarketplaceSourceResponse",
     responseMode: "unary",
   },
+  updateMarketplaceSource: {
+    operationName: "updateMarketplaceSource",
+    namespace: "plugin",
+    memberName: "updateSource",
+    requestType: "UpdateMarketplaceSourceRequest",
+    responseType: "UpdateMarketplaceSourceResponse",
+    responseMode: "unary",
+  },
   listInstalledPlugins: {
     operationName: "listInstalledPlugins",
     namespace: "plugin",
@@ -771,6 +786,22 @@ export const endpoints = {
     memberName: "import",
     requestType: "ImportPluginRequest",
     responseType: "ImportPluginResponse",
+    responseMode: "unary",
+  },
+  getProxySettings: {
+    operationName: "getProxySettings",
+    namespace: "proxy",
+    memberName: "get",
+    requestType: "GetProxySettingsRequest",
+    responseType: "GetProxySettingsResponse",
+    responseMode: "unary",
+  },
+  setProxySettings: {
+    operationName: "setProxySettings",
+    namespace: "proxy",
+    memberName: "set",
+    requestType: "SetProxySettingsRequest",
+    responseType: "SetProxySettingsResponse",
     responseMode: "unary",
   },
   listWorkspaceDirectory: {

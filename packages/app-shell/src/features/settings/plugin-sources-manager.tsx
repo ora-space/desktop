@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Input, toast } from "@ora/ui";
+import { Button, Input, Switch, toast } from "@ora/ui";
 import { IconLoader2, IconPlus, IconTrash } from "@tabler/icons-react";
 import { localizeContractError } from "../../i18n/contract-error";
 import {
   useAddMarketplaceSource,
   useDeleteMarketplaceSource,
+  useUpdateMarketplaceSource,
   useMarketplaceSources,
 } from "../../state/hooks/use-marketplace-sources";
 
@@ -22,8 +23,10 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
   const sourcesQuery = useMarketplaceSources();
   const addSource = useAddMarketplaceSource();
   const deleteSource = useDeleteMarketplaceSource();
+  const updateSource = useUpdateMarketplaceSource();
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("main");
+  const [useProxy, setUseProxy] = useState(false);
 
   const sources = sourcesQuery.data?.sources ?? [];
 
@@ -32,7 +35,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
     const nextBranch = branch.trim();
     if (nextUrl === "" || nextBranch === "") return;
     addSource.mutate(
-      { url: nextUrl, branch: nextBranch },
+      { url: nextUrl, branch: nextBranch, useProxy },
       {
         onSuccess: () => {
           setUrl("");
@@ -84,6 +87,16 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           aria-label={t("settings.plugins.sourceBranch")}
           className="bg-background sm:w-40"
         />
+        <div className="flex items-center gap-2 sm:pl-2">
+          <Switch
+            checked={useProxy}
+            onCheckedChange={setUseProxy}
+            aria-label={t("settings.plugins.sourceUseProxy")}
+          />
+          <span className="text-xs text-muted-foreground">
+            {t("settings.plugins.sourceUseProxy")}
+          </span>
+        </div>
         <Button
           type="submit"
           variant="outline"
@@ -120,6 +133,25 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
                   <span className="font-mono">{source.branch}</span>
                 </span>
               </span>
+              <Switch
+                checked={source.useProxy}
+                disabled={updateSource.isPending}
+                onCheckedChange={(checked) =>
+                  updateSource.mutate(
+                    { url: source.url, useProxy: checked },
+                    {
+                      onError: (cause) =>
+                        toast.error(
+                          t("settings.plugins.sourceProxyUpdateFailed"),
+                          {
+                            description: localizeContractError(cause, t),
+                          },
+                        ),
+                    },
+                  )
+                }
+                aria-label={`${t("settings.plugins.sourceUseProxy")}: ${source.url}`}
+              />
               <Button
                 variant="ghost"
                 size="icon-sm"
