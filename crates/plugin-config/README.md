@@ -20,7 +20,9 @@ Phase 1 restricts MCP setting types to `string`, `number`, and `boolean`; `secre
 `directory` are rejected with a dedicated error (see `docs/adr/0001`). HTTP headers must bind
 through Setting references — a literal header value would be a way to bake credentials into the
 package. HTTP URLs must be HTTPS, must not carry userinfo, must not contain a query string, and
-must not contain a fragment.
+must not contain a fragment. Bound text — stdio argument and environment literals, plus
+Setting-reference prefix/suffix on args, env, and headers — must not contain control characters
+(including CR/LF).
 
 The crate does not render UI, expose filesystem paths to frontend callers, start plugins, or pass
 configuration to Agent processes. Callers supply package identity and roots; lifecycle and backend
