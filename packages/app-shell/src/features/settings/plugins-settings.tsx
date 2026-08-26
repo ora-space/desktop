@@ -157,68 +157,80 @@ export function PluginsSettings({
         </p>
       </header>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={sync.isPending}
-          onClick={() =>
-            sync.mutate(undefined, {
-              onError: (cause) => {
-                toast.error(t("settings.plugins.syncFailed"), {
-                  description: localizeContractError(cause, t),
-                });
-              },
-            })
-          }
-          aria-label={t("settings.plugins.syncMarketplace")}
-        >
-          {sync.isPending ? (
-            <IconLoader2 className="animate-spin" />
-          ) : (
-            <IconRefresh />
-          )}
-          <span className="hidden sm:inline">
-            {t("settings.plugins.syncMarketplace")}
-          </span>
-        </Button>
-        <span className="text-xs text-muted-foreground">{lastSynced}</span>
-        <div className="relative min-w-0 flex-1 sm:ml-auto">
-          <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("settings.plugins.search")}
-            aria-label={t("settings.plugins.search")}
-            className="pl-8"
-          />
+      <div className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative min-w-0 flex-1">
+            <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t("settings.plugins.search")}
+              aria-label={t("settings.plugins.search")}
+              className="pl-8"
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={sync.isPending}
+            onClick={() =>
+              sync.mutate(undefined, {
+                onError: (cause) => {
+                  toast.error(t("settings.plugins.syncFailed"), {
+                    description: localizeContractError(cause, t),
+                  });
+                },
+              })
+            }
+            aria-label={t("settings.plugins.syncMarketplace")}
+          >
+            {sync.isPending ? (
+              <IconLoader2 className="animate-spin" />
+            ) : (
+              <IconRefresh />
+            )}
+            <span className="hidden sm:inline">
+              {t("settings.plugins.syncMarketplace")}
+            </span>
+          </Button>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setManaging(true)}>
-          {t("settings.plugins.manageInstalled")}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setManagingSources(true)}
-        >
-          {t("settings.plugins.manageSources")}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={importPlugin.isPending || selecting}
-          onClick={() => void handleImport()}
-          aria-label={t("settings.plugins.import")}
-        >
-          {importPlugin.isPending || selecting ? (
-            <IconLoader2 className="animate-spin" />
-          ) : (
-            <IconUpload />
-          )}
-          <span className="hidden sm:inline">
-            {t("settings.plugins.import")}
-          </span>
-        </Button>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground">{lastSynced}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setManaging(true)}
+            >
+              {t("settings.plugins.manageInstalled")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setManagingSources(true)}
+            >
+              {t("settings.plugins.manageSources")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={importPlugin.isPending || selecting}
+              onClick={() => void handleImport()}
+              aria-label={t("settings.plugins.import")}
+            >
+              {importPlugin.isPending || selecting ? (
+                <IconLoader2 className="animate-spin" />
+              ) : (
+                <IconUpload />
+              )}
+              <span className="hidden sm:inline">
+                {t("settings.plugins.import")}
+              </span>
+            </Button>
+          </div>
+        </div>
       </div>
 
       {visiblePlugins.length === 0 ? (

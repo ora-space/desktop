@@ -49,8 +49,8 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="space-y-5">
-      <header className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={onBack}>
+      <header className="flex flex-wrap items-center gap-3">
+        <Button variant="ghost" size="sm" className="shrink-0" onClick={onBack}>
           {t("settings.plugins.back")}
         </Button>
         <div className="min-w-0 flex-1">
@@ -64,7 +64,7 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
       </header>
 
       <form
-        className="flex flex-col gap-2 sm:flex-row sm:items-center"
+        className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/25 p-3 sm:flex-row sm:items-center"
         onSubmit={(event) => {
           event.preventDefault();
           handleAdd();
@@ -75,19 +75,20 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           onChange={(event) => setUrl(event.target.value)}
           placeholder={t("settings.plugins.sourceUrl")}
           aria-label={t("settings.plugins.sourceUrl")}
-          className="min-w-0 flex-1"
+          className="min-w-0 flex-1 bg-background"
         />
         <Input
           value={branch}
           onChange={(event) => setBranch(event.target.value)}
           placeholder={t("settings.plugins.sourceBranch")}
           aria-label={t("settings.plugins.sourceBranch")}
-          className="sm:w-44"
+          className="bg-background sm:w-40"
         />
         <Button
           type="submit"
           variant="outline"
           size="sm"
+          className="shrink-0"
           disabled={addSource.isPending}
         >
           {addSource.isPending ? (
@@ -104,21 +105,25 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
           {t("settings.plugins.emptySources")}
         </p>
       ) : (
-        <div className="divide-y divide-border border-y border-border">
+        <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
           {sources.map((source) => (
-            <div key={source.url} className="flex items-center gap-3 py-3">
+            <div
+              key={source.url}
+              className="flex items-center gap-3 px-3 py-3 sm:px-4"
+            >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">
                   {source.url}
                 </span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {t("settings.plugins.sourceBranch")}: {source.branch}
+                  {t("settings.plugins.sourceBranch")}:{" "}
+                  <span className="font-mono">{source.branch}</span>
                 </span>
               </span>
               <Button
                 variant="ghost"
-                size="sm"
-                className="shrink-0 text-muted-foreground"
+                size="icon-sm"
+                className="shrink-0 text-muted-foreground hover:text-destructive"
                 disabled={deleteSource.isPending}
                 onClick={() =>
                   deleteSource.mutate(
