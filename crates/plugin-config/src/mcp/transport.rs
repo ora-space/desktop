@@ -220,7 +220,7 @@ fn compile_value_expression(
 /// Compiles one HTTP header value.
 ///
 /// Phase 1 only accepts Setting references: a string literal would be a way to bake an API key
-/// into the immutable package, which the Tavily loop and ADR-0001 both forbid.
+/// into the immutable package.
 fn compile_header_expression(
     value: Value,
     field: &str,

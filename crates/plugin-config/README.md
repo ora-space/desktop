@@ -17,7 +17,7 @@ package-contained command, or `http` with an HTTPS URL and credential-free heade
 kind-aware callers can refuse a transport-bearing file on a non-MCP package. The settings subset
 of an MCP Configuration feeds the same editor and `store.json` machinery as a settings-only file.
 Phase 1 restricts MCP setting types to `string`, `number`, and `boolean`; `secret`, `file`, and
-`directory` are rejected with a dedicated error (see `docs/adr/0001`). HTTP headers must bind
+`directory` are rejected with a dedicated error. HTTP headers must bind
 through Setting references — a literal header value would be a way to bake credentials into the
 package. HTTP URLs must be HTTPS, must not carry userinfo, must not contain a query string, and
 must not contain a fragment. Bound text — stdio argument and environment literals, plus

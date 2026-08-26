@@ -105,8 +105,7 @@ pub enum CompileMcpConfigurationError {
     InvalidStructure(String),
     #[error("unsupported MCP configuration schema version {0}")]
     UnsupportedSchemaVersion(u32),
-    // Phase one deliberately stores API keys as `string` Settings (see
-    // docs/adr/0001-phase-1-mcp-api-keys-are-strings.md), so the reserved spec types fail with
+    // Phase one stores API keys as `string` Settings, so the reserved spec types fail with
     // a targeted message instead of a generic unknown-variant error.
     #[error(
         "invalid Setting `{setting_id}`: type `{found}` is not supported by MCP configuration schema version one"

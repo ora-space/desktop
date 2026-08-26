@@ -1,3 +1,0 @@
-# Phase-1 MCP API keys are string Settings
-
-MCP specs treat tokens as Secret Settings that must not land in ordinary files. Phase 1 of the Tavily MCP install loop still declares the API key as `type: "string"` and stores it in `store.json` via the existing settings UI (`string` / `number` / `boolean` only). Secret types, OS credential storage, and `secretRef` wait for a later breaking change; users will re-enter keys. The glossary term remains Secret Setting — this is a temporary deviation so the marketplace install and global enable loop can ship without the secret stack. The key must never be baked into the package, marketplace listing, or git.
