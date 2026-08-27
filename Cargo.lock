@@ -3162,6 +3162,7 @@ dependencies = [
  "ora-domain",
  "ora-utils",
  "pretty_assertions",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

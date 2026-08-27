@@ -520,7 +520,10 @@ export function createMockClient(state: MockClientState): ContractsClient {
           throw new Error(`import not configured for ${req.path}`);
         if (target === null) throw new Error(`import failed for ${req.path}`);
         state.installedPlugins.push({ ...target, enabled: true });
-        return { pluginId: target.id };
+        return {
+          pluginId: target.id,
+          outcome: { state: "installed_and_enabled" },
+        };
       },
       install: async (req) => {
         const available = state.availablePlugins.find(
@@ -545,7 +548,10 @@ export function createMockClient(state: MockClientState): ContractsClient {
           configuration: { state: "not_declared" },
           runtime: "stopped",
         });
-        return { pluginId: req.pluginId };
+        return {
+          pluginId: req.pluginId,
+          outcome: { state: "installed_and_enabled" },
+        };
       },
     },
     agent: {

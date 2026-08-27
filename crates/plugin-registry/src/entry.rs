@@ -1,5 +1,5 @@
 use ora_domain::PluginId;
-use ora_plugin_manifest::PluginManifest;
+use ora_plugin_manifest::{PluginManifest, PluginReleaseSource};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -28,11 +28,23 @@ pub struct RegistryEntry {
     /// source checkout, which install-time resolution is the only step that still needs.
     #[serde(default)]
     logo: Option<String>,
+    /// Cached release-source target support, so the UI can disable installation of an
+    /// unsupported target before downloading any artifact.
+    #[serde(default)]
+    release_targets: Vec<String>,
 }
 
 impl RegistryEntry {
     /// Builds one index record from a validated plugin manifest and its already-validated icon.
     pub(crate) fn from_manifest(manifest: &PluginManifest, logo: Option<String>) -> Self {
+        let release_targets = match manifest.release_source() {
+            Some(PluginReleaseSource::Universal { .. }) => Vec::new(),
+            Some(PluginReleaseSource::Targets(targets)) => targets
+                .iter()
+                .map(|target| target.target().as_str().to_owned())
+                .collect(),
+            None => Vec::new(),
+        };
         Self {
             id: entry_id(manifest),
             name: manifest.name().as_str().to_owned(),
@@ -42,6 +54,7 @@ impl RegistryEntry {
             version: manifest.version().clone(),
             description: manifest.description().to_owned(),
             logo,
+            release_targets,
         }
     }
 
@@ -83,6 +96,41 @@ impl RegistryEntry {
     /// Returns the trusted SVG source of the entry icon, when one is published.
     pub fn logo(&self) -> Option<&str> {
         self.logo.as_deref()
+    }
+
+    /// Returns the target triples the release ships artifacts for, empty for a universal
+    /// release or a release without downloadable artifacts.
+    pub fn release_targets(&self) -> &[String] {
+        &self.release_targets
+    }
+
+    /// Returns whether the current host can install this release.
+    ///
+    /// A universal release (empty `release_targets`) is always compatible; a targeted release is
+    /// compatible only when the host target triple appears in the cached target list.
+    pub fn is_compatible_with_host(&self) -> bool {
+        self.incompatible_reason_for_host().is_none()
+    }
+
+    /// Returns a human-readable incompatibility reason for the current host, or `None` when the
+    /// host can install the release.
+    pub fn incompatible_reason_for_host(&self) -> Option<String> {
+        if self.release_targets.is_empty() {
+            return None;
+        }
+        let host = crate::host::current_host_target();
+        if self
+            .release_targets
+            .iter()
+            .any(|target| target == host.as_str())
+        {
+            None
+        } else {
+            Some(format!(
+                "this release supports {} but your host is {host}",
+                self.release_targets.join(", ")
+            ))
+        }
     }
 }
 

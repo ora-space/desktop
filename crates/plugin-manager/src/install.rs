@@ -1,7 +1,7 @@
 //! Installs a plugin release by downloading its package and safely extracting it.
 
 use crate::discovery::installed_root;
-use ora_plugin_manifest::PluginManifest;
+use ora_plugin_manifest::{HookTarget, PluginManifest, PluginReleaseSource};
 use ora_utils::archive::{ArchiveFormat, ExtractLimits, extract_archive};
 use ora_utils::hash;
 use ora_utils::http::{Checksum, DownloadOptions, DownloadRequest, DownloadSource, HttpDownload};
@@ -41,6 +41,14 @@ pub enum InstallError {
     /// The imported archive digest does not match the digest the in-archive manifest declares.
     #[error("imported archive digest {actual} does not match the declared sha256 {expected}")]
     ChecksumMismatch { expected: String, actual: String },
+    /// A targeted archive self-declares a different target than the one the release selected.
+    #[error(
+        "installed artifact target {artifact} does not match the selected release target {release}"
+    )]
+    TargetMismatch { release: String, artifact: String },
+    /// The release does not provide an artifact for the requested host target.
+    #[error("release has no artifact for target {target}")]
+    NoArtifactForTarget { target: String },
     /// A plugin with the same namespace, name, and version is already installed.
     #[error(
         "a plugin with namespace `{namespace}` name `{name}` version `{version}` is already installed at {path}"
@@ -76,6 +84,88 @@ impl InstallError {
 }
 
 /// Describes one package materialized from a local release archive.
+/// Carries the resolved download source and digest for one release, after target selection.
+///
+/// The backend resolves this from a release manifest before handing it to the installer, so the
+/// installer never names a transport or target-selection policy. A universal release carries no
+/// target; a targeted release carries the selected target so the installer can verify it against
+/// the package's self-declared artifact target after extraction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedReleaseSource {
+    download: DownloadSource,
+    sha256: [u8; 32],
+    target: Option<HookTarget>,
+}
+
+impl ResolvedReleaseSource {
+    /// Builds a resolved source for a universal release.
+    pub fn universal(download: DownloadSource, sha256: [u8; 32]) -> Self {
+        Self {
+            download,
+            sha256,
+            target: None,
+        }
+    }
+
+    /// Builds a resolved source for a targeted release, carrying the selected target.
+    pub fn targeted(download: DownloadSource, sha256: [u8; 32], target: HookTarget) -> Self {
+        Self {
+            download,
+            sha256,
+            target: Some(target),
+        }
+    }
+
+    /// Returns the download source to pass to the downloader.
+    pub fn download(&self) -> &DownloadSource {
+        &self.download
+    }
+
+    /// Returns the SHA-256 digest bytes that verify the downloaded archive.
+    pub fn sha256(&self) -> &[u8; 32] {
+        &self.sha256
+    }
+
+    /// Returns the selected target, present only for a targeted release.
+    pub fn target(&self) -> Option<&HookTarget> {
+        self.target.as_ref()
+    }
+}
+
+/// Selects the release source matching `host_target` from a manifest's `release_source()`.
+///
+/// A universal release resolves to the single URL/digest pair regardless of target. A targeted
+/// release resolves to the one exact-matching target, returning `NoArtifactForTarget` when the
+/// host target has no matching artifact so the host can reject an unsupported target before
+/// download.
+pub fn select_release(
+    manifest: &PluginManifest,
+    host_target: &HookTarget,
+) -> Result<ResolvedReleaseSource, InstallError> {
+    match manifest.release_source() {
+        Some(PluginReleaseSource::Universal { url, sha256 }) => {
+            Ok(ResolvedReleaseSource::universal(
+                DownloadSource::Url(url.as_url().clone()),
+                *sha256.as_bytes(),
+            ))
+        }
+        Some(PluginReleaseSource::Targets(targets)) => {
+            let entry = targets
+                .iter()
+                .find(|entry| entry.target() == host_target)
+                .ok_or_else(|| InstallError::NoArtifactForTarget {
+                    target: host_target.to_string(),
+                })?;
+            Ok(ResolvedReleaseSource::targeted(
+                DownloadSource::Url(entry.url().as_url().clone()),
+                *entry.sha256().as_bytes(),
+                entry.target().clone(),
+            ))
+        }
+        None => Err(InstallError::MissingRelease),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledPackage {
     /// The package directory below `<data-dir>/plugins/installed/<namespace>/<name>/<version>`.
@@ -102,20 +192,24 @@ where
         Self { downloader }
     }
 
-    /// Downloads `manifest`'s release from `source` into the cache, verifies its digest, and
-    /// extracts it into `<data-dir>/plugins/installed/<namespace>/<name>/<version>`, returning that
-    /// package directory.
+    /// Downloads `manifest`'s release into the cache, verifies its digest, and extracts it into
+    /// `<data-dir>/plugins/installed/<namespace>/<name>/<version>`, returning that package
+    /// directory.
     ///
-    /// Callers pass `DownloadSource::Url(manifest.url().as_url().clone())` for online installs,
-    /// or a `Local` path for offline and test installs; either way the manifest's `sha256` is
-    /// enforced during the download and only a verified package ever reaches the extraction step.
+    /// For a universal release, `source` carries the download URL and the manifest's `sha256`
+    /// verifies the bytes. For a targeted release, `source` is the resolved target-specific
+    /// artifact (selected by the caller against `host_target`) and the matching target digest
+    /// verifies the bytes; the installer then confirms the extracted package's artifact target
+    /// equals the selected release target so a wrong-architecture archive never installs as valid.
     pub async fn install(
         &self,
         manifest: &PluginManifest,
-        source: DownloadSource,
+        source: ResolvedReleaseSource,
         data_dir: &Path,
     ) -> Result<PathBuf, InstallError> {
-        let archive_path = self.download_package(manifest, source, data_dir).await?;
+        let archive_path = self
+            .download_package(manifest, source.clone(), data_dir)
+            .await?;
         let namespace = manifest.namespace();
         let name = manifest.name();
         let version = manifest.version().to_string();
@@ -151,6 +245,32 @@ where
         })?;
         crate::validation::validate(staging.path(), manifest, None)
             .map_err(InstallError::invalid_package)?;
+        // A targeted archive self-declares its target in an in-package `[artifact]` section, which
+        // lives in the installed form of `orax.toml` rather than the release manifest the registry
+        // supplied. Reading the in-package manifest here keeps the host-compatibility check
+        // independent of marketplace metadata, exactly like local import.
+        if let Some(selected) = source.target() {
+            let installed_manifest_path = staging.path().join(crate::discovery::MANIFEST_FILE_NAME);
+            if installed_manifest_path.is_file() {
+                let installed_source =
+                    std::fs::read_to_string(&installed_manifest_path).map_err(|source| {
+                        InstallError::Io {
+                            path: installed_manifest_path.clone(),
+                            source,
+                        }
+                    })?;
+                let installed_manifest =
+                    ora_plugin_manifest::PluginManifest::parse_installed(&installed_source)?;
+                if let Some(artifact) = installed_manifest.artifact()
+                    && selected != artifact.target()
+                {
+                    return Err(InstallError::TargetMismatch {
+                        release: selected.to_string(),
+                        artifact: artifact.target().to_string(),
+                    });
+                }
+            }
+        }
         std::fs::rename(staging.path(), &package_dir).map_err(|source| InstallError::Io {
             path: package_dir.clone(),
             source,
@@ -258,10 +378,10 @@ where
     async fn download_package(
         &self,
         manifest: &PluginManifest,
-        source: DownloadSource,
+        source: ResolvedReleaseSource,
         data_dir: &Path,
     ) -> Result<PathBuf, InstallError> {
-        let digest = manifest.sha256().ok_or(InstallError::MissingRelease)?;
+        let digest = source.sha256();
         let cache_dir = data_dir.join("plugins").join(CACHE_ROOT);
         std::fs::create_dir_all(&cache_dir).map_err(|error| InstallError::Io {
             path: cache_dir.clone(),
@@ -275,9 +395,9 @@ where
         );
         let archive_path = cache_dir.join(archive_name);
         let request = DownloadRequest {
-            source,
+            source: source.download().clone(),
             destination: archive_path.clone(),
-            checksum: Some(Checksum::sha256(digest.as_bytes().to_vec())),
+            checksum: Some(Checksum::sha256(digest.to_vec())),
             options: DownloadOptions::default(),
             progress: None,
             cancel: None,
@@ -286,9 +406,10 @@ where
         Ok(archive_path)
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use super::{InstallError, InstalledPackage, Installer};
+    use super::{InstallError, InstalledPackage, Installer, ResolvedReleaseSource};
     use futures::executor::block_on;
     use ora_plugin_manifest::PluginManifest;
     use ora_utils::http::{DownloadSource, LocalFileDownloader};
@@ -372,9 +493,10 @@ mod tests {
         .unwrap();
 
         let installer = Installer::new(LocalFileDownloader);
+        let digest = sha256_file(&release_path);
         let package_dir = block_on(installer.install(
             &manifest,
-            DownloadSource::Local(release_path),
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
             temp_dir.path(),
         ))
         .unwrap();
@@ -426,9 +548,10 @@ mod tests {
         ))
         .unwrap();
 
+        let digest = sha256_file(&release_path);
         let package_dir = block_on(Installer::new(LocalFileDownloader).install(
             &manifest,
-            DownloadSource::Local(release_path),
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
             temp_dir.path(),
         ))
         .expect("install marketplace Skill release");
@@ -449,7 +572,7 @@ mod tests {
         let installer = Installer::new(LocalFileDownloader);
         let error = block_on(installer.install(
             &manifest,
-            DownloadSource::Local(release_path),
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), [0_u8; 32]),
             temp_dir.path(),
         ))
         .unwrap_err();
@@ -592,5 +715,112 @@ mod tests {
         );
         assert!(package.package_dir.join("main.js").exists());
         assert!(package.package_dir.join("logo.svg").exists());
+    }
+
+    /// Installs a targeted Hook release and verifies the package contains the executable and no
+    /// main.js, and the artifact target matches the selected release target.
+    #[test]
+    fn installs_targeted_hook_release_with_executable() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("rtk.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n\n[artifact]\ntarget = \"x86_64-pc-windows-msvc\"\n".as_slice(),
+                ),
+                (
+                    "assets/config.json",
+                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                ),
+                ("assets/rtk.exe", b"MZdummy".as_slice()),
+            ],
+        );
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk.orax\"\nsha256 = \"{}\"\n",
+            hex(digest)
+        ))
+        .unwrap();
+
+        let host_target = ora_plugin_manifest::HookTarget::parse("x86_64-pc-windows-msvc").unwrap();
+        let source = ResolvedReleaseSource::targeted(
+            DownloadSource::Local(release_path),
+            digest,
+            host_target,
+        );
+        let package_dir = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            source,
+            temp_dir.path(),
+        ))
+        .expect("install targeted hook release");
+
+        assert!(package_dir.join("assets/rtk.exe").is_file());
+        assert!(package_dir.join("assets/config.json").is_file());
+        assert!(!package_dir.join("main.js").exists());
+    }
+
+    /// A targeted Hook archive whose artifact target differs from the selected release target
+    /// is never committed as valid.
+    #[test]
+    fn rejects_targeted_hook_release_with_mismatched_artifact_target() {
+        let temp_dir = TempDir::new().unwrap();
+        let release_path = temp_dir.path().join("rtk.orax");
+        write_orax_zip(
+            &release_path,
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n\n[artifact]\ntarget = \"aarch64-pc-windows-msvc\"\n".as_slice(),
+                ),
+                (
+                    "assets/config.json",
+                    br#"{"schemaVersion":1,"hook":{"protocol":"rtk-rewrite-v1","executable":"assets/rtk.exe","command":"rtk","toolVersion":"0.45.0"}}"#.as_slice(),
+                ),
+                ("assets/rtk.exe", b"MZdummy".as_slice()),
+            ],
+        );
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK command rewrite hook\"\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk.orax\"\nsha256 = \"{}\"\n",
+            hex(digest)
+        ))
+        .unwrap();
+
+        let host_target = ora_plugin_manifest::HookTarget::parse("x86_64-pc-windows-msvc").unwrap();
+        let source = ResolvedReleaseSource::targeted(
+            DownloadSource::Local(release_path),
+            digest,
+            host_target,
+        );
+        let error = block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            source,
+            temp_dir.path(),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(error, InstallError::TargetMismatch { .. }));
+        assert!(
+            !temp_dir
+                .path()
+                .join("plugins/installed/official/rtk-ai.rtk/0.1.0")
+                .exists()
+        );
+    }
+
+    /// select_release returns NoArtifactForTarget when the host target has no matching artifact.
+    #[test]
+    fn select_release_rejects_unsupported_host_target() {
+        let digest = format!("{}{}", "ab".repeat(31), "ab");
+        let manifest = PluginManifest::parse(&format!(
+            "resolver = 1\nidentifier = \"rtk-ai.rtk\"\nnamespace = \"official\"\nkind = \"hook\"\nversion = \"0.1.0\"\ndescription = \"RTK hook\"\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk.orax\"\nsha256 = \"{digest}\"\n"
+        ))
+        .unwrap();
+        let host_target = ora_plugin_manifest::HookTarget::parse("aarch64-apple-darwin").unwrap();
+        let error = super::select_release(&manifest, &host_target).unwrap_err();
+        assert!(matches!(error, InstallError::NoArtifactForTarget { .. }));
     }
 }

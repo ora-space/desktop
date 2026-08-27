@@ -85,7 +85,8 @@ fn discovers_workbench_package_with_and_without_methods() {
             PluginContribution::Agent(_)
             | PluginContribution::Webview(_)
             | PluginContribution::Skill(_)
-            | PluginContribution::Mcp(_) => {
+            | PluginContribution::Mcp(_)
+            | PluginContribution::Hook(_) => {
                 panic!("expected workbench contributions")
             }
         })
@@ -154,7 +155,8 @@ allowed_origins = ["https://www.example.com", "https://example.com"]
         PluginContribution::Agent(_)
         | PluginContribution::Workbench(_)
         | PluginContribution::Skill(_)
-        | PluginContribution::Mcp(_) => {
+        | PluginContribution::Mcp(_)
+        | PluginContribution::Hook(_) => {
             panic!("expected a webview contribution")
         }
     };

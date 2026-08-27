@@ -297,7 +297,8 @@ where
                     PluginContribution::Workbench(_)
                     | PluginContribution::Webview(_)
                     | PluginContribution::Skill(_)
-                    | PluginContribution::Mcp(_),
+                    | PluginContribution::Mcp(_)
+                    | PluginContribution::Hook(_),
                     true,
                 ) => {
                     state.set_managed(
@@ -311,7 +312,8 @@ where
                     | PluginContribution::Workbench(_)
                     | PluginContribution::Webview(_)
                     | PluginContribution::Skill(_)
-                    | PluginContribution::Mcp(_),
+                    | PluginContribution::Mcp(_)
+                    | PluginContribution::Hook(_),
                     false,
                 ) => None,
             };

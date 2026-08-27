@@ -33,6 +33,18 @@ pub enum InstalledPluginContribution {
     Skill,
     /// A configuration-only kind describing one MCP Server; transport details stay host-side.
     Mcp,
+    /// A processless Hook contribution: one immutable Hook Protocol descriptor and one
+    /// package-contained executable. The frontend never learns the executable path; it renders
+    /// the protocol, command alias, target, and embedded tool version for audit.
+    Hook {
+        protocol: String,
+        command: String,
+        /// The target triple the installed physical artifact self-declares, absent for a
+        /// universal release.
+        target: Option<String>,
+        /// The embedded tool version, independent from the Hook Plugin version.
+        tool_version: String,
+    },
 }
 
 /// Represents whether the installed package and its immutable declaration are usable.
@@ -204,13 +216,20 @@ pub struct AvailablePlugin {
     /// Human-readable display title declared by the manifest; falls back to `name` when a cached
     /// index or older manifest omits it.
     pub title: String,
-    /// The plugin kind (`agent`, `workbench`, `webview`, `skill`, or `mcp`).
+    /// The plugin kind (`agent`, `workbench`, `webview`, `skill`, `mcp`, or `hook`).
     pub kind: String,
     pub namespace: String,
     pub version: String,
     pub description: String,
     /// Security-validated SVG source for the marketplace icon, absent when none is published.
     pub logo: Option<String>,
+    /// Whether the host can install this release. A universal release is always compatible; a
+    /// targeted release is compatible only when the host target has a matching artifact. The
+    /// UI uses this to disable the install action before any download is attempted.
+    pub compatible: bool,
+    /// Human-readable reason the release is incompatible, present only when `compatible` is
+    /// false, so the UI can explain why installation is unavailable.
+    pub incompatible_reason: Option<String>,
 }
 
 /// Requests the cached marketplace registry index used to populate the plugin catalog.
@@ -433,6 +452,32 @@ pub struct InstallPluginRequest {
 #[ts(export_to = "plugin.ts")]
 pub struct InstallPluginResponse {
     pub plugin_id: String,
+    /// The typed installation and activation outcome, so callers cannot observe contradictory
+    /// success flags. An enabled Hook with no command conflict reports `InstalledAndEnabled`;
+    /// a Hook whose command alias conflicts with an already-enabled Hook reports
+    /// `InstalledButDisabled` carrying the conflicting plugin identity.
+    pub outcome: InstallOutcome,
+}
+
+/// Models the closed set of installation and activation outcomes.
+///
+/// The outcome is a closed enum rather than a pair of booleans so a caller can never observe
+/// contradictory success flags: installation always succeeds, but automatic enablement may be
+/// blocked by a command-alias conflict.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum InstallOutcome {
+    /// The package was installed and automatically enabled because no conflict existed.
+    InstalledAndEnabled,
+    /// The package was installed but left disabled because another Enabled Hook owns the same
+    /// command alias. The conflicting plugin identity is carried so PATH resolution can never
+    /// silently select the wrong Hook.
+    InstalledButDisabled { conflict_plugin_id: String },
 }
 
 /// Requests importing one local `.orax` release archive into the installed plugins tree.
@@ -450,6 +495,8 @@ pub struct ImportPluginRequest {
 #[ts(export_to = "plugin.ts")]
 pub struct ImportPluginResponse {
     pub plugin_id: String,
+    /// The typed installation and activation outcome, identical in shape to a marketplace install.
+    pub outcome: InstallOutcome,
 }
 
 /// Requests the current editor snapshot for one installed plugin.
@@ -562,6 +609,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     PluginDataDisposition::export(config)?;
     UninstallPluginResponse::export(config)?;
     InstallPluginRequest::export(config)?;
+    InstallOutcome::export(config)?;
     InstallPluginResponse::export(config)?;
     ImportPluginRequest::export(config)?;
     ImportPluginResponse::export(config)?;
@@ -580,12 +628,12 @@ mod tests {
     use super::{
         AddMarketplaceSourceRequest, AddMarketplaceSourceResponse, AvailablePlugin,
         DeleteMarketplaceSourceRequest, DeleteMarketplaceSourceResponse, ImportPluginRequest,
-        ImportPluginResponse, InstallPluginRequest, InstallPluginResponse, InstalledPlugin,
-        InstalledPluginContribution, ListAvailablePluginsRequest, ListAvailablePluginsResponse,
-        ListInstalledPluginsRequest, ListInstalledPluginsResponse, ListMarketplaceSourcesRequest,
-        ListMarketplaceSourcesResponse, MarketplaceSource, PluginConfigurationSummary,
-        PluginInstallationValidity, PluginRuntimeStatus, SyncAvailablePluginsRequest,
-        SyncAvailablePluginsResponse,
+        ImportPluginResponse, InstallOutcome, InstallPluginRequest, InstallPluginResponse,
+        InstalledPlugin, InstalledPluginContribution, ListAvailablePluginsRequest,
+        ListAvailablePluginsResponse, ListInstalledPluginsRequest, ListInstalledPluginsResponse,
+        ListMarketplaceSourcesRequest, ListMarketplaceSourcesResponse, MarketplaceSource,
+        PluginConfigurationSummary, PluginInstallationValidity, PluginRuntimeStatus,
+        SyncAvailablePluginsRequest, SyncAvailablePluginsResponse,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -798,6 +846,8 @@ mod tests {
                     version: "1.2.0".to_string(),
                     description: "Weather plugin".to_string(),
                     logo: None,
+                    compatible: true,
+                    incompatible_reason: None,
                 }],
             })
             .unwrap(),
@@ -811,7 +861,9 @@ mod tests {
                     "namespace": "official",
                     "version": "1.2.0",
                     "description": "Weather plugin",
-                    "logo": null
+                    "logo": null,
+                    "compatible": true,
+                    "incompatibleReason": null
                 }]
             })
         );
@@ -912,9 +964,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(InstallPluginResponse {
                 plugin_id: "official/weather".to_string(),
+                outcome: InstallOutcome::InstalledAndEnabled,
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather" })
+            json!({ "pluginId": "official/weather", "outcome": { "state": "installed_and_enabled" } })
         );
     }
 
@@ -931,9 +984,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ImportPluginResponse {
                 plugin_id: "official/weather".to_string(),
+                outcome: InstallOutcome::InstalledAndEnabled,
             })
             .unwrap(),
-            json!({ "pluginId": "official/weather" })
+            json!({ "pluginId": "official/weather", "outcome": { "state": "installed_and_enabled" } })
         );
     }
 

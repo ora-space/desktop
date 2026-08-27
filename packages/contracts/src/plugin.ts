@@ -34,7 +34,7 @@ export type AvailablePlugin = {
    */
   title: string;
   /**
-   * The plugin kind (`agent`, `workbench`, or `webview`).
+   * The plugin kind (`agent`, `workbench`, `webview`, `skill`, `mcp`, or `hook`).
    */
   kind: string;
   namespace: string;
@@ -44,6 +44,17 @@ export type AvailablePlugin = {
    * Security-validated SVG source for the marketplace icon, absent when none is published.
    */
   logo: string | null;
+  /**
+   * Whether the host can install this release. A universal release is always compatible; a
+   * targeted release is compatible only when the host target has a matching artifact. The
+   * UI uses this to disable the install action before any download is attempted.
+   */
+  compatible: boolean;
+  /**
+   * Human-readable reason the release is incompatible, present only when `compatible` is
+   * false, so the UI can explain why installation is unavailable.
+   */
+  incompatibleReason: string | null;
 };
 
 /**
@@ -103,7 +114,25 @@ export type ImportPluginRequest = {
 /**
  * Confirms the identifier imported after the archive is verified, extracted, and enabled.
  */
-export type ImportPluginResponse = { pluginId: string };
+export type ImportPluginResponse = {
+  pluginId: string;
+  /**
+   * The typed installation and activation outcome, identical in shape to a marketplace install.
+   */
+  outcome: InstallOutcome;
+};
+
+/**
+ * Models the closed set of installation and activation outcomes.
+ *
+ * The outcome is a closed enum rather than a pair of booleans so a caller can never observe
+ * contradictory success flags: installation always succeeds, but automatic enablement may be
+ * blocked by a command-alias conflict.
+ */
+export type InstallOutcome = { "state": "installed_and_enabled" } | {
+  "state": "installed_but_disabled";
+  conflictPluginId: string;
+};
 
 /**
  * Requests installation of one marketplace plugin by its registry identifier.
@@ -113,7 +142,16 @@ export type InstallPluginRequest = { pluginId: string };
 /**
  * Confirms the identifier installed after download, verification, and extraction complete.
  */
-export type InstallPluginResponse = { pluginId: string };
+export type InstallPluginResponse = {
+  pluginId: string;
+  /**
+   * The typed installation and activation outcome, so callers cannot observe contradictory
+   * success flags. An enabled Hook with no command conflict reports `InstalledAndEnabled`;
+   * a Hook whose command alias conflicts with an already-enabled Hook reports
+   * `InstalledButDisabled` carrying the conflicting plugin identity.
+   */
+  outcome: InstallOutcome;
+};
 
 /**
  * Describes one installed plugin discovered from its `orax.toml` manifest.
@@ -149,6 +187,20 @@ export type InstalledPlugin =
     | { "kind": "webview"; title: string; startUrl: string }
     | { "kind": "skill" }
     | { "kind": "mcp" }
+    | {
+      "kind": "hook";
+      protocol: string;
+      command: string;
+      /**
+       * The target triple the installed physical artifact self-declares, absent for a
+       * universal release.
+       */
+      target: string | null;
+      /**
+       * The embedded tool version, independent from the Hook Plugin version.
+       */
+      toolVersion: string;
+    }
   )
   & ({ "runtime": "stopped" } | { "runtime": "starting" } | {
     "runtime": "running";
@@ -168,7 +220,21 @@ export type InstalledPluginContribution =
   | { "kind": "workbench"; title: string }
   | { "kind": "webview"; title: string; startUrl: string }
   | { "kind": "skill" }
-  | { "kind": "mcp" };
+  | { "kind": "mcp" }
+  | {
+    "kind": "hook";
+    protocol: string;
+    command: string;
+    /**
+     * The target triple the installed physical artifact self-declares, absent for a
+     * universal release.
+     */
+    target: string | null;
+    /**
+     * The embedded tool version, independent from the Hook Plugin version.
+     */
+    toolVersion: string;
+  };
 
 /**
  * Requests the cached marketplace registry index used to populate the plugin catalog.

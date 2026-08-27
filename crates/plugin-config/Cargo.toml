@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 ora-domain = { workspace = true }
 ora-utils = { workspace = true }
+semver = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -24,3 +25,4 @@ windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
+semver = { workspace = true }

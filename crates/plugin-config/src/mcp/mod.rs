@@ -14,6 +14,9 @@ use crate::declaration::{
     CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, compile_declaration,
     compile_declaration_from_value, parse_strict_json,
 };
+use crate::hook::{
+    CompileHookConfigurationError, CompiledHookConfiguration, compile_hook_configuration_from_value,
+};
 use ora_utils::path::PortableRelativePath;
 use serde::Deserialize;
 use serde_json::Value;
@@ -25,16 +28,19 @@ use url::Url;
 /// The package-relative directory an MCP stdio command must live in.
 pub const MCP_COMMAND_DIRECTORY: &str = "assets/";
 
-/// Distinguishes the two strict `assets/config.json` shapes by the `transport` member.
+/// Distinguishes the three strict `assets/config.json` shapes: Settings-only, MCP, and Hook.
 ///
-/// A Settings-only declaration rejects a `transport` member (`deny_unknown_fields`) and an MCP
-/// Configuration requires one, so the presence of that member decides the schema without any
-/// caller-provided kind hint. Kind policy — an MCP package must ship the MCP shape and every
-/// other kind must not — stays with the package validator that knows the manifest kind.
+/// The presence of `transport` decides the MCP shape, the presence of `hook` decides the Hook
+/// shape, and the absence of both falls back to Settings-only. The three shapes are mutually
+/// exclusive: a file declaring `transport` and `hook` together fails closed, because the host
+/// must never run two contribution types from one package. Kind policy — an MCP package must
+/// ship the MCP shape, a Hook package must ship the Hook shape, and every other kind must not —
+/// stays with the package validator that knows the manifest kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompiledConfigurationFile {
     Settings(CompiledDeclaration),
     Mcp(CompiledMcpConfiguration),
+    Hook(CompiledHookConfiguration),
 }
 
 /// Holds one validated MCP Configuration compiled from `assets/config.json`.
@@ -124,6 +130,12 @@ pub enum CompileConfigurationFileError {
     Settings(#[from] CompileDeclarationError),
     #[error(transparent)]
     Mcp(#[from] CompileMcpConfigurationError),
+    #[error(transparent)]
+    Hook(#[from] CompileHookConfigurationError),
+    #[error(
+        "configuration declares both `transport` and `hook`; only one contribution shape is allowed"
+    )]
+    MixedContribution,
 }
 
 /// Compiles one `assets/config.json` payload into whichever strict shape it declares.
@@ -134,13 +146,25 @@ pub fn compile_configuration_file(
         return Err(CompileDeclarationError::TooLarge.into());
     }
     let value = parse_strict_json(source).map_err(CompileConfigurationFileError::Settings)?;
-    if value
+    let has_transport = value
         .as_object()
-        .is_some_and(|object| object.contains_key("transport"))
-    {
+        .is_some_and(|object| object.contains_key("transport"));
+    let has_hook = value
+        .as_object()
+        .is_some_and(|object| object.contains_key("hook"));
+    // A file declaring both shapes would let one package carry two contribution types; the host
+    // must never run both, so the combination fails closed rather than picking one.
+    if has_transport && has_hook {
+        return Err(CompileConfigurationFileError::MixedContribution);
+    }
+    if has_transport {
         compile_mcp_configuration(value)
             .map(CompiledConfigurationFile::Mcp)
             .map_err(CompileConfigurationFileError::Mcp)
+    } else if has_hook {
+        compile_hook_configuration_from_value(value)
+            .map(CompiledConfigurationFile::Hook)
+            .map_err(CompileConfigurationFileError::Hook)
     } else {
         compile_declaration(source)
             .map(CompiledConfigurationFile::Settings)
@@ -207,3 +231,6 @@ fn compile_settings_subset(
     });
     Ok(compile_declaration_from_value(wrapped)?)
 }
+
+// Reserved spec types are surfaced through the shared compiler's `InvalidSetting` error; the
+// phase-one policy message is preserved via the `Display` impl.

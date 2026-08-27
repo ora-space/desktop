@@ -92,7 +92,8 @@ pub fn permissions_for(contribution: &PluginContribution) -> Vec<DenoPermission>
         PluginContribution::Workbench(_)
         | PluginContribution::Webview(_)
         | PluginContribution::Skill(_)
-        | PluginContribution::Mcp(_) => Vec::new(),
+        | PluginContribution::Mcp(_)
+        | PluginContribution::Hook(_) => Vec::new(),
     }
 }
 

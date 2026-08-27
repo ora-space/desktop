@@ -1,9 +1,9 @@
 use crate::{
     DownloadAction, DownloadDisposition, DownloadPolicy, DownloadRule, HomepageUrl,
     InvalidFieldReason, ManifestError, ManifestField, MethodName, MethodNameError, Origin,
-    PageMatcher, PathPrefix, PluginDependencies, PluginHead, PluginKind, PluginManifest,
-    PluginName, PluginNamespace, PluginWebview, PluginWorkbench, ReleaseUrl, RepositoryUrl,
-    RuleField, Sha256Digest, StartUrl,
+    PageMatcher, PathPrefix, PluginArtifact, PluginDependencies, PluginHead, PluginKind,
+    PluginManifest, PluginName, PluginNamespace, PluginReleaseSource, PluginWebview,
+    PluginWorkbench, ReleaseUrl, RepositoryUrl, RuleField, Sha256Digest, StartUrl,
 };
 use ora_utils::{GitBranchName, GitBranchNameError};
 use pretty_assertions::assert_eq;
@@ -95,6 +95,16 @@ fn parses_complete_manifest_into_full_domain_object() {
         }),
         workbench: None,
         webview: None,
+        release_source: Some(PluginReleaseSource::Universal {
+            url: success(
+                ReleaseUrl::parse(
+                    "https://github.com/user/ora-weather/releases/download/v1.2.0/ora-weather.orax?signature=abc",
+                ),
+                "release URL",
+            ),
+            sha256: success(Sha256Digest::parse(DIGEST), "digest"),
+        }),
+        artifact: None,
     };
 
     assert_eq!(actual, expected);
@@ -1025,4 +1035,153 @@ fn reports_structural_webview_errors_with_paths() {
         };
         assert_eq!(path.as_deref(), Some(expected_path));
     }
+}
+
+const TARGETED_HOOK_MANIFEST: &str = r#"resolver = 1
+identifier = "rtk-ai.rtk"
+namespace = "official"
+kind = "hook"
+version = "0.1.0"
+description = "RTK command rewrite hook"
+homepage = "https://github.com/rtk-ai/rtk"
+license = "Apache-2.0"
+
+[[targets]]
+target = "x86_64-pc-windows-msvc"
+url = "https://example.com/rtk.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+"#;
+
+/// A hook kind manifest is parsed and carries its targeted release source.
+#[test]
+fn parses_targeted_hook_manifest() {
+    let manifest = success(
+        PluginManifest::parse(TARGETED_HOOK_MANIFEST),
+        "targeted hook manifest",
+    );
+
+    assert_eq!(manifest.kind(), PluginKind::Hook);
+    assert!(manifest.workbench().is_none());
+    assert!(manifest.webview().is_none());
+    let Some(PluginReleaseSource::Targets(targets)) = manifest.release_source() else {
+        panic!("expected a targeted release source");
+    };
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].target().as_str(), "x86_64-pc-windows-msvc");
+    assert_eq!(targets[0].url().as_str(), "https://example.com/rtk.orax");
+    assert_eq!(manifest.artifact(), None);
+}
+
+/// A universal hook manifest is parsed and carries a universal release source.
+#[test]
+fn parses_universal_hook_manifest() {
+    let source = r#"resolver = 1
+identifier = "rtk-ai.rtk"
+namespace = "official"
+kind = "hook"
+version = "0.1.0"
+description = "RTK command rewrite hook"
+url = "https://example.com/rtk.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+"#;
+    let manifest = success(PluginManifest::parse(source), "universal hook manifest");
+
+    assert!(matches!(
+        manifest.release_source(),
+        Some(PluginReleaseSource::Universal { .. })
+    ));
+}
+
+/// Declaring both a universal release and targeted artifacts is rejected.
+#[test]
+fn rejects_both_universal_and_targeted_release_sources() {
+    // The universal `url`/`sha256` fields must appear before the `[[targets]]` array; placing them
+    // after would attach them to the last target entry instead of the top level.
+    let source = r#"resolver = 1
+identifier = "rtk-ai.rtk"
+namespace = "official"
+kind = "hook"
+version = "0.1.0"
+description = "RTK command rewrite hook"
+url = "https://example.com/rtk.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+
+[[targets]]
+target = "x86_64-pc-windows-msvc"
+url = "https://example.com/rtk.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+"#;
+    let Err(ManifestError::InvalidField { field, reason }) = PluginManifest::parse(source) else {
+        panic!("expected duplicate release source rejection");
+    };
+    assert_eq!(field, ManifestField::Targets);
+    assert!(matches!(reason, InvalidFieldReason::DuplicateReleaseSource));
+}
+
+/// Duplicate target triples within the targeted form are rejected with an index path.
+#[test]
+fn rejects_duplicate_target_triples() {
+    let source = TARGETED_HOOK_MANIFEST.to_owned()
+        + "\n[[targets]]\ntarget = \"x86_64-pc-windows-msvc\"\nurl = \"https://example.com/rtk2.orax\"\nsha256 = \"feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a\"\n";
+    let Err(ManifestError::InvalidField { field, .. }) = PluginManifest::parse(&source) else {
+        panic!("expected duplicate target rejection");
+    };
+    assert_eq!(field, ManifestField::ReleaseTargetTarget { index: 1 });
+}
+
+/// The targeted form is exclusive to hook kind plugins; other kinds are rejected.
+#[test]
+fn rejects_targeted_release_for_non_hook_kinds() {
+    let source = r#"resolver = 1
+identifier = "weather"
+namespace = "official"
+kind = "agent"
+version = "1.0.0"
+description = "Weather agent"
+
+[[targets]]
+target = "x86_64-pc-windows-msvc"
+url = "https://example.com/weather.orax"
+sha256 = "feab001d7e9ff4ce66011ebd70791de93eb1554d34d3ea44c33d102a25c1be0a"
+"#;
+    let Err(ManifestError::InvalidField { field, .. }) = PluginManifest::parse(source) else {
+        panic!("expected targeted release rejection for non-hook kind");
+    };
+    assert_eq!(field, ManifestField::Targets);
+}
+
+/// An installed targeted package carries an artifact section, not a URL or sha256.
+#[test]
+fn parses_installed_hook_manifest_with_artifact() {
+    let source = r#"resolver = 1
+identifier = "rtk-ai.rtk"
+namespace = "official"
+kind = "hook"
+version = "0.1.0"
+description = "RTK command rewrite hook"
+
+[artifact]
+target = "x86_64-pc-windows-msvc"
+"#;
+    let manifest = success(
+        PluginManifest::parse_installed(source),
+        "installed hook manifest",
+    );
+
+    assert_eq!(manifest.kind(), PluginKind::Hook);
+    assert_eq!(manifest.release_source(), None);
+    let Some(artifact) = manifest.artifact() else {
+        panic!("expected an installed artifact target");
+    };
+    assert_eq!(artifact.target().as_str(), "x86_64-pc-windows-msvc");
+}
+
+/// A hook manifest rejects workbench and webview sections.
+#[test]
+fn hook_kind_rejects_workbench_and_webview_sections() {
+    let workbench = TARGETED_HOOK_MANIFEST.to_owned() + "\n[workbench]\nmethods = [\"hello\"]\n";
+    let Err(ManifestError::InvalidField { field, .. }) = PluginManifest::parse(&workbench) else {
+        panic!("expected workbench rejection for hook kind");
+    };
+    assert_eq!(field, ManifestField::Workbench);
 }

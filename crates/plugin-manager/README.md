@@ -14,16 +14,19 @@ orchestrates checksum-verified installs of new plugin releases.
   file whose canonical target remains inside its package, then retain its portable relative path.
   Webview, skill, and MCP packages have no process entrypoint.
 - Keep `kind` and its contribution in one value (`PluginContribution::Agent`, `::Workbench`,
-  `::Webview`, `::Skill`, or `::Mcp`), so a validated plugin always carries exactly what its kind
-  promises. Skill contributions carry no additional contract fields, but the package must contain
-  one or more `assets/<name>/SKILL.md` trees. Each Skill manifest is parsed and its declared name
-  must match the package directory before it can be cataloged. MCP contributions carry the
-  immutable Installed MCP Descriptor compiled from `assets/config.json`.
+  `::Webview`, `::Skill`, `::Mcp`, or `::Hook`), so a validated plugin always carries exactly what
+  its kind promises. Skill contributions carry no additional contract fields, but the package must
+  contain one or more `assets/<name>/SKILL.md` trees. Each Skill manifest is parsed and its declared
+  name must match the package directory before it can be cataloged. MCP contributions carry the
+  immutable Installed MCP Descriptor compiled from `assets/config.json`. Hook contributions
+  carry the immutable Installed Hook Descriptor compiled from a Hook-shaped
+  `assets/config.json` plus the installed artifact target.
 - Compile an optional `assets/config.json` through `ora-plugin-config` without treating the
   package directory as a data root, and record whether the immutable declaration is absent, valid,
   or invalid so lifecycle can refuse to enable a broken package. A transport-bearing (MCP-shaped)
   `assets/config.json` is only accepted on `kind = "mcp"` packages, and an MCP package requires
-  one.
+  one. A Hook-shaped (hook-bearing) `assets/config.json` is only accepted on `kind = "hook"`
+  packages, and a hook package requires one.
 - Apply host-side workbench and webview policy that the manifest crate cannot check: a workbench
   package must ship `assets/index.html` beside `main.js`; a webview package must not ship
   `main.js`, must cover `start_url` with `allowed_origins`, and must not declare shadowed
@@ -81,6 +84,11 @@ or on the package on disk:
 - An MCP package is configuration-only: it must not ship `main.js`, must provide an MCP-shaped
   `assets/config.json` (settings subset plus exactly one transport), and, for a stdio transport,
   its command must resolve to a regular file inside the package (executable on Unix).
+- A hook package is processless: it must not ship `main.js`, must provide a Hook-shaped
+  `assets/config.json` (schema version, protocol, package-relative executable, bare command alias,
+  embedded tool version), and its executable must resolve to a regular non-symlink file under
+  `assets/` (Windows requires the `.exe` suffix). The installer verifies the installed artifact
+  target against the selected release target without executing the payload.
 - `display_name` is the plugin identifier for every kind. One agent-kind package contributes
   exactly one agent with no identifier of its own: the package's plugin id is that agent's
   identity everywhere in the host.

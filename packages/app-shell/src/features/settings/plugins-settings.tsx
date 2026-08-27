@@ -257,6 +257,7 @@ function AvailablePluginRow({
   const busy = install.isPending || mutations.uninstall.isPending;
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [deleteData, setDeleteData] = useState(true);
+  const incompatible = !plugin.compatible;
 
   const failInstall = (cause: unknown) => {
     toast.error(t("settings.plugins.installFailed"), {
@@ -302,6 +303,7 @@ function AvailablePluginRow({
             variant="outline"
             size="sm"
             className="shrink-0"
+            disabled={incompatible}
             onClick={() => install.mutate({}, { onError: failInstall })}
           >
             {t("settings.plugins.install")}
@@ -315,6 +317,11 @@ function AvailablePluginRow({
           >
             {t("settings.plugins.uninstall")}
           </Button>
+        )}
+        {incompatible && plugin.incompatibleReason !== null && (
+          <span className="block text-xs text-muted-foreground">
+            {plugin.incompatibleReason}
+          </span>
         )}
       </div>
       <AlertDialog

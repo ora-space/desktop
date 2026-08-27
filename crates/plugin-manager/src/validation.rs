@@ -1,3 +1,4 @@
+use crate::hook::{InstalledHookDescriptor, validate_hook};
 use crate::mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE, validate_mcp};
 use crate::skill::{InstalledSkillDescriptor, validate_skill};
 use crate::webview::{InstalledWebviewDescriptor, validate_webview};
@@ -26,6 +27,7 @@ pub enum PluginContribution {
     Webview(InstalledWebviewDescriptor),
     Skill(InstalledSkillDescriptor),
     Mcp(InstalledMcpDescriptor),
+    Hook(InstalledHookDescriptor),
 }
 
 impl PluginContribution {
@@ -37,6 +39,7 @@ impl PluginContribution {
             Self::Webview(_) => "webview",
             Self::Skill(_) => "skill",
             Self::Mcp(_) => "mcp",
+            Self::Hook(_) => "hook",
         }
     }
 
@@ -45,7 +48,7 @@ impl PluginContribution {
         match self {
             Self::Agent(agent) => Some(&agent.entrypoint),
             Self::Workbench(workbench) => Some(&workbench.entrypoint),
-            Self::Webview(_) | Self::Skill(_) | Self::Mcp(_) => None,
+            Self::Webview(_) | Self::Skill(_) | Self::Mcp(_) | Self::Hook(_) => None,
         }
     }
 }
@@ -141,7 +144,8 @@ pub(crate) fn validate(
             }
         };
     // The MCP shape is exclusive to the mcp kind: any other kind shipping a transport is either
-    // a mispackaged MCP or an attempt to smuggle connection state into a process kind.
+    // a mispackaged MCP or an attempt to smuggle connection state into a process kind. The Hook
+    // shape is exclusive to the hook kind for the symmetric reason.
     if !matches!(manifest.kind(), PluginKind::Mcp)
         && matches!(
             configuration_file,
@@ -152,6 +156,20 @@ pub(crate) fn validate(
             MCP_CONFIGURATION_FILE,
             format!(
                 "only `mcp` packages may declare an MCP transport (kind is `{}`)",
+                manifest.kind()
+            ),
+        ));
+    }
+    if !matches!(manifest.kind(), PluginKind::Hook)
+        && matches!(
+            configuration_file,
+            Ok(Some(CompiledConfigurationFile::Hook(_)))
+        )
+    {
+        return Err(invalid(
+            MCP_CONFIGURATION_FILE,
+            format!(
+                "only `hook` packages may declare a Hook configuration (kind is `{}`)",
                 manifest.kind()
             ),
         ));
@@ -180,6 +198,11 @@ pub(crate) fn validate(
         PluginKind::Mcp => {
             PluginContribution::Mcp(validate_mcp(package_root, &configuration_file)?)
         }
+        PluginKind::Hook => PluginContribution::Hook(validate_hook(
+            package_root,
+            &configuration_file,
+            manifest.artifact(),
+        )?),
     };
     let configuration_declaration = match &configuration_file {
         Ok(None) => PluginConfigurationDeclarationValidity::NotDeclared,
@@ -189,6 +212,15 @@ pub(crate) fn validate(
         // An MCP file contributes exactly its Settings subset to the configuration editor, so a
         // transport-only file behaves like a package without a declaration.
         Ok(Some(CompiledConfigurationFile::Mcp(configuration))) => {
+            if configuration.settings.is_some() {
+                PluginConfigurationDeclarationValidity::Valid
+            } else {
+                PluginConfigurationDeclarationValidity::NotDeclared
+            }
+        }
+        // A Hook file contributes its optional Settings subset to the configuration editor; RTK
+        // v0.1.0 declares none, so no Configure action is offered until Settings ship.
+        Ok(Some(CompiledConfigurationFile::Hook(configuration))) => {
             if configuration.settings.is_some() {
                 PluginConfigurationDeclarationValidity::Valid
             } else {

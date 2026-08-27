@@ -59,6 +59,14 @@ pub(crate) fn validate_mcp(
                 "an mcp plugin must declare exactly one `transport`",
             ));
         }
+        // A Hook-shaped file is a contribution-type mismatch the host rejects so a package
+        // cannot masquerade as another contribution type.
+        Ok(Some(CompiledConfigurationFile::Hook(_))) => {
+            return Err(invalid(
+                MCP_CONFIGURATION_FILE,
+                "an mcp plugin must not declare a `hook` contribution",
+            ));
+        }
         Ok(Some(CompiledConfigurationFile::Mcp(configuration))) => configuration.clone(),
     };
     if let McpTransport::Stdio(stdio) = &configuration.transport {

@@ -3,6 +3,7 @@
 
 mod entry;
 mod error;
+mod host;
 mod index;
 mod logo;
 mod source;

@@ -179,6 +179,8 @@ function InstalledPluginRow({
             {plugin.runtime === "failed"
               ? plugin.failureReason
               : plugin.runtime}
+            {plugin.kind === "hook" &&
+              ` · ${plugin.protocol} · ${plugin.command}${plugin.target ? ` · ${plugin.target}` : ""} · ${plugin.toolVersion}`}
           </span>
           {plugin.configuration.state === "available" &&
             plugin.configuration.completeness === "incomplete" && (

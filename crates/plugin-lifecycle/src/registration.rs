@@ -54,6 +54,9 @@ pub fn validate_registration(
         PluginContribution::Mcp(_) => Err(PluginRuntimeFailure::new(
             "mcp plugins have no process and cannot register",
         )),
+        PluginContribution::Hook(_) => Err(PluginRuntimeFailure::new(
+            "hook plugins have no process and cannot register",
+        )),
     }
 }
 

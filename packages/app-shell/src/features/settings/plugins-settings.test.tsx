@@ -54,6 +54,8 @@ function clientWithWeather(logo: string | null = null) {
     version: "1.2.0",
     description: "Weather plugin",
     logo,
+    compatible: true,
+    incompatibleReason: null,
   });
   return { state, client: createMockClient(state) };
 }

@@ -209,6 +209,15 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         },
         PluginContribution::Skill(_) => InstalledPluginContribution::Skill,
         PluginContribution::Mcp(_) => InstalledPluginContribution::Mcp,
+        PluginContribution::Hook(descriptor) => InstalledPluginContribution::Hook {
+            protocol: descriptor.configuration.hook.protocol.as_str().to_string(),
+            command: descriptor.configuration.hook.command.as_str().to_string(),
+            target: descriptor
+                .artifact_target
+                .as_ref()
+                .map(|target| target.as_str().to_string()),
+            tool_version: descriptor.configuration.hook.tool_version.to_string(),
+        },
     };
 
     let installation_validity = match &plugin.configuration_declaration {

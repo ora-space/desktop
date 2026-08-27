@@ -2,6 +2,7 @@
 
 mod declaration;
 mod filesystem;
+mod hook;
 mod mcp;
 mod service;
 mod values;
@@ -13,6 +14,10 @@ pub use declaration::{
     SettingDeclaration, SettingType, SettingValue, compile_declaration,
 };
 pub use filesystem::{ConfigurationFileSystem, StandardConfigurationFileSystem};
+pub use hook::{
+    CompileHookConfigurationError, CompiledHookConfiguration, HookCommand, HookDescriptor,
+    HookProtocol, compile_hook_configuration_from_bytes,
+};
 pub use mcp::{
     CompileConfigurationFileError, CompileMcpConfigurationError, CompiledConfigurationFile,
     CompiledMcpConfiguration, MCP_COMMAND_DIRECTORY, McpArgument, McpHttpTransport,

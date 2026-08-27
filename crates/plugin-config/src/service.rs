@@ -383,6 +383,9 @@ where
             .and_then(|file| match file {
                 CompiledConfigurationFile::Settings(declaration) => Some(declaration),
                 CompiledConfigurationFile::Mcp(configuration) => configuration.settings,
+                // A Hook Configuration may declare a future plugin-global Settings subset; RTK
+                // v0.1.0 declares none, so the settings summary stays NotDeclared until one ships.
+                CompiledConfigurationFile::Hook(configuration) => configuration.settings,
             }))
     }
 

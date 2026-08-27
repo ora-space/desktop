@@ -2,6 +2,7 @@
 //! checksum-verified installs of new plugin releases.
 
 mod discovery;
+mod hook;
 mod install;
 mod issue;
 mod logo;
@@ -17,9 +18,13 @@ mod kind_tests;
 mod tests;
 
 pub use discovery::{MANIFEST_FILE_NAME, installed_root};
-pub use install::{InstallError, InstalledPackage, Installer};
+pub use hook::InstalledHookDescriptor;
+pub use install::{
+    InstallError, InstalledPackage, Installer, ResolvedReleaseSource, select_release,
+};
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};
+pub use ora_plugin_manifest::HookTarget;
 pub use skill::{
     InstalledSkill, InstalledSkillDescriptor, SKILL_ASSET_DIRECTORY, SKILL_MANIFEST_FILE_NAME,
 };

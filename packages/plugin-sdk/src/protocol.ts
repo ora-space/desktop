@@ -46,32 +46,45 @@ export async function* decodeFrames(
   readable: ReadableStream<Uint8Array>,
 ): AsyncGenerator<unknown> {
   let buffer = new Uint8Array();
-  for await (const chunk of readable) {
-    const combined = new Uint8Array(buffer.byteLength + chunk.byteLength);
-    combined.set(buffer);
-    combined.set(chunk, buffer.byteLength);
-    buffer = combined;
-
-    while (buffer.byteLength >= 4) {
-      const length = new DataView(
-        buffer.buffer,
-        buffer.byteOffset,
-        buffer.byteLength,
-      ).getUint32(0, false);
-      if (length < 1 || length > MAX_FRAME_LENGTH) {
-        throw new Error(`Invalid plugin frame length ${length}`);
-      }
-      if (buffer.byteLength < length + 4) {
+  // ReadableStream's async iterator is a Deno runtime extension the `dom` lib does not type;
+  // acquiring a reader keeps the decode loop type-safe under every lib configuration while
+  // preserving the streaming semantics the protocol depends on.
+  const reader = readable.getReader();
+  try {
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      if (done) {
         break;
       }
-      if (buffer[4] !== JSON_RPC_FRAME_TYPE) {
-        throw new Error(`Unsupported plugin frame type ${buffer[4]}`);
-      }
+      const combined = new Uint8Array(buffer.byteLength + chunk.byteLength);
+      combined.set(buffer);
+      combined.set(chunk, buffer.byteLength);
+      buffer = combined;
 
-      const payload = buffer.slice(5, length + 4);
-      buffer = buffer.slice(length + 4);
-      yield JSON.parse(new TextDecoder().decode(payload));
+      while (buffer.byteLength >= 4) {
+        const length = new DataView(
+          buffer.buffer,
+          buffer.byteOffset,
+          buffer.byteLength,
+        ).getUint32(0, false);
+        if (length < 1 || length > MAX_FRAME_LENGTH) {
+          throw new Error(`Invalid plugin frame length ${length}`);
+        }
+        if (buffer.byteLength < length + 4) {
+          break;
+        }
+        if (buffer[4] !== JSON_RPC_FRAME_TYPE) {
+          throw new Error(`Unsupported plugin frame type ${buffer[4]}`);
+        }
+
+        const payload = buffer.slice(5, length + 4);
+        buffer = buffer.slice(length + 4);
+        yield JSON.parse(new TextDecoder().decode(payload));
+      }
     }
+  } finally {
+    // Releasing the reader unlocks the stream for any upstream cancellation path.
+    reader.releaseLock();
   }
 
   if (buffer.byteLength !== 0) {

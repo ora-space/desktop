@@ -84,7 +84,8 @@ impl SurfaceDefinition {
         let source = match &plugin.contributes {
             PluginContribution::Agent(_)
             | PluginContribution::Skill(_)
-            | PluginContribution::Mcp(_) => {
+            | PluginContribution::Mcp(_)
+            | PluginContribution::Hook(_) => {
                 return None;
             }
             PluginContribution::Workbench(descriptor) => {
